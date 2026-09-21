@@ -551,6 +551,17 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
     }),
   );
 
+  it.effect("does not turn unsupported ACP v2 auth methods into agent login", () =>
+    Effect.gen(function* () {
+      const handle = yield* makeHandle({ ACP_MOCK_CUSTOM_AUTH: "1" });
+      const response = yield* Effect.gen(function* () {
+        const acp = yield* AcpClient.AcpClient;
+        return yield* acp.agent.initialize({ protocolVersion: 2 });
+      }).pipe(Effect.provide(AcpClient.layerChildProcess(handle)));
+      assert.deepEqual(response.authMethods, []);
+    }),
+  );
+
   it.effect("preserves registry env-var authentication extensions", () =>
     Effect.gen(function* () {
       const handle = yield* makeHandle({ ACP_MOCK_ENV_VAR_AUTH: "1" });

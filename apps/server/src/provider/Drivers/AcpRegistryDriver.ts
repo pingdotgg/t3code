@@ -59,6 +59,7 @@ import {
 } from "../acp/AcpRegistryProbe.ts";
 import { AcpRegistryCatalog, type AcpRegistryInspection } from "../acp/AcpRegistrySupport.ts";
 import { AcpRegistryRuntimeCoordinator } from "../acp/AcpRegistryRuntimeCoordinator.ts";
+import { makeAcpRegistryAuth } from "../acp/AcpRegistryAuth.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -211,8 +212,16 @@ function baseSnapshot(
     installed: input.installed,
     version: input.version,
     status: input.settings.enabled ? input.status : "disabled",
-    auth: input.auth,
+    auth: { ...input.auth, canLogout: input.auth.canLogout ?? false },
     checkedAt: input.checkedAt,
+    setup: {
+      canInstall: false,
+      canAuthenticate:
+        input.installed &&
+        (input.probe
+          ? input.probe.probe.authMethods.length > 0
+          : input.settings.agentId.length > 0),
+    },
     ...(input.message ? { message: input.message } : {}),
     models: modelsFromDiscovery(input.probe?.probe, input.settings.customModels),
     ...(input.probe === undefined
@@ -307,11 +316,11 @@ export function buildCheckedAcpRegistrySnapshot(
       : undefined;
   const authenticationMessage = advertisedAuthMethod
     ? advertisedAuthMethod.type === "terminal" && advertisedAuthMethod.command
-      ? `Run \`${advertisedAuthMethod.command}\` in a thread terminal on this environment. T3 Code will detect the completed sign-in on the next provider refresh.`
+      ? `Sign in in provider settings using "${advertisedAuthMethod.name}". The login terminal runs on this environment.`
       : advertisedAuthMethod.type === "env_var" &&
           (advertisedAuthMethod.envVarNames?.length ?? 0) > 0
         ? `Set ${advertisedAuthMethod.envVarNames!.join(", ")} under this instance's environment variables in provider settings. T3 Code will detect it on the next provider refresh.`
-        : `Complete the advertised "${advertisedAuthMethod.name}" authentication method on the server. T3 Code will detect it automatically on the next provider refresh.`
+        : `Sign in in provider settings using "${advertisedAuthMethod.name}".`
     : undefined;
   return baseSnapshot({
     ...input,
@@ -323,7 +332,7 @@ export function buildCheckedAcpRegistrySnapshot(
     status: probeFailed ? "warning" : readiness.status,
     auth: input.probe
       ? {
-          status: "authenticated",
+          status: input.probe.probe.authMethods.length === 0 ? "authenticated" : "unknown",
           canLogout: input.probe.probe.sessionManagement.canLogout,
         }
       : input.probeError?.reason === "authentication_failed"
@@ -501,28 +510,37 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         settings: effectiveConfig,
         environment: processEnvironment,
       };
-      const withLiveRuntimeState = (provider: ServerProvider) =>
-        Option.isNone(runtimeCoordinator)
-          ? Effect.succeed(provider)
-          : Effect.all({
-              commands: runtimeCoordinator.value.getAvailableCommands(instanceId),
-              configuration: runtimeCoordinator.value.getLiveConfiguration(instanceId),
-              authAction: runtimeCoordinator.value.getUrlAuthAction(instanceId),
-            }).pipe(
-              Effect.map(({ commands, configuration, authAction }) => {
-                const withCommands = applyAcpRegistryAvailableCommands(provider, commands);
-                const withConfiguration = Option.match(configuration, {
-                  onNone: () => withCommands,
-                  onSome: (liveConfiguration) =>
-                    applyAcpRegistryLiveConfiguration(
-                      withCommands,
-                      liveConfiguration,
-                      effectiveConfig.customModels,
-                    ),
-                });
-                return applyAcpRegistryUrlAuthAction(withConfiguration, authAction);
-              }),
-            );
+      const confirmedAuthentication = yield* Ref.make(false);
+      const withLiveRuntimeState = (input: ServerProvider) =>
+        Effect.gen(function* () {
+          if (input.auth.status === "unauthenticated")
+            yield* Ref.set(confirmedAuthentication, false);
+          const provider =
+            input.auth.status === "unknown" && (yield* Ref.get(confirmedAuthentication))
+              ? { ...input, auth: { ...input.auth, status: "authenticated" as const } }
+              : input;
+          return yield* Option.isNone(runtimeCoordinator)
+            ? Effect.succeed(provider)
+            : Effect.all({
+                commands: runtimeCoordinator.value.getAvailableCommands(instanceId),
+                configuration: runtimeCoordinator.value.getLiveConfiguration(instanceId),
+                authAction: runtimeCoordinator.value.getUrlAuthAction(instanceId),
+              }).pipe(
+                Effect.map(({ commands, configuration, authAction }) => {
+                  const withCommands = applyAcpRegistryAvailableCommands(provider, commands);
+                  const withConfiguration = Option.match(configuration, {
+                    onNone: () => withCommands,
+                    onSome: (liveConfiguration) =>
+                      applyAcpRegistryLiveConfiguration(
+                        withCommands,
+                        liveConfiguration,
+                        effectiveConfig.customModels,
+                      ),
+                  });
+                  return applyAcpRegistryUrlAuthAction(withConfiguration, authAction);
+                }),
+              );
+        });
       const checkProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
         Effect.provideService(AcpRegistryCatalog, catalog),
         Effect.flatMap(withLiveRuntimeState),
@@ -566,7 +584,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             };
           }
           const enriched = yield* enrichProvider;
-          if (enriched.auth.status === "authenticated") {
+          if (enriched.status === "ready") {
             yield* Ref.update(enrichmentCache, (current) =>
               current.generation === cacheState.generation
                 ? {
@@ -710,6 +728,39 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           : provided;
       };
 
+      const clearLiveState = Option.isSome(runtimeCoordinator)
+        ? runtimeCoordinator.value
+            .clearLiveConfiguration(instanceId)
+            .pipe(Effect.andThen(runtimeCoordinator.value.clearAvailableCommands(instanceId)))
+        : Effect.void;
+      const controller = yield* makeAcpRegistryAuth({
+        instanceId,
+        settings: effectiveConfig,
+        cwd: serverConfig.cwd,
+        environment: processEnvironment,
+        onChanged: (authenticated) =>
+          Ref.set(confirmedAuthentication, authenticated).pipe(
+            Effect.andThen(authenticated ? Effect.void : clearLiveState),
+            Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
+            Effect.andThen(snapshot.refresh),
+            Effect.asVoid,
+          ),
+      }).pipe(
+        Effect.provideService(AcpRegistryCatalog, catalog),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(Crypto.Crypto, crypto),
+      );
+      const auth = {
+        ...controller,
+        invalidate: (controller.invalidate ?? Effect.void).pipe(
+          Effect.andThen(Ref.set(confirmedAuthentication, false)),
+          Effect.andThen(clearLiveState),
+          Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
+          Effect.andThen(snapshot.refresh),
+          Effect.asVoid,
+        ),
+      };
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -717,7 +768,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         displayName,
         accentColor,
         enabled,
-        snapshot,
+        auth,
+        snapshot: {
+          ...snapshot,
+          refresh: snapshot.refresh.pipe(
+            Effect.tap(() => controller.refreshMethods ?? Effect.void),
+          ),
+        },
         orchestrationAdapter,
         textGeneration: makeUnsupportedTextGeneration(),
         acpSessionManagement: {

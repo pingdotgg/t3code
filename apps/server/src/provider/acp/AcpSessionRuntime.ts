@@ -1095,7 +1095,7 @@ export function selectAcpAgentAuthMethod(
   if (preferred) {
     return authMethods?.find((method) => method.id === preferred);
   }
-  return authMethods?.find((method) => !("type" in method));
+  return authMethods?.find((method) => method.type === undefined || method.type === "agent");
 }
 
 function isAcpAuthenticationRequired(error: EffectAcpErrors.AcpError): boolean {
@@ -1210,6 +1210,8 @@ export class AcpSessionRuntime extends Context.Service<
       EffectAcpSchema.InitializeResponse,
       EffectAcpErrors.AcpError
     >;
+    /** Explicit login uses the negotiated v1 authenticate / v2 auth/login operation. */
+    readonly authenticate?: (methodId: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
     /**
      * Initializes the ACP connection, authenticates, and loads, resumes, or creates the session.
      * Concurrent calls share the same in-flight startup and a failed startup may be retried.
@@ -2228,7 +2230,11 @@ export const make = (
               cause: { configuredAuthMethodId, authMethods: initializeResult.authMethods },
             });
           }
-          if (authMethod !== undefined && "type" in authMethod) {
+          if (
+            authMethod !== undefined &&
+            authMethod.type !== undefined &&
+            authMethod.type !== "agent"
+          ) {
             return yield* new EffectAcpErrors.AcpTransportError({
               detail: `ACP authentication method "${authMethod.id}" requires ${authMethod.type} authentication, which cannot run inside a headless provider session`,
               cause: authMethod,
@@ -2487,6 +2493,13 @@ export const make = (
       handleExtRequest: acp.handleExtRequest,
       handleExtNotification: acp.handleExtNotification,
       initialize: () => initialize,
+      authenticate: (methodId) =>
+        initialize.pipe(
+          Effect.andThen(
+            runLoggedRequest("authenticate", { methodId }, acp.agent.authenticate({ methodId })),
+          ),
+          Effect.asVoid,
+        ),
       start: () => start,
       getEvents: () => Stream.fromQueue(eventQueue),
       drainEvents,

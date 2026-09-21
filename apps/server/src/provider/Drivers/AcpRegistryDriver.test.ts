@@ -86,6 +86,36 @@ describe("acpRegistrySnapshotReadiness", () => {
     );
   });
 
+  it("keeps authentication unknown when an agent permits a discovery session before sign-in", () => {
+    const snapshot = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ agentId: "test-agent" }),
+      checkedAt: "2026-08-13T10:00:00.000Z",
+      inspection: {
+        status: "ready",
+        agentId: "test-agent",
+        version: "1.0.0",
+        distribution: "binary",
+      },
+      probe: {
+        probe: {
+          instanceId: identity.instanceId,
+          ready: true,
+          icon: null,
+          authMethods: [{ id: "browser", name: "Browser", description: null, type: "agent" }],
+          models: [],
+          currentModelId: null,
+          configOptions: [],
+          sessionManagement: noSessionManagement,
+        },
+        slashCommands: [],
+        skills: [],
+      },
+    });
+    expect(snapshot.auth.status).toBe("unknown");
+    expect(snapshot.setup?.canAuthenticate).toBe(true);
+  });
+
   it("overlays live configuration without dropping probe-owned session capabilities", () => {
     const provider = buildCheckedAcpRegistrySnapshot({
       ...identity,
@@ -308,8 +338,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         type: "agent",
         label: "Log in with Grok",
       },
-      message:
-        'Complete the advertised "Log in with Grok" authentication method on the server. T3 Code will detect it automatically on the next provider refresh.',
+      message: 'Sign in in provider settings using "Log in with Grok".',
     });
   });
 

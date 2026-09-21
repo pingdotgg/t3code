@@ -2132,17 +2132,30 @@ const makeWsRpcLayer = (
                   message: "The ACP agent does not advertise logout.",
                 });
               }
-              yield* providerSessionManager.closeInstance(input.instanceId).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new AcpRegistryOperationError({
-                      reason: "logout_failed",
-                      message: "Could not stop live sessions before ACP logout.",
-                      cause,
-                    }),
-                ),
-              );
-              yield* manager.logout(config.cwd);
+              if (instance.auth) {
+                yield* providerAuth.logout(input).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new AcpRegistryOperationError({
+                        reason: "logout_failed",
+                        message: "Could not sign out of the ACP agent.",
+                        cause,
+                      }),
+                  ),
+                );
+              } else {
+                yield* providerSessionManager.closeInstance(input.instanceId).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new AcpRegistryOperationError({
+                        reason: "logout_failed",
+                        message: "Could not stop live sessions before ACP logout.",
+                        cause,
+                      }),
+                  ),
+                );
+                yield* manager.logout(config.cwd);
+              }
               yield* providerRegistry.refreshInstance(input.instanceId);
               return { loggedOut: true } as const;
             }),

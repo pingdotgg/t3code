@@ -126,7 +126,7 @@ export function normalizeAcpRegistryAuthMethods(
   for (const method of methods ?? []) {
     const id = boundedOpaqueValue(method.id, MAX_ID_LENGTH);
     if (id === undefined) continue;
-    const type = "type" in method ? method.type : "agent";
+    const type = method.type ?? "agent";
     const envVarNames =
       type === "env_var" && "vars" in method
         ? method.vars

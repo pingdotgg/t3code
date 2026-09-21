@@ -1879,7 +1879,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             clientCapabilities: {
               fs: { readTextFile: true, writeTextFile: true },
               terminal: clientTerminals !== undefined,
-              elicitation: { form: {} },
+              elicitation: { form: {}, ...(flavor.onUrlElicitation ? { url: {} } : {}) },
               ...(flavor.clientCapabilitiesMeta ? { _meta: flavor.clientCapabilitiesMeta } : {}),
             },
             clientInfo: { name: "t3-code", version: "0.0.0" },

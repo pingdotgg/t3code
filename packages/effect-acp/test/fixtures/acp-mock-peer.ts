@@ -41,6 +41,9 @@ const program = Effect.gen(function* () {
         name: "mock-agent",
         version: "0.0.0",
       },
+      ...(process.env.ACP_MOCK_CUSTOM_AUTH === "1"
+        ? { authMethods: [{ type: "custom_future", methodId: "custom", name: "Future auth" }] }
+        : {}),
       ...(process.env.ACP_MOCK_ENV_VAR_AUTH === "1"
         ? {
             authMethods: [

@@ -527,7 +527,7 @@ describe("AcpSessionRuntime", () => {
   it("selects explicit or agent-managed authentication without choosing terminal auth", () => {
     const methods = [
       { id: "browser", name: "Browser", type: "terminal" as const },
-      { id: "api-key", name: "API key" },
+      { id: "api-key", name: "API key", type: "agent" as const },
     ];
 
     expect(AcpSessionRuntime.selectAcpAgentAuthMethod(methods)?.id).toBe("api-key");
@@ -732,19 +732,15 @@ describe("AcpSessionRuntime", () => {
     );
   });
 
-  it.effect("requires an interactive handoff for v2 agent-managed authentication", () => {
+  it.effect("authenticates explicitly typed v2 agent methods and retries session creation", () => {
     const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
     return Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
-      const error = yield* runtime.start().pipe(Effect.flip);
-
-      expect(error._tag).toBe("AcpTransportError");
-      if (error._tag === "AcpTransportError") {
-        expect(error.detail).toContain("requires agent authentication");
-      }
+      const started = yield* runtime.start();
+      expect(started.sessionId).toBe("mock-session-1");
       expect(
         requestEvents.filter((event) => event.status === "started").map((event) => event.method),
-      ).toEqual(["initialize", "session/new"]);
+      ).toEqual(["initialize", "session/new", "authenticate", "session/new"]);
       expect(
         requestEvents.filter(
           (event) => event.method === "session/new" && event.status === "failed",
@@ -754,7 +750,7 @@ describe("AcpSessionRuntime", () => {
         requestEvents.filter(
           (event) => event.method === "session/new" && event.status === "succeeded",
         ),
-      ).toHaveLength(0);
+      ).toHaveLength(1);
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
