@@ -1,3 +1,4 @@
+import { deviceToolMaintenanceScript } from "./deviceToolMaintenance.ts";
 import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 export const quoteRemoteArg = (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`;
@@ -28,6 +29,7 @@ const mode = ${JSON.stringify(mode)};
 const hubVersion = ${JSON.stringify(DEVICE_HUB_VERSION)};
 const agentVersion = ${JSON.stringify(AGENT_DEVICE_VERSION)};
 ` +
+  deviceToolMaintenanceScript +
   String.raw`
 const fs = require('node:fs');
 const path = require('node:path');
@@ -162,6 +164,7 @@ async function install(name, version, entry) {
   }
   if (!ios && !android) throw Error(platforms.map(p => p.reason).join(' '));
   fs.mkdirSync(state, { recursive: true, mode: 0o700 });
+  await claimTool(path.join(root, 'tools'), 'expo-device-hub', hubVersion, process.pid);
   const hubEntry = await install('expo-device-hub', hubVersion, 'dist/server/cli.mjs');
   let hub = read(hubFile);
   if (!hub || hub.owner !== owner || hub.entryPath !== hubEntry || !await healthy(hub.port, '/readyz')) {
@@ -190,8 +193,10 @@ async function install(name, version, entry) {
       if (attempt === 4) throw Error('Device hub exited before becoming ready. See ' + path.join(state, 'hub.log'));
     }
   }
+  await claimTool(path.join(root, 'tools'), 'expo-device-hub', hubVersion, hub.pid);
   let agentResult = {};
   if (mode === 'agent-start') {
+  await claimTool(path.join(root, 'tools'), 'agent-device', agentVersion, process.pid);
   const agentEntry = await install('agent-device', agentVersion, 'bin/agent-device.mjs');
   const previousAgent = read(agentFile)?.entryPath;
   let daemon = read(daemonFile);
@@ -210,10 +215,12 @@ async function install(name, version, entry) {
   }
   if (!daemon || !await healthy(daemon.httpPort, '/health')) throw Error('agent-device daemon did not become ready in ' + state);
   write(agentFile, { entryPath: agentEntry });
+  await claimTool(path.join(root, 'tools'), 'agent-device', agentVersion, daemon.pid);
   agentResult = { daemonPort: daemon.httpPort, token: daemon.token, entryPath: agentEntry };
   }
   const vendor = path.resolve(path.dirname(hubEntry), '../../vendor/serve-sim/dist');
   const optional = file => fs.existsSync(file) ? file : null;
+  await pruneTools(path.join(root, 'tools'), [['expo-device-hub', hubVersion], ...(mode === 'agent-start' ? [['agent-device', agentVersion]] : [])], true).catch(() => {});
   console.log(JSON.stringify({ nodePath: process.execPath, platforms, tools: versions(), hubPort: hub.port, ...agentResult,
     helpers: { serveSimAxSettings: optional(path.join(vendor, 'simax/serve-sim-ax-settings')), serveSimCli: optional(path.join(vendor, 'serve-sim.js')) } }));
   } finally { releaseHost(); }
