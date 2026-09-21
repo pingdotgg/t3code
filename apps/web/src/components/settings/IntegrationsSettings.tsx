@@ -1,3 +1,4 @@
+import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceHostsSettings } from "./DeviceHostsSettings";
@@ -692,6 +693,10 @@ function DeviceIntegrationControls({
         description={deviceHubDescription}
         control={
           <>
+            <DeviceToolVersions
+              kind="hub"
+              tools={state.hosts.find((host) => host.kind === "local")?.tools}
+            />
             {pending === "hub" ? <DeviceHubSetupStatus state={state} pending compact /> : null}
             <ScopedSwitch
               settingKeys={["enableDeviceSupport"]}
@@ -751,6 +756,10 @@ function DeviceIntegrationControls({
         description={agentDeviceDescription}
         control={
           <>
+            <DeviceToolVersions
+              kind="agent"
+              tools={state.hosts.find((host) => host.kind === "local")?.tools}
+            />
             {pending === "agent" ? <AgentDeviceSetupStatus state={state} pending compact /> : null}
             <ScopedSwitch
               settingKeys={["enableAgentDeviceAccess"]}

@@ -2,6 +2,7 @@ import * as NodeCrypto from "node:crypto";
 import {
   type DeviceHostSummary,
   DevicePlatformAvailability,
+  DeviceToolVersions,
   type SshDeviceHostConfig,
 } from "@t3tools/contracts";
 import { runSshCommand, baseSshArgs, resolveSshCommand } from "@t3tools/ssh/command";
@@ -24,6 +25,7 @@ import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./s
 
 const Probe = Schema.Struct({
   nodePath: Schema.String,
+  tools: Schema.optional(DeviceToolVersions),
   platforms: Schema.Array(DevicePlatformAvailability),
 });
 const Started = Schema.Struct({
@@ -70,8 +72,23 @@ const bootstrap = (
     ),
   );
 
-export const probe = Effect.fn("SshDeviceHost.probe")(function* (config: SshDeviceHostConfig) {
-  const result = yield* bootstrap(config, "probe", "probe");
+const ownerFor = Effect.fn("SshDeviceHost.ownerFor")(function* (hostId: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const server = yield* ServerConfig.ServerConfig;
+  const environmentId = yield* fs
+    .readFileString(server.environmentIdPath)
+    .pipe(Effect.orElseSucceed(() => server.stateDir));
+  return NodeCrypto.createHash("sha256")
+    .update(`${environmentId}\0${server.stateDir}\0${hostId}`)
+    .digest("hex")
+    .slice(0, 24);
+});
+
+export const probe = Effect.fn("SshDeviceHost.probe")(function* (
+  config: SshDeviceHostConfig,
+  owner?: string,
+) {
+  const result = yield* bootstrap(config, owner ?? (yield* ownerFor(config.id)), "probe");
   const value = yield* decodeProbe(result.stdout.trim()).pipe(
     Effect.mapError(
       (cause) =>
@@ -82,8 +99,11 @@ export const probe = Effect.fn("SshDeviceHost.probe")(function* (config: SshDevi
     id: config.id,
     label: config.label,
     kind: "ssh",
-    hubInstalled: false,
-    agentDeviceInstalled: false,
+    tools: value.tools,
+    hubInstalled:
+      value.tools?.hub.installedVersions.includes(value.tools.hub.requiredVersion) ?? false,
+    agentDeviceInstalled:
+      value.tools?.agent.installedVersions.includes(value.tools.agent.requiredVersion) ?? false,
     platforms: value.platforms,
   } satisfies DeviceHostSummary;
 });
@@ -106,23 +126,21 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const parentScope = yield* Scope.Scope;
   const ssh = yield* resolveSshCommand;
-  const environmentId = yield* fs
-    .readFileString(server.environmentIdPath)
-    .pipe(Effect.orElseSucceed(() => server.stateDir));
-  const owner = NodeCrypto.createHash("sha256")
-    .update(`${environmentId}\0${server.stateDir}\0${config.id}`)
-    .digest("hex")
-    .slice(0, 24);
+  const owner = yield* ownerFor(config.id);
   const provide = <A, E>(
     effect: Effect.Effect<
       A,
       E,
-      FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+      | FileSystem.FileSystem
+      | Path.Path
+      | ChildProcessSpawner.ChildProcessSpawner
+      | ServerConfig.ServerConfig
     >,
   ) =>
     effect.pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(ServerConfig.ServerConfig, server),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
   const lock = yield* Semaphore.make(1);
@@ -183,6 +201,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
     summary = {
       ...summary,
       platforms: remote.platforms,
+      tools: remote.tools,
       hubInstalled: true,
       agentDeviceInstalled: wantsAgent || summary.agentDeviceInstalled,
     };
