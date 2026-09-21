@@ -1,4 +1,4 @@
-import { workerLive as usageLimitRecoveryWorkerLive } from "./UsageLimitRecoveryService.ts";
+import * as UsageLimitRecoveryService from "./UsageLimitRecoveryService.ts";
 import * as Layer from "effect/Layer";
 import {
   OrchestrationEventInfrastructureLayerLive,
@@ -296,7 +296,7 @@ export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
   threadLaunchProvided,
   threadLifecycleProvided,
   scheduledTaskProvided,
-  usageLimitRecoveryWorkerLive.pipe(
+  UsageLimitRecoveryService.workerLive.pipe(
     Layer.provide(Layer.mergeAll(projectionStoreLayer, threadManagementProvided)),
   ),
   providerContinuationWorkerProvided,

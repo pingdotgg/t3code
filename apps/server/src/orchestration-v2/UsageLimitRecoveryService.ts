@@ -8,9 +8,9 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import { ServerSettingsService } from "../serverSettings.ts";
-import { ProjectionStoreV2 } from "./ProjectionStore.ts";
-import { ThreadManagementService } from "./ThreadManagementService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
 
 /** The persisted run and reset form the identity of one recovery opportunity. */
 export function limitRecoveryCommand(
@@ -71,9 +71,9 @@ export function limitRecoveryCommand(
 }
 
 const make = Effect.gen(function* () {
-  const projections = yield* ProjectionStoreV2;
-  const threads = yield* ThreadManagementService;
-  const settings = yield* ServerSettingsService;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  const settings = yield* ServerSettings.ServerSettingsService;
   return Effect.fn("UsageLimitRecoveryService.sweep")(function* () {
     const preferences = yield* settings.getSettings;
     const snapshot = yield* projections.getShellSnapshot();
