@@ -303,6 +303,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["notification toast popup completion input approval failure"],
   },
   {
+    id: "thread-auto-switch",
+    title: "Thread auto-switch",
+    to: "/settings/general",
+    searchTerms: ["automatically switch focus jump thread input approval failed done multitasking"],
+  },
+  {
     id: "time-format",
     title: "Time format",
     to: "/settings/general",

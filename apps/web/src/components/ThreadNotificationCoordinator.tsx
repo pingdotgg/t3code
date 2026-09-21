@@ -93,6 +93,7 @@ function EnvironmentNotifications({
   const inAppNotificationsEnabled = useClientSettings(
     (settings) => settings.inAppNotificationsEnabled,
   );
+  const threadAutoSwitchMode = useClientSettings((settings) => settings.threadAutoSwitchMode);
   const navigate = useNavigate();
   const { environmentId: activeEnvironmentId, threadId: activeThreadId } = useParams({
     strict: false,
@@ -139,6 +140,23 @@ function EnvironmentNotifications({
             : status === "failed"
               ? "Thread failed"
               : "Input needed";
+      // Auto-switch covers only the focused-window case: in the background
+      // the OS notification is the attention signal, and switching a hidden
+      // window changes nothing the user can see.
+      const autoSwitch =
+        document.visibilityState === "visible" &&
+        document.hasFocus() &&
+        (activeEnvironmentId !== environmentId || activeThreadId !== thread.id) &&
+        (threadAutoSwitchMode === "attention"
+          ? kind === "input"
+          : threadAutoSwitchMode === "attention-or-done");
+      if (autoSwitch) {
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: { environmentId, threadId: thread.id },
+        });
+        continue;
+      }
       if (hasNotificationSound(mode)) {
         void playNotificationSound(kind, () =>
           hasNotificationSound(getClientSettings().notificationMode),
@@ -204,6 +222,7 @@ function EnvironmentNotifications({
     navigate,
     onNotification,
     shell,
+    threadAutoSwitchMode,
   ]);
 
   return null;

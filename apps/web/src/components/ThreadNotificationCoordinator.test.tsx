@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const state = vi.hoisted(() => ({
   mode: "off" as ClientSettings["notificationMode"],
   inApp: true,
+  autoSwitch: "off" as ClientSettings["threadAutoSwitchMode"],
   active: { environmentId: "env-1", threadId: "other-thread" },
   focused: true,
   visible: "visible",
@@ -58,9 +59,17 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../hooks/useSettings", () => ({
   useClientSettings: (
     select: (
-      settings: Pick<ClientSettings, "notificationMode" | "inAppNotificationsEnabled">,
+      settings: Pick<
+        ClientSettings,
+        "notificationMode" | "inAppNotificationsEnabled" | "threadAutoSwitchMode"
+      >,
     ) => unknown,
-  ) => select({ notificationMode: state.mode, inAppNotificationsEnabled: state.inApp }),
+  ) =>
+    select({
+      notificationMode: state.mode,
+      inAppNotificationsEnabled: state.inApp,
+      threadAutoSwitchMode: state.autoSwitch,
+    }),
   getClientSettings: () => ({ notificationMode: state.mode }),
 }));
 vi.mock("../state/environments", () => ({
@@ -99,6 +108,7 @@ beforeEach(() => {
   Object.assign(state, {
     mode: "off",
     inApp: true,
+    autoSwitch: "off",
     active: { environmentId: "env-1", threadId: "other-thread" },
     focused: true,
     visible: "visible",
@@ -250,5 +260,62 @@ describe("thread notifications", () => {
       tag: "env-1:thread-1",
       silent: true,
     });
+  });
+
+  it("does not switch threads when auto-switch is off", async () => {
+    await render();
+    await complete();
+    expect(state.navigate).not.toHaveBeenCalled();
+    expect(state.add).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["attention", "attention-or-done"] as const)(
+    "switches to a thread that needs input when auto-switch is %s",
+    async (autoSwitch) => {
+      state.autoSwitch = autoSwitch;
+      state.mode = "notifications-and-sound";
+      await render();
+      state.input = true;
+      await render();
+      expect(state.navigate).toHaveBeenCalledWith({
+        to: "/$environmentId/$threadId",
+        params: { environmentId: "env-1", threadId: "thread-1" },
+      });
+      expect(state.add).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["attention", "attention-or-done"] as const)(
+    "switches on completion only when auto-switch is %s",
+    async (autoSwitch) => {
+      state.autoSwitch = autoSwitch;
+      await render();
+      await complete();
+      expect(state.navigate).toHaveBeenCalledTimes(autoSwitch === "attention" ? 0 : 1);
+      if (autoSwitch === "attention") expect(state.add).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["hidden", "blurred", "active"] as const)(
+    "does not switch for a %s window or the thread already on screen",
+    async (condition) => {
+      state.autoSwitch = "attention-or-done";
+      await render();
+      if (condition === "hidden") state.visible = "hidden";
+      if (condition === "blurred") state.focused = false;
+      if (condition === "active") state.active.threadId = "thread-1";
+      await complete();
+      expect(state.navigate).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not replay an auto-switch after navigating away", async () => {
+    state.autoSwitch = "attention";
+    await render();
+    state.approval = true;
+    await render();
+    state.approval = false;
+    await render();
+    expect(state.navigate).toHaveBeenCalledTimes(1);
   });
 });

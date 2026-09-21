@@ -222,6 +222,16 @@ export const NotificationMode = Schema.Literals([
 ]);
 export type NotificationMode = typeof NotificationMode.Type;
 
+/**
+ * When a background thread needs attention, whether the app switches to it.
+ * "attention" covers pending input, approval, or failure; "attention-or-done"
+ * also covers settled completions. Applies only while the window is focused
+ * and already showing a different thread — the background case stays with
+ * notifications.
+ */
+export const ThreadAutoSwitchMode = Schema.Literals(["off", "attention", "attention-or-done"]);
+export type ThreadAutoSwitchMode = typeof ThreadAutoSwitchMode.Type;
+
 export const QuitConfirmationMode = Schema.Literals(["direct", "hold", "double-click"]);
 export type QuitConfirmationMode = typeof QuitConfirmationMode.Type;
 const DEFAULT_QUIT_CONFIRMATION_MODE: QuitConfirmationMode = "hold";
@@ -292,6 +302,9 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
   ),
   inAppNotificationsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  threadAutoSwitchMode: ThreadAutoSwitchMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("off" as const)),
+  ),
   diffColorScheme: DiffColorScheme.pipe(
     Schema.withDecodingDefault(Effect.succeed("red-green" as const)),
   ),
@@ -1516,6 +1529,7 @@ export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 export const ClientSettingsPatch = Schema.Struct({
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
+  threadAutoSwitchMode: Schema.optionalKey(ThreadAutoSwitchMode),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),

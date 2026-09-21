@@ -42,6 +42,7 @@ import {
   type ResponseStreamingMode,
   MIN_TERMINAL_FONT_SIZE,
   type QuitConfirmationMode,
+  type ThreadAutoSwitchMode,
 } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -200,6 +201,12 @@ const TIMESTAMP_FORMAT_LABELS = {
 const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
   stacked: "Stacked",
   split: "Split",
+};
+
+const THREAD_AUTO_SWITCH_MODE_LABELS: Record<ThreadAutoSwitchMode, string> = {
+  off: "Off",
+  attention: "Needs input or failed",
+  "attention-or-done": "Needs input, failed, or done",
 };
 
 const QUIT_CONFIRMATION_MODE_LABELS: Record<QuitConfirmationMode, string> = {
@@ -548,6 +555,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.inAppNotificationsEnabled !== DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled
         ? ["In-app notifications"]
         : []),
+      ...(settings.threadAutoSwitchMode !== DEFAULT_UNIFIED_SETTINGS.threadAutoSwitchMode
+        ? ["Thread auto-switch"]
+        : []),
       ...(settings.sidebarThreadPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
         ? ["Visible threads"]
         : []),
@@ -678,6 +688,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.timestampFormat,
       settings.notificationMode,
       settings.inAppNotificationsEnabled,
+      settings.threadAutoSwitchMode,
       settings.wordWrap,
       followSystem,
       theme,
@@ -753,6 +764,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
+      threadAutoSwitchMode: DEFAULT_UNIFIED_SETTINGS.threadAutoSwitchMode,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
@@ -2316,6 +2328,45 @@ export function GeneralSettingsPanel() {
               onCheckedChange={(checked) => updateSettings({ inAppNotificationsEnabled: checked })}
               aria-label="In-app notifications"
             />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("thread-auto-switch")}
+          description="Switch to a background thread that needs input or approval, fails, or (optionally) finishes, while this window is focused."
+          resetAction={
+            settings.threadAutoSwitchMode !== DEFAULT_UNIFIED_SETTINGS.threadAutoSwitchMode ? (
+              <SettingResetButton
+                label="thread auto-switch"
+                onClick={() =>
+                  updateSettings({
+                    threadAutoSwitchMode: DEFAULT_UNIFIED_SETTINGS.threadAutoSwitchMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.threadAutoSwitchMode}
+              onValueChange={(value) => {
+                if (value === "off" || value === "attention" || value === "attention-or-done") {
+                  updateSettings({ threadAutoSwitchMode: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Thread auto-switch">
+                <SelectValue>
+                  {THREAD_AUTO_SWITCH_MODE_LABELS[settings.threadAutoSwitchMode]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {Object.entries(THREAD_AUTO_SWITCH_MODE_LABELS).map(([value, label]) => (
+                  <SelectItem key={value} hideIndicator value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           }
         />
         <SettingsRow

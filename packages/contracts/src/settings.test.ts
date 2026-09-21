@@ -270,6 +270,32 @@ describe("ClientSettings notifications", () => {
   );
 });
 
+describe("ClientSettings thread auto-switch", () => {
+  it("stays off when existing settings omit the preference", () => {
+    expect(decodeClientSettings({}).threadAutoSwitchMode).toBe("off");
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("threadAutoSwitchMode");
+  });
+
+  it.each(["off", "attention", "attention-or-done"] as const)(
+    "round-trips the %s mode",
+    (threadAutoSwitchMode) => {
+      const settings = decodeClientSettings({ threadAutoSwitchMode });
+      expect(encodeClientSettings(settings).threadAutoSwitchMode).toBe(threadAutoSwitchMode);
+      expect(decodeClientSettingsPatch({ threadAutoSwitchMode }).threadAutoSwitchMode).toBe(
+        threadAutoSwitchMode,
+      );
+    },
+  );
+
+  it.each(["always", true, null, "done"])(
+    "rejects unsupported thread auto-switch mode %s",
+    (threadAutoSwitchMode) => {
+      expect(() => decodeClientSettings({ threadAutoSwitchMode })).toThrow();
+      expect(() => decodeClientSettingsPatch({ threadAutoSwitchMode })).toThrow();
+    },
+  );
+});
+
 describe("ClientSettings default diff file state", () => {
   it("keeps files collapsed when existing settings omit the preference", () => {
     expect(decodeClientSettings({}).diffFilesCollapsed).toBe(true);
