@@ -118,6 +118,51 @@ describe("resolveProjectSettings", () => {
   });
 });
 
+describe("resolveProjectSettings with a t3.json", () => {
+  it("walks project override, environment value, file, then built-in for file-backed keys", () => {
+    const file = { defaultThreadEnvMode: "worktree" as const };
+    const fromOverride = resolveProjectSettings(
+      {
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: { [projectId]: { defaultThreadEnvMode: "local" } },
+      },
+      projectId,
+      null,
+      file,
+    );
+    expect(fromOverride.settings.defaultThreadEnvMode).toBe("local");
+    expect(fromOverride.sources.defaultThreadEnvMode).toBe("project");
+
+    const fromEnvironment = resolveProjectSettings(
+      { ...DEFAULT_SERVER_SETTINGS, defaultThreadEnvMode: "local" },
+      projectId,
+      null,
+      file,
+    );
+    expect(fromEnvironment.settings.defaultThreadEnvMode).toBe("local");
+    expect(fromEnvironment.sources.defaultThreadEnvMode).toBe("environment");
+
+    const fromFile = resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId, null, file);
+    expect(fromFile.settings.defaultThreadEnvMode).toBe("worktree");
+    expect(fromFile.sources.defaultThreadEnvMode).toBe("t3.json");
+
+    const builtIn = resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId, null, null);
+    expect(builtIn.settings.defaultThreadEnvMode).toBe("local");
+    expect(builtIn.sources.defaultThreadEnvMode).toBe("environment");
+    // A file that does not mention the key leaves the source alone too.
+    expect(
+      resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId, null, {}).sources
+        .defaultThreadEnvMode,
+    ).toBe("environment");
+  });
+
+  it("leaves settings untouched when no file is passed", () => {
+    expect(resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId).settings).toBe(
+      DEFAULT_SERVER_SETTINGS,
+    );
+  });
+});
+
 describe("projectSettingsOverrides patches", () => {
   it("replaces a project's entry, removes it with null, and drops empty entries", () => {
     const first = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
