@@ -361,7 +361,6 @@ function createThreadCommand(input: {
   readonly scenario: string;
   readonly modelSelection: ModelSelection;
   readonly interactionMode?: ProviderInteractionMode;
-  readonly worktreePath?: string;
 }): OrchestrationV2Command {
   return {
     type: "thread.create",
@@ -375,7 +374,7 @@ function createThreadCommand(input: {
     runtimeMode: "full-access",
     interactionMode: input.interactionMode ?? "default",
     branch: null,
-    worktreePath: input.worktreePath ?? null,
+    worktreePath: null,
   };
 }
 
@@ -418,7 +417,6 @@ export function materializeFixtureInput(input: {
   readonly fixtureInput: OrchestratorFixtureInput;
   readonly driver: ProviderDriverKind;
   readonly modelSelection: ModelSelection;
-  readonly worktreePath?: string;
 }): Effect.Effect<MaterializedOrchestratorFixtureInput, IdAllocatorV2Error, IdAllocatorV2> {
   return Effect.gen(function* () {
     const idAllocator = yield* IdAllocatorV2;
@@ -466,7 +464,6 @@ export function materializeFixtureInput(input: {
         ids,
         scenario: input.scenario,
         modelSelection: input.modelSelection,
-        ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
         ...(input.fixtureInput.interactionMode === undefined
           ? {}
           : { interactionMode: input.fixtureInput.interactionMode }),

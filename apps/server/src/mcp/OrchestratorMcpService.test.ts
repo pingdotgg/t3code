@@ -881,7 +881,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           const dependencies = Layer.mergeAll(
             NodeServices.layer,
             Layer.mock(ThreadManagementService)({
-              getThreadProjection: (threadId) =>
+              getThreadRecords: (threadId) =>
                 Effect.succeed(
                   threadId === parentThreadId
                     ? parentProjection(delegated ? [task] : [], parentModelSelection)
