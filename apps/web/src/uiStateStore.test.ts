@@ -2,10 +2,12 @@ import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  isThreadUnread,
   legacyProjectCwdPreferenceKey,
   markThreadUnread,
   markThreadVisited,
   parsePersistedState,
+  toggleThreadRead,
   PERSISTED_STATE_KEY,
   type PersistedUiState,
   persistState,
@@ -54,6 +56,22 @@ describe("uiStateStore pure functions", () => {
 
     expect(next.threadLastVisitedAtById[threadId]).toBe("2026-02-25T12:29:59.999Z");
     expect(markThreadUnread(next, threadId, null)).toBe(next);
+  });
+
+  it("toggles read and unread from the completion timestamp", () => {
+    const threadId = ThreadId.make("thread-1");
+    const completedAt = "2026-02-25T12:30:00.000Z";
+    const read = markThreadVisited(makeUiState(), threadId, completedAt);
+
+    expect(isThreadUnread(read.threadLastVisitedAtById[threadId], completedAt)).toBe(false);
+
+    const unread = toggleThreadRead(read, threadId, completedAt);
+    expect(unread.threadLastVisitedAtById[threadId]).toBe("2026-02-25T12:29:59.999Z");
+    expect(isThreadUnread(unread.threadLastVisitedAtById[threadId], completedAt)).toBe(true);
+
+    const toggledRead = toggleThreadRead(unread, threadId, completedAt);
+    expect(toggledRead.threadLastVisitedAtById[threadId]).toBe(completedAt);
+    expect(toggleThreadRead(read, threadId, null)).toBe(read);
   });
 
   it("resolves project expansion from logical, physical, and legacy preference keys", () => {

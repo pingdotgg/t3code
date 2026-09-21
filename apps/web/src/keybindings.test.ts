@@ -160,6 +160,11 @@ const DEFAULT_BINDINGS = compile([
     command: "thread.settle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
+  {
+    shortcut: modShortcut("u", { shiftKey: true }),
+    command: "thread.toggleUnread",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("1"), command: "thread.jump.1" },
   { shortcut: modShortcut("2"), command: "thread.jump.2" },
   { shortcut: modShortcut("3"), command: "thread.jump.3" },
@@ -219,6 +224,27 @@ describe("settle thread shortcut", () => {
   it("does not intercept the terminal", () => {
     assert.isNull(
       resolveShortcutCommand(event({ key: "s", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Win32",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+});
+
+describe("toggle unread shortcut", () => {
+  it("resolves outside the terminal", () => {
+    assert.equal(
+      resolveShortcutCommand(event({ key: "u", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "thread.toggleUnread",
+    );
+  });
+
+  it("does not intercept the terminal", () => {
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "u", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
         platform: "Win32",
         context: { terminalFocus: true },
       }),
@@ -1230,6 +1256,7 @@ describe("composer and pull request shortcuts", () => {
     it.each([
       ["s", "thread.settle"],
       ["p", "thread.pin"],
+      ["u", "thread.toggleUnread"],
     ])(`preserves the existing %s shortcut on ${platform}`, (key, command) => {
       assert.strictEqual(
         resolveShortcutCommand(

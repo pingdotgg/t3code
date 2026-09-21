@@ -3,7 +3,11 @@
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopeProjectRef,
+  scopedThreadKey,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import {
   canCreateProjectInEnvironment,
   getCloneDestinationBrowsePath,
@@ -48,6 +52,7 @@ import {
   FolderIcon,
   FolderPlusIcon,
   LinkIcon,
+  MailOpenIcon,
   MessageSquareIcon,
   MonitorIcon,
   MoonIcon,
@@ -187,7 +192,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
-import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
+import { isThreadUnread, legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
@@ -765,6 +770,14 @@ function OpenCommandPaletteDialog(props: {
     }
   }, [activeThreadReferenceCopyTarget]);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
+  const toggleThreadRead = useUiStateStore((store) => store.toggleThreadRead);
+  const activeThreadLastVisitedAt = useUiStateStore((store) =>
+    activeThread
+      ? store.threadLastVisitedAtById[
+          scopedThreadKey(scopeThreadRef(activeThread.environmentId, activeThread.id))
+        ]
+      : undefined,
+  );
   const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const {
@@ -1790,6 +1803,22 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  if (activeThread !== null) {
+    const threadKey = scopedThreadKey(scopeThreadRef(activeThread.environmentId, activeThread.id));
+    const unread = isThreadUnread(activeThreadLastVisitedAt, activeThread.latestTurn?.completedAt);
+    actionItems.push({
+      kind: "action",
+      value: "action:toggle-thread-read",
+      searchTerms: ["unread", "read", "mark unread", "mark as read", "toggle"],
+      title: unread ? "Mark as read" : "Mark unread",
+      icon: <MailOpenIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "thread.toggleUnread",
+      run: async () => {
+        toggleThreadRead(threadKey, activeThread.latestTurn?.completedAt);
+      },
+    });
+  }
+
   if (
     activeThread !== null &&
     threadPullRequestLinkMode(activeThreadServerConfig?.environment.capabilities) !== "unsupported"
@@ -2686,6 +2715,17 @@ function OpenCommandPaletteDialog(props: {
       if (activeThreadReferenceCopyTarget === null) return;
       setOpen(false);
       void copyActiveThreadReference();
+      return;
+    }
+    if (command === "thread.toggleUnread") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (activeThread === null) return;
+      setOpen(false);
+      toggleThreadRead(
+        scopedThreadKey(scopeThreadRef(activeThread.environmentId, activeThread.id)),
+        activeThread.latestTurn?.completedAt,
+      );
       return;
     }
 

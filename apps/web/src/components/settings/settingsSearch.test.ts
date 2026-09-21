@@ -224,6 +224,10 @@ describe("searchSettings", () => {
       id: "keybinding-thread.copyReference",
       to: "/settings/keybindings",
     });
+    expect(searchSettings("toggle read")[0]).toMatchObject({
+      id: "keybinding-thread.toggleUnread",
+      to: "/settings/keybindings",
+    });
   });
 
   it("ranks keybinding commands after other settings", () => {

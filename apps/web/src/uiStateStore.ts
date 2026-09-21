@@ -295,6 +295,34 @@ export function markThreadUnread(
   };
 }
 
+/** Same rule as the sidebar unread badge: never-visited counts as read. */
+export function isThreadUnread(
+  lastVisitedAt: string | undefined,
+  latestTurnCompletedAt: string | null | undefined,
+): boolean {
+  if (!latestTurnCompletedAt) return false;
+  const completedAt = Date.parse(latestTurnCompletedAt);
+  if (Number.isNaN(completedAt)) return false;
+  if (!lastVisitedAt) return false;
+  const lastVisitedAtMs = Date.parse(lastVisitedAt);
+  if (Number.isNaN(lastVisitedAtMs)) return true;
+  return completedAt > lastVisitedAtMs;
+}
+
+export function toggleThreadRead(
+  state: UiState,
+  threadId: string,
+  latestTurnCompletedAt: string | null | undefined,
+): UiState {
+  if (
+    latestTurnCompletedAt &&
+    isThreadUnread(state.threadLastVisitedAtById[threadId], latestTurnCompletedAt)
+  ) {
+    return markThreadVisited(state, threadId, latestTurnCompletedAt);
+  }
+  return markThreadUnread(state, threadId, latestTurnCompletedAt);
+}
+
 export function setThreadChangedFilesExpanded(
   state: UiState,
   threadId: string,
@@ -426,6 +454,7 @@ export function reorderProjects(
 interface UiStateStore extends UiState {
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
+  toggleThreadRead: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setSidebarProjectScopeKey: (projectKey: string | null) => void;
@@ -444,6 +473,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>
     set((state) => markThreadUnread(state, threadId, latestTurnCompletedAt)),
+  toggleThreadRead: (threadId, latestTurnCompletedAt) =>
+    set((state) => toggleThreadRead(state, threadId, latestTurnCompletedAt)),
   setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>

@@ -1583,6 +1583,7 @@ export default function ChatView(props: ChatViewProps) {
     };
   }, [routeKind, routeThreadRef, routeThreadState]);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
+  const toggleThreadRead = useUiStateStore((store) => store.toggleThreadRead);
   const settings = useEnvironmentSettings(environmentId);
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
@@ -6749,6 +6750,17 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "thread.toggleUnread") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat || !activeThreadKey) return;
+        // Opening a thread stamps lastVisitedAt at completedAt. This handler
+        // only runs after that visit, so unread sticks until the user leaves
+        // or a later completion retriggers the visit effect.
+        toggleThreadRead(activeThreadKey, activeLatestTurn?.completedAt);
+        return;
+      }
+
       if (command === "terminal.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -6913,6 +6925,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadRef,
     activeThreadPinned,
     activeThreadSettled,
+    activeLatestTurn?.completedAt,
     canInterruptRunningThread,
     activeThreadKey,
     terminalUiState.terminalOpen,
@@ -6938,6 +6951,7 @@ export default function ChatView(props: ChatViewProps) {
     confirmAndUnpinThread,
     copyActiveThreadReference,
     getShortcutContext,
+    toggleThreadRead,
     toggleRightPanel,
     toggleRightPanelMaximized,
     toggleTerminalVisibility,

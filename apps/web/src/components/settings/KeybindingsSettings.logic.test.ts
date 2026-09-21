@@ -29,6 +29,7 @@ describe("KeybindingsSettings.logic", () => {
       "modelPicker.previousProvider",
       "modelPicker.nextProvider",
       "thread.copyReference",
+      "thread.toggleUnread",
       "pullRequest.copyNumber",
     ]) {
       expect(rows.find((row) => row.command === command)).toMatchObject({
@@ -204,6 +205,7 @@ describe("KeybindingsSettings.logic", () => {
     expect(commandLabel("commandPalette.toggle")).toBe("Command Palette: Toggle");
     expect(commandLabel("themeEditor.toggle")).toBe("Theme Editor: Toggle");
     expect(commandLabel("script.setup-db.run")).toBe("Run Script: Setup Db");
+    expect(commandLabel("thread.toggleUnread")).toBe("Thread: Toggle Read/Unread");
   });
 
   it("builds known when variable options from defaults without frontend labels", () => {

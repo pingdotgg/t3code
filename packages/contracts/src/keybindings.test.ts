@@ -122,6 +122,13 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedThreadCopyReference.command, "thread.copyReference");
 
+    const parsedThreadToggleUnread = yield* decode(KeybindingRule, {
+      key: "mod+shift+u",
+      command: "thread.toggleUnread",
+      when: "!terminalFocus",
+    });
+    assert.strictEqual(parsedThreadToggleUnread.command, "thread.toggleUnread");
+
     const parsedPullRequestCopyNumber = yield* decode(KeybindingRule, {
       key: "mod+shift+k",
       command: "pullRequest.copyNumber",
