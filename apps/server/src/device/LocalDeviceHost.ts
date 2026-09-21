@@ -1,3 +1,4 @@
+import { pruneLocalDeviceTools } from "./deviceToolMaintenance.ts";
 import { deviceToolInstallMessage } from "@t3tools/contracts";
 /**
  * The device host that is this machine.
@@ -593,6 +594,11 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     );
     yield* onPhase("starting");
     const hub = yield* spawnHub(hubTool, nodePath);
+    yield* pruneLocalDeviceTools(config.baseDir, nodePath, "hub").pipe(
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(ProcessRunner.ProcessRunner, runner),
+      Effect.ignore,
+    );
     const candidate = helperPaths(hubTool);
     const [axExists, cliExists] = yield* Effect.all([
       fs.exists(candidate.serveSimAxSettings).pipe(Effect.orElseSucceed(() => false)),
@@ -655,6 +661,11 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         agentToolRef = { entryPath: agentTool.entryPath, nodePath: running.hub.nodePath };
         yield* onPhase("starting");
         const agentDevice = yield* startAgentDeviceDaemon(agentTool, running.hub.nodePath);
+        yield* pruneLocalDeviceTools(config.baseDir, running.hub.nodePath, "agent").pipe(
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(ProcessRunner.ProcessRunner, runner),
+          Effect.ignore,
+        );
         const next = { ...running, agentDevice };
         yield* Ref.set(runningRef, next);
         return { ...toReady(next), agentDevice };
