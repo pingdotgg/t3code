@@ -5,7 +5,7 @@ import { Spinner } from "../ui/spinner";
 import type { EnvironmentId, SshDeviceHostConfig } from "@t3tools/contracts";
 import { randomUUID } from "../../lib/utils";
 import { useState } from "react";
-import { useDeviceState } from "../../state/device";
+import { deviceEnvironment, useDeviceState } from "../../state/device";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
@@ -178,6 +178,8 @@ function DeviceHostList({
   testConnection: ReturnType<typeof useHostConnectionChecks>["testConnection"];
 }) {
   const { state } = useDeviceState(environmentId);
+  const retry = useAtomCommand(deviceEnvironment.list);
+  const [retrying, setRetrying] = useState<string | null>(null);
   return (
     <>
       {hosts.length === 0 ? (
@@ -239,10 +241,9 @@ function DeviceHostList({
                     </Tooltip>
                   ))}
               </div>
-              <p className="truncate text-xs text-muted-foreground">
-                {host.target} · Tools managed by {environmentLabel}
-              </p>
+              <p className="truncate text-xs text-muted-foreground">{host.target}</p>
               <DeviceToolVersions
+                owner={environmentLabel}
                 error={state.hosts.find((value) => value.id === host.id)?.toolInspectionError}
                 tools={
                   state.hosts.find((value) => value.id === host.id)?.tools ??
@@ -296,14 +297,32 @@ function DeviceHostList({
                 </MenuItem>
               </MenuPopup>
             </Menu>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy || progress !== null}
-              onClick={() => void testConnection(host)}
-            >
-              Test connection
-            </Button>
+            {status?.status === "failed" &&
+            state.supportsHostRetry &&
+            state.hostStatus !== "disabled" ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy || retrying !== null}
+                onClick={() => {
+                  setRetrying(host.id);
+                  void retry({ environmentId, input: { retryHostId: host.id } }).finally(() =>
+                    setRetrying(null),
+                  );
+                }}
+              >
+                {retrying === host.id ? "Retrying…" : "Retry"}
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy || progress !== null}
+                onClick={() => void testConnection(host)}
+              >
+                Test connection
+              </Button>
+            )}
           </div>
         );
       })}

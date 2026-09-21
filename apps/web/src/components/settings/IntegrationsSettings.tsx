@@ -1,4 +1,3 @@
-import { deviceToolUpdateOwnership } from "@t3tools/client-runtime/state/device";
 import { DeviceHostUpdates } from "../device/DeviceHostUpdates";
 import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
@@ -781,41 +780,37 @@ function DeviceIntegrationControls({
           </>
         }
       />
-      {state.hostStatus === "failed" && state.hostStatusDetail ? (
-        <p role="alert" className="px-4 py-3 text-xs text-destructive">
-          {state.hostStatusDetail}
-        </p>
-      ) : null}
       <SettingsRow
-        title="Device tool versions"
-        description={deviceToolUpdateOwnership}
+        title="Device tools"
+        description="Managed by this environment. Updates install automatically when needed."
         control={
-          <DeviceToolVersions tools={state.hosts.find((host) => host.kind === "local")?.tools} />
+          <div className="flex items-center gap-4">
+            <DeviceToolVersions tools={state.hosts.find((host) => host.kind === "local")?.tools} />
+            {state.supportsToolInspection ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!environmentId || pending !== null || busy}
+                onClick={() => {
+                  if (!environmentId) return;
+                  setPending("check");
+                  void list({ environmentId, input: { inspectOnly: true } }).finally(() =>
+                    setPending(null),
+                  );
+                }}
+              >
+                {pending === "check" ? "Checking…" : "Check versions"}
+              </Button>
+            ) : null}
+          </div>
         }
       />
-      {state.supportsToolInspection ? (
-        <SettingsRow
-          title="Check device tool versions"
-          description="Read installed versions on this server and its SSH hosts without starting devices or downloading tools."
-          control={
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!environmentId || pending !== null || busy}
-              onClick={() => {
-                if (!environmentId) return;
-                setPending("check");
-                void list({ environmentId, input: { inspectOnly: true } }).finally(() =>
-                  setPending(null),
-                );
-              }}
-            >
-              {pending === "check" ? "Checking…" : "Check versions"}
-            </Button>
-          }
+      {environmentId ? (
+        <DeviceHostUpdates
+          state={{ ...state, hosts: state.hosts.filter((host) => host.kind === "local") }}
+          environmentId={environmentId}
         />
       ) : null}
-      {environmentId ? <DeviceHostUpdates state={state} environmentId={environmentId} /> : null}
       <DeviceHostsSettings environmentId={environmentId} />
     </>
   );

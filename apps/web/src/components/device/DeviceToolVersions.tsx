@@ -4,10 +4,12 @@ import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/component
 export function DeviceToolVersions({
   tools,
   kind,
+  owner,
   error,
 }: {
   tools: ToolVersions | undefined;
   kind?: keyof ToolVersions;
+  owner?: string | undefined;
   error?: string | undefined;
 }) {
   const selected = kind ? tools?.[kind] : undefined;
@@ -67,8 +69,14 @@ export function DeviceToolVersions({
         ) : (
           <p className="mt-3 text-xs text-muted-foreground">Versions have not been checked.</p>
         )}
-        <p className="mt-4 border-t border-border/50 pt-3 text-xs text-muted-foreground">Tools update automatically on this host when needed.</p>
-        {error ? <p role="status" className="mt-2 text-xs text-destructive">{error}</p> : null}
+        <p className="mt-4 border-t border-border/50 pt-3 text-xs text-muted-foreground">
+          {owner ? `Managed by ${owner}. ` : ""}Tools update automatically on this host when needed.
+        </p>
+        {error ? (
+          <p role="status" className="mt-2 text-xs text-destructive">
+            {error}
+          </p>
+        ) : null}
       </PopoverPopup>
     </Popover>
   );
