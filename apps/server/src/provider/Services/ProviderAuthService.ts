@@ -1,12 +1,26 @@
-import type { ProviderAuthState, ProviderInstanceId, ProviderSetupError } from "@t3tools/contracts";
+import type {
+  ProviderAuthRespondInput,
+  ProviderAuthStartInput,
+  ProviderAuthState,
+  ProviderInstanceId,
+  ProviderSetupError,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
+import type * as Scope from "effect/Scope";
 
 export interface ProviderAuthController {
+  /** Equal keys mean these instances share credentials on this environment. */
+  readonly credentialBinding?: { readonly owner: "provider" | "t3"; readonly key: string };
+  readonly isChangingCredentials?: Effect.Effect<boolean>;
+  readonly withAccess?: <A, E, R>(
+    task: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | ProviderSetupError, R | Scope.Scope>;
   readonly start: (
     ownerSessionId: string,
     stopSessions?: Effect.Effect<void, ProviderSetupError>,
+    methodId?: string,
   ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
   readonly complete: (
     ownerSessionId: string,
@@ -15,6 +29,10 @@ export interface ProviderAuthController {
   readonly cancel: (
     ownerSessionId: string,
     flowId: string,
+  ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+  readonly respond?: (
+    ownerSessionId: string,
+    input: ProviderAuthRespondInput,
   ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
   /** The controller closes process admission before it stops routed sessions. */
   readonly logout: (
@@ -30,11 +48,15 @@ interface ProviderAuthTarget {
 
 export interface ProviderAuthServiceShape {
   readonly start: (
-    input: ProviderAuthTarget,
+    input: ProviderAuthStartInput,
     ownerSessionId: string,
   ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
   readonly complete: (
     input: ProviderAuthTarget & { readonly flowId: string; readonly callbackUrl: string },
+    ownerSessionId: string,
+  ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
+  readonly respond: (
+    input: ProviderAuthRespondInput,
     ownerSessionId: string,
   ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
   readonly cancel: (

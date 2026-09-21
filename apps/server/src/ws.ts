@@ -2268,6 +2268,14 @@ const makeWsRpcLayer = (
             providerAuth.start(input, currentSessionId),
             { "rpc.aggregate": "provider" },
           ),
+        [WS_METHODS.providerAuthRespond]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerAuthRespond,
+            providerAuth.respond(input, currentSessionId),
+            {
+              instanceId: input.instanceId,
+            },
+          ),
         [WS_METHODS.providerAuthComplete]: (input) =>
           observeRpcEffect(
             WS_METHODS.providerAuthComplete,

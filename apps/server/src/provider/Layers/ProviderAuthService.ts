@@ -6,6 +6,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as Semaphore from "effect/Semaphore";
 
 import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSessionManager.ts";
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
@@ -16,6 +17,7 @@ export const makeProviderAuthService = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry;
   const projections = yield* ProjectionStoreV2;
   const providerSessions = yield* ProviderSessionManagerV2;
+  const credentialChanges = yield* Semaphore.make(1);
 
   const getController = Effect.fn("ProviderAuthService.getController")(function* (
     instanceId: ProviderInstanceId,
@@ -42,6 +44,19 @@ export const makeProviderAuthService = Effect.gen(function* () {
   ) {
     const failure = (detail: string) =>
       new ProviderSetupError({ instanceId, operation: "stopSessions", detail });
+    const target = yield* registry.getInstance(instanceId);
+    const binding = target?.auth?.credentialBinding;
+    const affectedIds = new Set(
+      binding === undefined
+        ? [instanceId]
+        : (yield* registry.listInstances)
+            .filter(
+              (instance) =>
+                instance.auth?.credentialBinding?.key === binding.key &&
+                instance.auth.credentialBinding.owner === binding.owner,
+            )
+            .map((instance) => instance.instanceId),
+    );
     const threadIds = yield* projections
       .getRecoveryThreadIds("runtime")
       .pipe(
@@ -56,7 +71,7 @@ export const makeProviderAuthService = Effect.gen(function* () {
             Effect.forEach(
               projection.providerSessions.filter(
                 (session) =>
-                  session.providerInstanceId === instanceId &&
+                  affectedIds.has(session.providerInstanceId) &&
                   session.status !== "stopped" &&
                   session.status !== "error" &&
                   !released.has(session.id),
@@ -80,10 +95,49 @@ export const makeProviderAuthService = Effect.gen(function* () {
     );
   });
 
+  const checkSharedBinding = Effect.fnUntraced(function* (instanceId: ProviderInstanceId) {
+    const auth = yield* getController(instanceId, "start");
+    const binding = auth.credentialBinding;
+    if (!binding) return;
+    const instances = yield* registry.listInstances;
+    for (const instance of instances) {
+      if (
+        instance.instanceId !== instanceId &&
+        instance.auth?.credentialBinding?.key === binding.key &&
+        instance.auth.credentialBinding.owner === binding.owner &&
+        instance.auth.isChangingCredentials &&
+        (yield* instance.auth.isChangingCredentials)
+      ) {
+        return yield* new ProviderSetupError({
+          instanceId,
+          operation: "start",
+          detail:
+            "Another provider instance is changing this shared sign-in. Finish or cancel it first.",
+        });
+      }
+    }
+  });
+
   return ProviderAuthService.of({
     start: Effect.fn("ProviderAuthService.start")(function* (input, ownerSessionId) {
-      const auth = yield* getController(input.instanceId, "start");
-      return yield* auth.start(ownerSessionId, stopSessions(input.instanceId));
+      return yield* credentialChanges.withPermit(
+        Effect.gen(function* () {
+          yield* checkSharedBinding(input.instanceId);
+          const auth = yield* getController(input.instanceId, "start");
+          return yield* auth.start(ownerSessionId, stopSessions(input.instanceId), input.methodId);
+        }),
+      );
+    }),
+    respond: Effect.fn("ProviderAuthService.respond")(function* (input, ownerSessionId) {
+      const auth = yield* getController(input.instanceId, "respond");
+      if (!auth.respond) {
+        return yield* new ProviderSetupError({
+          instanceId: input.instanceId,
+          operation: "respond",
+          detail: "This provider does not accept this sign-in interaction.",
+        });
+      }
+      return yield* auth.respond(ownerSessionId, input);
     }),
     complete: Effect.fn("ProviderAuthService.complete")(function* (input, ownerSessionId) {
       const auth = yield* getController(input.instanceId, "complete");
@@ -94,8 +148,13 @@ export const makeProviderAuthService = Effect.gen(function* () {
       return yield* auth.cancel(ownerSessionId, input.flowId);
     }),
     logout: Effect.fn("ProviderAuthService.logout")(function* (input) {
-      const auth = yield* getController(input.instanceId, "logout");
-      return yield* auth.logout(stopSessions(input.instanceId));
+      return yield* credentialChanges.withPermit(
+        Effect.gen(function* () {
+          yield* checkSharedBinding(input.instanceId);
+          const auth = yield* getController(input.instanceId, "logout");
+          return yield* auth.logout(stopSessions(input.instanceId));
+        }),
+      );
     }),
     subscribe: (input, ownerSessionId) =>
       Effect.gen(function* () {

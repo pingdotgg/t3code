@@ -10,6 +10,79 @@ export type ProviderSetupInput = typeof ProviderSetupInput.Type;
 
 const SetupOperationId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 
+export const ProviderAuthMethod = Schema.Struct({
+  id: SetupOperationId,
+  name: TrimmedNonEmptyString,
+  description: Schema.NullOr(Schema.String),
+  type: Schema.Literals(["agent", "terminal", "credentials"]),
+});
+export type ProviderAuthMethod = typeof ProviderAuthMethod.Type;
+
+// These describe client interactions, not OAuth grant types. The provider
+// adapter remains responsible for credentials, callbacks, and refresh.
+export const ProviderAuthInteraction = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("browser"),
+    id: SetupOperationId,
+    url: TrimmedNonEmptyString.check(Schema.isMaxLength(16_384)),
+    requiresConsent: Schema.Boolean,
+    acceptsCallback: Schema.optionalKey(Schema.Boolean),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("deviceCode"),
+    id: SetupOperationId,
+    url: TrimmedNonEmptyString.check(Schema.isMaxLength(16_384)),
+    userCode: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("terminal"),
+    id: SetupOperationId,
+    output: Schema.String.check(Schema.isMaxLength(16_384)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("credentials"),
+    id: SetupOperationId,
+    fields: Schema.Array(
+      Schema.Struct({
+        name: SetupOperationId,
+        label: TrimmedNonEmptyString,
+        secret: Schema.Boolean,
+      }),
+    ).check(Schema.isMaxLength(16)),
+  }),
+]);
+export type ProviderAuthInteraction = typeof ProviderAuthInteraction.Type;
+
+export const ProviderAuthResponse = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("browser"),
+    action: Schema.Literals(["accept", "decline"]),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("terminal"),
+    data: Schema.String.check(Schema.isMaxLength(4_096)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("credentials"),
+    values: Schema.Record(Schema.String, Schema.String.check(Schema.isMaxLength(16_384))),
+  }),
+]);
+export type ProviderAuthResponse = typeof ProviderAuthResponse.Type;
+
+export const ProviderAuthStartInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  methodId: Schema.optionalKey(SetupOperationId),
+});
+export type ProviderAuthStartInput = typeof ProviderAuthStartInput.Type;
+
+export const ProviderAuthRespondInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  flowId: SetupOperationId,
+  interactionId: SetupOperationId,
+  response: ProviderAuthResponse,
+});
+export type ProviderAuthRespondInput = typeof ProviderAuthRespondInput.Type;
+
 export const ProviderAuthState = Schema.Struct({
   instanceId: ProviderInstanceId,
   phase: Schema.Literals([
@@ -25,6 +98,9 @@ export const ProviderAuthState = Schema.Struct({
   authorizationUrl: Schema.NullOr(Schema.String),
   expiresAt: Schema.NullOr(IsoDateTime),
   message: Schema.NullOr(Schema.String),
+  methods: Schema.optionalKey(Schema.Array(ProviderAuthMethod).check(Schema.isMaxLength(32))),
+  interaction: Schema.optionalKey(Schema.NullOr(ProviderAuthInteraction)),
+  credentialOwner: Schema.optionalKey(Schema.Literals(["provider", "t3"])),
 });
 export type ProviderAuthState = typeof ProviderAuthState.Type;
 

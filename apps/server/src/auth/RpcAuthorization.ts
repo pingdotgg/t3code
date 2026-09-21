@@ -41,6 +41,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.providerAuthStart]: AuthOrchestrationOperateScope,
   [WS_METHODS.providerConsumeResetCredit]: AuthOrchestrationOperateScope,
   [WS_METHODS.providerAuthComplete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerAuthRespond]: AuthOrchestrationOperateScope,
   [WS_METHODS.providerAuthCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.providerAuthLogout]: AuthOrchestrationOperateScope,
   [WS_METHODS.providerAuthSubscribe]: AuthOrchestrationOperateScope,

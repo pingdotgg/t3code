@@ -1,0 +1,304 @@
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
+import type { ProviderAuthResponse, ServerProvider } from "@t3tools/contracts";
+import { useRef, useState } from "react";
+import { Alert, Linking, TextInput, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import { AppText as Text } from "../../components/AppText";
+import { ScreenScrollView } from "../../components/ScreenScrollView";
+import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { SettingsActionRow } from "./components/SettingsActionRow";
+import {
+  AndroidSettingsEnvironmentFilter,
+  SettingsEnvironmentFilterHeader,
+} from "./components/SettingsEnvironmentFilterHeader";
+import { SettingsScreen } from "./components/SettingsScreen";
+import { SettingsSection } from "./components/SettingsSection";
+import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
+
+export function SettingsProviderAccountsRouteScreen() {
+  const { selectedTargets } = useSettingsEnvironmentFilter();
+  const insets = useSafeAreaInsets();
+  return (
+    <>
+      <SettingsEnvironmentFilterHeader />
+      <SettingsScreen title="Provider accounts" trailing={<AndroidSettingsEnvironmentFilter />}>
+        <ScreenScrollView
+          className="flex-1"
+          contentInsetAdjustmentBehavior="automatic"
+          contentContainerClassName="gap-6 px-5 pt-4"
+          contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
+        >
+          {selectedTargets.length === 0 ? (
+            <Text className="text-foreground-muted">Select a connected environment.</Text>
+          ) : (
+            selectedTargets.map((environment) => (
+              <SettingsSection key={environment.environmentId} title={environment.label}>
+                {environment.serverConfig.providers
+                  .filter((provider) => provider.setup?.canAuthenticate)
+                  .map((provider) => (
+                    <ProviderAccount
+                      key={provider.instanceId}
+                      environment={environment}
+                      provider={provider}
+                    />
+                  ))}
+                {!environment.serverConfig.providers.some(
+                  (provider) => provider.setup?.canAuthenticate,
+                ) ? (
+                  <Text className="p-4 text-foreground-muted">
+                    Configure a provider with in-app sign-in in web or desktop Settings.
+                  </Text>
+                ) : null}
+              </SettingsSection>
+            ))
+          )}
+        </ScreenScrollView>
+      </SettingsScreen>
+    </>
+  );
+}
+
+function ProviderAccount({
+  environment,
+  provider,
+}: {
+  readonly environment: SettingsTarget;
+  readonly provider: ServerProvider;
+}) {
+  const environmentId = environment.environmentId;
+  const instanceId = provider.instanceId;
+  const target = { environmentId, input: { instanceId } };
+  const auth = useEnvironmentQuery(serverEnvironment.providerAuthState(target));
+  const options = { reportFailure: false, reportDefect: false };
+  const start = useAtomCommand(serverEnvironment.startProviderAuth, options);
+  const respond = useAtomCommand(serverEnvironment.respondProviderAuth, options);
+  const complete = useAtomCommand(serverEnvironment.completeProviderAuth, options);
+  const cancel = useAtomCommand(serverEnvironment.cancelProviderAuth, options);
+  const logout = useAtomCommand(serverEnvironment.logoutProviderAuth, options);
+  const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
+  const [error, setError] = useState<string | null>(null);
+  const [draft, setDraft] = useState({ id: "", values: {} as Record<string, string> });
+  const state = auth.data;
+  const interaction = state?.interaction;
+  const draftId = interaction?.id ?? state?.flowId ?? "";
+  const values = draft.id === draftId ? draft.values : {};
+  const active =
+    state?.phase === "starting" || state?.phase === "waiting" || state?.phase === "verifying";
+  const url =
+    interaction?.type === "browser" || interaction?.type === "deviceCode"
+      ? interaction.url
+      : state?.authorizationUrl;
+  const disabled = pending || auth.error !== null;
+  async function run(command: () => Promise<AtomCommandResult<unknown, unknown>>) {
+    if (pendingRef.current) return false;
+    pendingRef.current = true;
+    setPending(true);
+    setError(null);
+    try {
+      const result = await command();
+      if (result._tag === "Success") return true;
+      if (!isAtomCommandInterrupted(result)) {
+        const failure = squashAtomCommandFailure(result);
+        setError(failure instanceof Error ? failure.message : "Could not update provider sign-in.");
+      }
+    } catch {
+      setError("Could not update provider sign-in.");
+    } finally {
+      pendingRef.current = false;
+      setPending(false);
+    }
+    return false;
+  }
+  function send(response: ProviderAuthResponse) {
+    if (!state?.flowId || !interaction) return Promise.resolve(false);
+    return run(() =>
+      respond({
+        environmentId,
+        input: { instanceId, flowId: state.flowId!, interactionId: interaction.id, response },
+      }),
+    );
+  }
+  function field(name: string, label: string, secret: boolean) {
+    return (
+      <TextInput
+        accessibilityLabel={label}
+        className="rounded-lg border border-border-subtle px-3 py-2 text-base text-foreground"
+        placeholderTextColorClassName="accent-foreground-muted"
+        placeholder={label}
+        secureTextEntry={secret}
+        autoCapitalize="none"
+        autoCorrect={false}
+        editable={!disabled}
+        maxLength={secret && interaction?.type === "terminal" ? 4_095 : 16_384}
+        value={values[name] ?? ""}
+        onChangeText={(value) => setDraft({ id: draftId, values: { ...values, [name]: value } })}
+      />
+    );
+  }
+  function chooseMethod() {
+    const methods = state?.methods ?? [];
+    if (methods.length <= 1) {
+      void run(() => start(target));
+      return;
+    }
+    Alert.alert("Sign-in method", provider.displayName ?? provider.driver, [
+      ...methods.map((method) => ({
+        text: method.name,
+        onPress: () => {
+          void run(() => start({ environmentId, input: { instanceId, methodId: method.id } }));
+        },
+      })),
+      { text: "Cancel", style: "cancel" },
+    ]);
+  }
+  return (
+    <View className="border-b border-border-subtle">
+      <View className="gap-2 p-4">
+        <Text className="text-lg font-semibold text-foreground">
+          {provider.displayName ?? provider.driver}
+        </Text>
+        <Text accessibilityLiveRegion="polite" className="text-sm text-foreground-muted">
+          {active || state?.phase === "failed" || state?.phase === "cancelled"
+            ? state.message
+            : provider.auth.status === "authenticated"
+              ? (provider.auth.email ?? "Signed in.")
+              : "Connect this provider."}
+        </Text>
+        {interaction?.type === "deviceCode" ? (
+          <Text selectable className="text-foreground">
+            Enter code {interaction.userCode} on the sign-in page.
+          </Text>
+        ) : null}
+        {interaction?.type === "terminal" ? (
+          <>
+            <Text selectable className="max-h-64 font-mono text-sm text-foreground">
+              {interaction.output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")}
+            </Text>
+            {field("input", "Terminal response", true)}
+            <SettingsActionRow
+              icon="arrow.up"
+              label="Send response"
+              disabled={disabled}
+              onPress={() => {
+                void send({ type: "terminal", data: `${values.input ?? ""}\r` }).then((sent) => {
+                  if (sent) setDraft({ id: "", values: {} });
+                });
+              }}
+            />
+          </>
+        ) : null}
+        {interaction?.type === "credentials" ? (
+          <>
+            {interaction.fields.map((entry) => (
+              <View key={entry.name}>{field(entry.name, entry.label, entry.secret)}</View>
+            ))}
+            <SettingsActionRow
+              icon="person.crop.circle"
+              label="Connect"
+              disabled={disabled}
+              onPress={() => {
+                void send({ type: "credentials", values }).then((sent) => {
+                  if (sent) setDraft({ id: "", values: {} });
+                });
+              }}
+            />
+          </>
+        ) : null}
+        {url && (interaction?.type === "browser" ? interaction.acceptsCallback : !interaction) ? (
+          <>
+            {field("callback", "Final localhost URL", false)}
+            <SettingsActionRow
+              icon="arrow.right"
+              label="Continue"
+              disabled={disabled || !values.callback?.trim()}
+              onPress={() => {
+                if (!state?.flowId) return;
+                void run(() =>
+                  complete({
+                    environmentId,
+                    input: { instanceId, flowId: state.flowId!, callbackUrl: values.callback! },
+                  }),
+                ).then((sent) => {
+                  if (sent) setDraft({ id: "", values: {} });
+                });
+              }}
+            />
+          </>
+        ) : null}
+        {error || auth.error ? (
+          <Text accessibilityRole="alert" className="text-danger-foreground">
+            {error ?? auth.error}
+          </Text>
+        ) : null}
+      </View>
+      {url ? (
+        <SettingsActionRow
+          icon="globe"
+          label="Open sign-in page"
+          disabled={disabled}
+          onPress={() => {
+            void (async () => {
+              if (
+                interaction?.type === "browser" &&
+                interaction.requiresConsent &&
+                !(await send({ type: "browser", action: "accept" }))
+              )
+                return;
+              await Linking.openURL(url);
+            })().catch(() => setError("Could not open the sign-in page."));
+          }}
+        />
+      ) : null}
+      {active && state?.flowId ? (
+        <SettingsActionRow
+          icon="xmark"
+          label="Cancel sign-in"
+          disabled={disabled}
+          onPress={() => {
+            void run(() => cancel({ environmentId, input: { instanceId, flowId: state.flowId! } }));
+          }}
+        />
+      ) : !active ? (
+        <SettingsActionRow
+          icon="person.crop.circle"
+          label={provider.auth.status === "authenticated" ? "Change account" : "Sign in"}
+          disabled={disabled || !provider.enabled || !provider.installed || state === null}
+          loading={pending}
+          onPress={chooseMethod}
+        />
+      ) : null}
+      {!active && (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (
+        <SettingsActionRow
+          icon="person.crop.circle"
+          label="Sign out"
+          tone="danger"
+          disabled={disabled || state === null}
+          onPress={() =>
+            Alert.alert(
+              "Sign out?",
+              `Running threads sharing this sign-in on ${environment.label} will stop. Thread history is kept.`,
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Sign out",
+                  style: "destructive",
+                  onPress: () => {
+                    void run(() => logout(target));
+                  },
+                },
+              ],
+            )
+          }
+        />
+      ) : null}
+    </View>
+  );
+}

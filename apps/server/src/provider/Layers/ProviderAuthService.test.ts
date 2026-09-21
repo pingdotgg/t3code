@@ -131,6 +131,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
     shellError?: boolean;
     stopError?: boolean;
     logoutError?: ProviderSetupError;
+    sharedCredentials?: boolean;
   } = {},
 ) {
   const actions: string[] = [];
@@ -160,6 +161,9 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
   });
 
   const auth: ProviderAuthController = {
+    ...(input.sharedCredentials
+      ? { credentialBinding: { owner: "provider" as const, key: "shared" } }
+      : {}),
     start: Effect.fn(function* (ownerSessionId, stopSessions) {
       gateClosed = true;
       actions.push("close-gate");
@@ -203,6 +207,9 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
   const instances = [
     makeInstance({ instanceId, enabled: input.enabled ?? true, auth }),
     makeInstance({ instanceId: unsupportedInstanceId, enabled: true }),
+    ...(input.sharedCredentials
+      ? [makeInstance({ instanceId: otherInstanceId, enabled: true, auth })]
+      : []),
   ];
   const service = yield* makeProviderAuthService.pipe(
     Effect.provide(
@@ -210,6 +217,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
         Layer.mock(ProviderInstanceRegistry)({
           getInstance: (id) =>
             Effect.succeed(instances.find((instance) => instance.instanceId === id)),
+          listInstances: Effect.succeed(instances),
           subscribeChanges: PubSub.subscribe(registryChanges),
         }),
         Layer.mock(ProjectionStoreV2)({
@@ -339,6 +347,26 @@ const observeAuth = Effect.fn("ProviderAuthService.test.observeAuth")(function* 
 });
 
 describe("ProviderAuthService", () => {
+  it.effect("stops sessions of every instance sharing the credential binding", () =>
+    Effect.gen(function* () {
+      const { service, released } = yield* makeHarness({
+        sharedCredentials: true,
+        threads: [makeThread("active")],
+        sessions: new Map([
+          [
+            ThreadId.make("active"),
+            [
+              makeSession("one"),
+              makeSession("two", "ready", otherInstanceId),
+              makeSession("unrelated", "ready", unsupportedInstanceId),
+            ],
+          ],
+        ]),
+      });
+      yield* service.logout({ instanceId });
+      assert.deepStrictEqual(released, ["one", "two"]);
+    }),
+  );
   it.effect("stops routed sessions before sign-in, including for a disabled instance", () =>
     Effect.gen(function* () {
       const { service, actions, released } = yield* makeHarness({
