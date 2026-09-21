@@ -13,6 +13,7 @@ import {
   type PerspectiveCamera,
   type Texture,
 } from "three";
+import type { DuoRestFrame } from "./duoSnap.ts";
 import type { DeviceScreenSize } from "./stream.ts";
 
 export type DuoPanelId = 1 | 3;
@@ -119,6 +120,38 @@ export function createDuoScene(asset: Group, textures: Record<DuoPanelId, Textur
         localBounds.union(object.geometry.boundingBox.clone().applyMatrix4(relative));
       });
       content.position.copy(localBounds.getCenter(new Vector3())).negate();
+    },
+    restFrames(panel: DuoPanelId): DuoRestFrame[] {
+      root.updateWorldMatrix(true, true);
+      inverse.copy(root.matrixWorld).invert();
+      const frame = (meshes: Mesh[], face: DuoRestFrame["face"]): DuoRestFrame => {
+        const bounds = new Box3();
+        const normal = new Vector3();
+        const up = new Vector3();
+        for (const mesh of meshes) {
+          if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+          relative.multiplyMatrices(inverse, mesh.matrixWorld);
+          bounds.union(mesh.geometry.boundingBox!.clone().applyMatrix4(relative));
+          normal.add(
+            new Vector3()
+              .fromBufferAttribute(mesh.geometry.getAttribute("normal"), 0)
+              .transformDirection(relative),
+          );
+          up.add(new Vector3(0, 1, 0).transformDirection(relative));
+        }
+        return {
+          face,
+          center: bounds.getCenter(new Vector3()),
+          normal: normal.normalize(),
+          up: up.normalize(),
+        };
+      };
+      if (panel === 1) return [frame([cover], "cover")];
+      const inside = frame([innerLeft, innerRight], "inside");
+      // Leaf views only make sense when both displays form a useful open fold.
+      return currentAngle > 20 && currentAngle < 165
+        ? [inside, frame([innerLeft], "left"), frame([innerRight], "right")]
+        : [inside];
     },
     cancelInput() {
       captured = null;

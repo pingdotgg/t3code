@@ -59,6 +59,26 @@ it("keeps one continuous inner UV map across the hinge and folds opposite leaves
   scene.dispose();
 });
 
+it("derives resting views from the hinged display planes independently of the inspection orbit", () => {
+  const { scene } = fixture();
+  scene.setAngle(90);
+  const frames = scene.restFrames(3);
+  expect(frames.map((frame) => frame.face)).toEqual(["inside", "left", "right"]);
+  expect(frames[1]!.normal.x).toBeGreaterThan(0.5);
+  expect(frames[2]!.normal.x).toBeLessThan(-0.5);
+  scene.root.rotation.set(0.5, 1.2, -0.7);
+  scene.root.position.set(3, -2, 1);
+  const rotated = scene.restFrames(3);
+  for (let index = 0; index < frames.length; index++) {
+    expect(rotated[index]!.normal.distanceTo(frames[index]!.normal)).toBeLessThan(1e-6);
+    expect(rotated[index]!.center.distanceTo(frames[index]!.center)).toBeLessThan(1e-6);
+  }
+  scene.setAngle(180);
+  expect(scene.restFrames(3).map((frame) => frame.face)).toEqual(["inside"]);
+  expect(scene.restFrames(1).map((frame) => frame.face)).toEqual(["cover"]);
+  scene.dispose();
+});
+
 it("maps active display input through hardware mounting and blocks rear, inactive and stale surfaces", () => {
   const { scene, camera, innerLeft } = fixture();
   scene.setAngle(180);

@@ -18,6 +18,7 @@ export function DeviceDuoViewport(props: {
   readonly client: RefObject<DeviceStreamClient | null>;
   readonly screen: DeviceScreenSize | null;
   readonly hingePreview: number | null;
+  readonly controlError: string | null;
   readonly onUnavailable: () => void;
   readonly onFramingAspect: (aspect: number) => void;
 }) {
@@ -36,6 +37,10 @@ export function DeviceDuoViewport(props: {
     interactionRef.current?.end();
     viewerRef.current?.setScreen(props.screen);
   }, [props.screen, props.model]);
+
+  useEffect(() => {
+    if (props.controlError) viewerRef.current?.rejectOrientation();
+  }, [props.controlError]);
 
   useEffect(() => {
     previewRef.current = props.hingePreview;
@@ -73,6 +78,8 @@ export function DeviceDuoViewport(props: {
           sources,
           onUnavailable,
           onFramingAspect,
+          onOrientationRequested: (value) =>
+            client.current?.controlDuo({ control: "orientation", value }),
           onModelError: (cause) => console.warn("Device 3D asset could not load", cause),
           model: modelRef.current,
         });
@@ -93,6 +100,7 @@ export function DeviceDuoViewport(props: {
           touch: (phase, point) => client.current?.sendRawTouch(phase, point.x, point.y),
           orbit: viewer.orbit,
           zoomBy: viewer.zoomBy,
+          onInteractionActive: viewer.setInteractionActive,
         });
         trackpad = bindPhoneTrackpad(canvas, interactionRef.current);
         resize();

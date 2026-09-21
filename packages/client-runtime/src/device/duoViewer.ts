@@ -17,7 +17,8 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { createDuoScene, duoDisplayKey, duoFrameMatches, type DuoPanelId } from "./duoScene.ts";
 import { loadDeviceModel } from "./modelScene.ts";
 import { createDeviceModelSlot, type DeviceModelSource } from "./model.ts";
-import { createPhonePose } from "./phonePose.ts";
+import { createDuoMotion } from "./duoMotion.ts";
+import { duoViewSnaps, nearestDuoView, type DuoRestFace } from "./duoSnap.ts";
 import { createRenderScheduler } from "./renderScheduler.ts";
 import type { DeviceScreenSize } from "./stream.ts";
 import type { DuoPose } from "./duoControl.ts";
@@ -25,6 +26,8 @@ import type { DuoPose } from "./duoControl.ts";
 export interface DuoViewer {
   readonly setScreen: (screen: DeviceScreenSize | null) => void;
   readonly setHingePreview: (angle: number | null) => void;
+  readonly setInteractionActive: (active: boolean) => void;
+  readonly rejectOrientation: () => void;
   readonly frameUpdated: (panel: DuoPanelId) => void;
   readonly resize: (width: number, height: number, pixelRatio: number) => void;
   readonly screenPoint: (
@@ -46,6 +49,7 @@ export function createDuoViewer(options: {
   model: DeviceModelSource;
   onUnavailable: () => void;
   onModelError?: (cause: unknown) => void;
+  onOrientationRequested?: (orientation: DeviceScreenSize["orientation"]) => void;
   onFramingAspect?: (aspect: number) => void;
 }): DuoViewer {
   const surfaces = ([1, 3] as const)
@@ -103,15 +107,39 @@ export function createDuoViewer(options: {
   let disposed = false;
   let viewport = { width: 0, height: 0, ratio: 1 };
   let buffer = { width: 0, height: 0, ratio: 0 };
-  const orbit = createPhonePose();
+  let restFace: DuoRestFace = "inside";
+  let requestedOrientation: DeviceScreenSize["orientation"] | null = null;
+  let viewOrientation: DeviceScreenSize["orientation"] | null = null;
+  const pivot = new Vector3();
+  const targetPivot = new Vector3();
+  const snaps = () =>
+    model
+      ? duoViewSnaps(
+          model.restFrames(screen?.screenId === 1 ? 1 : 3),
+          screen?.screenId === 1 ? 1 : 3,
+        )
+      : [];
+  const orbit = createDuoMotion({
+    choose(rotation) {
+      const snap = nearestDuoView(rotation, snaps());
+      if (!snap) return rotation;
+      restFace = snap.face;
+      if (screen && snap.orientation !== viewOrientation && options.onOrientationRequested) {
+        viewOrientation = snap.orientation;
+        requestedOrientation = snap.orientation;
+        options.onOrientationRequested(snap.orientation);
+      }
+      return snap.rotation;
+    },
+  });
   let angle = 180;
   let targetAngle = 180;
   let previewAngle: number | null = null;
+  let interactionActive = false;
   let fitRadius = 1;
   let firstPose = true;
   let physicalPose: DuoPose = "open";
   let presentationAngle = 180;
-  let presentation = new Quaternion();
   let targetPresentation = new Quaternion();
   let lastTime = 0;
   const reduced =
@@ -119,10 +147,12 @@ export function createDuoViewer(options: {
   const applyPose = () => {
     if (!model) return;
     model.setAngle(angle);
-    model.root.quaternion.copy(presentation);
-    model.root.quaternion.premultiply(
-      new Quaternion().setFromEuler(new Euler(orbit.pitch, orbit.yaw, 0, "YXZ")),
-    );
+    model.root.quaternion.copy(orbit.rotation);
+    model.root.position.set(0, 0, 0);
+    const frames = model.restFrames(screen?.screenId === 1 ? 1 : 3);
+    const frame = frames.find((frame) => frame.face === restFace) ?? frames[0];
+    targetPivot.copy(frame?.center ?? new Vector3()).multiplyScalar(0.35);
+    model.root.position.copy(pivot).applyQuaternion(model.root.quaternion).negate();
   };
   let framingAspect = 0;
   const fit = () => {
@@ -138,7 +168,7 @@ export function createDuoViewer(options: {
     camera.updateProjectionMatrix();
   };
   const moving = () =>
-    Math.abs(angle - targetAngle) > 0.01 || presentation.angleTo(targetPresentation) > 0.001;
+    Math.abs(angle - targetAngle) > 0.01 || pivot.distanceTo(targetPivot) > 0.001;
   const scheduler = createRenderScheduler(() => {
     if (disposed || !model || !viewport.width || !viewport.height) return;
     try {
@@ -148,19 +178,18 @@ export function createDuoViewer(options: {
         : 1 - Math.exp(-14 * Math.max(0, (now - lastTime) / 1000 || 0.016));
       lastTime = now;
       const inMotion = moving();
+      const orbitChanged = orbit.advance(now, reduced);
       if (inMotion) {
         angle += (targetAngle - angle) * amount;
-        presentation.slerp(targetPresentation, amount);
-        if (
-          Math.abs(angle - targetAngle) <= 0.01 &&
-          presentation.angleTo(targetPresentation) <= 0.001
-        ) {
-          angle = targetAngle;
-          presentation.copy(targetPresentation);
-        }
+
+        if (Math.abs(angle - targetAngle) <= 0.01) angle = targetAngle;
+        applyPose();
+        pivot.lerp(targetPivot, amount);
+        if (pivot.distanceTo(targetPivot) <= 0.001) pivot.copy(targetPivot);
         applyPose();
         fit();
       }
+      if (orbitChanged) applyPose();
       if (
         buffer.width !== viewport.width ||
         buffer.height !== viewport.height ||
@@ -170,7 +199,7 @@ export function createDuoViewer(options: {
         buffer = viewport;
       }
       renderer.render(scene, camera);
-      if (inMotion) scheduler.invalidate();
+      if (inMotion || moving() || orbit.needsFrame()) scheduler.invalidate();
     } catch {
       options.onUnavailable();
     }
@@ -195,9 +224,26 @@ export function createDuoViewer(options: {
       for (let sample = 0; sample <= 180; sample += 15) {
         model.setAngle(sample);
         const bounds = new Box3().setFromObject(model.root);
-        fitRadius = Math.max(fitRadius, bounds.getSize(new Vector3()).length() / 2);
+        const focusRadius =
+          Math.max(
+            ...model
+              .restFrames(1)
+              .concat(model.restFrames(3))
+              .map((frame) => frame.center.length()),
+          ) * 0.35;
+        fitRadius = Math.max(fitRadius, bounds.getSize(new Vector3()).length() / 2 + focusRadius);
       }
       scene.add(model.root);
+      applyPose();
+      if (screen?.screenId === 1) {
+        const snap = nearestDuoView(orbit.rotation, snaps());
+        if (snap) {
+          restFace = snap.face;
+          orbit.setPose(snap.rotation, performance.now(), true);
+          applyPose();
+        }
+      }
+      pivot.copy(targetPivot);
       applyPose();
       fit();
       scheduler.invalidate();
@@ -212,20 +258,24 @@ export function createDuoViewer(options: {
   return {
     setScreen(next) {
       if (disposed) return;
-      const wasMoving = moving();
+      const wasMoving = moving() || orbit.needsFrame();
       if (duoDisplayKey(screen) !== duoDisplayKey(next)) {
         readyKey = "";
         activationAt = performance.now();
         model?.cancelInput();
       }
       const previous = screen;
+      const ownedRotation = requestedOrientation !== null && next?.screenId === previous?.screenId;
+      const changedDisplay = next?.screenId !== previous?.screenId;
+      requestedOrientation = null;
       screen = next;
       const changedPose = next?.hingePose && next.hingePose !== previous?.hingePose;
       const rotated =
         next?.screenId === previous?.screenId &&
         next?.hingeAngle === previous?.hingeAngle &&
         next?.orientation !== previous?.orientation;
-      const leftPhysicalPose = rotated && !next?.hingePose && previewAngle === null;
+      const leftPhysicalPose =
+        rotated && !ownedRotation && !next?.hingePose && previewAngle === null;
       if (firstPose || changedPose || leftPhysicalPose) {
         physicalPose = next?.hingePose ?? (next?.screenId === 1 ? "closed" : "open");
         presentationAngle = next?.hingeAngle ?? (next?.screenId === 1 ? 0 : 180);
@@ -245,7 +295,8 @@ export function createDuoViewer(options: {
       // Native angle commands clear hingePose. They change articulation only;
       // preserve the viewing pose, including laptop/tent and user orbit. A
       // separate rotation clears the physical preset and follows panel orientation.
-      if (firstPose || changedPose || rotated) {
+      if (firstPose || changedPose || (rotated && !ownedRotation)) {
+        viewOrientation = next?.orientation ?? null;
         const poseAngle = presentationAngle;
         const fold = ((180 - poseAngle) * Math.PI) / 360;
         let roll = physicalPose === "closed" ? 0 : Math.PI / 2;
@@ -265,10 +316,23 @@ export function createDuoViewer(options: {
           targetPresentation.premultiply(
             new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), roll),
           );
-        if (firstPose) {
-          firstPose = false;
-          angle = targetAngle;
-          presentation.copy(targetPresentation);
+        if (next?.screenId === 1) {
+          // Native readback can retain the cover even for an open physical preset.
+          // A screen-facing rest must use that display's actual hinged normal.
+          const snap = nearestDuoView(targetPresentation, snaps());
+          if (snap) targetPresentation.copy(snap.rotation);
+        }
+        if (firstPose) angle = targetAngle;
+        restFace = next?.screenId === 1 ? "cover" : physicalPose === "laptop" ? "right" : "inside";
+        orbit.setPose(targetPresentation, performance.now(), firstPose);
+        firstPose = false;
+      } else if (next && changedDisplay) {
+        // A sensor rotation can hand ownership to the other native display.
+        // Face that display without sending another rotation and creating a feedback loop.
+        const snap = nearestDuoView(orbit.rotation, snaps());
+        if (snap) {
+          restFace = snap.face;
+          orbit.setPose(snap.rotation, performance.now());
         }
       }
       if (!wasMoving) lastTime = performance.now();
@@ -280,12 +344,28 @@ export function createDuoViewer(options: {
       if (disposed || (next !== null && (!Number.isFinite(next) || next < 0 || next > 180))) return;
       if (!moving()) lastTime = performance.now();
       previewAngle = next;
+      orbit.hold(interactionActive || next !== null, performance.now());
       targetAngle = next ?? screen?.hingeAngle ?? (screen?.screenId === 1 ? 0 : 180);
       if (next !== null) {
         angle = next;
         applyPose();
       }
       model?.cancelInput();
+      scheduler.invalidate();
+    },
+    setInteractionActive(active) {
+      if (disposed) return;
+      interactionActive = active;
+      orbit.hold(active || previewAngle !== null, performance.now());
+      scheduler.invalidate();
+    },
+    rejectOrientation() {
+      if (disposed || requestedOrientation === null) return;
+      requestedOrientation = null;
+      viewOrientation = screen?.orientation ?? null;
+      const confirmed = snaps().filter((snap) => snap.orientation === screen?.orientation);
+      const snap = nearestDuoView(orbit.rotation, confirmed);
+      if (snap) orbit.setPose(snap.rotation, performance.now());
       scheduler.invalidate();
     },
     frameUpdated(id) {
@@ -338,7 +418,8 @@ export function createDuoViewer(options: {
       scheduler.invalidate();
     },
     screenPoint(x, y, captured = false) {
-      if (disposed || moving() || previewAngle !== null) return null;
+      if (disposed || moving() || previewAngle !== null || requestedOrientation !== null)
+        return null;
       applyPose();
       return model?.screenPoint(x, y, camera, screen, readyKey, captured) ?? null;
     },
@@ -347,7 +428,7 @@ export function createDuoViewer(options: {
     },
     orbit(x, y) {
       if (disposed) return;
-      orbit.orbit(x, y);
+      orbit.orbit(x, y, performance.now());
       applyPose();
       scheduler.invalidate();
     },
@@ -359,7 +440,14 @@ export function createDuoViewer(options: {
     },
     resetPose() {
       if (disposed) return;
-      orbit.reset();
+      requestedOrientation = null;
+      const snap = snaps().find((snap) => snap.orientation === screen?.orientation);
+      if (snap && snap.orientation !== viewOrientation && options.onOrientationRequested) {
+        viewOrientation = snap.orientation;
+        requestedOrientation = snap.orientation;
+        options.onOrientationRequested(snap.orientation);
+      }
+      orbit.reset(snap?.rotation ?? targetPresentation, performance.now());
       applyPose();
       fit();
       scheduler.invalidate();

@@ -7,10 +7,16 @@ export const DUO_POSES = [
   { id: "tent", label: "Tent", angle: 80 },
 ] as const;
 export type DuoPose = (typeof DUO_POSES)[number]["id"];
+export type DuoOrientation =
+  | "portrait"
+  | "landscape_left"
+  | "portrait_upside_down"
+  | "landscape_right";
 export type DuoCommand =
   | { control: "angle"; value: number }
   | { control: "pose"; value: DuoPose }
-  | { control: "table"; value: boolean };
+  | { control: "table"; value: boolean }
+  | { control: "orientation"; value: DuoOrientation };
 export type DuoControlState = {
   pending: boolean;
   requested: DuoCommand | null;

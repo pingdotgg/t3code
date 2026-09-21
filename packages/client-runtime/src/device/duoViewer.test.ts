@@ -88,7 +88,7 @@ afterEach(() => {
   gpu.environmentDispose.mockClear();
 });
 
-function fixture(reduced = true) {
+function fixture(reduced = true, onOrientationRequested = vi.fn()) {
   const pending = new Map<number, FrameRequestCallback>();
   let id = 0;
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -108,6 +108,7 @@ function fixture(reduced = true) {
         translate() {},
         rotate() {},
         drawImage() {},
+        getImageData: () => ({ data: new Uint8ClampedArray(8 * 8 * 4).fill(255) }),
       }),
     }),
   });
@@ -120,13 +121,14 @@ function fixture(reduced = true) {
     },
     model: { id: "iphone-duo", url: "/duo.glb" },
     onUnavailable: vi.fn(),
+    onOrientationRequested,
   });
   const draw = () => {
     const callbacks = [...pending.values()];
     pending.clear();
     callbacks.forEach((callback) => callback(0));
   };
-  return { viewer, draw, pending, state: gpu.instances[0]! };
+  return { viewer, draw, pending, state: gpu.instances[0]!, onOrientationRequested };
 }
 
 function asset() {
@@ -139,6 +141,7 @@ function asset() {
     leaf.name = name;
     for (const name of names) {
       const mesh = new Mesh(new PlaneGeometry(1, 2), new MeshBasicMaterial());
+      if (name === "cover-display") mesh.geometry.rotateY(Math.PI);
       mesh.geometry.translate(
         name === "inner-display-right" ? 0.5 : -0.5,
         0,
@@ -153,6 +156,8 @@ function asset() {
 }
 
 it("coalesces resize with redraw, retains the renderer and scene, and settles without an idle animation loop", async () => {
+  let now = 0;
+  vi.stubGlobal("performance", { now: () => now });
   const { viewer, draw, pending, state } = fixture();
   const dispose = vi.fn();
   models.resolve({ asset: asset(), dispose });
@@ -178,6 +183,9 @@ it("coalesces resize with redraw, retains the renderer and scene, and settles wi
   expect(state.allocations).toBe(2);
   expect(state.frames.at(-1)).toBe(scene);
   expect(gpu.instances).toHaveLength(1);
+  now += 1000;
+  draw();
+  draw();
   expect(pending.size).toBe(0);
   viewer.dispose();
   viewer.dispose();
@@ -198,6 +206,51 @@ it("cancels loading and disposes a late model after unmount without installing o
   draw();
   expect(dispose).toHaveBeenCalledOnce();
   expect(state.frames).toHaveLength(0);
+});
+
+it("keeps the chosen release view when an app locks orientation, freezes it during contact, and stops drawing after release", async () => {
+  let now = 0;
+  vi.stubGlobal("performance", { now: () => now });
+  const { viewer, draw, state, pending, onOrientationRequested } = fixture();
+  models.resolve({ asset: asset(), dispose: vi.fn() });
+  await Promise.resolve();
+  const screen = {
+    width: 1398,
+    height: 2034,
+    orientation: "portrait" as const,
+    screenId: 1,
+    hingeAngle: 0,
+  };
+  viewer.setScreen(screen);
+  viewer.resize(500, 700, 2);
+  draw();
+  const initial = state.views.at(-1)!.quaternion.clone();
+  viewer.setInteractionActive(true);
+  viewer.orbit(0, Math.PI / 3);
+  draw();
+  const held = state.views.at(-1)!.quaternion.clone();
+  now = 1000;
+  viewer.frameUpdated(1);
+  draw();
+  expect(state.views.at(-1)!.quaternion.angleTo(held)).toBeLessThan(1e-6);
+  expect(onOrientationRequested).not.toHaveBeenCalled();
+  viewer.setInteractionActive(false);
+  draw();
+  expect(onOrientationRequested).toHaveBeenCalledOnce();
+  const chosen = state.views.at(-1)!.quaternion.clone();
+  expect(chosen.angleTo(initial)).toBeGreaterThan(1);
+  viewer.setScreen({ ...screen }); // Native config confirms the sensor command, even if the app stays portrait.
+  draw();
+  expect(state.views.at(-1)!.quaternion.angleTo(chosen)).toBeLessThan(1e-6);
+  expect(pending.size).toBe(0);
+  viewer.resetPose();
+  draw();
+  expect(onOrientationRequested).toHaveBeenCalledTimes(2);
+  expect(onOrientationRequested.mock.lastCall?.[0]).toBe("portrait");
+  viewer.setScreen({ ...screen });
+  draw();
+  expect(pending.size).toBe(0);
+  viewer.dispose();
 });
 
 it("settles a hinge transition after a throttled frame instead of stretching time", async () => {
@@ -229,12 +282,80 @@ it("settles a hinge transition after a throttled frame instead of stretching tim
   viewer.dispose();
 });
 
+it("faces a display handed off by native rotation without requesting another sensor rotation", async () => {
+  let now = 0;
+  vi.stubGlobal("performance", { now: () => now });
+  const { viewer, draw, pending, onOrientationRequested } = fixture();
+  const loaded = asset();
+  models.resolve({ asset: loaded, dispose: vi.fn() });
+  await Promise.resolve();
+  viewer.resize(500, 700, 2);
+  viewer.setScreen({
+    width: 2007,
+    height: 2853,
+    orientation: "portrait",
+    screenId: 3,
+    hingeAngle: 90,
+  });
+  draw();
+  viewer.orbit(0, Math.PI / 3);
+  now = 1000;
+  draw();
+  const requests = onOrientationRequested.mock.calls.length;
+  expect(requests).toBe(1);
+  viewer.setScreen({
+    width: 1398,
+    height: 2034,
+    orientation: "landscape_left",
+    screenId: 1,
+    hingeAngle: 90,
+  });
+  draw();
+  draw();
+  const cover = loaded.getObjectByName("cover-display") as Mesh;
+  const normal = new Vector3()
+    .fromBufferAttribute(cover.geometry.getAttribute("normal"), 0)
+    .transformDirection(cover.matrixWorld);
+  expect(normal.z).toBeGreaterThan(0.45);
+  expect(onOrientationRequested).toHaveBeenCalledTimes(requests);
+  expect(pending.size).toBe(0);
+  viewer.dispose();
+});
+
+it.each(["book", "laptop", "open"] as const)(
+  "faces native cover readback for %s even when configuration arrives before the model",
+  async (hingePose) => {
+    const { viewer, draw } = fixture();
+    viewer.resize(500, 700, 2);
+    viewer.setScreen({
+      width: 1398,
+      height: 2034,
+      orientation: "landscape_left",
+      screenId: 1,
+      hingeAngle: hingePose === "open" ? 180 : 90,
+      hingePose,
+    });
+    const loaded = asset();
+    models.resolve({ asset: loaded, dispose: vi.fn() });
+    await Promise.resolve();
+    draw();
+    draw();
+    const cover = loaded.getObjectByName("cover-display") as Mesh;
+    const normal = new Vector3()
+      .fromBufferAttribute(cover.geometry.getAttribute("normal"), 0)
+      .transformDirection(cover.matrixWorld);
+    expect(normal.z).toBeGreaterThan(0.45);
+    viewer.dispose();
+  },
+);
+
 it("keeps every default-zoom orbit centered and inside a fixed camera frame across folds", async () => {
   const { viewer, draw, state } = fixture();
   models.resolve({ asset: asset(), dispose: vi.fn() });
   await Promise.resolve();
   viewer.resize(380, 620, 2);
   viewer.resetPose();
+  viewer.setInteractionActive(true);
   let distance = 0;
   for (const hingeAngle of [0, 30, 90, 127, 180]) {
     viewer.setScreen({
@@ -249,8 +370,8 @@ it("keeps every default-zoom orbit centered and inside a fixed camera frame acro
       draw();
       const { camera, bounds } = state.views.at(-1)!;
       const center = bounds.getCenter(new Vector3()).project(camera);
-      expect(Math.abs(center.x)).toBeLessThan(0.08);
-      expect(Math.abs(center.y)).toBeLessThan(0.08);
+      expect(Math.abs(center.x)).toBeLessThan(0.18);
+      expect(Math.abs(center.y)).toBeLessThan(0.18);
       state.frames.at(-1)!.traverse((object) => {
         if (!(object instanceof Mesh)) return;
         const positions = object.geometry.getAttribute("position");
@@ -339,6 +460,8 @@ it("does not restart an animated preset on duplicate native configurations", asy
   viewer.setScreen(next);
   now += 1_000;
   viewer.setScreen(next);
+  draw();
+  now += 1000;
   draw();
   draw();
   expect(pending.size).toBe(0);

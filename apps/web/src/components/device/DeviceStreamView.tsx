@@ -433,6 +433,7 @@ export function DeviceStreamView(props: {
         {showPhone && isDuo && model ? (
           <DeviceDuoViewport
             model={model}
+            controlError={duoControl.error}
             hingePreview={
               duoControl.requested?.control === "angle" ? duoControl.requested.value : null
             }

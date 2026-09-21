@@ -84,6 +84,7 @@ it("switches to fixed authenticated feeds while retaining one HID socket, routes
     panelFailed = resolve;
   });
   const onStatus = vi.fn();
+  const onDuoControl = vi.fn();
   const onDuoUnavailable = vi.fn((_detail?: string) => panelFailed());
   const client = createDeviceStreamClient(
     {
@@ -99,6 +100,7 @@ it("switches to fixed authenticated feeds while retaining one HID socket, routes
     { present },
     {
       onStatus,
+      onDuoControl,
       onDuoUnavailable,
       onScreen: vi.fn(),
       onInputConnected: vi.fn(),
@@ -130,7 +132,8 @@ it("switches to fixed authenticated feeds while retaining one HID socket, routes
     JSON.parse(new TextDecoder().decode(ws.send.mock.lastCall?.[0].subarray(1))).orientation;
   client.rotate();
   expect(requestedOrientation()).toBe("landscape_left");
-  config(3); // The app declined the sensor orientation; its unchanged pose must not reset the cycle.
+  config(3); // An orientation-locked app keeps its framebuffer orientation after the sensor rotates.
+  expect(onDuoControl.mock.lastCall?.[0].error).toBeNull();
   client.rotate();
   expect(requestedOrientation()).toBe("portrait_upside_down");
   config(3, "portrait_upside_down");
@@ -139,6 +142,38 @@ it("switches to fixed authenticated feeds while retaining one HID socket, routes
   config(3); // An external native orientation change becomes authoritative again.
   client.rotate();
   expect(requestedOrientation()).toBe("landscape_left");
+  config(3, "landscape_left");
+  expect(onDuoControl.mock.lastCall?.[0].pending).toBe(false);
+  client.controlDuo({ control: "angle", value: 40 });
+  const angleRequest = JSON.parse(new TextDecoder().decode(ws.send.mock.lastCall?.[0].subarray(1)));
+  const before = ws.send.mock.calls.length;
+  client.controlDuo({ control: "orientation", value: "portrait" });
+  expect(ws.send.mock.calls.length).toBe(before);
+  config(3, "landscape_left"); // The angle's config precedes its receipt; it cannot acknowledge a queued rotation.
+  const reply = new TextEncoder().encode(
+    JSON.stringify({ requestId: angleRequest.requestId, ok: true }),
+  );
+  const receipt = new Uint8Array(reply.length + 1);
+  receipt[0] = 0x90;
+  receipt.set(reply, 1);
+  ws.onmessage?.({ data: receipt.buffer });
+  expect(requestedOrientation()).toBe("portrait");
+  expect(ws.send.mock.lastCall?.[0][0]).toBe(0x07);
+  client.controlDuo({ control: "angle", value: 55 });
+  const orientationSends = ws.send.mock.calls.length;
+  expect(onDuoControl.mock.lastCall?.[0].pending).toBe(true);
+  config(3);
+  expect(ws.send.mock.calls.length).toBe(orientationSends + 1);
+  const after = JSON.parse(new TextDecoder().decode(ws.send.mock.lastCall?.[0].subarray(1)));
+  expect(after.command).toEqual({ control: "angle", value: 55 });
+  const finalReply = new TextEncoder().encode(
+    JSON.stringify({ requestId: after.requestId, ok: true }),
+  );
+  const finalReceipt = new Uint8Array(finalReply.length + 1);
+  finalReceipt[0] = 0x90;
+  finalReceipt.set(finalReply, 1);
+  ws.onmessage?.({ data: finalReceipt.buffer });
+  expect(onDuoControl.mock.lastCall?.[0].pending).toBe(false);
   const description = new Uint8Array([0, 0, 0, 5, 1, 1, 0x64, 0, 0x1f]);
   let ready = waitDecoders(1);
   feeds[0]!.controller.enqueue(description);
