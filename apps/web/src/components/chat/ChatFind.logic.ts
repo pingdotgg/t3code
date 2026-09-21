@@ -50,24 +50,30 @@ export function markdownSearchText(markdown: string): string {
   // Code renders literally, so its contents skip the HTML and emphasis rules.
   const literals: string[] = [];
   const keep = (text: string) => `\uE000${literals.push(text) - 1}\uE000`;
-  return markdown
-    .replace(/^[ \t]*(```|~~~)[^\n]*\n([\s\S]*?)\n[ \t]*\1[ \t]*$/gm, (_, _fence, body: string) =>
-      keep(body),
-    )
-    .replace(/(`+)([^`]+?)\1/g, (_, _ticks, body: string) => keep(body))
-    .replace(/^[ \t]*(```|~~~)[^\n]*$/gm, "")
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/<((?:https?|mailto):[^>\s]+)>/g, "$1")
-    .replace(/<\/?[a-zA-Z][^>\n]*>/g, "")
-    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
-    .replace(/^[ \t]*>[ \t]?/gm, "")
-    .replace(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?/gm, "")
-    .replace(/^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(\|[ \t]*:?-{3,}:?[ \t]*)*\|?[ \t]*$/gm, "")
-    .replace(/`+/g, "")
-    .replace(/(\*\*|__|~~)(?=\S)([\s\S]*?\S)\1/g, "$2")
-    .replace(/(^|[^\w*])[*_](?=\S)([^*_\n]*?\S)[*_](?![\w*])/g, "$1$2")
-    .replace(/\uE000(\d+)\uE000/g, (_, index: string) => literals[Number(index)] ?? "");
+  return (
+    markdown
+      // A fence closes on the same marker at least as long as the opening one.
+      .replace(/^[ \t]*(`{3,})[^\n]*\n([\s\S]*?)\n[ \t]*\1`*[ \t]*$/gm, (_, _fence, body: string) =>
+        keep(body),
+      )
+      .replace(/^[ \t]*(~{3,})[^\n]*\n([\s\S]*?)\n[ \t]*\1~*[ \t]*$/gm, (_, _fence, body: string) =>
+        keep(body),
+      )
+      .replace(/(`+)([^`]+?)\1/g, (_, _ticks, body: string) => keep(body))
+      .replace(/^[ \t]*(`{3,}|~{3,})[^\n]*$/gm, "")
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/<((?:https?|mailto):[^>\s]+)>/g, "$1")
+      .replace(/<\/?[a-zA-Z][^>\n]*>/g, "")
+      .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
+      .replace(/^[ \t]*>[ \t]?/gm, "")
+      .replace(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?/gm, "")
+      .replace(/^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(\|[ \t]*:?-{3,}:?[ \t]*)*\|?[ \t]*$/gm, "")
+      .replace(/`+/g, "")
+      .replace(/(\*\*|__|~~)(?=\S)([\s\S]*?\S)\1/g, "$2")
+      .replace(/(^|[^\w*])[*_](?=\S)([^*_\n]*?\S)[*_](?![\w*])/g, "$1$2")
+      .replace(/\uE000(\d+)\uE000/g, (_, index: string) => literals[Number(index)] ?? "")
+  );
 }
 
 /**

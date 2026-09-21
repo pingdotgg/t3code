@@ -101,6 +101,13 @@ describe("markdownSearchText", () => {
     expect(text.replace(/\s+/g, " ").trim()).toBe("Use <div> here <p>hi **there**</p> real");
   });
 
+  it("keeps code inside fences longer than three delimiters", () => {
+    const text = markdownSearchText(
+      "````md\n```js\nrun **now**\n```\n````\n\n~~~~\n<b>hi</b>\n~~~~\n\n**after**",
+    );
+    expect(text.replace(/\s+/g, " ").trim()).toBe("```js run **now** ``` <b>hi</b> after");
+  });
+
   it("does not count a delimiter-only query", () => {
     const entries = [message("m1", "Use **bold** here")];
     expect(collectChatFindMatches(entries, buildChatFindPattern("**"))).toEqual([]);
