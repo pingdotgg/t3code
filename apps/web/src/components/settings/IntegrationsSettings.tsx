@@ -793,26 +793,28 @@ function DeviceIntegrationControls({
           <DeviceToolVersions tools={state.hosts.find((host) => host.kind === "local")?.tools} />
         }
       />
-      <SettingsRow
-        title="Check device tool versions"
-        description="Read installed versions on this server and its SSH hosts without starting devices or downloading tools."
-        control={
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!environmentId || pending !== null || busy}
-            onClick={() => {
-              if (!environmentId) return;
-              setPending("check");
-              void list({ environmentId, input: { inspectOnly: true } }).finally(() =>
-                setPending(null),
-              );
-            }}
-          >
-            {pending === "check" ? "Checking…" : "Check versions"}
-          </Button>
-        }
-      />
+      {state.supportsToolInspection ? (
+        <SettingsRow
+          title="Check device tool versions"
+          description="Read installed versions on this server and its SSH hosts without starting devices or downloading tools."
+          control={
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!environmentId || pending !== null || busy}
+              onClick={() => {
+                if (!environmentId) return;
+                setPending("check");
+                void list({ environmentId, input: { inspectOnly: true } }).finally(() =>
+                  setPending(null),
+                );
+              }}
+            >
+              {pending === "check" ? "Checking…" : "Check versions"}
+            </Button>
+          }
+        />
+      ) : null}
       {environmentId ? <DeviceHostUpdates state={state} environmentId={environmentId} /> : null}
       <DeviceHostsSettings environmentId={environmentId} />
     </>

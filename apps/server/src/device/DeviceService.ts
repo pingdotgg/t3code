@@ -205,6 +205,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const stateRef = yield* SynchronizedRef.make<ServiceState>({
     state: {
       supportsHostRetry: true,
+      supportsToolInspection: true,
       hosts: initialHosts,
       hostStatus: initialSettings.enabled ? "idle" : "disabled",
       hostStatuses: {},

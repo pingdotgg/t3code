@@ -135,14 +135,18 @@ function DevicePreviewScreen({
           void retryHost({ environmentId, input: { retryHostId: host.id } });
         },
       })) ?? []),
-    {
-      id: "check-device-tools",
-      title: "Check device tool versions",
-      icon: "arrow.clockwise",
-      onPress: () => {
-        void retryHost({ environmentId, input: { inspectOnly: true } });
-      },
-    },
+    ...(state.data?.supportsToolInspection
+      ? [
+          {
+            id: "check-device-tools",
+            title: "Check device tool versions",
+            icon: "arrow.clockwise" as const,
+            onPress: () => {
+              void retryHost({ environmentId, input: { inspectOnly: true } });
+            },
+          },
+        ]
+      : []),
     {
       id: "device-tools",
       title: "Device tool versions",
@@ -169,7 +173,7 @@ function DevicePreviewScreen({
     {
       id: "reload",
       title: "Reload stream",
-      icon: "arrow.clockwise",
+      icon: "arrow.clockwise" as const,
       disabled: !preview || shuttingDown,
       onPress: () => {
         setInputConnected(false);
@@ -199,7 +203,7 @@ function DevicePreviewScreen({
           {
             id: "rotate",
             title: "Rotate device",
-            icon: "arrow.clockwise",
+            icon: "arrow.clockwise" as const,
             disabled: !inputConnected,
             onPress: () => streamRef.current?.rotate(),
           },

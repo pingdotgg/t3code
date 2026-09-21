@@ -640,6 +640,7 @@ it.effect("version discovery does not grant consent or start device tools", () =
   Effect.gen(function* () {
     const { service, starts, agentStarts, requests } = yield* fixture();
     const state = yield* service.inspect;
+    expect(state.supportsToolInspection).toBe(true);
     expect(state.hostStatus).toBe("disabled");
     expect(state.hosts).toHaveLength(1);
     expect(starts).toEqual([]);
@@ -652,6 +653,7 @@ it.effect("failed read-only discovery preserves lifecycle status and installed i
   Effect.gen(function* () {
     const { service, starts } = yield* fixture(Effect.void, undefined, false, undefined, true);
     const state = yield* service.inspect;
+    expect(state.supportsToolInspection).toBe(true);
     expect(state.hostStatus).toBe("disabled");
     expect(state.hosts[0]?.hubInstalled).toBe(true);
     expect(state.hosts[0]?.toolInspectionError).toContain("Reconnect the host");
