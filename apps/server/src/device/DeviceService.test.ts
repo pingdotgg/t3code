@@ -472,16 +472,17 @@ it.effect.each(["shutdown", "close"] as const)(
 );
 
 it.effect.each([
-  { hubReportsBooted: false, outcome: "succeeds" },
-  { hubReportsBooted: true, outcome: "fails" },
+  { hubReports: "off", outcome: "succeeds" },
+  { hubReports: "booted", outcome: "fails" },
+  { hubReports: "missing", outcome: "fails" },
 ] as const)(
-  "iOS shutdown $outcome when serve-sim rejects it and the hub reports booted=$hubReportsBooted",
-  ({ hubReportsBooted, outcome }) =>
+  "iOS shutdown $outcome when serve-sim rejects it and the hub reports the simulator $hubReports",
+  ({ hubReports, outcome }) =>
     Effect.gen(function* () {
       const deviceId = DeviceId.make("22222222-2222-2222-2222-222222222222");
       const paths: string[] = [];
       // The device list is stale until shutdown re-reads it from the hub.
-      let booted = true;
+      let listed: "booted" | "off" | "missing" = "booted";
       const ready: DeviceHost.DeviceHostReady = {
         nodePath: process.execPath,
         hub: { origin: "http://device.test" },
@@ -514,22 +515,27 @@ it.effect.each([
               request,
               Response.json({
                 emulators: [],
-                simulators: [
-                  {
-                    id: deviceId,
-                    name: "iPhone",
-                    platform: "ios",
-                    version: "26",
-                    physical: false,
-                    booted,
-                  },
-                ],
+                simulators:
+                  listed === "missing"
+                    ? []
+                    : [
+                        {
+                          id: deviceId,
+                          name: "iPhone",
+                          platform: "ios",
+                          version: "26",
+                          physical: false,
+                          booted: listed === "booted",
+                        },
+                      ],
+                // A partial listing still decodes; it must not read as "off".
+                errors: listed === "missing" ? [{ message: "simctl list failed" }] : [],
               }),
             );
           }
           if (path === "/vendor/serve-sim/grid/api/shutdown") {
             // serve-sim runs `simctl shutdown` bare and returns its failure as-is.
-            booted = hubReportsBooted;
+            listed = hubReports;
             return HttpClientResponse.fromWeb(
               request,
               Response.json(

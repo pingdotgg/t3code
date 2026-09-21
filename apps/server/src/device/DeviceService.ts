@@ -700,9 +700,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           Effect.catch((cause) =>
             fetchDevices(ready).pipe(
               Effect.flatMap(({ devices }) =>
-                devices.some((device) => device.id === deviceId && device.booted)
-                  ? Effect.fail(cause)
-                  : Effect.logInfo("iOS simulator was already shut down", { deviceId }),
+                devices.find((device) => device.id === deviceId)?.booted === false
+                  ? Effect.logInfo("iOS simulator was already shut down", { deviceId })
+                  : Effect.fail(cause),
               ),
             ),
           ),
