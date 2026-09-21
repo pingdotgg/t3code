@@ -1,4 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { assert, it, afterEach, describe, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -34,6 +38,61 @@ afterEach(() => {
 });
 
 describe("AzureDevOpsCli.layer", () => {
+  it.effect("resolves cwd's remotes despite inherited Git repository bindings", () =>
+    Effect.gen(function* () {
+      const root = mkdtempSync(join(tmpdir(), "t3-azure-scope-"));
+      const target = join(root, "target");
+      const unrelated = join(root, "unrelated");
+      try {
+        for (const [cwd, org] of [
+          [target, "target"],
+          [unrelated, "unrelated"],
+        ] as const) {
+          execFileSync("git", ["init", cwd]);
+          execFileSync("git", [
+            "-C",
+            cwd,
+            "remote",
+            "add",
+            "origin",
+            `https://dev.azure.com/${org}/Project/_git/Repo`,
+          ]);
+        }
+        vi.stubEnv("GIT_DIR", join(unrelated, ".git"));
+        vi.stubEnv("GIT_WORK_TREE", unrelated);
+        const azArgs: string[][] = [];
+        const scopedLayer = AzureDevOpsCli.layer.pipe(
+          Layer.provide(
+            Layer.mock(VcsProcess.VcsProcess)({
+              run: (input) =>
+                Effect.sync(() => {
+                  if (input.command === "git")
+                    return processOutput(
+                      execFileSync("git", [...input.args], {
+                        cwd: input.cwd,
+                        env: input.env,
+                        encoding: "utf8",
+                      }),
+                    );
+                  azArgs.push([...input.args]);
+                  return processOutput("[]");
+                }),
+            }),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+          yield* az.execute({ cwd: target, args: ["repos", "pr", "list", "--detect", "true"] });
+        }).pipe(Effect.provide(scopedLayer));
+        expect(azArgs[0]).toContain("https://dev.azure.com/target");
+        expect(azArgs[0]).not.toContain("https://dev.azure.com/unrelated");
+      } finally {
+        vi.unstubAllEnvs();
+        rmSync(root, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.effect("does not inspect Git for account queries or explicitly scoped commands", () =>
     Effect.gen(function* () {
       const calls: Array<Parameters<VcsProcess.VcsProcess["Service"]["run"]>[0]> = [];

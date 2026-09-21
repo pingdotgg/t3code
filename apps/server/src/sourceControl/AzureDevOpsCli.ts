@@ -372,6 +372,15 @@ export const make = Effect.gen(function* () {
             command: "git",
             args: ["config", "--get-regexp", "^remote\\..*\\.url$"],
             cwd: input.cwd,
+            env: {
+              ...globalThis.process.env,
+              GIT_DIR: undefined,
+              GIT_WORK_TREE: undefined,
+              GIT_COMMON_DIR: undefined,
+              GIT_INDEX_FILE: undefined,
+              GIT_OBJECT_DIRECTORY: undefined,
+              GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+            },
             timeoutMs: DEFAULT_TIMEOUT_MS,
             allowNonZeroExit: true,
           })
