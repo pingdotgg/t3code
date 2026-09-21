@@ -1,3 +1,4 @@
+// @effect-diagnostics globalTimers:off - Native display handoff has a bounded acknowledgement window.
 import {
   AmbientLight,
   Box3,
@@ -29,7 +30,7 @@ export interface DuoViewer {
   readonly setHingePreview: (angle: number | null) => void;
   readonly setInteractionActive: (active: boolean, mode?: "touch" | "orbit") => void;
   readonly rejectOrientation: () => void;
-  readonly frameUpdated: (panel: DuoPanelId) => void;
+  readonly frameUpdated: (panel: DuoPanelId, primary?: HTMLCanvasElement) => void;
   readonly resize: (width: number, height: number, pixelRatio: number) => void;
   readonly screenPoint: (
     x: number,
@@ -37,7 +38,7 @@ export interface DuoViewer {
     captured?: boolean,
   ) => { x: number; y: number } | null;
   readonly orbit: (x: number, y: number) => void;
-  readonly zoomBy: (delta: number) => void;
+  readonly containsDevice: (x: number, y: number) => boolean;
   readonly resetPose: () => void;
   readonly cancelInput: () => void;
   readonly dispose: () => void;
@@ -50,8 +51,8 @@ export function createDuoViewer(options: {
   model: DeviceModelSource;
   onUnavailable: () => void;
   onModelError?: (cause: unknown) => void;
+  onPanelRequested?: (panel: DuoPanelId) => void;
   onOrientationRequested?: (orientation: DeviceScreenSize["orientation"]) => void;
-  onFramingAspect?: (aspect: number) => void;
 }): DuoViewer {
   const surfaces = ([1, 3] as const)
     .map((id) => {
@@ -104,6 +105,7 @@ export function createDuoViewer(options: {
   let model: ReturnType<typeof createDuoScene> | null = null;
   let screen: DeviceScreenSize | null = null;
   let readyKey = "";
+  let primaryKey = "";
   let activationAt = 0;
   let disposed = false;
   let viewport = { width: 0, height: 0, ratio: 1 };
@@ -113,19 +115,55 @@ export function createDuoViewer(options: {
   let viewOrientation: DeviceScreenSize["orientation"] | null = null;
   const pivot = new Vector3();
   const targetPivot = new Vector3();
-  const snaps = () =>
+  let requestedPanel: DuoPanelId | null = null;
+  let handoffTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearHandoff = () => {
+    if (handoffTimer) clearTimeout(handoffTimer);
+    handoffTimer = null;
+    requestedPanel = null;
+  };
+  const activeSnaps = () =>
     model
       ? duoViewSnaps(
           model.restFrames(screen?.screenId === 1 ? 1 : 3),
           screen?.screenId === 1 ? 1 : 3,
         )
       : [];
+  const snaps = () => {
+    if (!model || !screen?.supportsPhysicalOrientation || !options.onPanelRequested)
+      return activeSnaps();
+    const cover = duoViewSnaps(model.restFrames(1), 1);
+    // A shut inner display is occluded and cannot become a useful rest view.
+    return angle > 20 && angle < 180
+      ? [...duoViewSnaps(model.restFrames(3), 3), ...cover]
+      : activeSnaps();
+  };
   const orbit = createDuoMotion({
     choose(rotation) {
       const snap = nearestDuoView(rotation, snaps());
       if (!snap) return rotation;
       restFace = snap.face;
-      if (screen && snap.orientation !== viewOrientation && options.onOrientationRequested) {
+      const panel = snap.face === "cover" ? 1 : 3;
+      if (screen && panel !== (requestedPanel ?? screen.screenId) && options.onPanelRequested) {
+        clearHandoff();
+        requestedPanel = panel;
+        model?.cancelInput();
+        options.onPanelRequested(panel);
+        handoffTimer = setTimeout(() => {
+          clearHandoff();
+          const confirmed = nearestDuoView(orbit.rotation, activeSnaps());
+          if (confirmed) {
+            restFace = confirmed.face;
+            orbit.setPose(confirmed.rotation, performance.now());
+          }
+          scheduler.invalidate();
+        }, 5000);
+      } else if (
+        screen &&
+        requestedPanel === null &&
+        snap.orientation !== viewOrientation &&
+        options.onOrientationRequested
+      ) {
         viewOrientation = snap.orientation;
         requestedOrientation = snap.orientation;
         options.onOrientationRequested(snap.orientation);
@@ -151,14 +189,13 @@ export function createDuoViewer(options: {
     model.setAngle(angle);
     model.root.quaternion.copy(orbit.rotation);
     model.root.position.set(0, 0, 0);
-    const frames = model.restFrames(screen?.screenId === 1 ? 1 : 3);
+    const frames = model.restFrames(restFace === "cover" ? 1 : 3);
     const frame = frames.find((frame) => frame.face === restFace) ?? frames[0];
     targetPivot.copy(frame?.center ?? new Vector3());
     model.root.position.copy(pivot).applyQuaternion(model.root.quaternion).negate();
   };
-  let framingAspect = 0;
   const updateCamera = () => {
-    camera.position.set(framing.center.x, framing.center.y, framing.distance() / orbit.zoom);
+    camera.position.set(framing.center.x, framing.center.y, framing.distance());
     camera.lookAt(framing.center.x, framing.center.y, 0);
     camera.updateProjectionMatrix();
   };
@@ -236,7 +273,7 @@ export function createDuoViewer(options: {
       scene.add(model.root);
       applyPose();
       if (screen?.screenId === 1) {
-        const snap = nearestDuoView(orbit.rotation, snaps());
+        const snap = nearestDuoView(orbit.rotation, activeSnaps());
         if (snap) {
           restFace = snap.face;
           orbit.setPose(snap.rotation, performance.now(), true);
@@ -265,6 +302,8 @@ export function createDuoViewer(options: {
         model?.cancelInput();
       }
       const previous = screen;
+      const ownedHandoff = requestedPanel !== null;
+      if (!next || next.screenId === requestedPanel) clearHandoff();
       const ownedRotation = requestedOrientation !== null && next?.screenId === previous?.screenId;
       const changedDisplay = next?.screenId !== previous?.screenId;
       requestedOrientation = null;
@@ -275,27 +314,17 @@ export function createDuoViewer(options: {
         next?.hingeAngle === previous?.hingeAngle &&
         next?.orientation !== previous?.orientation;
       const leftPhysicalPose =
-        rotated && !ownedRotation && !next?.hingePose && previewAngle === null;
+        rotated && !ownedRotation && !ownedHandoff && !next?.hingePose && previewAngle === null;
       if (firstPose || changedPose || leftPhysicalPose) {
         physicalPose = next?.hingePose ?? (next?.screenId === 1 ? "closed" : "open");
         presentationAngle = next?.hingeAngle ?? (next?.screenId === 1 ? 0 : 180);
-      }
-      const aspect =
-        next?.screenId === 1
-          ? 784 / 1140
-          : physicalPose === "laptop" || next?.orientation === "portrait"
-            ? 1125 / 1600
-            : 1600 / 1125;
-      if (aspect !== framingAspect) {
-        framingAspect = aspect;
-        options.onFramingAspect?.(aspect);
       }
       // A command reply/config confirms hinge state. Display identity, never an angle heuristic, owns input.
       targetAngle = previewAngle ?? next?.hingeAngle ?? (next?.screenId === 1 ? 0 : 180);
       // Native angle commands clear hingePose. They change articulation only;
       // preserve the viewing pose, including laptop/tent and user orbit. A
       // separate rotation clears the physical preset and follows panel orientation.
-      if (firstPose || changedPose || (rotated && !ownedRotation)) {
+      if (firstPose || changedPose || (rotated && !ownedRotation && !ownedHandoff)) {
         viewOrientation = next?.orientation ?? null;
         const poseAngle = presentationAngle;
         const fold = ((180 - poseAngle) * Math.PI) / 360;
@@ -319,17 +348,17 @@ export function createDuoViewer(options: {
         if (next?.screenId === 1) {
           // Native readback can retain the cover even for an open physical preset.
           // A screen-facing rest must use that display's actual hinged normal.
-          const snap = nearestDuoView(targetPresentation, snaps());
+          const snap = nearestDuoView(targetPresentation, activeSnaps());
           if (snap) targetPresentation.copy(snap.rotation);
         }
         if (firstPose) angle = targetAngle;
         restFace = next?.screenId === 1 ? "cover" : physicalPose === "laptop" ? "right" : "inside";
         orbit.setPose(targetPresentation, performance.now(), firstPose);
         firstPose = false;
-      } else if (next && changedDisplay) {
+      } else if (next && changedDisplay && !ownedHandoff) {
         // A sensor rotation can hand ownership to the other native display.
         // Face that display without sending another rotation and creating a feedback loop.
-        const snap = nearestDuoView(orbit.rotation, snaps());
+        const snap = nearestDuoView(orbit.rotation, activeSnaps());
         if (snap) {
           restFace = snap.face;
           orbit.setPose(snap.rotation, performance.now());
@@ -364,22 +393,30 @@ export function createDuoViewer(options: {
       scheduler.invalidate();
     },
     rejectOrientation() {
-      if (disposed || requestedOrientation === null) return;
+      if (disposed || (requestedOrientation === null && requestedPanel === null)) return;
+      clearHandoff();
       requestedOrientation = null;
       viewOrientation = screen?.orientation ?? null;
-      const confirmed = snaps().filter((snap) => snap.orientation === screen?.orientation);
+      const confirmed = activeSnaps().filter((snap) => snap.orientation === screen?.orientation);
       const snap = nearestDuoView(orbit.rotation, confirmed);
-      if (snap) orbit.setPose(snap.rotation, performance.now());
+      if (snap) {
+        restFace = snap.face;
+        orbit.setPose(snap.rotation, performance.now());
+      }
       scheduler.invalidate();
     },
-    frameUpdated(id) {
+    frameUpdated(id, primary) {
       if (disposed || screen?.screenId !== id) return;
-      const source = options.sources[id];
+      const key = duoDisplayKey(screen);
+      // The elected native feed is authoritative during handoff. Fixed-panel
+      // encoders can retain an inactive blank until that surface changes again.
+      if (!primary && primaryKey === key) return;
+      const source = primary ?? options.sources[id];
       if (!duoFrameMatches(source, screen)) return;
       const surface = surfaces[id === 1 ? 0 : 1]!;
       const { context, canvas } = surface;
       // Ignore native shutdown blanks only while waiting for an activation. Steady black application content remains valid.
-      if (!readyKey && performance.now() - activationAt < 1500) {
+      if (!primary && !readyKey && performance.now() - activationAt < 1500) {
         const probe = document.createElement("canvas");
         probe.width = probe.height = 8;
         const probeContext = probe.getContext("2d", { willReadFrequently: true });
@@ -412,6 +449,7 @@ export function createDuoViewer(options: {
       context.restore();
       surface.texture.needsUpdate = true;
       readyKey = duoDisplayKey(screen);
+      if (primary) primaryKey = readyKey;
       scheduler.invalidate();
     },
     resize(width, height, ratio) {
@@ -422,7 +460,13 @@ export function createDuoViewer(options: {
       scheduler.invalidate();
     },
     screenPoint(x, y, captured = false) {
-      if (disposed || moving() || previewAngle !== null || requestedOrientation !== null)
+      if (
+        disposed ||
+        moving() ||
+        previewAngle !== null ||
+        requestedOrientation !== null ||
+        requestedPanel !== null
+      )
         return null;
       applyPose();
       return model?.screenPoint(x, y, camera, screen, readyKey, captured) ?? null;
@@ -435,16 +479,14 @@ export function createDuoViewer(options: {
       orbit.orbit(x * viewport.width, y * viewport.height, performance.now());
       scheduler.invalidate();
     },
-    zoomBy(delta) {
-      if (disposed) return;
-      orbit.zoomBy(delta);
-      fit();
-      scheduler.invalidate();
+    containsDevice(x, y) {
+      return !disposed && !!model?.containsDevice(x, y, camera);
     },
     resetPose() {
       if (disposed) return;
       requestedOrientation = null;
-      const snap = snaps().find((snap) => snap.orientation === screen?.orientation);
+      clearHandoff();
+      const snap = activeSnaps().find((snap) => snap.orientation === screen?.orientation);
       if (snap && snap.orientation !== viewOrientation && options.onOrientationRequested) {
         viewOrientation = snap.orientation;
         requestedOrientation = snap.orientation;
@@ -456,6 +498,7 @@ export function createDuoViewer(options: {
       scheduler.invalidate();
     },
     dispose() {
+      clearHandoff();
       if (disposed) return;
       disposed = true;
       scheduler.dispose();

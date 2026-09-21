@@ -44,7 +44,6 @@ export function createDuoMotion(options: { choose: (rotation: Quaternion) => Qua
   let held = false;
   let interruptedDrag = false;
   let lastInput = -Infinity;
-  let zoom = 1;
   const beginSpring = (next: Quaternion, now: number) => {
     target.copy(next).normalize();
     spring = {
@@ -150,9 +149,6 @@ export function createDuoMotion(options: { choose: (rotation: Quaternion) => Qua
   };
   return {
     rotation,
-    get zoom() {
-      return zoom;
-    },
     setPose(next: Quaternion, now: number, immediate = false) {
       advance(now);
       drag = null;
@@ -219,13 +215,8 @@ export function createDuoMotion(options: { choose: (rotation: Quaternion) => Qua
             (!pointer || rotation.angleTo(target) > 0.0005 || velocity.length() > 0.005)))
       );
     },
-    zoomBy(delta: number) {
-      if (Number.isFinite(delta))
-        zoom = Math.exp(Math.max(Math.log(0.6), Math.min(Math.log(2.2), Math.log(zoom) + delta)));
-    },
     reset(next: Quaternion, now: number) {
       advance(now);
-      zoom = 1;
       drag = null;
       pointer = false;
       beginSpring(next, now);

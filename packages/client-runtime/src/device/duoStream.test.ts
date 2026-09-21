@@ -111,7 +111,11 @@ it("switches to fixed authenticated feeds while retaining one HID socket, routes
   client.start();
   await socketConstructed;
   const ws = Socket.instances[0]!;
-  const config = (id: number, orientation: DeviceScreenSize["orientation"] = "portrait") => {
+  const config = (
+    id: number,
+    orientation: DeviceScreenSize["orientation"] = "portrait",
+    physical = false,
+  ) => {
     const json = new TextEncoder().encode(
       JSON.stringify({
         width: id === 1 ? 1398 : 2007,
@@ -119,6 +123,7 @@ it("switches to fixed authenticated feeds while retaining one HID socket, routes
         orientation,
         screenId: id,
         supportsHingeAngle: true,
+        supportsPhysicalOrientation: physical,
         hingePose: "open",
       }),
     );
@@ -222,10 +227,34 @@ it("switches to fixed authenticated feeds while retaining one HID socket, routes
   await ready;
   errors[0]!(new DOMException("Late decoder failure"));
   expect(Decoder.instances[3]!.state).toBe("configured");
-  supported = false;
+  config(1, "portrait", true);
   client.setDuoPanels({ cover: { present: cover }, inner: { present: inner } });
+  expect(feeds).toHaveLength(5); // One active feed replaces the two fixed feeds.
+  expect(feeds[4]!.url).not.toContain("/panel/");
+  expect(new URL(feeds[4]!.url).searchParams.get("hostId")).toBe("remote");
+  ready = waitDecoders(5);
   feeds[4]!.controller.enqueue(description);
+  await ready;
+  const primary = { ...frame, displayWidth: 1398, displayHeight: 2034 } as VideoFrame;
+  const painted = present.mock.calls.length;
+  outputs[4]!(primary);
+  expect(present).toHaveBeenCalledTimes(painted + 1);
+  expect(present.mock.lastCall?.[0]).toBe(primary);
+  expect(cover).toHaveBeenCalledOnce(); // The main sink owns primary texture delivery.
+  supported = false;
+  client.setDuoPanels(null);
+  client.setDuoPanels({ cover: { present: cover }, inner: { present: inner } });
+  expect(feeds[6]!.url).not.toContain("/panel/");
+  feeds[6]!.controller.enqueue(description);
   await panelFailure;
+  expect(onDuoUnavailable.mock.lastCall?.[0]).toContain("cannot decode");
+  config(3);
+  const fixedPanelFailure = new Promise<void>((resolve) => {
+    panelFailed = resolve;
+  });
+  client.setDuoPanels({ cover: { present: cover }, inner: { present: inner } });
+  feeds[7]!.controller.enqueue(description);
+  await fixedPanelFailure;
   expect(onDuoUnavailable).toHaveBeenCalled();
   expect(onStatus.mock.calls.some(([status]) => status === "error")).toBe(false);
   panelHttpStatus = 404;
@@ -239,5 +268,5 @@ it("switches to fixed authenticated feeds while retaining one HID socket, routes
   client.stop();
   expect(feeds[3]!.signal.aborted).toBe(true);
   expect(ws.close).toHaveBeenCalledOnce();
-  expect(frame.close).toHaveBeenCalledTimes(6);
+  expect(frame.close).toHaveBeenCalledTimes(7);
 });

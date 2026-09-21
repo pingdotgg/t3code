@@ -1,0 +1,206 @@
+diff --git a/packages/serve-sim/Sources/SimNative/CoreDeviceBridge.swift b/packages/serve-sim/Sources/SimNative/CoreDeviceBridge.swift
+index cad58ee..142814e 100644
+--- a/packages/serve-sim/Sources/SimNative/CoreDeviceBridge.swift
++++ b/packages/serve-sim/Sources/SimNative/CoreDeviceBridge.swift
+@@ -125,7 +125,8 @@ actor CoreDeviceBridge {
+         }
+     }
+ 
+-    private func setPhysicalOrientation(udid: String, value: String) async -> Bool {
++    func setPhysicalOrientation(udid: String, value: String) async -> Bool {
++        guard ["portrait", "pud", "landscape-left", "landscape-right", "faceup", "facedown"].contains(value) else { return false }
+         guard let rawData = value.withCString({ SSCoreDeviceOrientationData($0) }) else { return false }
+         let data = Unmanaged<NSData>.fromOpaque(rawData).takeRetainedValue() as Data
+         return await sendControl(udid: udid, data: data)
+diff --git a/packages/serve-sim/Sources/SimNative/HIDInjector.swift b/packages/serve-sim/Sources/SimNative/HIDInjector.swift
+index bfd8761..ea12429 100644
+--- a/packages/serve-sim/Sources/SimNative/HIDInjector.swift
++++ b/packages/serve-sim/Sources/SimNative/HIDInjector.swift
+@@ -558,6 +558,16 @@ actor HIDInjector {
+         isFoldable
+     }
+ 
++    func setPhysicalOrientation(_ value: String) async -> Bool {
++        guard isFoldable, let deviceUDID else { return false }
++        guard await CoreDeviceBridge.shared.setTableMode(udid: deviceUDID, enabled: false) else { return false }
++        guard await CoreDeviceBridge.shared.setPhysicalOrientation(udid: deviceUDID, value: value) else { return false }
++        // Turning a half-open Duo outward uses the same surface election as
++        // Device Hub's Tent posture. Orientation alone does not elect the cover.
++        if value == "facedown" { return await CoreDeviceBridge.shared.setTableMode(udid: deviceUDID, enabled: true) }
++        return true
++    }
++
+     func setHingePose(_ pose: String) async -> Bool {
+         guard isFoldable, let deviceUDID else { return false }
+         return await CoreDeviceBridge.shared.setHingePose(udid: deviceUDID, pose: pose)
+diff --git a/packages/serve-sim/Sources/SimNative/sim-module.swift b/packages/serve-sim/Sources/SimNative/sim-module.swift
+index 8729107..746eeec 100644
+--- a/packages/serve-sim/Sources/SimNative/sim-module.swift
++++ b/packages/serve-sim/Sources/SimNative/sim-module.swift
+@@ -93,6 +93,11 @@ private func u32(_ v: Int) -> UInt32 {
+         return await injector.supportsHingeAngle()
+     }
+ 
++    @NodeMethod func setPhysicalOrientation(_ value: String) async -> Bool {
++        guard (try? await setup.value) != nil else { return false }
++        return await injector.setPhysicalOrientation(value)
++    }
++
+     @NodeMethod func setHingePose(_ pose: String) async -> Bool {
+         guard (try? await setup.value) != nil else { return false }
+         return await injector.setHingePose(pose)
+diff --git a/packages/serve-sim/src/__tests__/device-session-screen-config.test.ts b/packages/serve-sim/src/__tests__/device-session-screen-config.test.ts
+index 860bbe4..26a6236 100644
+--- a/packages/serve-sim/src/__tests__/device-session-screen-config.test.ts
++++ b/packages/serve-sim/src/__tests__/device-session-screen-config.test.ts
+@@ -4,6 +4,6 @@ import { runChildSuite } from "./fixtures/run-child-suite";
+ // Keep the native addon mocks out of the process that runs simulator E2E tests.
+ test("device sessions follow the active native screen", async () => {
+   const { exitCode, output } = await runChildSuite("device-session-screen-config.child.ts");
+-  expect(output).toContain("18 pass");
++  expect(output).toContain("19 pass");
+   expect(exitCode).toBe(0);
+ }, 10_000);
+diff --git a/packages/serve-sim/src/__tests__/fixtures/device-session-screen-config.child.ts b/packages/serve-sim/src/__tests__/fixtures/device-session-screen-config.child.ts
+index 86b9821..f139cc0 100644
+--- a/packages/serve-sim/src/__tests__/fixtures/device-session-screen-config.child.ts
++++ b/packages/serve-sim/src/__tests__/fixtures/device-session-screen-config.child.ts
+@@ -29,6 +29,7 @@ const addon = {
+     async supportsHingeAngle() { inputCalls.push("supportsHingeAngle"); return hingeSupported; }
+     async setHingeAngle(angle: number) { hingeAngles.push(angle); return hingeResult; }
+     async setTableMode(enabled: boolean) { tableModes.push(enabled); return hingeResult; }
++    async setPhysicalOrientation(value: string) { inputCalls.push(`physical:${value}`); return hingeResult; }
+     async setHingePose(pose: string) {
+       hingePoses.push(pose);
+       await Bun.sleep(hingePoseDelay);
+@@ -279,6 +280,26 @@ describe("native active screen config", () => {
+ 
+ 
+ describe("physical hinge controls", () => {
++  test("acknowledges display flips without changing hinge angle, rejects unavailable flips and reports native failure", async () => {
++    const { controlResults, configs } = await start({ width: 2007, height: 2853 }, true);
++    send(1, { control: "physical", value: "facedown" });
++    await waitUntil(() => controlResults.length === 1);
++    expect(controlResults[0]?.ok).toBe(false);
++    expect(inputCalls).not.toContain("physical:facedown");
++    send(2, { control: "pose", value: "book" });
++    send(3, { control: "physical", value: "facedown" });
++    await waitUntil(() => controlResults.length === 3);
++    expect(controlResults[2]).toEqual({ requestId: 3, ok: true });
++    expect(inputCalls).toContain("physical:facedown");
++    expect(hingeAngles).toEqual([]);
++    expect(configs.at(-1)).toMatchObject({ hingeAngle: 90, hingePose: null, tableMode: true, supportsPhysicalOrientation: true });
++    hingeResult = false;
++    send(4, { control: "physical", value: "faceup" });
++    await waitUntil(() => controlResults.length === 4);
++    expect(controlResults[3]?.ok).toBe(false);
++    expect(configs.at(-1)).not.toHaveProperty("hingeAngle");
++  });
++
+   const send = (requestId: number, command: unknown) => ws!.send(Buffer.concat([
+     Buffer.from([0x10]), Buffer.from(JSON.stringify({ requestId, command })),
+   ]));
+diff --git a/packages/serve-sim/src/__tests__/hinge-control.test.ts b/packages/serve-sim/src/__tests__/hinge-control.test.ts
+index 9d3e77d..1a9ad75 100644
+--- a/packages/serve-sim/src/__tests__/hinge-control.test.ts
++++ b/packages/serve-sim/src/__tests__/hinge-control.test.ts
+@@ -40,3 +40,11 @@ test("Table Mode follows physical pose eligibility", () => {
+   expect(hingeControlState({ control: "table", value: true })).toEqual({ tableMode: true, hingePose: null });
+   expect(isHingeControlCommand({ control: "table", value: "true" })).toBe(false);
+ });
++
++test("physical display handoff preserves hinge angle and elects the appropriate tabletop surface", () => {
++  for (const value of ["faceup", "facedown"] as const) {
++    expect(isHingeControlCommand({ control: "physical", value })).toBe(true);
++    expect(hingeControlState({ control: "physical", value })).toEqual({ hingePose: null, tableMode: value === "facedown" });
++  }
++  for (const value of ["portrait", "other", 5, null]) expect(isHingeControlCommand({ control: "physical", value })).toBe(false);
++});
+diff --git a/packages/serve-sim/src/device-session.ts b/packages/serve-sim/src/device-session.ts
+index dcab4bb..3a967db 100644
+--- a/packages/serve-sim/src/device-session.ts
++++ b/packages/serve-sim/src/device-session.ts
+@@ -1024,7 +1024,9 @@ export class DeviceSession {
+     const operation = this.hingeControlUpdate.then(async () => {
+       if (this.phase !== "running") return false;
+       if (command.control === "table" && command.value && !isTableModeAvailable(this.hingeAngle, this.hingePhysicalOrientation)) return false;
++      if (command.control === "physical" && command.value === "facedown" && !(this.hingeAngle !== undefined && this.hingeAngle > 0 && this.hingeAngle < 180)) return false;
+       const ok = command.control === "pose" ? await this.hid.setHingePose(command.value)
++        : command.control === "physical" ? await this.hid.setPhysicalOrientation(command.value)
+         : command.control === "table" ? await this.hid.setTableMode(command.value)
+         : await this.hid.setHingeAngle(command.value);
+       if (ok) {
+@@ -1033,6 +1035,7 @@ export class DeviceSession {
+         if (state.hingeAngle !== undefined) this.hingeAngle = state.hingeAngle;
+         this.hingePose = state.hingePose ?? null;
+         if (state.tableMode !== undefined) this.tableMode = state.tableMode;
++        if (command.control === "physical") this.hingePhysicalOrientation = command.value;
+         if (command.control === "pose") this.hingePhysicalOrientation = hingePoseOrientation(command.value);
+         this.broadcastConfig();
+       } else {
+@@ -1214,6 +1217,7 @@ export class DeviceSession {
+     orientation: string;
+     screenId?: number;
+     supportsHingeAngle?: boolean;
++    supportsPhysicalOrientation?: boolean;
+     hingeAngle?: number;
+     hingePose?: HingePose | null;
+     tableMode?: boolean;
+@@ -1224,6 +1228,7 @@ export class DeviceSession {
+       height: this.height,
+       orientation: this.orientation,
+       ...(this.nativeScreen?.screenId !== undefined ? { screenId: this.nativeScreen.screenId } : {}),
++      ...(this.supportsHingeAngle ? { supportsPhysicalOrientation: true } : {}),
+       ...(this.supportsHingeAngle !== undefined ? { supportsHingeAngle: this.supportsHingeAngle } : {}),
+       ...(this.hingeAngle !== undefined ? { hingeAngle: this.hingeAngle } : {}),
+       ...(this.supportsHingeAngle ? { hingePose: this.hingePose, tableModeAvailable: isTableModeAvailable(this.hingeAngle, this.hingePhysicalOrientation) } : {}),
+diff --git a/packages/serve-sim/src/hinge-control.ts b/packages/serve-sim/src/hinge-control.ts
+index 56108dc..f9ee3fc 100644
+--- a/packages/serve-sim/src/hinge-control.ts
++++ b/packages/serve-sim/src/hinge-control.ts
+@@ -13,18 +13,21 @@ export type HingePose = typeof HINGE_POSES[number]["id"];
+ export type HingeControlCommand =
+   | { control: "angle"; value: number }
+   | { control: "pose"; value: HingePose }
+-  | { control: "table"; value: boolean };
++  | { control: "table"; value: boolean }
++  | { control: "physical"; value: "faceup" | "facedown" };
+ 
+ export function isHingeControlCommand(value: unknown): value is HingeControlCommand {
+   if (!value || typeof value !== "object") return false;
+   const command = value as Record<string, unknown>;
+   return command.control === "angle" ? isHingeAngle(command.value)
++    : command.control === "physical" ? command.value === "faceup" || command.value === "facedown"
+     : command.control === "table" ? typeof command.value === "boolean"
+     : command.control === "pose" && HINGE_POSES.some((pose) => pose.id === command.value);
+ }
+ 
+ /** Confirmed command state, separate from the app's reported screen orientation. */
+ export function hingeControlState(command: HingeControlCommand): HingeControlState {
++  if (command.control === "physical") return { hingePose: null, tableMode: command.value === "facedown" };
+   if (command.control === "table") return { tableMode: command.value, hingePose: null };
+   if (command.control === "angle") return { hingeAngle: command.value, hingePose: null, tableMode: false };
+   const pose = HINGE_POSES.find((pose) => pose.id === command.value)!;
+diff --git a/packages/serve-sim/src/native.ts b/packages/serve-sim/src/native.ts
+index 0d64949..2370a08 100644
+--- a/packages/serve-sim/src/native.ts
++++ b/packages/serve-sim/src/native.ts
+@@ -28,6 +28,7 @@ interface SimHIDHandle {
+   supportsHingeAngle(): Promise<boolean>;
+   setHingeAngle(angle: number): Promise<boolean>;
+   setHingePose(pose: string): Promise<boolean>;
++  setPhysicalOrientation(value: string): Promise<boolean>;
+   setTableMode(enabled: boolean): Promise<boolean>;
+   touch(type: TouchType, x: number, y: number, w: number, hh: number, edge: number): Promise<void>;
+   multiTouch(type: TouchType, x1: number, y1: number, x2: number, y2: number, w: number, hh: number): Promise<void>;
+@@ -202,6 +203,10 @@ export class NativeHid {
+     return this.guard("setHingeAngle", () => this.handle.setHingeAngle(angle), false);
+   }
+ 
++  setPhysicalOrientation(value: string): Promise<boolean> {
++    return this.guard("setPhysicalOrientation", () => this.handle.setPhysicalOrientation(value), false);
++  }
++
+   setHingePose(pose: string): Promise<boolean> {
+     return this.guard("setHingePose", () => this.handle.setHingePose(pose), false);
+   }

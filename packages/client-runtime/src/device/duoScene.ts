@@ -153,6 +153,13 @@ export function createDuoScene(asset: Group, textures: Record<DuoPanelId, Textur
         ? [inside, frame([innerLeft], "left"), frame([innerRight], "right")]
         : [inside];
     },
+    containsDevice(x: number, y: number, camera: PerspectiveCamera) {
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+      root.updateMatrixWorld(true);
+      camera.updateMatrixWorld(true);
+      ray.setFromCamera(new Vector2(x * 2 - 1, 1 - y * 2), camera);
+      return ray.intersectObject(root, true).length > 0;
+    },
     cancelInput() {
       captured = null;
     },

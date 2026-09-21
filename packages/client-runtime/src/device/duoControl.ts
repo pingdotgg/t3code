@@ -16,6 +16,7 @@ export type DuoCommand =
   | { control: "angle"; value: number }
   | { control: "pose"; value: DuoPose }
   | { control: "table"; value: boolean }
+  | { control: "physical"; value: "faceup" | "facedown" }
   | { control: "orientation"; value: DuoOrientation };
 export type DuoControlState = {
   pending: boolean;
@@ -23,7 +24,7 @@ export type DuoControlState = {
   error: string | null;
 };
 
-/** One in-flight native transaction. Slider motion coalesces; presets replace queued motion. Nothing replays after reconnect. */
+/** One in-flight native transaction. Hinge motion coalesces; presets replace queued motion. Nothing replays after reconnect. */
 export function createDuoControl(options: {
   send: (request: { requestId: number; command: DuoCommand }) => boolean;
   onChange: (state: DuoControlState) => void;
@@ -77,5 +78,36 @@ export function createDuoControl(options: {
       else publish();
     },
     clear,
+  };
+}
+
+/** A pinch keeps its own accumulator across asynchronous native acknowledgements. */
+export function createDuoPinch(options: {
+  angle: () => number;
+  contains: (x: number, y: number) => boolean;
+  change: (angle: number | null) => void;
+}) {
+  let angle: number | null = null;
+  return {
+    begin(x: number, y: number) {
+      if (!options.contains(x, y)) return false;
+      angle = Math.max(0, Math.min(180, options.angle()));
+      return true;
+    },
+    move(logScale: number) {
+      if (angle === null || !Number.isFinite(logScale)) return;
+      const next = Math.max(0, Math.min(180, angle + logScale * 120));
+      if (next === angle) return;
+      angle = next;
+      options.change(next);
+    },
+    end() {
+      if (angle === null) return;
+      angle = null;
+      options.change(null);
+    },
+    get active() {
+      return angle !== null;
+    },
   };
 }

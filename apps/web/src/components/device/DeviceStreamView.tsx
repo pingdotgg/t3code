@@ -32,6 +32,7 @@ export interface DeviceViewControls {
   readonly showPhone: () => void;
   readonly showFlat: () => void;
   readonly resetView: () => void;
+  readonly foldingControls?: ReactNode;
   readonly keyboard: { readonly attached: boolean; readonly toggle: () => void } | null;
 }
 
@@ -326,6 +327,18 @@ export function DeviceStreamView(props: {
             phone: !!showPhone,
             streaming: status === "streaming",
             phoneUnavailableReason,
+            foldingControls:
+              showPhone && isDuo && screen?.supportsHingeAngle ? (
+                <DeviceDuoControls
+                  screen={screen}
+                  state={duoControl}
+                  enabled={inputState.connected}
+                  onCommand={(command) => {
+                    cancelPhoneInput();
+                    clientRef.current?.controlDuo(command);
+                  }}
+                />
+              ) : null,
             keyboard:
               showPhone && keyboardSource
                 ? {
@@ -432,19 +445,18 @@ export function DeviceStreamView(props: {
         </div>
         {showPhone && isDuo && model ? (
           <DeviceDuoViewport
+            onFrameListener={onFrameListener}
             model={model}
             controlError={duoControl.error}
             hingePreview={
               duoControl.requested?.control === "angle" ? duoControl.requested.value : null
             }
-            contentOffset={contentOffset}
             source={canvasRef}
             client={clientRef}
             onInputCancel={onInputCancel}
             onResetReady={onResetReady}
             screen={screen}
             onUnavailable={onPhoneUnavailable}
-            onFramingAspect={setFramingAspect}
           />
         ) : showPhone ? (
           <DevicePhoneViewport
@@ -458,17 +470,6 @@ export function DeviceStreamView(props: {
             onResetReady={onResetReady}
             screen={screen}
             onUnavailable={onPhoneUnavailable}
-          />
-        ) : null}
-        {props.allowPhoneView && isDuo && screen?.supportsHingeAngle && status === "streaming" ? (
-          <DeviceDuoControls
-            screen={screen}
-            state={duoControl}
-            enabled={inputState.connected}
-            onCommand={(command) => {
-              cancelPhoneInput();
-              clientRef.current?.controlDuo(command);
-            }}
           />
         ) : null}
         {props.allowPhoneView && !props.renderControls && status === "streaming" ? (

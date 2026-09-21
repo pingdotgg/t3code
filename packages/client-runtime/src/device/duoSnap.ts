@@ -51,7 +51,7 @@ export function duoViewSnaps(frames: readonly DuoRestFrame[], panel: 1 | 3) {
         continue;
       // Bound yaw using both real leaf normals. A narrow fold cannot tolerate
       // the same side view as a fully open display.
-      let yawLimit = Math.PI / 3;
+      let yawLimit = frame.face === "cover" ? Math.PI / 9 : Math.PI / 3;
       if (panel === 3) {
         for (const sign of [-1, 1]) {
           for (let step = 1; step <= 60; step++) {

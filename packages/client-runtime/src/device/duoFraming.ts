@@ -62,7 +62,7 @@ export function createDuoFraming() {
     },
     advance,
     distance() {
-      // Spring lag must never clip the default fit. Explicit user zoom may go beyond it.
+      // Spring lag must never clip the fitted assembly.
       const clearance = Math.max(
         Math.abs(bounds.min.x - center.x) / tanX,
         Math.abs(bounds.max.x - center.x) / tanX,

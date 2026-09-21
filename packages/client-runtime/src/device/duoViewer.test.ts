@@ -83,12 +83,17 @@ import {
 import { createDuoViewer } from "./duoViewer.ts";
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   gpu.instances.length = 0;
   gpu.environmentDispose.mockClear();
 });
 
-function fixture(reduced = true, onOrientationRequested = vi.fn()) {
+function fixture(
+  reduced = true,
+  onOrientationRequested = vi.fn(),
+  onPanelRequested?: (panel: 1 | 3) => void,
+) {
   const pending = new Map<number, FrameRequestCallback>();
   let id = 0;
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -97,6 +102,7 @@ function fixture(reduced = true, onOrientationRequested = vi.fn()) {
   });
   vi.stubGlobal("cancelAnimationFrame", (id: number) => pending.delete(id));
   vi.stubGlobal("matchMedia", () => ({ matches: reduced }));
+  const drawImage = vi.fn();
   vi.stubGlobal("document", {
     createElement: () => ({
       width: 0,
@@ -107,7 +113,7 @@ function fixture(reduced = true, onOrientationRequested = vi.fn()) {
         restore() {},
         translate() {},
         rotate() {},
-        drawImage() {},
+        drawImage,
         getImageData: () => ({ data: new Uint8ClampedArray(8 * 8 * 4).fill(255) }),
       }),
     }),
@@ -122,13 +128,14 @@ function fixture(reduced = true, onOrientationRequested = vi.fn()) {
     model: { id: "iphone-duo", url: "/duo.glb" },
     onUnavailable: vi.fn(),
     onOrientationRequested,
+    ...(onPanelRequested ? { onPanelRequested } : {}),
   });
   const draw = () => {
     const callbacks = [...pending.values()];
     pending.clear();
     callbacks.forEach((callback) => callback(0));
   };
-  return { viewer, draw, pending, state: gpu.instances[0]!, onOrientationRequested };
+  return { viewer, draw, pending, state: gpu.instances[0]!, onOrientationRequested, drawImage };
 }
 
 function asset() {
@@ -470,7 +477,7 @@ it("does not restart an animated preset on duplicate native configurations", asy
   viewer.dispose();
 });
 
-it("lets standalone rotation leave Laptop and Tent and stand a closed device upright after slider edits", async () => {
+it("lets standalone rotation leave Laptop and Tent and stand a closed device upright after hinge edits", async () => {
   const { viewer, draw, state } = fixture();
   models.resolve({ asset: asset(), dispose: vi.fn() });
   await Promise.resolve();
@@ -511,5 +518,124 @@ it("lets standalone rotation leave Laptop and Tent and stand a closed device upr
     const bounds = state.views.at(-1)!.bounds;
     expect(bounds.max.y - bounds.min.y).toBeGreaterThan(bounds.max.x - bounds.min.x);
   }
+  viewer.dispose();
+});
+
+it("snaps onto the opposite screen, requests native handoff once and retains the chosen view on readback", async () => {
+  vi.useFakeTimers();
+  let now = 0;
+  vi.stubGlobal("performance", { now: () => now });
+  const onPanelRequested = vi.fn();
+  const { viewer, draw, state, pending, onOrientationRequested } = fixture(
+    true,
+    vi.fn(),
+    onPanelRequested,
+  );
+  models.resolve({ asset: asset(), dispose: vi.fn() });
+  await Promise.resolve();
+  viewer.resize(500, 700, 2);
+  const inner = {
+    width: 2007,
+    height: 2853,
+    orientation: "portrait" as const,
+    screenId: 3,
+    hingeAngle: 90,
+    supportsPhysicalOrientation: true,
+  };
+  viewer.setScreen(inner);
+  draw();
+  viewer.setInteractionActive(true, "orbit");
+  viewer.orbit(Math.PI / 3, 0);
+  draw();
+  viewer.setInteractionActive(false, "orbit");
+  draw();
+  expect(onPanelRequested).toHaveBeenCalledExactlyOnceWith(1);
+  expect(onOrientationRequested).not.toHaveBeenCalled();
+  expect(viewer.screenPoint(0.5, 0.5)).toBeNull();
+  const chosen = state.views.at(-1)!.quaternion.clone();
+  viewer.setScreen({ ...inner, hingePose: null }); // Command acknowledgement precedes sensor readback.
+  draw();
+  expect(state.views.at(-1)!.quaternion.angleTo(chosen)).toBeLessThan(1e-6);
+  viewer.setScreen({ ...inner, width: 1398, height: 2034, screenId: 1 });
+  draw();
+  expect(state.views.at(-1)!.quaternion.angleTo(chosen)).toBeLessThan(1e-6);
+  vi.advanceTimersByTime(5000);
+  expect(onPanelRequested).toHaveBeenCalledTimes(1);
+  expect(pending.size).toBe(0);
+  viewer.setInteractionActive(true, "orbit");
+  viewer.orbit(-Math.PI / 3, 0);
+  draw();
+  viewer.setInteractionActive(false, "orbit");
+  draw();
+  expect(onPanelRequested).toHaveBeenLastCalledWith(3);
+  const reverse = state.views.at(-1)!.quaternion.clone();
+  viewer.setScreen(inner);
+  draw();
+  expect(state.views.at(-1)!.quaternion.angleTo(reverse)).toBeLessThan(1e-6);
+  vi.advanceTimersByTime(5000);
+  draw();
+  expect(pending.size).toBe(0);
+  expect(onPanelRequested).toHaveBeenCalledTimes(2);
+  viewer.dispose();
+  vi.useRealTimers();
+});
+
+it("rolls an unconfirmed opposite-screen snap back to the native active screen after timeout", async () => {
+  vi.useFakeTimers();
+  const request = vi.fn();
+  const { viewer, draw, state, pending } = fixture(true, vi.fn(), request);
+  models.resolve({ asset: asset(), dispose: vi.fn() });
+  await Promise.resolve();
+  viewer.resize(500, 700, 2);
+  viewer.setScreen({
+    width: 2007,
+    height: 2853,
+    orientation: "portrait",
+    screenId: 3,
+    hingeAngle: 90,
+    supportsPhysicalOrientation: true,
+  });
+  draw();
+  viewer.setInteractionActive(true, "orbit");
+  viewer.orbit(Math.PI / 3, 0);
+  draw();
+  viewer.setInteractionActive(false, "orbit");
+  draw();
+  const unconfirmed = state.views.at(-1)!.quaternion.clone();
+  expect(request).toHaveBeenCalledExactlyOnceWith(1);
+  vi.advanceTimersByTime(5000);
+  draw();
+  expect(state.views.at(-1)!.quaternion.angleTo(unconfirmed)).toBeGreaterThan(0.5);
+  expect(request).toHaveBeenCalledOnce();
+  draw();
+  expect(pending.size).toBe(0);
+  viewer.dispose();
+});
+
+it("uses the elected primary frame during handoff and never lets a stale fixed-panel feed overwrite it", async () => {
+  const { viewer, drawImage } = fixture();
+  const cover = {
+    width: 1398,
+    height: 2034,
+    orientation: "portrait" as const,
+    screenId: 1,
+    hingeAngle: 90,
+  };
+  viewer.setScreen(cover);
+  const primary = { width: 1398, height: 2034 } as HTMLCanvasElement;
+  viewer.frameUpdated(1, primary);
+  expect(drawImage.mock.calls.at(-1)?.[0]).toBe(primary);
+  const uploads = drawImage.mock.calls.length;
+  viewer.frameUpdated(1);
+  expect(drawImage).toHaveBeenCalledTimes(uploads);
+  viewer.frameUpdated(3, primary);
+  expect(drawImage).toHaveBeenCalledTimes(uploads);
+  viewer.setScreen({ ...cover, width: 2007, height: 2853, screenId: 3 });
+  const inner = { width: 2007, height: 2853 } as HTMLCanvasElement;
+  viewer.frameUpdated(3, inner);
+  expect(drawImage.mock.calls.at(-1)?.[0]).toBe(inner);
+  viewer.setScreen(cover);
+  viewer.frameUpdated(1);
+  expect(drawImage.mock.calls.length).toBeGreaterThan(uploads + 1);
   viewer.dispose();
 });

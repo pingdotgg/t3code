@@ -64,11 +64,9 @@ it("springs toward a cumulative drag without teleporting and keeps the same targ
   expect(run(1).angleTo(run(20))).toBeLessThan(1e-6);
 });
 
-it("selects the predicted nearest view once, retains zoom, and preserves velocity when interrupted", () => {
+it("selects the predicted nearest view once and preserves velocity when interrupted", () => {
   const choose = vi.fn((q: Quaternion) => nearestDuoView(q, snaps)!.rotation);
   const motion = createDuoMotion({ choose });
-  motion.zoomBy(0.3);
-  const zoom = motion.zoom;
   motion.dragActive(true, 0);
   motion.orbit(0, 240, 0);
   motion.orbit(0, 20, 20);
@@ -85,7 +83,6 @@ it("selects the predicted nearest view once, retains zoom, and preserves velocit
   motion.dragActive(false, 100);
   for (let time = 116; time <= 2500; time += 16) motion.advance(time);
   expect(choose).toHaveBeenCalledTimes(2);
-  expect(motion.zoom).toBe(zoom);
   expect(motion.needsFrame()).toBe(false);
 });
 
@@ -119,7 +116,6 @@ it("waits for trackpad quiet, handles reduced motion and invalid deltas, and set
   const choose = vi.fn(() => new Quaternion());
   const motion = createDuoMotion({ choose });
   motion.orbit(NaN, 0, 0);
-  motion.zoomBy(Infinity);
   expect(motion.needsFrame()).toBe(false);
   motion.orbit(200, 100, 0);
   motion.advance(100);

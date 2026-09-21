@@ -4,75 +4,72 @@ import {
   type DuoControlState,
 } from "@t3tools/client-runtime/device/duo-control";
 import type { DeviceScreenSize } from "@t3tools/client-runtime/device/stream";
+import { DeviceDuoGlyph } from "./DeviceDuoGlyph";
 import { Button } from "~/components/ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
+/** Physical presets live beside the device. Pinching supplies continuous hinge control. */
 export function DeviceDuoControls(props: {
   screen: DeviceScreenSize;
   state: DuoControlState;
   enabled: boolean;
   onCommand: (command: DuoCommand) => void;
 }) {
-  const requested = props.state.requested;
-  const angle =
-    requested?.control === "angle"
-      ? requested.value
-      : requested?.control === "pose"
-        ? DUO_POSES.find((pose) => pose.id === requested.value)?.angle
-        : props.screen.hingeAngle;
+  const angle = props.screen.hingeAngle;
+  const fold = angle == null ? null : angle === 0 ? "closed" : angle === 180 ? "open" : "book";
+  const selected = (id: (typeof DUO_POSES)[number]["id"]) =>
+    id === "laptop" || id === "tent" ? props.screen.hingePose === id : fold === id;
   return (
-    <div className="absolute inset-x-3 bottom-3 z-20 mx-auto flex w-fit max-w-[calc(100%-1.5rem)] flex-col gap-2 rounded-xl border border-border/60 bg-background/95 p-2 shadow-sm">
-      <div
-        className="flex flex-wrap justify-center gap-1"
-        role="group"
-        aria-label="iPhone Duo position"
-      >
-        {DUO_POSES.map((pose) => (
-          <Button
-            key={pose.id}
-            size="xs"
-            variant={props.screen.hingePose === pose.id ? "secondary" : "ghost"}
-            disabled={!props.enabled}
-            aria-pressed={props.screen.hingePose === pose.id}
-            onClick={() => props.onCommand({ control: "pose", value: pose.id })}
-          >
-            {pose.label}
-          </Button>
-        ))}
-      </div>
-      <div className="flex items-center gap-2 px-1">
-        <input
-          aria-label="Hinge angle"
-          type="range"
-          min={0}
-          max={180}
-          step={1}
-          value={angle ?? (props.screen.screenId === 1 ? 0 : 180)}
-          disabled={!props.enabled}
-          className="min-w-0 flex-1 accent-primary"
-          onChange={(event) =>
-            props.onCommand({ control: "angle", value: Number(event.target.value) })
-          }
-        />
-        <span
-          className="w-9 text-right text-xs tabular-nums text-muted-foreground"
-          aria-live="polite"
+    <div aria-label="iPhone Duo stands" className="flex flex-col items-center gap-2">
+      {([DUO_POSES.slice(0, 3), DUO_POSES.slice(3)] as const).map((poses, index) => (
+        <div
+          key={poses[0]?.id}
+          role="group"
+          aria-label={index === 0 ? "Fold shape" : "Device stance"}
+          className="pointer-events-auto flex shrink-0 flex-col items-center gap-1 rounded-full border border-border/50 bg-background/80 p-1 shadow-sm"
         >
-          {angle === undefined ? "?" : `${Math.round(angle)}°`}
-        </span>
-        <Button
-          size="xs"
-          variant={props.screen.tableMode ? "secondary" : "ghost"}
-          disabled={!props.enabled || !props.screen.tableModeAvailable || props.state.pending}
-          aria-pressed={props.screen.tableMode ?? false}
-          onClick={() => props.onCommand({ control: "table", value: !props.screen.tableMode })}
-        >
-          Table
-        </Button>
-      </div>
+          {poses.map((pose) => (
+            <Tooltip key={pose.id}>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-sm"
+                    className="size-9 shrink-0 [--control-icon-color:currentColor] data-pressed:text-primary sm:size-9"
+                    variant={selected(pose.id) ? "secondary" : "ghost"}
+                    disabled={!props.enabled}
+                    aria-label={`${pose.label} stand`}
+                    aria-pressed={selected(pose.id)}
+                    data-pressed={selected(pose.id) ? "" : undefined}
+                    onClick={() => props.onCommand({ control: "pose", value: pose.id })}
+                  />
+                }
+              >
+                <DeviceDuoGlyph pose={pose.id} />
+              </TooltipTrigger>
+              <TooltipPopup side="left">
+                {pose.label}
+                {pose.id === "book" ? " / bookshelf" : ""}
+              </TooltipPopup>
+            </Tooltip>
+          ))}
+        </div>
+      ))}
       {props.state.error ? (
-        <p role="alert" className="max-w-72 px-1 text-xs text-destructive">
-          {props.state.error}
-        </p>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                tabIndex={0}
+                role="alert"
+                aria-label={props.state.error}
+                className="text-xs text-destructive"
+              >
+                !
+              </span>
+            }
+          />
+          <TooltipPopup side="left">{props.state.error}</TooltipPopup>
+        </Tooltip>
       ) : null}
     </div>
   );

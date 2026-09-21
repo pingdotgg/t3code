@@ -1,11 +1,19 @@
 /** Build the audited Duo prototype outside the checkout. Usage: node scripts/build-duo-device-hub.ts /absolute/output-directory */
+import * as NodeCrypto from "node:crypto";
+import * as NodeURL from "node:url";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 
 const commit = "bb265b11c13b395e5302d121458e2d42224a2e9f";
 const hubVersion = "0.9.0";
-const prototypeVersion = `${hubVersion}-duo.${commit.slice(0, 12)}`;
+const patchPath = NodeURL.fileURLToPath(
+  new URL("./patches/serve-sim-duo-physical-orientation.patch", import.meta.url),
+);
+const patchHash = NodeCrypto.createHash("sha256")
+  .update(NodeFS.readFileSync(patchPath))
+  .digest("hex");
+const prototypeVersion = `${hubVersion}-duo.${commit.slice(0, 12)}.physical.${patchHash.slice(0, 8)}`;
 const output = NodePath.resolve(process.argv[2] ?? "/tmp/t3-duo-build");
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone build entry point, not a server service.
 if (process.platform !== "darwin" || process.arch !== "arm64")
@@ -36,8 +44,16 @@ try {
 }
 run("git", ["fetch", "origin", commit], source);
 run("git", ["checkout", "--detach", commit], source);
+// A previous build may have this exact, versioned overlay applied. Remove only
+// that patch, then require a clean pin before applying it again.
+const applied = NodeChildProcess.spawnSync("git", ["apply", "--reverse", "--check", patchPath], {
+  cwd: source,
+});
+if (applied.status === 0) run("git", ["apply", "--reverse", patchPath], source);
 if (run("git", ["status", "--porcelain", "--untracked-files=no"], source, true).trim())
   throw new Error("Upstream source has tracked edits. Refusing an unpinned build.");
+run("git", ["apply", "--check", patchPath], source);
+run("git", ["apply", patchPath], source);
 run("bun", ["install", "--frozen-lockfile"], source);
 run("bun", ["run", "build"], NodePath.join(source, "packages/serve-sim"));
 const packed = JSON.parse(
@@ -61,6 +77,7 @@ const manifest = JSON.parse(NodeFS.readFileSync(manifestPath, "utf8"));
 manifest.version = prototypeVersion;
 manifest.t3DeviceHubBuild = {
   serveSimCommit: commit,
+  physicalOrientationPatchSha256: patchHash,
   hubVersion,
   hubIntegrity: packed[0].integrity,
 };
