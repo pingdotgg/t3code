@@ -100,7 +100,11 @@ export async function writeTextToClipboard(
   target = "text",
   extraFlavors?: Readonly<Record<string, string>>,
 ) {
-  if (typeof window === "undefined") {
+  // The DOM fallback below needs `window`; the async clipboard API itself does not, and some
+  // hosts (tests, embedded bridges) expose `navigator.clipboard` without a `window` global.
+  const canUseClipboardApi =
+    typeof navigator !== "undefined" && typeof navigator.clipboard?.writeText === "function";
+  if (typeof window === "undefined" && !canUseClipboardApi) {
     throw new ClipboardApiUnavailableError({
       target,
     });
@@ -124,7 +128,7 @@ export async function writeTextToClipboard(
       ),
     };
 
-  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+  if (!canUseClipboardApi) {
     if (writeTextWithExecCommand(value, extraFlavors)) return true;
     throw new ClipboardApiUnavailableError({
       target,
