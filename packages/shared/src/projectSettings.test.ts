@@ -149,6 +149,19 @@ describe("resolveProjectSettings with a t3.json", () => {
     const builtIn = resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId, null, null);
     expect(builtIn.settings.defaultThreadEnvMode).toBe("local");
     expect(builtIn.sources.defaultThreadEnvMode).toBe("environment");
+    // A stored null override defers like an unset one and is not reported
+    // as the project's value.
+    const nullOverride = resolveProjectSettings(
+      {
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: { [projectId]: { defaultThreadEnvMode: null } as never },
+      },
+      projectId,
+      null,
+      file,
+    );
+    expect(nullOverride.settings.defaultThreadEnvMode).toBe("worktree");
+    expect(nullOverride.sources.defaultThreadEnvMode).toBe("t3.json");
     // A file that does not mention the key leaves the source alone too.
     expect(
       resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId, null, {}).sources

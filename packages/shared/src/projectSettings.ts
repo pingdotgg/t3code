@@ -107,15 +107,15 @@ function applyProjectFile(
     if (resolved.settings[settingKey] !== null) continue;
     const fromFile = projectFile?.[field];
     effective ??= { ...resolved.settings };
+    sources ??= { ...resolved.sources };
     effective[settingKey] = fromFile ?? builtIn;
-    if (fromFile !== undefined) {
-      sources ??= { ...resolved.sources };
-      sources[settingKey] = "t3.json";
-    }
+    // A project override of null defers like an unset one, so the value did
+    // not come from the project either way.
+    sources[settingKey] = fromFile === undefined ? "environment" : "t3.json";
   }
-  return effective === null
+  return effective === null || sources === null
     ? resolved
-    : { ...resolved, settings: effective as ServerSettings, sources: sources ?? resolved.sources };
+    : { ...resolved, settings: effective as ServerSettings, sources };
 }
 
 function resolveProjectOverrides(
