@@ -840,6 +840,7 @@ function OpenCommandPaletteDialog(props: {
   const [isPickingProjectFolder, setIsPickingProjectFolder] = useState(false);
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
   const cloneLookupGeneration = useRef(0);
+  const addProjectCreationInFlightRef = useRef(new Set<string>());
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
   const projectGroupingSettings = useMemo(
@@ -2221,20 +2222,53 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
-      const projectId = newProjectId();
-      const createResult = await createProject({
-        environmentId: input.environmentId,
-        input: {
-          projectId,
-          title: inferProjectTitleFromPath(cwd),
-          workspaceRoot: cwd,
-          createWorkspaceRootIfMissing: true,
-          defaultModelSelection: null,
-        },
-      });
-      if (createResult._tag === "Failure") {
-        if (!isAtomCommandInterrupted(createResult)) {
-          const error = squashAtomCommandFailure(createResult);
+      const creationKey = `${input.environmentId}\0${cwd}`;
+      if (addProjectCreationInFlightRef.current.has(creationKey)) return;
+      addProjectCreationInFlightRef.current.add(creationKey);
+
+      try {
+        const projectId = newProjectId();
+        const createResult = await createProject({
+          environmentId: input.environmentId,
+          input: {
+            projectId,
+            title: inferProjectTitleFromPath(cwd),
+            workspaceRoot: cwd,
+            createWorkspaceRootIfMissing: true,
+            defaultModelSelection: null,
+          },
+        });
+        if (createResult._tag === "Failure") {
+          if (!isAtomCommandInterrupted(createResult)) {
+            const error = squashAtomCommandFailure(createResult);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to add project",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+          return;
+        }
+
+        const projectRef = scopeProjectRef(input.environmentId, projectId);
+        const projectionResult = await settlePromise(() => waitForProject(projectRef));
+        if (projectionResult._tag === "Failure") {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Project created, but not opened",
+              description: "Reload T3 Code to open the new project.",
+            }),
+          );
+          setOpen(false);
+          return;
+        }
+
+        const navigationResult = await settlePromise(() => handleNewThread(projectRef));
+        if (navigationResult._tag === "Failure") {
+          const error = squashAtomCommandFailure(navigationResult);
           toastManager.add(
             stackedThreadToast({
               type: "error",
@@ -2242,37 +2276,12 @@ function OpenCommandPaletteDialog(props: {
               description: error instanceof Error ? error.message : "An error occurred.",
             }),
           );
+          return;
         }
-        return;
-      }
-
-      const projectRef = scopeProjectRef(input.environmentId, projectId);
-      const projectionResult = await settlePromise(() => waitForProject(projectRef));
-      if (projectionResult._tag === "Failure") {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Project created, but not opened",
-            description: "Reload T3 Code to open the new project.",
-          }),
-        );
         setOpen(false);
-        return;
+      } finally {
+        addProjectCreationInFlightRef.current.delete(creationKey);
       }
-
-      const navigationResult = await settlePromise(() => handleNewThread(projectRef));
-      if (navigationResult._tag === "Failure") {
-        const error = squashAtomCommandFailure(navigationResult);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to add project",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-        return;
-      }
-      setOpen(false);
     },
     [
       handleNewThread,
