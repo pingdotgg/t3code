@@ -52,7 +52,10 @@ const toolVersions = (name, requiredVersion, entry, record) => {
   let runningVersion = null;
   if (record?.entryPath && record?.pid) {
     const command = run('ps', ['-p', String(record.pid), '-o', 'command=']).stdout || '';
-    if (command.includes(record.entryPath)) runningVersion = installedVersions.find(version => record.entryPath === path.join(directory, prefix + version, 'node_modules', name, entry)) ?? null;
+    runningVersion = installedVersions.find(version => {
+      const install = path.join(directory, prefix + version);
+      return record.entryPath === path.join(install, 'node_modules', name, entry) && command.includes(install + path.sep);
+    }) ?? null;
   }
   return { requiredVersion, installedVersions, runningVersion };
 };

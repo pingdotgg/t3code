@@ -83,9 +83,10 @@ const state=process.env.AGENT_DEVICE_STATE_DIR || args[args.indexOf('--state-dir
 const file=path.join(state,'daemon.json');
 if(args[0]==='daemon') { const data=JSON.parse(fs.readFileSync(file,'utf8')); fs.writeFileSync(path.join(state,'stopped-agent'),String(data.pid)); try {process.kill(data.pid,'SIGTERM')} catch {} }
 else if(args[0]==='serve') { const server=http.createServer((req,res)=>{res.statusCode=fs.existsSync(path.join(state,'unhealthy-agent-'+process.pid))?503:200;res.end('ok');}); server.listen(0,'127.0.0.1',()=>{fs.writeFileSync(file,JSON.stringify({httpPort:server.address().port,pid:process.pid,token:'test'}));process.send?.('ready');process.disconnect?.();}); }
-else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:true,stdio:['ignore','ignore','ignore','ipc'],env:process.env});await new Promise((resolve,reject)=>{child.once('message',resolve);child.once('error',reject);});child.unref(); }
+else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1]),'daemon.mjs'),'serve'],{detached:true,stdio:['ignore','ignore','ignore','ipc'],env:process.env});await new Promise((resolve,reject)=>{child.once('message',resolve);child.once('error',reject);});child.unref(); }
 `,
         );
+        await NodeFSP.copyFile(agent, NodePath.join(NodePath.dirname(agent), "daemon.mjs"));
         const nextHubVersion = DEVICE_HUB_VERSION + "-upgrade";
         const nextAgentVersion = AGENT_DEVICE_VERSION + "-upgrade";
         let invocation = 0;
@@ -140,6 +141,9 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
           ]);
           expect(concurrentAgent.hubPort).toBe(first.hubPort);
           expect(concurrentAgent.daemonPort).toBe(first.daemonPort);
+          const running = await invoke("one", "probe");
+          expect(running.tools.hub.runningVersion).toBe(DEVICE_HUB_VERSION);
+          expect(running.tools.agent.runningVersion).toBe(AGENT_DEVICE_VERSION);
           const second = await invoke("two", "agent-start");
           const reused = await invoke("one", "agent-start");
           expect(reused.hubPort).toBe(first.hubPort);
