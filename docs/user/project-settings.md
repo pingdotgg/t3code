@@ -52,6 +52,23 @@ on each selected environment, and reset returns to the environment's shared list
 For workspace mode, a project's `t3.json` preference applies when the project has no override.
 Browser access changes apply when an agent session next starts.
 
+## APFS worktree copies on macOS
+
+T3 uses APFS copies for regular tracked files in eligible clean, same-commit
+worktrees. The copies share disk blocks until edited; changes remain independent.
+This saves disk space, but verification can make checkout slower than Git. Set
+`"worktreeCloneFiles": false` in `t3.json` to opt out. Unsupported checkouts and
+filesystems use Git as usual.
+
+To seed dependencies too, set `"worktreeCloneDependencies": true` in `t3.json` and
+keep a `runOnWorktreeCreate` script that installs dependencies. T3 copies ignored
+`node_modules` directories when the source and new worktree are clean and at the
+same commit, just before running the effective setup action. Worktree creation
+that skips setup does not seed dependencies. Setup still runs to reconcile dependencies and rebuild executable
+shims; path-sensitive caches and non-portable symlinks are not reused. Set the
+option to `false` or remove it to disable dependency copying. This runs on the
+machine hosting the environment, including when you connect remotely.
+
 ## Storage cleanup
 
 Open **Settings → Storage** to enable automatic cleanup on one machine or all connected

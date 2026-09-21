@@ -86,6 +86,18 @@ export const T3ProjectFile = Schema.Struct({
         'Where new threads start for this repository: "worktree" for a fresh git worktree, "local" for the current checkout. A per-project setting in T3 Code overrides this; when neither is set, the global default applies.',
     }),
   ),
+  worktreeCloneFiles: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "Use copy-on-write files in eligible clean, same-commit worktrees on supported filesystems. Saves disk space but verification can be slower than Git checkout. Defaults to true; set false to use ordinary Git checkout.",
+    }),
+  ),
+  worktreeCloneDependencies: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "On macOS, seed ignored node_modules in same-commit worktrees with APFS clones. Requires a runOnWorktreeCreate install script to reconcile dependencies and rebuild executable shims. Defaults to false.",
+    }),
+  ),
   scripts: Schema.optionalKey(
     Schema.Array(T3ProjectFileScript)
       .annotate({
