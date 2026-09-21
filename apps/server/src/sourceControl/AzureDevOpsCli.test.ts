@@ -23,7 +23,7 @@ const mockRun = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
 
 const supportLayer = Layer.mergeAll(
   Layer.mock(VcsProcess.VcsProcess)({
-    run: mockRun,
+    run: (input) => (input.command === "git" ? Effect.succeed(processOutput("")) : mockRun(input)),
   }),
   NodeServices.layer,
 );
@@ -34,6 +34,125 @@ afterEach(() => {
 });
 
 describe("AzureDevOpsCli.layer", () => {
+  it.effect("does not inspect Git for account queries or explicitly scoped commands", () =>
+    Effect.gen(function* () {
+      const calls: Array<Parameters<VcsProcess.VcsProcess["Service"]["run"]>[0]> = [];
+      const scopedLayer = AzureDevOpsCli.layer.pipe(
+        Layer.provide(
+          Layer.mock(VcsProcess.VcsProcess)({
+            run: (input) => {
+              calls.push(input);
+              return Effect.succeed(processOutput("{}"));
+            },
+          }),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+        for (const args of [
+          ["account", "show"],
+          [
+            "repos",
+            "pr",
+            "show",
+            "--detect",
+            "true",
+            "--organization",
+            "https://dev.azure.com/explicit",
+            "--id",
+            "42",
+          ],
+          ["repos", "pr", "show", "--detect", "false", "--id", "42"],
+        ]) {
+          yield* az.execute({ cwd: "/repo", args });
+          expect(calls.at(-1)?.args).toEqual(args);
+        }
+      }).pipe(Effect.provide(scopedLayer));
+      expect(calls).toHaveLength(3);
+      expect(calls.every((call) => call.command === "az")).toBe(true);
+    }),
+  );
+
+  it.effect(
+    "uses server-side Git scope for PR detail, listing, and REST reads across checkouts",
+    () =>
+      Effect.gen(function* () {
+        const calls: Array<Parameters<VcsProcess.VcsProcess["Service"]["run"]>[0]> = [];
+        const scopedLayer = AzureDevOpsCli.layer.pipe(
+          Layer.provide(
+            Layer.mock(VcsProcess.VcsProcess)({
+              run: (input) => {
+                calls.push(input);
+                if (input.command === "git")
+                  return Effect.succeed(
+                    processOutput(
+                      `remote.origin.url https://${input.cwd === "/one" ? "acme" : "other"}.visualstudio.com/DefaultCollection/Project/_git/Repo\n`,
+                    ),
+                  );
+                // Simulate the Windows CLI: local repository detection never works.
+                if (input.args?.includes("true"))
+                  return Effect.fail(
+                    new VcsProcessExitError({
+                      operation: "test",
+                      command: "az",
+                      cwd: input.cwd ?? "/one",
+                      exitCode: 1,
+                      detail: "--organization must be specified",
+                    }),
+                  );
+                return Effect.succeed(processOutput("[]"));
+              },
+            }),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+          for (const [cwd, command] of [
+            ["/one", ["repos", "pr", "show", "--id", "42"]],
+            ["/two", ["repos", "pr", "list"]],
+            ["/one", ["devops", "invoke", "--area", "git"]],
+          ] as const) {
+            yield* az.execute({ cwd, args: [...command, "--detect", "true"] });
+          }
+        }).pipe(Effect.provide(scopedLayer));
+        const commands = calls.filter((call) => call.command === "az");
+        expect(commands[0]?.args).toEqual([
+          "repos",
+          "pr",
+          "show",
+          "--id",
+          "42",
+          "--detect",
+          "false",
+          "--organization",
+          "https://dev.azure.com/acme",
+        ]);
+        expect(commands[1]?.args).toEqual([
+          "repos",
+          "pr",
+          "list",
+          "--detect",
+          "false",
+          "--organization",
+          "https://dev.azure.com/other",
+          "--project",
+          "Project",
+          "--repository",
+          "Repo",
+        ]);
+        expect(commands[2]?.args).toEqual([
+          "devops",
+          "invoke",
+          "--area",
+          "git",
+          "--detect",
+          "false",
+          "--organization",
+          "https://dev.azure.com/acme",
+        ]);
+      }),
+  );
+
   it.effect("parses pull request view output", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(

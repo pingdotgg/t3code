@@ -18,6 +18,7 @@ import {
   type NormalizedAzureDevOpsPullRequestRecord,
 } from "./azureDevOpsPullRequests.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
+import { azureDevOpsScopeFromConfig, scopeAzureDevOpsArgs } from "./azureDevOpsScope.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -354,29 +355,62 @@ function decodeAzureDevOpsJson<S extends Schema.Top>(
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
 
-  const execute: AzureDevOpsCli["Service"]["execute"] = (input) =>
-    process
-      .run({
-        operation: "AzureDevOpsCli.execute",
-        command: "az",
-        args: input.args,
-        cwd: input.cwd,
-        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
-      })
-      .pipe(
-        Effect.mapError((error) =>
-          AzureDevOpsCommandFailedError.fromVcsError(
-            {
-              operation: "execute",
-              command: "az",
-              cwd: input.cwd,
-              argumentCount: input.args.length,
-            },
-            error,
+  const execute: AzureDevOpsCli["Service"]["execute"] = Effect.fn("AzureDevOpsCli.execute")(
+    function* (input) {
+      let args = input.args;
+      if (
+        args.includes("--detect") &&
+        args[args.indexOf("--detect") + 1] === "true" &&
+        !args.includes("--organization") &&
+        !args.includes("--org")
+      ) {
+        // In WSL, az may be a Windows executable and cannot inspect the Linux checkout.
+        // Read its remotes with the server's Git, including worktree-specific configuration.
+        const config = yield* process
+          .run({
+            operation: "AzureDevOpsCli.resolveScope",
+            command: "git",
+            args: ["config", "--get-regexp", "^remote\\..*\\.url$"],
+            cwd: input.cwd,
+            timeoutMs: DEFAULT_TIMEOUT_MS,
+            allowNonZeroExit: true,
+          })
+          .pipe(Effect.orElseSucceed(() => null));
+        const scope =
+          config && config.exitCode === 0 && !config.stdoutTruncated
+            ? azureDevOpsScopeFromConfig(
+                config.stdout,
+                args.includes("--remote-name")
+                  ? args[args.indexOf("--remote-name") + 1]
+                  : undefined,
+              )
+            : null;
+        if (scope) args = scopeAzureDevOpsArgs(args, scope);
+      }
+      return yield* process
+        .run({
+          operation: "AzureDevOpsCli.execute",
+          command: "az",
+          args,
+          cwd: input.cwd,
+          timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            AzureDevOpsCommandFailedError.fromVcsError(
+              {
+                operation: "execute",
+                command: "az",
+                cwd: input.cwd,
+                argumentCount: input.args.length,
+              },
+              error,
+            ),
           ),
-        ),
-      );
+        );
+    },
+  );
 
   const executeJson = (input: Parameters<AzureDevOpsCli["Service"]["execute"]>[0]) =>
     execute({
