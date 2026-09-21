@@ -411,17 +411,6 @@ it.effect.each(["shutdown", "close"] as const)(
         run: () => Effect.succeed({ code: 0, stdout: "", stderr: "" }),
       };
       const host: DeviceHost.DeviceHost["Service"] = {
-        ...(inspectError
-          ? {
-              inspect: Effect.fail(
-                new DeviceHost.DeviceHostError({
-                  hostId: LOCAL_DEVICE_HOST_ID,
-                  step: "probe",
-                  cause: new Error("offline"),
-                }),
-              ),
-            }
-          : {}),
         id: LOCAL_DEVICE_HOST_ID,
         summary: Effect.succeed({
           id: LOCAL_DEVICE_HOST_ID,
