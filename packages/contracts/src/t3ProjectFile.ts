@@ -118,6 +118,7 @@ export type T3ProjectFile = typeof T3ProjectFile.Type;
  */
 export const PROJECT_FILE_BACKED_SETTINGS = {
   defaultThreadEnvMode: { field: "defaultThreadEnvMode", builtIn: "local" },
+  worktreeSubmodules: { field: "worktreeSubmodules", builtIn: "recursive" },
 } as const satisfies {
   readonly [K in ProjectScopedServerSettingKey]?: {
     readonly field: {

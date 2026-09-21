@@ -32,7 +32,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
-import { resolveProjectFileDefault } from "@t3tools/shared/projectFileDefaults";
+import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import {
@@ -3102,34 +3102,30 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       .exists(path.join(worktreePath, ".gitmodules"))
       .pipe(Effect.orElseSucceed(() => false));
     const submoduleMode = !hasSubmodules
-      ? "none"
-      : resolveProjectFileDefault({
-          setting: options?.submodules,
-          builtIn: "recursive",
-          projectFile:
-            options?.submodules != null
-              ? null
-              : yield* fileSystem
-                  .readFileString(path.join(worktreePath, T3_PROJECT_FILE_NAME))
-                  .pipe(
-                    Effect.flatMap((contents) => {
-                      const file = parseT3ProjectFile(contents);
-                      return file === null
-                        ? Effect.logWarning(
-                            "t3.json is invalid; initializing submodules recursively",
-                            { worktreePath },
-                          ).pipe(Effect.as(null))
-                        : Effect.succeed(file.worktreeSubmodules ?? null);
-                    }),
-                    Effect.orElseSucceed(() => null),
-                  ),
-        });
-    if (hasSubmodules && submoduleMode === "none" && progress?.onSubmodulesDisabled) {
+      ? { value: "none" as const, source: "environment" as const }
+      : resolveProjectFileBackedSetting(
+          "worktreeSubmodules",
+          options?.submodules ?? null,
+          options?.submodules != null
+            ? null
+            : yield* fileSystem.readFileString(path.join(worktreePath, T3_PROJECT_FILE_NAME)).pipe(
+                Effect.flatMap((contents) => {
+                  const file = parseT3ProjectFile(contents);
+                  return file === null
+                    ? Effect.logWarning("t3.json is invalid; initializing submodules recursively", {
+                        worktreePath,
+                      }).pipe(Effect.as(null))
+                    : Effect.succeed(file);
+                }),
+                Effect.orElseSucceed(() => null),
+              ),
+        );
+    if (hasSubmodules && submoduleMode.value === "none" && progress?.onSubmodulesDisabled) {
       yield* progress.onSubmodulesDisabled({
-        source: options?.submodules != null ? "settings" : "t3.json",
+        source: submoduleMode.source === "t3.json" ? "t3.json" : "settings",
       });
     }
-    if (submoduleMode !== "none") {
+    if (submoduleMode.value !== "none") {
       if (progress?.onSubmodulesStarted) {
         yield* progress.onSubmodulesStarted();
       }
@@ -3137,7 +3133,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* runGit(
         "GitVcsDriver.createWorktree.updateSubmodules",
         worktreePath,
-        submoduleMode === "recursive"
+        submoduleMode.value === "recursive"
           ? ["submodule", "update", "--init", "--recursive"]
           : ["submodule", "update", "--init"],
         onSubmoduleLine
