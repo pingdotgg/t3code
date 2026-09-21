@@ -1,6 +1,7 @@
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import { xAiRateLimitedErrorCode } from "../../provider/acp/XAiAcpExtension.ts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
   defaultInstanceIdForDriver,
   GrokSettings,
@@ -10,6 +11,7 @@ import {
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
@@ -104,6 +106,7 @@ export interface GrokAdapterV2Options {
   readonly hostPlatform: NodeJS.Platform;
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly crypto: Crypto.Crypto;
+  readonly selfInvocation: SelfInvocation;
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocatorV2["Service"];
   readonly serverConfig: ServerConfig["Service"];
@@ -299,6 +302,7 @@ export function makeGrokAdapterV2(options: GrokAdapterV2Options) {
     fileSystem: options.fileSystem,
     idAllocator: options.idAllocator,
     serverConfig: options.serverConfig,
+    selfInvocation: options.selfInvocation,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
     ...(options.continuationRequests === undefined
       ? {}
@@ -311,6 +315,7 @@ export type GrokAdapterV2DriverEnv =
   | Crypto.Crypto
   | FileSystem.FileSystem
   | IdAllocatorV2
+  | Path.Path
   | ProviderEventLoggers
   | ServerConfig;
 
@@ -322,6 +327,7 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
     function* (input: ProviderAdapterDriverCreateInput<GrokSettings>) {
       const hostEnvironment = yield* HostProcessEnvironment;
       const hostPlatform = yield* HostProcessPlatform;
+      const selfInvocation = yield* resolveSelfInvocation();
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const crypto = yield* Crypto.Crypto;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -340,6 +346,7 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
         fileSystem,
         idAllocator,
         serverConfig,
+        selfInvocation,
         continuationRequests,
         nativeLogging: (threadId) =>
           makeNativeLogger({
@@ -367,6 +374,7 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
 const layer: Layer.Layer<
   ProviderAdapterV2,
   never,
+  | Path.Path
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
@@ -378,6 +386,7 @@ const layer: Layer.Layer<
   Effect.gen(function* () {
     const hostEnvironment = yield* HostProcessEnvironment;
     const hostPlatform = yield* HostProcessPlatform;
+    const selfInvocation = yield* resolveSelfInvocation();
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const crypto = yield* Crypto.Crypto;
     const fileSystem = yield* FileSystem.FileSystem;
@@ -396,6 +405,7 @@ const layer: Layer.Layer<
       fileSystem,
       idAllocator,
       serverConfig,
+      selfInvocation,
       continuationRequests,
       nativeLogging: (threadId) =>
         makeNativeLogger({

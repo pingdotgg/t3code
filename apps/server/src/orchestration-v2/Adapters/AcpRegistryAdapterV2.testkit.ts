@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AcpRegistrySettings } from "@t3tools/contracts";
+import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
@@ -66,6 +67,7 @@ function makeAcpRegistryProviderAdapterRegistryReplayLayer(transcript: AcpReplay
           resolve: () => Effect.die("ACP registry resolver must not run during replay"),
         },
         serverConfig,
+        selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: makeAcpReplayRuntime({
           transcript,
           statusPath,

@@ -8,6 +8,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 
 import { ServerConfig } from "../../config.ts";
 import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
@@ -59,6 +60,7 @@ function makeGrokProviderAdapterRegistryReplayLayer(transcript: AcpReplayTranscr
         fileSystem,
         idAllocator,
         serverConfig,
+        selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: makeAcpReplayRuntime({
           transcript,
           statusPath,
