@@ -240,9 +240,16 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     const daemon = running?.agentDevice
       ? yield* readDaemonFile().pipe(Effect.option)
       : Option.none();
+    const hubAlive = running
+      ? yield* running.hub.child.isRunning.pipe(Effect.orElseSucceed(() => false))
+      : false;
+    const agentAlive =
+      Option.isSome(daemon) && daemon.value.pid ? yield* isProcessAlive(daemon.value.pid) : false;
     const tools = yield* deviceToolVersions(config.baseDir, {
-      ...(running ? { hub: DEVICE_HUB_VERSION } : {}),
-      ...(Option.isSome(daemon) && daemon.value.version ? { agent: daemon.value.version } : {}),
+      ...(hubAlive ? { hub: DEVICE_HUB_VERSION } : {}),
+      ...(agentAlive && Option.isSome(daemon) && daemon.value.version
+        ? { agent: daemon.value.version }
+        : {}),
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),

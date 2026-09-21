@@ -43,12 +43,14 @@ const toolVersions = (name, requiredVersion, entry, record) => {
   const directory = path.join(root, 'tools');
   const prefix = name + '@';
   let names = [];
-  try { names = fs.readdirSync(directory); } catch {}
+  try { names = fs.readdirSync(directory); } catch (error) { if (error.code !== 'ENOENT') return null; }
+  let unreadable = false;
   const installedVersions = names.filter(name => name.startsWith(prefix)).map(name => name.slice(prefix.length)).filter(version => {
     if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$/.test(version)) return false;
     const dir = path.join(directory, prefix + version);
-    try { return fs.readFileSync(path.join(dir, '.install-complete'), 'utf8').trim() === version && fs.existsSync(path.join(dir, 'node_modules', name, entry)); } catch { return false; }
+    try { return fs.readFileSync(path.join(dir, '.install-complete'), 'utf8').trim() === version && fs.existsSync(path.join(dir, 'node_modules', name, entry)); } catch (error) { if (error.code !== 'ENOENT') unreadable = true; return false; }
   }).sort();
+  if (unreadable) return null;
   let runningVersion = null;
   if (record?.entryPath && record?.pid) {
     const command = run('ps', ['-p', String(record.pid), '-o', 'command=']).stdout || '';
@@ -59,10 +61,13 @@ const toolVersions = (name, requiredVersion, entry, record) => {
   }
   return { requiredVersion, installedVersions, runningVersion };
 };
-const versions = () => ({
+const versions = () => {
+  const result = {
   hub: toolVersions('expo-device-hub', hubVersion, 'dist/server/cli.mjs', read(path.join(state, 'hub.json'))),
   agent: toolVersions('agent-device', agentVersion, 'bin/agent-device.mjs', { ...read(path.join(state, 'agent.json')), ...read(path.join(state, 'daemon.json')) }),
-});
+  };
+  return result.hub && result.agent ? result : undefined;
+};
 const stopHub = hub => {
   if (!hub || hub.owner !== owner) return;
   const command = run('ps', ['-p', String(hub.pid), '-o', 'command=']).stdout || '';

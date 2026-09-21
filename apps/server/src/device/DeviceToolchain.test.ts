@@ -1,3 +1,4 @@
+import * as PlatformError from "effect/PlatformError";
 import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -64,12 +65,35 @@ it.effect("inventory reports only completed versions without installing the requ
       yield* fs.writeFileString(path.join(dir, ".install-complete"), sentinel!);
     }
     const tools = yield* deviceToolVersions(base);
-    expect(tools.hub).toEqual({
+    expect(tools?.hub).toEqual({
       requiredVersion: DEVICE_HUB_VERSION,
       installedVersions: ["0.9.0"],
       runningVersion: null,
     });
-    expect(tools.agent.installedVersions).toEqual([]);
+    expect(tools?.agent.installedVersions).toEqual([]);
     expect(yield* isDeviceHubInstalled(base)).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("unreadable inventory stays unknown instead of reporting no installs", () =>
+  Effect.gen(function* () {
+    const tools = yield* deviceToolVersions("/unreadable");
+    expect(tools).toBeUndefined();
+  }).pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        readDirectory: () =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "FileSystem",
+              method: "readDirectory",
+              description: "denied",
+            }),
+          ),
+      }),
+    ),
+    Effect.provide(NodeServices.layer),
+  ),
 );

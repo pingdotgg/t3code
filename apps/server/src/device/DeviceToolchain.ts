@@ -232,10 +232,24 @@ export const deviceToolVersions = Effect.fn("DeviceToolchain.versions")(function
   const path = yield* Path.Path;
   const inspect = Effect.fn("DeviceToolchain.inspect")(function* (spec: ToolSpec) {
     const directory = path.join(baseDir, "tools", spec.name);
-    const names = yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
+    const names = yield* fs.readDirectory(directory).pipe(
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.succeed([]),
+      ),
+    );
     const versions = yield* Effect.filter(names, (version) =>
       /^[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$/.test(version)
-        ? isInstalled(fs, toolPaths(path, baseDir, { ...spec, version }), version)
+        ? Effect.gen(function* () {
+            const paths = toolPaths(path, baseDir, { ...spec, version });
+            const sentinel = yield* fs.readFileString(paths.sentinelPath).pipe(
+              Effect.catchIf(
+                (error) => error.reason._tag === "NotFound",
+                () => Effect.succeed(null),
+              ),
+            );
+            return sentinel?.trim() === version && (yield* fs.exists(paths.entryPath));
+          })
         : Effect.succeed(false),
     );
     return {
@@ -244,8 +258,10 @@ export const deviceToolVersions = Effect.fn("DeviceToolchain.versions")(function
       runningVersion: (spec.name === DEVICE_HUB_PACKAGE ? running.hub : running.agent) ?? null,
     };
   });
-  return {
-    hub: yield* inspect(HUB_SPEC),
-    agent: yield* inspect(AGENT_DEVICE_SPEC),
-  } satisfies DeviceToolVersions;
+  return yield* Effect.gen(function* () {
+    return {
+      hub: yield* inspect(HUB_SPEC),
+      agent: yield* inspect(AGENT_DEVICE_SPEC),
+    } satisfies DeviceToolVersions;
+  }).pipe(Effect.orElseSucceed(() => undefined));
 });
