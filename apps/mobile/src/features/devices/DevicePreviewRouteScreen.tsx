@@ -74,6 +74,7 @@ function DevicePreviewScreen({
   const [inputConnected, setInputConnected] = useState(false);
   const [streamAttempt, setStreamAttempt] = useState(0);
   const [shuttingDown, setShuttingDown] = useState(false);
+  const retryHost = useAtomCommand(deviceEnvironment.list);
   const shutdown = useAtomCommand(deviceEnvironment.shutdown, { reportFailure: false });
   const streamRef = useRef<DeviceStreamRef>(null);
   const state = useEnvironmentQuery(deviceEnvironment.state({ environmentId, input: {} }));
@@ -117,6 +118,16 @@ function DevicePreviewScreen({
   };
 
   const controls: ScreenHeaderMenuItem[] = [
+    ...(state.data?.hosts
+      .filter((host) => state.data?.hostStatuses[host.id]?.status === "failed")
+      .map((host) => ({
+        id: `retry-${host.id}`,
+        title: `Retry ${host.label}`,
+        icon: "arrow.clockwise" as const,
+        onPress: () => {
+          void retryHost({ environmentId, input: { retryHostId: host.id } });
+        },
+      })) ?? []),
     {
       id: "device-tools",
       title: "Device tool versions",
@@ -126,7 +137,9 @@ function DevicePreviewScreen({
           "Device tool versions",
           deviceToolVersionLabels(
             state.data?.hosts.find((host) => host.id === preview?.session.hostId)?.tools,
-          ).join("\n"),
+          ).join("\n") +
+            "\n" +
+            (state.data?.hostStatuses[preview?.session.hostId ?? ""]?.detail ?? ""),
         ),
     },
     {

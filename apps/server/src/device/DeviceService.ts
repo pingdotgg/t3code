@@ -126,6 +126,7 @@ export class DeviceService extends Context.Service<
     ) => Effect.Effect<DeviceServiceState, DeviceError>;
     /** Refreshes devices only after device support has been enabled. */
     readonly list: Effect.Effect<DeviceServiceState, DeviceError>;
+    readonly retryHost: (hostId: DeviceHostId) => Effect.Effect<DeviceServiceState, DeviceError>;
     readonly open: (input: DeviceOpenInput) => Effect.Effect<DeviceSession, DeviceError>;
     readonly close: (input: DeviceCloseInput) => Effect.Effect<void, DeviceError>;
     readonly shutdown: (input: DeviceShutdownInput) => Effect.Effect<void, DeviceError>;
@@ -257,7 +258,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         });
       }
       const ready = yield* host
-        .ensureReady((status) => setHostStatus(host.id, { status }).pipe(Effect.asVoid))
+        .ensureReady((status, detail) =>
+          setHostStatus(host.id, { status, detail }).pipe(Effect.asVoid),
+        )
         .pipe(
           Effect.tapError((error) =>
             setHostStatus(host.id, { status: "failed", detail: error.message }),
@@ -308,7 +311,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       if (summary.kind === "local" && !summary.platforms.some((platform) => platform.available))
         return null;
       const ready = yield* host
-        .ensureAgentReady((phase) => setHostStatus(host.id, { status: phase }).pipe(Effect.asVoid))
+        .ensureAgentReady((phase, detail) =>
+          setHostStatus(host.id, { status: phase, detail }).pipe(Effect.asVoid),
+        )
         .pipe(
           Effect.tapError((error) =>
             setHostStatus(host.id, { status: "failed", detail: error.message }),
@@ -451,6 +456,21 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     );
     return (yield* SynchronizedRef.get(stateRef)).state;
   }).pipe(Effect.withSpan("DeviceService.list"));
+
+  const retryHost: DeviceService["Service"]["retryHost"] = Effect.fn("DeviceService.retryHost")(
+    function* (hostId) {
+      yield* resolveHost(hostId);
+      if (!(yield* readDeviceSettings).enabled) return (yield* SynchronizedRef.get(stateRef)).state;
+      yield* Effect.gen(function* () {
+        const ready =
+          (yield* agentReadinessIfSupported(hostId)) ?? (yield* readinessIfSupported(hostId));
+        if (ready) yield* refresh(ready);
+      }).pipe(
+        Effect.catch((error) => setHostStatus(hostId, { status: "failed", detail: error.message })),
+      );
+      return (yield* SynchronizedRef.get(stateRef)).state;
+    },
+  );
 
   const configure: DeviceService["Service"]["configure"] = Effect.fn("DeviceService.configure")(
     function* (input) {
@@ -832,6 +852,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   return {
     ...DeviceService.of({
       testHost,
+      retryHost,
       agentCli: Effect.fail(
         new DeviceHostUnavailableError({
           hostId: LOCAL_DEVICE_HOST_ID,

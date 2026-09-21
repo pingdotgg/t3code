@@ -150,7 +150,10 @@ export const DeviceServiceState = Schema.Struct({
 });
 export type DeviceServiceState = typeof DeviceServiceState.Type;
 
-export const DeviceListInput = Schema.Struct({});
+export const DeviceListInput = Schema.Struct({
+  /** Retry this host only, including agent tools if access was already granted. */
+  retryHostId: Schema.optional(DeviceHostId),
+});
 export type DeviceListInput = typeof DeviceListInput.Type;
 
 export const DeviceConfigureInput = Schema.Struct({
@@ -560,3 +563,13 @@ export const DeviceToolError = Schema.Union([
   DeviceActionUnavailableError,
 ]);
 export type DeviceToolError = typeof DeviceToolError.Type;
+
+export function deviceToolInstallMessage(name: string, tool: DeviceToolVersion | undefined) {
+  if (!tool) return `Installing ${name}…`;
+  const previous =
+    tool.runningVersion ??
+    tool.installedVersions.toSorted((a, b) => a.localeCompare(b, "en", { numeric: true })).at(-1);
+  return previous && !tool.installedVersions.includes(tool.requiredVersion)
+    ? `Updating ${name} from ${previous} to ${tool.requiredVersion}…`
+    : `Installing ${name} ${tool.requiredVersion}…`;
+}

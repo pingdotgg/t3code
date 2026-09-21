@@ -3453,10 +3453,14 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.deviceTestHost, deviceService.testHost(input), {
             "rpc.aggregate": "device",
           }),
-        [WS_METHODS.deviceList]: (_input) =>
-          observeRpcEffect(WS_METHODS.deviceList, deviceService.list, {
-            "rpc.aggregate": "device",
-          }),
+        [WS_METHODS.deviceList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.deviceList,
+            input.retryHostId ? deviceService.retryHost(input.retryHostId) : deviceService.list,
+            {
+              "rpc.aggregate": "device",
+            },
+          ),
         [WS_METHODS.deviceOpen]: (input) =>
           observeRpcEffect(WS_METHODS.deviceOpen, deviceService.open(input), {
             "rpc.aggregate": "device",

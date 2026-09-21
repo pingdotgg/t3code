@@ -3,6 +3,7 @@ import {
   type DeviceHostSummary,
   DevicePlatformAvailability,
   DeviceToolVersions,
+  deviceToolInstallMessage,
   type SshDeviceHostConfig,
 } from "@t3tools/contracts";
 import { runSshCommand, baseSshArgs, resolveSshCommand } from "@t3tools/ssh/command";
@@ -371,7 +372,12 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
         stopped = false;
         if (ready) return ready;
         summary = yield* provide(probe(config));
-        yield* onPhase("installing");
+        yield* onPhase(
+          summary.hubInstalled ? "starting" : "installing",
+          summary.hubInstalled
+            ? undefined
+            : deviceToolInstallMessage("device hub", summary.tools?.hub),
+        );
         return yield* connect().pipe(
           Effect.tapError(() =>
             connectionScope ? Scope.close(connectionScope, Exit.void) : Effect.void,
@@ -421,7 +427,15 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
     current: Effect.sync(() => ready),
     ensureReady,
     ensureAgentReady: (onPhase) =>
-      onPhase("installing").pipe(
+      ensureReady(onPhase).pipe(
+        Effect.flatMap(() =>
+          onPhase(
+            summary.agentDeviceInstalled ? "starting" : "installing",
+            summary.agentDeviceInstalled
+              ? undefined
+              : deviceToolInstallMessage("agent tools", summary.tools?.agent),
+          ),
+        ),
         Effect.flatMap(() => changeAgent(true)),
         Effect.flatMap((value) =>
           value?.agentDevice
