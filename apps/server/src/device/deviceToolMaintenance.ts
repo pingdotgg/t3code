@@ -113,12 +113,12 @@ class DeviceToolMaintenanceError extends Schema.TaggedError<DeviceToolMaintenanc
   {
     operation: Schema.Literals(["claim", "prune"]),
     tool: Schema.Literals(["hub", "agent"]),
-    exitCode: Schema.Int,
+    exitCode: Schema.NullOr(Schema.Int),
     cause: Schema.Defect(),
   },
 ) {
   override get message() {
-    return `Device tool ${this.operation} failed for ${this.tool} (exit code ${this.exitCode}).`;
+    return `Device tool ${this.operation} failed for ${this.tool} (exit code ${this.exitCode ?? "unknown"}).`;
   }
 }
 
