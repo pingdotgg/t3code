@@ -39,7 +39,10 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
-import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
+import {
+  buildCodexDeveloperInstructions,
+  type T3CodeToolAvailability,
+} from "../CodexDeveloperInstructions.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
 
 const PROVIDER = ProviderDriverKind.make("codex");
@@ -64,6 +67,16 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
 
 export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | undefined): boolean {
   return appServerArgs?.some((argument) => argument.includes("mcp_servers.")) === true;
+}
+
+function configuredMcpToolAvailability(
+  appServerArgs: ReadonlyArray<string> | undefined,
+  mcpCapabilities: ReadonlySet<string> | undefined,
+): T3CodeToolAvailability {
+  if (!hasConfiguredMcpServer(appServerArgs)) return { browser: false, device: false };
+  // Callers predating the capability set attached the browser toolkit only.
+  if (mcpCapabilities === undefined) return { browser: true, device: false };
+  return { browser: mcpCapabilities.has("preview"), device: mcpCapabilities.has("device") };
 }
 
 export const CodexResumeCursorSchema = Schema.Struct({
@@ -166,20 +179,15 @@ export interface CodexSessionRuntimeOptions {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
-  /**
-   * Whether the attached `t3-code` MCP server exposes the preview tools. The
-   * server is attached for every session now (the pull request toolkit is
-   * always on), so its presence in `appServerArgs` no longer implies browser
-   * access; the credential's own capability decides the developer prompt.
-   */
-  readonly browserToolsAvailable?: boolean;
+  /** Capabilities the session's `t3-code` MCP credential grants; drives the prompt blocks. */
+  readonly mcpCapabilities?: ReadonlySet<string>;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
   readonly input?: string;
   readonly attachments?: ReadonlyArray<{
-    readonly type: "image";
-    readonly url: string;
+    readonly type: "localImage";
+    readonly path: string;
   }>;
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
@@ -576,7 +584,7 @@ function buildCodexCollaborationMode(input: {
   readonly interactionMode?: ProviderInteractionMode;
   readonly model?: string;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
-  readonly browserToolsAvailable?: boolean;
+  readonly browserToolsAvailable?: boolean | T3CodeToolAvailability;
 }): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
   if (input.interactionMode === undefined) {
     return undefined;
@@ -597,20 +605,24 @@ function buildCodexCollaborationMode(input: {
   };
 }
 
+// Match the skill grammar used by Claude/Cursor, leaving currency amounts as prose.
+const SKILL_MENTION_PATTERN =
+  /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
+
 export function buildTurnStartParams(input: {
   readonly threadId: string;
   readonly runtimeMode: RuntimeMode;
   readonly prompt?: string;
   readonly attachments?: ReadonlyArray<{
-    readonly type: "image";
-    readonly url: string;
+    readonly type: "localImage";
+    readonly path: string;
   }>;
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly interactionMode?: ProviderInteractionMode;
   /** Defaults to true so callers that predate the agent-access gate are unchanged. */
-  readonly browserToolsAvailable?: boolean;
+  readonly browserToolsAvailable?: boolean | T3CodeToolAvailability;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
@@ -619,7 +631,7 @@ export function buildTurnStartParams(input: {
   if (input.prompt) {
     turnInput.push({
       type: "text",
-      text: input.prompt,
+      text: input.prompt.replace(SKILL_MENTION_PATTERN, "$1$$$2"),
     });
   }
   for (const attachment of input.attachments ?? []) {
@@ -1183,6 +1195,97 @@ function parseThreadSnapshot(
     })),
   };
 }
+
+const CodexThreadHistoryMetadata = Schema.Struct({
+  thread: Schema.Struct({
+    historyMode: Schema.optionalKey(Schema.Literals(["legacy", "paginated"])),
+  }),
+});
+const CodexTurnsPage = Schema.Struct({
+  data: Schema.Array(EffectCodexSchema.V2ThreadReadResponse__Turn),
+  nextCursor: Schema.NullOr(Schema.String),
+});
+const decodeCodexHistoryMetadata = Schema.decodeUnknownEffect(CodexThreadHistoryMetadata);
+const decodeCodexTurnsPage = Schema.decodeUnknownEffect(CodexTurnsPage);
+type CodexHistoryClient = {
+  readonly raw: Pick<CodexClient.CodexAppServerClient["Service"]["raw"], "request">;
+  readonly request: CodexClient.CodexAppServerClient["Service"]["request"];
+};
+
+const readCodexHistoryMode = Effect.fn("readCodexHistoryMode")(function* (
+  client: CodexHistoryClient,
+  threadId: string,
+) {
+  const response = yield* client.raw.request("thread/read", { threadId, includeTurns: false });
+  const metadata = yield* decodeCodexHistoryMetadata(response).pipe(
+    Effect.mapError((error) =>
+      CodexErrors.CodexAppServerRequestError.invalidPayload("thread/read", "decode-payload", error),
+    ),
+  );
+  return metadata.thread.historyMode;
+});
+
+export const readCodexThread = Effect.fn("readCodexThread")(function* (
+  client: CodexHistoryClient,
+  threadId: string,
+): Effect.fn.Return<CodexThreadSnapshot, CodexErrors.CodexAppServerError> {
+  if ((yield* readCodexHistoryMode(client, threadId)) !== "paginated") {
+    return parseThreadSnapshot(
+      yield* client.request("thread/read", { threadId, includeTurns: true }),
+    );
+  }
+  const turns: Array<CodexThreadTurnSnapshot> = [];
+  const requestedCursors = new Set<string | null>();
+  let cursor: string | null = null;
+  do {
+    if (requestedCursors.has(cursor)) {
+      return yield* CodexErrors.CodexAppServerRequestError.internalError(
+        "Thread history pagination repeated a cursor.",
+        undefined,
+        { method: "thread/turns/list", operation: "decode-payload" },
+      );
+    }
+    requestedCursors.add(cursor);
+    const response: unknown = yield* client.raw.request("thread/turns/list", {
+      threadId,
+      cursor,
+      limit: 100,
+      sortDirection: "asc",
+      itemsView: "full",
+    });
+    const page = yield* decodeCodexTurnsPage(response).pipe(
+      Effect.mapError((error) =>
+        CodexErrors.CodexAppServerRequestError.invalidPayload(
+          "thread/turns/list",
+          "decode-payload",
+          error,
+        ),
+      ),
+    );
+    turns.push(...page.data.map((turn) => ({ id: TurnId.make(turn.id), items: turn.items })));
+    cursor = page.nextCursor;
+  } while (cursor !== null);
+  return { threadId, turns };
+});
+
+export const rollbackCodexThread = Effect.fn("rollbackCodexThread")(function* (
+  client: CodexHistoryClient,
+  threadId: string,
+  numTurns: number,
+): Effect.fn.Return<CodexThreadSnapshot, CodexErrors.CodexAppServerError> {
+  if ((yield* readCodexHistoryMode(client, threadId)) !== "paginated") {
+    return parseThreadSnapshot(yield* client.request("thread/rollback", { threadId, numTurns }));
+  }
+  // Paginated threads replace history at a turn boundary instead of supporting
+  // the legacy count-based rollback endpoint.
+  const snapshot = yield* readCodexThread(client, threadId);
+  const retainedCount = Math.max(0, snapshot.turns.length - numTurns);
+  const firstRemoved = snapshot.turns[retainedCount];
+  if (firstRemoved) {
+    yield* client.raw.request("thread/revert", { threadId, beforeTurnId: firstRemoved.id });
+  }
+  return { threadId, turns: snapshot.turns.slice(0, retainedCount) };
+});
 
 export const makeCodexSessionRuntime = (
   options: CodexSessionRuntimeOptions,
@@ -2129,6 +2232,69 @@ export const makeCodexSessionRuntime = (
       }),
     );
 
+    yield* client.handleServerRequest("item/permissions/requestApproval", (payload) =>
+      Effect.gen(function* () {
+        const requestId = ApprovalRequestId.make(
+          yield* randomUUIDv4("app-permission-approval-request"),
+        );
+        const turnId = TurnId.make(payload.turnId);
+        const itemId = ProviderItemId.make(payload.itemId);
+        const decision = yield* Deferred.make<ProviderApprovalDecision>();
+
+        yield* Ref.update(pendingApprovalsRef, (current) => {
+          const next = new Map(current);
+          next.set(requestId, {
+            requestId,
+            jsonRpcId: payload.itemId,
+            requestKind: "permission",
+            turnId,
+            itemId,
+            decision,
+          });
+          return next;
+        });
+        yield* Ref.update(approvalCorrelationsRef, (current) => {
+          const next = new Map(current);
+          next.set(payload.itemId, {
+            requestId,
+            requestKind: "permission",
+            turnId,
+            itemId,
+          });
+          return next;
+        });
+
+        yield* emitEvent({
+          kind: "request",
+          threadId: options.threadId,
+          method: "item/permissions/requestApproval",
+          requestId,
+          requestKind: "permission",
+          ...(turnId ? { turnId } : {}),
+          ...(itemId ? { itemId } : {}),
+          payload,
+        });
+
+        const resolved = yield* Deferred.await(decision).pipe(
+          Effect.ensuring(
+            Ref.update(pendingApprovalsRef, (current) => {
+              const next = new Map(current);
+              next.delete(requestId);
+              return next;
+            }),
+          ),
+        );
+        // Approving grants the requested profile; denying answers with an
+        // empty grant so the app-server treats the permission as withheld.
+        const grantedPermissions =
+          resolved === "accept" || resolved === "acceptForSession" ? payload.permissions : {};
+        return {
+          permissions: grantedPermissions,
+          ...(resolved === "acceptForSession" ? { scope: "session" as const } : {}),
+        } satisfies EffectCodexSchema.PermissionsRequestApprovalResponse;
+      }),
+    );
+
     yield* client.handleServerRequest("item/tool/requestUserInput", (payload) =>
       Effect.gen(function* () {
         const requestId = ApprovalRequestId.make(yield* randomUUIDv4("user-input-request"));
@@ -2359,9 +2525,10 @@ export const makeCodexSessionRuntime = (
             // Derived from the session's own credential rather than the
             // setting, so the prompt describes the tools this turn actually
             // has even if the setting changed after the session started.
-            browserToolsAvailable:
-              hasConfiguredMcpServer(options.appServerArgs) &&
-              (options.browserToolsAvailable ?? true),
+            browserToolsAvailable: configuredMcpToolAvailability(
+              options.appServerArgs,
+              options.mcpCapabilities,
+            ),
           });
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
@@ -2395,6 +2562,16 @@ export const makeCodexSessionRuntime = (
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
           const session = yield* Ref.get(sessionRef);
+          // Settle parked approvals FIRST. The transport answers server
+          // requests inline on its stdin read loop, so a pending
+          // command/file/app-permission prompt blocks every incoming message,
+          // including the turn/interrupt response itself - cancelling after
+          // the RPC would deadlock Stop exactly when a card is open. Settling
+          // releases the handler, which answers the peer and unblocks the
+          // loop before the interrupts below are sent.
+          yield* settlePendingApprovals("cancel");
+          // Pending user-input prompts block the same way; settle them too.
+          yield* settlePendingUserInputs({});
           // Stop-everything: children are full threads with their own turns;
           // interrupting only the parent leaves the fleet running. Interrupt
           // each live child turn first, best-effort per child, BOUNDED: the
@@ -2426,24 +2603,17 @@ export const makeCodexSessionRuntime = (
         }),
       readThread: Effect.gen(function* () {
         const providerThreadId = yield* readProviderThreadId;
-        const response = yield* client.request("thread/read", {
-          threadId: providerThreadId,
-          includeTurns: true,
-        });
-        return parseThreadSnapshot(response);
+        return yield* readCodexThread(client, providerThreadId);
       }),
       rollbackThread: (numTurns) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
-          const response = yield* client.request("thread/rollback", {
-            threadId: providerThreadId,
-            numTurns,
-          });
+          const snapshot = yield* rollbackCodexThread(client, providerThreadId, numTurns);
           yield* updateSession(sessionRef, {
             status: "ready",
             activeTurnId: undefined,
           });
-          return parseThreadSnapshot(response);
+          return snapshot;
         }),
       uploadFeedback: (reason) =>
         Effect.gen(function* () {

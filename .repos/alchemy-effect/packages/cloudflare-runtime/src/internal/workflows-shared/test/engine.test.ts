@@ -1,5 +1,6 @@
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
+// Alchemy modifications: uses Array<T> syntax and expects current workerd error serialization, which preserves the message without prefixing the custom class name.
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
@@ -20,7 +21,12 @@ import type {
   RollbackFn,
   WorkflowStepRollbackOptions,
 } from "../lib/rollback.ts";
-import type { WorkflowStep, WorkflowStepConfig } from "cloudflare:workers";
+import type {
+  WorkflowDelayFunction,
+  WorkflowStep,
+  WorkflowStepConfig,
+  WorkflowStepContext,
+} from "cloudflare:workers";
 
 afterEach(async () => {
   await workerdUnsafe.abortAllDurableObjects();
@@ -180,6 +186,166 @@ describe("Engine", () => {
     expect(
       logs.logs.filter((val) => val.event == InstanceEvent.ATTEMPT_FAILURE),
     ).toHaveLength(1);
+  });
+
+  it("applies a dynamic delay function and succeeds after retries", async ({
+    expect,
+  }) => {
+    const instanceId = "DYNAMIC-DELAY-APPLIED";
+    const dynamicDelay: WorkflowDelayFunction = () => 50;
+    let attempts = 0;
+
+    const engineStub = await runWorkflow(instanceId, async (_event, step) => {
+      await step.do(
+        "dynamic-delay-step",
+        {
+          retries: { limit: 3, delay: dynamicDelay, backoff: "constant" },
+        },
+        async () => {
+          attempts++;
+          if (attempts < 2) {
+            throw new Error("transient");
+          }
+          return "ok";
+        },
+      );
+      return "done";
+    });
+
+    await vi.waitUntil(
+      async () => {
+        const logs = (await engineStub.readLogs()) as EngineLogs;
+        return logs.logs.some(
+          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
+        );
+      },
+      { timeout: 5000 },
+    );
+
+    const logs = (await engineStub.readLogs()) as EngineLogs;
+    const attemptFailures = logs.logs.filter(
+      (val) => val.event === InstanceEvent.ATTEMPT_FAILURE,
+    );
+
+    expect(attemptFailures.length).toBeGreaterThanOrEqual(1);
+    expect(attemptFailures[0]?.metadata).toMatchObject({ retryDelayMs: 50 });
+  });
+
+  it("fails non-retryably when the delay function throws", async ({
+    expect,
+  }) => {
+    const instanceId = "DYNAMIC-DELAY-BROKEN";
+    const throwingDelay: WorkflowDelayFunction = () => {
+      throw new Error("delay boom");
+    };
+
+    const engineStub = await runWorkflow(instanceId, async (_event, step) => {
+      await step.do(
+        "broken-delay-step",
+        {
+          retries: { limit: 5, delay: throwingDelay, backoff: "constant" },
+        },
+        async () => {
+          throw new Error("step failed");
+        },
+      );
+      return "done";
+    });
+
+    await vi.waitUntil(
+      async () => {
+        const logs = (await engineStub.readLogs()) as EngineLogs;
+        return logs.logs.some(
+          (val) => val.event === InstanceEvent.WORKFLOW_FAILURE,
+        );
+      },
+      { timeout: 5000 },
+    );
+
+    const logs = (await engineStub.readLogs()) as EngineLogs;
+
+    // The broken delay function turns the retry into a non-retryable failure,
+    // so the step is only attempted once.
+    expect(
+      logs.logs.filter((val) => val.event === InstanceEvent.ATTEMPT_START),
+    ).toHaveLength(1);
+
+    // Current workerd preserves the error message across the RPC boundary
+    // without folding the custom class name into it.
+    const workflowFailure = logs.logs.find(
+      (val) => val.event === InstanceEvent.WORKFLOW_FAILURE,
+    );
+    expect(workflowFailure?.metadata.error.message).toContain("delay function");
+    expect(workflowFailure?.metadata.error.message).toContain("delay boom");
+  });
+
+  it("omits delay from ctx.config for a dynamic delay but includes it for a static delay", async ({
+    expect,
+  }) => {
+    const dynamicDelay: WorkflowDelayFunction = () => 10;
+    let dynamicConfig:
+      | WorkflowStepContext<WorkflowDelayFunction>["config"]
+      | undefined;
+    let staticConfig: WorkflowStepContext<number>["config"] | undefined;
+
+    const dynamicStub = await runWorkflow(
+      "DYNAMIC-DELAY-CTX-HIDDEN",
+      async (_event, step) => {
+        await step.do(
+          "dynamic-config-step",
+          {
+            retries: { limit: 1, delay: dynamicDelay, backoff: "constant" },
+          },
+          async (ctx) => {
+            dynamicConfig = ctx.config;
+            return "ok";
+          },
+        );
+        return "done";
+      },
+    );
+
+    await vi.waitUntil(
+      async () => {
+        const logs = (await dynamicStub.readLogs()) as EngineLogs;
+        return logs.logs.some(
+          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
+        );
+      },
+      { timeout: 5000 },
+    );
+
+    const staticStub = await runWorkflow(
+      "STATIC-DELAY-CTX-VISIBLE",
+      async (_event, step) => {
+        await step.do(
+          "static-config-step",
+          {
+            retries: { limit: 1, delay: 1234, backoff: "constant" },
+          },
+          async (ctx) => {
+            staticConfig = ctx.config;
+            return "ok";
+          },
+        );
+        return "done";
+      },
+    );
+
+    await vi.waitUntil(
+      async () => {
+        const logs = (await staticStub.readLogs()) as EngineLogs;
+        return logs.logs.some(
+          (val) => val.event === InstanceEvent.WORKFLOW_SUCCESS,
+        );
+      },
+      { timeout: 5000 },
+    );
+
+    const dynamicRetries = dynamicConfig?.retries;
+    expect(dynamicRetries).toBeDefined();
+    expect(dynamicRetries && "delay" in dynamicRetries).toBe(false);
+    expect(staticConfig?.retries?.delay).toBe(1234);
   });
 
   it("waitForEvent should receive events while active", async ({ expect }) => {
@@ -1562,7 +1728,7 @@ describe("Rollback", () => {
             ctx.output !== "out" ||
             ctx.ctx.step.name !== "ctx-step" ||
             ctx.ctx.step.count !== 1 ||
-            ctx.stepName !== "ctx-step-1"
+            `${ctx.ctx.step.name}-${ctx.ctx.step.count}` !== "ctx-step-1"
           ) {
             throw new Error("unexpected rollback context");
           }
@@ -1595,7 +1761,7 @@ describe("Rollback", () => {
               ctx.output !== undefined ||
               ctx.ctx.step.name !== "failed-step" ||
               ctx.ctx.step.count !== 1 ||
-              ctx.stepName !== "failed-step-1"
+              `${ctx.ctx.step.name}-${ctx.ctx.step.count}` !== "failed-step-1"
             ) {
               throw new Error("unexpected failed-step rollback context");
             }
@@ -1673,6 +1839,459 @@ describe("Rollback", () => {
       "step-2-1",
     ]);
     expect(countOf(logs, InstanceEvent.ROLLBACK_COMPLETE)).toBe(0);
+  });
+
+  it("runs rollback when terminate requests it", async ({ expect }) => {
+    const instanceId = "RB-TERMINATE";
+    const engineStub = await runWorkflow(instanceId, async (_e, step) => {
+      await doWithRollback(
+        step,
+        "setup-resource",
+        async () => "resource-id",
+        rollbackOptions(),
+      );
+      await step.sleep("wait-forever", "1 hour");
+    });
+
+    await readLogsAfter(engineStub, (currentLogs) =>
+      currentLogs.logs.some(
+        (log) =>
+          log.event === InstanceEvent.STEP_SUCCESS &&
+          log.target === "setup-resource-1",
+      ),
+    );
+
+    try {
+      await runInDurableObject(engineStub, async (engine) => {
+        await engine.changeInstanceStatus("terminate", undefined, {
+          rollback: true,
+        });
+      });
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !error.message.startsWith("Aborting engine:")
+      ) {
+        throw error;
+      }
+    }
+
+    const logs = await readLogsAfter(
+      env.ENGINE.get(env.ENGINE.idFromName(instanceId)),
+      (currentLogs) =>
+        currentLogs.logs.some(
+          (log) => log.event === InstanceEvent.WORKFLOW_TERMINATED,
+        ),
+    );
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual([
+      "setup-resource-1",
+    ]);
+    expect(countOf(logs, InstanceEvent.ROLLBACK_COMPLETE)).toBe(1);
+  });
+
+  it("replays cached steps before terminate rollback when registry is empty", async ({
+    expect,
+  }) => {
+    const instanceId = "RB-TERMINATE-REPLAY";
+    const engineStub = await runWorkflow(instanceId, async (_e, step) => {
+      await doWithRollback(
+        step,
+        "setup-resource",
+        async () => "resource-id",
+        rollbackOptions(),
+      );
+      await step.sleep("wait-forever", "1 hour");
+    });
+
+    await readLogsAfter(engineStub, (currentLogs) =>
+      currentLogs.logs.some(
+        (log) =>
+          log.event === InstanceEvent.STEP_SUCCESS &&
+          log.target === "setup-resource-1",
+      ),
+    );
+
+    await runInDurableObject(engineStub, async (engine) => {
+      engine.rollbackRegistry.clear();
+    });
+
+    try {
+      await runInDurableObject(engineStub, async (engine) => {
+        await engine.changeInstanceStatus("terminate", undefined, {
+          rollback: true,
+        });
+      });
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !error.message.startsWith("Aborting engine:")
+      ) {
+        throw error;
+      }
+    }
+
+    const logs = await readLogsAfter(
+      env.ENGINE.get(env.ENGINE.idFromName(instanceId)),
+      (currentLogs) =>
+        currentLogs.logs.some(
+          (log) => log.event === InstanceEvent.WORKFLOW_TERMINATED,
+        ),
+    );
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual([
+      "setup-resource-1",
+    ]);
+    expect(countOf(logs, InstanceEvent.ROLLBACK_COMPLETE)).toBe(1);
+  });
+
+  it("replays started unfinished steps before terminate rollback when registry is empty", async ({
+    expect,
+  }) => {
+    const instanceId = `RB-TERMINATE-STARTED-REPLAY-${crypto.randomUUID()}`;
+    const engineId = env.ENGINE.idFromName(instanceId);
+    const engineStub = await runWorkflow(instanceId, async (_e, step) => {
+      await doWithRollback(
+        step,
+        "started-setup",
+        async () => {
+          await scheduler.wait(30_000);
+          return "late-resource-id";
+        },
+        rollbackOptions(),
+      );
+    });
+
+    await readLogsAfter(engineStub, (currentLogs) =>
+      currentLogs.logs.some(
+        (log) =>
+          log.event === InstanceEvent.ATTEMPT_START &&
+          log.target === "started-setup-1",
+      ),
+    );
+
+    try {
+      await runInDurableObject(engineStub, async (engine) => {
+        await engine.abort("test restart before step completion");
+      });
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        error.message !== "test restart before step completion"
+      ) {
+        throw error;
+      }
+    }
+
+    const restartedStub = env.ENGINE.get(engineId);
+    await runInDurableObject(restartedStub, async (engine) => {
+      engine.rollbackRegistry.clear();
+    });
+
+    try {
+      await runInDurableObject(restartedStub, async (engine) => {
+        await engine.changeInstanceStatus("terminate", undefined, {
+          rollback: true,
+        });
+      });
+    } catch (error) {
+      if (!isAbortError(error)) {
+        throw error;
+      }
+    }
+
+    let logs: EngineLogs | undefined;
+    await vi.waitUntil(
+      async () => {
+        try {
+          logs = (await env.ENGINE.get(engineId).readLogs()) as EngineLogs;
+          return logs.logs.some(
+            (log) => log.event === InstanceEvent.WORKFLOW_TERMINATED,
+          );
+        } catch (error) {
+          if (isAbortError(error)) {
+            return false;
+          }
+          throw error;
+        }
+      },
+      { timeout: 5000 },
+    );
+    if (logs === undefined) {
+      throw new Error("Expected workflow logs after terminate");
+    }
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual([
+      "started-setup-1",
+    ]);
+    expect(countOf(logs, InstanceEvent.ROLLBACK_COMPLETE)).toBe(1);
+  });
+
+  it("fails terminate rollback when replay cannot rebuild an eligible handler", async ({
+    expect,
+  }) => {
+    const instanceId = `RB-TERMINATE-MISSING-REPLAY-${crypto.randomUUID()}`;
+    const engineId = env.ENGINE.idFromName(instanceId);
+    const engineStub = await runWorkflow(instanceId, async (_e, step) => {
+      await doWithRollback(
+        step,
+        "branchy-setup",
+        async () => "resource-id",
+        rollbackOptions(),
+      );
+      await step.sleep("wait-forever", "1 hour");
+    });
+
+    await readLogsAfter(engineStub, (currentLogs) =>
+      currentLogs.logs.some(
+        (log) =>
+          log.event === InstanceEvent.STEP_SUCCESS &&
+          log.target === "branchy-setup-1",
+      ),
+    );
+
+    try {
+      await runInDurableObject(engineStub, async (engine) => {
+        await engine.abort("test restart before replay branch changes");
+      });
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        error.message !== "test restart before replay branch changes"
+      ) {
+        throw error;
+      }
+    }
+
+    setTestWorkflowCallback(async () => {
+      // Simulate nondeterministic replay control flow that no longer reaches
+      // the persisted eligible step. Production treats this as rollback failure.
+    });
+
+    try {
+      await runInDurableObject(env.ENGINE.get(engineId), async (engine) => {
+        await engine.changeInstanceStatus("terminate", undefined, {
+          rollback: true,
+        });
+      });
+    } catch (error) {
+      if (!isAbortError(error)) {
+        throw error;
+      }
+    }
+
+    const logs = await readLogsAfter(env.ENGINE.get(engineId), (currentLogs) =>
+      currentLogs.logs.some(
+        (log) => log.event === InstanceEvent.WORKFLOW_TERMINATED,
+      ),
+    );
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_FAILURE)).toEqual([
+      "branchy-setup-1",
+    ]);
+    expect(countOf(logs, InstanceEvent.ROLLBACK_FAILED)).toBe(1);
+    expect(countOf(logs, InstanceEvent.ROLLBACK_COMPLETE)).toBe(0);
+  });
+
+  it("replays cached failed steps before terminate rollback when registry is empty", async ({
+    expect,
+  }) => {
+    const instanceId = "RB-TERMINATE-FAILED-REPLAY";
+    const engineStub = await runWorkflow(instanceId, async (_e, step) => {
+      try {
+        await doWithRollback(
+          step,
+          "failed-setup",
+          { retries: { limit: 0, delay: 0, backoff: "constant" } },
+          async () => {
+            throw new Error("step-boom");
+          },
+          rollbackOptions(),
+        );
+      } catch {
+        // Keep the workflow running so terminate rollback can replay the cached
+        // failed step and re-register its rollback handler.
+      }
+      await step.sleep("wait-forever", "1 hour");
+    });
+
+    await readLogsAfter(engineStub, (currentLogs) =>
+      currentLogs.logs.some(
+        (log) =>
+          log.event === InstanceEvent.STEP_FAILURE &&
+          log.target === "failed-setup-1",
+      ),
+    );
+
+    await runInDurableObject(engineStub, async (engine) => {
+      engine.rollbackRegistry.clear();
+    });
+
+    try {
+      await runInDurableObject(engineStub, async (engine) => {
+        await engine.changeInstanceStatus("terminate", undefined, {
+          rollback: true,
+        });
+      });
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !error.message.startsWith("Aborting engine:")
+      ) {
+        throw error;
+      }
+    }
+
+    const logs = await readLogsAfter(
+      env.ENGINE.get(env.ENGINE.idFromName(instanceId)),
+      (currentLogs) =>
+        currentLogs.logs.some(
+          (log) => log.event === InstanceEvent.WORKFLOW_TERMINATED,
+        ),
+    );
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual([
+      "failed-setup-1",
+    ]);
+    expect(countOf(logs, InstanceEvent.ROLLBACK_COMPLETE)).toBe(1);
+  });
+
+  it("omits dynamic delay from rollback ctx.config on cached-error replay", async ({
+    expect,
+  }) => {
+    const dynamicDelay: WorkflowDelayFunction = () => 1000;
+    const instanceId = "RB-TERMINATE-FAILED-REPLAY-DYNAMIC-DELAY";
+    const engineStub = await runWorkflow(instanceId, async (_e, step) => {
+      try {
+        await doWithRollback(
+          step,
+          "failed-setup",
+          { retries: { limit: 0, delay: dynamicDelay, backoff: "constant" } },
+          async () => {
+            throw new Error("step-boom");
+          },
+          rollbackOptions(async (ctx) => {
+            // A dynamic delay must be omitted from the user-facing config,
+            // never surfaced as the internal "[dynamic]" marker string.
+            if ("delay" in ctx.ctx.config.retries) {
+              throw new Error(
+                "dynamic delay marker leaked into rollback ctx.config",
+              );
+            }
+          }),
+        );
+      } catch {
+        // Keep the workflow running so terminate rollback can replay the cached
+        // failed step and re-register its rollback handler.
+      }
+      await step.sleep("wait-forever", "1 hour");
+    });
+
+    await readLogsAfter(engineStub, (currentLogs) =>
+      currentLogs.logs.some(
+        (log) =>
+          log.event === InstanceEvent.STEP_FAILURE &&
+          log.target === "failed-setup-1",
+      ),
+    );
+
+    await runInDurableObject(engineStub, async (engine) => {
+      engine.rollbackRegistry.clear();
+    });
+
+    try {
+      await runInDurableObject(engineStub, async (engine) => {
+        await engine.changeInstanceStatus("terminate", undefined, {
+          rollback: true,
+        });
+      });
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !error.message.startsWith("Aborting engine:")
+      ) {
+        throw error;
+      }
+    }
+
+    const logs = await readLogsAfter(
+      env.ENGINE.get(env.ENGINE.idFromName(instanceId)),
+      (currentLogs) =>
+        currentLogs.logs.some(
+          (log) => log.event === InstanceEvent.WORKFLOW_TERMINATED,
+        ),
+    );
+    // ROLLBACK_STEP_SUCCESS only fires if the rollback fn did not throw, i.e.
+    // the leaked marker was stripped by toEngineStepConfig on the replay path.
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual([
+      "failed-setup-1",
+    ]);
+    expect(countOf(logs, InstanceEvent.ROLLBACK_COMPLETE)).toBe(1);
+  });
+
+  it("runs terminate rollback while paused with an empty registry", async ({
+    expect,
+  }) => {
+    const instanceId = "RB-TERMINATE-PAUSED";
+    const engineId = env.ENGINE.idFromName(instanceId);
+    const engineStub = await runWorkflow(instanceId, async (_e, step) => {
+      await doWithRollback(
+        step,
+        "setup-resource",
+        async () => "resource-id",
+        rollbackOptions(),
+      );
+      await step.sleep("wait-forever", "1 hour");
+    });
+
+    await readLogsAfter(engineStub, (currentLogs) =>
+      currentLogs.logs.some(
+        (log) =>
+          log.event === InstanceEvent.STEP_SUCCESS &&
+          log.target === "setup-resource-1",
+      ),
+    );
+
+    try {
+      await runInDurableObject(engineStub, async (engine) => {
+        await engine.changeInstanceStatus("pause");
+      });
+    } catch (error) {
+      if (!isAbortError(error)) {
+        throw error;
+      }
+    }
+
+    await vi.waitUntil(
+      async () =>
+        runInDurableObject(
+          env.ENGINE.get(engineId),
+          async (engine) =>
+            (await engine.getStatus()) === InstanceStatus.Paused,
+        ),
+      { timeout: 5000 },
+    );
+
+    await runInDurableObject(env.ENGINE.get(engineId), async (engine) => {
+      engine.rollbackRegistry.clear();
+    });
+
+    try {
+      await runInDurableObject(env.ENGINE.get(engineId), async (engine) => {
+        await engine.changeInstanceStatus("terminate", undefined, {
+          rollback: true,
+        });
+      });
+    } catch (error) {
+      if (!isAbortError(error)) {
+        throw error;
+      }
+    }
+
+    const logs = await readLogsAfter(env.ENGINE.get(engineId), (currentLogs) =>
+      currentLogs.logs.some(
+        (log) => log.event === InstanceEvent.WORKFLOW_TERMINATED,
+      ),
+    );
+    expect(targetsOf(logs, InstanceEvent.ROLLBACK_STEP_SUCCESS)).toEqual([
+      "setup-resource-1",
+    ]);
+    expect(countOf(logs, InstanceEvent.ROLLBACK_COMPLETE)).toBe(1);
   });
 
   it("does not run rollback when workflow succeeds", async ({ expect }) => {

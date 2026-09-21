@@ -188,6 +188,7 @@ export const layer = Layer.effect(
 
     const reconcileBody = Effect.gen(function* () {
       const settings = yield* appSettings.get;
+      if (!settings.localEnvironmentEnabled) return;
       const available = yield* wslEnvironment.isAvailable;
       const existing = yield* findExistingWslInstance;
       const existingId = Option.map(existing, (instance) => instance.id);

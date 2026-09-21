@@ -131,7 +131,13 @@ const imageProps = {
           <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7l5 5-5 5M12 17h7"/></svg>
           <h2 class="platform-name">Terminal</h2>
         </div>
-        <code class="cli-line">npx t3@nightly</code>
+        <code class="cli-line cli-line--stable">curl -fsSL https://t3.codes/install.sh | sh</code>
+        <code class="cli-line cli-line--stable">irm https://t3.codes/install.ps1 | iex</code>
+        <code class="cli-line cli-line--nightly">curl -fsSL https://t3.codes/install.sh | T3CODE_CHANNEL=nightly sh</code>
+        <code class="cli-line cli-line--nightly">$env:T3CODE_CHANNEL="nightly"; irm https://t3.codes/install.ps1 | iex</code>
+        <p class="cli-note">Or try it once without installing:</p>
+        <code class="cli-line cli-line--stable">npx t3@latest</code>
+        <code class="cli-line cli-line--nightly">npx t3@nightly</code>
       </section>
     </div>
 
@@ -399,16 +405,18 @@ const imageProps = {
     gap: 0.75rem;
   }
 
-  .platform-section--cli {
-    display: none;
-  }
-
   .download-page[data-channel="nightly"] .platform-section--mobile {
     display: none;
   }
 
-  .download-page[data-channel="nightly"] .platform-section--cli {
-    display: flex;
+  /* The CLI ships on both trains; only the install command differs. */
+  .cli-line--nightly,
+  .download-page[data-channel="nightly"] .cli-line--stable {
+    display: none;
+  }
+
+  .download-page[data-channel="nightly"] .cli-line--nightly {
+    display: block;
   }
 
   .platform-header {
@@ -430,6 +438,12 @@ const imageProps = {
     font-weight: 500;
     font-size: 1.1rem;
     letter-spacing: -0.01em;
+  }
+
+  .cli-note {
+    color: var(--fg-muted);
+    font-size: 0.85rem;
+    margin-top: 0.5rem;
   }
 
   .cli-line {

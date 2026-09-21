@@ -126,7 +126,7 @@ export function SidebarProviderUpdatePill() {
 
   return (
     <div
-      className={`group/provider-update relative flex h-7 w-full items-center overflow-hidden rounded-lg text-xs font-medium transform-gpu transition-all duration-180 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
+      className={`group/provider-update relative flex min-h-7 w-full shrink-0 items-center overflow-hidden rounded-lg text-[11px] leading-4 font-medium transform-gpu transition-all duration-180 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
         PROVIDER_UPDATE_PILL_STYLES[displayedView.tone]
       } ${
         exitingKey === displayedView.key
@@ -170,19 +170,19 @@ export function SidebarProviderUpdatePill() {
             <button
               type="button"
               aria-label={displayedView.description}
-              className="provider-update-main relative z-[1] flex h-full flex-1 items-center gap-2 px-2 text-left"
+              className="provider-update-main relative z-[1] flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
               onClick={openProviderSettings}
             >
               {displayedView.tone === "loading" ? (
-                <Spinner className="size-3.5" />
+                <Spinner className="size-3.5 shrink-0" />
               ) : displayedView.tone === "success" ? (
-                <CircleCheckIcon className="size-3.5" />
+                <CircleCheckIcon className="size-3.5 shrink-0" />
               ) : displayedView.tone === "error" ? (
-                <TriangleAlertIcon className="size-3.5" />
+                <TriangleAlertIcon className="size-3.5 shrink-0" />
               ) : (
-                <DownloadIcon className="size-3.5" />
+                <DownloadIcon className="size-3.5 shrink-0" />
               )}
-              <span>{displayedView.title}</span>
+              <span className="min-w-0 wrap-break-word">{displayedView.title}</span>
             </button>
           }
         />
@@ -199,7 +199,7 @@ export function SidebarProviderUpdatePill() {
                 className="relative z-[1] mr-1 [--control-icon-color:currentColor] rounded-md text-inherit opacity-70 hover:bg-transparent hover:opacity-100"
                 onClick={() => startExit(displayedView.key, null, displayedView.key)}
               >
-                <XIcon className="size-3.5" />
+                <XIcon className="size-3.5 shrink-0" />
               </Button>
             }
           />

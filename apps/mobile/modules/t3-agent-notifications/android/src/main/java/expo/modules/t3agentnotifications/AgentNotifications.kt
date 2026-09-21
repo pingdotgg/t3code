@@ -11,8 +11,6 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Build
-import android.text.TextPaint
-import android.text.TextUtils
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.Lifecycle
@@ -197,34 +195,32 @@ object AgentNotifications {
     active: Boolean,
     remainingMs: Long
   ) {
-    val body = data["activity_body"].orEmpty().take(240)
     val dismissIntent = PendingIntent.getBroadcast(
       context,
       ACTIVITY_ID,
       Intent(context, AgentActivityDismissReceiver::class.java),
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
-    val lines = (0..4).mapNotNull {
-      data["activity_line_$it"]?.let { line -> activityLine(context, line) }
-    }
-    // BigTextStyle remains eligible for Android Live Update promotion.
-    val style = NotificationCompat.BigTextStyle().bigText(
-      if (lines.isEmpty()) body else lines.joinToString("\n")
-    )
-    val notification = base(context, ACTIVITY_CHANNEL)
-      .setContentTitle(data["activity_title"].orEmpty().take(120))
-      .setContentText(body)
-      .setStyle(style)
+    val presentation = ActivityPresentation(data, active)
+    val openThread = contentIntent(context, scheme, data["activity_path"], ACTIVITY_ID)
+    val builder = base(context, ACTIVITY_CHANNEL)
       .setOngoing(active).setOnlyAlertOnce(true).setSilent(true)
       .setTimeoutAfter(remainingMs)
       // Live Updates must remain uncolorized to qualify for promotion.
       .setColorized(false)
       .setRequestPromotedOngoing(active)
-      .setContentIntent(contentIntent(context, scheme, data["activity_path"], ACTIVITY_ID))
+      .setShortCriticalText(presentation.chip)
+      .setContentIntent(openThread)
       .setDeleteIntent(dismissIntent)
-      .addAction(0, "Dismiss", dismissIntent)
-      .build()
-    manager(context).notify(ACTIVITY_TAG, ACTIVITY_ID, notification)
+    presentation.applyTo(builder, context)
+    // A finished card is no longer ongoing, so it swipes away and a tap opens
+    // the thread; buttons would only repeat that.
+    val action = presentation.action
+    if (action != null) {
+      if (openThread != null) builder.addAction(0, action, openThread)
+      builder.addAction(0, "Dismiss", dismissIntent)
+    }
+    manager(context).notify(ACTIVITY_TAG, ACTIVITY_ID, builder.build())
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
       // Notification timeouts were added in API 26. One inexact alarm also
       // expires cards on Android 7, including when the app process has exited.
@@ -251,32 +247,6 @@ object AgentNotifications {
       context.getSystemService(AlarmManager::class.java).cancel(expiryIntent(context))
       context.getSharedPreferences(STORE, Context.MODE_PRIVATE).edit().remove("expiresAt").apply()
     }
-  }
-
-  private fun activityLine(context: Context, value: String): String {
-    val parts = value.split('\t', limit = 3)
-    if (parts.size != 3) return value.take(300)
-    val metrics = context.resources.displayMetrics
-    val paint = TextPaint().apply { textSize = 14 * metrics.scaledDensity }
-    val prefix = "${parts[0]}: "
-    val separator = " · "
-    // Reserve the system notification's icon and margins. Fit the two titles
-    // independently so large fonts/long names never hide the project or status.
-    // The shade uses a narrow column even when a headless service sees a
-    // foldable's wider display metrics. Keep rows inside that column too.
-    val width = (metrics.widthPixels - 152 * metrics.density)
-      .coerceIn(120 * metrics.density, 280 * metrics.density)
-    val available = (width - paint.measureText(prefix + separator)).coerceAtLeast(0f)
-    val projectWidth = paint.measureText(parts[2]).coerceAtMost(available * 0.4f)
-    val titleWidth = paint.measureText(parts[1]).coerceAtMost(available - projectWidth)
-    val title = TextUtils.ellipsize(parts[1], paint, titleWidth, TextUtils.TruncateAt.END)
-    val project = TextUtils.ellipsize(
-      parts[2],
-      paint,
-      available - titleWidth,
-      TextUtils.TruncateAt.END
-    )
-    return "$prefix$title$separator$project"
   }
 
   private fun manager(context: Context) = context.getSystemService(NotificationManager::class.java)

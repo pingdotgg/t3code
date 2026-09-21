@@ -59,6 +59,22 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     ).toBe("bitbucket");
   });
 
+  it("detects Forgejo and Gitea hosts while preserving HTTP origins", () => {
+    for (const host of ["codeberg.org", "forgejo.example.test", "gitea.example.test"]) {
+      expect(detectSourceControlProviderFromRemoteUrl(`http://${host}:3000/team/repo.git`)).toEqual(
+        {
+          kind: "forgejo",
+          name: "Forgejo",
+          baseUrl: `http://${host}:3000`,
+        },
+      );
+    }
+    expect(getChangeRequestTerminologyForKind("forgejo")).toEqual({
+      shortLabel: "PR",
+      singular: "pull request",
+    });
+  });
+
   it("detects Azure DevOps SSH remotes", () => {
     // The default Azure DevOps SSH clone URL uses the ssh.dev.azure.com host.
     expect(
@@ -191,4 +207,18 @@ it("keeps a GitLab identity's whole path, because a nested group is part of the 
     name: "service",
   });
   expect(selector).toBe("group/subgroup/service");
+});
+
+it("puts owner and name back together for an identity recorded before displayName", () => {
+  const selector = sourceControlRepositorySelector({
+    provider: "github",
+    owner: "t3tools",
+    name: "t3code",
+  });
+  expect(selector).toBe("t3tools/t3code");
+});
+
+it("names nothing for a project with no remote to name it by", () => {
+  expect(sourceControlRepositorySelector(null)).toBeNull();
+  expect(sourceControlRepositorySelector({ provider: "github" })).toBeNull();
 });

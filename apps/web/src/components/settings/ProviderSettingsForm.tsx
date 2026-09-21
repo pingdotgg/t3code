@@ -265,14 +265,14 @@ function ProviderSettingsFieldRow({
           value={value}
           inputId={inputId}
           size="sm"
-          className="w-full sm:w-56"
+          className="w-full max-w-full @min-[32rem]/settings-row:w-56"
           onChange={onChange}
         />
       ) : field.control === "textarea" ? (
         <Textarea
           id={inputId}
           aria-describedby={descriptionId}
-          className="w-full sm:w-96"
+          className="w-full max-w-full @min-[32rem]/settings-row:w-[min(24rem,50cqw)]"
           value={readProviderConfigString(value, field.key)}
           onChange={(event) =>
             onChange(nextProviderConfigWithFieldValue(value, field, event.target.value))
@@ -285,7 +285,7 @@ function ProviderSettingsFieldRow({
           id={inputId}
           aria-describedby={descriptionId}
           size="sm"
-          className="w-full sm:w-56"
+          className="w-full max-w-full @min-[32rem]/settings-row:w-56"
           type={field.control === "password" ? "password" : undefined}
           autoComplete={field.control === "password" ? "off" : undefined}
           value={readProviderConfigString(value, field.key)}

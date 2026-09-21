@@ -2,13 +2,13 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Scope from "effect/Scope";
-import * as Tracer from "effect/Tracer";
 import { HttpClient } from "effect/unstable/http";
 import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 
 import { settleAsyncResult, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary";
+import * as ClientTracer from "./clientTracer";
 import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
 import { isElectron } from "../env";
 import { APP_VERSION } from "~/branding";
@@ -30,7 +30,6 @@ const delegateRuntimeLayer = Layer.mergeAll(
   Layer.succeed(HttpClient.TracerDisabledWhen, () => true),
 );
 
-let activeDelegate: Tracer.Tracer | null = null;
 let activeRuntime: ManagedRuntime.ManagedRuntime<never, never> | null = null;
 let activeScope: Scope.Closeable | null = null;
 let activeConfigKey: string | null = null;
@@ -54,7 +53,7 @@ async function applyClientTracingConfig(config: ClientTracingConfig): Promise<vo
   const exportIntervalMs = Math.max(10, config.exportIntervalMs ?? DEFAULT_EXPORT_INTERVAL_MS);
   const nextConfigKey = `${otlpTracesUrl}|${exportIntervalMs}`;
 
-  if (activeConfigKey === nextConfigKey && activeDelegate !== null) {
+  if (activeConfigKey === nextConfigKey && ClientTracer.hasDelegate()) {
     return;
   }
 
@@ -64,7 +63,7 @@ async function applyClientTracingConfig(config: ClientTracingConfig): Promise<vo
   const previousRuntime = activeRuntime;
   const previousScope = activeScope;
 
-  activeDelegate = null;
+  ClientTracer.setDelegate(null);
   activeRuntime = null;
   activeScope = null;
 
@@ -106,7 +105,7 @@ async function applyClientTracingConfig(config: ClientTracingConfig): Promise<vo
     return;
   }
 
-  activeDelegate = delegateResult.value;
+  ClientTracer.setDelegate(delegateResult.value);
   activeRuntime = runtime;
   activeScope = scope;
 }

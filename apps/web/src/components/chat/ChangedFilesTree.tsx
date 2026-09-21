@@ -1,5 +1,5 @@
 import { type TurnId } from "@t3tools/contracts";
-import { memo, useCallback, useMemo, useState } from "react";
+import { type MouseEvent, memo, useCallback, useMemo, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
 import {
   buildTurnDiffTree,
@@ -19,8 +19,12 @@ import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { MiddleTruncate } from "../ui/middle-truncate";
 
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
+
+/** Opens the OS-level context menu for a changed file (reveal in file manager, open in editor). */
+export type ChangedFileContextMenuHandler = (filePath: string, event: MouseEvent) => void;
 
 export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   turnId: TurnId;
@@ -29,6 +33,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   resolvedTheme: "light" | "dark";
   onToggleAllDirectories: () => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onFileContextMenu?: ChangedFileContextMenuHandler | undefined;
 }) {
   const {
     turnId,
@@ -37,6 +42,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
     resolvedTheme,
     onToggleAllDirectories,
     onOpenTurnDiff,
+    onFileContextMenu,
   } = props;
   const summaryStat = useMemo(() => summarizeTurnDiffStats(files), [files]);
   const hasDirectories = files.some((file) => /[/\\]/.test(file.path));
@@ -117,6 +123,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
         allDirectoriesExpanded={allDirectoriesExpanded}
         resolvedTheme={resolvedTheme}
         onOpenTurnDiff={onOpenTurnDiff}
+        onFileContextMenu={onFileContextMenu}
       />
     </div>
   );
@@ -128,8 +135,16 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
   allDirectoriesExpanded: boolean;
   resolvedTheme: "light" | "dark";
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onFileContextMenu?: ChangedFileContextMenuHandler | undefined;
 }) {
-  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, turnId } = props;
+  const {
+    files,
+    allDirectoriesExpanded,
+    onOpenTurnDiff,
+    resolvedTheme,
+    turnId,
+    onFileContextMenu,
+  } = props;
   const treeNodes = useMemo(() => buildTurnDiffTree(files), [files]);
   const directoryPathsKey = useMemo(
     () => collectDirectoryPaths(treeNodes).join("\u0000"),
@@ -214,6 +229,14 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
         className="group flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         style={{ paddingLeft: `${leftPadding}px` }}
         onClick={() => onOpenTurnDiff(turnId, node.path)}
+        onContextMenu={
+          onFileContextMenu
+            ? (event) => {
+                event.preventDefault();
+                onFileContextMenu(node.path, event);
+              }
+            : undefined
+        }
       >
         {hasDirectoryNodes || depth > 0 ? (
           <span aria-hidden="true" className="size-3.5 shrink-0" />
@@ -224,9 +247,10 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           theme={resolvedTheme}
           className="size-3.5 text-muted-foreground/70"
         />
-        <span className="truncate font-mono text-xs text-foreground/85 group-hover:text-foreground">
-          {node.name}
-        </span>
+        <MiddleTruncate
+          value={node.name}
+          className="font-mono text-xs text-foreground/85 group-hover:text-foreground"
+        />
         {node.stat && (
           <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
             <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />

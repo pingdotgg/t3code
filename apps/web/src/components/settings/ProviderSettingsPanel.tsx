@@ -1,3 +1,4 @@
+import { SettingsGroup } from "./SettingsGroup";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
@@ -31,7 +32,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import { isElectron } from "../../env";
 import { usePrimarySessionState } from "../../environments/primary";
-import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import {
+  useEnvironmentSettings,
+  useUpdateClientSettings,
+  useUpdateEnvironmentSettings,
+} from "../../hooks/useSettings";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { cn } from "../../lib/utils";
 import { resolveAppModelSelectionState } from "../../modelSelection";
@@ -167,10 +172,10 @@ function providerEnvironmentDetail(environment: EnvironmentPresentation): string
   return environment.displayUrl ?? "Remote device";
 }
 
-const providerCardClassName = "rounded-xl border border-border/60 bg-card/40 shadow-xs/5";
 // Shared by the editor grid and the placeholder states so switching devices
 // never changes the card's footprint.
-const providerCardHeightClassName = "lg:h-[min(44rem,calc(100dvh-11rem))] lg:min-h-[32rem]";
+const providerCardHeightClassName =
+  "@min-[48rem]/providers:h-[min(44rem,calc(100dvh-11rem))] @min-[48rem]/providers:min-h-[32rem]";
 
 /**
  * Same chrome as the provider editor (section heading, floating device tabs,
@@ -190,16 +195,13 @@ function ProviderSettingsPlaceholder({
   readonly children?: ReactNode;
 }) {
   return (
-    <SettingsSection {...searchableSetting("providers")} hideTitle variant="plain">
+    <SettingsSection {...searchableSetting("providers")} variant="plain">
       {deviceTabs ? (
         <div className="flex min-h-11 min-w-0 items-center px-3 sm:px-4">{deviceTabs}</div>
       ) : null}
-      <div
-        className={cn(
-          providerCardClassName,
-          providerCardHeightClassName,
-          "flex overflow-x-hidden overflow-y-auto",
-        )}
+      <SettingsGroup
+        divided={false}
+        className={cn(providerCardHeightClassName, "flex overflow-x-hidden overflow-y-auto")}
       >
         <Empty className="min-h-88">
           <EmptyMedia variant="icon">{icon}</EmptyMedia>
@@ -209,7 +211,7 @@ function ProviderSettingsPlaceholder({
           </EmptyHeader>
           {children ? <EmptyContent className="max-w-xl">{children}</EmptyContent> : null}
         </Empty>
-      </div>
+      </SettingsGroup>
     </SettingsSection>
   );
 }
@@ -262,11 +264,12 @@ function EnvironmentUnavailablePlaceholder({
 interface ProviderSettingsTarget {
   readonly environmentId?: EnvironmentId;
   readonly instanceId?: ProviderInstanceId;
+  readonly scoped?: boolean;
 }
 
 export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
   return (
-    <SettingsPageContainer width="wide" className="gap-8">
+    <SettingsPageContainer width="wide" className="@container/providers gap-8">
       <ProviderSettingsPanelContent
         key={`${target.environmentId ?? ""}:${target.instanceId ?? ""}`}
         {...target}
@@ -293,9 +296,10 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
     target.environmentId !== undefined &&
     selectedEnvironmentId === target.environmentId &&
     !options.some((environment) => environment.environmentId === target.environmentId);
-  const effectiveEnvironmentId = targetEnvironmentMissing
-    ? target.environmentId
-    : resolveSelectedProviderEnvironmentId(options, selectedEnvironmentId, primaryEnvironmentId);
+  const effectiveEnvironmentId =
+    target.scoped || targetEnvironmentMissing
+      ? target.environmentId
+      : resolveSelectedProviderEnvironmentId(options, selectedEnvironmentId, primaryEnvironmentId);
   const selectedEnvironment =
     options.find((environment) => environment.environmentId === effectiveEnvironmentId) ?? null;
   const selectedEnvironmentCanRenderSettings =
@@ -312,6 +316,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
   )?.environmentId;
   useEffect(() => {
     if (
+      !target.scoped &&
       (searchTargetId === searchableSetting("provider-health-check-interval").id ||
         searchTargetId === searchableSetting("usage-providers").id) &&
       !selectedEnvironmentCanRenderSettings &&
@@ -319,11 +324,16 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
     ) {
       setSelectedEnvironmentId(searchableEnvironmentId);
     }
-  }, [searchTargetId, searchableEnvironmentId, selectedEnvironmentCanRenderSettings]);
+  }, [
+    searchTargetId,
+    searchableEnvironmentId,
+    selectedEnvironmentCanRenderSettings,
+    target.scoped,
+  ]);
   const onlyPrimaryDevice =
     options.length === 1 && options[0]?.entry.target._tag === "PrimaryConnectionTarget";
   const deviceTabs =
-    !onlyPrimaryDevice && options.length > 0 ? (
+    !target.scoped && !onlyPrimaryDevice && options.length > 0 ? (
       <ScrollArea hideScrollbars scrollFade className="h-11 min-w-0 flex-1 rounded-none">
         <ToggleGroup
           aria-label="Devices"
@@ -559,7 +569,10 @@ export function EnvironmentProviderSettings({
   readonly readOnly?: boolean;
 }) {
   const settings = useEnvironmentSettings(environmentId);
+  // Provider instances hold per-machine credentials and binaries, so this
+  // page always edits exactly the environment it displays.
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const updateClientSettings = useUpdateClientSettings();
   const serverProviders =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
@@ -815,7 +828,7 @@ export function EnvironmentProviderSettings({
     const hiddenModels = [...new Set(next.hiddenModels.filter((slug) => slug.trim().length > 0))];
     const modelOrder = [...new Set(next.modelOrder.filter((slug) => slug.trim().length > 0))];
     const rest = withoutProviderInstanceKey(settings.providerModelPreferences, instanceId);
-    updateSettings({
+    updateClientSettings({
       providerModelPreferences:
         hiddenModels.length === 0 && modelOrder.length === 0
           ? rest
@@ -841,7 +854,7 @@ export function EnvironmentProviderSettings({
         }),
       ),
     ];
-    updateSettings({
+    updateClientSettings({
       favorites: [
         ...withoutProviderInstanceFavorites(settings.favorites ?? [], instanceId),
         ...favoriteModels.map((model) => ({ provider: instanceId, model })),
@@ -974,7 +987,7 @@ export function EnvironmentProviderSettings({
 
   return (
     <>
-      <SettingsSection {...searchableSetting("providers")} hideTitle variant="plain">
+      <SettingsSection {...searchableSetting("providers")} variant="plain">
         <div className="flex min-h-11 min-w-0 items-center gap-2 px-3 sm:px-4">
           {deviceTabs}
           <div className="ml-auto flex min-w-0 shrink-0 items-center gap-2">
@@ -1028,31 +1041,35 @@ export function EnvironmentProviderSettings({
           </div>
         </div>
         {readOnly ? (
-          <div className={cn(providerCardClassName, "overflow-hidden")}>
+          <SettingsGroup divided={false} className="overflow-hidden">
             <SettingsRow
               title="Limited permissions"
               description={`This session can view ${environmentLabel}'s providers but can't change their settings.`}
             />
-          </div>
+          </SettingsGroup>
         ) : null}
-        <div
+        <SettingsGroup
+          divided={false}
           className={cn(
-            providerCardClassName,
             providerCardHeightClassName,
-            "overflow-hidden lg:grid lg:grid-cols-[17rem_minmax(0,1fr)]",
+            "overflow-hidden @min-[48rem]/providers:grid @min-[48rem]/providers:grid-cols-[17rem_minmax(0,1fr)]",
           )}
         >
-          <div className="border-b border-border/60 bg-muted/10 lg:flex lg:min-h-0 lg:flex-col lg:border-r lg:border-b-0">
-            <ScrollArea scrollFade chainVerticalScroll className="lg:min-h-0 lg:flex-1">
+          <div className="border-b border-border/60 bg-muted/10 @min-[48rem]/providers:flex @min-[48rem]/providers:min-h-0 @min-[48rem]/providers:flex-col @min-[48rem]/providers:border-r @min-[48rem]/providers:border-b-0">
+            <ScrollArea
+              scrollFade
+              chainVerticalScroll
+              className="@min-[48rem]/providers:min-h-0 @min-[48rem]/providers:flex-1"
+            >
               <div className="divide-y divide-border/50">
                 {rows.map((row) => renderProviderInstance(row, "list"))}
               </div>
             </ScrollArea>
           </div>
 
-          <div className="min-w-0 lg:min-h-0">
+          <div className="min-w-0 @min-[48rem]/providers:min-h-0">
             {selectedRow ? (
-              <ScrollArea scrollFade chainVerticalScroll className="lg:h-full">
+              <ScrollArea scrollFade chainVerticalScroll className="@min-[48rem]/providers:h-full">
                 <div className="space-y-6 p-4">{renderProviderInstance(selectedRow, "editor")}</div>
               </ScrollArea>
             ) : (
@@ -1063,7 +1080,7 @@ export function EnvironmentProviderSettings({
               </div>
             )}
           </div>
-        </div>
+        </SettingsGroup>
       </SettingsSection>
 
       <UsageProviderSettings

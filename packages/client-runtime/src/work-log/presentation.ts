@@ -11,8 +11,17 @@ import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 
+/**
+ * Activities the worktree setup card already represents. The settled record
+ * is rendered by the card on web and mobile, never as a
+ * worklog entry, so it is hidden from the activity feed even when it failed.
+ */
 export function isWorktreeSetupActivity(kind: string): boolean {
-  return kind === "setup-script.requested" || kind === "setup-script.started";
+  return (
+    kind === "setup-script.requested" ||
+    kind === "setup-script.started" ||
+    kind === "worktree-setup"
+  );
 }
 
 export type WorkLogToolLifecycleStatus = RuntimeItemStatus | "stopped";
@@ -44,6 +53,7 @@ export type ToolGroupAction =
   | "edit"
   | "command"
   | "browser"
+  | "device"
   | "code-search"
   | "search"
   | "other"
@@ -104,6 +114,15 @@ const T3_MCP_TOOL_LABELS: Record<
   preview_set_appearance: ["Set", "Setting", "Set", "preview browser appearance"],
   preview_recording_start: ["Start", "Starting", "Started", "recording the preview browser"],
   preview_recording_stop: ["Stop", "Stopping", "Stopped", "recording the preview browser"],
+  device_list: ["List", "Listing", "Listed", "simulators and emulators"],
+  device_open: ["Open", "Opening", "Opened", "a device in the Device panel"],
+  device_screenshot: [
+    "Take a screenshot of",
+    "Taking a screenshot of",
+    "Took a screenshot of",
+    "the device",
+  ],
+  device_close: ["Close", "Closing", "Closed", "a device"],
 };
 
 const PR_TOOL_ACTIONS: Readonly<Record<string, ToolGroupAction>> = {
@@ -159,7 +178,9 @@ function resolveT3McpToolPresentation(
         ? ("pull-request" as const)
         : name.startsWith("preview_")
           ? ("browser" as const)
-          : ("t3-code" as const),
+          : name.startsWith("device_")
+            ? ("device" as const)
+            : ("t3-code" as const),
     ...(actionKind === undefined ? {} : { action: actionKind }),
   };
 }
@@ -451,6 +472,7 @@ export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation?.action !== undefined) return presentation.action;
   if (presentation?.icon === "browser") return "browser";
+  if (presentation?.icon === "device") return "device";
   if (
     entry.requestKind === "file-read" ||
     entry.itemType === "image_view" ||
@@ -558,6 +580,8 @@ function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
       return `Changed ${count} ${count === 1 ? "file" : "files"}`;
     case "command":
       return `Ran ${count} ${count === 1 ? "command" : "commands"}`;
+    case "device":
+      return `Used device controls ${count} ${count === 1 ? "time" : "times"}`;
     case "browser":
       return `Used browser ${count} ${count === 1 ? "time" : "times"}`;
     case "search":
@@ -643,7 +667,9 @@ export function omitSupersededLifecycleMarkers<T>(
     }
   }
 
-  return reversedEntries.toReversed();
+  // Hermes lacks toReversed; this array is local, so reversing it cannot mutate the input.
+  // oxlint-disable-next-line unicorn/no-array-reverse
+  return reversedEntries.reverse();
 }
 
 export function toolGroupSummaryKind(

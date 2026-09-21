@@ -6,13 +6,12 @@
  * The same combobox as the project and branch pickers, and dressed the same, rather than a menu:
  * a menu's typeahead claims every keypress to jump between rows, which a search box cannot share.
  */
-import { SearchIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Button } from "../ui/button";
 import {
   Combobox,
-  ComboboxInput,
+  ComboboxSearchInput,
   ComboboxItem,
   ComboboxList,
   ComboboxPopup,
@@ -123,25 +122,12 @@ export function PullRequestCandidatePicker<T>({
         }
       />
       <ComboboxPopup align="start" side="bottom" className="w-72">
-        <div className="shrink-0 px-3 pt-2.5">
-          <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
-            <SearchIcon
-              aria-hidden="true"
-              className="pointer-events-none absolute top-1.5 left-0 size-4 shrink-0 text-muted-foreground/55"
-            />
-            <ComboboxInput
-              aria-label={searchLabel}
-              className="[&_input]:h-6.5 [&_input]:ps-5 [&_input]:font-sans [&_input]:leading-6.5"
-              inputClassName="rounded-none bg-transparent text-sm"
-              placeholder={searchLabel}
-              showTrigger={false}
-              size="sm"
-              unstyled
-              value={query}
-              onChange={(event) => onQueryChange(event.target.value)}
-            />
-          </div>
-        </div>
+        <ComboboxSearchInput
+          aria-label={searchLabel}
+          placeholder={searchLabel}
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+        />
         <ComboboxList className="max-h-72">
           {isPending ? (
             <PullRequestPeopleGhost rows={4} />

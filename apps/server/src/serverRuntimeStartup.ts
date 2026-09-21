@@ -1,16 +1,21 @@
 import {
   CommandId,
+  EventId,
   DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_SERVER_SETTINGS,
+  type ServerSettings as ServerSettingsValue,
   type ModelSelection,
   type OrchestrationProjectShell,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   TurnId,
+  WORKTREE_SETUP_ACTIVITY_KIND,
+  WorktreeSetupSnapshot,
+  worktreeSetupActivityId,
 } from "@t3tools/contracts";
-import { resolveProjectAutoPull } from "@t3tools/shared/serverSettings";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
@@ -229,7 +234,8 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
         nextProjectId = existingProject.value.id;
         bootstrapProjectId = nextProjectId;
         nextThreadModelSelection =
-          existingProject.value.defaultModelSelection ?? defaultModelSelection;
+          resolveProjectSettings(settings, nextProjectId, existingProject.value).settings
+            .defaultModelSelection ?? defaultModelSelection;
       }
 
       yield* Effect.gen(function* () {
@@ -246,7 +252,8 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
             title: "New thread",
             modelSelection: nextThreadModelSelection,
             interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-            runtimeMode: "full-access",
+            runtimeMode: resolveProjectSettings(settings, nextProjectId).settings
+              .defaultRuntimeMode,
             branch: null,
             worktreePath: null,
             createdAt,
@@ -479,14 +486,19 @@ export const reconcileProviderSessions = Effect.gen(function* () {
   const providerService = yield* ProviderService.ProviderService;
   const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const settings = yield* ServerSettings.ServerSettingsService;
-  const continueAfterRestart = yield* settings.getSettings.pipe(
-    Effect.map((value) => value.continueThreadsAfterServerUpdate),
+  const restartSettings = yield* settings.getSettings.pipe(
+    Effect.map(Option.some),
     Effect.catch((cause) =>
       Effect.logWarning("could not read restart continuation preference", { cause }).pipe(
-        Effect.as(false),
+        Effect.as(Option.none()),
       ),
     ),
   );
+  const continueAfterRestartFor = (projectId: ProjectId) =>
+    Option.isSome(restartSettings)
+      ? resolveProjectSettings(restartSettings.value, projectId).settings
+          .continueThreadsAfterServerUpdate
+      : false;
 
   const liveThreadIds = new Set(
     (yield* providerService.listSessions()).map((session) => session.threadId),
@@ -568,7 +580,7 @@ export const reconcileProviderSessions = Effect.gen(function* () {
     // Runtime events advance the projection's turn, but not the directory's
     // last admitted turn. Use the projection to identify interrupted work.
     const interruptedByRestart =
-      continueAfterRestart &&
+      continueAfterRestartFor(thread.projectId) &&
       session.status === "running" &&
       session.activeTurnId !== null &&
       Option.isSome(binding) &&
@@ -734,6 +746,91 @@ export const reconcileProviderSessions = Effect.gen(function* () {
   ),
 );
 
+const decodeWorktreeSetupSnapshot = Schema.decodeUnknownOption(WorktreeSetupSnapshot);
+
+/**
+ * A worktree bootstrap records its setup snapshot on the thread while it runs
+ * and settles it when it finishes. The bootstrap itself lives only in memory,
+ * so a process exit mid-setup leaves a `running` record with nobody to finish
+ * it. Before the turn started that also strands the persisted user message, so
+ * the setup is marked failed and the user is told to send again. After the
+ * handoff only an async setup script was still running; its stage is marked
+ * failed and the setup settles as done, like any other script failure.
+ */
+export const reconcileWorktreeSetups = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
+  const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+  const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  // The command read model carries no activity bodies; read the setup
+  // records directly, live threads only.
+  const recordedSetups = yield* query.listActivitiesByKind(WORKTREE_SETUP_ACTIVITY_KIND);
+  const interruptedAt = DateTime.formatIso(yield* DateTime.now);
+
+  for (const recorded of recordedSetups) {
+    const snapshot = decodeWorktreeSetupSnapshot(recorded.payload);
+    if (Option.isNone(snapshot) || snapshot.value.phase !== "running") continue;
+    if (recorded.id !== worktreeSetupActivityId(snapshot.value.threadId)) continue;
+    const threadId = snapshot.value.threadId;
+
+    const turnStarted = snapshot.value.stages.some(
+      (stage) => stage.id === "agent" && stage.status === "done",
+    );
+    const interrupted: WorktreeSetupSnapshot = {
+      ...snapshot.value,
+      phase: turnStarted ? "done" : "failed",
+      endedAt: interruptedAt,
+      error: turnStarted
+        ? null
+        : "The server restarted before the worktree setup finished. Send the message again.",
+      stages: snapshot.value.stages.map((stage) =>
+        stage.status === "running" || stage.status === "pending"
+          ? {
+              ...stage,
+              status: "failed",
+              endedAt: interruptedAt,
+              detail: "interrupted by a server restart",
+            }
+          : stage,
+      ),
+      sequence: snapshot.value.sequence + 1,
+    };
+    yield* orchestrationEngine
+      .dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make(yield* crypto.randomUUIDv4),
+        threadId,
+        activity: {
+          id: EventId.make(worktreeSetupActivityId(threadId)),
+          tone: "error",
+          kind: WORKTREE_SETUP_ACTIVITY_KIND,
+          summary: turnStarted
+            ? "Setup script interrupted by a server restart"
+            : "Worktree setup interrupted by a server restart",
+          payload: interrupted,
+          turnId: null,
+          createdAt: snapshot.value.startedAt,
+        },
+        createdAt: interruptedAt,
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterrupts(cause)
+            ? Effect.failCause(cause)
+            : Effect.logWarning("failed to settle interrupted worktree setup", {
+                threadId,
+                cause,
+              }),
+        ),
+      );
+  }
+}).pipe(
+  Effect.catchCause((cause) =>
+    Cause.hasInterrupts(cause)
+      ? Effect.failCause(cause)
+      : Effect.logWarning("worktree setup startup reconciliation failed", { cause }),
+  ),
+);
+
 interface StartupOptions {
   readonly activate?: Effect.Effect<void>;
   readonly awaitAuxiliaryParked?: Effect.Effect<void>;
@@ -742,16 +839,13 @@ interface StartupOptions {
 
 export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
   projects: ReadonlyArray<OrchestrationProjectShell>,
-  settings: Pick<
-    typeof DEFAULT_SERVER_SETTINGS,
-    "defaultAutoPull" | "projectAutoPullOverrides"
-  > = DEFAULT_SERVER_SETTINGS,
+  settings: ServerSettingsValue = DEFAULT_SERVER_SETTINGS,
 ) {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const workspaceRoots = [
     ...new Set(
       projects
-        .filter((project) => resolveProjectAutoPull(settings, project.id, project.autoPull))
+        .filter((project) => resolveProjectSettings(settings, project.id).settings.defaultAutoPull)
         .map((project) => project.workspaceRoot),
     ),
   ];
@@ -876,6 +970,7 @@ export const make = (options?: StartupOptions) =>
       );
 
       yield* runStartupPhase("provider-sessions.reconcile", reconcileProviderSessions);
+      yield* runStartupPhase("worktree-setups.reconcile", reconcileWorktreeSetups);
 
       yield* Effect.logDebug("startup phase: syncing clean projects");
       yield* runStartupPhase("projects.auto-pull", syncAutoPullProjects);

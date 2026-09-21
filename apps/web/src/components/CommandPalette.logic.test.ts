@@ -3,6 +3,7 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools
 import type { Project, Thread } from "../types";
 import {
   buildBrowseGroups,
+  buildCommandPaletteProjectMetadata,
   buildProjectActionItems,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
@@ -10,6 +11,7 @@ import {
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
+  type CommandPaletteActionItem,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
 
@@ -52,6 +54,124 @@ describe("linked pull request thread navigation", () => {
     expect(items[0]?.description).toBe("Archived thread");
     await items[0]?.run();
     expect(runThread).toHaveBeenCalledWith({ environmentId, id });
+  });
+});
+
+describe("buildCommandPaletteProjectMetadata", () => {
+  const localEnvironmentId = EnvironmentId.make("environment-local");
+  const remoteEnvironmentId = EnvironmentId.make("environment-build-box");
+  const locations = new Map([
+    [localEnvironmentId, { kind: "local" as const, label: "Local", machine: "laptop" as const }],
+    [
+      remoteEnvironmentId,
+      { kind: "remote" as const, label: "Build box", machine: "server" as const },
+    ],
+  ]);
+
+  it("makes every member environment and path searchable", () => {
+    const metadata = buildCommandPaletteProjectMetadata({
+      projects: [
+        {
+          environmentId: localEnvironmentId,
+          title: "T3 Code",
+          workspaceRoot: "/Users/theo/Projects/t3code",
+        },
+        {
+          environmentId: remoteEnvironmentId,
+          title: "t3code",
+          workspaceRoot: "/srv/t3code",
+        },
+      ],
+      locationByEnvironmentId: locations,
+    });
+
+    expect(metadata.searchTerms).toEqual([
+      "T3 Code",
+      "/Users/theo/Projects/t3code",
+      "Local",
+      "t3code",
+      "/srv/t3code",
+      "Build box",
+    ]);
+    expect(metadata.environmentLabels).toEqual(["Local", "Build box"]);
+
+    const [filteredGroup] = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "build box",
+      isInSubmenu: false,
+      projectSearchItems: [
+        {
+          kind: "action",
+          value: "project:t3code",
+          title: "T3 Code",
+          searchTerms: metadata.searchTerms,
+          icon: null,
+          run: async () => undefined,
+        },
+      ],
+      threadSearchItems: [],
+    });
+    expect(filteredGroup?.items).toHaveLength(1);
+  });
+
+  it("deduplicates grouped checkouts by environment", () => {
+    const metadata = buildCommandPaletteProjectMetadata({
+      projects: [
+        {
+          environmentId: remoteEnvironmentId,
+          title: "T3 Code",
+          workspaceRoot: "/srv/t3code",
+        },
+        {
+          environmentId: remoteEnvironmentId,
+          title: "T3 Code worktree",
+          workspaceRoot: "/srv/t3code-feature",
+        },
+      ],
+      locationByEnvironmentId: locations,
+    });
+
+    expect(metadata.environmentLabels).toEqual(["Build box"]);
+  });
+
+  it("deduplicates distinct environments with the same label", () => {
+    const secondRemoteEnvironmentId = EnvironmentId.make("environment-build-box-2");
+    const metadata = buildCommandPaletteProjectMetadata({
+      projects: [
+        {
+          environmentId: remoteEnvironmentId,
+          title: "T3 Code",
+          workspaceRoot: "/srv/t3code",
+        },
+        {
+          environmentId: secondRemoteEnvironmentId,
+          title: "T3 Code mirror",
+          workspaceRoot: "/srv/mirror/t3code",
+        },
+      ],
+      locationByEnvironmentId: new Map([
+        [remoteEnvironmentId, { label: "Build box" }],
+        [secondRemoteEnvironmentId, { label: "Build box" }],
+      ]),
+    });
+
+    expect(metadata.environmentLabels).toEqual(["Build box"]);
+  });
+
+  it("uses a human-readable fallback when presentation data is unavailable", () => {
+    const metadata = buildCommandPaletteProjectMetadata({
+      projects: [
+        {
+          environmentId: remoteEnvironmentId,
+          title: "T3 Code",
+          workspaceRoot: "/srv/t3code",
+        },
+      ],
+      locationByEnvironmentId: new Map(),
+    });
+
+    expect(metadata.searchTerms).toContain("Remote");
+    expect(metadata.environmentLabels).toEqual(["Remote"]);
   });
 });
 
@@ -464,6 +584,40 @@ describe("buildThreadActionItems", () => {
     expect(item?.description).toBe("T3 Code · #feat/search");
   });
 
+  it("surfaces threads when the query is their ID, without outranking title matches", () => {
+    const idThread = makeThread({
+      id: ThreadId.make("thread-alpha-1234"),
+      title: "Unrelated work",
+      updatedAt: "2026-03-05T00:00:00.000Z",
+    });
+    const titleThread = makeThread({
+      id: ThreadId.make("thread-other-9999"),
+      title: "Fix thread-alpha-1234 flakes",
+      updatedAt: "2026-03-04T00:00:00.000Z",
+    });
+    const items = buildThreadActionItems({
+      threads: [idThread, titleThread],
+      projectTitleById: new Map([[PROJECT_ID, "T3 Code"]]),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async (_thread) => undefined,
+    });
+
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "  THREAD-ALPHA-1234  ",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      settingsSearchItems: [],
+      threadSearchItems: items,
+    });
+
+    expect(groups.flatMap((group) => group.items)).toEqual([
+      expect.objectContaining({ value: `thread:${titleThread.id}` }),
+      expect.objectContaining({ value: `thread:${idThread.id}` }),
+    ]);
+  });
+
   it("prefers renderDescription when provided", () => {
     const [item] = buildThreadActionItems({
       threads: [makeThread({ branch: "feat/search", worktreePath: "/tmp/wt" })],
@@ -618,4 +772,34 @@ it.each([
   expect(groups.flatMap((group) => group.items.map((item) => item.title))).toEqual([
     "Implementation",
   ]);
+});
+
+describe("filterCommandPaletteGroups", () => {
+  it("sorts secondary settings results after other matches", () => {
+    const item = (value: string, title: string, secondary?: boolean) =>
+      ({
+        kind: "action",
+        value,
+        title,
+        searchTerms: [title, "General"],
+        icon: null,
+        run: async () => undefined,
+        ...(secondary ? { secondary } : {}),
+      }) satisfies CommandPaletteActionItem;
+    const [group] = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "model",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      settingsSearchItems: [
+        item("setting:keybinding-modelPicker.toggle", "Model Picker: Toggle", true),
+        item("setting:default-model", "Default model"),
+      ],
+      threadSearchItems: [],
+    });
+    expect(group?.items.map((entry) => entry.value)).toEqual([
+      "setting:default-model",
+      "setting:keybinding-modelPicker.toggle",
+    ]);
+  });
 });

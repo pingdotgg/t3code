@@ -32,10 +32,11 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
 }) {
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,
+    group: "orchestration",
     method: "GET",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/orchestration/shell"),
     timeoutMs: input.timeoutMs ?? DEFAULT_SHELL_SNAPSHOT_TIMEOUT_MS,
-    request: ({ client, headers }) => client.orchestration.shellSnapshot({ headers }),
+    request: ({ client, headers }) => client.shellSnapshot({ headers }),
   });
 });
 

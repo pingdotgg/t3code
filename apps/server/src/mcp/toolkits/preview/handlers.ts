@@ -7,6 +7,7 @@ import {
   PreviewAutomationRecordingTransferError,
   PreviewAutomationRecordingDesktopUpdateRequiredError,
   PreviewAutomationRecordingArtifact,
+  type ToolActivityIcon,
   type ThreadId,
   type PreviewAutomationOperation,
   type PreviewAutomationOpenInput,
@@ -55,22 +56,47 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
   timeoutMs?: number,
   tabId?: PreviewTabId,
 ): Effect.fn.Return<
-  A,
+  { result: A; toolIcon?: ToolActivityIcon },
   import("@t3tools/contracts").PreviewAutomationError,
   McpInvocationContext.McpInvocationContext | PreviewAutomationBroker.PreviewAutomationBroker
 > {
   const scope = yield* McpInvocationContext.requireMcpCapability("preview");
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
-  return yield* broker.invoke<A>({
+  let targetTabId = tabId;
+  const result = yield* broker.invoke<A>({
+    onTargetTab: (resolvedTabId) => {
+      targetTabId = resolvedTabId;
+    },
     scope,
     operation,
     input,
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
     ...(tabId === undefined ? {} : { tabId }),
   });
+  if (["status", "open", "navigate", "snapshot"].includes(operation)) return { result };
+  const statusTabId =
+    (operation !== "evaluate" && typeof result === "object" && result !== null
+      ? (result as { tabId?: PreviewTabId }).tabId
+      : undefined) ?? targetTabId;
+  const page = yield* broker
+    .invoke<PreviewAutomationStatus>({
+      scope,
+      operation: "status",
+      input: {},
+      timeoutMs: 500,
+      updateCurrentTab: false,
+      ...(statusTabId === undefined ? {} : { tabId: statusTabId }),
+    })
+    .pipe(Effect.catch(() => Effect.succeed(null)));
+  return {
+    result,
+    ...(page?.url && /^https?:\/\//i.test(page.url) && page.url.length <= 4096
+      ? { toolIcon: { _tag: "website" as const, pageUrl: page.url } }
+      : {}),
+  };
 });
 
-const invokeTargeted = <A>(
+const invokeTargeted = <A extends object>(
   operation: PreviewAutomationOperation,
   input: {
     readonly tabId?: PreviewTabId | undefined;
@@ -79,7 +105,12 @@ const invokeTargeted = <A>(
   timeoutMs?: number,
 ) => {
   const { tabId, ...operationInput } = input;
-  return invoke<A>(operation, operationInput, timeoutMs, tabId);
+  return invoke<A>(operation, operationInput, timeoutMs, tabId).pipe(
+    Effect.map(({ result, toolIcon }) => ({
+      ...result,
+      ...(toolIcon ? { toolIcon } : {}),
+    })),
+  );
 };
 
 const UploadedRecordingArtifact = Schema.Struct({
@@ -170,28 +201,32 @@ const handlers = {
     const { includeImage: _includeImage, save: _save, ...operationInput } = input ?? {};
     return invokeTargeted<PreviewAutomationSnapshot>("snapshot", operationInput);
   },
-  preview_click: (input) =>
-    invokeTargeted<void>("click", input, input.timeoutMs).pipe(Effect.as({})),
-  preview_type: (input) => invokeTargeted<void>("type", input, input.timeoutMs).pipe(Effect.as({})),
-  preview_press: (input) => invokeTargeted<void>("press", input).pipe(Effect.as({})),
-  preview_scroll: (input) => invokeTargeted<void>("scroll", input).pipe(Effect.as({})),
-  preview_evaluate: (input) =>
-    invokeTargeted<unknown>("evaluate", input).pipe(
-      Effect.map((result) => ({ value: result ?? null })),
+  preview_click: (input) => invokeTargeted<object>("click", input, input.timeoutMs),
+  preview_type: (input) => invokeTargeted<object>("type", input, input.timeoutMs),
+  preview_press: (input) => invokeTargeted<object>("press", input),
+  preview_scroll: (input) => invokeTargeted<object>("scroll", input),
+  preview_evaluate: ({ tabId, ...input }) =>
+    invoke<unknown>("evaluate", input, undefined, tabId).pipe(
+      Effect.map(({ result, toolIcon }) => ({
+        value: result ?? null,
+        ...(toolIcon ? { toolIcon } : {}),
+      })),
     ),
-  preview_wait_for: (input) =>
-    invokeTargeted<void>("waitFor", input, input.timeoutMs).pipe(Effect.as({})),
+  preview_wait_for: (input) => invokeTargeted<object>("waitFor", input, input.timeoutMs),
   preview_recording_start: (input) =>
     invokeTargeted<PreviewAutomationRecordingStatus>("recordingStart", input ?? {}),
   preview_recording_stop: (input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.requireMcpCapability("preview");
-      const response = yield* invokeTargeted<unknown>(
+      const { tabId, ...operationInput } = input;
+      const response = yield* invoke<unknown>(
         "recordingStop",
-        { ...input, transferToEnvironment: true },
+        { ...operationInput, transferToEnvironment: true },
         PREVIEW_RECORDING_STOP_TIMEOUT_MS,
+        tabId,
       );
-      return yield* claimPreviewRecording(scope.threadId, response);
+      const artifact = yield* claimPreviewRecording(scope.threadId, response.result);
+      return { ...artifact, ...(response.toolIcon ? { toolIcon: response.toolIcon } : {}) };
     }),
 } satisfies Parameters<typeof PreviewToolkit.toLayer>[0];
 

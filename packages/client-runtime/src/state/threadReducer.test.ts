@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   CheckpointRef,
   CommandId,
+  ComposerContextId,
   EventId,
   MessageId,
   ProjectId,
@@ -526,6 +527,54 @@ describe("applyThreadDetailEvent", () => {
   });
 
   describe("thread.message-sent", () => {
+    it.each([
+      ["first", ["first+", "middle", "last"]],
+      ["middle", ["first", "middle+", "last"]],
+      ["last", ["first", "middle", "last+"]],
+      ["new", ["first", "middle", "last", "+"]],
+    ] as const)("applies a delta to %s without changing other messages", (id, texts) => {
+      const messages = Object.freeze(
+        ["first", "middle", "last"].map((name) =>
+          Object.freeze({
+            id: MessageId.make(name),
+            role: "assistant" as const,
+            text: name,
+            turnId: null,
+            streaming: false,
+            createdAt: baseThread.createdAt,
+            updatedAt: baseThread.updatedAt,
+          }),
+        ),
+      );
+      const result = applyThreadDetailEvent(
+        { ...baseThread, messages },
+        {
+          ...baseEventFields,
+          sequence: 6,
+          occurredAt: baseThread.updatedAt,
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.message-sent",
+          payload: {
+            threadId: baseThread.id,
+            messageId: MessageId.make(id),
+            role: "assistant",
+            text: "+",
+            turnId: null,
+            streaming: true,
+            createdAt: baseThread.createdAt,
+            updatedAt: baseThread.updatedAt,
+          },
+        },
+      );
+      expect(result.kind).toBe("updated");
+      if (result.kind !== "updated") return;
+      expect(result.thread.messages.map((message) => message.text)).toEqual(texts);
+      for (const [index, message] of messages.entries()) {
+        if (message.id !== id) expect(result.thread.messages[index]).toBe(message);
+      }
+    });
+
     it("appends a new message", () => {
       const result = applyThreadDetailEvent(baseThread, {
         ...baseEventFields,
@@ -585,6 +634,48 @@ describe("applyThreadDetailEvent", () => {
       expect(repeated.thread.messages).toEqual(imported.thread.messages);
       expect(repeated.thread.latestTurn).toBeNull();
       expect(repeated.thread.checkpoints).toBe(baseThread.checkpoints);
+    });
+
+    it("keeps structured context on a newly sent message", () => {
+      const context = {
+        version: 1 as const,
+        records: [
+          {
+            version: 1 as const,
+            contextId: ComposerContextId.make("video-1"),
+            kind: "file" as const,
+            label: "demo.mp4",
+            attachmentId: "attachment-video-1",
+            name: "demo.mp4",
+            mimeType: "video/mp4",
+            sizeBytes: 42,
+          },
+        ],
+      };
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-01T06:01:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.message-sent",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("msg-with-context"),
+          role: "user",
+          text: "Watch [demo.mp4](t3-context://v1/file/video-1).",
+          context,
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-04-01T06:01:00.000Z",
+          updatedAt: "2026-04-01T06:01:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages[0]?.context).toEqual(context);
+      }
     });
 
     it("appends text for streaming messages", () => {

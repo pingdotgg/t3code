@@ -1154,7 +1154,7 @@ describe.skipIf(!!process.env.FAST)("AWS.DynamoDB.Table", () => {
             const state = yield* yield* State;
             yield* state.delete({
               stack: stack.name,
-              stage: "test",
+              stage: stack.stage,
               fqn: "AdoptableTable",
             });
           }).pipe(Effect.provide(stack.state));
@@ -1218,7 +1218,7 @@ describe.skipIf(!!process.env.FAST)("AWS.DynamoDB.Table", () => {
             const state = yield* yield* State;
             yield* state.delete({
               stack: stack.name,
-              stage: "test",
+              stage: stack.stage,
               fqn: "Original",
             });
           }).pipe(Effect.provide(stack.state));
@@ -1292,7 +1292,7 @@ describe.skipIf(!!process.env.FAST)("AWS.DynamoDB.Table", () => {
         // interrupted deploy leaves behind: `creating`, no attributes, and
         // the `attributes` prop lost in the state round-trip.
         const state = yield* yield* State;
-        const stage = "test"; // scratch stacks default to the "test" stage
+        const stage = stack.stage;
         const fqns = yield* state.list({ stack: stack.name, stage });
         const rows = yield* Effect.forEach(fqns, (fqn) =>
           state

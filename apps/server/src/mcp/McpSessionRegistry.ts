@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpServer } from "effect/unstable/http";
+import * as NetAddress from "effect/unstable/net/NetAddress";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -14,11 +15,7 @@ import * as McpProviderSession from "./McpProviderSession.ts";
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
-  /**
-   * Whether the credential may drive the user's browser. The pull request
-   * toolkit is always granted: it only touches the thread's own links.
-   */
-  readonly preview: boolean;
+  readonly capabilities: ReadonlySet<McpInvocationContext.McpCapability>;
 }
 
 export interface McpIssuedCredential {
@@ -82,16 +79,12 @@ const bytesToHex = (bytes: Uint8Array): string =>
 
 const tokenFromBytes = (bytes: Uint8Array): string => Buffer.from(bytes).toString("base64url");
 
-const getHttpMcpEndpointHost = (hostname: string): string => {
-  const normalized = hostname.toLowerCase();
-  const endpointHostname =
-    normalized === "0.0.0.0" || normalized === "::" || normalized === "[::]"
-      ? "127.0.0.1"
-      : hostname;
-  return endpointHostname.includes(":") && !endpointHostname.startsWith("[")
-    ? `[${endpointHostname}]`
-    : endpointHostname;
-};
+// A wildcard bind is reachable on loopback, which is where the provider
+// subprocesses run; anything else is announced as the address it bound.
+const getHttpMcpEndpointHost = (address: NetAddress.IpAddress): string =>
+  NetAddress.isUnspecified(address)
+    ? "127.0.0.1"
+    : NetAddress.formatUrlHostString(NetAddress.formatIp(address));
 
 const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   options: McpSessionRegistryOptions = {},
@@ -103,10 +96,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const state = yield* SynchronizedRef.make<RegistryState>({ records: new Map() });
   const currentTimeMillis = options.now ? Effect.sync(options.now) : Clock.currentTimeMillis;
   const livenessWindowMs = options.livenessWindowMs ?? DEFAULT_LIVENESS_WINDOW_MS;
-  const endpoint =
-    httpServer.address._tag === "TcpAddress"
-      ? `http://${getHttpMcpEndpointHost(httpServer.address.hostname)}:${httpServer.address.port}/mcp`
-      : "http://127.0.0.1/mcp";
+  const endpoint = NetAddress.isInetAddress(httpServer.address)
+    ? `http://${getHttpMcpEndpointHost(httpServer.address.address)}:${httpServer.address.port}/mcp`
+    : "http://127.0.0.1/mcp";
 
   const hashToken = (token: string) =>
     crypto
@@ -133,9 +125,10 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         threadId: ThreadId.make(request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
-        capabilities: new Set<McpInvocationContext.McpCapability>(
-          request.preview ? ["pull-requests", "preview"] : ["pull-requests"],
-        ),
+        capabilities: new Set<McpInvocationContext.McpCapability>([
+          "pull-requests",
+          ...request.capabilities,
+        ]),
         issuedAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
@@ -151,7 +144,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           providerInstanceId: scope.providerInstanceId,
           endpoint,
           authorizationHeader: `Bearer ${rawToken}`,
-          preview: request.preview,
+          capabilities: scope.capabilities,
         },
       };
     },

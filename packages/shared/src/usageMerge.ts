@@ -37,7 +37,20 @@ export interface ModelTotals {
   readonly costUsd: number;
   readonly totalTokens: number;
   readonly records: number;
+  /**
+   * Records whose tokens are counted here but which contributed nothing to
+   * `costUsd`. When it equals `records` the cost is unknown, not zero.
+   */
+  readonly unpricedRecords: number;
   readonly costShare: number;
+}
+
+/**
+ * A model whose every record lacked rates has an unknown cost, not a zero one.
+ * Clients must not present its `costUsd` as a real dollar figure.
+ */
+export function isModelCostUnknown(model: ModelTotals): boolean {
+  return model.records > 0 && model.unpricedRecords >= model.records;
 }
 
 export interface DailyTotals {
@@ -105,9 +118,9 @@ function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
  *
  * Several environments on one machine (worktree servers, for instance) resolve
  * the same provider home and would otherwise double count every token. The
- * first environment in a stable order claims a fingerprint; the rest have that
- * provider's buckets dropped. Environments are sorted by id so the winner does
- * not change between renders.
+ * most recently read summary claims a fingerprint; the rest have that provider's
+ * buckets dropped. Environment ids break ties so the winner is stable when
+ * summaries have the same read time.
  */
 function claimSources(environments: readonly EnvironmentUsage[]): {
   readonly ownerByFingerprint: ReadonlyMap<string, EnvironmentId>;
@@ -116,7 +129,11 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
   const ownerByFingerprint = new Map<string, EnvironmentId>();
   const duplicates: string[] = [];
 
-  const ordered = [...environments].sort((a, b) => a.environmentId.localeCompare(b.environmentId));
+  const ordered = [...environments].sort(
+    (a, b) =>
+      (Date.parse(b.summary.readAt) || 0) - (Date.parse(a.summary.readAt) || 0) ||
+      a.environmentId.localeCompare(b.environmentId),
+  );
 
   for (const environment of ordered) {
     for (const source of environment.summary.sources) {
@@ -249,7 +266,13 @@ export function mergeUsage(
   >();
   const modelAccumulator = new Map<
     string,
-    { provider: UsageProviderKind; costUsd: number; totalTokens: number; records: number }
+    {
+      provider: UsageProviderKind;
+      costUsd: number;
+      totalTokens: number;
+      records: number;
+      unpricedRecords: number;
+    }
   >();
   const dailyAccumulator = new Map<
     string,
@@ -319,10 +342,12 @@ export function mergeUsage(
         costUsd: 0,
         totalTokens: 0,
         records: 0,
+        unpricedRecords: 0,
       };
       model.costUsd += bucket.costUsd;
       model.totalTokens += tokens;
       model.records += bucket.records;
+      model.unpricedRecords += bucket.unpricedRecords;
       modelAccumulator.set(modelKey, model);
 
       const day = dailyAccumulator.get(bucket.day) ?? {
@@ -381,6 +406,7 @@ export function mergeUsage(
       costUsd: totals.costUsd,
       totalTokens: totals.totalTokens,
       records: totals.records,
+      unpricedRecords: totals.unpricedRecords,
       costShare: costUsd === 0 ? 0 : totals.costUsd / costUsd,
     }))
     .sort((a, b) => b.costUsd - a.costUsd || b.totalTokens - a.totalTokens);

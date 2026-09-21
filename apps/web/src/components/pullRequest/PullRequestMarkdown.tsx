@@ -1,8 +1,11 @@
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
+import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
+import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { createContext, useContext, useMemo } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
 
+import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { cn } from "~/lib/utils";
 import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 
@@ -14,6 +17,46 @@ export const PullRequestMarkdownContext = createContext<{
   repositoryUrl: string | null;
   threadRef: ScopedThreadRef | null;
 } | null>(null);
+
+/**
+ * A video GitHub hosts for the repository. It plays through a signed asset URL the server
+ * fetches with the repository's GitHub credential, which is what a private repository's
+ * uploads need; the URL is re-signed on retry, so a stale one recovers without a reload.
+ */
+function PullRequestGitHubVideo({
+  environmentId,
+  cwd,
+  url,
+  fetchUrl,
+}: {
+  environmentId: EnvironmentId;
+  cwd: string;
+  /** What the body authored, which is what "Open original" should reach. */
+  url: string;
+  /** The canonical GitHub media URL: a `blob` link addresses the page, not the bytes. */
+  fetchUrl: string;
+}) {
+  const resource = useMemo<AssetResource>(
+    () => ({ _tag: "github-media", cwd, url: fetchUrl }),
+    [cwd, fetchUrl],
+  );
+  const assetUrl = useAssetUrlState(environmentId, resource);
+  const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
+  // A server too old to sign this resource, or one with no route to GitHub, still leaves a
+  // public repository's video playing exactly as it did before.
+  const src =
+    assetUrl._tag === "Success" ? assetUrl.url : assetUrl._tag === "Failure" ? fetchUrl : null;
+  return (
+    <MediaVideoPlayer
+      src={src === null ? null : src + markdownImageSourceFragment(url)}
+      originalUrl={url}
+      label="Pull request video"
+      className="w-full"
+      videoClassName="rounded-lg border border-border/60"
+      onRetry={refreshAssetUrl}
+    />
+  );
+}
 
 /** Renders PR uploads inline, with retry and an original link when video playback fails. */
 export function PullRequestMarkdown({
@@ -39,7 +82,13 @@ export function PullRequestMarkdown({
     [repositoryUrl],
   );
   return (
-    <div className={cn("space-y-3", className)} data-image-gallery>
+    <div
+      className={cn(
+        "space-y-3 [&_[data-markdown-details]]:border-0 [&_[data-markdown-details-summary]]:text-foreground/80 [&_[data-markdown-details-summary]>svg]:text-muted-foreground/60",
+        className,
+      )}
+      data-image-gallery
+    >
       {segments.map((segment) => {
         if (segment.kind === "markdown") {
           return (
@@ -51,6 +100,19 @@ export function PullRequestMarkdown({
               pullRequestPanelRef={resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF}
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
+              githubMedia
+            />
+          );
+        }
+        const githubMediaUrl = segment.media === "video" ? githubMediaFetchUrl(segment.url) : null;
+        if (githubMediaUrl !== null) {
+          return (
+            <PullRequestGitHubVideo
+              key={`${segment.id}:${segment.url}`}
+              environmentId={environmentId}
+              cwd={cwd}
+              url={segment.url}
+              fetchUrl={githubMediaUrl}
             />
           );
         }

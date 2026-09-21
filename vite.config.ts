@@ -2,6 +2,43 @@ import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
 import * as NodeURL from "node:url";
 
+/** Import restrictions every file keeps, including the one module exempt from the glyph rule. */
+const RESTRICTED_IMPORT_PATHS = [
+  {
+    name: "@t3tools/client-runtime",
+    message:
+      "Import from an explicit @t3tools/client-runtime/* subpath. The package has no root export.",
+  },
+  {
+    name: "@pierre/diffs/react",
+    importNames: ["CodeView"],
+    message: "Use StyledDiffCodeView so web diff surfaces share styling and virtualized geometry.",
+  },
+];
+
+/** Lucide's pull-request glyphs, which only `pullRequestIcons.tsx` may name. */
+const RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS = {
+  name: "lucide-react",
+  importNames: [
+    "GitMerge",
+    "GitMergeIcon",
+    "GitPullRequest",
+    "GitPullRequestIcon",
+    "GitPullRequestArrow",
+    "GitPullRequestArrowIcon",
+    "GitPullRequestClosed",
+    "GitPullRequestClosedIcon",
+    "GitPullRequestDraft",
+    "GitPullRequestDraftIcon",
+    "GitPullRequestCreate",
+    "GitPullRequestCreateIcon",
+    "GitPullRequestCreateArrow",
+    "GitPullRequestCreateArrowIcon",
+  ],
+  message:
+    "Pick a glyph by meaning from PullRequestGlyph in apps/web/src/components/pullRequest/pullRequestIcons.tsx so every surface draws the same pull request the same way.",
+};
+
 export default defineConfig({
   resolve: {
     alias: {
@@ -32,6 +69,9 @@ export default defineConfig({
   fmt: {
     ignorePatterns: [
       ".repos/**",
+      // Macroscope's glob-per-line ignore grammar, not Markdown: formatting
+      // it rewrites `*` as `_` and joins lines.
+      ".macroscope/ignore.md",
       ".alchemy",
       "dist",
       "dist-electron",
@@ -103,21 +143,7 @@ export default defineConfig({
       "typescript/unbound-method": "off",
       "eslint/no-restricted-imports": [
         "error",
-        {
-          paths: [
-            {
-              name: "@t3tools/client-runtime",
-              message:
-                "Import from an explicit @t3tools/client-runtime/* subpath. The package has no root export.",
-            },
-            {
-              name: "@pierre/diffs/react",
-              importNames: ["CodeView"],
-              message:
-                "Use StyledDiffCodeView so web diff surfaces share styling and virtualized geometry.",
-            },
-          ],
-        },
+        { paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS] },
       ],
       "t3code/no-global-process-runtime": "error",
       "t3code/no-inline-schema-compile": "warn",
@@ -132,8 +158,27 @@ export default defineConfig({
         rules: { "t3code/no-global-process-runtime": "off" },
       },
       {
+        // The one module allowed to name lucide's pull-request glyphs; everything else picks
+        // from its vocabulary. The other import restrictions still apply here.
+        files: ["apps/web/src/components/pullRequest/pullRequestIcons.tsx"],
+        rules: { "eslint/no-restricted-imports": ["error", { paths: RESTRICTED_IMPORT_PATHS }] },
+      },
+      {
         files: ["apps/mobile/src/**"],
         rules: { "t3code/no-mobile-uniwind-theme-escape-hatches": "error" },
+      },
+      {
+        // Shared client code must not call APIs missing from Hermes. Our ESNext
+        // TypeScript target accepts them even when they would crash mobile at launch.
+        // Tests run on Node and are exempt.
+        files: [
+          "apps/mobile/src/**",
+          "packages/client-runtime/src/**",
+          "packages/contracts/src/**",
+          "packages/shared/src/**",
+        ],
+        excludeFiles: ["**/*.test.ts", "**/*.test.tsx"],
+        rules: { "t3code/no-hermes-unsupported-apis": "error" },
       },
       {
         // Reviewed native and third-party interop boundaries that cannot consume a className.
@@ -142,6 +187,8 @@ export default defineConfig({
           "apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx",
           "apps/mobile/src/features/files/FileMarkdownPreview.tsx",
           "apps/mobile/src/features/files/SourceFileSurface.tsx",
+          "apps/mobile/src/features/terminal/ThreadTerminalRouteScreen.tsx",
+          "apps/mobile/src/features/files/AttachmentFileScreen.tsx",
           "apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx",
           "apps/mobile/src/features/files/thread-file-navigator-pane.tsx",
           "apps/mobile/src/features/home/HomeHeader.tsx",
@@ -153,6 +200,7 @@ export default defineConfig({
           "apps/mobile/src/features/threads/NewTaskDraftScreen.tsx",
           "apps/mobile/src/features/threads/ThreadComposer.tsx",
           "apps/mobile/src/features/threads/ThreadFeed.tsx",
+          "apps/mobile/src/features/review/ReviewCommentCard.tsx",
           "apps/mobile/src/features/threads/ThreadSettingsSheet.tsx",
           "apps/mobile/src/features/threads/git/GitOverviewSheet.tsx",
           "apps/mobile/src/features/threads/thread-list-items.tsx",
@@ -160,6 +208,7 @@ export default defineConfig({
           "apps/mobile/src/lib/useMobileNavigationTheme.ts",
           "apps/mobile/src/native/T3ComposerEditor.ios.tsx",
           "apps/mobile/src/native/T3ComposerEditor.native.tsx",
+          "apps/mobile/src/native/SelectableMarkdownText.android.tsx",
         ],
         rules: {
           "t3code/no-mobile-uniwind-theme-escape-hatches": ["error", { allowUniwindTheme: true }],

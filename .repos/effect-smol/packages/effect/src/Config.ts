@@ -40,7 +40,7 @@ const TypeId = "~effect/Config"
  * ```ts import.meta.vitest
  * import { Config } from "effect"
  *
- * Config.isConfig(Config.string("HOST")) // => true
+ * Config.isConfig(Config.String("HOST")) // => true
  * Config.isConfig("not a config") // => false
  * ```
  *
@@ -236,7 +236,7 @@ const preserveInputEvidence = <T>(
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const upper = Config.string("name").pipe(
+ * const upper = Config.String("name").pipe(
  *   Config.map((s) => s.toUpperCase())
  * )
  *
@@ -244,7 +244,7 @@ const preserveInputEvidence = <T>(
  * Effect.runSync(upper.parse(provider)) // => "ALICE"
  * ```
  *
- * @see {@link mapOrFail} – when the transformation can fail
+ * @see {@link mapEffect} – when the transformation can fail
  *
  * @category mapping
  * @since 2.0.0
@@ -274,8 +274,8 @@ export const map: {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const trimmed = Config.string("name").pipe(
- *   Config.mapOrFail((s) => Effect.succeed(s.trim()))
+ * const trimmed = Config.String("name").pipe(
+ *   Config.mapEffect((s) => Effect.succeed(s.trim()))
  * )
  * const provider = ConfigProvider.fromUnknown({ name: " Alice " })
  * Effect.runSync(trimmed.parse(provider)) // => "Alice"
@@ -286,7 +286,7 @@ export const map: {
  * @category mapping
  * @since 2.0.0
  */
-export const mapOrFail: {
+export const mapEffect: {
   <A, B>(f: (a: A) => Effect.Effect<B, ConfigError>): (self: Config<A>) => Config<B>
   <A, B>(self: Config<A>, f: (a: A) => Effect.Effect<B, ConfigError>): Config<B>
 } = dual(2, <A, B>(self: Config<A>, f: (a: A) => Effect.Effect<B, ConfigError>): Config<B> => {
@@ -327,7 +327,7 @@ export const mapOrFail: {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const hostConfig = Config.string("HOST").pipe(
+ * const hostConfig = Config.String("HOST").pipe(
  *   Config.orElse(() => Config.succeed("localhost"))
  * )
  * const provider = ConfigProvider.fromUnknown({})
@@ -386,8 +386,8 @@ export const orElse: {
  * import { Config, ConfigProvider, Effect } from "effect"
  *
  * const dbConfig = Config.all({
- *   host: Config.string("host"),
- *   port: Config.number("port")
+ *   host: Config.String("host"),
+ *   port: Config.Number("port")
  * })
  *
  * const provider = ConfigProvider.fromUnknown({ host: "localhost", port: 5432 })
@@ -409,12 +409,12 @@ export function all<const Arg extends Iterable<Config<any>> | Record<string, Con
       }
     : never
 > {
-  const configs: Array<Config<any>> | Record<string, Config<any>> = Array.isArray(arg)
+  const configs: Array<Config<any>> | Record<string, Config<any>> = globalThis.Array.isArray(arg)
     ? arg
     : Symbol.iterator in arg
     ? [...arg as any]
     : arg
-  if (Array.isArray(configs)) {
+  if (globalThis.Array.isArray(configs)) {
     return make((provider, pathPrefix) =>
       Effect.flatMapEager(
         Effect.all(configs.map((config) => Effect.result(evaluateAt(config, provider, pathPrefix)))),
@@ -513,7 +513,7 @@ const resolveRecord = (
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const port = Config.number("port").pipe(Config.withDefault(3000))
+ * const port = Config.Number("port").pipe(Config.withDefault(3000))
  *
  * const provider = ConfigProvider.fromUnknown({})
  * Effect.runSync(port.parse(provider)) // => 3000
@@ -558,7 +558,7 @@ export const withDefault: {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect, Option } from "effect"
  *
- * const maybePort = Config.option(Config.number("port"))
+ * const maybePort = Config.option(Config.Number("port"))
  *
  * const provider = ConfigProvider.fromUnknown({})
  * Effect.runSync(maybePort.parse(provider)) // => Option.none()
@@ -641,7 +641,7 @@ type IsPlainObject<A> = [A] extends [Record<string, any>]
  * const makeConfig = (config: Config.Wrap<Options>): Config.Config<Options> =>
  *   Config.unwrap(config)
  *
- * const config = makeConfig({ key: Config.string("key") })
+ * const config = makeConfig({ key: Config.String("key") })
  * const provider = ConfigProvider.fromUnknown({ key: "value" })
  * Effect.runSync(config.parse(provider)) // => { key: "value" }
  * ```
@@ -691,7 +691,7 @@ const decodeFromCursor = (
     SchemaAST.unknown,
     ast,
     new SchemaTransformation.Transformation(
-      SchemaGetter.transformOrFail((input: unknown) => decode(input as ConfigCursor)),
+      SchemaGetter.transformEffect((input: unknown) => decode(input as ConfigCursor)),
       SchemaGetter.passthrough()
     )
   )
@@ -807,7 +807,7 @@ const toConfigCursorAST = memoize((root: SchemaAST.AST): SchemaAST.AST => {
  * {@link nested} calls. Pass a single string for a flat key or an array for
  * nested paths.
  *
- * Convenience constructors such as `string`, `number`, and `boolean` delegate
+ * Convenience constructors such as `String`, `Number`, and `Boolean` delegate
  * to this API.
  *
  * The codec is converted to its canonical `StringTree` form. Its encoded shape
@@ -868,7 +868,7 @@ const toConfigCursorAST = memoize((root: SchemaAST.AST): SchemaAST.AST => {
  * Effect.runSync(DbConfig.parse(provider)) // => { host: "localhost", port: 5432 }
  * ```
  *
- * @see {@link string} / {@link number} / {@link boolean} – shortcuts for
+ * @see {@link String} / {@link Number} / {@link Boolean} – shortcuts for
  *   single-value configs
  *
  * @category schemas
@@ -905,172 +905,20 @@ export function schema<T>(codec: Schema.ConstraintCodec<T, unknown>, path?: stri
   })
 }
 
-/** @internal */
-export const TrueValues = Schema.Literals(["true", "yes", "on", "1", "y"])
+const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))
 
-/** @internal */
-export const FalseValues = Schema.Literals(["false", "no", "off", "0", "n"])
+const LogLevelSchema = Schema.Literals(LogLevel_.values)
 
-/**
- * Schema for boolean values encoded as strings.
- *
- * **When to use**
- *
- * Use when you need the reusable boolean schema value for `Config.schema` with
- * custom paths.
- *
- * **Details**
- *
- * Accepted string values: `true`, `false`, `yes`, `no`, `on`, `off`, `1`,
- * `0`, `y`, `n` (case-sensitive).
- *
- * @see {@link boolean} – convenience constructor
- *
- * @category schemas
- * @since 4.0.0
- */
-export const Boolean = Schema.Literals([...TrueValues.literals, ...FalseValues.literals]).pipe(
-  Schema.decodeTo(
-    Schema.Boolean,
-    SchemaTransformation.transform({
-      decode: (value) => value === "true" || value === "yes" || value === "on" || value === "1" || value === "y",
-      encode: (value) => value ? "true" : "false"
-    })
-  )
-)
+interface ArrayOptions {
+  readonly separator?: string | undefined
+}
 
-/**
- * Schema for port numbers (integers in 1–65535).
- *
- * **When to use**
- *
- * Use when you need the reusable port schema value for `Config.schema` with
- * custom paths.
- *
- * @see {@link port} – convenience constructor
- *
- * @category schemas
- * @since 4.0.0
- */
-export const Port = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))
-
-/**
- * Schema for `LogLevel` string literals.
- *
- * **When to use**
- *
- * Use when you need the reusable log-level schema value for `Config.schema`
- * with custom paths.
- *
- * **Details**
- *
- * Accepted values: `"All"`, `"Fatal"`, `"Error"`, `"Warn"`, `"Info"`,
- * `"Debug"`, `"Trace"`, `"None"`.
- *
- * @see {@link logLevel} – convenience constructor
- *
- * @category schemas
- * @since 4.0.0
- */
-export const LogLevel = Schema.Literals(LogLevel_.values)
-
-/**
- * Schema for key-value record types that can also be parsed from
- * a flat comma-separated string.
- *
- * **When to use**
- *
- * Use when reading key-value maps from a single env var (e.g. OpenTelemetry
- *   resource attributes).
- *
- * **Details**
- *
- * Accepts either a JSON-like record from the provider or a flat string like
- * `"key1=val1,key2=val2"`. The `separator` (default `","`) and
- * `keyValueSeparator` (default `"="`) can be customized.
- *
- * **Example** (Parsing a comma-separated record)
- *
- * ```ts import.meta.vitest
- * import { Config, ConfigProvider, Effect, Schema } from "effect"
- *
- * const schema = Config.Record(Schema.String, Schema.String)
- * const config = Config.schema(schema, "OTEL_RESOURCE_ATTRIBUTES")
- *
- * const provider = ConfigProvider.fromEnv({
- *   env: {
- *     OTEL_RESOURCE_ATTRIBUTES:
- *       "service.name=my-service,service.version=1.0.0,custom.attribute=value"
- *   }
- * })
- *
- * const result = Effect.runSync(config.parse(provider))
- * result["service.name"] // => "my-service"
- * result["service.version"] // => "1.0.0"
- * result["custom.attribute"] // => "value"
- * ```
- *
- * @see {@link Array} for separated or structural array input
- *
- * @category schemas
- * @since 4.0.0
- */
-export const Record = <K extends Schema.Record.Key, V extends Schema.Constraint>(key: K, value: V, options?: {
+interface RecordOptions {
   readonly separator?: string | undefined
   readonly keyValueSeparator?: string | undefined
-}) => {
-  const record = Schema.Record(key, value)
-  const split = SchemaTransformation.splitKeyValue(options)
-  const recordString = Schema.String.pipe(
-    Schema.decodeTo(Schema.toCodecStringTree(record), {
-      decode: split.decode,
-      encode: SchemaGetter.passthrough<Record<string, string>, Schema.StringTree>({ strict: false }).compose(
-        split.encode
-      )
-    })
-  )
-
-  return Schema.Union([record, recordString])
 }
 
-const ArrayConfig = <V extends Schema.Constraint>(value: V, options?: {
-  readonly separator?: string | undefined
-}) => {
-  const array = Schema.Array(value)
-  const separator = options?.separator ?? ","
-  const arrayString = Schema.String.pipe(
-    Schema.decodeTo(Schema.toCodecStringTree(array), {
-      decode: SchemaGetter.split(options),
-      encode: SchemaGetter.passthrough<ReadonlyArray<string>, Schema.StringTree>({ strict: false }).compose(
-        SchemaGetter.transform((input) => input.join(separator))
-      )
-    })
-  )
-
-  return Schema.Union([arrayString, array])
-}
-
-export {
-  /**
-   * Schema for array types that can also be parsed from a flat separated string.
-   *
-   * **When to use**
-   *
-   * Use when reading array values from a single env var, such as comma-separated
-   * exporter names.
-   *
-   * **Details**
-   *
-   * Accepts either a JSON-like array from the provider or a flat string like
-   * `"a,b,c"`. The `separator` defaults to `","` and can be customized.
-   *
-   * @see {@link Record} for separated or structural record input
-   *
-   * @category schemas
-   * @since 4.0.0
-   */
-  ArrayConfig as Array
-}
+const isPath = (u: unknown): u is string | Path => Predicate.isString(u) || globalThis.Array.isArray(u)
 
 // -----------------------------------------------------------------------------
 // constructors
@@ -1105,7 +953,7 @@ export function fail(err: SourceError | Schema.SchemaError) {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const host = Config.string("HOST").pipe(
+ * const host = Config.String("HOST").pipe(
  *   Config.orElse(() => Config.succeed("localhost"))
  * )
  * const provider = ConfigProvider.fromUnknown({})
@@ -1135,19 +983,19 @@ export function succeed<T>(value: T) {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const host = Config.string("HOST")
+ * const host = Config.String("HOST")
  *
  * const provider = ConfigProvider.fromUnknown({ HOST: "localhost" })
  * Effect.runSync(host.parse(provider)) // => "localhost"
  * ```
  *
- * @see {@link nonEmptyString} – rejects empty strings
+ * @see {@link NonEmptyString} – rejects empty strings
  * @see {@link schema} – for more complex types
  *
  * @category constructors
  * @since 2.0.0
  */
-export function string(name?: string) {
+export function String(name?: string) {
   return schema(Schema.String, name)
 }
 
@@ -1163,12 +1011,12 @@ export function string(name?: string) {
  *
  * Shortcut for `Config.schema(Schema.NonEmptyString, name)`.
  *
- * @see {@link string} for allowing empty strings
+ * @see {@link String} for allowing empty strings
  *
  * @category constructors
  * @since 3.7.0
  */
-export function nonEmptyString(name?: string) {
+export function NonEmptyString(name?: string) {
   return schema(Schema.NonEmptyString, name)
 }
 
@@ -1184,13 +1032,13 @@ export function nonEmptyString(name?: string) {
  *
  * Shortcut for `Config.schema(Schema.Number, name)`.
  *
- * @see {@link finite} for rejecting `NaN` and `Infinity`
- * @see {@link int} for accepting only integers
+ * @see {@link Finite} for rejecting `NaN` and `Infinity`
+ * @see {@link Int} for accepting only integers
  *
  * @category constructors
  * @since 2.0.0
  */
-export function number(name?: string) {
+export function Number(name?: string) {
   return schema(Schema.Number, name)
 }
 
@@ -1205,13 +1053,13 @@ export function number(name?: string) {
  *
  * Shortcut for `Config.schema(Schema.Finite, name)`.
  *
- * @see {@link number} for accepting `NaN` and `Infinity`
- * @see {@link int} for accepting only integers
+ * @see {@link Number} for accepting `NaN` and `Infinity`
+ * @see {@link Int} for accepting only integers
  *
  * @category constructors
  * @since 4.0.0
  */
-export function finite(name?: string) {
+export function Finite(name?: string) {
   return schema(Schema.Finite, name)
 }
 
@@ -1226,13 +1074,13 @@ export function finite(name?: string) {
  *
  * Shortcut for `Config.schema(Schema.Int, name)`.
  *
- * @see {@link number} for accepting any number
- * @see {@link port} for accepting only integers in `1` through `65535`
+ * @see {@link Number} for accepting any number
+ * @see {@link Port} for accepting only integers in `1` through `65535`
  *
  * @category constructors
  * @since 4.0.0
  */
-export function int(name?: string) {
+export function Int(name?: string) {
   return schema(Schema.Int, name)
 }
 
@@ -1252,16 +1100,16 @@ export function int(name?: string) {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const env = Config.literal("production", "ENV")
+ * const env = Config.Literal("production", "ENV")
  * const provider = ConfigProvider.fromUnknown({ ENV: "production" })
  * Effect.runSync(env.parse(provider)) // => "production"
  * ```
  *
- * @see {@link literals} – accepts multiple literal values
+ * @see {@link Literals} – accepts multiple literal values
  * @category constructors
  * @since 2.0.0
  */
-export function literal<L extends SchemaAST.LiteralValue>(literal: L, name?: string) {
+export function Literal<L extends SchemaAST.LiteralValue>(literal: L, name?: string) {
   return schema(Schema.Literal(literal), name)
 }
 
@@ -1281,18 +1129,153 @@ export function literal<L extends SchemaAST.LiteralValue>(literal: L, name?: str
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const env = Config.literals(["development", "production"], "ENV")
+ * const env = Config.Literals(["development", "production"], "ENV")
  * const provider = ConfigProvider.fromUnknown({ ENV: "development" })
  * Effect.runSync(env.parse(provider)) // => "development"
  * ```
  *
- * @see {@link literal} for accepting one specific literal value
+ * @see {@link Literal} for accepting one specific literal value
  *
  * @category constructors
  * @since 4.0.0
  */
-export function literals<const L extends ReadonlyArray<SchemaAST.LiteralValue>>(literals: L, name?: string) {
+export function Literals<const L extends ReadonlyArray<SchemaAST.LiteralValue>>(literals: L, name?: string) {
   return schema(Schema.Literals(literals), name)
+}
+
+/**
+ * Creates a config for array values that may also be read from a separated string.
+ *
+ * **When to use**
+ *
+ * Use when you need to read either structural array input or a flat value such as
+ * `"otlp,console"` from an environment variable.
+ *
+ * **Details**
+ *
+ * Pass a string or `ConfigProvider.Path` as the second argument to set the lookup
+ * path. When no path is needed, pass the options object directly. The `separator`
+ * defaults to `","`.
+ *
+ * **Example** (Reading a comma-separated array)
+ *
+ * ```ts import.meta.vitest
+ * import { Config, ConfigProvider, Effect, Schema } from "effect"
+ *
+ * const config = Config.Array(Schema.String, "EXPORTERS")
+ * const provider = ConfigProvider.fromEnv({ env: { EXPORTERS: "otlp,console" } })
+ *
+ * Effect.runSync(config.parse(provider)) // => ["otlp", "console"]
+ * ```
+ *
+ * @see {@link Record} for key-value input from structural records or separated strings.
+ * @category constructors
+ * @since 4.0.0
+ */
+export function Array<V extends Schema.ConstraintCodec<unknown, unknown>>(
+  value: V,
+  options?: ArrayOptions
+): Config<ReadonlyArray<V["Type"]>>
+export function Array<V extends Schema.ConstraintCodec<unknown, unknown>>(
+  value: V,
+  path: string | Path,
+  options?: ArrayOptions
+): Config<ReadonlyArray<V["Type"]>>
+export function Array<V extends Schema.ConstraintCodec<unknown, unknown>>(
+  value: V,
+  pathOrOptions?: string | Path | ArrayOptions,
+  options?: ArrayOptions
+) {
+  const hasPath = isPath(pathOrOptions)
+  const resolvedOptions = hasPath ? options : pathOrOptions
+  const array = Schema.Array(value)
+  const separator = resolvedOptions?.separator ?? ","
+  const arrayString = Schema.String.pipe(
+    Schema.decodeTo(Schema.toCodecStringTree(array), {
+      decode: SchemaGetter.split(resolvedOptions),
+      encode: SchemaGetter.passthrough<ReadonlyArray<string>, Schema.StringTree>({ strict: false }).compose(
+        SchemaGetter.transform((input) => input.join(separator))
+      )
+    })
+  )
+  return schema(Schema.Union([arrayString, array]), hasPath ? pathOrOptions : undefined)
+}
+
+/**
+ * Creates a config for record values that may also be read from a separated key-value string.
+ *
+ * **When to use**
+ *
+ * Use when you need to read either structural record input or a flat value such as
+ * `"service.name=my-service,service.version=1.0.0"` from an environment variable.
+ *
+ * **Details**
+ *
+ * Pass a string or `ConfigProvider.Path` as the third argument to set the lookup
+ * path. When no path is needed, pass the options object directly. The `separator`
+ * defaults to `","` and `keyValueSeparator` defaults to `"="`.
+ *
+ * **Example** (Reading a comma-separated record)
+ *
+ * ```ts import.meta.vitest
+ * import { Config, ConfigProvider, Effect, Schema } from "effect"
+ *
+ * const config = Config.Record(Schema.String, Schema.String, "OTEL_RESOURCE_ATTRIBUTES")
+ * const provider = ConfigProvider.fromEnv({
+ *   env: {
+ *     OTEL_RESOURCE_ATTRIBUTES:
+ *       "service.name=my-service,service.version=1.0.0,custom.attribute=value"
+ *   }
+ * })
+ *
+ * const result = Effect.runSync(config.parse(provider))
+ * result["service.name"] // => "my-service"
+ * result["service.version"] // => "1.0.0"
+ * result["custom.attribute"] // => "value"
+ * ```
+ *
+ * @see {@link Array} for array input from structural arrays or separated strings.
+ * @category constructors
+ * @since 4.0.0
+ */
+export function Record<
+  K extends Schema.Record.Key & Schema.ConstraintCodec<unknown, unknown>,
+  V extends Schema.ConstraintCodec<unknown, unknown>
+>(
+  key: K,
+  value: V,
+  options?: RecordOptions
+): Config<Schema.Record.Type<K, V>>
+export function Record<
+  K extends Schema.Record.Key & Schema.ConstraintCodec<unknown, unknown>,
+  V extends Schema.ConstraintCodec<unknown, unknown>
+>(
+  key: K,
+  value: V,
+  path: string | Path,
+  options?: RecordOptions
+): Config<Schema.Record.Type<K, V>>
+export function Record<
+  K extends Schema.Record.Key & Schema.ConstraintCodec<unknown, unknown>,
+  V extends Schema.ConstraintCodec<unknown, unknown>
+>(
+  key: K,
+  value: V,
+  pathOrOptions?: string | Path | RecordOptions,
+  options?: RecordOptions
+) {
+  const hasPath = isPath(pathOrOptions)
+  const record = Schema.Record(key, value)
+  const split = SchemaTransformation.splitKeyValue(hasPath ? options : pathOrOptions)
+  const recordString = Schema.String.pipe(
+    Schema.decodeTo(Schema.toCodecStringTree(record), {
+      decode: split.decode,
+      encode: SchemaGetter.passthrough<Record<string, string>, Schema.StringTree>({ strict: false }).compose(
+        split.encode
+      )
+    })
+  )
+  return schema(Schema.Union([record, recordString]), hasPath ? pathOrOptions : undefined)
 }
 
 /**
@@ -1305,8 +1288,6 @@ export function literals<const L extends ReadonlyArray<SchemaAST.LiteralValue>>(
  *
  * **Details**
  *
- * Shortcut for `Config.schema(Config.Boolean, name)`.
- *
  * Accepted values: `true`, `false`, `yes`, `no`, `on`, `off`, `1`, `0`,
  * `y`, `n`.
  *
@@ -1315,7 +1296,7 @@ export function literals<const L extends ReadonlyArray<SchemaAST.LiteralValue>>(
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const program = Config.boolean("FEATURE_FLAG")
+ * const program = Config.Boolean("FEATURE_FLAG")
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: {
@@ -1328,13 +1309,11 @@ export function literals<const L extends ReadonlyArray<SchemaAST.LiteralValue>>(
  * ) // => true
  * ```
  *
- * @see {@link Boolean} for the underlying boolean codec
- *
  * @category constructors
  * @since 2.0.0
  */
-export function boolean(name?: string) {
-  return schema(Boolean, name)
+export function Boolean(name?: string) {
+  return schema(Schema.BooleanLiterals, name)
 }
 
 /**
@@ -1357,7 +1336,7 @@ export function boolean(name?: string) {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Duration, Effect } from "effect"
  *
- * const program = Config.duration("DURATION").pipe(Effect.map(Duration.toMillis))
+ * const program = Config.Duration("DURATION").pipe(Effect.map(Duration.toMillis))
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: {
@@ -1375,8 +1354,23 @@ export function boolean(name?: string) {
  * @category constructors
  * @since 2.5.0
  */
-export function duration(name?: string) {
+export function Duration(name?: string) {
   return schema(Schema.DurationFromString, name)
+}
+
+/**
+ * Creates a config for an exact, human-readable byte-size value.
+ *
+ * **Details**
+ *
+ * Decimal symbols such as `kB` use powers of 1,000, while binary symbols such
+ * as `KiB` use powers of 1,024.
+ *
+ * @category constructors
+ * @since 4.0.0
+ */
+export function ByteSize(name?: string) {
+  return schema(Schema.ByteSize, name)
 }
 
 /**
@@ -1388,14 +1382,14 @@ export function duration(name?: string) {
  *
  * **Details**
  *
- * Shortcut for `Config.schema(Config.Port, name)`.
+ * Accepts integers from `1` through `65535`.
  *
  * **Example** (Reading a port)
  *
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const program = Config.port("PORT")
+ * const program = Config.Port("PORT")
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: {
@@ -1408,14 +1402,13 @@ export function duration(name?: string) {
  * ) // => 8080
  * ```
  *
- * @see {@link int} for integer config values outside the port range
- * @see {@link Port} for the underlying port codec
+ * @see {@link Int} for integer config values outside the port range
  *
  * @category constructors
  * @since 3.16.0
  */
-export function port(name?: string) {
-  return schema(Port, name)
+export function Port(name?: string) {
+  return schema(PortSchema, name)
 }
 
 /**
@@ -1427,8 +1420,6 @@ export function port(name?: string) {
  *
  * **Details**
  *
- * Shortcut for `Config.schema(Config.LogLevel, name)`.
- *
  * Accepted values: `"All"`, `"Fatal"`, `"Error"`, `"Warn"`, `"Info"`,
  * `"Debug"`, `"Trace"`, `"None"`.
  *
@@ -1437,7 +1428,7 @@ export function port(name?: string) {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const program = Config.logLevel("LOG_LEVEL")
+ * const program = Config.LogLevel("LOG_LEVEL")
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: {
@@ -1450,13 +1441,11 @@ export function port(name?: string) {
  * ) // => "Info"
  * ```
  *
- * @see {@link LogLevel} for the underlying log-level codec
- *
  * @category constructors
  * @since 2.0.0
  */
-export function logLevel(name?: string) {
-  return schema(LogLevel, name)
+export function LogLevel(name?: string) {
+  return schema(LogLevelSchema, name)
 }
 
 /**
@@ -1477,7 +1466,7 @@ export function logLevel(name?: string) {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const program = Config.redacted("API_KEY").pipe(Effect.map(String))
+ * const program = Config.Redacted("API_KEY").pipe(Effect.map(String))
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: {
@@ -1490,12 +1479,12 @@ export function logLevel(name?: string) {
  * ) // => "<redacted>"
  * ```
  *
- * @see {@link string} for non-secret string settings
+ * @see {@link String} for non-secret string settings
  *
  * @category constructors
  * @since 2.0.0
  */
-export function redacted(name?: string) {
+export function Redacted(name?: string) {
   return schema(Schema.Redacted(Schema.String), name)
 }
 
@@ -1519,7 +1508,7 @@ export function redacted(name?: string) {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const program = Config.url("URL").pipe(Effect.map((url) => url.href))
+ * const program = Config.URL("URL").pipe(Effect.map((url) => url.href))
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: {
@@ -1537,7 +1526,7 @@ export function redacted(name?: string) {
  * @category constructors
  * @since 3.11.0
  */
-export function url(name?: string) {
+export function URL(name?: string) {
   return schema(Schema.URL, name)
 }
 
@@ -1561,7 +1550,7 @@ export function url(name?: string) {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const createdAt = Config.date("CREATED_AT")
+ * const createdAt = Config.Date("CREATED_AT")
  *
  * const provider = ConfigProvider.fromUnknown({ CREATED_AT: "2024-01-15" })
  * Effect.runSync(createdAt.parse(provider)).toISOString() // => "2024-01-15T00:00:00.000Z"
@@ -1570,7 +1559,7 @@ export function url(name?: string) {
  * @category constructors
  * @since 2.0.0
  */
-export function date(name?: string) {
+export function Date(name?: string) {
   return schema(Schema.Date, name)
 }
 
@@ -1596,8 +1585,8 @@ export function date(name?: string) {
  * import { Config, ConfigProvider, Effect } from "effect"
  *
  * const dbConfig = Config.all({
- *   host: Config.string("host"),
- *   port: Config.number("port")
+ *   host: Config.String("host"),
+ *   port: Config.Number("port")
  * }).pipe(Config.nested("database"))
  *
  * const provider = ConfigProvider.fromUnknown({
@@ -1611,7 +1600,7 @@ export function date(name?: string) {
  * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const host = Config.string("host").pipe(Config.nested("database"))
+ * const host = Config.String("host").pipe(Config.nested("database"))
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: { database_host: "localhost" }

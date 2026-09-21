@@ -35,6 +35,8 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   | "transformSessionUpdate"
   | "transformStdout"
 > {
+  /** Device CLI environment supplied for this provider session. */
+  readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   /**
@@ -262,6 +264,13 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
   let totalBytes = 0;
 
   for (const attachment of input.attachments ?? []) {
+    const isPastedText =
+      attachment.type === "file" &&
+      "source" in attachment &&
+      attachment.source?._tag === "pasted-text";
+    // ProviderService has already put the file path in the text block. Keep a
+    // folded clipboard paste lazy so the agent can search or sample it rather
+    // than paying to embed the entire resource in context immediately.
     const mimeType = attachment.mimeType.toLowerCase().split(";", 1)[0] ?? "";
     const image = attachment.type === "image" && IMAGE_MIME_TYPES.has(mimeType);
     const audio = attachment.type === "file" && AUDIO_MIME_TYPES.has(mimeType);
@@ -294,6 +303,14 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
           ),
         ),
       );
+    if (isPastedText) {
+      if (info.type !== "File") {
+        return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+          `Could not read attachment '${attachment.name}'.`,
+        );
+      }
+      continue;
+    }
     const size = Number(info.size);
     const limit = image
       ? PROVIDER_SEND_TURN_MAX_IMAGE_BYTES

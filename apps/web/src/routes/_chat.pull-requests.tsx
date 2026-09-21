@@ -4,6 +4,7 @@ import { pullRequestHostOf, resolveEnvironmentMachineKind } from "@t3tools/contr
 import type {
   EnvironmentId,
   ProjectId,
+  PullRequestAction,
   PullRequestInvolvement,
   PullRequestListCursors,
   PullRequestListFilters,
@@ -21,15 +22,16 @@ import {
   ChevronDownIcon,
   ClockIcon,
   EyeIcon,
-  GitMergeIcon,
-  GitPullRequestClosedIcon,
-  GitPullRequestIcon,
   LayersIcon,
   ListChecksIcon,
   PenLineIcon,
+  UsersIcon,
+  Plug2Icon,
   Maximize2Icon,
   Minimize2Icon,
   SearchIcon,
+  UserLockIcon,
+  type LucideIcon,
 } from "lucide-react";
 import {
   useCallback,
@@ -76,6 +78,11 @@ import {
   type PullRequestStatsPolicy,
   type PullRequestStatsScope,
   type PullRequestPartitionsSnapshot,
+  applyPullRequestOverrides,
+  type PullRequestListOverride,
+  pullRequestOverrideAfterAction,
+  reusePullRequestEntries,
+  settlePullRequestOverrides,
 } from "../components/pullRequest/pullRequestList.logic";
 import {
   pullRequestListPreferences,
@@ -114,7 +121,7 @@ import { WorkspacePageContainer } from "../components/WorkspacePageContainer";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { isElectron } from "../env";
-import { resolveShortcutCommand } from "../keybindings";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { PanelLayoutControls } from "../components/chat/PanelLayoutControls";
 import { Button } from "../components/ui/button";
@@ -147,8 +154,22 @@ import {
 } from "../state/pullRequests";
 import { useAtomCommand } from "../state/use-atom-command";
 import { cn } from "~/lib/utils";
+import { Separator } from "~/components/ui/separator";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+
+function getShortcutContext() {
+  return {
+    terminalFocus: isTerminalFocused(),
+    terminalOpen: false,
+    previewFocus: false,
+    previewOpen: false,
+    modelPickerOpen: false,
+    isWeb: !isElectron,
+    isDesktop: isElectron,
+  };
+}
 
 export interface PullRequestsSearch extends PullRequestListPreferences {
   /**
@@ -176,6 +197,32 @@ export interface PullRequestsSearch extends PullRequestListPreferences {
   readonly selectedEnvironmentId?: EnvironmentId;
 }
 
+/**
+ * A group reads like the sidebar's shelves: its glyph, its name, how many, then a rule out
+ * to the edge. The glyph is the one the involvement filter uses for the same idea.
+ */
+const GROUP_ICONS: Record<string, LucideIcon> = {
+  authored: PenLineIcon,
+  reviewRequested: EyeIcon,
+  others: UsersIcon,
+};
+
+function PullRequestGroupHeader({
+  group,
+}: {
+  group: { key: string; label: string; entries: ReadonlyArray<unknown> };
+}) {
+  const Icon = GROUP_ICONS[group.key] ?? LayersIcon;
+  return (
+    <div className="flex items-center gap-2 px-3 pb-1 text-xs font-medium text-muted-foreground/70">
+      <Icon aria-hidden className="size-3.5 shrink-0" />
+      <h2 className="shrink-0">{group.label}</h2>
+      <span className="shrink-0 tabular-nums text-muted-foreground/50">{group.entries.length}</span>
+      <Separator className="min-w-2 flex-1 bg-border/60" />
+    </div>
+  );
+}
+
 // The state filters wear the same glyphs the rows do, so the two read as one vocabulary.
 const INVOLVEMENT_TABS = [
   { value: "all", label: "All", Icon: LayersIcon },
@@ -185,13 +232,14 @@ const INVOLVEMENT_TABS = [
 
 const STATE_TABS = [
   { value: "all", label: "All", Icon: LayersIcon },
-  { value: "open", label: "Open", Icon: GitPullRequestIcon },
-  { value: "closed", label: "Closed", Icon: GitPullRequestClosedIcon },
-  { value: "merged", label: "Merged", Icon: GitMergeIcon },
+  { value: "open", label: "Open", Icon: PullRequestGlyph.pullRequest },
+  { value: "closed", label: "Closed", Icon: PullRequestGlyph.closed },
+  { value: "merged", label: "Merged", Icon: PullRequestGlyph.merged },
 ] as const satisfies ReadonlyArray<PullRequestFilterOption<PullRequestListState>>;
 
 const SORT_OPTIONS = [
   { value: "ready", label: "Merge readiness", Icon: ListChecksIcon },
+  { value: "blocked", label: "Blocked on me", Icon: UserLockIcon },
   { value: "updated", label: "Recently updated", Icon: ClockIcon },
   { value: "newest", label: "Newest shown", Icon: CalendarArrowDownIcon },
   { value: "oldest", label: "Oldest shown", Icon: CalendarArrowUpIcon },
@@ -872,6 +920,36 @@ function PullRequestsRouteView() {
     key: string;
     entries: ReadonlyArray<EnvironmentPullRequestEntry>;
   } | null>(null);
+  // What the reader just did to a row, shown before any host confirms it. A closed pull request
+  // leaves an "open" list on the click; the reads that follow are slow, and until one lands the
+  // row says what was asked of it. Cleared when a whole-page answer arrives after the action.
+  const [overrides, setOverrides] = useState<ReadonlyMap<string, PullRequestListOverride>>(
+    () => new Map(),
+  );
+  const overrideToken = useRef(0);
+  /** Writes the action's outcome onto the row; the token names this write for a later rollback. */
+  const overrideEntry = (
+    entry: EnvironmentPullRequestEntry,
+    action: PullRequestAction,
+  ): number | null => {
+    const token = ++overrideToken.current;
+    const override = pullRequestOverrideAfterAction(entry, action, new Date(), token);
+    if (override === null) return null;
+    setOverrides((current) => new Map(current).set(pullRequestEntryKey(entry), override));
+    return token;
+  };
+  /** A rollback for one write only: a later action's note over the same row is left alone. */
+  const revertOverride = (key: string, token: number | null) => {
+    if (token === null) return;
+    setOverrides((current) => {
+      if (current.get(key)?.token !== token) return current;
+      const next = new Map(current);
+      next.delete(key);
+      return next;
+    });
+  };
+  /** The detail panel's own writes, by row, so its failure takes back its own note. */
+  const detailOverrideTokens = useRef(new Map<string, number | null>());
   // A reload recreates the registry the queries live in, so with nothing held the page would
   // cold-start into skeletons even though almost every row is unchanged. The last answer for
   // this set of environments is kept across reloads and hydrated here as the carried rows: they
@@ -1035,8 +1113,20 @@ function PullRequestsRouteView() {
       // since the last read at the bottom of the page — below rows a week older — where "the
       // latest" is exactly what a refresh was for. The host answers in the order the page
       // reads, so its order stands; a row that moved was updated, and moving is the news.
-      return { key: filterKey, entries: rankPullRequestMatches(answered.entries, sentParsed.text) };
+      return {
+        key: filterKey,
+        entries: reusePullRequestEntries(
+          previous.entries,
+          rankPullRequestMatches(answered.entries, sentParsed.text),
+          pullRequestEntryKey,
+        ),
+      };
     });
+    // The host's word outranks the reader's, once it has actually said it: an override is
+    // cleared by an answer that agrees with it, not by any answer that happens to land.
+    setOverrides((current) =>
+      settlePullRequestOverrides(current, answered.entries, pullRequestEntryKey, Date.now()),
+    );
   }, [
     answered,
     filterKey,
@@ -1413,10 +1503,34 @@ function PullRequestsRouteView() {
     setStatsByRow((previous) => mergePullRequestDiffStats(previous, stats));
   }, [statsQuery.stats]);
   const displayGroups = useMemo(() => {
-    const enriched = groups.map((group) => ({
-      ...group,
-      entries: group.entries.map((entry) => withDiffStat(entry, statsByRow)),
-    }));
+    // The reader's pending answers go on here, after grouping: the authored and reviewing
+    // groups are read separately from the feed, and a row closed a moment ago has to leave
+    // whichever group it was in.
+    const enriched = groups.map((group) => {
+      const answered = applyPullRequestOverrides(
+        group.entries.map((entry) => withDiffStat(entry, statsByRow)),
+        overrides,
+        pullRequestEntryKey,
+        search.state,
+      );
+      // A row whose draft flag just changed has to pass the local filters again: a draft
+      // filter that let it in may not let the new one in.
+      return {
+        ...group,
+        entries:
+          hasLocalFilters && overrides.size > 0
+            ? answered.filter(
+                (entry) =>
+                  !overrides.has(pullRequestEntryKey(entry)) ||
+                  matchesPullRequestFilters(
+                    entry,
+                    localFilters,
+                    pullRequestEntryViewer(entry, viewers),
+                  ),
+              )
+            : answered,
+      };
+    });
     // Searching keeps its relevance order and priority groups unless the reader explicitly asks
     // for another sort. The readiness queue is the default browse order, not a way to bury a
     // closer text match.
@@ -1426,8 +1540,31 @@ function PullRequestsRouteView() {
       typedParsed.text,
       (entry) =>
         entry.additions + entry.deletions > 0 || statsByRow.has(pullRequestDiffStatKey(entry)),
+      search.involvement,
     );
-  }, [groups, sort, statsByRow, typedParsed.text]);
+  }, [
+    groups,
+    hasLocalFilters,
+    localFilters,
+    overrides,
+    search.involvement,
+    search.state,
+    sort,
+    statsByRow,
+    typedParsed.text,
+    viewers,
+  ]);
+  /** What is actually on screen once the reader's pending answers are on the rows. */
+  const shownCount = displayGroups.reduce((count, group) => count + group.entries.length, 0);
+  const heldPullRequestsBySurface = useMemo(
+    () =>
+      new Map(
+        groups.flatMap((group) =>
+          group.entries.map((entry) => [pullRequestListEntryId(entry), entry] as const),
+        ),
+      ),
+    [groups],
+  );
   const listedPullRequestsBySurface = useMemo(
     () =>
       new Map(
@@ -1577,7 +1714,7 @@ function PullRequestsRouteView() {
       terminalShortcutLabel={null}
       rightPanelAvailable={rightPanelAvailable}
       rightPanelOpen={rightPanelState.isOpen}
-      rightPanelShortcutLabel={null}
+      rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
       rightPanelUnavailableLabel="Select a pull request first"
       liveAgentCount={0}
       onToggleTerminal={() => undefined}
@@ -1602,7 +1739,7 @@ function PullRequestsRouteView() {
   // so that case waits with the skeletons rather than answering for the hosts. A search says so
   // in its own words and is left to.
   const carriedToNothing =
-    showingCarried && listQuery.isPending && entries.length === 0 && typedQuery.length === 0;
+    showingCarried && listQuery.isPending && shownCount === 0 && typedQuery.length === 0;
   const listBody = (
     <>
       {!capabilityKnown ? (
@@ -1614,7 +1751,7 @@ function PullRequestsRouteView() {
         />
       ) : firstLoad ? (
         <PullRequestListGhost rows={7} />
-      ) : listQuery.error && entries.length === 0 ? (
+      ) : listQuery.error && shownCount === 0 ? (
         <PullRequestsUnavailableState
           error={listQuery.error}
           refreshing={listQuery.isPending}
@@ -1622,7 +1759,7 @@ function PullRequestsRouteView() {
         />
       ) : carriedToNothing ? (
         <PullRequestListGhost rows={7} />
-      ) : entries.length === 0 ? (
+      ) : shownCount === 0 ? (
         <PullRequestListEmptyState
           hasProjects={!projectsKnown || projects.length > 0}
           refreshing={refreshing}
@@ -1645,11 +1782,7 @@ function PullRequestsRouteView() {
         <div className="space-y-3">
           {displayGroups.map((group) => (
             <div key={group.key} className="space-y-0.5">
-              {group.label ? (
-                <h2 className="px-3 pb-0.5 text-xs font-medium text-muted-foreground/70">
-                  {group.label}
-                </h2>
-              ) : null}
+              {group.label ? <PullRequestGroupHeader group={group} /> : null}
               {group.entries.map((entry) => {
                 const entryKey = pullRequestEntryKey(entry);
                 return (
@@ -1685,7 +1818,7 @@ function PullRequestsRouteView() {
         </div>
       )}
 
-      {listQuery.error && entries.length > 0 ? (
+      {listQuery.error && shownCount > 0 ? (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs">
           <span>{listQuery.error} Showing the last pull requests loaded.</span>
           <Button size="xs" variant="outline" onClick={() => listQuery.refresh()}>
@@ -1721,7 +1854,7 @@ function PullRequestsRouteView() {
   // kind force the hostname to tell them apart.
   const hostEntries = hosts.length > 0 ? hosts : expectedHosts;
   const hostMenuOptions: ReadonlyArray<PullRequestFilterOption<string>> = [
-    { value: "", label: "All hosts", Icon: LayersIcon },
+    { value: "", label: "All", Icon: Plug2Icon },
     ...hostEntries.map((entry) => {
       // `expectedHosts` stands in before the server has answered, and nothing is known to be
       // unreadable yet; once the summaries arrive they carry whether each one could be read.
@@ -1914,13 +2047,20 @@ function PullRequestsRouteView() {
     event.stopPropagation();
     if (!event.repeat) closeSurface(activePullRequestSurface);
   });
+  const toggleRightPanelFromShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (!rightPanelAvailable) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.repeat) toggleRightPanel();
+  });
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || isCommandPaletteOpen()) return;
       const command = resolveShortcutCommand(event, keybindings, {
-        context: { terminalFocus: isTerminalFocused() },
+        context: getShortcutContext(),
       });
       if (command === "rightPanel.close") closeActiveSurfaceFromShortcut(event);
+      if (command === "rightPanel.toggle") toggleRightPanelFromShortcut(event);
       if (command === "thread.copyReference") copyPullRequestFromShortcut(event);
     };
     window.addEventListener("keydown", onKeyDown);
@@ -1971,6 +2111,7 @@ function PullRequestsRouteView() {
             onAddPullRequest={() => undefined}
             onAddPullRequests={() => undefined}
             onAddAgents={() => undefined}
+            onAddDevice={() => undefined}
             browserAvailable={false}
             terminalAvailable={false}
             diffAvailable={false}
@@ -1978,10 +2119,13 @@ function PullRequestsRouteView() {
             pullRequestAvailable={false}
             pullRequestsAvailable={false}
             agentsAvailable={false}
+            deviceAvailable={false}
             liveAgentCount={0}
             pullRequestStatusSeeds={listedPullRequestTabStatuses}
           >
             <PullRequestDetailPanel
+              getShortcutContext={getShortcutContext}
+              shortcutsEnabled={activePullRequestSurface?.id === renderedPullRequestSurface.id}
               key={renderedPullRequestSurface.id}
               environmentId={panelEnvironmentId}
               onSelectPullRequest={(reference) => {
@@ -2017,9 +2161,40 @@ function PullRequestsRouteView() {
               refreshToken={detailRefreshToken}
               // Host actions can change both readiness and diff size, so refresh the counts
               // alongside the list. The panel already refreshes itself after each action.
-              onActed={() => {
-                // Mutations already invalidate the host's affected caches.
-                refreshListAndStats(undefined, panelEnvironmentId);
+              onActed={(action, phase = "done") => {
+                // An action that only moves a row's state is written onto the row as it is
+                // sent, and taken back if the host refuses; the host invalidates its caches,
+                // so the next scheduled read confirms it. The rest change what the counts and
+                // checks say, and those need the reads once they are done.
+                // From every row held, not the ones on screen: a pull request closed from an
+                // open list has left the screen, and reopening it has to find it anyway.
+                const acted = heldPullRequestsBySurface.get(
+                  pullRequestListEntryId(renderedPullRequestSurface),
+                );
+                const stateOnly =
+                  action !== undefined &&
+                  acted !== undefined &&
+                  pullRequestOverrideAfterAction(acted, action, new Date(), 0) !== null;
+                if (stateOnly) {
+                  const key = pullRequestEntryKey(acted);
+                  // A merge is written on once the host has done it, since a host that only
+                  // queues one leaves the pull request open; the rest go on as they are sent.
+                  if (phase === "sent" && action !== "merge") {
+                    detailOverrideTokens.current.set(key, overrideEntry(acted, action));
+                  }
+                  // A merge wrote nothing on the way out, so its failure has nothing to take
+                  // back; an earlier action's note on the same row is left standing.
+                  if (phase === "failed" && action !== "merge") {
+                    revertOverride(key, detailOverrideTokens.current.get(key) ?? null);
+                  }
+                  if (phase !== "sent") detailOverrideTokens.current.delete(key);
+                  if (phase === "done" && action === "merge") {
+                    overrideEntry(acted, action);
+                    refreshListAndStats(undefined, panelEnvironmentId);
+                  }
+                  return;
+                }
+                if (phase === "done") refreshListAndStats(undefined, panelEnvironmentId);
               }}
             />
           </RightPanelTabs>
@@ -2035,6 +2210,7 @@ function CompactFilterMenu<Value extends string>({
   triggerIcon,
   triggerLabel,
   outlined = false,
+  iconOnly = false,
   value,
   options,
   onChange,
@@ -2044,6 +2220,7 @@ function CompactFilterMenu<Value extends string>({
   triggerIcon?: ReactNode;
   triggerLabel?: string;
   outlined?: boolean;
+  iconOnly?: boolean;
   value: Value;
   options: ReadonlyArray<PullRequestFilterOption<Value>>;
   onChange: (value: Value) => void;
@@ -2054,8 +2231,11 @@ function CompactFilterMenu<Value extends string>({
   return (
     <Menu>
       <MenuTrigger
-        aria-label={triggerLabel ? `${label}: ${current.label}` : label}
-        render={outlined ? <Button variant="outline" /> : undefined}
+        aria-label={triggerLabel || iconOnly ? `${label}: ${current.label}` : label}
+        title={iconOnly ? `${label}: ${current.label}` : undefined}
+        render={
+          outlined ? <Button variant="outline" size={iconOnly ? "icon" : "default"} /> : undefined
+        }
         className={
           outlined
             ? className
@@ -2065,7 +2245,9 @@ function CompactFilterMenu<Value extends string>({
               )
         }
       >
-        {triggerLabel ? (
+        {iconOnly ? (
+          <current.Icon aria-hidden className="size-4" />
+        ) : triggerLabel ? (
           <>
             {triggerIcon}
             <span>{triggerLabel}</span>
@@ -2360,7 +2542,7 @@ function PullRequestsColumn({
         {/* The top padding is the shared fade band's height, the same pairing the
             settings page makes: at rest the controls sit fully below the mask, and only
             content actually passing under the chrome fades. */}
-        <WorkspacePageContainer width="expanded" className="gap-4">
+        <WorkspacePageContainer width="expanded" className="min-h-full gap-4">
           <div className="flex flex-col gap-3">
             <div ref={inFlowSearchRef} className="flex flex-wrap items-center gap-2">
               <div className="min-w-0 basis-full @lg/pr-list:basis-0 @lg/pr-list:flex-1">
@@ -2368,6 +2550,16 @@ function PullRequestsColumn({
               </div>
               {sortMenu}
               {filtersMenu}
+              <CompactFilterMenu
+                label="Filter by provider"
+                outlined
+                iconOnly={host !== undefined}
+                triggerIcon={<Plug2Icon aria-hidden className="size-4" />}
+                triggerLabel="All"
+                value={host ?? ""}
+                options={hostMenuOptions}
+                onChange={(next) => onHost(next === "" ? undefined : next)}
+              />
               {!condensed ? (
                 <PullRequestRefreshControl refreshing={refreshing} onRefresh={onRefresh} />
               ) : null}
