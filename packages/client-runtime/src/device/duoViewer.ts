@@ -221,7 +221,12 @@ export function createDuoViewer(options: {
       const previous = screen;
       screen = next;
       const changedPose = next?.hingePose && next.hingePose !== previous?.hingePose;
-      if (firstPose || changedPose) {
+      const rotated =
+        next?.screenId === previous?.screenId &&
+        next?.hingeAngle === previous?.hingeAngle &&
+        next?.orientation !== previous?.orientation;
+      const leftPhysicalPose = rotated && !next?.hingePose && previewAngle === null;
+      if (firstPose || changedPose || leftPhysicalPose) {
         physicalPose = next?.hingePose ?? (next?.screenId === 1 ? "closed" : "open");
         presentationAngle = next?.hingeAngle ?? (next?.screenId === 1 ? 0 : 180);
       }
@@ -237,12 +242,9 @@ export function createDuoViewer(options: {
       }
       // A command reply/config confirms hinge state. Display identity, never an angle heuristic, owns input.
       targetAngle = previewAngle ?? next?.hingeAngle ?? (next?.screenId === 1 ? 0 : 180);
-      const rotated =
-        next?.screenId === previous?.screenId &&
-        next?.hingeAngle === previous?.hingeAngle &&
-        next?.orientation !== previous?.orientation;
       // Native angle commands clear hingePose. They change articulation only;
-      // preserve the viewing pose, including laptop/tent and user orbit.
+      // preserve the viewing pose, including laptop/tent and user orbit. A
+      // separate rotation clears the physical preset and follows panel orientation.
       if (firstPose || changedPose || rotated) {
         const poseAngle = presentationAngle;
         const fold = ((180 - poseAngle) * Math.PI) / 360;

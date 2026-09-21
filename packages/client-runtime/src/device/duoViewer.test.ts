@@ -71,7 +71,15 @@ vi.mock("./modelScene.ts", () => ({
     });
   },
 }));
-import { Group, Mesh, MeshBasicMaterial, PlaneGeometry, Vector3 } from "three";
+import {
+  Group,
+  Mesh,
+  MeshBasicMaterial,
+  PlaneGeometry,
+  Vector3,
+  Euler,
+  Quaternion as Rotation,
+} from "three";
 import { createDuoViewer } from "./duoViewer.ts";
 
 afterEach(() => {
@@ -334,5 +342,49 @@ it("does not restart an animated preset on duplicate native configurations", asy
   draw();
   draw();
   expect(pending.size).toBe(0);
+  viewer.dispose();
+});
+
+it("lets standalone rotation leave Laptop and Tent and stand a closed device upright after slider edits", async () => {
+  const { viewer, draw, state } = fixture();
+  models.resolve({ asset: asset(), dispose: vi.fn() });
+  await Promise.resolve();
+  viewer.resize(500, 700, 2);
+  viewer.resetPose();
+  for (const hingePose of ["laptop", "tent"] as const) {
+    viewer.setScreen({
+      width: 1398,
+      height: 2034,
+      orientation: "landscape_left",
+      screenId: 1,
+      hingeAngle: 90,
+      hingePose,
+    });
+    draw();
+    viewer.setHingePreview(0);
+    viewer.setScreen({
+      width: 1398,
+      height: 2034,
+      orientation: "landscape_left",
+      screenId: 1,
+      hingeAngle: 0,
+      hingePose: null,
+    });
+    viewer.setHingePreview(null);
+    draw();
+    viewer.setScreen({
+      width: 1398,
+      height: 2034,
+      orientation: "portrait",
+      screenId: 1,
+      hingeAngle: 0,
+      hingePose: null,
+    });
+    draw();
+    const upright = new Rotation().setFromEuler(new Euler(0, Math.PI / 2, 0, "YXZ"));
+    expect(state.views.at(-1)!.quaternion.angleTo(upright)).toBeLessThan(0.00001);
+    const bounds = state.views.at(-1)!.bounds;
+    expect(bounds.max.y - bounds.min.y).toBeGreaterThan(bounds.max.x - bounds.min.x);
+  }
   viewer.dispose();
 });
