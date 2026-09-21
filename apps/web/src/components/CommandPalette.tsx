@@ -170,11 +170,7 @@ import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
 import { searchSettings, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
-import {
-  COMMAND_PALETTE_META_ICON_CLASS,
-  CommandPaletteMetaDot,
-  ThreadCommandSubtitle,
-} from "./ThreadCommandSubtitle";
+import { COMMAND_PALETTE_META_ICON_CLASS, ThreadCommandSubtitle } from "./ThreadCommandSubtitle";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
@@ -230,7 +226,7 @@ function ProjectSearchDescription(props: {
 }) {
   if (!props.grouped) {
     return (
-      <span className="flex min-w-0 items-center gap-1">
+      <span className="flex min-w-0 items-center gap-3">
         <span className="inline-flex min-w-0 items-center gap-1">
           {props.location.kind === "remote" ? (
             <EnvironmentMachineIcon
@@ -241,13 +237,12 @@ function ProjectSearchDescription(props: {
           ) : null}
           <span className="truncate">{props.location.label}</span>
         </span>
-        <CommandPaletteMetaDot />
         <span className="truncate">{props.workspaceRoot}</span>
       </span>
     );
   }
 
-  return <span className="truncate">{props.environmentLabels.join(" · ")}</span>;
+  return <span className="truncate">{props.environmentLabels.join(", ")}</span>;
 }
 
 function getEnvironmentBrowsePlatform(os: string | null | undefined): string {
@@ -1278,7 +1273,7 @@ function OpenCommandPaletteDialog(props: {
               machine: "server" as const,
             };
             return (
-              <span className="flex min-w-0 items-center gap-1">
+              <span className="flex min-w-0 items-center gap-3">
                 <span className="inline-flex min-w-0 items-center gap-1">
                   {location.kind === "remote" ? (
                     <EnvironmentMachineIcon
@@ -1289,7 +1284,6 @@ function OpenCommandPaletteDialog(props: {
                   ) : null}
                   <span className="truncate">{location.label}</span>
                 </span>
-                <CommandPaletteMetaDot />
                 <span className="truncate">{project.workspaceRoot}</span>
               </span>
             );
@@ -2087,7 +2081,7 @@ function OpenCommandPaletteDialog(props: {
     value: `setting:${item.id}`,
     searchTerms: [item.title, SETTINGS_SECTION_LABELS[item.to], ...(item.searchTerms ?? [])],
     title: item.title,
-    description: `Settings · ${SETTINGS_SECTION_LABELS[item.to]}`,
+    description: `Settings / ${SETTINGS_SECTION_LABELS[item.to]}`,
     ...(item.secondary ? { secondary: true } : {}),
     icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
     run: async () => {

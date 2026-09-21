@@ -26,8 +26,8 @@ describe("settings scope environment labels", () => {
     expect(
       environments.map((environment) => settingsScopeEnvironmentLabel(environment, environments)),
     ).toEqual([
-      "Development · https://first.example.com",
-      "Development · https://second.example.com",
+      "Development (https://first.example.com)",
+      "Development (https://second.example.com)",
     ]);
   });
 
@@ -38,7 +38,7 @@ describe("settings scope environment labels", () => {
     }));
     expect(
       environments.map((environment) => settingsScopeEnvironmentLabel(environment, environments)),
-    ).toEqual(["Development · first", "Development · second"]);
+    ).toEqual(["Development (first)", "Development (second)"]);
   });
 
   it("keeps unique names compact and removes disambiguation after a rename", () => {

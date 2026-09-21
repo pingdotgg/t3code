@@ -56,8 +56,9 @@ function LicenseNoticeRow({
                 <code className="shrink-0 text-xs text-muted-foreground">{entry.version}</code>
               ) : null}
             </span>
-            <span className="max-w-[42%] shrink-0 truncate text-xs text-muted-foreground">
-              {entry.license} · {formatLicenseBundles(entry.bundles)}
+            <span className="flex max-w-[42%] shrink-0 gap-3 overflow-hidden text-xs text-muted-foreground">
+              <span className="shrink-0">{entry.license}</span>
+              <span className="truncate">{formatLicenseBundles(entry.bundles)}</span>
             </span>
           </CollapsibleTrigger>
           {entry.sourceUrl ? (

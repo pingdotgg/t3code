@@ -83,7 +83,7 @@ function subscriptionUsageProps(
         detail: !fresh
           ? "Open T3 to refresh"
           : pool.accounts.length > 1
-            ? `${pool.accounts.length} accounts · pooled`
+            ? `${pool.accounts.length} pooled accounts`
             : "Subscription remaining",
         expiresAt: fresh ? expiresAt : 0,
         totalWindows: fresh ? pool.windows.length : 0,

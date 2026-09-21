@@ -149,7 +149,7 @@ internal class ActivityPresentation(data: Map<String, String>, private val activ
         listOfNotNull(
           hero!!.project.takeIf { singleProject && it.isNotBlank() },
           if (activeCount > 0) "$activeCount active" else "$threadCount threads"
-        ).joinToString(" · ")
+        ).joinToString(", ")
       )
     }
     val body = body(context)
@@ -180,10 +180,10 @@ internal class ActivityPresentation(data: Map<String, String>, private val activ
       val color = ContextCompat.getColor(context, status?.color ?: R.color.agent_activity_waiting)
       append(tinted(row.status, color, bold = true))
       append(" ").append(row.title)
-      // Promoted cards drop text color, so the separator has to do the work of the dimming.
+      // Parentheses distinguish the project when promoted cards drop text color.
       if (trailing.isNotBlank()) {
         val start = length
-        append(" · ").append(trailing)
+        append(" (").append(trailing).append(")")
         setSpan(
           ForegroundColorSpan(ContextCompat.getColor(context, R.color.agent_activity_waiting)),
           start,

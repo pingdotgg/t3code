@@ -435,9 +435,9 @@ function ProjectDetail({
             title="Project icon"
             description={
               projectIcon?.kind === "lucide"
-                ? `${projectIcon.name} · ${projectIcon.color}`
+                ? `${projectIcon.name} in ${projectIcon.color}`
                 : projectIcon?.kind === "monogram"
-                  ? `${projectIcon.text} · ${projectIcon.color}`
+                  ? `${projectIcon.text} in ${projectIcon.color}`
                   : projectIcon?.kind === "emoji"
                     ? projectIcon.emoji
                     : (faviconPath ?? "Automatic")

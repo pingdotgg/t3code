@@ -143,7 +143,7 @@ function TerminalHeader(props: {
                       basename(session.cwd),
                     ]
                       .filter(Boolean)
-                      .join(" · "),
+                      .join(" in "),
                     selected: session.terminalId === props.terminalId,
                     onPress: () => props.onSelectTerminal(session.terminalId),
                   })),

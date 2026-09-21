@@ -339,7 +339,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     },
     [menuActions],
   );
-  const subtitle = `${draftKey ? "Draft attachment" : "Attachment"} · ${formatAttachmentSize(sizeBytes)}`;
+  const subtitle = `${draftKey ? "Draft attachment" : "Attachment"} (${formatAttachmentSize(sizeBytes)})`;
 
   return (
     <View className="flex-1 bg-sheet">

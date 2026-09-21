@@ -406,7 +406,7 @@ function SidebarThreadTooltip({
               />
               <div className="min-w-0 truncate text-foreground/75">
                 {showInstanceBadge && providerEntry
-                  ? `${modelLabel} · ${providerEntry.displayName}`
+                  ? `${modelLabel} (${providerEntry.displayName})`
                   : modelLabel}
               </div>
             </div>

@@ -4110,8 +4110,9 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
         <div className="text-message-foreground text-xs font-medium">
           {formatWorkspaceRelativePath(comment.filePath, ctx.workspaceRoot)}
         </div>
-        <div className="text-secondary-label text-[11px]">
-          {comment.sectionTitle} · {comment.rangeLabel}
+        <div className="flex flex-wrap gap-x-3 text-secondary-label text-[11px]">
+          <span>{comment.sectionTitle}</span>
+          <span>{comment.rangeLabel}</span>
         </div>
       </div>
       {comment.text.length > 0 && (
@@ -4646,7 +4647,7 @@ const AgentSpawnRow = memo(function AgentSpawnRow(props: {
         className="flex cursor-pointer select-none rounded-md text-left transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         <LiveActivityRow
-          label={workflowName ? `${lead} · ${workflowName}` : lead}
+          label={workflowName ? `${lead}: ${workflowName}` : lead}
           iconName="bot"
           active={live && props.active !== false}
           failed={failed}
@@ -4704,7 +4705,7 @@ function AgentSpawnMemberRow({
       : null,
   ]
     .filter(Boolean)
-    .join(" · ");
+    .join(", ");
   // Settled members show their metrics; anything other than success keeps
   // the status word so the outcome remains explicit.
   const statusLabel =
@@ -4712,7 +4713,7 @@ function AgentSpawnMemberRow({
       ? AGENT_MEMBER_STATUS_LABEL[agent.status]
       : agent.status === "completed"
         ? meta
-        : `${AGENT_MEMBER_STATUS_LABEL[agent.status]} · ${meta}`;
+        : `${AGENT_MEMBER_STATUS_LABEL[agent.status]} (${meta})`;
   const role =
     agent.role && agent.role.trim().toLowerCase() !== agent.title.trim().toLowerCase()
       ? agent.role

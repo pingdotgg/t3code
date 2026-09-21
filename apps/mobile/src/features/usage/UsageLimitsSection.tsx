@@ -103,7 +103,7 @@ function AccountInstanceLabel({ value }: { readonly value: string }) {
   if (!value.includes("@")) {
     return (
       <Text className="shrink text-xs text-foreground-tertiary" numberOfLines={1}>
-        · {value}
+        {value}
       </Text>
     );
   }
@@ -115,7 +115,7 @@ function AccountInstanceLabel({ value }: { readonly value: string }) {
       onPress={() => setRevealed((current) => !current)}
     >
       <Text className="text-xs text-foreground-tertiary" numberOfLines={1}>
-        · {revealed ? value : "••••••@••••••"}
+        {revealed ? value : "••••••@••••••"}
       </Text>
     </Pressable>
   );
@@ -156,7 +156,7 @@ export function AccountLimits(props: {
           ) : null}
           {props.detail ? (
             <Text className="shrink text-sm text-foreground-muted" numberOfLines={1}>
-              · {props.detail}
+              {props.detail}
             </Text>
           ) : null}
         </View>
@@ -211,7 +211,7 @@ export function ResetCredits(props: {
     credits.availableCount === 0
       ? "No reset credits banked"
       : `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
-          expiresIn ? ` · next expires in ${expiresIn}` : ""
+          expiresIn ? ` (next expires in ${expiresIn})` : ""
         }`;
 
   const redeem = async () => {

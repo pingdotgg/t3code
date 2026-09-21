@@ -56,9 +56,10 @@ export function UsageProviderSettings({
                 key={id}
                 title={label}
                 description={
-                  <span className="break-all">
-                    CLI Proxy{source.enabled ? "" : " · Disabled"}
-                    {label !== source.url ? ` · ${source.url}` : ""}
+                  <span className="flex flex-wrap gap-x-3 gap-y-1 break-all">
+                    <span>CLI Proxy</span>
+                    {source.enabled ? null : <span>Disabled</span>}
+                    {label !== source.url ? <span>{source.url}</span> : null}
                   </span>
                 }
                 control={

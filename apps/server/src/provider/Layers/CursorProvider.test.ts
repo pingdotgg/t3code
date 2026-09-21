@@ -994,14 +994,14 @@ describe("Cursor usage limits", () => {
         {
           id: "autoPercentUsed",
           kind: "monthly",
-          label: "Monthly · Auto",
+          label: "Monthly (Auto)",
           usedPercent: 69.5,
           resetsAt: "2026-09-20T03:53:06.000Z",
         },
         {
           id: "apiPercentUsed",
           kind: "monthly",
-          label: "Monthly · API",
+          label: "Monthly (API)",
           usedPercent: 100,
           resetsAt: "2026-09-20T03:53:06.000Z",
         },

@@ -46,7 +46,7 @@ export function summarizeLoadPreferences(
       ? []
       : [`${environment.label} ${preferenceLabel(preference).toLowerCase()}`];
   });
-  return parts.length === 0 ? null : parts.join(" · ");
+  return parts.length === 0 ? null : parts.join("; ");
 }
 
 /**

@@ -373,7 +373,8 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
                   }
                 />
                 <TooltipPopup side="top">
-                  {detail} · {statusText}
+                  <span className="block">{detail}</span>
+                  <span className="block text-muted-foreground">{statusText}</span>
                 </TooltipPopup>
               </Tooltip>
             );

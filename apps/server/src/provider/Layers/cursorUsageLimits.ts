@@ -41,8 +41,8 @@ export function cursorUsageResponseToLimits(
   if (response.planUsage) {
     for (const [key, label] of [
       ["totalPercentUsed", "Monthly"],
-      ["autoPercentUsed", "Monthly · Auto"],
-      ["apiPercentUsed", "Monthly · API"],
+      ["autoPercentUsed", "Monthly (Auto)"],
+      ["apiPercentUsed", "Monthly (API)"],
     ] as const) {
       const usedPercent = response.planUsage[key];
       if (usedPercent === undefined || !Number.isFinite(usedPercent)) continue;

@@ -238,9 +238,11 @@ export function PullRequestThreadDialog({
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="truncate font-medium text-sm">{resolvedPullRequest.title}</p>
-                  <p className="truncate text-muted-foreground text-xs">
-                    #{resolvedPullRequest.number} · {resolvedPullRequest.headBranch} to{" "}
-                    {resolvedPullRequest.baseBranch}
+                  <p className="flex min-w-0 items-center gap-3 text-muted-foreground text-xs">
+                    <span className="shrink-0">#{resolvedPullRequest.number}</span>
+                    <span className="truncate">
+                      {resolvedPullRequest.headBranch} to {resolvedPullRequest.baseBranch}
+                    </span>
                   </p>
                 </div>
                 <span className={cn("shrink-0 text-xs capitalize", statusTone)}>

@@ -186,7 +186,7 @@ export function DevicePanel(props: {
       <div className="flex h-9 shrink-0 items-center gap-1.5 border-b px-2">
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           {props.surface.target
-            ? `${state.hosts.find((host) => host.id === props.surface.target?.hostId)?.label ?? "Device host"} · ${activeDevice?.version ?? props.surface.target.platform}`
+            ? `${state.hosts.find((host) => host.id === props.surface.target?.hostId)?.label ?? "Device host"} (${activeDevice?.version ?? props.surface.target.platform})`
             : (pendingDevice?.name ?? "Choose a device")}
         </span>
         {activeDevice ? (
@@ -283,7 +283,7 @@ export function DevicePanel(props: {
                 environmentId={environmentId}
                 platform={activeDevice.platform}
                 deviceName={activeDevice.name}
-                deviceDescription={`${state.hosts.find((host) => host.id === activeDevice.hostId)?.label ?? "Device host"} · ${activeDevice.version}`}
+                deviceDescription={`${state.hosts.find((host) => host.id === activeDevice.hostId)?.label ?? "Device host"} (${activeDevice.version})`}
                 deviceId={activeDevice.id}
                 hostId={activeDevice.hostId}
                 visible={props.visible}
@@ -309,7 +309,7 @@ export function DevicePanel(props: {
             name={pendingDevice?.name ?? "Devices"}
             description={
               pendingDevice
-                ? `${state.hosts.find((host) => host.id === pendingDevice.hostId)?.label ?? "Device host"} · ${pendingDevice.version}`
+                ? `${state.hosts.find((host) => host.id === pendingDevice.hostId)?.label ?? "Device host"} (${pendingDevice.version})`
                 : ""
             }
             stage="opening"
@@ -359,7 +359,7 @@ export function DevicePanel(props: {
                               </span>
                             }
                             title={device.name}
-                            description={`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version} · ${device.booted ? "Running" : "Stopped"}`}
+                            description={`${state.hosts.find((host) => host.id === device.hostId)?.label ?? "Device host"} (${device.version}, ${device.booted ? "running" : "stopped"})`}
                             disabled={pendingDeviceKey !== null}
                             aria-label={`${device.booted ? "Open" : "Start"} ${device.name}`}
                             onClick={() => void selectDevice(deviceKey(device))}

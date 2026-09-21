@@ -106,7 +106,7 @@ function SubscriptionUsage(
               ]}
             >
               {provider.name}
-              {tightest ? ` · ${tightest.label}` : ""}
+              {tightest ? ` (${tightest.label})` : ""}
             </Text>
             <Spacer />
             <Text

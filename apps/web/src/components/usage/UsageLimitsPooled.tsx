@@ -185,7 +185,7 @@ function SegmentPopover({
         {window.resetsAt ? (
           <Row label="Resets">
             {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
-            {resetsIn ? ` · ${resetsIn.replace("resets in ", "in ")}` : ""}
+            {resetsIn ? ` (${resetsIn.replace("resets in ", "in ")})` : ""}
           </Row>
         ) : null}
         {reset && reset.restoresPercent > 0 ? (
@@ -280,17 +280,10 @@ function PoolSegment({
           <span className="ms-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-background/85 px-1.5 py-0.5 text-[11px] text-foreground tabular-nums">
             {resetsIn?.replace("resets in ", "↻ ") ?? ""}
             {credits ? (
-              <>
-                {resetsIn ? (
-                  <span aria-hidden className="text-muted-foreground">
-                    ·
-                  </span>
-                ) : null}
-                <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
-                  <TicketIcon className="size-3" aria-hidden />
-                  {credits}
-                </span>
-              </>
+              <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
+                <TicketIcon className="size-3" aria-hidden />
+                {credits}
+              </span>
             ) : null}
           </span>
         </div>
@@ -362,7 +355,6 @@ function LegendRow({
         {resetsIn?.replace("resets in ", "↻ ") ?? ""}
         {credits ? (
           <>
-            {resetsIn ? <span aria-hidden>·</span> : null}
             <span
               aria-hidden
               className="inline-flex items-center gap-0.5 font-semibold text-foreground"

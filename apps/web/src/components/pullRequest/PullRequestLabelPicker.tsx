@@ -110,10 +110,10 @@ export function PullRequestLabelPicker({
               className="size-2 shrink-0 rounded-full bg-muted-foreground"
               {...(dot ? { style: { backgroundColor: dot } } : {})}
             />
-            <span className="min-w-0 flex-1 truncate">
-              {candidate.name}
+            <span className="flex min-w-0 flex-1 items-baseline gap-3">
+              <span className="truncate">{candidate.name}</span>
               {candidate.description ? (
-                <span className="text-muted-foreground"> · {candidate.description}</span>
+                <span className="truncate text-muted-foreground">{candidate.description}</span>
               ) : null}
             </span>
             {candidate.isApplied ? (

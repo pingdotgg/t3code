@@ -111,12 +111,12 @@ export function projectCloneDisplayName(
   return segments[segments.length - 1] ?? snapshot.destinationPath;
 }
 
-/** One-line progress summary: `Receiving objects · 45% · 12.3 MiB | 5.0 MiB/s`. */
+/** One-line progress summary: `Receiving objects, 45%, 12.3 MiB | 5.0 MiB/s`. */
 export function projectCloneProgressSummary(
   snapshot: Pick<ProjectCloneSnapshot, "stage" | "percent" | "detail">,
 ): string {
   const parts = [projectCloneStageLabel(snapshot.stage)];
   if (snapshot.percent !== null) parts.push(`${snapshot.percent}%`);
   if (snapshot.detail) parts.push(snapshot.detail);
-  return parts.join(" · ");
+  return parts.join(", ");
 }

@@ -511,7 +511,7 @@ export function UsagePriceOverrides({
                       }
                     >
                       {result?.status === "failed"
-                        ? `Not saved · ${result.error}`
+                        ? `Not saved: ${result.error}`
                         : result?.status === "saved"
                           ? "Saved"
                           : "Saving…"}

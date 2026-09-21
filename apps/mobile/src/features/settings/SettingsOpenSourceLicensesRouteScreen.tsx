@@ -52,7 +52,7 @@ function LicenseRow(props: {
             {props.entry.name}
           </Text>
           <Text className="text-sm text-foreground-muted" numberOfLines={2}>
-            {props.entry.version ? `${props.entry.version} · ` : ""}
+            {props.entry.version ? `${props.entry.version}  ` : ""}
             {props.entry.license}
           </Text>
         </View>
@@ -226,7 +226,7 @@ export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailPro
           <Text className="text-base leading-normal text-foreground-muted">
             {[entry.version, entry.license, formatLicenseBundles(entry.bundles)]
               .filter((value): value is string => Boolean(value))
-              .join(" · ")}
+              .join(", ")}
           </Text>
           {sourceUrl ? (
             <Pressable

@@ -17,7 +17,7 @@ function distinguishTitles<Project extends FilterProject>(
   }
   return projects.map((project) =>
     (counts.get(project.title) ?? 0) > 1
-      ? { ...project, title: `${project.title} · ${suffix(project)}` }
+      ? { ...project, title: `${project.title} (${suffix(project)})` }
       : project,
   );
 }

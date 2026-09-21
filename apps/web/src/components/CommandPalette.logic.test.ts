@@ -581,7 +581,7 @@ describe("buildThreadActionItems", () => {
       snippet: "The relay reconnect is now bounded.",
       query: "reconnect",
     });
-    expect(item?.description).toBe("T3 Code · #feat/search");
+    expect(item?.description).toBe("T3 Code, #feat/search");
   });
 
   it("surfaces threads when the query is their ID, without outranking title matches", () => {

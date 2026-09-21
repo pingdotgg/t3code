@@ -445,7 +445,7 @@ function ThreadRouteContent(
     selectedEnvironmentConnection?.environmentLabel ?? null,
   ]
     .filter(Boolean)
-    .join(" · ");
+    .join(" on ");
   /* ─── Git status for native header trigger ───────────────────────── */
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null

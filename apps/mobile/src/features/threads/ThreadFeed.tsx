@@ -527,9 +527,14 @@ function MessageAttachmentFile(props: {
             <Text className="font-t3-medium text-sm text-foreground" numberOfLines={2}>
               {attachment.name}
             </Text>
-            <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-              {fileTypeLabel} · {sizeLabel}
-            </Text>
+            <View className="flex-row items-baseline gap-3">
+              <Text className="shrink text-xs text-foreground-muted" numberOfLines={1}>
+                {fileTypeLabel}
+              </Text>
+              <Text className="text-xs text-foreground-tertiary" numberOfLines={1}>
+                {sizeLabel}
+              </Text>
+            </View>
           </View>
           <SymbolView
             name="chevron.right"

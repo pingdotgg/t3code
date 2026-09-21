@@ -325,7 +325,7 @@ export function useComposerCommandMenu({
           isDraft: entry.isDraft,
         },
         label: `#${entry.number}`,
-        description: `${entry.isDraft ? "Draft" : entry.state} · ${entry.title}`,
+        description: `${entry.title} (${entry.isDraft ? "Draft" : entry.state})`,
       }));
     }
 

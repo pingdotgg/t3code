@@ -138,7 +138,7 @@ describe("settings scope resolution", () => {
       kind: "checkout",
       checkout: second,
       environmentId: laptopId,
-      label: "t3code / Laptop · /repos/second",
+      label: "t3code / Laptop (/repos/second)",
       members: [second],
       environmentIds: [laptopId],
     });

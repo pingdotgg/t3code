@@ -468,7 +468,7 @@ function FanoutSwitchRow(props: {
         className="rounded-full bg-subtle px-3 py-2 active:opacity-70"
         onPress={() => props.onValueChange(true)}
       >
-        <Text className="text-sm font-t3-medium text-foreground">Mixed · Set on</Text>
+        <Text className="text-sm font-t3-medium text-foreground">Mixed (set on)</Text>
       </Pressable>
     </SettingsControlRow>
   );

@@ -300,7 +300,7 @@ function DeviceMiniPlayer({
             deviceId={source.deviceId}
             hostId={source.hostId}
             deviceName={device?.name ?? source.name}
-            deviceDescription={`${hostLabel} · ${device?.version ?? source.platform}`}
+            deviceDescription={`${hostLabel} (${device?.version ?? source.platform})`}
             visible
             onScreen={setScreen}
           />

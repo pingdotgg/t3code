@@ -74,7 +74,7 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
       {
         id: "go_rolling",
         kind: "session",
-        label: "Go · Session",
+        label: "Go session",
         windowDurationMins: 5 * 60,
         usedPercent: clampPercent(body.usage.rolling.percent),
         resetsAt: DateTime.formatIso(body.usage.rolling.resetsAt),
@@ -82,7 +82,7 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
       {
         id: "go_weekly",
         kind: "weekly",
-        label: "Go · Weekly",
+        label: "Go weekly",
         windowDurationMins: 7 * 24 * 60,
         usedPercent: clampPercent(body.usage.weekly.percent),
         resetsAt: DateTime.formatIso(body.usage.weekly.resetsAt),
@@ -90,7 +90,7 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
       {
         id: "go_monthly",
         kind: "monthly",
-        label: "Go · Monthly",
+        label: "Go monthly",
         usedPercent: clampPercent(body.usage.monthly.percent),
         resetsAt: DateTime.formatIso(body.usage.monthly.resetsAt),
       },

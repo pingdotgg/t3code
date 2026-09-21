@@ -7,5 +7,5 @@
   <string name="t3_subscription_widget_refresh">Open app to refresh</string>
   <string name="t3_subscription_widget_remaining">%1$d%% remaining</string>
   <string name="t3_subscription_widget_as_of">As of %1$s</string>
-  <string name="t3_subscription_widget_more"> · +%1$d more</string>
+  <string name="t3_subscription_widget_more"> (+%1$d more)</string>
 </resources>

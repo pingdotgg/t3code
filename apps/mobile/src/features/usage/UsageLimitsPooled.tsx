@@ -176,7 +176,6 @@ function PoolWindowCard({
                 ) : null}
                 {credits ? (
                   <>
-                    {resetsIn ? <Text className="text-xs text-foreground-tertiary">·</Text> : null}
                     <SymbolView name="ticket" size={13} tintColorClassName="accent-icon" />
                     <Text className="text-xs font-t3-medium tabular-nums text-foreground">
                       {credits}

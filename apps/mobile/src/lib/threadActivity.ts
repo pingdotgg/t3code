@@ -1094,10 +1094,10 @@ export function agentSpawnLabel(spawn: NonNullable<WorkLogEntry["agentSpawn"]>):
   const failed = members.filter((agent) => agent.status === "failed").length;
   const stopped = members.filter((agent) => agent.status === "stopped").length;
   if (working > 0) {
-    return `Kicked off ${subjects} · ${working} working`;
+    return `Kicked off ${subjects} (${working} working)`;
   }
   const status = failed > 0 ? `${failed} failed` : stopped > 0 ? `${stopped} stopped` : "completed";
-  return `Ran ${subjects} · ${status}`;
+  return `Ran ${subjects} (${status})`;
 }
 
 /** Workflow coordinators sit in their own batch but are not a member. */
@@ -1179,7 +1179,7 @@ function agentSpawnExpandedBody(spawn: NonNullable<WorkLogEntry["agentSpawn"]>):
   const lines = agentSpawnMembers(spawn).map((agent) => {
     const status =
       agent.status === undefined || agent.status === "inProgress" ? "working" : agent.status;
-    return `${agent.title} · ${status}${agent.detail ? `\n  ${agent.detail}` : ""}`;
+    return `${agent.title}: ${status}${agent.detail ? `\n  ${agent.detail}` : ""}`;
   });
   return lines.length > 0 ? lines.join("\n") : null;
 }

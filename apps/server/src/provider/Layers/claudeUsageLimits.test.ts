@@ -57,7 +57,7 @@ describe("claudeUsageResponseToLimits", () => {
           {
             id: "seven_day_fable",
             kind: "weekly",
-            label: "Weekly · Fable",
+            label: "Weekly (Fable)",
             usedPercent: 73,
             windowDurationMins: 10080,
             resetsAt: "2026-07-24T08:59:00.000Z",
@@ -158,7 +158,7 @@ describe("claudeRateLimitEventToUpdate", () => {
         {
           id: "seven_day_fable",
           kind: "weekly",
-          label: "Weekly · Fable",
+          label: "Weekly (Fable)",
           usedPercent: 40,
           windowDurationMins: 10080,
         },

@@ -49,7 +49,7 @@ describe("fileHeaderSubtitle", () => {
   it("places a workspace file under its project", () => {
     expect(
       fileHeaderSubtitle("t3code", "apps/mobile/src/features/threads/fileChipMenu.test.ts"),
-    ).toBe("t3code · apps/mobile/src/features/threads");
+    ).toBe("t3code/apps/mobile/src/features/threads");
   });
 
   it("shows only the directory for a host file outside the workspace", () => {

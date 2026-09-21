@@ -280,8 +280,9 @@ function ComposerReviewCommentDetails({ comment }: { comment: ReviewCommentConte
     <div className="space-y-2 overflow-hidden rounded-lg border border-border/70 bg-background/70 p-3">
       <div className="space-y-1">
         <div className="truncate text-xs font-medium text-foreground">{comment.filePath}</div>
-        <div className="text-secondary-label text-[11px]">
-          {comment.sectionTitle} · {comment.rangeLabel}
+        <div className="flex flex-wrap gap-x-3 text-secondary-label text-[11px]">
+          <span>{comment.sectionTitle}</span>
+          <span>{comment.rangeLabel}</span>
         </div>
       </div>
       {comment.text.trim() ? <ChatMarkdown text={comment.text.trim()} cwd={undefined} /> : null}

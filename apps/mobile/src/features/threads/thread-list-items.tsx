@@ -355,7 +355,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
           }
           numberOfLines={1}
         >
-          {subtitleParts.join(" · ")}
+          {subtitleParts.join("  ")}
         </Text>
       </View>
     ) : null;
@@ -625,7 +625,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               )}
               numberOfLines={1}
             >
-              {subtitleParts.join(" · ")}
+              {subtitleParts.join("  ")}
             </Text>
           </>
         ) : null}

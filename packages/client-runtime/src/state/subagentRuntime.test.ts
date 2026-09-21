@@ -596,7 +596,7 @@ describe("model and effort attribution", () => {
     const waitingAgent = fold(waitingRows)[0]!;
     expect(waitingAgent.status).toBe("waiting");
     expect(formatSubagentModelLabel(waitingAgent.model, waitingAgent.effort)).toBe(
-      "gpt-5.6-sol · high",
+      "gpt-5.6-sol (high)",
     );
 
     const idleRows = [
@@ -618,9 +618,9 @@ describe("model and effort attribution", () => {
   });
 
   it("formatSubagentModelLabel compacts ids and appends effort", () => {
-    expect(formatSubagentModelLabel("claude-sonnet-5[1m]", "high")).toBe("sonnet-5[1m] · high");
+    expect(formatSubagentModelLabel("claude-sonnet-5[1m]", "high")).toBe("sonnet-5[1m] (high)");
     expect(formatSubagentModelLabel("claude-opus-4-20250514", null)).toBe("opus-4");
-    expect(formatSubagentModelLabel("gpt-5.6-sol", "low")).toBe("gpt-5.6-sol · low");
+    expect(formatSubagentModelLabel("gpt-5.6-sol", "low")).toBe("gpt-5.6-sol (low)");
     expect(formatSubagentModelLabel(null, "high")).toBeNull();
   });
 });

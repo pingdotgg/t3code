@@ -738,7 +738,7 @@ function itemTitle(
     }
     const computerUseTitle = computerUseToolTitle(item, presentation);
     if (computerUseTitle) return computerUseTitle;
-    return `${item.server} · ${item.tool}`;
+    return `${item.server}: ${item.tool}`;
   }
   switch (itemType) {
     case "assistant_message":

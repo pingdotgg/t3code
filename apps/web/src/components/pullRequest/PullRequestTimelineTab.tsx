@@ -330,9 +330,11 @@ function ConversationGroup({
               <span className="block text-xs font-semibold">
                 {events.length.toLocaleString()} {events.length === 1 ? "comment" : "comments"}
               </span>
-              <span className="block truncate text-[10px] text-muted-foreground">
-                {actors.length.toLocaleString()} {actors.length === 1 ? "author" : "authors"} ·{" "}
-                {formatRelativeTimeLabel(first.at)}
+              <span className="flex min-w-0 items-center gap-3 text-[10px] text-muted-foreground">
+                <span className="shrink-0">
+                  {actors.length.toLocaleString()} {actors.length === 1 ? "author" : "authors"}
+                </span>
+                <span className="truncate">{formatRelativeTimeLabel(first.at)}</span>
               </span>
             </span>
             <ChevronDownIcon

@@ -1368,7 +1368,7 @@ function ChatMarkdownMediaUnavailableLabel(props: {
   return (
     <span className="inline-flex items-center gap-1.5">
       <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
-      {props.alt.length > 0 ? `${label} · ${props.alt}` : label}
+      {props.alt.length > 0 ? `${label}: ${props.alt}` : label}
     </span>
   );
 }
@@ -2584,7 +2584,7 @@ function useChatMarkdownState({
       );
       const labelParts = [fileLinkMeta.basename];
       if (typeof parentSuffix === "string" && parentSuffix.length > 0) {
-        labelParts.push(parentSuffix);
+        labelParts.push(`(${parentSuffix})`);
       }
       if (fileLinkMeta.line) {
         labelParts.push(
@@ -2610,7 +2610,7 @@ function useChatMarkdownState({
           displayPath={fileLinkMeta.displayPath}
           panelPath={panelPath}
           line={fileLinkMeta.line}
-          label={labelParts.join(" · ")}
+          label={labelParts.join(" ")}
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}
           threadRef={threadRef}

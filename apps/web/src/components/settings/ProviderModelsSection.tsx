@@ -490,7 +490,11 @@ export function ProviderModelsSection({
         */}
         <span className="text-[11px] text-muted-foreground/70">
           {capLabels.length > 0 ? (
-            <span className="hidden sm:inline">{capLabels.join(" · ")}</span>
+            <span className="hidden flex-wrap gap-x-3 gap-y-1 sm:inline-flex">
+              {capLabels.map((label) => (
+                <span key={label}>{label}</span>
+              ))}
+            </span>
           ) : null}
         </span>
         {rowActions(model, { isHidden, canMoveUp, canMoveDown })}
@@ -532,12 +536,16 @@ export function ProviderModelsSection({
               {allBuiltInModelsHidden ? "Enable all" : "Disable all"}
             </Button>
           ) : null}
-          <span className="text-xs text-muted-foreground">
-            {models.length} model{models.length === 1 ? "" : "s"}
-            {favoriteCount > 0
-              ? ` · ${favoriteCount} favorite${favoriteCount === 1 ? "" : "s"}`
-              : ""}
-            {hiddenCount > 0 ? ` · ${hiddenCount} hidden` : ""}
+          <span className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            <span>
+              {models.length} model{models.length === 1 ? "" : "s"}
+            </span>
+            {favoriteCount > 0 ? (
+              <span>
+                {favoriteCount} favorite{favoriteCount === 1 ? "" : "s"}
+              </span>
+            ) : null}
+            {hiddenCount > 0 ? <span>{hiddenCount} hidden</span> : null}
           </span>
         </div>
         {driverKind !== "antigravity" && !isAdding ? (

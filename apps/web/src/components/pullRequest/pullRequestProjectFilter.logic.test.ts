@@ -38,8 +38,8 @@ describe("pull request project filter choices", () => {
     const choices = pullRequestFilterProjects(projects, labels);
 
     expect(choices.map(({ id, environmentId, title }) => ({ id, environmentId, title }))).toEqual([
-      { id: "main", environmentId: cups, title: "t3code · cups" },
-      { id: "main", environmentId: nucbox, title: "t3code · nucbox-1" },
+      { id: "main", environmentId: cups, title: "t3code (cups)" },
+      { id: "main", environmentId: nucbox, title: "t3code (nucbox-1)" },
     ]);
     expect(choices[1]?.workspaceRoot).toBe("/work/main");
     expect(choices[1]?.faviconPath).toBe("main/favicon.png");
@@ -52,7 +52,7 @@ describe("pull request project filter choices", () => {
     const choices = pullRequestFilterProjects(projects, labels, selected);
 
     expect(choices.filter((choice) => choice.environmentId === nucbox)).toEqual([
-      { ...projects[1], title: "t3code · nucbox-1" },
+      { ...projects[1], title: "t3code (nucbox-1)" },
     ]);
     expect(findScopedProject(choices, nucbox, "worktree")).toBeDefined();
     expect(findScopedProject(choices, nucbox, "main")).toBeUndefined();
@@ -82,8 +82,8 @@ describe("pull request project filter choices", () => {
     const choices = pullRequestFilterProjects(projects, labels);
 
     expect(choices.map((choice) => choice.title)).toEqual([
-      "t3code · nucbox-1 · /work/fork",
-      "t3code · nucbox-1 · /work/upstream",
+      "t3code (nucbox-1) (/work/fork)",
+      "t3code (nucbox-1) (/work/upstream)",
     ]);
   });
 
@@ -103,8 +103,8 @@ describe("pull request project filter choices", () => {
     );
 
     expect(choices.map((choice) => choice.title)).toEqual([
-      "t3code · nucbox-1 · /work/first",
-      "t3code · nucbox-1 · /work/second",
+      "t3code (nucbox-1) (/work/first)",
+      "t3code (nucbox-1) (/work/second)",
     ]);
   });
 
@@ -119,8 +119,8 @@ describe("pull request project filter choices", () => {
     const choices = pullRequestFilterProjects([first, second], repeatedLabels);
 
     expect(choices.map((choice) => choice.title)).toEqual([
-      "t3code · nucbox-1 · /work/main · env-cups",
-      "t3code · nucbox-1 · /work/main · env-nucbox",
+      "t3code (nucbox-1) (/work/main) (env-cups)",
+      "t3code (nucbox-1) (/work/main) (env-nucbox)",
     ]);
   });
 
@@ -131,8 +131,8 @@ describe("pull request project filter choices", () => {
     );
 
     expect(choices.map((choice) => choice.title)).toEqual([
-      "t3code · env-cups",
-      "t3code · env-nucbox",
+      "t3code (env-cups)",
+      "t3code (env-nucbox)",
     ]);
   });
 
@@ -143,8 +143,8 @@ describe("pull request project filter choices", () => {
     const choices = pullRequestFilterProjects([first, second], labels);
 
     expect(choices.map((choice) => choice.title)).toEqual([
-      "t3code · nucbox-1 · /work/first · env-nucbox · first",
-      "t3code · nucbox-1 · /work/first · env-nucbox · second",
+      "t3code (nucbox-1) (/work/first) (env-nucbox) (first)",
+      "t3code (nucbox-1) (/work/first) (env-nucbox) (second)",
     ]);
   });
 

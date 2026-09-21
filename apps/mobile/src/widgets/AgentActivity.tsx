@@ -272,9 +272,6 @@ export function AgentActivity(
               {agentsLabel}
             </Text>
             {attentionSuffix ? (
-              <Text modifiers={[font({ size: 13 }), foregroundStyle(secondaryForeground)]}>·</Text>
-            ) : null}
-            {attentionSuffix ? (
               <Text
                 modifiers={[
                   font({ weight: "semibold", size: 13 }),

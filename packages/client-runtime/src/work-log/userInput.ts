@@ -170,10 +170,10 @@ export function getQuestionAnswerPreview(answer: UserInputAttachmentAnswerPayloa
     .map((attachment) => attachment.name);
   return (
     answers.length > 0
-      ? answers.join(" · ")
+      ? answers.join("; ")
       : attachments.length > 0
         ? attachments.join(", ")
-        : Object.values(answer.questionTextById ?? {}).join(" · ")
+        : Object.values(answer.questionTextById ?? {}).join("; ")
   )
     .replace(/\s+/g, " ")
     .trim();

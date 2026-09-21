@@ -189,7 +189,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     ? selectedEntries.map((selection) => selection.label).join(", ") || "Choose models"
     : undefined;
   const triggerTooltipContent = shortcutLabel
-    ? `${props.triggerLabel ?? allModelNames ?? triggerLabel} · ${shortcutLabel}`
+    ? `${props.triggerLabel ?? allModelNames ?? triggerLabel} (${shortcutLabel})`
     : (props.triggerLabel ?? allModelNames ?? triggerLabel);
 
   return (

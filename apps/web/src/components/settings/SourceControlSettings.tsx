@@ -508,7 +508,7 @@ export function SourceControlSettingsPanel() {
   const environmentId =
     environment?.connection.phase === "connected" ? environment.environmentId : null;
   const aggregate = scope.environmentIds.length !== 1 && connectedEnvironments.length > 1;
-  const environmentSuffix = aggregate && environment ? ` · ${environment.label}` : "";
+  const environmentSuffix = aggregate && environment ? ` on ${environment.label}` : "";
   const discovery = useEnvironmentQuery(
     environmentId === null
       ? null

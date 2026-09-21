@@ -89,7 +89,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           {rightPanelAvailable
             ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}${
                 liveAgentCount > 0
-                  ? ` · ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
+                  ? `. ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
                   : ""
               }`
             : rightPanelUnavailableLabel}

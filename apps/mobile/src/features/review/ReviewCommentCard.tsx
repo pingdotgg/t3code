@@ -160,9 +160,14 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
           >
             {props.comment.filePath}
           </Text>
-          <Text className="text-xs" style={{ color: props.colors.mutedText }}>
-            {props.comment.sectionTitle} · {props.comment.rangeLabel}
-          </Text>
+          <View className="flex-row flex-wrap gap-x-3">
+            <Text className="text-xs" style={{ color: props.colors.mutedText }}>
+              {props.comment.sectionTitle}
+            </Text>
+            <Text className="text-xs" style={{ color: props.colors.mutedText }}>
+              {props.comment.rangeLabel}
+            </Text>
+          </View>
         </View>
       </View>
       {props.comment.text.length > 0 ? (

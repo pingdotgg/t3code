@@ -394,14 +394,15 @@ export function UsagePage() {
                           ? formatUsd(merged.costUsd)
                           : formatTokens(merged.totalTokens)}
                       </span>
-                      <span className="text-xs text-muted-foreground">
-                        {metric !== "cost"
-                          ? `${formatCount(merged.sessions)} sessions`
-                          : merged.costQuality.unpricedShare > 0
-                            ? `${formatCount(merged.sessions)} sessions · API estimate excludes ${formatPercent(
-                                merged.costQuality.unpricedShare,
-                              )} unpriced records`
-                            : `${formatCount(merged.sessions)} sessions · API estimate`}
+                      <span className="flex flex-col gap-1 text-xs text-muted-foreground">
+                        <span>{formatCount(merged.sessions)} sessions</span>
+                        {metric === "cost" ? (
+                          <span>
+                            {merged.costQuality.unpricedShare > 0
+                              ? `API estimate excludes ${formatPercent(merged.costQuality.unpricedShare)} unpriced records`
+                              : "API estimate"}
+                          </span>
+                        ) : null}
                       </span>
                     </div>
 
@@ -440,10 +441,15 @@ export function UsagePage() {
                                 : formatTokens(totals?.totalTokens ?? 0)}
                             </span>
                           </div>
-                          <span className="text-xs text-muted-foreground">
-                            {metric === "cost"
-                              ? `${formatPercent(share)} of cost · ${formatTokens(totals?.totalTokens ?? 0)} tokens`
-                              : `${formatPercent(share)} of tokens · ${formatUsd(totals?.costUsd ?? 0)}`}
+                          <span className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                            <span>
+                              {formatPercent(share)} of {metric === "cost" ? "cost" : "tokens"}
+                            </span>
+                            <span>
+                              {metric === "cost"
+                                ? `${formatTokens(totals?.totalTokens ?? 0)} tokens`
+                                : formatUsd(totals?.costUsd ?? 0)}
+                            </span>
                           </span>
                         </div>
                       );

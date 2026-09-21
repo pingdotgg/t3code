@@ -260,7 +260,7 @@ function ArchivedThreadRow(props: {
                   className="min-w-0 flex-1 font-mono text-2xs text-foreground-tertiary"
                   numberOfLines={1}
                 >
-                  {subtitle.join(" · ")}
+                  {subtitle.join("  ")}
                 </Text>
               </View>
             ) : null}

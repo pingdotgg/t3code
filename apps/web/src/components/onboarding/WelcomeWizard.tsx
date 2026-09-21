@@ -765,7 +765,7 @@ function AgentCard({
         <span className="block text-sm font-medium text-foreground">{displayName}</span>
         <p className="mt-0.5 text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
           {summary.headline}
-          {summary.detail ? ` · ${summary.detail}` : ""}
+          {summary.detail ? <span className="mt-1 block">{summary.detail}</span> : null}
         </p>
       </div>
       <div className="shrink-0">

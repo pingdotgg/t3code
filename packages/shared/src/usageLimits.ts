@@ -183,7 +183,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   for (const [environmentId, presentation] of presentations) {
     for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
       const sourceLabel = labelEnvironment
-        ? `${presentation.entry.target.label} · ${source.label}`
+        ? `${source.label} on ${presentation.entry.target.label}`
         : source.label;
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
@@ -222,7 +222,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
  */
 export function collectLimitNotices(presentations: LimitPresentations): readonly string[] {
   const label = (environmentLabel: string, subject: string) =>
-    presentations.size > 1 ? `${environmentLabel} · ${subject}` : subject;
+    presentations.size > 1 ? `${subject} on ${environmentLabel}` : subject;
   const notices: string[] = [];
   for (const presentation of presentations.values()) {
     const environmentLabel = presentation.entry.target.label;
@@ -620,7 +620,7 @@ export function collectProviderUsageLimits(
       accounts.push({
         id: `${source.id}:${account.id}`,
         driver: account.driver,
-        label: `${source.label} · ${account.id}`,
+        label: `${source.label} (${account.id})`,
         sourceLabel: "CLI Proxy",
         ...(account.usageLimits.resetCredits?.nextCreditId
           ? {

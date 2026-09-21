@@ -41,7 +41,7 @@ const STATUS_VISUALS: Record<RuntimeSubagent["status"], { dotClass: string; labe
   waiting: { dotClass: "bg-info", label: "Working" },
   // Idle reads as settled (muted, not sky): a resting Codex child looks done
   // unless resumed — live-test: sky idle dots read as stuck in-progress.
-  idle: { dotClass: "bg-muted-foreground/50", label: "Idle · resumable" },
+  idle: { dotClass: "bg-muted-foreground/50", label: "Idle (resumable)" },
   completed: { dotClass: "bg-success", label: "Completed" },
   failed: { dotClass: "bg-destructive", label: "Failed" },
   cancelled: { dotClass: "bg-muted-foreground/60", label: "Stopped" },
@@ -184,7 +184,11 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
         {activity ?? statusLabel}
       </span>
       <span className="col-start-2 col-end-4 row-start-3 truncate font-mono text-[.7rem] tabular-nums text-muted-foreground/70">
-        {metadata.join(" · ")}
+        {metadata.map((value, index) => (
+          <span key={index} className="mr-3 last:mr-0">
+            {value}
+          </span>
+        ))}
       </span>
       <span className="sr-only">{statusLabel}</span>
     </div>
@@ -359,7 +363,7 @@ function PhaseSection({
             ? "pending"
             : phase.state === "done"
               ? `${phase.settledCount} done`
-              : `${phase.activeCount} active · ${phase.settledCount} done`}
+              : `${phase.activeCount} active, ${phase.settledCount} done`}
         </span>
         {!open && phase.members.length > 0 ? (
           <span className="ml-auto flex items-center gap-0.5">
@@ -486,11 +490,11 @@ function CollapsedWorkflowSection({
         <span className="truncate text-sm">
           {group.workflow.workflowName ?? group.workflow.title}
         </span>
-        <span className="ml-auto flex items-center gap-1.5 font-mono text-[.7rem] text-muted-foreground/80">
+        <span className="ml-auto flex items-center gap-3 font-mono text-[.7rem] text-muted-foreground/80">
           {failed > 0 ? <span className="text-destructive-foreground">{failed} failed</span> : null}
           <span>{members.length} agents</span>
-          <span className="tabular-nums">· {formatSubagentTokenCount(totalTokens)} tok</span>
-          {elapsed ? <span className="tabular-nums">· {elapsed}</span> : null}
+          <span className="tabular-nums">{formatSubagentTokenCount(totalTokens)} tok</span>
+          {elapsed ? <span className="tabular-nums">{elapsed}</span> : null}
           <ChevronRight aria-hidden className="size-3" />
         </span>
       </button>

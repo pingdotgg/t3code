@@ -63,7 +63,7 @@ function compactMenuStatus(gitStatus: VcsStatusResult | null): string {
     parts.push(`PR #${gitStatus.pr.number}`);
   }
 
-  return parts.join(" · ");
+  return parts.join(", ");
 }
 
 type HeaderItem = Record<string, unknown>;
@@ -289,7 +289,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
                 basename(session.cwd),
               ]
                 .filter(Boolean)
-                .join(" · "),
+                .join(" in "),
               icon: { name: "terminal", type: "sfSymbol" as const },
               label: session.displayLabel,
               onPress: () => props.onOpenTerminal(session.terminalId),
@@ -469,7 +469,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
                 basename(session.cwd),
               ]
                 .filter(Boolean)
-                .join(" · ")}
+                .join(" in ")}
             >
               <NativeHeaderToolbar.Label>{session.displayLabel}</NativeHeaderToolbar.Label>
             </NativeHeaderToolbar.MenuAction>

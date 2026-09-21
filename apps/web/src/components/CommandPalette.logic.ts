@@ -295,7 +295,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
     const contentMatch = input.getContentMatch?.(thread);
     const description = input.renderDescription
       ? input.renderDescription(thread, { projectTitle })
-      : descriptionParts.join(` · `);
+      : descriptionParts.join(", ");
 
     return Object.assign(
       {

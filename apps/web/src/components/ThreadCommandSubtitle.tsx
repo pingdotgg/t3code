@@ -19,10 +19,6 @@ const THREAD_COMMAND_SUBTITLE_VARIANT: ThreadCommandSubtitleVariant = "favicon-w
 
 export const COMMAND_PALETTE_META_ICON_CLASS = "size-3 shrink-0 text-muted-foreground/70";
 
-export function CommandPaletteMetaDot() {
-  return <span className="shrink-0 text-muted-foreground/50">·</span>;
-}
-
 function WorkspaceIcon(props: { variant: ThreadCommandSubtitleVariant; isWorktree: boolean }) {
   if (props.isWorktree) {
     return <FolderGit2Icon className={COMMAND_PALETTE_META_ICON_CLASS} aria-hidden />;
@@ -60,7 +56,7 @@ export function ThreadCommandSubtitle(props: {
   return (
     <span
       className={cn(
-        "inline-flex min-w-0 max-w-full items-center gap-1 text-xs text-muted-foreground/70",
+        "inline-flex min-w-0 max-w-full items-center gap-3 text-xs text-muted-foreground/70",
         props.className,
       )}
     >
@@ -71,41 +67,27 @@ export function ThreadCommandSubtitle(props: {
           ) : null}
           <span className="min-w-0 truncate">{projectLabel}</span>
           {props.environmentLabel ? (
-            <>
-              <CommandPaletteMetaDot />
-              <span className="shrink-0">{props.environmentLabel}</span>
-            </>
+            <span className="ml-2 shrink-0">{props.environmentLabel}</span>
           ) : null}
         </span>
       ) : null}
 
       {branchLabel ? (
-        <>
-          {projectLabel ? <CommandPaletteMetaDot /> : null}
-          <span className="inline-flex min-w-0 items-center gap-1">
-            <WorkspaceIcon variant={variant} isWorktree={isWorktree} />
-            <span className="min-w-0 truncate">{branchLabel}</span>
-          </span>
-        </>
+        <span className="inline-flex min-w-0 items-center gap-1">
+          <WorkspaceIcon variant={variant} isWorktree={isWorktree} />
+          <span className="min-w-0 truncate">{branchLabel}</span>
+        </span>
       ) : null}
 
       {showHarness && props.driverKind ? (
-        <>
-          {projectLabel || branchLabel ? <CommandPaletteMetaDot /> : null}
-          <ProviderInstanceIcon
-            driverKind={props.driverKind}
-            displayName={props.providerDisplayName ?? props.driverKind}
-            iconClassName="size-3 shrink-0 opacity-70"
-          />
-        </>
+        <ProviderInstanceIcon
+          driverKind={props.driverKind}
+          displayName={props.providerDisplayName ?? props.driverKind}
+          iconClassName="size-3 shrink-0 opacity-70"
+        />
       ) : null}
 
-      {props.isCurrent ? (
-        <>
-          {projectLabel || branchLabel || showHarness ? <CommandPaletteMetaDot /> : null}
-          <span className="shrink-0">Current thread</span>
-        </>
-      ) : null}
+      {props.isCurrent ? <span className="shrink-0">Current thread</span> : null}
     </span>
   );
 }

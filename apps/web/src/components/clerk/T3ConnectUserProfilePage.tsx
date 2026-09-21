@@ -54,8 +54,9 @@ export function T3ConnectEnvironmentRow(props: {
             <h3 className="truncate text-[0.8125rem] leading-[1.125rem] font-medium text-foreground">
               {environment.label}
             </h3>
-            <p className="mt-1 text-xs leading-[1.125rem] text-muted-foreground">
-              {linkedAtLabel(environment.linkedAt)} · {endpointLabel(environment)}
+            <p className="mt-1 flex flex-wrap gap-x-3 text-xs leading-[1.125rem] text-muted-foreground">
+              <span>{linkedAtLabel(environment.linkedAt)}</span>
+              <span>{endpointLabel(environment)}</span>
             </p>
           </div>
           <CollapsibleTrigger

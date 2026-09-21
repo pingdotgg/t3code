@@ -738,7 +738,7 @@ describe("collectLimitNotices", () => {
       entry: { target: { label: "Desktop" } },
       serverConfig: { providers: [], usageLimitSources: [] },
     });
-    expect(collectLimitNotices(one)[0]).toBe("Laptop · Claude Max: Could not read limits.");
+    expect(collectLimitNotices(one)[0]).toBe("Claude Max on Laptop: Could not read limits.");
   });
 });
 
@@ -866,7 +866,7 @@ describe("/usage-limits", () => {
       limits: { resetCredits: { availableCount: 2 } },
     });
     expect(report?.accounts[2]).toMatchObject({
-      label: "Accounts · oss",
+      label: "Accounts (oss)",
       sourceLabel: "CLI Proxy",
       plan: "Codex OSS",
     });

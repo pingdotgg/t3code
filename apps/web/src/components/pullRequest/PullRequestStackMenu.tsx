@@ -142,7 +142,7 @@ export function PullRequestStackMenu({
           />
           <TooltipPopup>
             View stack #{stack.number}, layer {position} of {stack.layers.length}
-            {notice ? ` · ${notice}` : null}
+            {notice ? <span className="block">{notice}</span> : null}
           </TooltipPopup>
         </Tooltip>
         <MenuPopup align="start" className="w-96 max-w-[calc(100vw-2rem)]">

@@ -130,7 +130,7 @@ function WindowBar({
       <TooltipPopup side="top" className="max-w-72 text-xs">
         <div className="flex flex-col gap-0.5">
           <span className="text-foreground">
-            {remaining}% left{timeLeft !== null ? ` · ${timeLeft}% of the window left` : ""}
+            {remaining}% left{timeLeft !== null ? ` with ${timeLeft}% of the window remaining` : ""}
           </span>
           {timeLeft !== null ? (
             <span className="text-muted-foreground">The line is where even spending would be.</span>
@@ -138,7 +138,7 @@ function WindowBar({
           {resetsAt ? (
             <span className="text-muted-foreground">
               Resets {resetsAt}
-              {resetsIn ? ` · ${resetsIn}` : ""}
+              {resetsIn ? ` (${resetsIn})` : ""}
             </span>
           ) : null}
         </div>
@@ -265,7 +265,7 @@ export function ResetCreditDialog({
   );
 }
 
-/** `2 reset credits banked · next expires in 27d 23h`, or the short form for a popover. */
+/** `2 reset credits banked, next expires in 27d 23h`, or the short form for a popover. */
 export function resetCreditsSummary(
   credits: ServerProviderResetCredits,
   now: number,
@@ -276,9 +276,9 @@ export function resetCreditsSummary(
     : null;
   if (credits.availableCount === 0) return "No reset credits banked";
   if (compact)
-    return `${credits.availableCount} banked${expiresIn ? ` · expires in ${expiresIn}` : ""}`;
+    return `${credits.availableCount} banked${expiresIn ? `, expires in ${expiresIn}` : ""}`;
   return `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
-    expiresIn ? ` · next expires in ${expiresIn}` : ""
+    expiresIn ? `, next expires in ${expiresIn}` : ""
   }`;
 }
 

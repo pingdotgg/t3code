@@ -72,7 +72,7 @@ function scopedWindow(
   return {
     id: scopedWindowId(displayName),
     kind: "weekly",
-    label: `Weekly · ${displayName}`,
+    label: `Weekly (${displayName})`,
     windowDurationMins: WEEK_MINS,
     usedPercent: clampPercent(usedPercent),
     ...(resetsAt ? { resetsAt } : {}),

@@ -190,5 +190,5 @@ export function statusSummary(
     parts.push(`PR #${gitStatus.pr.number} open`);
   }
 
-  return parts.join(" \u00b7 ");
+  return parts.join(", ");
 }

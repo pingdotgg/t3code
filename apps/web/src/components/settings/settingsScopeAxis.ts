@@ -12,7 +12,7 @@ export function settingsScopeEnvironmentLabel(
       other.environmentId !== environment.environmentId && other.label === environment.label,
   );
   return duplicate
-    ? `${environment.label} · ${environment.displayUrl ?? environment.environmentId}`
+    ? `${environment.label} (${environment.displayUrl ?? environment.environmentId})`
     : environment.label;
 }
 

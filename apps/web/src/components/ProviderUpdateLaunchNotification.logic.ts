@@ -627,7 +627,7 @@ export function deriveEnvironmentDisplayLabel(input: {
   readonly fallbackLabel: string;
 }): string {
   if (input.isWsl) {
-    return input.wslDistro ? `WSL · ${input.wslDistro}` : "WSL";
+    return input.wslDistro ? `WSL (${input.wslDistro})` : "WSL";
   }
   switch (input.platformOs) {
     case "windows":

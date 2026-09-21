@@ -1472,7 +1472,7 @@ describe("ClaudeAdapterLive", () => {
             {
               id: "seven_day_fable",
               kind: "weekly",
-              label: "Weekly · Fable",
+              label: "Weekly (Fable)",
               usedPercent: 40,
               windowDurationMins: 10_080,
             },

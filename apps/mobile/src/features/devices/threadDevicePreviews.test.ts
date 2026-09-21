@@ -80,7 +80,7 @@ describe("thread device previews", () => {
     expect(previews.map((preview) => preview.name)).toEqual(["Pixel 9", "Pixel 8"]);
     expect(new Set(previews.map((preview) => preview.key)).size).toBe(2);
     expect(selectedThreadDevicePreview(previews, previews[1]!.key)?.description).toBe(
-      "Android 15 · Mac mini",
+      "Android 15 on Mac mini",
     );
   });
 

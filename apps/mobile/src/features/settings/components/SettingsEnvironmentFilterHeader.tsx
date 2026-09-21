@@ -145,7 +145,7 @@ export function AndroidSettingsEnvironmentFilter() {
         },
         ...availableTargets.map((entry) => ({
           id: `environment:${entry.environmentId}`,
-          title: `Environment · ${entry.label}`,
+          title: `Environment: ${entry.label}`,
           subtitle: entry.displayUrl ?? undefined,
           state:
             selectedIds === null || selectedIds.has(entry.environmentId)
@@ -159,7 +159,7 @@ export function AndroidSettingsEnvironmentFilter() {
         },
         ...selectableProjectGroups.map((group) => ({
           id: `project:${group.key}`,
-          title: `Project · ${group.label}`,
+          title: `Project: ${group.label}`,
           state: selectedProjectKey === group.key ? ("on" as const) : ("off" as const),
         })),
       ]}

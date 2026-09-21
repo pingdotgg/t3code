@@ -902,7 +902,7 @@ describe("provider update launch notification logic", () => {
           platformOs: "linux",
           fallbackLabel: "Jgratton24",
         }),
-      ).toBe("WSL · ubuntu");
+      ).toBe("WSL (ubuntu)");
       expect(
         deriveEnvironmentDisplayLabel({
           isWsl: false,

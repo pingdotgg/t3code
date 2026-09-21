@@ -380,9 +380,9 @@ export function ThemeSearchSection({
                     <ThemeExtensionIcon key={extension.iconUrl} extension={extension} />
                     <div className="min-w-0 flex-1">
                       <h4 className="truncate text-sm font-medium">{extension.name}</h4>
-                      <p className="truncate text-muted-foreground text-xs">
-                        {extension.publisher} · {DOWNLOAD_FORMAT.format(extension.downloadCount)}{" "}
-                        downloads
+                      <p className="flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground text-xs">
+                        <span className="truncate">{extension.publisher}</span>
+                        <span>{DOWNLOAD_FORMAT.format(extension.downloadCount)} downloads</span>
                       </p>
                     </div>
                   </div>

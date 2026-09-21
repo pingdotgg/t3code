@@ -62,7 +62,7 @@ describe("available cloud environment presentation", () => {
       connectionError: null,
       connectionErrorTraceId: null,
       connectionState: "available",
-      statusText: "Available · Relay online",
+      statusText: "Available (relay online)",
     });
   });
 
@@ -78,7 +78,7 @@ describe("available cloud environment presentation", () => {
       connectionError: null,
       connectionErrorTraceId: null,
       connectionState: "available",
-      statusText: "Available · Checking relay status...",
+      statusText: "Available (checking relay status...)",
     });
   });
 

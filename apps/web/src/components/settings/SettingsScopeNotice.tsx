@@ -31,7 +31,7 @@ export function SettingsScopeNotice({
           .filter((group) => !search.project || group.projectKey === search.project)
           .flatMap((group) =>
             group.memberProjects.map((member) => ({
-              label: `${group.displayName} · ${member.environmentLabel ?? "Environment"} · ${member.workspaceRoot}`,
+              label: `${group.displayName} on ${member.environmentLabel ?? "Environment"} (${member.workspaceRoot})`,
               search: {
                 project: group.projectKey,
                 machine: member.environmentId,
@@ -56,7 +56,7 @@ export function SettingsScopeNotice({
                   (other) =>
                     other.environmentId !== entry.environmentId && other.label === entry.label,
                 )
-                  ? `${entry.label} · ${entry.displayUrl || entry.environmentId}`
+                  ? `${entry.label} (${entry.displayUrl || entry.environmentId})`
                   : entry.label,
                 search: { machine: entry.environmentId },
               }))

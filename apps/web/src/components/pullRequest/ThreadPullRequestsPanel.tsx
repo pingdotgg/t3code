@@ -109,7 +109,7 @@ function LinkRow({
                 #{link.number}
               </TooltipTrigger>
               <TooltipPopup>
-                {SOURCE_LABELS[link.source]} · {formatRelativeTimeLabel(link.linkedAt)}
+                {SOURCE_LABELS[link.source]} {formatRelativeTimeLabel(link.linkedAt)}
               </TooltipPopup>
             </Tooltip>
           }
@@ -298,9 +298,10 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
         </div>
       </ScrollArea>
       <footer className="flex items-center justify-between border-t border-border/60 px-2 py-1.5 text-[.7rem] text-muted-foreground">
-        <span>
-          {openCount} open · {links.length} linked
-          {lastSynced ? ` · synced ${formatRelativeTimeLabel(lastSynced)}` : ""}
+        <span className="flex min-w-0 flex-wrap items-center gap-x-3">
+          <span>{openCount} open</span>
+          <span>{links.length} linked</span>
+          {lastSynced ? <span>synced {formatRelativeTimeLabel(lastSynced)}</span> : null}
         </span>
         <Button size="xs" variant="ghost" onClick={openLinkDialog}>
           <PlusIcon className="size-3.5" />

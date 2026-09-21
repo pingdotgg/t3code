@@ -533,7 +533,7 @@ export function buildTraitsTriggerDisplay(input: {
   if (labels.length === 0 && fastModeFallbackLabel !== null) {
     return { label: fastModeFallbackLabel, showFastModeIcon: false };
   }
-  return { label: labels.join(" · "), showFastModeIcon: fastModeEnabled };
+  return { label: labels.join(", "), showFastModeIcon: fastModeEnabled };
 }
 
 export const TraitsPicker = memo(function TraitsPicker({

@@ -17,7 +17,7 @@ function accountLabel(account: UsageLimitsReport["accounts"][number]): string {
     (String(account.instanceId) !== String(account.driver) ? account.instanceId : "");
   // The default instance is often named after its driver; saying it twice adds nothing.
   return instance && instance.toLowerCase() !== driver.toLowerCase()
-    ? `${driver} · ${instance}`
+    ? `${driver} (${instance})`
     : driver;
 }
 
@@ -37,7 +37,7 @@ function AccountSummary({ account }: { readonly account: UsageLimitsReport["acco
       ) : (
         label
       )}
-      {account.plan ? ` · ${account.plan}` : null}
+      {account.plan ? <span className="ml-3 text-muted-foreground">{account.plan}</span> : null}
     </>
   );
 }

@@ -284,7 +284,7 @@ export function PreviewChromeRow({
               ) : null}
             </TooltipTrigger>
             <TooltipPopup>
-              {recording ? "Stop recording" : "Screenshot · Shift-click to record"}
+              {recording ? "Stop recording" : "Screenshot (Shift-click to record)"}
             </TooltipPopup>
           </Tooltip>
         ) : null}

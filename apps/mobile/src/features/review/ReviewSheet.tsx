@@ -660,7 +660,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     headerDiffSummary.deletions,
   ]
     .filter((part): part is string => Boolean(part))
-    .join(" · ");
+    .join(", ");
 
   // The changed-files navigator drives the native diff surface via
   // scrollToFile, so it is only useful when that surface resolved. In raw
@@ -712,7 +712,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
       : null,
   ]
     .filter(Boolean)
-    .join(" · ");
+    .join(", ");
   const headerTitleText = selectedSection?.title ?? "Review changes";
 
   return (

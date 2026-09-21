@@ -243,10 +243,8 @@ function Separator() {
     <span
       aria-hidden
       data-slot="composer-banner-separator"
-      className="mx-1 inline-block flex-none text-muted-foreground/40"
-    >
-      ·
-    </span>
+      className="mx-1 inline-block w-1 flex-none"
+    />
   );
 }
 

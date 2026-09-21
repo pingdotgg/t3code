@@ -1319,7 +1319,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         return;
       }
       NodeAssert.equal(firstEvent.value.payload.itemType, "mcp_tool_call");
-      NodeAssert.equal(firstEvent.value.payload.title, "t3-code · preview_status");
+      NodeAssert.equal(firstEvent.value.payload.title, "t3-code: preview_status");
       NodeAssert.deepStrictEqual(firstEvent.value.payload.data, {
         completedAtMs: 1_778_000_000_000,
         threadId: "thread-1",
@@ -1630,7 +1630,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         }
         NodeAssert.equal(firstEvent.value.payload.status, item.status);
         if (item.id.startsWith("failed-computer")) {
-          NodeAssert.equal(firstEvent.value.payload.title, "computer-use · click");
+          NodeAssert.equal(firstEvent.value.payload.title, "computer-use: click");
           const sourceKey = firstEvent.value.payload.toolSource?.key;
           NodeAssert.equal(sourceKey?.length, 512);
           if (sourceKey) longAppSourceKeys.push(sourceKey);

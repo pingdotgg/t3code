@@ -147,9 +147,14 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                 >
                   Files
                 </Text>
-                <Text className="text-foreground-muted text-xs leading-normal">
-                  {selectedFiles.length} selected · +{selectedInsertions} / -{selectedDeletions}
-                </Text>
+                <View className="flex-row flex-wrap gap-x-3">
+                  <Text className="text-foreground-muted text-xs leading-normal">
+                    {selectedFiles.length} selected
+                  </Text>
+                  <Text className="text-foreground-muted text-xs leading-normal">
+                    +{selectedInsertions} / -{selectedDeletions}
+                  </Text>
+                </View>
               </View>
               <View className="flex-row items-center gap-2">
                 {!allSelected && isEditingFiles ? (

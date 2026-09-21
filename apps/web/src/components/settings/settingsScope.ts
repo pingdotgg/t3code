@@ -124,7 +124,7 @@ export function resolveSettingsScope(
         group,
         checkout,
         environmentId: checkout.environmentId,
-        label: `${group.displayName} / ${checkoutEnvironment.label}${sharesEnvironment ? ` · ${checkout.workspaceRoot}` : ""}`,
+        label: `${group.displayName} / ${checkoutEnvironment.label}${sharesEnvironment ? ` (${checkout.workspaceRoot})` : ""}`,
         members,
         environmentIds: [checkout.environmentId],
       };

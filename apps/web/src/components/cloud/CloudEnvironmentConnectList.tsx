@@ -339,17 +339,17 @@ export function CloudEnvironmentConnectRows({
             : "bg-muted-foreground/35";
     const statusText =
       unsupported && !savedEnvironment
-        ? "T3 Connect · Not added · Client not supported"
+        ? "T3 Connect: not added (client not supported)"
         : savedConnection
           ? savedConnection.statusText
           : availability === "online"
-            ? "T3 Connect · Not added · Relay online"
+            ? "T3 Connect: not added (relay online)"
             : availability === "offline"
-              ? "T3 Connect · Not added · Relay offline"
+              ? "T3 Connect: not added (relay offline)"
               : availability === "checking"
-                ? "T3 Connect · Not added · Checking relay status…"
+                ? "T3 Connect: not added (checking relay status…)"
                 : (Option.getOrNull(error)?.message ??
-                  "T3 Connect · Not added · Relay status unavailable");
+                  "T3 Connect: not added (relay status unavailable)");
     if (selection) {
       return (
         <label

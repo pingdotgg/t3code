@@ -864,7 +864,7 @@ export function deriveAgentPanelModel({
 /**
  * Compact model chip text: strips vendor prefixes/date-or-context suffixes
  * ("claude-sonnet-5[1m]" → "sonnet-5[1m]", "claude-opus-4-20250514" →
- * "opus-4"). Unknown ids pass through untouched; effort appends as "· high".
+ * "opus-4"). Unknown ids pass through untouched; effort appends as "(high)".
  */
 export function formatSubagentModelLabel(
   model: string | null,
@@ -877,7 +877,7 @@ export function formatSubagentModelLabel(
     .replace(/^claude-/, "")
     .replace(/-\d{8}$/, "")
     .replace(/-latest$/, "");
-  return effort ? `${compact} · ${effort}` : compact;
+  return effort ? `${compact} (${effort})` : compact;
 }
 
 export function formatSubagentTokenCount(totalTokens: number): string {

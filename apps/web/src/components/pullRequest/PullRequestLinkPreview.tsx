@@ -108,9 +108,8 @@ export function PullRequestLinkPreview({
               <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
                 <span className="min-w-0 truncate">{detail.repository}</span>
                 <span className="shrink-0">#{detail.number}</span>
-                <span aria-hidden>·</span>
                 {state === null ? null : (
-                  <span className="inline-flex shrink-0 items-center gap-1">
+                  <span className="ml-1.5 inline-flex shrink-0 items-center gap-1">
                     <state.Icon aria-hidden className={`size-3 ${state.toneClassName}`} />
                     {state.label}
                   </span>
@@ -122,8 +121,9 @@ export function PullRequestLinkPreview({
               <div className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                 <PullRequestActorAvatar actor={detail.author} className="size-4" />
                 <span className="min-w-0 truncate">{authorLabel}</span>
-                <span aria-hidden>·</span>
-                <span className="shrink-0">opened {formatRelativeTimeLabel(detail.createdAt)}</span>
+                <span className="ml-1.5 shrink-0">
+                  opened {formatRelativeTimeLabel(detail.createdAt)}
+                </span>
               </div>
             </div>
           )}

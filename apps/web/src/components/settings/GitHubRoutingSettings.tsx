@@ -37,7 +37,7 @@ export function summarizeGitHubRouting(
       ? []
       : [`${labels.map((entry) => entry.label).join(", ")} ${summaryLabels[permission]}`];
   });
-  return groups.length === 0 ? null : groups.join(" · ");
+  return groups.length === 0 ? null : groups.join("; ");
 }
 
 /**

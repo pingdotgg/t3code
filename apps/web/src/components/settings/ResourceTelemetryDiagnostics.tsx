@@ -1021,7 +1021,7 @@ export function ResourceTelemetryDiagnostics({
               label="Process count"
               value={allT3 ? String(allT3.processCount) : "..."}
               detail={
-                allT3 ? `${allT3.processStarts} starts · ${allT3.processExits} exits` : undefined
+                allT3 ? `${allT3.processStarts} starts, ${allT3.processExits} exits` : undefined
               }
             />
             <IconStat
@@ -1125,7 +1125,7 @@ export function ResourceTelemetryDiagnostics({
                   })}${
                     snapshot.power.idleSeconds === null
                       ? ""
-                      : ` · ${Math.round(snapshot.power.idleSeconds)}s`
+                      : ` for ${Math.round(snapshot.power.idleSeconds)}s`
                   }`}
                 />
                 <DetailRow
@@ -1197,7 +1197,7 @@ export function ResourceTelemetryDiagnostics({
                     onSome: (version) =>
                       `${version}${Option.match(snapshot.health.sidecarPid, {
                         onNone: () => "",
-                        onSome: (pid) => ` · PID ${pid}`,
+                        onSome: (pid) => ` (PID ${pid})`,
                       })}`,
                   })}
                 />

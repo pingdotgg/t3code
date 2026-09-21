@@ -309,11 +309,11 @@ class AgentNotificationsTest {
     assertEquals("1 needs you", card.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
     assertEquals("8 active", card.extras.getString(Notification.EXTRA_SUB_TEXT))
     assertEquals(
-      "Approval $title · Project\nWorking Another thread · Other project",
+      "Approval $title (Project)\nWorking Another thread (Other project)",
       card.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
     )
     assertEquals(
-      "Approval $title · Project",
+      "Approval $title (Project)",
       card.extras.getCharSequence(Notification.EXTRA_TEXT).toString()
     )
     assertEquals(listOf("Approve", "Dismiss"), card.actions.map { it.title.toString() })
@@ -442,7 +442,7 @@ class AgentNotificationsTest {
     val card = manager.activeNotifications.single().notification
     assertEquals("2 live", card.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT))
     assertEquals("2 working", card.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
-    assertEquals("Project · 2 active", card.extras.getString(Notification.EXTRA_SUB_TEXT))
+    assertEquals("Project, 2 active", card.extras.getString(Notification.EXTRA_SUB_TEXT))
     assertEquals(
       "Working Build feature\nDone Write tests",
       card.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
@@ -468,7 +468,7 @@ class AgentNotificationsTest {
       "Finished, 1 failed",
       finished.extras.getCharSequence(Notification.EXTRA_TITLE).toString()
     )
-    assertEquals("Project · 2 threads", finished.extras.getString(Notification.EXTRA_SUB_TEXT))
+    assertEquals("Project, 2 threads", finished.extras.getString(Notification.EXTRA_SUB_TEXT))
   }
 
   private fun assertTimeout(card: Notification, expected: LongRange) {

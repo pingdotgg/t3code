@@ -18,7 +18,7 @@ import {
   UserRoundIcon,
   UserRoundXIcon,
 } from "lucide-react";
-import { Children, type CSSProperties, isValidElement, type ReactNode, useState } from "react";
+import { type CSSProperties, type ReactNode, useState } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -501,7 +501,7 @@ export function PullRequestActorLabel({
       </TooltipTrigger>
       <TooltipPopup side="top">
         {actor?.name && actor.name !== login ? `${actor.name} (@${login})` : login}
-        {profileUrl ? " · Open profile" : ""}
+        {profileUrl ? <span className="block">Open profile</span> : null}
       </TooltipPopup>
     </Tooltip>
   );
@@ -530,17 +530,7 @@ export function PullRequestDiffStat({
   );
 }
 
-/**
- * Dot-separated metadata. It owns the separator, and draws one only between the segments that
- * survive, so a caller can render `{condition ? <span/> : null}` without leaving a stray dot.
- * `Children.toArray` drops the nullish entries and keys what remains, which a plain array
- * check would not do for a single child or a fragment. A separator borrows the key of the
- * segment it precedes, so it stays stable without counting positions.
- */
-function separatorKey(segment: ReactNode): string {
-  return `separator:${isValidElement(segment) ? String(segment.key) : String(segment)}`;
-}
-
+/** Keep metadata segments readable with spacing, including when optional segments disappear. */
 export function PullRequestMetaLine({
   children,
   className,
@@ -548,25 +538,7 @@ export function PullRequestMetaLine({
   children: ReactNode;
   className?: string;
 }) {
-  const segments = Children.toArray(children);
-  return (
-    <span className={cn("flex min-w-0 items-center gap-1.5", className)}>
-      {segments.flatMap((segment, index) =>
-        index === 0
-          ? segment
-          : [
-              <span
-                aria-hidden
-                className="shrink-0 text-muted-foreground/50"
-                key={separatorKey(segment)}
-              >
-                ·
-              </span>,
-              segment,
-            ],
-      )}
-    </span>
-  );
+  return <span className={cn("flex min-w-0 items-center gap-3", className)}>{children}</span>;
 }
 
 export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestCheck>): string {

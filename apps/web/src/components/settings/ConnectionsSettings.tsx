@@ -450,7 +450,7 @@ function summarizeAuthorizedClients(
       ? `${links.length} ${links.length === 1 ? "pairing link" : "pairing links"}`
       : null,
   ];
-  return parts.filter((part): part is string => part !== null).join(" · ");
+  return parts.filter((part): part is string => part !== null).join(" and ");
 }
 
 function sortDesktopClientSessions(sessions: ReadonlyArray<ServerClientSessionRecord>) {
@@ -760,14 +760,13 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             />
             <h3 className="text-sm font-medium text-foreground">{primaryLabel}</h3>
           </div>
-          <p className="text-xs text-muted-foreground">
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             <Tooltip>
               <TooltipTrigger render={<span />}>
                 {formatExpiresInLabel(pairingLink.expiresAt, nowMs)}
               </TooltipTrigger>
               <TooltipPopup side="top">{expiresAbsolute}</TooltipPopup>
             </Tooltip>
-            <span aria-hidden> · </span>
             <AccessScopeSummary scopes={pairingLink.scopes} label="Pairing link scopes" />
           </p>
           {!credential ? (
@@ -999,7 +998,7 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
   ].filter((value): value is string => value !== null);
   const primaryLabel =
     clientSession.client.label ??
-    ([clientSession.client.os, clientSession.client.browser].filter(Boolean).join(" · ") ||
+    ([clientSession.client.os, clientSession.client.browser].filter(Boolean).join(" ") ||
       clientSession.subject);
 
   return (
@@ -1019,13 +1018,10 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
               </span>
             ) : null}
           </div>
-          <p className="text-xs text-muted-foreground">
-            {deviceInfoBits.length > 0 ? (
-              <>
-                {deviceInfoBits.join(" · ")}
-                <span aria-hidden> · </span>
-              </>
-            ) : null}
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            {deviceInfoBits.map((info, index) => (
+              <span key={index}>{info}</span>
+            ))}
             <AccessScopeSummary scopes={clientSession.scopes} label="Client scopes" />
           </p>
         </div>
@@ -1538,13 +1534,11 @@ function SavedBackendListRow({
     environment.serverConfig ??
       (lastDescriptor === undefined ? null : { environment: lastDescriptor }),
   );
-  const subtitleText = [
+  const subtitleParts = [
     environmentTransportLabel(environment),
     resumingServerUpdate ? "Restarting" : status.text,
     enabled && versionMismatch ? serverVersion : null,
-  ]
-    .filter((value): value is string => value !== null)
-    .join(" · ");
+  ].filter((value): value is string => value !== null);
 
   // Only a connected, enabled machine can take a remote update; a switched-off
   // one keeps the version note so the icon is not a surprise later.
@@ -1565,13 +1559,15 @@ function SavedBackendListRow({
             render={
               <span
                 className={cn(
-                  "block truncate",
+                  "flex min-w-0 flex-wrap gap-x-3 gap-y-1",
                   enabled && status.tone === "error" && !resumingServerUpdate && "text-destructive",
                 )}
               />
             }
           >
-            {subtitleText}
+            {subtitleParts.map((part, index) => (
+              <span key={index}>{part}</span>
+            ))}
           </TooltipTrigger>
           <TooltipPopup side="top" className="max-w-80 whitespace-pre-wrap leading-tight">
             {unsupported
@@ -3319,12 +3315,16 @@ export function ConnectionsSettings() {
                   primaryServerUpdateState.status !== "idle" ? (
                     <ServerUpdateProgress state={primaryServerUpdateState} />
                   ) : (
-                    [
-                      primaryServerConfig?.environment.serverVersion ?? null,
-                      primaryEnvironment?.displayUrl ?? null,
-                    ]
-                      .filter((value): value is string => value !== null)
-                      .join(" · ") || "Loading…"
+                    <span className="flex flex-wrap gap-x-3 gap-y-1">
+                      {primaryServerConfig?.environment.serverVersion ? (
+                        <span>{primaryServerConfig.environment.serverVersion}</span>
+                      ) : primaryEnvironment?.displayUrl ? null : (
+                        "Loading…"
+                      )}
+                      {primaryEnvironment?.displayUrl ? (
+                        <span>{primaryEnvironment.displayUrl}</span>
+                      ) : null}
+                    </span>
                   )
                 }
                 control={

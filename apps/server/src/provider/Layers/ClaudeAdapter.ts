@@ -2029,7 +2029,7 @@ function previewUnknownSdkContent(message: unknown): string | undefined {
   if (parts.length === 0) {
     return undefined;
   }
-  const joined = parts.join(" · ");
+  const joined = parts.join(", ");
   return joined.length > 280 ? `${joined.slice(0, 279)}…` : joined;
 }
 

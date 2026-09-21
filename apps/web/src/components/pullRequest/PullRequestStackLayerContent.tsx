@@ -18,9 +18,10 @@ export function PullRequestStackLayerContent({
       <state.Icon aria-hidden className={cn("size-4 shrink-0", state.toneClassName)} />
       <span className="min-w-0 flex-1">
         <span className="block truncate">{layer.title || layer.headBranch}</span>
-        <span className="block truncate text-xs font-normal text-muted-foreground">
-          #{layer.number} · {compact ? null : `${layer.headBranch} · `}
-          {state.label}
+        <span className="flex min-w-0 items-center gap-3 text-xs font-normal text-muted-foreground">
+          <span className="shrink-0">#{layer.number}</span>
+          {compact ? null : <span className="truncate">{layer.headBranch}</span>}
+          <span className="shrink-0">{state.label}</span>
         </span>
       </span>
     </>

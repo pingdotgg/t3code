@@ -367,7 +367,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
                 {branch}
               </Text>
             ) : null}
-            {branch && props.environmentLabel ? "  ·  " : null}
+            {branch && props.environmentLabel ? "  " : null}
             {props.environmentLabel ? (
               <Text
                 className={cn(
@@ -903,7 +903,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             {thread.session.lastError}
           </Text>
         ) : thread.branch || props.environmentLabel ? (
-          /* "branch · machine" share one truncating line. The machine sits
+          /* "branch and machine" share one truncating line. The machine sits
              last so a tight fit cuts the repetitive label, not the branch —
              and machine-only fills the row for non-git projects. The glyph
              hugs the label (it cannot live inside the Text without breaking
@@ -932,7 +932,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   {thread.branch}
                 </Text>
               ) : null}
-              {thread.branch && props.environmentLabel ? "  ·  " : null}
+              {thread.branch && props.environmentLabel ? "  " : null}
               {props.environmentLabel ? (
                 <Text
                   className={cn(

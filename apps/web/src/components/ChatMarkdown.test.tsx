@@ -594,8 +594,8 @@ describe("ChatMarkdown file option chips", () => {
       />,
     );
 
-    expect(html).toContain("index.ts · project/src");
-    expect(html).toContain("index.ts · project/test");
+    expect(html).toContain("index.ts (project/src)");
+    expect(html).toContain("index.ts (project/test)");
   });
 
   it("preserves rejected citations created by over-indented list recovery", () => {
@@ -806,8 +806,8 @@ describe("ChatMarkdown Windows file links", () => {
         />,
       );
 
-      expect(html).toContain("index.ts · project/src");
-      expect(html).toContain("index.ts · project/test");
+      expect(html).toContain("index.ts (project/src)");
+      expect(html).toContain("index.ts (project/test)");
     },
   );
 
@@ -826,7 +826,7 @@ describe("ChatMarkdown Windows file links", () => {
       );
 
       expect(html.match(/chat-markdown-file-link/g)).toHaveLength(2);
-      expect(html).not.toContain("main.ts ·");
+      expect(html).not.toContain("main.ts (");
     },
   );
 

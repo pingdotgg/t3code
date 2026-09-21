@@ -3415,11 +3415,12 @@ export function ArchivedThreadsPanel() {
                 }}
                 title={thread.title}
                 description={
-                  <>
-                    Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
-                    {" \u00b7 Created "}
-                    {formatRelativeTimeLabel(thread.createdAt)}
-                  </>
+                  <span className="flex flex-wrap gap-x-3 gap-y-1">
+                    <span>
+                      Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
+                    </span>
+                    <span>Created {formatRelativeTimeLabel(thread.createdAt)}</span>
+                  </span>
                 }
                 control={
                   <Button

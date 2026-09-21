@@ -443,8 +443,8 @@ function ProviderSection(props: {
             </View>
             <Text className="text-sm text-foreground-muted">
               {metric === "cost"
-                ? `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens`
-                : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`}
+                ? `${formatPercent(share)} of cost (${formatTokens(provider.totalTokens)} tokens)`
+                : `${formatPercent(share)} of tokens (${formatUsd(provider.costUsd)})`}
             </Text>
           </View>
         );
@@ -544,8 +544,8 @@ function ModelsSection(props: { readonly merged: MergedUsage }) {
             </Text>
             <Text className="text-sm text-foreground-muted">
               {isModelCostUnknown(model)
-                ? `no known rates · ${formatTokens(model.totalTokens)} tokens`
-                : `${formatPercent(model.costShare)} of cost · ${formatTokens(model.totalTokens)} tokens`}
+                ? `no known rates (${formatTokens(model.totalTokens)} tokens)`
+                : `${formatPercent(model.costShare)} of cost (${formatTokens(model.totalTokens)} tokens)`}
             </Text>
           </View>
           <Text className="text-base tabular-nums text-foreground">
@@ -571,12 +571,12 @@ function usageEnvironmentStatus(environment: EnvironmentUsageStatus): string {
     environment.summary &&
     !isCompatibleUsageContractVersion(environment.summary.contractVersion, USAGE_CONTRACT_VERSION)
   ) {
-    return "Older server · excluded from usage totals";
+    return "Older server (excluded from usage totals)";
   }
   if (!environment.isConnected)
-    return environment.summary ? "Disconnected · showing saved usage" : "Waiting for connection…";
+    return environment.summary ? "Disconnected (showing saved usage)" : "Waiting for connection…";
   if (environment.error)
-    return environment.summary ? "Usage unavailable · showing saved totals" : "Usage unavailable";
+    return environment.summary ? "Usage unavailable (showing saved totals)" : "Usage unavailable";
   if (isUsageLoading(environment))
     return environment.summary ? "Updating usage…" : "Loading usage…";
   return "Usage up to date";

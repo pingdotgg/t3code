@@ -292,7 +292,7 @@ export function CommandPalette(props: {
       key: `project:${scopedProjectKey(project.environmentId, project.id)}`,
       kind: "project",
       title: project.title,
-      detail: `New thread · ${savedConnectionsById[project.environmentId]?.environmentLabel ?? project.environmentId}`,
+      detail: `New thread on ${savedConnectionsById[project.environmentId]?.environmentLabel ?? project.environmentId}`,
       searchTerms: [project.workspaceRoot, "new thread", "project"],
       run: () =>
         navigation.navigate("NewTaskSheet", {
@@ -319,7 +319,7 @@ export function CommandPalette(props: {
           key: scopedThreadKey(thread.environmentId, thread.id),
           kind: "thread",
           title: thread.title || "Untitled thread",
-          detail: [project?.title, environment].filter(Boolean).join(" · "),
+          detail: [project?.title, environment].filter(Boolean).join(" on "),
           searchTerms: [
             project?.title ?? "",
             environment,

@@ -226,12 +226,14 @@ export function ReviewThreadCard({
         )}
         <button
           type="button"
-          className="hover:text-foreground"
+          className="flex items-center gap-3 hover:text-foreground"
           aria-expanded={expanded}
           onClick={() => setExpanded((current) => !current)}
         >
-          {thread.isResolved ? "Resolved" : "Open"} · {commentCount}{" "}
-          {commentCount === 1 ? "comment" : "comments"}
+          <span>{thread.isResolved ? "Resolved" : "Open"}</span>
+          <span>
+            {commentCount} {commentCount === 1 ? "comment" : "comments"}
+          </span>
         </button>
         {thread.isOutdated ? <span>outdated</span> : null}
         {onFix ? (

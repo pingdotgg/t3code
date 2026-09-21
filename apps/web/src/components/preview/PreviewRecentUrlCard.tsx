@@ -34,9 +34,9 @@ export function PreviewRecentUrlCard({ threadRef, entry, onOpen, onRemove }: Pro
           <span className="truncate text-sm font-medium text-foreground">
             {entry.title ?? label}
           </span>
-          <span className="truncate text-xs text-muted-foreground">
-            {entry.title ? `${label} · ` : ""}
-            {visitedAt}
+          <span className="flex min-w-0 items-center gap-3 text-xs text-muted-foreground">
+            {entry.title ? <span className="truncate">{label}</span> : null}
+            <span className="shrink-0">{visitedAt}</span>
           </span>
         </div>
       </button>

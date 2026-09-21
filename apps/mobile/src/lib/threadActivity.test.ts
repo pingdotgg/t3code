@@ -3065,7 +3065,7 @@ describe("quiet timeline: nested agents", () => {
       expect(rows).toMatchObject([
         {
           lifecycleStatus: "inProgress",
-          summary: "Kicked off 1 subagent · 1 working",
+          summary: "Kicked off 1 subagent (1 working)",
           workEntry: { agentSpawn: { workflowId: null, agentTaskIds: ["agent-1"] } },
         },
       ]);
@@ -3133,7 +3133,7 @@ describe("quiet timeline: nested agents", () => {
     // unlike progress ticks (which the server rewrites in place).
     const running = rowsFor([]);
     expect(running.map((row) => [row.id, row.summary])).toEqual([
-      ["a-start", "Kicked off 2 subagents · 2 working"],
+      ["a-start", "Kicked off 2 subagents (2 working)"],
       ["shell-1", "Run tests"],
     ]);
     expect(running[0]).toMatchObject({
@@ -3145,7 +3145,7 @@ describe("quiet timeline: nested agents", () => {
     const oneDone = rowsFor([agent("a-done", "task.completed", "a", "completed", 7)]);
     expect(oneDone[0]).toMatchObject({
       id: "a-start",
-      summary: "Kicked off 2 subagents · 1 working",
+      summary: "Kicked off 2 subagents (1 working)",
       lifecycleStatus: "inProgress",
     });
 
@@ -3155,7 +3155,7 @@ describe("quiet timeline: nested agents", () => {
     ]);
     expect(allDone[0]).toMatchObject({
       id: "a-start",
-      summary: "Ran 2 subagents · 1 failed",
+      summary: "Ran 2 subagents (1 failed)",
       lifecycleStatus: "failed",
       status: "failure",
     });
@@ -3401,7 +3401,7 @@ describe("quiet timeline: nested agents", () => {
       expect(rows).toHaveLength(2);
       expect(rows[0]).toMatchObject({
         lifecycleStatus: status === "failed" ? "failed" : "stopped",
-        summary: `Ran 1 subagent · ${status === "failed" ? "1 failed" : "1 stopped"}`,
+        summary: `Ran 1 subagent (${status === "failed" ? "1 failed" : "1 stopped"})`,
         workEntry: {
           taskId: "trajectory:4",
           toolTitle: "Antigravity subagent batch",
@@ -3411,7 +3411,7 @@ describe("quiet timeline: nested agents", () => {
       expect(rows[0]?.getFullDetail()).toContain(detail);
       expect(rows[1]).toMatchObject({
         lifecycleStatus: "inProgress",
-        summary: "Kicked off 1 subagent · 1 working",
+        summary: "Kicked off 1 subagent (1 working)",
         workEntry: { taskId: "trajectory:5" },
       });
     },
@@ -3483,7 +3483,7 @@ describe("quiet timeline: nested agents", () => {
     // The member that never reported its own end settles with the coordinator.
     expect(rows[0]).toMatchObject({
       id: "wf-progress",
-      summary: "Ran 2 subagents · completed",
+      summary: "Ran 2 subagents (completed)",
       lifecycleStatus: "completed",
       workEntry: {
         agentSpawn: {
@@ -3492,7 +3492,7 @@ describe("quiet timeline: nested agents", () => {
         },
       },
     });
-    expect(rows[0]?.getFullDetail()).toBe("Reviewer 0 · completed\nReviewer 1 · completed");
+    expect(rows[0]?.getFullDetail()).toBe("Reviewer 0: completed\nReviewer 1: completed");
   });
 
   it("summarizes a spawn card from the newest member report and the batch outcome", () => {
@@ -3581,7 +3581,7 @@ describe("quiet timeline: nested agents", () => {
     );
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
-      summary: "Ran 1 subagent · completed",
+      summary: "Ran 1 subagent (completed)",
       lifecycleStatus: "completed",
     });
   });

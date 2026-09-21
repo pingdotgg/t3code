@@ -175,7 +175,7 @@ export function T3ConnectProfilePage() {
           <ClerkRow
             key={environment.environmentId}
             title={environment.label}
-            subtitle={`${linkedAtLabel(environment.linkedAt)} · ${endpointLabel(environment)}`}
+            subtitle={`${linkedAtLabel(environment.linkedAt)} (${endpointLabel(environment)})`}
             accessory={
               deregisteringEnvironmentId === environment.environmentId ? (
                 <ActivityIndicator colorClassName={"accent-clerk-foreground-muted"} size="small" />

@@ -581,9 +581,9 @@ export function ProviderInstanceCard({
         {needsAttention ? statusDotNode : null}
         <span>Authenticated as</span>
         <ProviderAuthEmail email={authEmail} />
-        {authLabel ? <span>· {authLabel}</span> : null}
+        {authLabel ? <span className="text-muted-foreground">{authLabel}</span> : null}
         {summary.detail ? (
-          <span className="min-w-0 [overflow-wrap:anywhere]">· {summary.detail}</span>
+          <span className="basis-full min-w-0 [overflow-wrap:anywhere]">{summary.detail}</span>
         ) : null}
       </>
     ) : (
@@ -591,7 +591,7 @@ export function ProviderInstanceCard({
         {statusDotNode}
         <span>{summary.headline}</span>
         {summary.detail ? (
-          <span className="min-w-0 [overflow-wrap:anywhere]">· {summary.detail}</span>
+          <span className="basis-full min-w-0 [overflow-wrap:anywhere]">{summary.detail}</span>
         ) : null}
       </>
     );
@@ -665,7 +665,9 @@ export function ProviderInstanceCard({
               ) : null}
               <span className="line-clamp-2 [overflow-wrap:anywhere]">
                 {summary.headline}
-                {needsAttention && summary.detail ? ` · ${summary.detail}` : null}
+                {needsAttention && summary.detail ? (
+                  <span className="block">{summary.detail}</span>
+                ) : null}
               </span>
             </span>
           </span>

@@ -288,7 +288,7 @@ export function ComposerContextSheet(props: {
                   <>
                     {record.pullRequest ? (
                       <ContextField
-                        label={`#${record.pullRequest.number} · ${record.pullRequest.isDraft ? "draft" : record.pullRequest.state}`}
+                        label={`#${record.pullRequest.number} (${record.pullRequest.isDraft ? "draft" : record.pullRequest.state})`}
                         value={`${record.pullRequest.title}\n${record.pullRequest.headBranch} → ${record.pullRequest.baseBranch}`}
                       />
                     ) : null}
@@ -342,7 +342,7 @@ export function ComposerContextSheet(props: {
                 {record.kind === "image" ? (
                   <ContextField
                     label="File"
-                    value={`${record.mimeType} · ${formatAttachmentSize(record.sizeBytes)}`}
+                    value={`${record.mimeType} (${formatAttachmentSize(record.sizeBytes)})`}
                   />
                 ) : null}
                 {record.kind === "mention" ? (
