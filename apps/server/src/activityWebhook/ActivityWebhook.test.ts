@@ -188,6 +188,33 @@ describe("ActivityWebhook", () => {
     ).pipe(Effect.provide(CaptureLogger)),
   );
 
+  it.effect("rejects plain http for non-loopback hosts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          env: { ...ENABLED_ENV, T3CODE_ACTIVITY_WEBHOOK_URL: "http://wake.example.test/activity" },
+        });
+        yield* harness.service.observe(sessionEvent("t1", "running"));
+        yield* TestClock.adjust("2 minutes");
+        assert.strictEqual(yield* Queue.size(harness.requests), 0);
+        assert.isTrue(harness.logs.some((line) => line.includes("must be https")));
+      }),
+    ).pipe(Effect.provide(CaptureLogger)),
+  );
+
+  it.effect("accepts plain http on loopback", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          env: { ...ENABLED_ENV, T3CODE_ACTIVITY_WEBHOOK_URL: "http://127.0.0.1:8787/activity" },
+        });
+        yield* harness.service.observe(sessionEvent("t1", "running"));
+        const request = yield* Queue.take(harness.requests);
+        assert.strictEqual(request.url, "http://127.0.0.1:8787/activity");
+      }),
+    ).pipe(Effect.provide(CaptureLogger)),
+  );
+
   it.effect("falls back to the default interval when the configured one is invalid", () =>
     Effect.scoped(
       Effect.gen(function* () {

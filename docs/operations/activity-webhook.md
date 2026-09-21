@@ -14,7 +14,7 @@ The feature is off unless `T3CODE_ACTIVITY_WEBHOOK_URL` is set. Implementation:
 
 | Variable                              | Required | Default | Meaning                                                                                                         |
 | ------------------------------------- | -------- | ------- | --------------------------------------------------------------------------------------------------------------- |
-| `T3CODE_ACTIVITY_WEBHOOK_URL`         | no       | unset   | `http(s)` URL to POST to. Unset disables the feature.                                                           |
+| `T3CODE_ACTIVITY_WEBHOOK_URL`         | no       | unset   | `https` URL to POST to (`http` only on loopback). Unset disables the feature.                                   |
 | `T3CODE_ACTIVITY_WEBHOOK_TOKEN`       | with URL | unset   | Sent as `Authorization: Bearer <token>`. URL without token logs one warning and disables the feature.           |
 | `T3CODE_ACTIVITY_WEBHOOK_INTERVAL_MS` | no       | `60000` | Heartbeat interval. Accepts `5000` to `3600000`; anything else logs a warning and uses the default.             |
 | `T3CODE_ACTIVITY_WEBHOOK_CONFIG_FILE` | no       | unset   | Optional `KEY=VALUE` file holding any of the variables above. The process environment wins on conflicting keys. |

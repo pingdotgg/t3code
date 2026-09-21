@@ -109,10 +109,14 @@ const parseInterval = (raw: Option.Option<string>) =>
     return DEFAULT_INTERVAL_MS;
   });
 
+const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/** Every request carries the bearer token, so plain HTTP is limited to loopback. */
 const parseUrl = (raw: string) => {
   try {
     const url = new URL(raw);
-    return url.protocol === "http:" || url.protocol === "https:" ? url : null;
+    if (url.protocol === "https:") return url;
+    return url.protocol === "http:" && LOOPBACK_HOSTNAMES.has(url.hostname) ? url : null;
   } catch {
     return null;
   }
@@ -133,7 +137,7 @@ export const resolveSettings: Effect.Effect<
   const url = parseUrl(env.url.value);
   if (url === null) {
     yield* Effect.logWarning(
-      "Activity webhook disabled: T3CODE_ACTIVITY_WEBHOOK_URL is not an http(s) URL",
+      "Activity webhook disabled: T3CODE_ACTIVITY_WEBHOOK_URL must be https, or http on loopback",
     );
     return Option.none();
   }
