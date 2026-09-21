@@ -1059,7 +1059,8 @@ function shouldSuppressChildConversationNotification(
     method === "turn/started" ||
     method === "turn/completed" ||
     method === "turn/plan/updated" ||
-    method === "item/plan/delta"
+    method === "item/plan/delta" ||
+    method === "item/commandExecution/terminalInteraction"
   );
 }
 
@@ -1100,6 +1101,7 @@ const CHILD_CHATTER_METHODS: ReadonlySet<string> = new Set([
   "item/reasoning/summaryTextDelta",
   "item/reasoning/summaryPartAdded",
   "item/commandExecution/outputDelta",
+  "item/commandExecution/terminalInteraction",
   "item/fileChange/outputDelta",
   "item/fileChange/patchUpdated",
   "item/plan/delta",

@@ -1719,6 +1719,54 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("does not expose terminal interactions as tool lifecycle updates", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-terminal-interaction"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/commandExecution/terminalInteraction",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("command-1"),
+        payload: {
+          itemId: "command-1",
+          processId: "process-1",
+          stdin: "",
+          threadId: "thread-1",
+          turnId: "turn-1",
+        },
+      } satisfies ProviderEvent);
+      yield* runtime.emit({
+        id: asEventId("evt-agent-message-delta"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        method: "item/agentMessage/delta",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("message-1"),
+        textDelta: "Visible response",
+        payload: {
+          delta: "Visible response",
+          itemId: "message-1",
+          threadId: "thread-1",
+          turnId: "turn-1",
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = Option.getOrThrow(yield* Fiber.join(firstEventFiber));
+      NodeAssert.equal(firstEvent.type, "content.delta");
+      if (firstEvent.type === "content.delta") {
+        NodeAssert.equal(firstEvent.payload.delta, "Visible response");
+      }
+    }),
+  );
+
   it.effect("maps app permission approval requests to permission_approval request types", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
