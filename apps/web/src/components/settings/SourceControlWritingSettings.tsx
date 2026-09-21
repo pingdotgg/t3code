@@ -45,7 +45,7 @@ const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; descr
     repo_conventions: {
       label: "Repository conventions",
       description:
-        "In each project, follows the root AGENTS.md and the style of recent change descriptions.",
+        "In each project, follows the root AGENTS.md and the style of recent change descriptions. Conventions in README.md or CONTRIBUTING.md must be copied into AGENTS.md.",
     },
     conventional_commits: {
       label: "Conventional Commits",
