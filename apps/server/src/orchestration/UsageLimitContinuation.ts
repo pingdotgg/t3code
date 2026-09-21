@@ -166,6 +166,7 @@ export const make = Effect.gen(function* () {
         threadId,
         fromSequenceExclusive: wait.snapshotSequence,
         toSequenceInclusive: sequence,
+        limit: sequence - wait.snapshotSequence,
       })
       .pipe(
         Stream.filter(cancelsUsageLimitContinuation),
@@ -353,7 +354,14 @@ export const make = Effect.gen(function* () {
           !(yield* canceledSince(event.threadId, wait, yield* engine.latestSequence))
         )
           yield* save(event.threadId, wait);
-      }),
+      }).pipe(
+        Effect.tapError(() =>
+          Effect.sync(() => {
+            if (handledFailures.get(event.threadId) === event.turnId)
+              handledFailures.delete(event.threadId);
+          }),
+        ),
+      ),
     );
   });
 

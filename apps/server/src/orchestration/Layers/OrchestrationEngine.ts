@@ -199,6 +199,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               aggregateId: command.threadId,
               fromSequenceExclusive: envelope.command.expectedUsageLimit.snapshotSequence,
               toSequenceInclusive: commandReadModel.snapshotSequence,
+              limit:
+                commandReadModel.snapshotSequence -
+                envelope.command.expectedUsageLimit.snapshotSequence,
             })
             .pipe(Stream.filter(cancelsUsageLimitContinuation), Stream.runHead);
           if (Option.isSome(canceled)) {

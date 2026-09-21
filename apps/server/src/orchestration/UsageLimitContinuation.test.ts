@@ -22,6 +22,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import { TestClock } from "effect/testing";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../config.ts";
@@ -65,7 +66,7 @@ const testLayer = Layer.mergeAll(
   Layer.provide(OrchestrationEventStoreLive),
   Layer.provide(OrchestrationCommandReceiptRepositoryLive),
   Layer.provide(RepositoryIdentityResolver.layer),
-  Layer.provide(SqlitePersistenceMemory),
+  Layer.provideMerge(SqlitePersistenceMemory),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3code-usage-limit-test-" })),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -316,11 +317,44 @@ it.effect("does not opt an old failure in when the setting is enabled later", ()
   }).pipe(Effect.provide(testLayer)),
 );
 
-it.effect("honors a stop before the continuation worker records the failure", () =>
+const appendThreadActivity = Effect.fnUntraced(function* (h: Harness) {
+  for (let index = 0; index < 1_000; index++) {
+    yield* h.engine.dispatch({
+      type: "thread.meta.update",
+      commandId: h.commandId(),
+      threadId: firstId,
+      title: `Thread ${index}`,
+    });
+  }
+});
+
+it.effect("retries a failure after its pending continuation could not be persisted", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness();
+    const sql = yield* SqlClient.SqlClient;
+    const service = yield* h.start;
+    yield* sql`CREATE TEMP TRIGGER reject_usage_wait
+      BEFORE UPDATE OF runtime_payload_json ON provider_session_runtime
+      BEGIN SELECT RAISE(FAIL, 'temporary write failure'); END`;
+    const failure = yield* record(h, service, firstId, RESET);
+    expect(yield* h.pending()).toBeUndefined();
+    yield* sql`DROP TRIGGER reject_usage_wait`;
+    yield* service.recordFailure(failure.event, failure.snapshotSequence);
+    yield* service.drain;
+    expect((yield* h.pending())?.failedTurnId).toBe(failure.event.turnId);
+    yield* TestClock.adjust("3601 seconds");
+    yield* Queue.take(h.probes);
+    yield* respond(h, service);
+    expect((yield* h.read()).messages).toHaveLength(1);
+  }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("honors a stop after more than 1,000 events before the worker records the failure", () =>
   Effect.gen(function* () {
     const h = yield* makeHarness();
     const service = yield* h.start;
     const failure = yield* h.fail(firstId, RESET);
+    yield* appendThreadActivity(h);
     yield* h.engine.dispatch({
       type: "thread.turn.interrupt",
       commandId: h.commandId(),
@@ -527,6 +561,7 @@ it.effect.each(["stop", "disable", "new-turn"] as const)(
       if (action === "disable") {
         yield* h.settings.updateSettings({ continueThreadsAfterUsageLimit: false });
       } else if (action === "stop") {
+        yield* appendThreadActivity(h);
         yield* h.engine.dispatch({
           type: "thread.turn.interrupt",
           commandId: h.commandId(),
