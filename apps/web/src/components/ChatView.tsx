@@ -270,6 +270,7 @@ import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations"
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useRemoveClonedProject } from "../hooks/useRemoveClonedProject";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
+import { runThreadActionShortcut } from "../lib/threadActionShortcut";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import {
@@ -360,6 +361,7 @@ import {
   useThread,
   useThreadRefs,
   useThreadShell,
+  readThreadShell,
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
@@ -1475,7 +1477,14 @@ export default function ChatView(props: ChatViewProps) {
   const threadSyncPhase = routeKind === "server" ? (props.threadSyncPhase ?? null) : null;
   const threadDetailLoading = threadSyncPhase === "loading";
   const handleNewThread = useNewThreadHandler();
-  const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
+  const {
+    settleThread,
+    pinThread,
+    confirmAndUnpinThread,
+    confirmAndArchiveThread,
+    confirmAndDeleteThread,
+  } = useThreadActions();
+  const threadActionShortcutPendingRef = useRef(false);
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
@@ -6705,6 +6714,40 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "thread.archive" || command === "thread.delete") {
+        const target = isServerThread ? activeThreadRef : null;
+        let didArchive = false;
+        void settlePromise(() =>
+          runThreadActionShortcut(event, target, threadActionShortcutPendingRef, (threadRef) =>
+            command === "thread.archive"
+              ? confirmAndArchiveThread(threadRef, {
+                  onArchived: () => {
+                    didArchive = true;
+                  },
+                })
+              : confirmAndDeleteThread(threadRef),
+          ),
+        ).then((outcome) => {
+          const result = outcome._tag === "Failure" ? outcome : outcome.value;
+          if (!result || result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+          // Deletion reports cleanup failures itself once the thread is gone.
+          if (command === "thread.delete" && target && readThreadShell(target) === null) return;
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: didArchive
+                ? "Thread archived, but navigation failed"
+                : command === "thread.archive"
+                  ? "Failed to archive thread"
+                  : "Failed to delete thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        });
+        return;
+      }
+
       if (command === "thread.settle") {
         event.preventDefault();
         event.stopPropagation();
@@ -6936,6 +6979,8 @@ export default function ChatView(props: ChatViewProps) {
     supportsPinning,
     supportsSettlement,
     confirmAndUnpinThread,
+    confirmAndArchiveThread,
+    confirmAndDeleteThread,
     copyActiveThreadReference,
     getShortcutContext,
     toggleRightPanel,

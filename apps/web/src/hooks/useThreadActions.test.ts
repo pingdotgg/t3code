@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   navigateAfterThreadDeletion,
   requestThreadUnpinConfirmation,
+  requestThreadArchiveConfirmation,
   ThreadArchiveBlockedError,
 } from "./useThreadActions";
 import { toastManager } from "../components/ui/toast";
@@ -102,5 +103,38 @@ describe("requestThreadUnpinConfirmation", () => {
     });
 
     expect(result._tag).toBe("Failure");
+  });
+});
+
+describe("requestThreadArchiveConfirmation", () => {
+  it("preserves cancellation and the thread title", async () => {
+    const confirm = vi.fn(async () => false);
+    const result = await requestThreadArchiveConfirmation({
+      enabled: true,
+      title: "Release prep",
+      confirm,
+    });
+    expect(result).toMatchObject({ _tag: "Success", value: false });
+    expect(confirm).toHaveBeenCalledWith('Archive thread "Release prep"?');
+  });
+
+  it("skips confirmation when disabled", async () => {
+    const confirm = vi.fn(async () => false);
+    expect(
+      await requestThreadArchiveConfirmation({ enabled: false, title: "Release prep", confirm }),
+    ).toMatchObject({ _tag: "Success", value: true });
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("keeps dialog failures observable", async () => {
+    expect(
+      await requestThreadArchiveConfirmation({
+        enabled: true,
+        title: "Release prep",
+        confirm: async () => {
+          throw new Error("Dialog unavailable");
+        },
+      }),
+    ).toMatchObject({ _tag: "Failure" });
   });
 });
