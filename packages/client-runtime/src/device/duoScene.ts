@@ -4,6 +4,7 @@ import {
   Group,
   Mesh,
   MeshBasicMaterial,
+  Matrix4,
   Plane,
   Raycaster,
   Triangle,
@@ -61,7 +62,13 @@ export function createDuoScene(asset: Group, textures: Record<DuoPanelId, Textur
     return { bounds, size };
   });
   const root = new Group();
-  root.add(asset);
+  const content = new Group();
+  content.add(asset);
+  root.add(content);
+  let currentAngle = Number.NaN;
+  const localBounds = new Box3();
+  const relative = new Matrix4();
+  const inverse = new Matrix4();
   const materials = {
     1: new MeshBasicMaterial({ map: textures[1], toneMapped: false }),
     3: new MeshBasicMaterial({ map: textures[3], toneMapped: false }),
@@ -94,9 +101,24 @@ export function createDuoScene(asset: Group, textures: Record<DuoPanelId, Textur
   return {
     root,
     setAngle(angle: number) {
+      if (angle === currentAngle) return;
+      currentAngle = angle;
       const radians = ((180 - Math.min(180, Math.max(0, angle))) * Math.PI) / 360;
       left.rotation.y = radians;
       right.rotation.y = -radians;
+      // Orbit the folded body's center, while retaining the authored hinge pivots.
+      content.position.set(0, 0, 0);
+      root.updateWorldMatrix(true, true);
+      inverse.copy(root.matrixWorld).invert();
+      localBounds.makeEmpty();
+      asset.traverse((object) => {
+        if (!(object instanceof Mesh)) return;
+        if (!object.geometry.boundingBox) object.geometry.computeBoundingBox();
+        if (!object.geometry.boundingBox) return;
+        relative.multiplyMatrices(inverse, object.matrixWorld);
+        localBounds.union(object.geometry.boundingBox.clone().applyMatrix4(relative));
+      });
+      content.position.copy(localBounds.getCenter(new Vector3())).negate();
     },
     cancelInput() {
       captured = null;
@@ -159,7 +181,7 @@ export function createDuoScene(asset: Group, textures: Record<DuoPanelId, Textur
         material.map = null;
         material.dispose();
       }
-      root.remove(asset);
+      content.remove(asset);
       captured = null;
     },
   };

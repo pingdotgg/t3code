@@ -17,6 +17,7 @@ export function DeviceDuoViewport(props: {
   readonly onInputCancel: (cancel: (() => void) | null) => void;
   readonly client: RefObject<DeviceStreamClient | null>;
   readonly screen: DeviceScreenSize | null;
+  readonly hingePreview: number | null;
   readonly onUnavailable: () => void;
   readonly onFramingAspect: (aspect: number) => void;
 }) {
@@ -26,6 +27,7 @@ export function DeviceDuoViewport(props: {
   const interactionRef = useRef<ReturnType<typeof createPhoneInteraction> | null>(null);
   const screenRef = useRef(props.screen);
   const modelRef = useRef(props.model);
+  const previewRef = useRef(props.hingePreview);
   const { source, client, onInputCancel, onResetReady, onUnavailable, onFramingAspect } = props;
 
   useEffect(() => {
@@ -34,6 +36,11 @@ export function DeviceDuoViewport(props: {
     interactionRef.current?.end();
     viewerRef.current?.setScreen(props.screen);
   }, [props.screen, props.model]);
+
+  useEffect(() => {
+    previewRef.current = props.hingePreview;
+    viewerRef.current?.setHingePreview(props.hingePreview);
+  }, [props.hingePreview]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -72,6 +79,7 @@ export function DeviceDuoViewport(props: {
         viewerRef.current = viewer;
         onResetReady(viewer.resetPose);
         viewer.setScreen(screenRef.current);
+        viewer.setHingePreview(previewRef.current);
         client.current?.setDuoPanels({
           onScreen(next) {
             interactionRef.current?.end();

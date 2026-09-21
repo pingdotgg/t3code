@@ -20,9 +20,11 @@ import { createDeviceModelSlot, type DeviceModelSource } from "./model.ts";
 import { createPhonePose } from "./phonePose.ts";
 import { createRenderScheduler } from "./renderScheduler.ts";
 import type { DeviceScreenSize } from "./stream.ts";
+import type { DuoPose } from "./duoControl.ts";
 
 export interface DuoViewer {
   readonly setScreen: (screen: DeviceScreenSize | null) => void;
+  readonly setHingePreview: (angle: number | null) => void;
   readonly frameUpdated: (panel: DuoPanelId) => void;
   readonly resize: (width: number, height: number, pixelRatio: number) => void;
   readonly screenPoint: (
@@ -104,7 +106,11 @@ export function createDuoViewer(options: {
   const orbit = createPhonePose();
   let angle = 180;
   let targetAngle = 180;
+  let previewAngle: number | null = null;
+  let fitRadius = 1;
   let firstPose = true;
+  let physicalPose: DuoPose = "open";
+  let presentationAngle = 180;
   let presentation = new Quaternion();
   let targetPresentation = new Quaternion();
   let lastTime = 0;
@@ -122,16 +128,13 @@ export function createDuoViewer(options: {
   const fit = () => {
     if (!model || !viewport.width || !viewport.height) return;
     camera.aspect = viewport.width / viewport.height;
-    const bounds = new Box3().setFromObject(model.root);
-    const size = bounds.getSize(new Vector3());
-    const center = bounds.getCenter(new Vector3());
-    const tangent = Math.tan((camera.fov * Math.PI) / 360);
-    const distance =
-      (Math.max(size.y / (2 * tangent), size.x / (2 * tangent * camera.aspect)) * 1.16 +
-        size.z / 2) /
-      orbit.zoom;
-    camera.position.set(center.x, center.y, center.z + Math.max(1, distance));
-    camera.lookAt(center);
+    const vertical = (camera.fov * Math.PI) / 360;
+    const horizontal = Math.atan(Math.tan(vertical) * camera.aspect);
+    // A fixed envelope fits every hinge angle and orbit. Rotation cannot move the
+    // target off-screen or make the camera pump in and out during a fold.
+    const distance = (fitRadius * 1.08) / Math.sin(Math.min(vertical, horizontal)) / orbit.zoom;
+    camera.position.set(0, 0, Math.max(1, distance));
+    camera.lookAt(0, 0, 0);
     camera.updateProjectionMatrix();
   };
   const moving = () =>
@@ -188,6 +191,12 @@ export function createDuoViewer(options: {
       }
       model = next;
       if (!model || disposed) return;
+      fitRadius = 0;
+      for (let sample = 0; sample <= 180; sample += 15) {
+        model.setAngle(sample);
+        const bounds = new Box3().setFromObject(model.root);
+        fitRadius = Math.max(fitRadius, bounds.getSize(new Vector3()).length() / 2);
+      }
       scene.add(model.root);
       applyPose();
       fit();
@@ -203,16 +212,23 @@ export function createDuoViewer(options: {
   return {
     setScreen(next) {
       if (disposed) return;
+      const wasMoving = moving();
       if (duoDisplayKey(screen) !== duoDisplayKey(next)) {
         readyKey = "";
         activationAt = performance.now();
         model?.cancelInput();
       }
+      const previous = screen;
       screen = next;
+      const changedPose = next?.hingePose && next.hingePose !== previous?.hingePose;
+      if (firstPose || changedPose) {
+        physicalPose = next?.hingePose ?? (next?.screenId === 1 ? "closed" : "open");
+        presentationAngle = next?.hingeAngle ?? (next?.screenId === 1 ? 0 : 180);
+      }
       const aspect =
         next?.screenId === 1
           ? 784 / 1140
-          : next?.hingePose === "laptop" || next?.orientation === "portrait"
+          : physicalPose === "laptop" || next?.orientation === "portrait"
             ? 1125 / 1600
             : 1600 / 1125;
       if (aspect !== framingAspect) {
@@ -220,33 +236,54 @@ export function createDuoViewer(options: {
         options.onFramingAspect?.(aspect);
       }
       // A command reply/config confirms hinge state. Display identity, never an angle heuristic, owns input.
-      targetAngle = next?.hingeAngle ?? (next?.screenId === 1 ? 0 : 180);
-      const fold = ((180 - targetAngle) * Math.PI) / 360;
-      let roll = next?.screenId === 3 ? Math.PI / 2 : 0;
-      if (next && next.width < next.height) {
-        if (next.orientation === "landscape_left") roll -= Math.PI / 2;
-        if (next.orientation === "landscape_right") roll += Math.PI / 2;
+      targetAngle = previewAngle ?? next?.hingeAngle ?? (next?.screenId === 1 ? 0 : 180);
+      const rotated =
+        next?.screenId === previous?.screenId &&
+        next?.hingeAngle === previous?.hingeAngle &&
+        next?.orientation !== previous?.orientation;
+      // Native angle commands clear hingePose. They change articulation only;
+      // preserve the viewing pose, including laptop/tent and user orbit.
+      if (firstPose || changedPose || rotated) {
+        const poseAngle = presentationAngle;
+        const fold = ((180 - poseAngle) * Math.PI) / 360;
+        let roll = physicalPose === "closed" ? 0 : Math.PI / 2;
+        if (next && next.width < next.height) {
+          if (next.orientation === "landscape_left") roll -= Math.PI / 2;
+          if (next.orientation === "landscape_right") roll += Math.PI / 2;
+        }
+        if (next?.orientation === "portrait_upside_down") roll -= Math.PI;
+        const physical =
+          physicalPose === "laptop"
+            ? new Euler(-fold + Math.PI / 9, -Math.PI / 9, Math.PI / 2, "YXZ")
+            : physicalPose === "tent"
+              ? new Euler(Math.PI / 2 + Math.PI / 18, -Math.PI / 9, -Math.PI / 2, "YXZ")
+              : new Euler(0, (Math.PI / 2) * Math.pow(1 - poseAngle / 180, 3), 0, "YXZ");
+        targetPresentation = new Quaternion().setFromEuler(physical);
+        if (physicalPose !== "laptop" && physicalPose !== "tent")
+          targetPresentation.premultiply(
+            new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), roll),
+          );
+        if (firstPose) {
+          firstPose = false;
+          angle = targetAngle;
+          presentation.copy(targetPresentation);
+        }
       }
-      if (next?.orientation === "portrait_upside_down") roll -= Math.PI;
-      const physical =
-        next?.hingePose === "laptop"
-          ? new Euler(-fold + Math.PI / 9, -Math.PI / 9, Math.PI / 2, "YXZ")
-          : next?.hingePose === "tent"
-            ? new Euler(Math.PI / 2 + Math.PI / 18, -Math.PI / 9, -Math.PI / 2, "YXZ")
-            : new Euler(0, (Math.PI / 2) * Math.pow(1 - targetAngle / 180, 3), 0, "YXZ");
-      targetPresentation = new Quaternion().setFromEuler(physical);
-      if (next?.hingePose !== "laptop" && next?.hingePose !== "tent")
-        targetPresentation.premultiply(
-          new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), roll),
-        );
-      if (firstPose) {
-        firstPose = false;
-        angle = targetAngle;
-        presentation.copy(targetPresentation);
-      }
-      lastTime = performance.now();
+      if (!wasMoving) lastTime = performance.now();
       applyPose();
       fit();
+      scheduler.invalidate();
+    },
+    setHingePreview(next) {
+      if (disposed || (next !== null && (!Number.isFinite(next) || next < 0 || next > 180))) return;
+      if (!moving()) lastTime = performance.now();
+      previewAngle = next;
+      targetAngle = next ?? screen?.hingeAngle ?? (screen?.screenId === 1 ? 0 : 180);
+      if (next !== null) {
+        angle = next;
+        applyPose();
+      }
+      model?.cancelInput();
       scheduler.invalidate();
     },
     frameUpdated(id) {
@@ -299,7 +336,7 @@ export function createDuoViewer(options: {
       scheduler.invalidate();
     },
     screenPoint(x, y, captured = false) {
-      if (disposed || moving()) return null;
+      if (disposed || moving() || previewAngle !== null) return null;
       applyPose();
       return model?.screenPoint(x, y, camera, screen, readyKey, captured) ?? null;
     },
@@ -307,16 +344,19 @@ export function createDuoViewer(options: {
       model?.cancelInput();
     },
     orbit(x, y) {
+      if (disposed) return;
       orbit.orbit(x, y);
       applyPose();
       scheduler.invalidate();
     },
     zoomBy(delta) {
+      if (disposed) return;
       orbit.zoomBy(delta);
       fit();
       scheduler.invalidate();
     },
     resetPose() {
+      if (disposed) return;
       orbit.reset();
       applyPose();
       fit();
