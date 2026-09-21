@@ -97,6 +97,40 @@ describe("pull request list decoding", () => {
     ]);
   });
 
+  it("takes the verdict from the latest reviews when GitHub summarizes none, as for a bot's approval", () => {
+    const batch = expectSuccess(
+      decodePullRequestListJson(
+        listJson([
+          {
+            reviewDecision: null,
+            latestReviews: [{ author: { login: "macroscopeapp" }, state: "APPROVED" }],
+          },
+          {
+            reviewDecision: "REVIEW_REQUIRED",
+            latestReviews: [
+              { author: { login: "octocat" }, state: "APPROVED" },
+              { author: { login: "hubot" }, state: "CHANGES_REQUESTED" },
+            ],
+          },
+          {
+            reviewDecision: "APPROVED",
+            latestReviews: [{ author: { login: "hubot" }, state: "CHANGES_REQUESTED" }],
+          },
+          {
+            reviewDecision: null,
+            latestReviews: [{ author: { login: "octocat" }, state: "COMMENTED" }],
+          },
+        ]),
+      ),
+    );
+    expect(batch.items.map((entry) => entry.reviewDecision)).toEqual([
+      "approved",
+      "changes-requested",
+      "approved",
+      null,
+    ]);
+  });
+
   it("rolls the head commit's checks up to the one word a row has space for", () => {
     const batch = expectSuccess(
       decodePullRequestListJson(
@@ -121,6 +155,13 @@ describe("pull request list decoding", () => {
           { statusCheckRollup: [{ context: "ci/legacy", state: "ERROR" }] },
           // Neither a pass, a failure nor a wait is no verdict rather than a green tick.
           { statusCheckRollup: [{ name: "lint", status: "COMPLETED", conclusion: "SKIPPED" }] },
+          // Cancelled reads as failing here and in the detail header, so the two never flap.
+          {
+            statusCheckRollup: [
+              { name: "lint", status: "COMPLETED", conclusion: "SUCCESS" },
+              { name: "test", status: "COMPLETED", conclusion: "CANCELLED" },
+            ],
+          },
           { statusCheckRollup: [] },
           {},
         ]),
@@ -132,6 +173,7 @@ describe("pull request list decoding", () => {
       "passing",
       "failing",
       null,
+      "failing",
       null,
       null,
     ]);

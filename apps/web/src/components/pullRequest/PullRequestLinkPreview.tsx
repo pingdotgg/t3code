@@ -1,6 +1,13 @@
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
-import { cloneElement, useState, type ComponentPropsWithoutRef, type ReactElement } from "react";
+import {
+  cloneElement,
+  useState,
+  type ComponentPropsWithoutRef,
+  type MouseEvent,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -15,7 +22,9 @@ interface PullRequestLinkPreviewTarget {
   readonly input: PullRequestRef;
 }
 
-type PullRequestLinkElement = ReactElement<ComponentPropsWithoutRef<"a">>;
+type PullRequestLinkElement = ReactElement<
+  ComponentPropsWithoutRef<"a"> | ComponentPropsWithoutRef<"button">
+>;
 
 export function PullRequestLinkPreview({
   link,
@@ -24,13 +33,15 @@ export function PullRequestLinkPreview({
   confirmBeforeOpen,
   onOpenPullRequest,
   onOpenFallback,
+  fallback,
 }: {
   link: PullRequestLinkElement;
   originalUrl: string;
   target: PullRequestLinkPreviewTarget;
-  confirmBeforeOpen: boolean;
-  onOpenPullRequest: (url: string) => boolean;
-  onOpenFallback: (url: string) => Promise<void>;
+  confirmBeforeOpen?: boolean;
+  onOpenPullRequest?: (url: string) => boolean;
+  onOpenFallback?: (url: string) => Promise<void>;
+  fallback?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [resolvingClick, setResolvingClick] = useState(false);
@@ -46,28 +57,29 @@ export function PullRequestLinkPreview({
     reportFailure: false,
     reportDefect: false,
   });
-  const trigger = confirmBeforeOpen
-    ? cloneElement(link, {
-        onClick: (event) => {
-          if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-          event.preventDefault();
-          event.stopPropagation();
-          if (resolvingClick) return;
-          setOpen(false);
-          setResolvingClick(true);
-          void readPreview(target)
-            .then(async (result) => {
-              if (isAtomCommandInterrupted(result)) return;
-              if (result._tag === "Success" && onOpenPullRequest(result.value.url)) return;
-              await onOpenFallback(originalUrl);
-            })
-            .catch((error: unknown) => {
-              console.error("[pull-request-link-preview] failed to open link", error);
-            })
-            .finally(() => setResolvingClick(false));
-        },
-      })
-    : link;
+  const trigger =
+    confirmBeforeOpen === true
+      ? cloneElement(link, {
+          onClick: (event: MouseEvent<HTMLAnchorElement | HTMLButtonElement>) => {
+            if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (resolvingClick) return;
+            setOpen(false);
+            setResolvingClick(true);
+            void readPreview(target)
+              .then(async (result) => {
+                if (isAtomCommandInterrupted(result)) return;
+                if (result._tag === "Success" && onOpenPullRequest?.(result.value.url)) return;
+                await onOpenFallback?.(originalUrl);
+              })
+              .catch((error: unknown) => {
+                console.error("[pull-request-link-preview] failed to open link", error);
+              })
+              .finally(() => setResolvingClick(false));
+          },
+        })
+      : link;
   const detail = detailQuery.data;
   const state =
     detail === null
@@ -86,9 +98,11 @@ export function PullRequestLinkPreview({
       {detail !== null || detailQuery.error !== null ? (
         <PreviewCardPopup align="center" className="w-80 max-w-[calc(100vw-2rem)] p-3">
           {detail === null ? (
-            <p className="text-xs leading-relaxed text-muted-foreground wrap-anywhere">
-              {originalUrl}
-            </p>
+            (fallback ?? (
+              <p className="text-xs leading-relaxed text-muted-foreground wrap-anywhere">
+                {originalUrl}
+              </p>
+            ))
           ) : (
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
