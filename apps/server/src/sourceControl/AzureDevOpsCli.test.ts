@@ -1,8 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { assert, it, afterEach, describe, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -40,16 +40,16 @@ afterEach(() => {
 describe("AzureDevOpsCli.layer", () => {
   it.effect("resolves cwd's remotes despite inherited Git repository bindings", () =>
     Effect.gen(function* () {
-      const root = mkdtempSync(join(tmpdir(), "t3-azure-scope-"));
-      const target = join(root, "target");
-      const unrelated = join(root, "unrelated");
+      const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-azure-scope-"));
+      const target = NodePath.join(root, "target");
+      const unrelated = NodePath.join(root, "unrelated");
       try {
         for (const [cwd, org] of [
           [target, "target"],
           [unrelated, "unrelated"],
         ] as const) {
-          execFileSync("git", ["init", cwd]);
-          execFileSync("git", [
+          NodeChildProcess.execFileSync("git", ["init", "--quiet", cwd]);
+          NodeChildProcess.execFileSync("git", [
             "-C",
             cwd,
             "remote",
@@ -58,7 +58,7 @@ describe("AzureDevOpsCli.layer", () => {
             `https://dev.azure.com/${org}/Project/_git/Repo`,
           ]);
         }
-        vi.stubEnv("GIT_DIR", join(unrelated, ".git"));
+        vi.stubEnv("GIT_DIR", NodePath.join(unrelated, ".git"));
         vi.stubEnv("GIT_WORK_TREE", unrelated);
         const azArgs: string[][] = [];
         const scopedLayer = AzureDevOpsCli.layer.pipe(
@@ -68,7 +68,7 @@ describe("AzureDevOpsCli.layer", () => {
                 Effect.sync(() => {
                   if (input.command === "git")
                     return processOutput(
-                      execFileSync("git", [...input.args], {
+                      NodeChildProcess.execFileSync("git", [...input.args], {
                         cwd: input.cwd,
                         env: input.env,
                         encoding: "utf8",
@@ -88,7 +88,7 @@ describe("AzureDevOpsCli.layer", () => {
         expect(azArgs[0]).not.toContain("https://dev.azure.com/unrelated");
       } finally {
         vi.unstubAllEnvs();
-        rmSync(root, { recursive: true, force: true });
+        NodeFS.rmSync(root, { recursive: true, force: true });
       }
     }),
   );
