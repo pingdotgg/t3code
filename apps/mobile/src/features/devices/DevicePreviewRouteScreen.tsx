@@ -1,4 +1,8 @@
-import { deviceToolVersionLabels } from "@t3tools/client-runtime/state/device";
+import {
+  deviceToolVersionLabels,
+  deviceToolUpdateOwnership,
+  deviceToolUpdatePolicy,
+} from "@t3tools/client-runtime/state/device";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -131,6 +135,18 @@ function DevicePreviewScreen({
           void retryHost({ environmentId, input: { retryHostId: host.id } });
         },
       })) ?? []),
+    ...(state.data?.supportsToolInspection
+      ? [
+          {
+            id: "check-device-tools",
+            title: "Check device tool versions",
+            icon: "arrow.clockwise" as const,
+            onPress: () => {
+              void retryHost({ environmentId, input: { inspectOnly: true } });
+            },
+          },
+        ]
+      : []),
     {
       id: "device-tools",
       title: "Device tool versions",
@@ -138,17 +154,26 @@ function DevicePreviewScreen({
       onPress: () =>
         Alert.alert(
           "Device tool versions",
-          deviceToolVersionLabels(
-            state.data?.hosts.find((host) => host.id === preview?.session.hostId)?.tools,
-          ).join("\n") +
+          deviceToolUpdateOwnership +
+            "\n\n" +
+            deviceToolUpdatePolicy(
+              state.data?.hosts.find((host) => host.id === preview?.session.hostId)?.tools,
+            ) +
+            "\n\n" +
+            deviceToolVersionLabels(
+              state.data?.hosts.find((host) => host.id === preview?.session.hostId)?.tools,
+            ).join("\n") +
             "\n" +
-            (state.data?.hostStatuses[preview?.session.hostId ?? ""]?.detail ?? ""),
+            (state.data?.hosts.find((host) => host.id === preview?.session.hostId)
+              ?.toolInspectionError ??
+              state.data?.hostStatuses[preview?.session.hostId ?? ""]?.detail ??
+              ""),
         ),
     },
     {
       id: "reload",
       title: "Reload stream",
-      icon: "arrow.clockwise",
+      icon: "arrow.clockwise" as const,
       disabled: !preview || shuttingDown,
       onPress: () => {
         setInputConnected(false);
@@ -178,7 +203,7 @@ function DevicePreviewScreen({
           {
             id: "rotate",
             title: "Rotate device",
-            icon: "arrow.clockwise",
+            icon: "arrow.clockwise" as const,
             disabled: !inputConnected,
             onPress: () => streamRef.current?.rotate(),
           },

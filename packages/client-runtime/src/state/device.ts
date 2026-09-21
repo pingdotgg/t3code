@@ -84,3 +84,16 @@ export function deviceToolVersionLabels(tools: DeviceToolVersions | undefined) {
     return `${name}: installed ${installed}; required ${tool.requiredVersion}${tool.runningVersion ? `; running ${tool.runningVersion}` : ""}.`;
   });
 }
+
+export function deviceToolUpdatePolicy(tools: DeviceToolVersions | undefined) {
+  if (!tools) return "Versions have not been checked. Reconnect the host and check versions.";
+  const outdated = [tools.hub, tools.agent].filter(
+    (tool) =>
+      tool.installedVersions.length > 0 && !tool.installedVersions.includes(tool.requiredVersion),
+  );
+  return outdated.length > 0
+    ? "Update pending. Required tools will install automatically when next used. The host needs network access; an older install is not used as a fallback."
+    : "Required tools are installed automatically when needed. Checking versions does not install or start anything.";
+}
+export const deviceToolUpdateOwnership =
+  "This environment's T3 server chooses device tool versions for itself and its SSH hosts. Update that server to receive newer tool versions; updating only your browser or mobile app does not update a remote server.";
