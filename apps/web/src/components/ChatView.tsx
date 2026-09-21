@@ -6618,7 +6618,6 @@ export default function ChatView(props: ChatViewProps) {
       const recoveryOwnsSnooze =
         recovery?.snooze === true &&
         recovery.runId === activeThreadShell?.latestRun?.runId &&
-        recovery.resetAt === serverRuntime?.usageLimitResetAt &&
         activeThreadShell?.snoozedUntil != null &&
         Date.parse(activeThreadShell.snoozedUntil) === Date.parse(recovery.resetAt);
       const result = recoveryOwnsSnooze
@@ -6646,13 +6645,7 @@ export default function ChatView(props: ChatViewProps) {
     } finally {
       setUnsnoozingThreadKey((current) => (current === threadKey ? null : current));
     }
-  }, [
-    activeThreadRef,
-    activeThreadShell,
-    serverRuntime?.usageLimitResetAt,
-    unsnoozeThreadMutation,
-    updateThreadMetadata,
-  ]);
+  }, [activeThreadRef, activeThreadShell, unsnoozeThreadMutation, updateThreadMetadata]);
   const [isRestoringThreadBranch, setIsRestoringThreadBranch] = useState(false);
   const [branchRestoreConfirmOpen, setBranchRestoreConfirmOpen] = useState(false);
   // Once revealed for a given mismatch, the banner stays mounted until the
