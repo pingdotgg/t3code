@@ -21,6 +21,13 @@ Android uses **Material You Layout** by default unless you have turned it off in
 It changes shapes, spacing, and controls independently
 of the selected theme.
 
+## Background scenes
+
+On web and desktop, choose a **Background scene** under **Settings → Appearance** to show a dimmed
+scenic backdrop behind the interface. **Theme scene** follows the active theme, so each built-in
+theme ships with its own matching scene; picking a specific scene keeps it across theme changes.
+Choose **None** to turn the backdrop off. The backdrop is a device-local appearance preference.
+
 ## Motion
 
 The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the

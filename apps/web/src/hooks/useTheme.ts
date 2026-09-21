@@ -305,7 +305,10 @@ export function syncBrowserChromeTheme() {
   if (!backgroundColor) return;
 
   document.documentElement.style.backgroundColor = backgroundColor;
-  document.body.style.backgroundColor = backgroundColor;
+  // With a background scene active the body must stay clear: the fixed scene
+  // layer paints beneath it, and an opaque body fill would hide the scene.
+  document.body.style.backgroundColor =
+    document.documentElement.dataset.appBackdrop === "on" ? "transparent" : backgroundColor;
   // Update every theme-color meta so any element another layer added (for
   // example a media-scoped one) carries the resolved color too.
   const themeColorMetas = document.querySelectorAll<HTMLMetaElement>(

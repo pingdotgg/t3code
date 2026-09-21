@@ -44,6 +44,8 @@ import {
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
+import { getThemeDefinition, resolveThemeHalf } from "../themePalette";
+import { applyThemeBackground, resolveThemeBackgroundUrl } from "../themeBackground";
 import { applyAppearanceContrast } from "~/appearanceContrast";
 import { useClientSettings } from "../hooks/useSettings";
 import { PlanAgentSelectionHeal } from "../planAgentSelectionHeal";
@@ -53,7 +55,7 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { useUiStateStore } from "../uiStateStore";
-import { syncBrowserChromeTheme } from "../hooks/useTheme";
+import { syncBrowserChromeTheme, readThemeHalves, useTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
@@ -172,6 +174,7 @@ function RootRouteView() {
           <ContrastAppearanceSync />
           <EnvironmentThemeSync />
           <GlassAppearanceSync />
+          <ThemeBackgroundSync />
           <FontAppearanceSync />
           <CustomSnoozeDialogHost />
           <CommandPalette>
@@ -212,6 +215,7 @@ function RootRouteView() {
         <ContrastAppearanceSync />
         <EnvironmentThemeSync />
         <GlassAppearanceSync />
+        <ThemeBackgroundSync />
         <FontAppearanceSync />
         <FirstRunGate
           enabled={primaryEnvironmentAuthenticated}
@@ -280,6 +284,29 @@ function GlassAppearanceSync() {
       style.removeProperty("--glass-blur");
     }
   }, [glassOpacity]);
+
+  return null;
+}
+
+/**
+ * Keep the scene layer in step with the backdrop setting and the active
+ * theme. Runs after the useTheme effect inside this component has applied
+ * the palette, so the solid tints captured below reflect the current theme.
+ */
+function ThemeBackgroundSync() {
+  const themeBackground = useClientSettings((settings) => settings.themeBackground);
+  const { theme, resolvedTheme } = useTheme();
+
+  useEffect(() => {
+    const definition = getThemeDefinition(
+      resolveThemeHalf(theme, readThemeHalves(), resolvedTheme),
+    );
+    applyThemeBackground(
+      resolveThemeBackgroundUrl(themeBackground, definition?.id ?? null),
+      definition,
+      resolvedTheme,
+    );
+  }, [themeBackground, theme, resolvedTheme]);
 
   return null;
 }

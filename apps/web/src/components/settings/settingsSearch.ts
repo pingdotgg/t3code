@@ -204,6 +204,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["transparent transparency solid menus dialogs composer"],
   },
   {
+    id: "setting-theme-background",
+    title: "Background scene",
+    to: "/settings/appearance",
+    searchTerms: ["wallpaper backdrop scenery image dimmed tinted theme"],
+  },
+  {
     id: "diff-color-scheme",
     title: "Diff colors",
     to: "/settings/appearance",

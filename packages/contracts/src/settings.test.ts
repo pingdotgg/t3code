@@ -554,6 +554,21 @@ describe("ClientSettings environment identification", () => {
   });
 });
 
+describe("ClientSettings theme background", () => {
+  it("defaults to the theme-matched scene and accepts every choice", () => {
+    expect(decodeClientSettings({}).themeBackground).toBe("auto");
+
+    for (const choice of ["auto", "none", "t3-chat", "grove", "ocean", "ember", "iris"] as const) {
+      expect(decodeClientSettingsPatch({ themeBackground: choice }).themeBackground).toBe(choice);
+    }
+  });
+
+  it("rejects unsupported scene choices", () => {
+    expect(() => decodeClientSettings({ themeBackground: "sunset" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ themeBackground: "sunset" })).toThrow();
+  });
+});
+
 describe("ClientSettings sidebar", () => {
   it("defaults to the current sidebar", () => {
     expect(decodeClientSettings({}).legacySidebarEnabled).toBe(false);

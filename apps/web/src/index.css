@@ -2222,3 +2222,78 @@ code {
 .composer-tiptap li[data-checked] > div > p {
   margin: 0;
 }
+
+/* ── Theme background scenes ──
+   With a scene active, a fixed dimmed image paints under every surface and
+   the main canvas fills re-derive from the theme's solid colors at partial
+   alpha, so the interface reads as tinted glass over the scene. The solid
+   colors arrive as --app-backdrop-tint* inline vars, captured while the
+   backdrop was off. Large surfaces get no backdrop-filter: one blurred
+   layer that big repaints on every streaming frame. Terminal and code keep
+   their own fills. These rules sit unlayered so they outrank the theme
+   blocks in the components layer while active. */
+html[data-app-backdrop="on"][data-app-backdrop="on"] {
+  --backdrop-surface-opacity: 80%;
+  --backdrop-dim: 20%;
+  --background: color-mix(
+    in srgb,
+    var(--app-backdrop-tint) var(--backdrop-surface-opacity),
+    transparent
+  );
+  --app-chrome-background: var(--background);
+  --toolbar-background: color-mix(
+    in srgb,
+    var(--app-backdrop-tint-toolbar, var(--app-backdrop-tint)) var(--backdrop-surface-opacity),
+    transparent
+  );
+  --terminal-background: var(--app-backdrop-tint);
+
+  @variant dark {
+    /* Dark canvases leave less contrast headroom, so the scene stays subtle:
+       a hint of scenery rather than the light themes' full glass. */
+    --backdrop-surface-opacity: 88%;
+    --backdrop-dim: 60%;
+  }
+}
+
+/* The workspace nests several containers that all paint bg-background; with
+   translucent fills they would stack into near-opaque layers. Only the
+   outermost one keeps the glass fill. */
+html[data-app-backdrop="on"][data-app-backdrop="on"] .bg-background .bg-background {
+  background-color: transparent;
+}
+
+html[data-app-backdrop="on"][data-app-backdrop="on"],
+html[data-app-backdrop="on"][data-app-backdrop="on"] [data-app-sidebar] {
+  --background: color-mix(
+    in srgb,
+    var(--app-backdrop-tint) var(--backdrop-surface-opacity),
+    transparent
+  );
+  --sidebar: color-mix(
+    in srgb,
+    var(--app-backdrop-tint-sidebar, var(--app-backdrop-tint)) var(--backdrop-surface-opacity),
+    transparent
+  );
+  --sidebar-stage-fade: var(--sidebar);
+}
+
+/* The scene must sit under every surface but above the html fallback fill,
+   so the body itself stays transparent (see syncBrowserChromeTheme). */
+html[data-app-backdrop="on"][data-app-backdrop="on"] body {
+  background: transparent;
+}
+
+html[data-app-backdrop="on"][data-app-backdrop="on"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      color-mix(in srgb, var(--app-backdrop-tint) var(--backdrop-dim), transparent),
+      color-mix(in srgb, var(--app-backdrop-tint) var(--backdrop-dim), transparent)
+    ),
+    var(--app-backdrop-image) center / cover no-repeat;
+}

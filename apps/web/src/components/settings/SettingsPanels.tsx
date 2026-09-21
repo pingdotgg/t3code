@@ -24,6 +24,7 @@ import {
   DEFAULT_UNIFIED_SETTINGS,
   type DiffLayout,
   type EnvironmentIdentificationMode,
+  type ThemeBackgroundChoice,
   MAX_APPEARANCE_CONTRAST,
   MAX_CODE_FONT_SIZE,
   MAX_GLASS_OPACITY,
@@ -63,6 +64,7 @@ import {
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
 import { isElectron } from "../../env";
+import { THEME_BACKGROUND_CHOICES, THEME_BACKGROUND_LABELS } from "../../themeBackground";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useCustomThemes } from "../../hooks/useCustomThemes";
 import {
@@ -1289,6 +1291,44 @@ export function AppearanceSettingsPanel() {
                 value={settings.glassOpacity}
               />
             </div>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("setting-theme-background")}
+          description="Show a dimmed scenic backdrop behind the interface. Theme scene follows the active theme; a picked scene stays across theme changes."
+          resetAction={
+            settings.themeBackground !== DEFAULT_UNIFIED_SETTINGS.themeBackground ? (
+              <SettingResetButton
+                label="background scene"
+                onClick={() =>
+                  updateSettings({
+                    themeBackground: DEFAULT_UNIFIED_SETTINGS.themeBackground,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.themeBackground}
+              onValueChange={(value) => {
+                if (THEME_BACKGROUND_CHOICES.includes(value as ThemeBackgroundChoice)) {
+                  updateSettings({ themeBackground: value as ThemeBackgroundChoice });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Background scene">
+                <SelectValue>{THEME_BACKGROUND_LABELS[settings.themeBackground]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {THEME_BACKGROUND_CHOICES.map((choice) => (
+                  <SelectItem hideIndicator key={choice} value={choice}>
+                    {THEME_BACKGROUND_LABELS[choice]}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           }
         />
 

@@ -154,6 +154,23 @@ export const EnvironmentIdentificationMode = Schema.Literals(["artwork", "pill",
 export type EnvironmentIdentificationMode = typeof EnvironmentIdentificationMode.Type;
 export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "artwork";
 
+/**
+ * Which scenic backdrop paints behind the interface, dimmed like tinted glass.
+ * The theme ids mirror `BUILT_IN_THEME_IDS` in `@t3tools/shared/themePalettes`
+ * (contracts cannot import shared); "auto" follows the active built-in theme.
+ */
+export const ThemeBackgroundChoice = Schema.Literals([
+  "auto",
+  "none",
+  "t3-chat",
+  "grove",
+  "ocean",
+  "ember",
+  "iris",
+]);
+export type ThemeBackgroundChoice = typeof ThemeBackgroundChoice.Type;
+const DEFAULT_THEME_BACKGROUND: ThemeBackgroundChoice = "auto";
+
 export const SnapShotKeyChord = KeybindingShortcut.check(
   Schema.makeFilter(
     (shortcut) =>
@@ -370,6 +387,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   glassOpacity: GlassOpacity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_GLASS_OPACITY)),
+  ),
+  themeBackground: ThemeBackgroundChoice.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_THEME_BACKGROUND)),
   ),
   fontSizeInterface: InterfaceFontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_INTERFACE_FONT_SIZE)),
@@ -1546,6 +1566,7 @@ export const ClientSettingsPatch = Schema.Struct({
   diffLayout: Schema.optionalKey(DiffLayout),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
   glassOpacity: Schema.optionalKey(GlassOpacity),
+  themeBackground: Schema.optionalKey(ThemeBackgroundChoice),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),
   fontSizePrompt: Schema.optionalKey(PromptFontSize),
