@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
   approval: false,
   sessionError: false,
   turnError: false,
+  extraThreads: [] as Array<Record<string, unknown>>,
   add: vi.fn(
     (_toast: { title: string; description: string; actionProps: { onClick: () => void } }) =>
       "toast-1",
@@ -48,6 +49,7 @@ vi.mock("@effect/atom-react", () => ({
             completedAt: state.completedAt,
           },
         },
+        ...state.extraThreads,
       ],
     }),
   }),
@@ -119,6 +121,7 @@ beforeEach(() => {
     approval: false,
     sessionError: false,
     turnError: false,
+    extraThreads: [],
   });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", new EventTarget());
@@ -317,5 +320,58 @@ describe("thread notifications", () => {
     state.approval = false;
     await render();
     expect(state.navigate).toHaveBeenCalledTimes(1);
+  });
+
+  it("still switches when all notifications are off", async () => {
+    state.autoSwitch = "attention-or-done";
+    state.mode = "off";
+    state.inApp = false;
+    await render();
+    await complete();
+    expect(state.navigate).toHaveBeenCalledTimes(1);
+    expect(state.sound).not.toHaveBeenCalled();
+    expect(state.add).not.toHaveBeenCalled();
+  });
+
+  it("keeps the configured sound when auto-switching", async () => {
+    state.autoSwitch = "attention";
+    state.mode = "sound";
+    await render();
+    state.approval = true;
+    await render();
+    expect(state.navigate).toHaveBeenCalledTimes(1);
+    expect(state.sound).toHaveBeenCalledWith("input", expect.any(Function));
+    expect(state.add).not.toHaveBeenCalled();
+  });
+
+  it("switches at most once per snapshot and toasts later matches", async () => {
+    state.autoSwitch = "attention";
+    state.mode = "off";
+    state.inApp = true;
+    state.extraThreads = [
+      {
+        id: "thread-2",
+        title: "Second thread",
+        archivedAt: null,
+        hasPendingUserInput: false,
+        hasPendingApprovals: false,
+        session: null,
+        latestTurn: { turnId: "turn-2", state: "running", completedAt: null },
+      },
+    ];
+    await render();
+    state.input = true;
+    state.extraThreads = state.extraThreads.map((thread) => ({
+      ...thread,
+      hasPendingApprovals: true,
+    }));
+    await render();
+    expect(state.navigate).toHaveBeenCalledTimes(1);
+    expect(state.navigate).toHaveBeenCalledWith({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: "env-1", threadId: "thread-1" },
+    });
+    expect(state.add).toHaveBeenCalledTimes(1);
+    expect(state.add).toHaveBeenCalledWith(expect.objectContaining({ title: "Approval needed" }));
   });
 });
