@@ -34,7 +34,7 @@ interface ThreadSelectionStore extends ThreadSelectionState {
 
 const EMPTY_SET = new Set<string>();
 
-/** Clear completed deletions and missing threads, retaining failed or unprocessed threads. */
+/** Clear completed deletions or archives and missing threads, retaining other live selections. */
 export function getThreadKeysToDeselectAfterDelete(
   selectedThreadKeys: readonly string[],
   deletedThreadKeys: ReadonlySet<string>,

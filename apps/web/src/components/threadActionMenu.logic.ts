@@ -14,6 +14,7 @@ export type ThreadActionMenuId =
   | "unpin"
   | "settle"
   | "unsettle"
+  | "archive"
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
@@ -24,7 +25,6 @@ export type ThreadActionMenuId =
   | "copy-path"
   | "copy-branch"
   | "copy-thread-id"
-  | "archive"
   | "delete";
 
 export interface ThreadActionMenuState {
@@ -43,8 +43,8 @@ export interface ThreadActionMenuState {
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
-  /** Archive rejects a thread with an active turn, so disable it here rather than let the action fail. */
-  readonly isRunning: boolean;
+  /** Resolved by the shared archive policy, including turns and background work. */
+  readonly archive: { readonly disabled: boolean };
   readonly supports: {
     readonly settlement: boolean;
     readonly snooze: boolean;
@@ -154,7 +154,7 @@ export function buildThreadActionMenuItems(
       id: "archive",
       label: "Archive thread",
       icon: "archive",
-      disabled: state.isRunning,
+      disabled: state.archive.disabled,
       separatorBefore: true,
     },
     {
