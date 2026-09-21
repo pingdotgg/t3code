@@ -6,13 +6,26 @@ TypeScript package. It does not use Cursor's ACP transport for V2 execution.
 ## Prerequisites
 
 - Node.js 22.13 or newer. The repository's supported Node version satisfies this requirement.
-- A Cursor API key in `CURSOR_API_KEY`. Provider-instance environment variables override the host
-  environment in the same way as the other providers.
+- Sign in with Cursor in **Settings > Providers > Cursor**, or provide a Cursor API key in
+  `CURSOR_API_KEY`.
 - A model accepted by the Cursor SDK. `auto` is sent to the SDK as its `default` model selection.
 
 The adapter currently uses the SDK's local-agent runtime so runs operate in the selected T3 Code
 workspace. Cursor cloud agents need repository and cloud-environment configuration that T3 Code does
 not expose yet.
+
+## Sign in
+
+Choose **Sign in**, then open the sign-in page and complete it in your browser. T3 Code
+updates automatically when sign-in finishes. This works when connected to a remote environment too.
+
+Each provider instance keeps its own login on the environment that runs it. Your Cursor editor and
+CLI login are separate. A configured `CURSOR_API_KEY` overrides browser sign-in; remove that override
+to use the browser flow.
+
+Use **Switch account** or **Sign out** in the same settings section. Both stop that
+instance's running threads and keep their history. Sign-out forgets the saved credential; to revoke
+the generated key before it expires, remove it from your Cursor dashboard's API keys.
 
 ## V2 Capability Mapping
 

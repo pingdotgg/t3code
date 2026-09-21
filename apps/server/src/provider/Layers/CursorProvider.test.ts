@@ -245,7 +245,7 @@ describe("checkCursorProviderStatus", () => {
         installed: true,
         status: "error",
         auth: { status: "unauthenticated" },
-        message: "Cursor API key is required. Add CURSOR_API_KEY in provider settings.",
+        message: "Sign in with Cursor or add CURSOR_API_KEY in provider settings.",
       });
     }),
   );

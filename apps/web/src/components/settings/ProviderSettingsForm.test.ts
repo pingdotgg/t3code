@@ -44,7 +44,7 @@ describe("ProviderSettingsForm helpers", () => {
       {
         name: "CURSOR_API_KEY",
         label: "Cursor API key",
-        description: "Required by the Cursor Agent SDK.",
+        description: "Optional. Overrides browser sign-in for this provider.",
         placeholder: "Paste API key",
         sensitive: true,
       },
