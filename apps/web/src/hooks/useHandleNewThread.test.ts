@@ -108,9 +108,9 @@ vi.mock("@t3tools/shared/projectSettings", () => ({
 }));
 vi.mock("@t3tools/shared/threadEnvMode", () => ({
   resolveDefaultThreadEnvMode: (input: {
+    readonly setting: "local" | "worktree" | null;
     readonly projectFile: "local" | "worktree" | null;
-    readonly globalDefault: "local" | "worktree";
-  }) => input.projectFile ?? input.globalDefault,
+  }) => input.setting ?? input.projectFile ?? "local",
 }));
 vi.mock("@tanstack/react-router", () => ({
   useParams: () => null,

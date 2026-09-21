@@ -42,7 +42,9 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
           ? "Automatic"
           : key === "sourceControlWriterModelSelection"
             ? "Text generation model"
-            : "Not set";
+            : key === "defaultThreadEnvMode"
+              ? "Inherit"
+              : "Not set";
   }
   if (typeof value === "boolean") return value ? "On" : "Off";
   if (typeof value === "number") {

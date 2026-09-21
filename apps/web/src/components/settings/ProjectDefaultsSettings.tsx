@@ -75,12 +75,11 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
-  const workspaceSource = useScopedSettingSource(["defaultThreadEnvMode"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unavailable = connectedEnvironments.length === 0;
 
-  // A checkout's t3.json wins over the environment default when the project
-  // has no override of its own; show which one "inherit" resolves to.
+  // A setting on either scope beats the checkout's t3.json, and "inherit"
+  // (null) is what lets the file decide; show what inherit resolves to.
   const checkout = scope.kind === "checkout" ? scope.checkout : null;
   // The query is disabled without a checkout, so any id satisfies the hook.
   const t3File = useT3ProjectFileState(
@@ -89,11 +88,11 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   );
   const repositoryEnvMode = t3File.file?.defaultThreadEnvMode ?? null;
   const inheritedEnvModeLabel =
-    workspaceSource === "project"
+    settings.defaultThreadEnvMode !== null
       ? null
       : repositoryEnvMode
         ? `${resolveEnvModeLabel(repositoryEnvMode)} (t3.json)`
-        : null;
+        : resolveEnvModeLabel("local");
 
   function modelDisabledReason(instanceId: ProviderInstanceId, model: string): string | null {
     const sourceEntry = entries.find((entry) => entry.instanceId === instanceId);
@@ -292,44 +291,34 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             title="Workspace"
             description={
               isProjectScope
-                ? "Where new threads in this project start. A t3.json preference applies when the project has no override."
-                : "Where new threads start, unless overridden by the project or t3.json."
+                ? "Where new threads in this project start. Inherit follows the environment, then the repository's t3.json."
+                : "Where new threads start. Inherit follows the repository's t3.json, or the current checkout."
             }
-            status={
-              inheritedEnvModeLabel ? `Repository default: ${inheritedEnvModeLabel}` : undefined
-            }
-            resetAction={
-              settings.defaultThreadEnvMode !== DEFAULT_SERVER_SETTINGS.defaultThreadEnvMode ? (
-                <SettingResetButton
-                  label="default workspace"
-                  onClick={() =>
-                    updateSettings({
-                      defaultThreadEnvMode: DEFAULT_SERVER_SETTINGS.defaultThreadEnvMode,
-                    })
-                  }
-                />
-              ) : null
-            }
+            status={inheritedEnvModeLabel ? `Resolves to: ${inheritedEnvModeLabel}` : undefined}
             control={
               <Select
-                value={mixedWorkspace ? null : settings.defaultThreadEnvMode}
+                value={mixedWorkspace ? null : (settings.defaultThreadEnvMode ?? "inherit")}
                 onValueChange={(value) => {
-                  if (value === "local" || value === "worktree")
+                  if (value === "inherit") updateSettings({ defaultThreadEnvMode: null });
+                  else if (value === "local" || value === "worktree")
                     updateSettings({ defaultThreadEnvMode: value });
                 }}
               >
                 <SelectTrigger size="sm" aria-label="Default workspace">
                   <SelectValue>
                     {(value: string | null) =>
-                      value === "local" || value === "worktree"
-                        ? resolveEnvModeLabel(value)
-                        : unavailable
-                          ? "Unavailable"
-                          : "Mixed"
+                      value === "inherit"
+                        ? "Inherit"
+                        : value === "local" || value === "worktree"
+                          ? resolveEnvModeLabel(value)
+                          : unavailable
+                            ? "Unavailable"
+                            : "Mixed"
                     }
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="inherit">Inherit</SelectItem>
                   <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
                   <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
                 </SelectPopup>

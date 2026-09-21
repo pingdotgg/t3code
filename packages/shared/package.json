@@ -127,6 +127,10 @@
       "types": "./src/projectSettings.ts",
       "import": "./src/projectSettings.ts"
     },
+    "./projectFileDefaults": {
+      "types": "./src/projectFileDefaults.ts",
+      "import": "./src/projectFileDefaults.ts"
+    },
     "./threadEnvMode": {
       "types": "./src/threadEnvMode.ts",
       "import": "./src/threadEnvMode.ts"
