@@ -45,6 +45,11 @@ export interface PreviewAutomationInvokeInput {
   readonly input: unknown;
   readonly tabId?: PreviewTabId;
   readonly timeoutMs?: number;
+  /**
+   * Extra time to wait for a host that answers at its own `timeoutMs`, such as
+   * a `waitFor` miss. Keeps an honest late reply from reading as a dead host.
+   */
+  readonly replyGraceMs?: number;
   /** Background metadata reads must not change the agent's current tab. */
   readonly updateCurrentTab?: boolean;
   /** Capture the routed tab before another request changes the current assignment. */
@@ -471,6 +476,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     input: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0],
   ): Effect.fn.Return<A, PreviewAutomationError> {
     const timeoutMs = input.timeoutMs ?? 15_000;
+    const replyGraceMs = input.replyGraceMs ?? 0;
     const deferred = yield* Deferred.make<unknown, PreviewAutomationError>();
     const route = yield* SynchronizedRef.modify(state, (current) => {
       const assignments = new Map(
@@ -599,7 +605,9 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         }
         return yield* new PreviewAutomationRequestQueueClosedError(requestContext);
       }
-      const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(timeoutMs));
+      const result = yield* Deferred.await(deferred).pipe(
+        Effect.timeoutOption(timeoutMs + replyGraceMs),
+      );
       return yield* Option.match(result, {
         onNone: () =>
           Effect.gen(function* () {

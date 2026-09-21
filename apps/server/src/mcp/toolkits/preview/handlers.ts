@@ -50,11 +50,19 @@ export function normalizePreviewOpenInput(
   };
 }
 
+/**
+ * Desktop `waitFor` polls for the caller's full `timeoutMs` and only then
+ * reports the miss, so its reply lands after the broker deadline when both
+ * clocks match. The grace lets that reply arrive before the host is evicted.
+ */
+const PREVIEW_WAIT_FOR_REPLY_GRACE_MS = 1_500;
+
 const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
   operation: PreviewAutomationOperation,
   input: unknown,
   timeoutMs?: number,
   tabId?: PreviewTabId,
+  replyGraceMs?: number,
 ): Effect.fn.Return<
   { result: A; toolIcon?: ToolActivityIcon },
   import("@t3tools/contracts").PreviewAutomationError,
@@ -72,6 +80,7 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
     input,
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
     ...(tabId === undefined ? {} : { tabId }),
+    ...(replyGraceMs === undefined ? {} : { replyGraceMs }),
   });
   if (["status", "open", "navigate", "snapshot"].includes(operation)) return { result };
   const statusTabId =
@@ -103,9 +112,10 @@ const invokeTargeted = <A extends object>(
     readonly [key: string]: unknown;
   },
   timeoutMs?: number,
+  replyGraceMs?: number,
 ) => {
   const { tabId, ...operationInput } = input;
-  return invoke<A>(operation, operationInput, timeoutMs, tabId).pipe(
+  return invoke<A>(operation, operationInput, timeoutMs, tabId, replyGraceMs).pipe(
     Effect.map(({ result, toolIcon }) => ({
       ...result,
       ...(toolIcon ? { toolIcon } : {}),
@@ -212,7 +222,8 @@ const handlers = {
         ...(toolIcon ? { toolIcon } : {}),
       })),
     ),
-  preview_wait_for: (input) => invokeTargeted<object>("waitFor", input, input.timeoutMs),
+  preview_wait_for: (input) =>
+    invokeTargeted<object>("waitFor", input, input.timeoutMs, PREVIEW_WAIT_FOR_REPLY_GRACE_MS),
   preview_recording_start: (input) =>
     invokeTargeted<PreviewAutomationRecordingStatus>("recordingStart", input ?? {}),
   preview_recording_stop: (input) =>

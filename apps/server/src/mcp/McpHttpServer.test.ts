@@ -4,12 +4,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
@@ -763,6 +765,79 @@ it.effect("registers annotated tools and preserves authenticated request context
         const text = result.content[0];
         expect(text?.type === "text" ? decodeJsonText(text.text) : null).toEqual({ toolIcon });
       }
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("keeps the host after an honest preview_wait_for miss at the caller deadline", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const clientId = "mcp-wait-for-client";
+      const connected = yield* Deferred.make<void>();
+      const waitForReceived = yield* Deferred.make<void>();
+      const routedOperations: Array<string> = [];
+      const statusResult = {
+        available: true,
+        visible: true,
+        tabId,
+        url: "http://example.test/",
+        title: "Example",
+        loading: false,
+      };
+      const events = yield* broker.connect({ clientId, environmentId });
+      yield* Stream.runForEach(events, (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, undefined);
+        routedOperations.push(event.request.operation);
+        const target = {
+          clientId,
+          connectionId: event.connectionId,
+          requestId: event.request.requestId,
+        };
+        if (event.request.operation !== "waitFor") {
+          return broker.respond({ ...target, ok: true, result: statusResult });
+        }
+        // The desktop polls until the caller's own deadline and sleeps one more
+        // tick before it reports the miss, so its reply lands after timeoutMs.
+        const input = event.request.input as { readonly timeoutMs?: number };
+        return Deferred.succeed(waitForReceived, undefined).pipe(
+          Effect.andThen(Effect.sleep((input.timeoutMs ?? 15_000) + 100)),
+          Effect.andThen(
+            broker.respond({
+              ...target,
+              ok: false,
+              error: { _tag: "PreviewAutomationTimeoutError", message: "Wait timed out" },
+            }),
+          ),
+        );
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+
+      const waited = yield* server
+        .callTool({ name: "preview_wait_for", arguments: { text: "Missing", timeoutMs: 5_000 } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+          Effect.forkScoped,
+        );
+      yield* Deferred.await(waitForReceived);
+      yield* TestClock.adjust(5_100);
+      const missed = yield* Fiber.join(waited);
+      expect(missed.isError).toBe(true);
+      expect(missed.content).toEqual([
+        { type: "text", text: "Preview automation waitFor timed out after 5000ms." },
+      ]);
+
+      const status = yield* server
+        .callTool({ name: "preview_status", arguments: {} })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(status.isError).toBe(false);
+      expect(status.structuredContent).toMatchObject({ available: true, tabId });
+      expect(routedOperations).toEqual(["waitFor", "status"]);
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

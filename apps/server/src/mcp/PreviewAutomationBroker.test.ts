@@ -1359,3 +1359,58 @@ it.effect("keeps a host that responds with an operation timeout", () =>
     }),
   ),
 );
+
+it.effect("keeps a host whose operation timeout reply lands inside the reply grace", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const connected = yield* Deferred.make<void>();
+      const waitForReceived = yield* Deferred.make<void>();
+      const routed: string[] = [];
+      const events = yield* broker.connect(makeHost());
+      yield* Stream.runForEach(events, (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, undefined);
+        routed.push(event.request.operation);
+        const target = {
+          clientId: "client-1",
+          connectionId: event.connectionId,
+          requestId: event.request.requestId,
+        };
+        if (event.request.operation !== "waitFor") {
+          return broker.respond({ ...target, ok: true, result: "responsive" });
+        }
+        // The desktop polls until the caller deadline, then reports the miss.
+        return Deferred.succeed(waitForReceived, undefined).pipe(
+          Effect.andThen(Effect.sleep(event.request.timeoutMs + 100)),
+          Effect.andThen(
+            broker.respond({
+              ...target,
+              ok: false,
+              error: { _tag: "PreviewAutomationTimeoutError", message: "Selector timed out" },
+            }),
+          ),
+        );
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+
+      const missed = yield* broker
+        .invoke<void>({
+          scope,
+          operation: "waitFor",
+          input: {},
+          timeoutMs: 5_000,
+          replyGraceMs: 1_500,
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Deferred.await(waitForReceived);
+      yield* TestClock.adjust(5_100);
+      expect(yield* Fiber.join(missed)).toMatchObject({
+        _tag: "PreviewAutomationTimeoutError",
+        timeoutMs: 5_000,
+        remoteTag: "PreviewAutomationTimeoutError",
+      });
+      expect(yield* broker.invoke({ scope, operation: "status", input: {} })).toBe("responsive");
+      expect(routed).toEqual(["waitFor", "status"]);
+    }),
+  ),
+);
