@@ -44,7 +44,7 @@ export function DeviceHostUpdates({
                 </p>
               ) : null}
             </div>
-            {failed ? (
+            {failed && state.supportsHostRetry ? (
               <Button
                 size="compact"
                 variant="outline"

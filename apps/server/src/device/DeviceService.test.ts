@@ -616,6 +616,7 @@ it.effect("host retry exposes actionable failure without internal IDs or diagnos
     );
     yield* Ref.update(settings, (current) => ({ ...current, enableDeviceSupport: true }));
     const state = yield* service.retryHost(LOCAL_DEVICE_HOST_ID);
+    expect(state.supportsHostRetry).toBe(true);
     expect(state.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
       status: "failed",
       detail: "Could not connect to this host over SSH.",

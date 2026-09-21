@@ -119,7 +119,10 @@ function DevicePreviewScreen({
 
   const controls: ScreenHeaderMenuItem[] = [
     ...(state.data?.hosts
-      .filter((host) => state.data?.hostStatuses[host.id]?.status === "failed")
+      .filter(
+        (host) =>
+          state.data?.supportsHostRetry && state.data.hostStatuses[host.id]?.status === "failed",
+      )
       .map((host) => ({
         id: `retry-${host.id}`,
         title: `Retry ${host.label}`,
