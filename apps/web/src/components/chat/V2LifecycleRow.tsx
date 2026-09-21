@@ -1,5 +1,5 @@
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
-import { AgentElapsed } from "../AgentsPanel";
+import { AgentElapsed } from "./AgentElapsed";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { ReactNode } from "react";
 import { useThreadShell, useProject } from "../../state/entities";
