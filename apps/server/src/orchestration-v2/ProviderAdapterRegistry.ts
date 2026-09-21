@@ -24,6 +24,8 @@ import {
   type ProviderAdapterV2Shape,
 } from "./ProviderAdapter.ts";
 
+const isProviderSetupError = Schema.is(ProviderSetupError);
+
 export class ProviderAdapterRegistryLookupError extends Schema.TaggedError<ProviderAdapterRegistryLookupError>()(
   "ProviderAdapterRegistryLookupError",
   {
@@ -117,7 +119,7 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
                 });
                 return (auth.withAccess ? auth.withAccess(open) : open).pipe(
                   Effect.mapError((cause) =>
-                    Schema.is(ProviderSetupError)(cause)
+                    isProviderSetupError(cause)
                       ? new ProviderAdapterOpenSessionError({
                           driver: adapter.driver,
                           providerSessionId: input.providerSessionId,
