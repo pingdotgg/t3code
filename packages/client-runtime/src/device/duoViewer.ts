@@ -24,8 +24,8 @@ import {
 } from "./duoScene.ts";
 import { loadDeviceModel } from "./modelScene.ts";
 import { createDeviceModelSlot, type DeviceModelSource } from "./model.ts";
-import { createDuoFraming } from "./duoFraming.ts";
-import { createDuoMotion } from "./duoMotion.ts";
+import { createDeviceFraming } from "./deviceFraming.ts";
+import { createDeviceMotion } from "./deviceMotion.ts";
 import { duoViewSnaps, nearestDuoView, type DuoRestFace } from "./duoSnap.ts";
 import { createRenderScheduler } from "./renderScheduler.ts";
 import type { DeviceScreenSize } from "./stream.ts";
@@ -144,7 +144,7 @@ export function createDuoViewer(options: {
       ? [...duoViewSnaps(model.restFrames(3), 3), ...cover]
       : activeSnaps();
   };
-  const orbit = createDuoMotion({
+  const orbit = createDeviceMotion({
     choose(rotation) {
       const snap = nearestDuoView(rotation, snaps());
       if (!snap) return rotation;
@@ -183,7 +183,7 @@ export function createDuoViewer(options: {
   let hingeLeaf: DuoHingeLeaf | null = null;
   let appliedAngle = Number.NaN;
   let interactionActive = false;
-  const framing = createDuoFraming();
+  const framing = createDeviceFraming();
   const framingBounds = new Box3();
   let firstPose = true;
   let physicalPose: DuoPose = "open";

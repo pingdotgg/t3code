@@ -1,4 +1,5 @@
 import { Matrix4, Quaternion, Vector3 } from "three";
+import { nearestDeviceView } from "./deviceViewSnap.ts";
 import type { DeviceScreenSize } from "./stream.ts";
 
 export type DuoRestFace = "cover" | "inside" | "left" | "right";
@@ -81,23 +82,5 @@ export function duoViewSnaps(frames: readonly DuoRestFrame[], panel: 1 | 3) {
   return snaps;
 }
 
-/** Each useful view permits a small yaw. Pick the closest member of each family, then the closest family. */
-export function nearestDuoView(rotation: Quaternion, snaps: readonly DuoViewSnap[]) {
-  let closest: DuoViewSnap | null = null;
-  let distance = Infinity;
-  for (const snap of snaps) {
-    const relative = rotation.clone().multiply(snap.rotation.clone().invert());
-    const turn = 2 * Math.atan2(relative.y, relative.w);
-    const yaw = Math.max(
-      -snap.yawLimit,
-      Math.min(snap.yawLimit, Math.atan2(Math.sin(turn), Math.cos(turn))),
-    );
-    const candidate = snap.rotation.clone().premultiply(new Quaternion().setFromAxisAngle(y, yaw));
-    const nextDistance = candidate.angleTo(rotation);
-    if (nextDistance < distance - 1e-8) {
-      distance = nextDistance;
-      closest = { ...snap, rotation: candidate };
-    }
-  }
-  return closest;
-}
+/** Fold-specific candidates use the base viewer's nearest-family selection. */
+export const nearestDuoView = nearestDeviceView<DuoViewSnap>;

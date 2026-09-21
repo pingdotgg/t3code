@@ -695,7 +695,11 @@ export function createDeviceStreamClient(
               if (!configured) {
                 await reader.cancel().catch(() => {});
                 if (!isCurrent()) return;
-                if (target.videoOnly) setStatus("error", "The Duo panel requires H.264 decoding.");
+                if (target.videoOnly)
+                  setStatus(
+                    "error",
+                    `This browser cannot decode the Duo panel's ${avcCodecString(chunk.payload)} stream.`,
+                  );
                 else fallBackToMjpeg();
                 return;
               }
