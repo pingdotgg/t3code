@@ -183,27 +183,30 @@ describe("selection action gestures", () => {
     expect(surface.onSelection).not.toHaveBeenCalled();
   });
 
-  it.each([1, 2])("dismisses selection actions when a button is pressed after %i clicks", (detail) => {
-    const surface = createSelectionSurface();
-    surface.down();
-    surface.up({ detail });
-    surface.flush();
-    surface.onSelection.mockClear();
-    surface.onDismiss.mockClear();
+  it.each([1, 2])(
+    "dismisses selection actions when a button is pressed after %i clicks",
+    (detail) => {
+      const surface = createSelectionSurface();
+      surface.down();
+      surface.up({ detail });
+      surface.flush();
+      surface.onSelection.mockClear();
+      surface.onDismiss.mockClear();
 
-    surface.down({ target: surface.buttonIcon });
-    surface.up();
-    surface.change();
-    surface.flush(1000);
-    expect(surface.onDismiss).toHaveBeenCalledWith("interaction");
-    expect(surface.onSelection).not.toHaveBeenCalled();
+      surface.down({ target: surface.buttonIcon });
+      surface.up();
+      surface.change();
+      surface.flush(1000);
+      expect(surface.onDismiss).toHaveBeenCalledWith("interaction");
+      expect(surface.onSelection).not.toHaveBeenCalled();
 
-    surface.down();
-    surface.change();
-    surface.up();
-    surface.flush();
-    expect(surface.onSelection).toHaveBeenCalledOnce();
-  });
+      surface.down();
+      surface.change();
+      surface.up();
+      surface.flush();
+      expect(surface.onSelection).toHaveBeenCalledOnce();
+    },
+  );
 
   it("ignores nonprimary pointers and non-left mouseup without ending a left drag", () => {
     const surface = createSelectionSurface();
