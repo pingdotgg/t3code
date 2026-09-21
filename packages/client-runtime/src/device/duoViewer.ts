@@ -17,6 +17,7 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { createDuoScene, duoDisplayKey, duoFrameMatches, type DuoPanelId } from "./duoScene.ts";
 import { loadDeviceModel } from "./modelScene.ts";
 import { createDeviceModelSlot, type DeviceModelSource } from "./model.ts";
+import { createDuoFraming } from "./duoFraming.ts";
 import { createDuoMotion } from "./duoMotion.ts";
 import { duoViewSnaps, nearestDuoView, type DuoRestFace } from "./duoSnap.ts";
 import { createRenderScheduler } from "./renderScheduler.ts";
@@ -26,7 +27,7 @@ import type { DuoPose } from "./duoControl.ts";
 export interface DuoViewer {
   readonly setScreen: (screen: DeviceScreenSize | null) => void;
   readonly setHingePreview: (angle: number | null) => void;
-  readonly setInteractionActive: (active: boolean) => void;
+  readonly setInteractionActive: (active: boolean, mode?: "touch" | "orbit") => void;
   readonly rejectOrientation: () => void;
   readonly frameUpdated: (panel: DuoPanelId) => void;
   readonly resize: (width: number, height: number, pixelRatio: number) => void;
@@ -136,7 +137,8 @@ export function createDuoViewer(options: {
   let targetAngle = 180;
   let previewAngle: number | null = null;
   let interactionActive = false;
-  let fitRadius = 1;
+  const framing = createDuoFraming();
+  const framingBounds = new Box3();
   let firstPose = true;
   let physicalPose: DuoPose = "open";
   let presentationAngle = 180;
@@ -151,21 +153,26 @@ export function createDuoViewer(options: {
     model.root.position.set(0, 0, 0);
     const frames = model.restFrames(screen?.screenId === 1 ? 1 : 3);
     const frame = frames.find((frame) => frame.face === restFace) ?? frames[0];
-    targetPivot.copy(frame?.center ?? new Vector3()).multiplyScalar(0.35);
+    targetPivot.copy(frame?.center ?? new Vector3());
     model.root.position.copy(pivot).applyQuaternion(model.root.quaternion).negate();
   };
   let framingAspect = 0;
-  const fit = () => {
+  const updateCamera = () => {
+    camera.position.set(framing.center.x, framing.center.y, framing.distance() / orbit.zoom);
+    camera.lookAt(framing.center.x, framing.center.y, 0);
+    camera.updateProjectionMatrix();
+  };
+  const fit = (immediate = false) => {
     if (!model || !viewport.width || !viewport.height) return;
     camera.aspect = viewport.width / viewport.height;
-    const vertical = (camera.fov * Math.PI) / 360;
-    const horizontal = Math.atan(Math.tan(vertical) * camera.aspect);
-    // A fixed envelope fits every hinge angle and orbit. Rotation cannot move the
-    // target off-screen or make the camera pump in and out during a fold.
-    const distance = (fitRadius * 1.08) / Math.sin(Math.min(vertical, horizontal)) / orbit.zoom;
-    camera.position.set(0, 0, Math.max(1, distance));
-    camera.lookAt(0, 0, 0);
-    camera.updateProjectionMatrix();
+    framing.setBounds(
+      framingBounds.setFromObject(model.root),
+      (camera.fov * Math.PI) / 360,
+      camera.aspect,
+      performance.now(),
+      immediate,
+    );
+    updateCamera();
   };
   const moving = () =>
     Math.abs(angle - targetAngle) > 0.01 || pivot.distanceTo(targetPivot) > 0.001;
@@ -173,6 +180,7 @@ export function createDuoViewer(options: {
     if (disposed || !model || !viewport.width || !viewport.height) return;
     try {
       const now = performance.now();
+      const elapsed = Math.max(0, (now - lastTime) / 1000);
       const amount = reduced
         ? 1
         : 1 - Math.exp(-14 * Math.max(0, (now - lastTime) / 1000 || 0.016));
@@ -187,9 +195,13 @@ export function createDuoViewer(options: {
         pivot.lerp(targetPivot, amount);
         if (pivot.distanceTo(targetPivot) <= 0.001) pivot.copy(targetPivot);
         applyPose();
-        fit();
+        fit(reduced || elapsed > 0.5);
       }
-      if (orbitChanged) applyPose();
+      if (orbitChanged) {
+        applyPose();
+        fit(reduced || elapsed > 0.5);
+      }
+      if (framing.advance(now, reduced)) updateCamera();
       if (
         buffer.width !== viewport.width ||
         buffer.height !== viewport.height ||
@@ -199,7 +211,8 @@ export function createDuoViewer(options: {
         buffer = viewport;
       }
       renderer.render(scene, camera);
-      if (inMotion || moving() || orbit.needsFrame()) scheduler.invalidate();
+      if (inMotion || moving() || orbit.needsFrame() || framing.needsFrame())
+        scheduler.invalidate();
     } catch {
       options.onUnavailable();
     }
@@ -220,19 +233,6 @@ export function createDuoViewer(options: {
       }
       model = next;
       if (!model || disposed) return;
-      fitRadius = 0;
-      for (let sample = 0; sample <= 180; sample += 15) {
-        model.setAngle(sample);
-        const bounds = new Box3().setFromObject(model.root);
-        const focusRadius =
-          Math.max(
-            ...model
-              .restFrames(1)
-              .concat(model.restFrames(3))
-              .map((frame) => frame.center.length()),
-          ) * 0.35;
-        fitRadius = Math.max(fitRadius, bounds.getSize(new Vector3()).length() / 2 + focusRadius);
-      }
       scene.add(model.root);
       applyPose();
       if (screen?.screenId === 1) {
@@ -353,10 +353,14 @@ export function createDuoViewer(options: {
       model?.cancelInput();
       scheduler.invalidate();
     },
-    setInteractionActive(active) {
+    setInteractionActive(active, mode = "touch") {
       if (disposed) return;
-      interactionActive = active;
-      orbit.hold(active || previewAngle !== null, performance.now());
+      if (mode === "orbit") orbit.dragActive(active, performance.now());
+      else {
+        interactionActive = active;
+        orbit.hold(active || previewAngle !== null, performance.now());
+        framing.hold(active, performance.now());
+      }
       scheduler.invalidate();
     },
     rejectOrientation() {
@@ -414,7 +418,7 @@ export function createDuoViewer(options: {
       if (disposed || ![width, height, ratio].every(Number.isFinite) || width <= 0 || height <= 0)
         return;
       viewport = { width, height, ratio: Math.min(2, Math.max(1, ratio)) };
-      fit();
+      fit(true);
       scheduler.invalidate();
     },
     screenPoint(x, y, captured = false) {
@@ -428,8 +432,7 @@ export function createDuoViewer(options: {
     },
     orbit(x, y) {
       if (disposed) return;
-      orbit.orbit(x, y, performance.now());
-      applyPose();
+      orbit.orbit(x * viewport.width, y * viewport.height, performance.now());
       scheduler.invalidate();
     },
     zoomBy(delta) {

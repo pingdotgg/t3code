@@ -225,7 +225,7 @@ it("keeps the chosen release view when an app locks orientation, freezes it duri
   viewer.resize(500, 700, 2);
   draw();
   const initial = state.views.at(-1)!.quaternion.clone();
-  viewer.setInteractionActive(true);
+  viewer.setInteractionActive(true, "orbit");
   viewer.orbit(0, Math.PI / 3);
   draw();
   const held = state.views.at(-1)!.quaternion.clone();
@@ -234,7 +234,7 @@ it("keeps the chosen release view when an app locks orientation, freezes it duri
   draw();
   expect(state.views.at(-1)!.quaternion.angleTo(held)).toBeLessThan(1e-6);
   expect(onOrientationRequested).not.toHaveBeenCalled();
-  viewer.setInteractionActive(false);
+  viewer.setInteractionActive(false, "orbit");
   draw();
   expect(onOrientationRequested).toHaveBeenCalledOnce();
   const chosen = state.views.at(-1)!.quaternion.clone();
@@ -298,7 +298,7 @@ it("faces a display handed off by native rotation without requesting another sen
     hingeAngle: 90,
   });
   draw();
-  viewer.orbit(0, Math.PI / 3);
+  viewer.orbit(0, Math.PI / 6);
   now = 1000;
   draw();
   const requests = onOrientationRequested.mock.calls.length;
@@ -349,14 +349,15 @@ it.each(["book", "laptop", "open"] as const)(
   },
 );
 
-it("keeps every default-zoom orbit centered and inside a fixed camera frame across folds", async () => {
+it("keeps default-zoom orbits framed across folds and fits the current assembly", async () => {
   const { viewer, draw, state } = fixture();
   models.resolve({ asset: asset(), dispose: vi.fn() });
   await Promise.resolve();
   viewer.resize(380, 620, 2);
   viewer.resetPose();
-  viewer.setInteractionActive(true);
-  let distance = 0;
+  viewer.setInteractionActive(true, "orbit");
+  let minimumDistance = Infinity;
+  let maximumDistance = 0;
   for (const hingeAngle of [0, 30, 90, 127, 180]) {
     viewer.setScreen({
       width: 2007,
@@ -384,10 +385,11 @@ it("keeps every default-zoom orbit centered and inside a fixed camera frame acro
           expect(Math.abs(point.y)).toBeLessThan(1);
         }
       });
-      if (distance) expect(camera.position.z).toBe(distance);
-      distance = camera.position.z;
+      minimumDistance = Math.min(minimumDistance, camera.position.z);
+      maximumDistance = Math.max(maximumDistance, camera.position.z);
     }
   }
+  expect(maximumDistance).toBeGreaterThan(minimumDistance);
   viewer.dispose();
 });
 

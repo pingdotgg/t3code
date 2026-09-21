@@ -46,36 +46,58 @@ it("chooses a leaf-focused seated view when it is closer than the middle of the 
   expect(chosen.center.x).toBe(1);
 });
 
-it("allows free inspection while held, latches the closest release target, and never changes zoom while settling", () => {
+it("springs toward a cumulative drag without teleporting and keeps the same target across event partitions", () => {
+  const run = (parts: number) => {
+    const choose = vi.fn((q: Quaternion) => q);
+    const motion = createDuoMotion({ choose });
+    motion.dragActive(true, 0);
+    for (let part = 0; part < parts; part++) motion.orbit(160 / parts, 80 / parts, 0);
+    expect(motion.rotation.angleTo(new Quaternion())).toBeLessThan(1e-6);
+    for (let time = 8; time <= 400; time += 8) motion.advance(time);
+    expect(motion.rotation.angleTo(new Quaternion())).toBeGreaterThan(0.5);
+    motion.dragActive(false, 400);
+    for (let time = 408; time <= 2400; time += 8) motion.advance(time);
+    expect(choose).toHaveBeenCalledOnce();
+    expect(motion.needsFrame()).toBe(false);
+    return motion.rotation;
+  };
+  expect(run(1).angleTo(run(20))).toBeLessThan(1e-6);
+});
+
+it("selects the predicted nearest view once, retains zoom, and preserves velocity when interrupted", () => {
   const choose = vi.fn((q: Quaternion) => nearestDuoView(q, snaps)!.rotation);
   const motion = createDuoMotion({ choose });
   motion.zoomBy(0.3);
   const zoom = motion.zoom;
-  motion.hold(true, 0);
-  motion.orbit(0.7, 0.8, 0);
-  const released = motion.rotation.clone();
-  expect(motion.advance(10000)).toBe(false);
-  expect(motion.rotation.angleTo(released)).toBeLessThan(1e-6);
-  motion.hold(false, 10000);
-  motion.advance(10000);
-  const selected = nearestDuoView(released, snaps)!;
-  for (let time = 10016; time <= 12000; time += 16) motion.advance(time);
-  expect(choose).toHaveBeenCalledOnce();
-  expect(motion.rotation.angleTo(selected.rotation)).toBeLessThan(1e-6);
+  motion.dragActive(true, 0);
+  motion.orbit(0, 240, 0);
+  motion.orbit(0, 20, 20);
+  motion.advance(40);
+  motion.dragActive(false, 40);
+  const before = motion.rotation.clone();
+  motion.advance(80);
+  expect(motion.rotation.angleTo(before)).toBeGreaterThan(0.01);
+  const interrupted = motion.rotation.clone();
+  motion.dragActive(true, 80);
+  expect(motion.rotation.angleTo(interrupted)).toBeLessThan(1e-6);
+  motion.orbit(30, -30, 80);
+  motion.advance(96);
+  motion.dragActive(false, 100);
+  for (let time = 116; time <= 2500; time += 16) motion.advance(time);
+  expect(choose).toHaveBeenCalledTimes(2);
   expect(motion.zoom).toBe(zoom);
   expect(motion.needsFrame()).toBe(false);
 });
 
-it("settles equally with fast, slow and throttled frames, waits for trackpad quiet, and freezes for a screen contact", () => {
+it("release uses elapsed time equally at different frame rates and a captured contact freezes projection", () => {
   const run = (step: number) => {
     const motion = createDuoMotion({ choose: () => new Quaternion() });
-    motion.orbit(0.25, 0.4, 0);
-    const drag = motion.rotation.clone();
-    motion.advance(100);
-    expect(motion.rotation.angleTo(drag)).toBeLessThan(1e-6);
-    motion.advance(140);
-    for (let time = 140; time < 700; time += step) motion.advance(time);
-    motion.advance(700);
+    motion.dragActive(true, 0);
+    motion.orbit(160, 80, 0);
+    motion.advance(50);
+    motion.dragActive(false, 50);
+    for (let time = 50; time < 450; time += step) motion.advance(time);
+    motion.advance(450);
     return motion;
   };
   const fast = run(8),
@@ -83,8 +105,9 @@ it("settles equally with fast, slow and throttled frames, waits for trackpad qui
     throttled = run(1000);
   expect(fast.rotation.angleTo(slow.rotation)).toBeLessThan(1e-6);
   expect(fast.rotation.angleTo(throttled.rotation)).toBeLessThan(1e-6);
-  fast.hold(true, 700);
+  fast.hold(true, 450);
   const contact = fast.rotation.clone();
+  fast.orbit(100, 100, 500);
   fast.advance(10000);
   expect(fast.rotation.angleTo(contact)).toBeLessThan(1e-6);
   fast.hold(false, 10000);
@@ -92,20 +115,69 @@ it("settles equally with fast, slow and throttled frames, waits for trackpad qui
   expect(fast.needsFrame()).toBe(false);
 });
 
-it("supports reduced motion, bounded release velocity, invalid deltas, and exact half-turn rotations", () => {
-  const motion = createDuoMotion({ choose: () => new Quaternion() });
+it("waits for trackpad quiet, handles reduced motion and invalid deltas, and settles without idle frames", () => {
+  const choose = vi.fn(() => new Quaternion());
+  const motion = createDuoMotion({ choose });
   motion.orbit(NaN, 0, 0);
   motion.zoomBy(Infinity);
   expect(motion.needsFrame()).toBe(false);
-  motion.hold(true, 0);
-  motion.orbit(0.2, 0, 0);
-  motion.orbit(0.2, 0, 1);
-  const released = motion.rotation.clone();
-  motion.advance(10000, true);
-  expect(motion.rotation.angleTo(released)).toBeLessThan(1e-6);
-  motion.hold(false, 10000);
-  motion.advance(10000, true);
+  motion.orbit(200, 100, 0);
+  motion.advance(100);
+  expect(choose).not.toHaveBeenCalled();
+  expect(motion.rotation.angleTo(new Quaternion())).toBeGreaterThan(0);
+  motion.advance(140, true);
+  expect(choose).toHaveBeenCalledOnce();
   expect(motion.rotation.angleTo(new Quaternion())).toBeLessThan(1e-6);
   expect(motion.needsFrame()).toBe(false);
   expect(rotationVector(rotation(0, Math.PI)).length()).toBeCloseTo(Math.PI);
+});
+
+it("a seated view exposes the base, and upright yaw keeps both inner displays facing the camera", () => {
+  const folded = [
+    frames[0]!,
+    ...(["left", "right"] as const).map((face) => ({
+      face,
+      normal: new Vector3(face === "left" ? Math.SQRT1_2 : -Math.SQRT1_2, 0, Math.SQRT1_2),
+      up: new Vector3(0, 1, 0),
+      center: new Vector3(face === "left" ? -1 : 1, 0, 0),
+    })),
+  ];
+  const candidates = duoViewSnaps(folded, 3);
+  expect(candidates.filter((candidate) => candidate.face === "right")).toHaveLength(1);
+  for (const candidate of candidates) {
+    for (const frame of folded.slice(1))
+      expect(frame.normal.clone().applyQuaternion(candidate.rotation).z).toBeGreaterThan(0.2);
+    const side = candidate.rotation.clone().premultiply(rotation(0, 1.5));
+    const chosen = nearestDuoView(side, [candidate])!;
+    for (const frame of folded.slice(1))
+      expect(frame.normal.clone().applyQuaternion(chosen.rotation).z).toBeGreaterThan(0.02);
+  }
+});
+
+it("keeps release angular speed bounded even across a back-facing half turn", () => {
+  const motion = createDuoMotion({ choose: () => rotation(0, Math.PI) });
+  motion.setPose(rotation(0, Math.PI), 0);
+  let previous = motion.rotation.clone();
+  for (let time = 8; time <= 1600; time += 8) {
+    motion.advance(time);
+    expect(motion.rotation.angleTo(previous)).toBeLessThanOrEqual(9 * 0.008 + 1e-5);
+    previous = motion.rotation.clone();
+  }
+  expect(motion.rotation.angleTo(rotation(0, Math.PI))).toBeLessThan(1e-6);
+  expect(motion.needsFrame()).toBe(false);
+});
+
+it("a click without dragging resumes the interrupted resting view instead of stranding the device", () => {
+  const choose = vi.fn(() => new Quaternion());
+  const motion = createDuoMotion({ choose });
+  const rest = rotation(0, 0.8);
+  motion.setPose(rest, 0);
+  motion.advance(50);
+  motion.dragActive(true, 50);
+  motion.advance(60);
+  motion.dragActive(false, 60);
+  motion.advance(2100);
+  expect(motion.rotation.angleTo(rest)).toBeLessThan(1e-6);
+  expect(choose).not.toHaveBeenCalled();
+  expect(motion.needsFrame()).toBe(false);
 });
