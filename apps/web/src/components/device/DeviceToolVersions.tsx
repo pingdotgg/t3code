@@ -1,13 +1,16 @@
+import type { ReactNode } from "react";
 import type { DeviceToolVersions as ToolVersions } from "@t3tools/contracts";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/components/ui/popover";
 
 export function DeviceToolVersions({
   tools,
+  action,
   kind,
   owner,
   error,
 }: {
   tools: ToolVersions | undefined;
+  action?: ReactNode;
   kind?: keyof ToolVersions;
   owner?: string | undefined;
   error?: string | undefined;
@@ -37,7 +40,9 @@ export function DeviceToolVersions({
             : selected
               ? "Not installed"
               : "Version unknown"
-          : "Versions"}
+          : error
+            ? "Versions unavailable"
+            : "Versions"}
       </PopoverTrigger>
       <PopoverPopup align="end" className="w-80">
         <PopoverTitle className="text-sm">{kind ? label : "Device tools"}</PopoverTitle>
@@ -77,6 +82,7 @@ export function DeviceToolVersions({
             {error}
           </p>
         ) : null}
+        {action ? <div className="mt-3">{action}</div> : null}
       </PopoverPopup>
     </Popover>
   );

@@ -685,6 +685,21 @@ function DeviceIntegrationControls({
     }
   };
 
+  const checkVersions = state.supportsToolInspection ? (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={!environmentId || pending !== null || busy}
+      onClick={() => {
+        if (!environmentId) return;
+        setPending("check");
+        void list({ environmentId, input: { inspectOnly: true } }).finally(() => setPending(null));
+      }}
+    >
+      {pending === "check" ? "Checking…" : "Check versions"}
+    </Button>
+  ) : null;
+
   return (
     <>
       <SettingsRow
@@ -695,6 +710,7 @@ function DeviceIntegrationControls({
         control={
           <>
             <DeviceToolVersions
+              action={checkVersions}
               kind="hub"
               tools={state.hosts.find((host) => host.kind === "local")?.tools}
             />
@@ -758,6 +774,7 @@ function DeviceIntegrationControls({
         control={
           <>
             <DeviceToolVersions
+              action={checkVersions}
               kind="agent"
               tools={state.hosts.find((host) => host.kind === "local")?.tools}
             />
@@ -778,31 +795,6 @@ function DeviceIntegrationControls({
               }
             />
           </>
-        }
-      />
-      <SettingsRow
-        title="Device tools"
-        description="Managed by this environment. Updates install automatically when needed."
-        control={
-          <div className="flex items-center gap-4">
-            <DeviceToolVersions tools={state.hosts.find((host) => host.kind === "local")?.tools} />
-            {state.supportsToolInspection ? (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!environmentId || pending !== null || busy}
-                onClick={() => {
-                  if (!environmentId) return;
-                  setPending("check");
-                  void list({ environmentId, input: { inspectOnly: true } }).finally(() =>
-                    setPending(null),
-                  );
-                }}
-              >
-                {pending === "check" ? "Checking…" : "Check versions"}
-              </Button>
-            ) : null}
-          </div>
         }
       />
       {environmentId ? (
