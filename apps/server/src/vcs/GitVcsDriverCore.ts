@@ -38,6 +38,8 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import { ServerConfig } from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const gitProcesses = Semaphore.makeUnsafe(8);
@@ -3053,7 +3055,22 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const targetBranch = input.newRefName ?? input.refName;
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
     const repoName = path.basename(input.cwd);
-    const worktreePath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
+    let worktreePath = input.path;
+    if (worktreePath === null) {
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const configured = yield* settings.getSettings.pipe(
+        Effect.map((current) => current.worktreesDirectory),
+        Effect.orElseSucceed(() => ""),
+      );
+      worktreePath = path.join(
+        resolveWorktreesDirectory(configured, worktreesDir, path),
+        repoName,
+        sanitizedBranch,
+      );
+    }
+    yield* fileSystem
+      .makeDirectory(path.dirname(worktreePath), { recursive: true })
+      .pipe(Effect.ignore);
     const args = input.newRefName
       ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
       : ["worktree", "add", worktreePath, input.refName];

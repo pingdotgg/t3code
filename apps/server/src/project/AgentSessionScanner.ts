@@ -52,6 +52,7 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { listManagedWorktreesRoots } from "../worktreesDirectory.ts";
 import {
   createTranscriptJsonReader,
   createTranscriptJsonSelector,
@@ -540,10 +541,12 @@ function shouldRetainDecodedRecord(
  * transcripts look exactly like user sessions, but re-importing the app's own
  * sandboxes as projects is never right. Matches this server's configured
  * worktrees directory plus the conventional `.t3/worktrees` layout, which
- * also catches sandboxes from other T3 homes on the same machine. Separators
- * are normalized (and, on Windows, case folded) so the prefix match holds
- * there too. Callers check both the recorded spelling and its realpath so a
- * symlink into the worktrees directory cannot bypass the filter.
+ * also catches sandboxes from other T3 homes on the same machine. A custom
+ * worktrees directory is checked too, and the default root stays recognized
+ * after that setting changes. Separators are normalized (and, on Windows,
+ * case folded) so the prefix match holds there too. Callers check both the
+ * recorded spelling and its realpath so a symlink into the worktrees
+ * directory cannot bypass the filter.
  */
 function normalizeForWorktreeMatch(value: string, caseFold: boolean): string {
   const normalized = `${value.replaceAll("\\", "/")}/`;
@@ -552,13 +555,14 @@ function normalizeForWorktreeMatch(value: string, caseFold: boolean): string {
 
 function isT3ManagedWorktree(
   candidatePath: string,
-  worktreesDir: string,
+  worktreesDirs: ReadonlyArray<string>,
   caseFold: boolean,
 ): boolean {
   const normalized = normalizeForWorktreeMatch(candidatePath, caseFold);
   return (
-    normalized.startsWith(normalizeForWorktreeMatch(worktreesDir, caseFold)) ||
-    normalized.includes("/.t3/worktrees/")
+    worktreesDirs.some((worktreesDir) =>
+      normalized.startsWith(normalizeForWorktreeMatch(worktreesDir, caseFold)),
+    ) || normalized.includes("/.t3/worktrees/")
   );
 }
 
@@ -646,7 +650,14 @@ export const make = Effect.gen(function* () {
     path.join(homeDir, "Documents", "Codex"),
   ];
 
-  const isExcludedProjectPath = (candidatePath: string) =>
+  const resolveManagedWorktreesDirs = serverSettings.getSettings.pipe(
+    Effect.map((settings) =>
+      listManagedWorktreesRoots(settings.worktreesDirectory, worktreesDir, path),
+    ),
+    Effect.orElseSucceed(() => [worktreesDir]),
+  );
+
+  const isExcludedProjectPath = (candidatePath: string, worktreesDirs: ReadonlyArray<string>) =>
     excludedProjectRoots.has(normalizeProjectPathForComparison(candidatePath)) ||
     excludedProjectAncestors.some((ancestor) =>
       normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
@@ -656,7 +667,7 @@ export const make = Effect.gen(function* () {
     normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
       normalizeForWorktreeMatch(baseDir, foldWorktreeCase),
     ) ||
-    isT3ManagedWorktree(candidatePath, worktreesDir, foldWorktreeCase);
+    isT3ManagedWorktree(candidatePath, worktreesDirs, foldWorktreeCase);
 
   const listDirectory = (directory: string) =>
     fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
@@ -1200,6 +1211,7 @@ export const make = Effect.gen(function* () {
 
   const scan: AgentSessionScanner["Service"]["scan"] = Effect.gen(function* () {
     const { candidates: raw, truncated } = yield* collectCandidates();
+    const managedWorktreesDirs = yield* resolveManagedWorktreesDirs;
     cachedCandidates = raw;
 
     // Filesystem identity merges symlinks and case aliases without collapsing
@@ -1221,7 +1233,7 @@ export const make = Effect.gen(function* () {
       const expanded = expandHomePath(candidate.cwd.trim());
       if (!path.isAbsolute(expanded)) continue;
       const resolved = path.resolve(expanded);
-      if (isExcludedProjectPath(resolved)) continue;
+      if (isExcludedProjectPath(resolved, managedWorktreesDirs)) continue;
       let key = directoryKeys.get(resolved);
       if (key === undefined) {
         const stats = yield* statOption(resolved);
@@ -1235,7 +1247,7 @@ export const make = Effect.gen(function* () {
           .pipe(Effect.orElseSucceed(() => resolved));
         // A symlink can point into the worktrees directory even when its own
         // spelling doesn't; check again with links resolved.
-        if (isExcludedProjectPath(realPath)) {
+        if (isExcludedProjectPath(realPath, managedWorktreesDirs)) {
           key = "";
         } else {
           const gitIdentity = yield* readGitIdentity(resolved);
@@ -1331,7 +1343,13 @@ export const make = Effect.gen(function* () {
   ) {
     const root = path.resolve(expandHomePath(workspaceRoot));
     const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
-    if (isExcludedProjectPath(root) || isExcludedProjectPath(realRoot)) return Stream.empty;
+    const managedWorktreesDirs = yield* resolveManagedWorktreesDirs;
+    if (
+      isExcludedProjectPath(root, managedWorktreesDirs) ||
+      isExcludedProjectPath(realRoot, managedWorktreesDirs)
+    ) {
+      return Stream.empty;
+    }
     const rootIdentity = yield* directoryIdentity(root);
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const cutoffMs = nowMs - RECENT_THREAD_WINDOW_MS;

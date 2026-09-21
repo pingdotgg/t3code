@@ -612,6 +612,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
+      ...(settings.worktreesDirectory !== DEFAULT_UNIFIED_SETTINGS.worktreesDirectory
+        ? ["Worktrees directory"]
+        : []),
       ...(settings.confirmThreadUnpin !== DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin
         ? ["Unpin confirmation"]
         : []),
@@ -651,6 +654,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sendShortcut,
       settings.followUpBehavior,
       settings.addProjectBaseDirectory,
+      settings.worktreesDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
       settings.diffFilesCollapsed,
@@ -783,6 +787,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
+      worktreesDirectory: DEFAULT_UNIFIED_SETTINGS.worktreesDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
@@ -2175,6 +2180,7 @@ export function GeneralSettingsPanel() {
   const backgroundActivityProfileOption = resolveBackgroundActivityProfileOption(settings);
   const mixedBackgroundActivity = useScopedSettingsMixed(["backgroundActivity"]);
   const mixedAddProjectBaseDirectory = useScopedSettingsMixed(["addProjectBaseDirectory"]);
+  const mixedWorktreesDirectory = useScopedSettingsMixed(["worktreesDirectory"]);
   const mixedTextGenerationModel = useScopedSettingsMixed(["textGenerationModelSelection"]);
   const backgroundActivityDescription =
     backgroundActivityProfileOption === "advanced"
@@ -2920,6 +2926,35 @@ export function GeneralSettingsPanel() {
                 updateSettings({ newWorktreesStartFromOrigin: Boolean(checked) })
               }
               aria-label="Start new worktrees from origin by default"
+            />
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["worktreesDirectory"]}
+          {...searchableSetting("worktrees-directory")}
+          description="Where new git worktrees are created. Leave empty to keep them next to this environment's data directory."
+          resetAction={
+            settings.worktreesDirectory !== DEFAULT_UNIFIED_SETTINGS.worktreesDirectory ? (
+              <SettingResetButton
+                label="worktrees directory"
+                onClick={() =>
+                  updateSettings({
+                    worktreesDirectory: DEFAULT_UNIFIED_SETTINGS.worktreesDirectory,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              size="sm"
+              className="w-full sm:w-72"
+              value={mixedWorktreesDirectory ? "" : settings.worktreesDirectory}
+              onCommit={(next) => updateSettings({ worktreesDirectory: next })}
+              placeholder={mixedWorktreesDirectory ? "Mixed" : ""}
+              spellCheck={false}
+              aria-label="Worktrees directory"
             />
           }
         />

@@ -77,6 +77,7 @@ interface ScannerTestInput {
   readonly importedWorkspaceRoots?: ReadonlyArray<string>;
   /** Base dir for the test ServerConfig; worktreesDir derives from it. */
   readonly configBaseDir?: string;
+  readonly worktreesDirectory?: string;
   readonly providerInstances?: ContractServerSettings["providerInstances"];
 }
 
@@ -89,6 +90,9 @@ const makeScannerTestLayer = (input: ScannerTestInput) =>
             claudeAgent: { homePath: input.claudeHomePath },
             codex: { homePath: input.codexHomePath },
           },
+          ...(input.worktreesDirectory === undefined
+            ? {}
+            : { worktreesDirectory: input.worktreesDirectory }),
           ...(input.providerInstances === undefined
             ? {}
             : { providerInstances: input.providerInstances }),
@@ -997,6 +1001,40 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
 
         expect(result.candidates).toEqual([]);
+      }),
+    );
+
+    it.effect("excludes sandboxes under a custom worktrees directory without .t3 in the path", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
+        const worktreesDirectory = yield* makeTempDir("t3code-custom-worktrees-");
+        const keep = yield* makeTempDir("t3code-workspace-keep-");
+        const fileSystem = yield* FileSystem.FileSystem;
+
+        const worktreeCwd = path.join(worktreesDirectory, "t3code", "wt-custom");
+        yield* fileSystem.makeDirectory(worktreeCwd, { recursive: true });
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-slug-0", "a.jsonl"),
+          contents: claudeSessionLine(worktreeCwd),
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-slug-1", "b.jsonl"),
+          contents: claudeSessionLine(keep),
+          mtimeMs: Date.parse("2026-01-02T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          configBaseDir,
+          worktreesDirectory,
+        });
+
+        expect(result.candidates.map((candidate) => candidate.path)).toEqual([keep]);
       }),
     );
 

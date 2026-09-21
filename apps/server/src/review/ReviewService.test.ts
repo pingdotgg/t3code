@@ -3,9 +3,11 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 
 import { ServerConfig } from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as ReviewService from "./ReviewService.ts";
@@ -14,6 +16,7 @@ function makeLayer(input: {
   readonly workspaceRoot: string;
   readonly baseDir: string;
   readonly detectCalls?: Array<{ readonly cwd: string }>;
+  readonly worktreesDirectory?: string;
 }) {
   return ReviewService.layer.pipe(
     Layer.provide(
@@ -29,6 +32,13 @@ function makeLayer(input: {
     ),
     Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
     Layer.provide(ServerConfig.layerTest(input.workspaceRoot, input.baseDir)),
+    Layer.provideMerge(
+      ServerSettings.layerTest(
+        input.worktreesDirectory === undefined
+          ? {}
+          : { worktreesDirectory: input.worktreesDirectory },
+      ),
+    ),
     Layer.provideMerge(NodeServices.layer),
   );
 }
@@ -128,6 +138,60 @@ describe("ReviewService", () => {
       assert.match(error.detail, /Failed to resolve a path/);
       assert.instanceOf(error.cause, PlatformError.PlatformError);
       assert.deepStrictEqual(detectCalls, []);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("allows diff preview cwd inside the default worktrees directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const worktreeCwd = path.join(baseDir, "worktrees", "repo", "branch");
+      yield* fs.makeDirectory(worktreeCwd, { recursive: true });
+      const detectCalls: Array<{ readonly cwd: string }> = [];
+
+      const result = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.getDiffPreview({ cwd: worktreeCwd });
+      }).pipe(Effect.provide(makeLayer({ workspaceRoot, baseDir, detectCalls })));
+
+      assert.strictEqual(result.cwd, worktreeCwd);
+      assert.deepStrictEqual(detectCalls, [{ cwd: worktreeCwd }]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("allows diff preview cwd in a configured worktrees directory and the old default", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const configuredRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-worktrees-" });
+      const configuredCwd = path.join(configuredRoot, "repo", "branch");
+      const defaultCwd = path.join(baseDir, "worktrees", "repo", "old-branch");
+      yield* fs.makeDirectory(configuredCwd, { recursive: true });
+      yield* fs.makeDirectory(defaultCwd, { recursive: true });
+      const detectCalls: Array<{ readonly cwd: string }> = [];
+      const layer = makeLayer({
+        workspaceRoot,
+        baseDir,
+        detectCalls,
+        worktreesDirectory: configuredRoot,
+      });
+
+      const configuredResult = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.getDiffPreview({ cwd: configuredCwd });
+      }).pipe(Effect.provide(layer));
+      const defaultResult = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.getDiffPreview({ cwd: defaultCwd });
+      }).pipe(Effect.provide(layer));
+
+      assert.strictEqual(configuredResult.cwd, configuredCwd);
+      assert.strictEqual(defaultResult.cwd, defaultCwd);
+      assert.deepStrictEqual(detectCalls, [{ cwd: configuredCwd }, { cwd: defaultCwd }]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
