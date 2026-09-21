@@ -2399,7 +2399,8 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         ) {
           yield* writeTextFile(cwd, "t3.json", `{ "worktreeSubmodules": "${fileMode}" }`);
           yield* git(cwd, ["add", "t3.json"]);
-          yield* git(cwd, ["commit", "-m", `submodules: ${fileMode}`]);
+          // Consecutive cases may reuse a file mode to test the option alone.
+          yield* git(cwd, ["commit", "--allow-empty", "-m", `submodules: ${fileMode}`]);
           const worktreePath = pathService.join(worktreesDir, branch);
           const disabled = yield* Ref.make(false);
           yield* driver.createWorktree(
@@ -2425,15 +2426,20 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           inner: true,
           nested: false,
         });
-        assert.deepEqual(yield* createWithMode("none", "none"), {
+        // A resolved setting outranks the file in both directions.
+        assert.deepEqual(yield* createWithMode("recursive", "setting-none", "none"), {
           disabled: true,
           inner: false,
           nested: false,
         });
-        // A resolved setting outranks the file.
         assert.deepEqual(yield* createWithMode("none", "setting-wins", "top-level"), {
           disabled: false,
           inner: true,
+          nested: false,
+        });
+        assert.deepEqual(yield* createWithMode("none", "none"), {
+          disabled: true,
+          inner: false,
           nested: false,
         });
       }),

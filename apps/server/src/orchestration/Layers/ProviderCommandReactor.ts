@@ -501,8 +501,11 @@ const make = Effect.gen(function* () {
     });
     // A directory deleted without `git worktree remove` leaves an admin entry
     // that makes `git worktree add` refuse the path; prune clears it.
+    const { worktreeSubmodules: submodules } = yield* projectSettingsForThread(thread.id);
     yield* gitWorkflow.pruneWorktrees({ cwd }).pipe(
-      Effect.andThen(gitWorkflow.createWorktree({ cwd, refName: branch, path: worktreePath })),
+      Effect.andThen(
+        gitWorkflow.createWorktree({ cwd, refName: branch, path: worktreePath }, { submodules }),
+      ),
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.failCause(cause)
