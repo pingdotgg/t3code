@@ -5,11 +5,12 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
+  ProviderAuthRespondInput,
   ProviderAuthResponse,
   ProviderInstanceId,
   ServerProvider,
 } from "@t3tools/contracts";
-import { useRef, useState } from "react";
+import { lazy, Suspense, useRef, useState } from "react";
 
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { ensureLocalApi } from "../../localApi";
@@ -19,6 +20,8 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { SettingsRow } from "./settingsLayout";
+
+const ProviderAuthTerminal = lazy(() => import("./ProviderAuthTerminal"));
 
 /** All actions target the provider's environment, even when the browser is on another device. */
 export function ProviderAuthenticationSection({
@@ -47,6 +50,8 @@ export function ProviderAuthenticationSection({
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
+  const terminalQueue = useRef<ProviderAuthRespondInput[]>([]);
+  const terminalSending = useRef(false);
   const auth = query.data;
   const interaction = auth?.interaction;
   const active =
@@ -122,7 +127,8 @@ export function ProviderAuthenticationSection({
           <p role="status" className="text-muted-foreground [overflow-wrap:anywhere]">
             {active || auth?.phase === "failed" || auth?.phase === "cancelled"
               ? auth?.message
-              : provider.auth.status === "authenticated"
+              : provider.auth.status === "authenticated" ||
+                  (provider.auth.status === "unknown" && auth?.phase === "succeeded")
                 ? provider.auth.email
                   ? `Signed in as ${provider.auth.email}.`
                   : "Signed in."
@@ -247,43 +253,46 @@ export function ProviderAuthenticationSection({
       }
     >
       {interaction?.type === "terminal" ? (
-        <div className="grid gap-2 py-2">
-          <pre
-            aria-label="Provider sign-in terminal"
-            className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs"
-          >
-            {interaction.output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")}
-          </pre>
-          <form
-            className="flex gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void send({ type: "terminal", data: `${values.input ?? ""}\r` }).then((sent) => {
-                if (sent) setDraft({ id: interaction.id, values: {} });
-              });
-            }}
-          >
-            <Input
-              aria-label="Terminal response"
-              type="password"
-              autoComplete="off"
-              value={values.input ?? ""}
-              disabled={disabled}
-              maxLength={4_095}
-              onChange={(event) => updateDraft("input", event.target.value)}
+        <div className="py-2">
+          <Suspense fallback={<p>Loading sign-in terminal.</p>}>
+            <ProviderAuthTerminal
+              key={`${auth?.flowId}:${interaction.id}`}
+              output={interaction.output}
+              outputOffset={interaction.outputOffset}
+              onResponse={(response) => {
+                if (readOnly || !auth?.flowId) return;
+                for (let offset = 0; offset < Math.max(1, response.data.length); offset += 4_096) {
+                  terminalQueue.current.push({
+                    instanceId,
+                    flowId: auth.flowId,
+                    interactionId: interaction.id,
+                    response: { ...response, data: response.data.slice(offset, offset + 4_096) },
+                  });
+                }
+                if (terminalSending.current) return;
+                terminalSending.current = true;
+                void (async () => {
+                  while (terminalQueue.current.length > 0) {
+                    const input = terminalQueue.current.shift()!;
+                    const result = await respond({ environmentId, input });
+                    if (result._tag !== "Success") {
+                      terminalQueue.current = [];
+                      if (!isAtomCommandInterrupted(result))
+                        setError("The provider sign-in terminal is no longer available.");
+                      break;
+                    }
+                  }
+                })()
+                  .catch(() => {
+                    terminalQueue.current = [];
+                    setError("Could not send input to the provider sign-in terminal.");
+                  })
+                  .finally(() => {
+                    terminalSending.current = false;
+                  });
+              }}
             />
-            <Button size="sm" variant="outline" type="submit" disabled={disabled}>
-              Send
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={disabled}
-              onClick={() => void send({ type: "terminal", data: "\u0003" })}
-            >
-              Interrupt
-            </Button>
-          </form>
+          </Suspense>
         </div>
       ) : null}
       {interaction?.type === "credentials" ? (

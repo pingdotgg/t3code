@@ -168,7 +168,8 @@ function ProviderAccount({
         <Text accessibilityLiveRegion="polite" className="text-sm text-foreground-muted">
           {active || state?.phase === "failed" || state?.phase === "cancelled"
             ? state.message
-            : provider.auth.status === "authenticated"
+            : provider.auth.status === "authenticated" ||
+                (provider.auth.status === "unknown" && state?.phase === "succeeded")
               ? (provider.auth.email ?? "Signed in.")
               : "Connect this provider."}
         </Text>

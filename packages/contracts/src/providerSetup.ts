@@ -38,6 +38,7 @@ export const ProviderAuthInteraction = Schema.Union([
     type: Schema.Literal("terminal"),
     id: SetupOperationId,
     output: Schema.String.check(Schema.isMaxLength(16_384)),
+    outputOffset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   }),
   Schema.Struct({
     type: Schema.Literal("credentials"),
@@ -61,6 +62,12 @@ export const ProviderAuthResponse = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("terminal"),
     data: Schema.String.check(Schema.isMaxLength(4_096)),
+    size: Schema.optionalKey(
+      Schema.Struct({
+        cols: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 500 })),
+        rows: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 })),
+      }),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("credentials"),

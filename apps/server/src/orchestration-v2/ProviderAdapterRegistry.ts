@@ -1,5 +1,6 @@
 import {
   ProviderInstanceId,
+  ProviderSetupError,
   type OrchestrationV2ProviderCapabilities,
   type ProviderDriverKind,
   type ProviderInstanceConfig,
@@ -17,7 +18,11 @@ import {
   ProviderAdapterDriverCreateError,
   type AnyProviderAdapterDriver,
 } from "./ProviderAdapterDriver.ts";
-import { ProviderAdapterV2, type ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
+import {
+  ProviderAdapterV2,
+  ProviderAdapterOpenSessionError,
+  type ProviderAdapterV2Shape,
+} from "./ProviderAdapter.ts";
 
 export class ProviderAdapterRegistryLookupError extends Schema.TaggedError<ProviderAdapterRegistryLookupError>()(
   "ProviderAdapterRegistryLookupError",
@@ -78,15 +83,53 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
     const instances = yield* ProviderInstanceRegistry;
     return ProviderAdapterRegistryV2.of({
       get: (instanceId) =>
-        instances
-          .getInstance(instanceId)
-          .pipe(
-            Effect.flatMap((instance) =>
-              instance === undefined
-                ? new ProviderAdapterRegistryLookupError({ instanceId })
-                : Effect.succeed(instance.orchestrationAdapter),
-            ),
-          ),
+        instances.getInstance(instanceId).pipe(
+          Effect.flatMap((instance) => {
+            if (instance === undefined)
+              return new ProviderAdapterRegistryLookupError({ instanceId });
+            const adapter = instance.orchestrationAdapter;
+            const auth = instance.auth;
+            if (!auth) return Effect.succeed(adapter);
+            return Effect.succeed({
+              ...adapter,
+              openSession: (input) => {
+                const open = Effect.gen(function* () {
+                  const binding = auth.credentialBinding;
+                  const related = binding
+                    ? (yield* instances.listInstances).filter(
+                        (instance) =>
+                          instance.auth?.credentialBinding?.key === binding.key &&
+                          instance.auth.credentialBinding.owner === binding.owner,
+                      )
+                    : [instance];
+                  for (const instance of related) {
+                    if (
+                      instance.auth?.isChangingCredentials &&
+                      (yield* instance.auth.isChangingCredentials)
+                    )
+                      return yield* new ProviderSetupError({
+                        instanceId,
+                        operation: "session",
+                        detail: "This provider's sign-in is changing. Try again after it finishes.",
+                      });
+                  }
+                  return yield* adapter.openSession(input);
+                });
+                return (auth.withAccess ? auth.withAccess(open) : open).pipe(
+                  Effect.mapError((cause) =>
+                    Schema.is(ProviderSetupError)(cause)
+                      ? new ProviderAdapterOpenSessionError({
+                          driver: adapter.driver,
+                          providerSessionId: input.providerSessionId,
+                          cause,
+                        })
+                      : cause,
+                  ),
+                );
+              },
+            } satisfies ProviderAdapterV2Shape);
+          }),
+        ),
       list: () =>
         instances.listInstances.pipe(
           Effect.map((available) => available.map((instance) => instance.instanceId)),

@@ -101,7 +101,7 @@ export const makeProviderAuthFlow = Effect.fn("makeProviderAuthFlow")(function* 
   });
 
   // Discovery initializes the agent without invoking login or creating a session.
-  yield* options.methods.pipe(
+  const refreshMethods = options.methods.pipe(
     Effect.flatMap((methods) =>
       SubscriptionRef.update(snapshot, (current) => ({
         ...current,
@@ -109,11 +109,24 @@ export const makeProviderAuthFlow = Effect.fn("makeProviderAuthFlow")(function* 
       })),
     ),
     Effect.catch(() => Effect.void),
-    Effect.forkIn(scope),
   );
+  yield* refreshMethods.pipe(Effect.forkIn(scope));
 
   const controller: ProviderAuthController = {
     credentialBinding: options.credentialBinding,
+    refreshMethods,
+    invalidate: Effect.suspend(() =>
+      active
+        ? Effect.void
+        : SubscriptionRef.set(snapshot, {
+            owner: null,
+            state: {
+              ...empty,
+              methods: snapshot.value.state.methods ?? [],
+              message: "This provider's shared sign-in changed.",
+            },
+          }),
+    ),
     isChangingCredentials: Effect.sync(() => operation !== "idle"),
     withAccess: (task) =>
       Effect.uninterruptibleMask((restore) =>

@@ -57,6 +57,15 @@ export const makeProviderAuthService = Effect.gen(function* () {
             )
             .map((instance) => instance.instanceId),
     );
+    if (binding) {
+      yield* Effect.forEach(
+        (yield* registry.listInstances).filter(
+          (instance) => instance.instanceId !== instanceId && affectedIds.has(instance.instanceId),
+        ),
+        (instance) => instance.auth?.invalidate ?? Effect.void,
+        { discard: true },
+      );
+    }
     const threadIds = yield* projections
       .getRecoveryThreadIds("runtime")
       .pipe(
@@ -176,7 +185,12 @@ export const makeProviderAuthService = Effect.gen(function* () {
         if (!instance?.auth?.isLogoutPrompt?.(input.text, input.hasAttachments)) {
           return false;
         }
-        yield* instance.auth.logout(stopSessions(input.instanceId));
+        yield* credentialChanges.withPermit(
+          Effect.gen(function* () {
+            yield* checkSharedBinding(input.instanceId);
+            yield* instance.auth!.logout(stopSessions(input.instanceId));
+          }),
+        );
         return true;
       },
     ),

@@ -14,6 +14,8 @@ export interface ProviderAuthController {
   /** Equal keys mean these instances share credentials on this environment. */
   readonly credentialBinding?: { readonly owner: "provider" | "t3"; readonly key: string };
   readonly isChangingCredentials?: Effect.Effect<boolean>;
+  readonly invalidate?: Effect.Effect<void>;
+  readonly refreshMethods?: Effect.Effect<void>;
   readonly withAccess?: <A, E, R>(
     task: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | ProviderSetupError, R | Scope.Scope>;
