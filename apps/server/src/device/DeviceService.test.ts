@@ -66,7 +66,7 @@ const fixture = Effect.fn("fixture")(function* (
   onBoot: Effect.Effect<void> = Effect.void,
   bootError?: string,
   failListAfterShutdown = false,
-  runtimeFailure?: NodeRuntimeUnavailableError,
+  runtimeFailure?: NodeRuntimeUnavailableError | DeviceHost.DeviceHostError,
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
   const starts: string[] = [];
@@ -599,5 +599,26 @@ it.effect("publishes update detail for the correct host", () =>
         (state) => state.hostStatuses.local?.detail === "Updating device hub from 0.9.0 to 0.10.1…",
       ),
     ).toBe(true);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("host retry exposes actionable failure without internal IDs or diagnostics", () =>
+  Effect.gen(function* () {
+    const { service, settings } = yield* fixture(
+      Effect.void,
+      undefined,
+      false,
+      new DeviceHost.DeviceHostError({
+        hostId: LOCAL_DEVICE_HOST_ID,
+        step: "probe",
+        cause: "private diagnostics",
+      }),
+    );
+    yield* Ref.update(settings, (current) => ({ ...current, enableDeviceSupport: true }));
+    const state = yield* service.retryHost(LOCAL_DEVICE_HOST_ID);
+    expect(state.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
+      status: "failed",
+      detail: "Could not connect to this host over SSH.",
+    });
   }).pipe(Effect.scoped),
 );

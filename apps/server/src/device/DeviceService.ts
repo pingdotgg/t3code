@@ -272,7 +272,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                 reason:
                   error._tag === "NodeRuntimeUnavailableError"
                     ? nodeRuntimeUnavailableMessage("Local device support")
-                    : `Device host ${error.hostId} failed while ${error.step}.`,
+                    : error.step === "probe"
+                      ? "Could not connect to this host over SSH."
+                      : `Device support failed during ${error.step}.`,
                 cause: error,
               }),
           ),
@@ -326,8 +328,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                   error._tag === "NodeRuntimeUnavailableError"
                     ? nodeRuntimeUnavailableMessage("Local device support")
                     : error._tag === "DeviceHostTimeoutError"
-                      ? `Device host ${error.hostId} did not start agent tools within ${error.timeoutMs} ms.`
-                      : `Device host ${error.hostId} failed while ${error.step}.`,
+                      ? `Agent tools did not start within ${error.timeoutMs} ms.`
+                      : error.step === "probe"
+                        ? "Could not connect to this host over SSH."
+                        : `Device support failed during ${error.step}.`,
                 cause: error,
               }),
           ),
@@ -449,7 +453,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           if (ready) yield* refresh(ready);
         }).pipe(
           Effect.catch((error) =>
-            setHostStatus(host.id, { status: "failed", detail: error.message }),
+            setHostStatus(host.id, {
+              status: "failed",
+              detail: error._tag === "DeviceHostUnavailableError" ? error.reason : error.message,
+            }),
           ),
         ),
       { concurrency: 4 },
@@ -466,7 +473,12 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           (yield* agentReadinessIfSupported(hostId)) ?? (yield* readinessIfSupported(hostId));
         if (ready) yield* refresh(ready);
       }).pipe(
-        Effect.catch((error) => setHostStatus(hostId, { status: "failed", detail: error.message })),
+        Effect.catch((error) =>
+          setHostStatus(hostId, {
+            status: "failed",
+            detail: error._tag === "DeviceHostUnavailableError" ? error.reason : error.message,
+          }),
+        ),
       );
       return (yield* SynchronizedRef.get(stateRef)).state;
     },
