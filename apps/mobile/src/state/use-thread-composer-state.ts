@@ -309,7 +309,6 @@ export function useThreadComposerState() {
           threadId: selectedThreadShell.id,
         }),
   );
-  const canSteerActiveTurn = queueWorkflow?.canPromoteToSteer === true;
   const queuedRunEdit = useQueuedRunEdit(selectedThreadKey);
   const composerDraftKey =
     selectedThreadKey === null
@@ -392,6 +391,9 @@ export function useThreadComposerState() {
     selectedThreadRuntime,
     selectedThreadVisibleTurnItems,
   ]);
+  // Compaction runs cannot take a steer, so the composer labels and sends
+  // follow-ups as queued behind it, matching the server's dispatch policy.
+  const canSteerActiveTurn = queueWorkflow?.canPromoteToSteer === true && !isCompacting;
 
   const activeWorkStartedAt = useMemo(() => {
     if (!selectedThreadShell) {

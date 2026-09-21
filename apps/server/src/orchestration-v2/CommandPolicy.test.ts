@@ -42,6 +42,7 @@ function dispatchProjection(
   const providerThreadId = ProviderThreadId.make("command-policy-provider-thread");
   const providerSessionId = ProviderSessionId.make("command-policy-provider-session");
   return {
+    messages: [],
     runs:
       sessionCapabilities === undefined
         ? []
