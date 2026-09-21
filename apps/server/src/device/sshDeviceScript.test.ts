@@ -120,7 +120,7 @@ else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1
         await NodeFSP.symlink("2147483647:exited-installer", installLock);
         await NodeFSP.writeFile(
           NodePath.join(bin, "npm"),
-          `#!${process.execPath}\nconst fs=require('node:fs');const args=process.argv.slice(2);fs.cpSync(${JSON.stringify(template)},args[args.indexOf('--prefix')+1],{recursive:true});`,
+          `#!${process.execPath}\nconst fs=require('node:fs');const args=process.argv.slice(2);if(args[0]==='--version'){console.log('10.0.0');process.exit(0);}fs.cpSync(${JSON.stringify(template)},args[args.indexOf('--prefix')+1],{recursive:true});`,
           { mode: 0o755 },
         );
         await NodeFSP.mkdir(NodePath.join(root, "hosts/one"), { recursive: true });
