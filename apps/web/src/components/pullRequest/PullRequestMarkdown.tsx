@@ -16,6 +16,7 @@ import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestM
 export const PullRequestMarkdownContext = createContext<{
   repositoryUrl: string | null;
   threadRef: ScopedThreadRef | null;
+  panelRef?: ScopedThreadRef | null;
 } | null>(null);
 
 /**
@@ -97,7 +98,9 @@ export function PullRequestMarkdown({
               text={segment.text}
               cwd={cwd}
               threadRef={resolvedThreadRef}
-              pullRequestPanelRef={resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF}
+              pullRequestPanelRef={
+                context?.panelRef ?? resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF
+              }
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
               githubMedia

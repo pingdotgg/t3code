@@ -125,6 +125,7 @@ export interface ComposerPromptEditorProps {
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
+  label?: string;
   containerClassName?: string;
   className?: string;
   placeholderClassName?: string;
@@ -145,7 +146,7 @@ export interface ComposerPromptEditorProps {
   onPageScrollKeyUp?: (key: string) => void;
   onPageScrollRelease?: () => void;
   onCitationSubmitAndSend?: () => void;
-  onPaste: React.ClipboardEventHandler<HTMLElement>;
+  onPaste?: React.ClipboardEventHandler<HTMLElement>;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }
 
@@ -574,6 +575,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     skills,
     disabled,
     placeholder,
+    label,
     containerClassName,
     className,
     placeholderClassName,
@@ -735,8 +737,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       "data-testid": "composer-editor",
       "data-composer-rich-text": richText ? "true" : "false",
       "aria-placeholder": placeholder,
+      ...(label ? { "aria-label": label } : {}),
     }),
-    [className, placeholder, richText],
+    [className, placeholder, richText, label],
   );
 
   const editor = useEditor(

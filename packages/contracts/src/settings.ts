@@ -959,6 +959,23 @@ export const BackgroundActivitySettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 
+export const IssueTrackerProjectBinding = Schema.Struct({
+  credentialId: Schema.optionalKey(TrimmedNonEmptyString),
+  repository: TrimmedNonEmptyString,
+});
+export type IssueTrackerProjectBinding = typeof IssueTrackerProjectBinding.Type;
+
+const IssueTrackerSettings = Schema.Struct({
+  projectBindings: Schema.Record(ProjectId, Schema.NullOr(IssueTrackerProjectBinding)).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+});
+
+const IssueTrackingSettings = Schema.Struct({
+  connections: Schema.Record(TrimmedNonEmptyString, IssueTrackerSettings).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 /**
  * Server settings a project may override. Every other server setting is
  * environment-wide: providers, keybindings, observability, device hosts,
@@ -1183,6 +1200,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  issueTracking: IssueTrackingSettings,
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -1474,6 +1492,11 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
+  issueTracking: Schema.optionalKey(
+    Schema.Struct({
+      connections: Schema.optionalKey(Schema.Record(TrimmedNonEmptyString, IssueTrackerSettings)),
+    }),
+  ),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({

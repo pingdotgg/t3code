@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("~/state/pullRequests", () => ({ pullRequestEnvironment: {} }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => vi.fn() }));
+vi.mock("../workItems/SavedWorkItemLinks", () => ({ SavedWorkItemLinks: () => null }));
 vi.mock("./PullRequestMarkdown", () => ({
   PullRequestMarkdown: ({ text }: { text: string }) => <p>{text}</p>,
 }));

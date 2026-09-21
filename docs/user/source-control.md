@@ -145,6 +145,68 @@ does not show its diff, so marks are made and read on web and desktop.
 - **A review cannot load:** open it on the host website while resolving connectivity, permissions,
   or rate limits.
 
+## Track Issues Beside the Work
+
+**Browse every tracker in one place**
+
+- The **Issues** page in web and desktop lists issues from the primary connected environment.
+  Browsing issues across several environments is not yet supported.
+- Filter by state, project, host, or label. Assignment, author, and mention filters depend on the host.
+- Free-text search asks hosts that support search; other results are filtered locally.
+- Supports GitHub Issues, GitLab Issues, Bitbucket Issues, Azure DevOps work items, and Linear.
+  Forgejo issues are not yet supported; open them on the host website.
+- Available actions depend on the host and your permissions.
+
+**Read and act on one without leaving T3 Code**
+
+- Open several issues as tabs in the right panel, beside a thread or on the page
+- Read the description and the conversation, comment, close (with a reason where the host
+  records one), reopen, rename, edit the body, and change labels and assignees
+- File a new issue from the **New issue** button
+- The change requests that reference an issue are listed on it, and the issues a pull request
+  cites or closes are listed on the pull request — either one opens the other beside it
+
+**Connect Linear**
+
+Open **Settings → Integrations → Issue Tracking**, then select **Add account** under **Linear
+accounts**. Enter a Linear API key, then choose an account and team for each project. You can add
+several accounts. Keys stay on the connected server.
+
+Linear supports browsing, search, comments, reactions, and agent handoffs. Create issues and change
+their title, description, state, labels, or assignees in Linear. Disconnecting a saved account removes
+its key and project connections.
+
+**Hand one to an agent**
+
+- **Solve** opens a new worktree draft with the issue attached as context. Review the prompt, then send it.
+- **Ask** and **Explain** answer a question about the issue without changing any code
+- **Add to composer** attaches the issue to a thread you are already in, rather than starting a
+  new one
+- Issue content is marked as untrusted context. Review it before sending it to an agent.
+
+Select several issues or pull requests to prepare one task or a parent task with subtasks.
+The draft contains their source links immediately; preparing it does not make a separate model call.
+The agent fetches the details when you send the prompt. **Find matches** uses your configured text
+model to suggest related work or possible duplicates.
+
+Agents can use `link_issue`, `list_thread_issues`, and `unlink_issue` to keep issues with their
+current thread. The thread header's **Linked issues** button opens each issue or removes its link.
+An issue's **Linked threads** section takes you back to those conversations, where you can follow
+their linked pull requests. These controls are available on web and desktop.
+
+### Link issues and pull requests
+
+Use **Link pull request** in an issue's related work, or **Link issue** in a pull request's related
+work. A saved link appears on both items. Open or unlink it from either side.
+
+These links are saved in T3 Code on the connected environment. They do not change the host's PR
+text or close an issue. Host-reported links remain visible separately. Use **Refresh saved links**
+to pick up changes made by an agent or another client.
+
+Agents can use `link_issue_to_pull_request`, `unlink_issue_from_pull_request`, and
+`list_issue_pull_request_links` for the current thread's project. Agent tools resolve the items
+through the host; the UI can remove a saved link without a host request.
+
 ## Linked pull requests
 
 A thread can hold several pull requests, including reviews from another repository on the same host.

@@ -8,6 +8,8 @@ import {
   ProjectId,
   ThreadId,
   type ThreadPullRequestLink,
+  type ThreadIssueLink,
+  ThreadIssueLinks,
   ThreadLinkedPullRequest,
   TurnId,
   ProviderInstanceId,
@@ -43,6 +45,7 @@ const encodeChatAttachments = Schema.encodeEffect(
 const encodeThreadLinkedPullRequest = Schema.encodeSync(
   Schema.fromJsonString(ThreadLinkedPullRequest),
 );
+const encodeThreadIssueLinks = Schema.encodeSync(Schema.fromJsonString(ThreadIssueLinks));
 const encodeMessageContext = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationMessageContext),
 );
@@ -414,6 +417,16 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           stack: null,
         },
       ];
+      const expectedIssues: ReadonlyArray<ThreadIssueLink> = [
+        {
+          provider: "github",
+          repository: "pingdotgg/t3code",
+          number: 7,
+          url: "https://github.com/pingdotgg/t3code/issues/7",
+          title: "Fix the issue",
+        },
+      ];
+      yield* sql`UPDATE projection_threads SET issue_links_json = ${encodeThreadIssueLinks(expectedIssues)} WHERE thread_id = 'thread-1'`;
 
       const snapshot = yield* snapshotQuery.getSnapshot();
 
@@ -461,6 +474,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           branch: null,
           worktreePath: null,
           pullRequests: expectedPullRequests,
+          issues: expectedIssues,
           branchPullRequest,
           latestTurn: {
             turnId: asTurnId("turn-1"),
@@ -587,6 +601,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           branch: null,
           worktreePath: null,
           pullRequests: expectedPullRequests,
+          issues: expectedIssues,
           branchPullRequest,
           latestTurn: {
             turnId: asTurnId("turn-1"),

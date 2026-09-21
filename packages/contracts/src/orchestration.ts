@@ -24,6 +24,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { IssueProviderKind } from "./issue.ts";
 import {
   PullRequestActor,
   PullRequestChecksState,
@@ -790,6 +791,25 @@ export const ThreadPullRequestLink = Schema.Struct({
 });
 export type ThreadPullRequestLink = typeof ThreadPullRequestLink.Type;
 
+export const ThreadIssueKey = Schema.Struct({
+  provider: IssueProviderKind,
+  repository: TrimmedNonEmptyString,
+  number: PositiveInt,
+});
+export type ThreadIssueKey = typeof ThreadIssueKey.Type;
+
+export const ThreadIssueLink = Schema.Struct({
+  ...ThreadIssueKey.fields,
+  url: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+});
+export type ThreadIssueLink = typeof ThreadIssueLink.Type;
+
+export const MAX_THREAD_ISSUES = 100;
+export const ThreadIssueLinks = Schema.Array(ThreadIssueLink).check(
+  Schema.isMaxLength(MAX_THREAD_ISSUES),
+);
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -806,6 +826,7 @@ export const OrchestrationThread = Schema.Struct({
   pullRequests: Schema.Array(ThreadPullRequestLink).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  issues: Schema.optional(ThreadIssueLinks),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
@@ -892,6 +913,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   pullRequests: Schema.Array(ThreadPullRequestLink).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  issues: Schema.optional(ThreadIssueLinks),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
@@ -1236,13 +1258,23 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
-}).check(
-  Schema.makeFilter(
-    (input) =>
-      !(input.title !== undefined && input.regenerateTitle === true) ||
-      "title and regenerateTitle cannot be specified together",
-  ),
-);
+  issueLink: Schema.optional(ThreadIssueLink),
+  issueUnlink: Schema.optional(ThreadIssueKey),
+})
+  .check(
+    Schema.makeFilter(
+      (input) =>
+        !(input.title !== undefined && input.regenerateTitle === true) ||
+        "title and regenerateTitle cannot be specified together",
+    ),
+  )
+  .check(
+    Schema.makeFilter(
+      (input) =>
+        !(input.issueLink !== undefined && input.issueUnlink !== undefined) ||
+        "issueLink and issueUnlink cannot be specified together",
+    ),
+  );
 
 const ThreadPullRequestLinkCommand = Schema.Struct({
   type: Schema.Literal("thread.pull-request.link"),
@@ -1845,6 +1877,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   // No longer produced; kept so persisted events from before
   // thread.pull-request-linked still decode and replay into the link table.
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+  issues: Schema.optional(ThreadIssueLinks),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   updatedAt: IsoDateTime,
 });

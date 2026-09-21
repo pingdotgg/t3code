@@ -1,5 +1,7 @@
 import type {
   EnvironmentId,
+  IssueLink,
+  WorkItemMatch,
   PullRequestComment,
   PullRequestDetailView,
   PullRequestRef,
@@ -22,6 +24,14 @@ import { cn } from "~/lib/utils";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
+import { openLinkInBrowser } from "~/lib/openIssueLink";
+import { IssueStateGlyph } from "../issue/issuePresentation";
+import {
+  useWorkItemMatches,
+  WorkItemMatchButton,
+  WorkItemMatchRows,
+} from "../workItems/WorkItemMatches";
+import { SavedWorkItemLinks } from "../workItems/SavedWorkItemLinks";
 import { Button } from "../ui/button";
 import { PullRequestEditButton } from "./PullRequestEditButton";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -41,6 +51,7 @@ import { PullRequestLabelPicker } from "./PullRequestLabelPicker";
 import { PullRequestReviewerPicker } from "./PullRequestReviewerPicker";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import {
+  LINK_ISSUES_HANDOFF_KIND,
   latestPullRequestReviewOutcomes,
   orderPullRequestComments,
   pullRequestFindingKey,
@@ -57,6 +68,7 @@ import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
+import { SummaryMetaRow as MetaRow } from "../sourceControl/SummaryMetaRow";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
 
 /** One reviewer, however a host happens to have cased their login this time. */
@@ -265,26 +277,6 @@ function CollapsedComment({
   );
 }
 
-function MetaRow({
-  icon,
-  label,
-  children,
-}: {
-  icon: ReactNode;
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="grid min-h-7 min-w-0 grid-cols-[6rem_minmax(0,1fr)] items-center gap-2 text-xs sm:min-h-6">
-      <span className="flex items-center gap-1.5 text-muted-foreground">
-        {icon}
-        {label}
-      </span>
-      <span className="min-w-0 text-foreground">{children}</span>
-    </div>
-  );
-}
-
 function Section({
   title,
   defaultOpen = true,
@@ -467,6 +459,8 @@ export function PullRequestSummaryTab({
   fixFindingLabel = "Fix in a thread",
   fixCheckLabel = "Fix",
   onFixFinding,
+  onLinkIssues,
+  onOpenLinkedIssue,
   onRefresh,
   onRefreshChecks = onRefresh,
 }: {
@@ -482,12 +476,38 @@ export function PullRequestSummaryTab({
   fixFindingLabel?: string;
   fixCheckLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
+  /**
+   * Hands one selected issue to an agent for linking. Supplied by whoever
+   * mounted the panel, because only they can open a thread for it; without one the section
+   * offers nothing, which is never a dead control.
+   */
+  onLinkIssues?: (match: WorkItemMatch) => void;
+  /**
+   * Opens one of the issues this pull request references. Supplied by whoever mounted the panel,
+   * because only they know which thread's panel a peer tab belongs beside; without one the row
+   * opens the issue on its host instead, which is never a dead control.
+   */
+  onOpenLinkedIssue?: (link: IssueLink & { readonly provider: string }) => void;
   onRefresh: () => void;
   onRefreshChecks?: () => void;
 }) {
   // Keyed by the pull request, so opening another one starts at the end of its conversation
   // rather than wherever the last one had been read back to.
   const [shown, setShown] = useState({ url: detail.url, count: COMMENT_PAGE });
+  const aiMatches = useWorkItemMatches({
+    environmentId,
+    projectId: reference.projectId,
+    source: {
+      kind: "pull-request",
+      provider: detail.provider,
+      repository: reference.repository,
+      number: reference.number,
+    },
+    version: detail.updatedAt,
+  });
+  const openAiMatch = (match: { readonly url: string }) => {
+    openLinkInBrowser(match.url);
+  };
   const [openedBotGroup, setOpenedBotGroup] = useState<string | null>(null);
   const [shownBots, setShownBots] = useState({ url: detail.url, count: COMMENT_PAGE });
   const shownBotComments = shownBots.url === detail.url ? shownBots.count : COMMENT_PAGE;
@@ -865,6 +885,75 @@ export function PullRequestSummaryTab({
             </div>
           )}
         </div>
+      </Section>
+
+      <Section
+        title="Related issues"
+        {...(detail.linkedIssues === undefined ? {} : { count: detail.linkedIssues.length })}
+        actions={
+          <WorkItemMatchButton
+            busy={aiMatches.pending === "related"}
+            disabled={aiMatches.pending !== null}
+            loaded={aiMatches.related !== undefined}
+            onClick={() => void aiMatches.find("related")}
+          />
+        }
+      >
+        {detail.linkedIssues === undefined ? (
+          <p className="text-xs text-muted-foreground">This host does not report issue links.</p>
+        ) : detail.linkedIssues.length === 0 ? (
+          <p className="text-xs text-muted-foreground">This change mentions no issue.</p>
+        ) : (
+          <div className="space-y-0.5">
+            {detail.linkedIssues.map((link) => (
+              <button
+                key={`${link.repository}#${link.number}`}
+                type="button"
+                // Beside the change rather than instead of it: reading what a change is for is
+                // reading the two together.
+                onClick={() =>
+                  onOpenLinkedIssue === undefined
+                    ? openAiMatch(link)
+                    : onOpenLinkedIssue({ ...link, provider: detail.provider })
+                }
+                className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent/60"
+              >
+                <IssueStateGlyph state={link.state} stateReason={null} className="size-3.5" />
+                <span className="min-w-0 flex-1 truncate">{link.title}</span>
+                {link.closesIssue ? (
+                  <span className="shrink-0 rounded-full border border-border/60 px-1.5 text-[10px] text-muted-foreground">
+                    closed by this
+                  </span>
+                ) : null}
+                <span className="shrink-0 text-muted-foreground tabular-nums">#{link.number}</span>
+              </button>
+            ))}
+            {detail.linkedIssuesTruncated === true ? (
+              <p className="px-2 pt-1 text-xs text-muted-foreground">
+                More linked issues exist on the host.
+              </p>
+            ) : null}
+          </div>
+        )}
+        {aiMatches.related === undefined ? null : (
+          <div className="mt-2">
+            <WorkItemMatchRows
+              matches={aiMatches.related}
+              emptyText="No likely related issues found."
+              onOpen={openAiMatch}
+              {...(detail.linkedIssues !== undefined && onLinkIssues
+                ? {
+                    onLink: onLinkIssues,
+                    linking: pendingFinding === LINK_ISSUES_HANDOFF_KIND,
+                  }
+                : {})}
+            />
+          </div>
+        )}
+        <SavedWorkItemLinks
+          environmentId={environmentId}
+          source={{ kind: "pull-request", reference, provider: detail.provider, url: detail.url }}
+        />
       </Section>
 
       <Section key={`checks:${detail.url}`} title="Checks" defaultOpen={false}>

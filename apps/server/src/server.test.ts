@@ -148,6 +148,7 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -814,6 +815,7 @@ const buildAppUnderTest = (options?: {
             listInstances: Effect.succeed([]),
             ...options?.layers?.providerInstanceRegistry,
           }),
+          Layer.mock(TextGeneration.TextGeneration)({}),
           Layer.mock(AntigravityInstallation)({
             managedDirectory: "unused-test-antigravity-runtime",
             ...options?.layers?.antigravityInstallation,
@@ -4936,6 +4938,48 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.isUndefined(response.shellRevealInFileManager);
       assert.isUndefined(response.shellRevealInFileManagerKind);
       assert.equal(response.threadResumeCompletionMarker, true);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes tracker management and rejects providers without account management", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const error = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.issueTrackersConnect]({ provider: "github", token: "unused" }).pipe(
+            Effect.flip,
+          ),
+        ),
+      );
+      assert.equal(error._tag, "IssueTrackingError");
+      if (error._tag === "IssueTrackingError") {
+        assert.equal(error.operation, "connect");
+        assert.include(error.detail, "not supported for github");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serves saved work item link reads and idempotent unlink over websocket", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const issue = { provider: "linear", url: "https://linear.app/team/issue/ABC-123" };
+      const pullRequest = { provider: "github", url: "https://github.com/team/repo/pull/7" };
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const before = yield* client[WS_METHODS.workItemsListLinks]({ source: issue });
+            yield* client[WS_METHODS.workItemsUnlink]({ issue, pullRequest });
+            const after = yield* client[WS_METHODS.workItemsListLinks]({ source: pullRequest });
+            return { before, after };
+          }),
+        ),
+      );
+      assert.deepEqual(result, {
+        before: { links: [], truncated: false },
+        after: { links: [], truncated: false },
+      });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

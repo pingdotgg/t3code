@@ -816,6 +816,41 @@ describe("ServerSettings worktree defaults", () => {
   });
 });
 
+describe("ServerSettings issue tracking", () => {
+  it("defaults tracker connections to empty", () => {
+    expect(decodeServerSettings({}).issueTracking.connections).toEqual({});
+  });
+
+  it("encodes tracker connections in server config responses", () => {
+    const settings = decodeServerSettings({ issueTracking: { connections: { linear: {} } } });
+    expect(encodeServerSettings(settings).issueTracking).toEqual({
+      connections: { linear: { projectBindings: {} } },
+    });
+  });
+
+  it("accepts account-aware Linear project bindings", () => {
+    const patch = decodeServerSettingsPatch({
+      issueTracking: {
+        connections: {
+          linear: {
+            projectBindings: {
+              project_1: { credentialId: "  user-1  ", repository: "  ENG  " },
+              project_2: null,
+              project_3: { repository: " ENV " },
+            },
+          },
+        },
+      },
+    });
+
+    expect(patch.issueTracking?.connections?.linear?.projectBindings).toEqual({
+      project_1: { credentialId: "user-1", repository: "ENG" },
+      project_2: null,
+      project_3: { repository: "ENV" },
+    });
+  });
+});
+
 describe("ServerSettings.sourceControlWritingStyle", () => {
   it("defaults all style settings for legacy configs", () => {
     const settings = decodeServerSettings({});

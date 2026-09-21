@@ -100,6 +100,53 @@ import {
   OrchestrationGetWorkflowScriptError,
 } from "./orchestration.ts";
 import {
+  IssueActionInput,
+  IssueActivity,
+  IssueAssigneeCandidateList,
+  IssueAssigneesInput,
+  IssueCommentInput,
+  IssueCommentsPageInput,
+  IssueCommentsPageResult,
+  IssueCommentUpdateInput,
+  IssueCreateInput,
+  IssueCreateResult,
+  IssueDetail,
+  IssueInvalidateInput,
+  IssueLabelCandidateList,
+  IssueLabelsInput,
+  IssueListInput,
+  IssueListResult,
+  IssueOperationError,
+  IssueReactionInput,
+  IssueRef,
+  IssueRepositoryRef,
+  IssueTemplateList,
+  IssueUnavailableError,
+  IssueUpdateInput,
+} from "./issue.ts";
+import {
+  IssueTrackingError,
+  IssueTrackerStatusInput,
+  IssueTrackerConnectInput,
+  IssueTrackerConnection,
+  IssueTrackerDisconnectInput,
+  IssueTrackerBindInput,
+} from "./issueTracking.ts";
+import {
+  WorkItemLink,
+  WorkItemLinkError,
+  WorkItemLinkInput,
+  WorkItemLinksInput,
+  WorkItemLinksResult,
+  WorkItemUnlinkInput,
+  WorkItemMatchError,
+  WorkItemMatchInput,
+  WorkItemMatchResult,
+  WorkItemTaskError,
+  WorkItemTaskInput,
+  WorkItemTaskResult,
+} from "./workItem.ts";
+import {
   ProviderUploadFeedbackError,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
@@ -416,6 +463,35 @@ export const WS_METHODS = {
   pullRequestsRequestReviewers: "pullRequests.requestReviewers",
   pullRequestsLabelCandidates: "pullRequests.labelCandidates",
   pullRequestsSetLabels: "pullRequests.setLabels",
+
+  // Issue methods
+  issuesList: "issues.list",
+  issuesDetail: "issues.detail",
+  issuesActivity: "issues.activity",
+  issuesCommentsPage: "issues.commentsPage",
+  issuesRunAction: "issues.runAction",
+  issuesComment: "issues.comment",
+  issuesUpdateComment: "issues.updateComment",
+  issuesSetReaction: "issues.setReaction",
+  issuesCreate: "issues.create",
+  issuesUpdate: "issues.update",
+  issuesSetLabels: "issues.setLabels",
+  issuesSetAssignees: "issues.setAssignees",
+  issuesLabelCandidates: "issues.labelCandidates",
+  issuesAssigneeCandidates: "issues.assigneeCandidates",
+  issuesTemplates: "issues.templates",
+  issuesInvalidate: "issues.invalidate",
+
+  // Issue tracking connection methods
+  issueTrackersStatus: "issueTrackers.status",
+  issueTrackersConnect: "issueTrackers.connect",
+  issueTrackersDisconnect: "issueTrackers.disconnect",
+  issueTrackersBind: "issueTrackers.bind",
+  workItemsGenerateTask: "workItems.generateTask",
+  workItemsFindMatches: "workItems.findMatches",
+  workItemsListLinks: "workItems.listLinks",
+  workItemsLink: "workItems.link",
+  workItemsUnlink: "workItems.unlink",
 
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
@@ -851,6 +927,172 @@ const WsPullRequestsRequestReviewersRpc = Rpc.make(WS_METHODS.pullRequestsReques
   payload: PullRequestReviewerRequestInput,
   success: Schema.Void,
   error: PullRequestRpcError,
+});
+
+const IssueRpcError = Schema.Union([
+  IssueUnavailableError,
+  IssueOperationError,
+  EnvironmentAuthorizationError,
+]);
+
+const WsIssuesListRpc = Rpc.make(WS_METHODS.issuesList, {
+  payload: IssueListInput,
+  success: IssueListResult,
+  error: IssueRpcError,
+});
+
+const WsIssuesDetailRpc = Rpc.make(WS_METHODS.issuesDetail, {
+  payload: IssueRef,
+  success: IssueDetail,
+  error: IssueRpcError,
+});
+
+const WsIssuesActivityRpc = Rpc.make(WS_METHODS.issuesActivity, {
+  payload: IssueRef,
+  success: IssueActivity,
+  error: IssueRpcError,
+});
+
+const WsIssuesCommentsPageRpc = Rpc.make(WS_METHODS.issuesCommentsPage, {
+  payload: IssueCommentsPageInput,
+  success: IssueCommentsPageResult,
+  error: IssueRpcError,
+});
+
+const WsIssuesRunActionRpc = Rpc.make(WS_METHODS.issuesRunAction, {
+  payload: IssueActionInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssuesCommentRpc = Rpc.make(WS_METHODS.issuesComment, {
+  payload: IssueCommentInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssuesUpdateCommentRpc = Rpc.make(WS_METHODS.issuesUpdateComment, {
+  payload: IssueCommentUpdateInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssuesSetReactionRpc = Rpc.make(WS_METHODS.issuesSetReaction, {
+  payload: IssueReactionInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssuesCreateRpc = Rpc.make(WS_METHODS.issuesCreate, {
+  payload: IssueCreateInput,
+  success: IssueCreateResult,
+  error: IssueRpcError,
+});
+
+const WsIssuesUpdateRpc = Rpc.make(WS_METHODS.issuesUpdate, {
+  payload: IssueUpdateInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssuesSetLabelsRpc = Rpc.make(WS_METHODS.issuesSetLabels, {
+  payload: IssueLabelsInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssuesSetAssigneesRpc = Rpc.make(WS_METHODS.issuesSetAssignees, {
+  payload: IssueAssigneesInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+/**
+ * Read on their own rather than as part of the detail: a repository's labels and the people who
+ * may be assigned are only wanted once somebody opens the menu, and reading them with every issue
+ * would spend a request per host on a list nobody looked at.
+ */
+const WsIssuesLabelCandidatesRpc = Rpc.make(WS_METHODS.issuesLabelCandidates, {
+  payload: IssueRef,
+  success: IssueLabelCandidateList,
+  error: IssueRpcError,
+});
+
+const WsIssuesAssigneeCandidatesRpc = Rpc.make(WS_METHODS.issuesAssigneeCandidates, {
+  payload: IssueRef,
+  success: IssueAssigneeCandidateList,
+  error: IssueRpcError,
+});
+
+/**
+ * What this repository offers as a starting point for a new issue, read when somebody opens the
+ * composer rather than with the listing: it is about the repository and not about any issue in it,
+ * which is why it takes a repository rather than a reference.
+ */
+const WsIssuesTemplatesRpc = Rpc.make(WS_METHODS.issuesTemplates, {
+  payload: IssueRepositoryRef,
+  success: IssueTemplateList,
+  error: IssueRpcError,
+});
+
+const WsIssuesInvalidateRpc = Rpc.make(WS_METHODS.issuesInvalidate, {
+  payload: IssueInvalidateInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssueTrackersStatusRpc = Rpc.make(WS_METHODS.issueTrackersStatus, {
+  payload: IssueTrackerStatusInput,
+  success: IssueTrackerConnection,
+  error: Schema.Union([IssueTrackingError, EnvironmentAuthorizationError]),
+});
+
+const WsIssueTrackersConnectRpc = Rpc.make(WS_METHODS.issueTrackersConnect, {
+  payload: IssueTrackerConnectInput,
+  success: IssueTrackerConnection,
+  error: Schema.Union([IssueTrackingError, EnvironmentAuthorizationError]),
+});
+
+const WsIssueTrackersDisconnectRpc = Rpc.make(WS_METHODS.issueTrackersDisconnect, {
+  payload: IssueTrackerDisconnectInput,
+  success: IssueTrackerConnection,
+  error: Schema.Union([IssueTrackingError, EnvironmentAuthorizationError]),
+});
+
+const WsIssueTrackersBindRpc = Rpc.make(WS_METHODS.issueTrackersBind, {
+  payload: IssueTrackerBindInput,
+  success: Schema.Void,
+  error: Schema.Union([IssueTrackingError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkItemsGenerateTaskRpc = Rpc.make(WS_METHODS.workItemsGenerateTask, {
+  payload: WorkItemTaskInput,
+  success: WorkItemTaskResult,
+  error: Schema.Union([WorkItemTaskError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkItemsFindMatchesRpc = Rpc.make(WS_METHODS.workItemsFindMatches, {
+  payload: WorkItemMatchInput,
+  success: WorkItemMatchResult,
+  error: Schema.Union([WorkItemMatchError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkItemsListLinksRpc = Rpc.make(WS_METHODS.workItemsListLinks, {
+  payload: WorkItemLinksInput,
+  success: WorkItemLinksResult,
+  error: Schema.Union([WorkItemLinkError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkItemsLinkRpc = Rpc.make(WS_METHODS.workItemsLink, {
+  payload: WorkItemLinkInput,
+  success: WorkItemLink,
+  error: Schema.Union([WorkItemLinkError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkItemsUnlinkRpc = Rpc.make(WS_METHODS.workItemsUnlink, {
+  payload: WorkItemUnlinkInput,
+  success: Schema.Void,
+  error: Schema.Union([WorkItemLinkError, EnvironmentAuthorizationError]),
 });
 
 /** Read when the label menu opens, for the same reason the reviewer candidates are. */
@@ -1444,6 +1686,31 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsSubscribeRefreshesRpc,
   WsPullRequestsReviewerCandidatesRpc,
   WsPullRequestsRequestReviewersRpc,
+  WsIssuesListRpc,
+  WsIssuesDetailRpc,
+  WsIssuesActivityRpc,
+  WsIssuesRunActionRpc,
+  WsIssuesCommentsPageRpc,
+  WsIssuesCommentRpc,
+  WsIssuesUpdateCommentRpc,
+  WsIssuesSetReactionRpc,
+  WsIssuesCreateRpc,
+  WsIssuesUpdateRpc,
+  WsIssuesSetLabelsRpc,
+  WsIssuesSetAssigneesRpc,
+  WsIssuesLabelCandidatesRpc,
+  WsIssuesAssigneeCandidatesRpc,
+  WsIssuesTemplatesRpc,
+  WsIssuesInvalidateRpc,
+  WsIssueTrackersStatusRpc,
+  WsIssueTrackersConnectRpc,
+  WsIssueTrackersDisconnectRpc,
+  WsIssueTrackersBindRpc,
+  WsWorkItemsGenerateTaskRpc,
+  WsWorkItemsFindMatchesRpc,
+  WsWorkItemsListLinksRpc,
+  WsWorkItemsLinkRpc,
+  WsWorkItemsUnlinkRpc,
   WsPullRequestsLabelCandidatesRpc,
   WsPullRequestsSetLabelsRpc,
   WsSourceControlLookupRepositoryRpc,

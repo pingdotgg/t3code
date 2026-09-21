@@ -3,6 +3,7 @@ import {
   MAX_SCRIPT_ID_LENGTH,
   SCRIPT_RUN_COMMAND_PATTERN,
   MessageId,
+  MAX_THREAD_ISSUES,
   ThreadLinkedPullRequest,
   UserInputRequestedPayload,
   isImportedAgentSessionMessageId,
@@ -12,6 +13,7 @@ import {
   type OrchestrationThread,
   type ThreadPullRequestKey,
   type ThreadPullRequestLink,
+  type ThreadIssueKey,
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import {
@@ -54,6 +56,10 @@ const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const decodeUserInputRequestedPayload = Schema.decodeUnknownOption(UserInputRequestedPayload);
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
+const issueKeysEqual = (left: ThreadIssueKey, right: ThreadIssueKey) =>
+  left.provider === right.provider &&
+  left.repository.toLowerCase() === right.repository.toLowerCase() &&
+  left.number === right.number;
 
 /**
  * Blocked-on-you work derived from the thread's retained activities: an
@@ -902,6 +908,28 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const issues = thread.issues ?? [];
+      const issueKey = command.issueLink ?? command.issueUnlink;
+      const issueIndex =
+        issueKey === undefined ? -1 : issues.findIndex((issue) => issueKeysEqual(issue, issueKey));
+      if (command.issueLink !== undefined && issueIndex !== -1) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `issue ${command.issueLink.repository}#${command.issueLink.number} is already linked to thread ${command.threadId}`,
+        });
+      }
+      if (command.issueLink !== undefined && issues.length >= MAX_THREAD_ISSUES) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} already has ${MAX_THREAD_ISSUES} linked issues`,
+        });
+      }
+      if (command.issueUnlink !== undefined && issueIndex === -1) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `issue ${command.issueUnlink.repository}#${command.issueUnlink.number} is not linked to thread ${command.threadId}`,
+        });
+      }
       // Old clients only see the derived single link. Unlink that request through
       // the same command path as modern clients, including stack dismissal, while
       // retaining other links they cannot see. Historical metadata events still replay unchanged.
@@ -1028,6 +1056,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
           ...(command.linkedPullRequest !== undefined
             ? { linkedPullRequest: command.linkedPullRequest }
+            : {}),
+          ...(command.issueLink !== undefined ? { issues: [...issues, command.issueLink] } : {}),
+          ...(command.issueUnlink !== undefined
+            ? { issues: issues.filter((_, index) => index !== issueIndex) }
             : {}),
           updatedAt: occurredAt,
         },

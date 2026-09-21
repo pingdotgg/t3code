@@ -24,6 +24,56 @@ import {
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
 
 describe("serverSettings helpers", () => {
+  it("replaces an account binding with an environment binding and clears it without changing other projects", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      issueTracking: {
+        connections: {
+          jira: { projectBindings: { project_3: { repository: "APP" } } },
+          linear: {
+            projectBindings: {
+              project_1: { credentialId: "user-1", repository: "ENG" },
+              project_2: { credentialId: "user-2", repository: "OPS" },
+            },
+          },
+        },
+      },
+    };
+    const environment = applyServerSettingsPatch(current, {
+      issueTracking: {
+        connections: {
+          linear: {
+            projectBindings: {
+              ["project_1" as ProjectId]: { repository: "ENV" },
+            },
+          },
+        },
+      },
+    });
+    expect(environment.issueTracking.connections.linear?.projectBindings).toEqual({
+      project_1: { repository: "ENV" },
+      project_2: current.issueTracking.connections.linear.projectBindings.project_2,
+    });
+    expect(environment.issueTracking.connections.jira).toEqual(
+      current.issueTracking.connections.jira,
+    );
+    const cleared = applyServerSettingsPatch(environment, {
+      issueTracking: {
+        connections: {
+          linear: {
+            projectBindings: {
+              ["project_1" as ProjectId]: null,
+            },
+          },
+        },
+      },
+    });
+    expect(cleared.issueTracking.connections.linear?.projectBindings).toEqual({
+      project_1: null,
+      project_2: current.issueTracking.connections.linear.projectBindings.project_2,
+    });
+  });
+
   it("changes a cleanup rule without replacing the machine's other rules", () => {
     const enabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       storageCleanup: { worktreeAfterDays: 8, worktreeOnMerge: true, logsAfterDays: 30 },

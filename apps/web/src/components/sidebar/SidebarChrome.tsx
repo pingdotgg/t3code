@@ -1,4 +1,4 @@
-import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import { ArrowLeftIcon, ChartNoAxesColumnIcon, CircleDotIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
@@ -142,13 +142,16 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             ? "usage"
             : location.pathname === "/pull-requests"
               ? "pull-requests"
-              : null,
+              : location.pathname === "/issues"
+                ? "issues"
+                : null,
   });
   const { environments } = useEnvironments();
-  // The page reads every connected server, so one of them offering pull requests is enough for
-  // the link to lead somewhere.
   const pullRequestsSupported = environments.some(
     (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
+  );
+  const issuesSupported = environments.some(
+    (environment) => environment.serverConfig?.environment.capabilities.issues === true,
   );
   const closeMobileSidebar = useCallback(() => {
     if (isMobile) {
@@ -161,6 +164,10 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
       to: "/pull-requests",
       search: readPullRequestListPreferences(),
     });
+  }, [closeMobileSidebar, navigate]);
+  const handleIssuesClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/issues", search: { involvement: "all", state: "open" } });
   }, [closeMobileSidebar, navigate]);
   const handleSettingsClick = useCallback(() => {
     closeMobileSidebar();
@@ -204,6 +211,13 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               icon={<PullRequestGlyph.pullRequest />}
               label="Pull Requests"
               onClick={handlePullRequestsClick}
+            />
+          ) : null}
+          {issuesSupported ? (
+            <SidebarUtilityItem
+              icon={<CircleDotIcon />}
+              label="Issues"
+              onClick={handleIssuesClick}
             />
           ) : null}
           <SidebarUtilityItem

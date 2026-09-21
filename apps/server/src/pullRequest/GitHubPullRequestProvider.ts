@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import type {
+  IssueLink,
   PullRequestActor,
   PullRequestCapabilities,
   PullRequestCheck,
@@ -16,6 +17,11 @@ import {
   type PullRequestProviderApi,
 } from "./PullRequestProvider.ts";
 import type { GitHubViewerAccess, GitHubWorkflowRunApproval } from "./gitHubPullRequestJson.ts";
+import {
+  mergeIssueLinks,
+  parseIssueReferences,
+  unlinkedIssueReferences,
+} from "./issueReferences.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
@@ -198,6 +204,37 @@ export const make = Effect.gen(function* () {
       cause: error,
     });
 
+  /**
+   * The issues the pull request's own words name, resolved before any of them is shown: a number
+   * in a body is not proof that an issue exists, and a dead row in this section is worse than an
+   * absent one.
+   *
+   * Weaker than what GitHub itself reported, so a lookup that fails leaves the section with the
+   * host's own links rather than taking the detail down with it. What the host already reported is
+   * dropped first, which is what keeps an ordinary `Closes #12` from costing a request at all.
+   */
+  const citedIssues = (
+    input: { readonly cwd: string; readonly repository: string; readonly host: string },
+    pullRequest: { readonly title: string; readonly body: string },
+    hostLinks: ReadonlyArray<IssueLink>,
+  ): Effect.Effect<ReadonlyArray<IssueLink>> => {
+    const references = unlinkedIssueReferences(
+      parseIssueReferences({
+        kind: "github",
+        host: input.host,
+        repository: input.repository,
+        title: pullRequest.title,
+        body: pullRequest.body,
+      }),
+      hostLinks,
+    );
+    return references.length === 0
+      ? Effect.succeed([])
+      : cli
+          .listCitedIssues({ cwd: input.cwd, host: input.host, references })
+          .pipe(Effect.orElseSucceed((): ReadonlyArray<IssueLink> => []));
+  };
+
   const provider: PullRequestProviderApi = {
     kind: "github",
     capabilities: CAPABILITIES,
@@ -311,8 +348,16 @@ export const make = Effect.gen(function* () {
       cli.getPullRequestPreview(input).pipe(Effect.mapError(fail("getChangeRequestPreview"))),
 
     getChangeRequest: (input) =>
-      cli.getPullRequestDetail(input).pipe(
-        Effect.flatMap((pullRequest) => {
+      Effect.all(
+        {
+          pullRequest: cli.getPullRequestDetail(input),
+          linkedIssues: cli
+            .listLinkedIssues(input)
+            .pipe(Effect.orElseSucceed(() => ({ links: [], truncated: false }))),
+        },
+        { concurrency: 2 },
+      ).pipe(
+        Effect.flatMap(({ pullRequest, linkedIssues }) => {
           // Fork workflows awaiting approval are absent from the normal check rollup.
           const approvals =
             pullRequest.state !== "open" || pullRequest.isCrossRepository !== true
@@ -346,8 +391,14 @@ export const make = Effect.gen(function* () {
                         onSuccess: (runs) => Effect.succeed({ runs, unavailable: false }),
                       }),
                     );
-          return approvals.pipe(
-            Effect.map((workflowApprovals): ProviderChangeRequestDetail => ({
+          return Effect.all(
+            {
+              workflowApprovals: approvals,
+              cited: citedIssues(input, pullRequest, linkedIssues.links),
+            },
+            { concurrency: 2 },
+          ).pipe(
+            Effect.map(({ workflowApprovals, cited }): ProviderChangeRequestDetail => ({
               ...pullRequest,
               author: withAvatar(pullRequest.author, new Map<string, string>(), input.host),
               checks: withWorkflowApprovals(
@@ -368,6 +419,8 @@ export const make = Effect.gen(function* () {
                 ...pullRequest.viewerAccess,
                 canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
               }),
+              linkedIssues: mergeIssueLinks(linkedIssues.links, cited),
+              linkedIssuesTruncated: linkedIssues.truncated,
               baseComparison:
                 pullRequest.comparison === null || pullRequest.comparison.behindBy === null
                   ? "unknown"

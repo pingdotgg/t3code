@@ -14,6 +14,8 @@ import {
   type PullRequestRef,
   resolveEnvironmentMachineKind,
   type ScopedThreadRef,
+  type IssueLink,
+  type WorkItemMatch,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -139,9 +141,11 @@ import {
   buildExplainPullRequestHandoff,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
+  buildLinkIssuesHandoff,
   buildResolveConflictsPrompt,
   handoffPrompt,
   handoffReviewComments,
+  LINK_ISSUES_HANDOFF_KIND,
   latestPullRequestReviewOutcomes,
   loadingPullRequestCheckoutCommand,
   isStackedPullRequestBase,
@@ -421,6 +425,7 @@ function PullRequestBaseFreshnessWarning({
 
 export function PullRequestDetailPanel({
   environmentId,
+  panelRef = null,
   shortcutsEnabled,
   getShortcutContext,
   threadRef = null,
@@ -429,12 +434,14 @@ export function PullRequestDetailPanel({
   refreshToken: forcedRefreshToken = 0,
   onActed,
   onClose,
+  onOpenLinkedIssue,
   context = "page",
   composerDraftTarget,
   onBack,
   onSelectPullRequest,
 }: {
   environmentId: EnvironmentId;
+  panelRef?: ScopedThreadRef | null;
   shortcutsEnabled: boolean;
   getShortcutContext: () => ShortcutMatchContext;
   onSelectPullRequest?: ((reference: PullRequestRef) => void) | undefined;
@@ -466,6 +473,11 @@ export function PullRequestDetailPanel({
   onActed?: (action?: PullRequestAction, phase?: "sent" | "done" | "failed") => void;
   /** Page-owned detail columns use this to clear the selected pull request. */
   onClose?: () => void;
+  /**
+   * Opens one of the issues this pull request references, as a peer tab beside it. Supplied by
+   * whoever mounted the panel, because only they know which panel the tab belongs in.
+   */
+  onOpenLinkedIssue?: (link: IssueLink & { readonly provider: string }) => void;
   /**
    * Beside a thread, the checkout affordance disappears: the panel is showing that thread's
    * own pull request, so the branch is already under the reader's feet — and checking it out
@@ -750,8 +762,12 @@ export function PullRequestDetailPanel({
   }, [detail?.autoMergeMethod, pullRequestKey]);
   const repositoryUrl = detail === null ? null : changeRequestRepositoryUrl(detail.url);
   const markdownContext = useMemo(
-    () => ({ repositoryUrl: detail?.provider === "github" ? repositoryUrl : null, threadRef }),
-    [detail?.provider, repositoryUrl, threadRef],
+    () => ({
+      repositoryUrl: detail?.provider === "github" ? repositoryUrl : null,
+      threadRef,
+      panelRef,
+    }),
+    [detail?.provider, repositoryUrl, threadRef, panelRef],
   );
   const authorProfileUrl =
     detail?.provider === "github" &&
@@ -1142,7 +1158,13 @@ export function PullRequestDetailPanel({
   };
 
   /** A question about the change, which needs a thread and nothing else. */
-  const startAsk = async (kind: string, task: ThreadTask) => {
+  const startAsk = async (
+    kind: string,
+    task: ThreadTask,
+    // What the toast says landed, for the hand-offs that need a thread and no checkout but are
+    // not questions.
+    announce?: { readonly title: string; readonly description: string },
+  ) => {
     if (!detail || handoff !== null) return;
     if (attachTarget !== null) {
       writeTaskToComposer(attachTarget, task);
@@ -1153,6 +1175,7 @@ export function PullRequestDetailPanel({
           task.prompt.length > 0
             ? "The question is in the composer — read it over, then send."
             : "The pull request is in the composer — type your question, then send.",
+        ...announce,
       });
       return;
     }
@@ -1170,13 +1193,15 @@ export function PullRequestDetailPanel({
     }
     toastManager.add({
       type: "success",
-      title: "Asked in a thread",
-      // "Ask" leaves the composer empty on purpose, so saying the question is in it would send
-      // the reader looking for something that is not there. The chips are what landed.
-      description:
-        task.prompt.length > 0
-          ? "The question is in the composer — read it over, then send."
-          : "The pull request is in the composer — type your question, then send.",
+      ...(announce ?? {
+        title: "Asked in a thread",
+        // "Ask" leaves the composer empty on purpose, so saying the question is in it would send
+        // the reader looking for something that is not there. The chips are what landed.
+        description:
+          task.prompt.length > 0
+            ? "The question is in the composer — read it over, then send."
+            : "The pull request is in the composer — type your question, then send.",
+      }),
     });
   };
 
@@ -1346,6 +1371,34 @@ export function PullRequestDetailPanel({
     });
   };
 
+  /**
+   * Links one selected issue with an agent. No checkout: the link is a line in
+   * the description, and nothing here touches code.
+   */
+  const linkIssues = (issue: WorkItemMatch) => {
+    if (!detail) return;
+    void startAsk(
+      LINK_ISSUES_HANDOFF_KIND,
+      buildLinkIssuesHandoff(
+        {
+          number: detail.number,
+          title: detail.title,
+          url: detail.url,
+          headBranch: detail.headBranch,
+          baseBranch: detail.baseBranch,
+          state: detail.state,
+          isDraft: detail.isDraft,
+        },
+        issue,
+      ),
+      {
+        title: "Task ready in the composer",
+        description: "The task is in the composer — read it over, then send.",
+      },
+    );
+  };
+
+  /** Lines the reader marked in the diff, handed to the current agent composer. */
   const addSelectionToAgent = (selection: PullRequestAgentSelectionInput) => {
     if (!detail) return;
     void startAsk(
@@ -2742,6 +2795,8 @@ export function PullRequestDetailPanel({
                   fixFindingLabel={handoffLabels.fixFinding}
                   fixCheckLabel={handoffLabels.fixCheck}
                   onFixFinding={startFixFinding}
+                  onLinkIssues={linkIssues}
+                  {...(onOpenLinkedIssue ? { onOpenLinkedIssue } : {})}
                   onRefresh={refreshDetail}
                   onRefreshChecks={refreshFromHost}
                 />

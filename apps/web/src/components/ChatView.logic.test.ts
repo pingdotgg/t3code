@@ -51,6 +51,7 @@ import {
   shouldRefocusComposerOnWindowFocus,
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
+  resolveSourceControlSurfaceCapability,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
   resolveBackgroundDraftWorkspaceOptions,
@@ -590,6 +591,20 @@ describe("artifact template composer insertion", () => {
     const prompt = "Create a document using this $artifact-template-hello-world about…";
 
     expect(codexArtifactTemplatePromptToAppend(prompt, helloWorldTemplate)).toBeNull();
+  });
+});
+
+describe("source-control surface capability", () => {
+  it.each([
+    { state: "unknown", input: { capabilityKnown: false, supported: false }, expected: "loading" },
+    {
+      state: "unsupported",
+      input: { capabilityKnown: true, supported: false },
+      expected: "unavailable",
+    },
+    { state: "supported", input: { capabilityKnown: true, supported: true }, expected: "ready" },
+  ] as const)("returns $expected for a $state capability", ({ input, expected }) => {
+    expect(resolveSourceControlSurfaceCapability(input)).toBe(expected);
   });
 });
 
@@ -1600,6 +1615,20 @@ describe("buildRunningThreadTurnInterruptInput", () => {
 });
 
 describe("deriveComposerSendState", () => {
+  it.each([
+    ["[@acme/app#12](https://github.com/acme/app/issues/12)", 0],
+    ["[PR #12](t3-context://v1/review-comment/pr12)", 1],
+  ])("keeps a source-control mention sendable: %s", (prompt, elementContextCount) => {
+    expect(
+      deriveComposerSendState({
+        prompt,
+        imageCount: 0,
+        terminalContexts: [],
+        elementContextCount,
+      }).hasSendableContent,
+    ).toBe(true);
+  });
+
   it("treats expired terminal pills as non-sendable content", () => {
     const state = deriveComposerSendState({
       prompt: "[Terminal 1 line 4](t3-context://v1/terminal/ctx-expired)",

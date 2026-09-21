@@ -431,6 +431,7 @@ export function projectEvent(
             branch: payload.branch,
             worktreePath: payload.worktreePath,
             pullRequests: [],
+            issues: [],
             branchPullRequest: null,
             latestTurn: null,
             createdAt: payload.createdAt,
@@ -629,6 +630,7 @@ export function projectEvent(
               ...(payload.branchPullRequest !== undefined
                 ? { branchPullRequest: payload.branchPullRequest }
                 : {}),
+              ...(payload.issues !== undefined ? { issues: payload.issues } : {}),
               ...legacyLinkPatch,
               updatedAt: payload.updatedAt,
             }),

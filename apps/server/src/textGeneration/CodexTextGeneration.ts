@@ -27,6 +27,8 @@ import {
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildWorkItemMatchPrompt,
+  buildWorkItemTaskPrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   normalizeCliError,
@@ -103,7 +105,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateWorkItemTask"
+      | "findWorkItemMatches",
     value: unknown,
   ): Effect.Effect<string, TextGenerationError> =>
     encodeJsonString(value).pipe(
@@ -164,7 +168,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateWorkItemTask"
+      | "findWorkItemMatches";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -417,10 +423,37 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateWorkItemTask: TextGeneration.TextGeneration["Service"]["generateWorkItemTask"] =
+    Effect.fn("CodexTextGeneration.generateWorkItemTask")(function* (input) {
+      const { prompt, outputSchema } = buildWorkItemTaskPrompt(input);
+      const generated = yield* runCodexJson({
+        operation: "generateWorkItemTask",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+      return { prompt: generated.prompt.trim() };
+    });
+
+  const findWorkItemMatches: TextGeneration.TextGeneration["Service"]["findWorkItemMatches"] =
+    Effect.fn("CodexTextGeneration.findWorkItemMatches")(function* (input) {
+      const { prompt, outputSchema } = buildWorkItemMatchPrompt(input);
+      return yield* runCodexJson({
+        operation: "findWorkItemMatches",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateWorkItemTask,
+    findWorkItemMatches,
   } satisfies TextGeneration.TextGeneration["Service"];
 });
