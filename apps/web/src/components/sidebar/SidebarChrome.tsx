@@ -1,6 +1,6 @@
 import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { memo, useCallback } from "react";
+import { memo, useCallback, useLayoutEffect, useRef } from "react";
 import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
@@ -49,7 +49,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   return (
     <SidebarHeader
       className={cn(
-        "@container/sidebar-header relative h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center px-3 py-0 md:px-0",
+        "@container/sidebar-header relative h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center py-0 pr-3 pl-[var(--sidebar-drawer-controls-inset,0.75rem)] md:pl-0",
         isElectron && "drag-region",
       )}
     >
@@ -62,41 +62,92 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           backdropVariant && resolveSidebarStageFocusRingOffsetClass(backdropVariant),
         )}
       />
-      <SidebarBrand onBackdrop={backdropVariant !== null} />
-      {pillLabel ? (
-        <Badge
-          className="relative z-10 ml-1 hidden rounded-full px-1.5 text-muted-foreground @[15rem]/sidebar-header:inline-flex"
-          data-environment-identification="pill"
-          size="sm"
-          variant="secondary"
-        >
-          {pillLabel}
-        </Badge>
-      ) : null}
+      {/* Keep one visible row: the pill wraps out before the brand hides Code. */}
+      <div className="flex h-7 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 gap-y-0 overflow-hidden">
+        <SidebarBrand onBackdrop={backdropVariant !== null} />
+        {pillLabel ? (
+          <div className="ml-1 flex h-7 shrink-0 items-center">
+            <Badge
+              className="relative z-10 rounded-full px-1.5 text-muted-foreground"
+              data-environment-identification="pill"
+              size="sm"
+              variant="secondary"
+            >
+              {pillLabel}
+            </Badge>
+          </div>
+        ) : null}
+      </div>
     </SidebarHeader>
   );
 });
 
+export function SidebarChromeIntrinsicWidthProbe({
+  onWidthChange,
+}: {
+  onWidthChange: (width: number) => void;
+}) {
+  const probeRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    const probe = probeRef.current;
+    if (!probe) return;
+
+    const update = (entry?: ResizeObserverEntry) => {
+      const width = entry?.borderBoxSize[0]?.inlineSize ?? probe.offsetWidth;
+      if (Number.isFinite(width)) onWidthChange(width);
+    };
+    update();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => update(entry));
+    observer.observe(probe, { box: "border-box" });
+    return () => observer.disconnect();
+  }, [onWidthChange]);
+
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none invisible absolute top-0 left-0 -z-10 box-content flex h-7 w-max items-center border-r border-transparent pr-3 pl-[var(--workspace-titlebar-content-left)] text-sm font-medium tracking-tight"
+      data-sidebar-header-width-probe=""
+      ref={probeRef}
+    >
+      <span className="inline-flex h-7 shrink-0 items-center">
+        <T3Wordmark aria-hidden className="h-[1cap] w-auto shrink-0" />
+      </span>
+    </div>
+  );
+}
+
 function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
+  const { isMobile, setOpenMobile } = useSidebar();
+  const closeMobileSidebar = useCallback(() => {
+    if (isMobile) setOpenMobile(false);
+  }, [isMobile, setOpenMobile]);
+
   return (
     <Link
       aria-label="Go to threads"
       className={cn(
-        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
+        "relative z-10 flex h-7 w-fit min-w-0 shrink items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset md:ml-[var(--workspace-titlebar-content-left)] [flex-basis:max-content]",
         onBackdrop ? "text-white" : "text-foreground",
       )}
+      onClick={closeMobileSidebar}
       to="/"
     >
-      {/* Center the visible capitals, without the font's ascender/descender space. */}
-      <span className="inline-flex min-w-0 items-baseline gap-1 text-sm font-medium tracking-tight">
-        <T3Wordmark aria-label="T3" className="h-[1cap] w-auto shrink-0" />
-        <span
-          className={cn(
-            "truncate [text-box:trim-both_cap_alphabetic]",
-            onBackdrop ? "text-white/70" : "text-muted-foreground",
-          )}
-        >
-          Code
+      <span className="flex h-7 min-w-0 flex-wrap content-start gap-1 overflow-hidden text-sm font-medium tracking-tight">
+        <span className="inline-flex h-7 shrink-0 items-center">
+          <T3Wordmark aria-label="T3" className="h-[1cap] w-auto shrink-0" />
+        </span>
+        {/* Center the visible capitals, without the font's ascender/descender space. */}
+        <span className="inline-flex h-7 shrink-0 items-center">
+          <span
+            className={cn(
+              "whitespace-nowrap [text-box:trim-both_cap_alphabetic]",
+              onBackdrop ? "text-white/70" : "text-muted-foreground",
+            )}
+          >
+            Code
+          </span>
         </span>
       </span>
     </Link>
