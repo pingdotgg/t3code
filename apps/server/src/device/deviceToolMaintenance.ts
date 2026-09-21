@@ -26,33 +26,51 @@ const maintenanceAlive = (pid, identity) => {
 async function withToolMaintenance(root, operation) {
   maintenanceFs.mkdirSync(root, { recursive: true });
   const lock = maintenancePath.join(root, '.maintenance-lock');
-  const token = JSON.stringify({ pid: process.pid, identity: maintenanceIdentity(process.pid), nonce: require('node:crypto').randomUUID() });
-  const readOwner = () => { try { return maintenanceFs.readFileSync(lock, 'utf8'); } catch { return null; } };
+  const nonce = require('node:crypto').randomUUID();
+  const ownerFile = process.pid + '.' + nonce + '.json';
+  const candidate = lock + '.' + nonce;
+  const holder = { pid: process.pid, identity: maintenanceIdentity(process.pid) };
   const deadline = Date.now() + 30000;
-  while (true) {
-    const candidate = lock + '.' + process.pid + '.' + require('node:crypto').randomUUID();
-    try {
-      maintenanceFs.writeFileSync(candidate, token);
-      try { maintenanceFs.linkSync(candidate, lock); }
-      finally { maintenanceFs.unlinkSync(candidate); }
-      break;
-    }
-    catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-      const previous = readOwner();
-      let holder;
-      try { holder = JSON.parse(previous); } catch {}
-      const pid = holder?.pid;
-      if (Number.isSafeInteger(pid) && pid > 0 && !maintenanceAlive(pid, holder.identity) && readOwner() === previous) {
-        try { maintenanceFs.unlinkSync(lock); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-        continue;
+  const removeEmptyLock = () => {
+    try { maintenanceFs.rmdirSync(lock); }
+    catch (error) { if (!['ENOENT', 'ENOTEMPTY', 'EEXIST', 'EPERM'].includes(error.code)) throw error; }
+  };
+  maintenanceFs.mkdirSync(candidate);
+  try {
+    maintenanceFs.writeFileSync(maintenancePath.join(candidate, ownerFile), JSON.stringify(holder));
+    while (true) {
+      try {
+        // Publish a populated directory atomically; rename cannot replace another populated lock.
+        maintenanceFs.renameSync(candidate, lock);
+        break;
       }
-      if (Date.now() >= deadline) throw Error('Device tool maintenance is locked. Retry when the other operation finishes.');
-      await new Promise(resolve => setTimeout(resolve, 50));
+      catch (error) {
+        if (!['EEXIST', 'ENOTEMPTY', 'EPERM', 'EACCES'].includes(error.code)) throw error;
+        let files = [];
+        try { files = maintenanceFs.readdirSync(lock); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+        if (files.length === 1) {
+          const previousFile = maintenancePath.join(lock, files[0]);
+          let previous;
+          try { previous = JSON.parse(maintenanceFs.readFileSync(previousFile, 'utf8')); } catch {}
+          if (Number.isSafeInteger(previous?.pid) && previous.pid > 0 && !maintenanceAlive(previous.pid, previous.identity)) {
+            // The unique filename belongs only to that owner. Never unlink a replacement owner's file.
+            try { maintenanceFs.unlinkSync(previousFile); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+          }
+        }
+        // A concurrent acquirer publishes its owner file with the directory, so this cannot remove it.
+        removeEmptyLock();
+        if (Date.now() >= deadline) throw Error('Device tool maintenance is locked. Retry when the other operation finishes.');
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
     }
+    try { return operation(); }
+    finally {
+      maintenanceFs.unlinkSync(maintenancePath.join(lock, ownerFile));
+      removeEmptyLock();
+    }
+  } finally {
+    maintenanceFs.rmSync(candidate, { recursive: true, force: true });
   }
-  try { return operation(); }
-  finally { if (readOwner() === token) maintenanceFs.unlinkSync(lock); }
 }
 function claimTool(root, name, version, pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) throw Error("Missing device tool process identity.");

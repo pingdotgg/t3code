@@ -41,7 +41,8 @@ describe.each([false, true])("device tool cleanup, flat=%s", (flat) => {
 (async () => {
   const root = ${JSON.stringify(root)};
   // Simulate a dead owner whose numeric PID was reused by this live test process.
-  maintenanceFs.writeFileSync(maintenancePath.join(root, '.maintenance-lock'), JSON.stringify({ pid: ${process.pid}, identity: 'previous-process-start' }));
+  maintenanceFs.mkdirSync(maintenancePath.join(root, '.maintenance-lock'));
+  maintenanceFs.writeFileSync(maintenancePath.join(root, '.maintenance-lock', 'stale-owner.json'), JSON.stringify({ pid: ${process.pid}, identity: 'previous-process-start' }));
   await claimTool(root, '${name}', '0.1.0', ${process.pid});
   maintenanceFs.writeFileSync(maintenancePath.join(root, '.users', '${name}@0.1.0', '${process.pid}'), 'previous-process-start');
   await claimTool(root, '${name}', '0.2.0', ${process.pid});
@@ -111,3 +112,34 @@ it.effect("maintenance failures retain safe context and the original process res
     }
   }).pipe(Effect.provide(NodePathLayer.layer)),
 );
+
+it("serializes competing maintenance processes after reclaiming a stale lock", async () => {
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-tool-contention-"));
+  try {
+    const lock = NodePath.join(root, ".maintenance-lock");
+    await NodeFSP.mkdir(lock);
+    await NodeFSP.writeFile(
+      NodePath.join(lock, "stale-owner.json"),
+      JSON.stringify({ pid: 2147483647, identity: "dead" }),
+    );
+    const script =
+      deviceToolMaintenanceScript +
+      `
+(async () => {
+  const root = ${JSON.stringify(root)};
+  const marker = maintenancePath.join(root, 'critical-section');
+  for (let attempt = 0; attempt < 8; attempt++) await withToolMaintenance(root, () => {
+    maintenanceFs.writeFileSync(marker, String(process.pid), { flag: 'wx' });
+    for (let check = 0; check < 100; check++) {
+      if (maintenanceFs.readFileSync(marker, 'utf8') !== String(process.pid)) throw Error('Overlapping maintenance');
+    }
+    maintenanceFs.unlinkSync(marker);
+  });
+})().catch(error => { console.error(error); process.exitCode = 1; });`;
+    await Promise.all(Array.from({ length: 6 }, () => exec(process.execPath, ["-e", script])));
+    await expect(NodeFSP.stat(lock)).rejects.toThrow();
+    expect(await NodeFSP.readdir(root)).toEqual([]);
+  } finally {
+    await NodeFSP.rm(root, { recursive: true, force: true });
+  }
+});
