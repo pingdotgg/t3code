@@ -7478,7 +7478,10 @@ export default function ChatView(props: ChatViewProps) {
       prompt: promptForSend,
       imageCount: composerImages.length + composerFiles.length,
       terminalContexts: composerTerminalContexts,
-      elementContextCount: composerPreviewAnnotations.length + composerReviewComments.length,
+      elementContextCount:
+        composerPreviewAnnotations.length +
+        composerReviewComments.length +
+        (deviceMentions?.length ?? 0),
     });
     const feedbackCommand =
       ctxSelectedProvider === "codex" &&
@@ -7486,7 +7489,8 @@ export default function ChatView(props: ChatViewProps) {
       composerFiles.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
-      composerReviewComments.length === 0
+      composerReviewComments.length === 0 &&
+      (deviceMentions?.length ?? 0) === 0
         ? parseCodexFeedbackCommand(trimmed)
         : null;
     if (feedbackCommand && !queuedMessage && multipleModelSelections === null) {
@@ -7613,7 +7617,8 @@ export default function ChatView(props: ChatViewProps) {
       composerFiles.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
-      composerReviewComments.length === 0
+      composerReviewComments.length === 0 &&
+      (deviceMentions?.length ?? 0) === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand && !queuedMessage && multipleModelSelections === null) {

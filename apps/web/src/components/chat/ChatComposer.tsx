@@ -2238,9 +2238,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         prompt,
         imageCount: composerImages.length + composerFiles.length,
         terminalContexts: composerTerminalContexts,
-        elementContextCount: composerPreviewAnnotations.length + composerReviewComments.length,
+        elementContextCount:
+          composerPreviewAnnotations.length +
+          composerReviewComments.length +
+          (composerDraft.deviceMentions?.length ?? 0),
       }),
     [
+      composerDraft.deviceMentions?.length,
       composerFiles.length,
       composerImages.length,
       composerPreviewAnnotations.length,
