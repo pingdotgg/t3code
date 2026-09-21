@@ -2246,9 +2246,21 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
-      const navigationResult = await settlePromise(() =>
-        handleNewThread(scopeProjectRef(input.environmentId, projectId)),
-      );
+      const projectRef = scopeProjectRef(input.environmentId, projectId);
+      const projectionResult = await settlePromise(() => waitForProject(projectRef));
+      if (projectionResult._tag === "Failure") {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Project created, but not opened",
+            description: "Reload T3 Code to open the new project.",
+          }),
+        );
+        setOpen(false);
+        return;
+      }
+
+      const navigationResult = await settlePromise(() => handleNewThread(projectRef));
       if (navigationResult._tag === "Failure") {
         const error = squashAtomCommandFailure(navigationResult);
         toastManager.add(
