@@ -208,12 +208,7 @@ import {
   type TerminalStatusIndicator,
   useLinkedThreadPullRequest,
 } from "./ThreadStatusIndicators";
-import {
-  resolveSnoozePresets,
-  snoozeWakeDescription,
-  snoozeWakeLabel,
-  type SnoozePreset,
-} from "./Sidebar.snooze";
+import { resolveSnoozePresets, snoozeWakeLabel, type SnoozePreset } from "./Sidebar.snooze";
 import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
@@ -3082,7 +3077,9 @@ export default function Sidebar() {
         settlingThreadKeysRef.current.add(threadKey);
         try {
           const navigateAfterSettle = planForwardNavigation(threadKey, opts.coSettlingKeys);
-          const result = await settleThread(threadRef);
+          const result = await settleThread(threadRef, {
+            undoToast: opts.coSettlingKeys === undefined,
+          });
           if (result._tag === "Failure") {
             // Never navigate away from a thread that did not settle.
             if (!isAtomCommandInterrupted(result)) {
@@ -3734,7 +3731,9 @@ export default function Sidebar() {
         // Snoozing the open thread moves you forward, same as settle —
         // both park the thread you're done with for now.
         const navigateAfterSnooze = planForwardNavigation(threadKey, opts.coSnoozingKeys);
-        const result = await snoozeThread(threadRef, preset.snoozedUntil);
+        const result = await snoozeThread(threadRef, preset.snoozedUntil, {
+          undoToast: opts.coSnoozingKeys === undefined,
+        });
         if (result._tag === "Failure") {
           // Never navigate away from a thread that did not snooze.
           return isAtomCommandInterrupted(result)
@@ -3780,23 +3779,9 @@ export default function Sidebar() {
           );
           return;
         }
-        if (outcome.status !== "success") return;
-        // Snooze hides the row, so the toast is the only confirmation —
-        // and the Undo is the escape hatch for a mis-click.
-        toastManager.add(
-          stackedThreadToast({
-            type: "success",
-            title: `Snoozed until ${snoozeWakeDescription(preset.snoozedUntil, new Date(), timestampFormat)}`,
-            timeout: 5_000,
-            actionProps: {
-              children: "Undo",
-              onClick: () => attemptUnsnooze(threadRef),
-            },
-          }),
-        );
       })();
     },
-    [attemptUnsnooze, performSnooze, timestampFormat],
+    [performSnooze],
   );
 
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
