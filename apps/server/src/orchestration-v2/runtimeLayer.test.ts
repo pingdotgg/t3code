@@ -1,4 +1,4 @@
-import { limitRecoveryCommand } from "./UsageLimitRecoveryService.ts";
+import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import { SourceControlProviderRegistry } from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";

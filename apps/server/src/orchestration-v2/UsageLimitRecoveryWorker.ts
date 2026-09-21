@@ -70,11 +70,11 @@ export function limitRecoveryCommand(
   };
 }
 
-const make = Effect.gen(function* () {
+const makeSweep = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const settings = yield* ServerSettings.ServerSettingsService;
-  return Effect.fn("UsageLimitRecoveryService.sweep")(function* () {
+  return Effect.fn("UsageLimitRecoveryWorker.sweep")(function* () {
     const preferences = yield* settings.getSettings;
     const snapshot = yield* projections.getShellSnapshot();
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
@@ -97,7 +97,7 @@ const make = Effect.gen(function* () {
 // so restarts need no timer restoration and disconnected clients need not run it.
 export const workerLive = Layer.effectDiscard(
   Effect.gen(function* () {
-    const sweep = yield* make;
+    const sweep = yield* makeSweep;
     yield* sweep().pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("orchestration-v2.limit-recovery.sweep-failed", { cause }),
