@@ -1,5 +1,6 @@
 import { ArrowUpIcon, ClockIcon } from "lucide-react";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
+import { useChatFindStore } from "~/chatFindStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import {
   getQuestionAnswerPreview,
@@ -174,7 +175,9 @@ import {
   type AssistantCitationRequest,
   type AssistantCitationTarget,
 } from "./AssistantCitationSource";
+import { ChatFindBar } from "./ChatFindBar";
 import { useAssistantCitationTarget, type CitationHistoryPage } from "./useAssistantCitationTarget";
+import { useChatFind } from "./useChatFind";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRowsWithState,
@@ -956,8 +959,26 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     onExpandTurn: expandCitedTurn,
     onManualNavigation,
   });
+  const findOpen = useChatFindStore((store) => store.open);
+  const findFocusRequestId = useChatFindStore((store) => store.focusRequestId);
+  const hideFind = useChatFindStore((store) => store.hide);
+  const [findQuery, setFindQuery] = useState("");
+  // Find is scoped to one thread; switching threads closes it.
+  useEffect(() => {
+    hideFind();
+  }, [hideFind, listIdentityKey]);
+  const chatFind = useChatFind({
+    enabled: findOpen,
+    query: findQuery,
+    entries: timelineEntries,
+    rows,
+    listRef,
+    viewport: timelineViewportElement,
+    onExpandTurn: expandCitedTurn,
+    onManualNavigation,
+  });
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
-  const alwaysRender = citationAlwaysRender ?? restoringAlwaysRender;
+  const alwaysRender = citationAlwaysRender ?? chatFind.alwaysRender ?? restoringAlwaysRender;
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const [minimapCurrentIndex, setMinimapCurrentIndex] = useState<number | null>(null);
   const handleAnchorReady = useCallback(
@@ -1274,6 +1295,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               viewport={timelineViewportElement}
               threadRef={citationThreadRef}
               onCite={onCiteAssistantText}
+            />
+          ) : null}
+          {findOpen ? (
+            <ChatFindBar
+              query={findQuery}
+              onQueryChange={setFindQuery}
+              matchCount={chatFind.matches.length}
+              activeIndex={chatFind.activeIndex}
+              onStep={chatFind.step}
+              onClose={hideFind}
+              focusRequestId={findFocusRequestId}
+              loadEarlier={loadEarlier}
             />
           ) : null}
           <LegendList<MessagesTimelineRow>
