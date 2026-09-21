@@ -1592,6 +1592,7 @@ const make = Effect.gen(function* () {
           !stoppedSession ||
           stoppedSession.status === "stopped" ||
           stoppedSession.status === "ready" ||
+          sessionWasReplaced(session, stoppedSession) ||
           (event.payload.turnId !== undefined &&
             stoppedSession.activeTurnId !== null &&
             stoppedSession.activeTurnId !== event.payload.turnId)
@@ -1624,9 +1625,18 @@ const make = Effect.gen(function* () {
     // Orchestration turn ids are not provider turn ids, so interrupt by session.
     yield* FiberSet.run(
       interruptFibers,
-      providerService
-        .interruptTurn({ threadId: event.payload.threadId })
-        .pipe(Effect.catchCause(recoverInterruptFailure)),
+      providerService.interruptTurn({ threadId: event.payload.threadId }).pipe(
+        Effect.catchCause(recoverInterruptFailure),
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) {
+            return Effect.interrupt;
+          }
+          return Effect.logWarning("provider command reactor failed to recover interrupt", {
+            threadId: event.payload.threadId,
+            cause: Cause.pretty(cause),
+          });
+        }),
+      ),
     );
   });
 

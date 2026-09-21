@@ -29,6 +29,7 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -175,6 +176,8 @@ describe("ProviderCommandReactor", () => {
     readonly requiresNewThreadForModelChange?: boolean;
     readonly unreadableHistory?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
+    readonly interruptRecoveryDispatchFailure?: "session" | "activity";
+    readonly logger?: Logger.Logger<unknown, void>;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly serverActivation?: Effect.Effect<void>;
     readonly beforeReadySessionDispatch?: () => Effect.Effect<void>;
@@ -427,6 +430,16 @@ describe("ProviderCommandReactor", () => {
           readThreadEvents: engine.readThreadEvents,
           getThreadReplayStats: engine.getThreadReplayStats,
           dispatch: (command) => {
+            if (
+              (input?.interruptRecoveryDispatchFailure === "session" &&
+                command.type === "thread.session.set" &&
+                command.session.status === "stopped") ||
+              (input?.interruptRecoveryDispatchFailure === "activity" &&
+                command.type === "thread.activity.append" &&
+                command.activity.kind === "provider.turn.interrupt.failed")
+            ) {
+              return Effect.die(new Error("Injected interrupt recovery dispatch failure"));
+            }
             if (command.type === "thread.title.regeneration.complete") {
               titleRegenerationCompletionDispatchAttempts += 1;
               if (
@@ -495,7 +508,11 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
-    runtime = ManagedRuntime.make(layer);
+    runtime = ManagedRuntime.make(
+      input?.logger
+        ? layer.pipe(Layer.provide(Logger.layer([input.logger], { mergeWithExisting: false })))
+        : layer,
+    );
 
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
@@ -3806,6 +3823,148 @@ describe("ProviderCommandReactor", () => {
         );
         expect(thread?.session).toMatchObject({ status: "starting", activeTurnId: null });
         expect(harness.stopSession).not.toHaveBeenCalled();
+      }),
+  );
+
+  effectIt.effect(
+    "preserves a replacement session created while interrupt recovery is stopping the old session",
+    () =>
+      Effect.gen(function* () {
+        const interruptStarted = yield* Deferred.make<void>();
+        const failInterrupt = yield* Deferred.make<void>();
+        const stopStarted = yield* Deferred.make<void>();
+        const releaseStop = yield* Deferred.make<void>();
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            stopSessionEffect: () =>
+              Deferred.succeed(stopStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseStop)),
+              ),
+            interruptTurnEffect: () =>
+              Deferred.succeed(interruptStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(failInterrupt)),
+                Effect.andThen(
+                  Effect.fail(
+                    new ProviderAdapterRequestError({
+                      provider: "codex",
+                      method: "thread.interrupt",
+                      detail: "provider session disappeared",
+                    }),
+                  ),
+                ),
+              ),
+          }),
+        );
+        const threadId = ThreadId.make("thread-1");
+        const now = "2026-01-01T00:00:00.000Z";
+        const later = "2026-01-01T00:00:01.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-set-before-late-failure"),
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: asTurnId("turn-1"),
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("cmd-turn-interrupt-late-failure"),
+          threadId,
+          createdAt: now,
+        });
+        yield* Deferred.await(interruptStarted);
+
+        yield* Deferred.succeed(failInterrupt, undefined);
+        yield* Deferred.await(stopStarted);
+        // A replacement starts while cleanup of the old session is awaiting the provider.
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-set-newer"),
+          threadId,
+          session: {
+            threadId,
+            status: "starting",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: later,
+          },
+          createdAt: later,
+        });
+        yield* Deferred.succeed(releaseStop, undefined);
+        yield* Effect.promise(() => harness.drain());
+
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === threadId,
+        );
+        expect(thread?.session).toMatchObject({ status: "starting", activeTurnId: null });
+        expect(harness.stopSession).toHaveBeenCalledTimes(1);
+      }),
+  );
+
+  effectIt.effect.each(["session", "activity"] as const)(
+    "logs a failure to persist the %s during interrupt recovery",
+    (interruptRecoveryDispatchFailure) =>
+      Effect.gen(function* () {
+        const messages: Array<unknown> = [];
+        const logger = Logger.make(({ message }) => {
+          messages.push(message);
+        });
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            logger,
+            interruptRecoveryDispatchFailure,
+            interruptTurnEffect: () =>
+              Effect.fail(
+                new ProviderAdapterRequestError({
+                  provider: "codex",
+                  method: "thread.interrupt",
+                  detail: "provider session disappeared",
+                }),
+              ),
+          }),
+        );
+        const threadId = ThreadId.make("thread-1");
+        const now = "2026-01-01T00:00:00.000Z";
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-before-recovery-dispatch-failure"),
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: asTurnId("turn-1"),
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("cmd-interrupt-with-recovery-dispatch-failure"),
+          threadId,
+          createdAt: now,
+        });
+        yield* Effect.promise(() => harness.drain());
+
+        expect(messages).toContainEqual([
+          "provider command reactor failed to recover interrupt",
+          {
+            threadId,
+            cause: expect.stringContaining("Injected interrupt recovery dispatch failure"),
+          },
+        ]);
       }),
   );
 
