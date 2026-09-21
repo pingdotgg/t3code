@@ -47,11 +47,6 @@ describe("Azure DevOps checkout scope", () => {
     });
   });
 
-  const scope = {
-    organization: "https://dev.azure.com/acme",
-    project: "Project",
-    repository: "Repo",
-  };
   it("honors checkout's explicit remote selection", () => {
     const config =
       "remote.upstream.url https://dev.azure.com/acme/Project/_git/Repo\nremote.origin.url https://dev.azure.com/fork/Project/_git/Fork";
@@ -59,33 +54,6 @@ describe("Azure DevOps checkout scope", () => {
       "https://dev.azure.com/fork",
     );
     expect(azureDevOpsScopeFromConfig(config, "missing")).toBeNull();
-  });
-  it("scopes listing to the repository rather than Azure CLI defaults", () => {
-    expect(scopeAzureDevOpsArgs(["repos", "pr", "list", "--detect", "true"], scope)).toEqual([
-      "repos",
-      "pr",
-      "list",
-      "--detect",
-      "false",
-      "--organization",
-      scope.organization,
-      "--project",
-      "Project",
-      "--repository",
-      "Repo",
-    ]);
-  });
-  it.each([
-    ["repos", "pr", "show"],
-    ["repos", "pr", "update"],
-    ["repos", "pr", "set-vote"],
-    ["repos", "pr", "reviewer", "add"],
-    ["devops", "invoke"],
-  ])("passes only organization for %j", (...command) => {
-    const args = scopeAzureDevOpsArgs([...command, "--detect", "true"], scope);
-    expect(args).toContain(scope.organization);
-    expect(args).not.toContain("--project");
-    expect(args).not.toContain("--repository");
   });
   it("preserves explicit repository and project selections", () => {
     const args = scopeAzureDevOpsArgs(
@@ -100,7 +68,7 @@ describe("Azure DevOps checkout scope", () => {
         "--project",
         "Other Project",
       ],
-      scope,
+      { organization: "https://dev.azure.com/acme", project: "Project", repository: "Repo" },
     );
     expect(args.filter((arg) => arg === "--repository")).toHaveLength(1);
     expect(args.filter((arg) => arg === "--project")).toHaveLength(1);

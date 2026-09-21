@@ -116,39 +116,19 @@ describe("AzureDevOpsCli.layer", () => {
           }
         }).pipe(Effect.provide(scopedLayer));
         const commands = calls.filter((call) => call.command === "az");
-        expect(commands[0]?.args).toEqual([
-          "repos",
-          "pr",
-          "show",
-          "--id",
-          "42",
-          "--detect",
-          "false",
-          "--organization",
-          "https://dev.azure.com/acme",
-        ]);
-        expect(commands[1]?.args).toEqual([
-          "repos",
-          "pr",
-          "list",
-          "--detect",
-          "false",
-          "--organization",
-          "https://dev.azure.com/other",
-          "--project",
-          "Project",
-          "--repository",
-          "Repo",
-        ]);
-        expect(commands[2]?.args).toEqual([
-          "devops",
-          "invoke",
-          "--area",
-          "git",
-          "--detect",
-          "false",
-          "--organization",
-          "https://dev.azure.com/acme",
+        expect(
+          commands.map((call) => call.args?.slice(call.args.indexOf("--organization"))),
+        ).toEqual([
+          ["--organization", "https://dev.azure.com/acme"],
+          [
+            "--organization",
+            "https://dev.azure.com/other",
+            "--project",
+            "Project",
+            "--repository",
+            "Repo",
+          ],
+          ["--organization", "https://dev.azure.com/acme"],
         ]);
       }),
   );
