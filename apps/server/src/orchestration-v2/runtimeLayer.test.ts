@@ -3021,6 +3021,7 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
     "resume",
     "cancel",
     "rearm",
+    "snooze-race",
     "new-message",
     "archive",
     "settle",
@@ -3153,6 +3154,31 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
         DateTime.toEpochMillis(yield* DateTime.now),
       );
       assert.isNotNull(resume);
+      if (scenario === "snooze-race") {
+        const wakeAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, { minutes: 1 }));
+        yield* orchestrator.dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make("recovery:raced-snooze"),
+          threadId,
+          snoozedUntil: wakeAt,
+        });
+        yield* orchestrator.dispatch(resume!);
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+        yield* TestClock.adjust("1 minute");
+        const current = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        const freshResume = limitRecoveryCommand(
+          current,
+          true,
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
+        assert.isNotNull(freshResume);
+        assert.notEqual(freshResume!.commandId, resume!.commandId);
+        yield* orchestrator.dispatch(freshResume!);
+        yield* orchestrator.dispatch(freshResume!);
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+      }
       if (scenario === "cancel" || scenario === "rearm")
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",

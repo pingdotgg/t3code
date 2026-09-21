@@ -3815,7 +3815,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             type: "thread.metadata-updated",
             threadId: command.threadId,
             occurredAt: now,
-            payload: projection.thread,
+            payload: {
+              ...projection.thread,
+              ...(recovery?.autoResume &&
+              recovery.requestId === command.usageLimitRecoveryRequestId &&
+              recovery.runId === command.usageLimitContinuationOfRunId &&
+              projection.thread.snoozedUntil != null &&
+              DateTime.toEpochMillis(projection.thread.snoozedUntil) > DateTime.toEpochMillis(now)
+                ? { limitRecovery: { ...recovery, requestId: command.commandId } }
+                : {}),
+            },
           });
           return;
         }
