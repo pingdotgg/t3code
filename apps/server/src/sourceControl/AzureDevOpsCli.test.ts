@@ -83,7 +83,10 @@ describe("AzureDevOpsCli.layer", () => {
       }).pipe(Effect.provide(scopedLayer));
       expect(azArgs[0]).toContain("https://dev.azure.com/target");
       expect(azArgs[0]).not.toContain("https://dev.azure.com/unrelated");
-    }).pipe(Effect.scoped, Effect.provide(VcsProcess.layer), Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(VcsProcess.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+    ),
   );
 
   it.effect("does not inspect Git for account queries or explicitly scoped commands", () =>
