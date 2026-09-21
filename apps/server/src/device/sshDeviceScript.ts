@@ -164,7 +164,6 @@ async function install(name, version, entry) {
   }
   if (!ios && !android) throw Error(platforms.map(p => p.reason).join(' '));
   fs.mkdirSync(state, { recursive: true, mode: 0o700 });
-  await claimTool(path.join(root, 'tools'), 'expo-device-hub', hubVersion, process.pid);
   const hubEntry = await install('expo-device-hub', hubVersion, 'dist/server/cli.mjs');
   let hub = read(hubFile);
   if (!hub || hub.owner !== owner || hub.entryPath !== hubEntry || !await healthy(hub.port, '/readyz')) {
@@ -193,10 +192,8 @@ async function install(name, version, entry) {
       if (attempt === 4) throw Error('Device hub exited before becoming ready. See ' + path.join(state, 'hub.log'));
     }
   }
-  await claimTool(path.join(root, 'tools'), 'expo-device-hub', hubVersion, hub.pid);
   let agentResult = {};
   if (mode === 'agent-start') {
-  await claimTool(path.join(root, 'tools'), 'agent-device', agentVersion, process.pid);
   const agentEntry = await install('agent-device', agentVersion, 'bin/agent-device.mjs');
   const previousAgent = read(agentFile)?.entryPath;
   let daemon = read(daemonFile);
@@ -215,7 +212,6 @@ async function install(name, version, entry) {
   }
   if (!daemon || !await healthy(daemon.httpPort, '/health')) throw Error('agent-device daemon did not become ready in ' + state);
   write(agentFile, { entryPath: agentEntry });
-  await claimTool(path.join(root, 'tools'), 'agent-device', agentVersion, daemon.pid);
   agentResult = { daemonPort: daemon.httpPort, token: daemon.token, entryPath: agentEntry };
   }
   const vendor = path.resolve(path.dirname(hubEntry), '../../vendor/serve-sim/dist');

@@ -1,4 +1,4 @@
-import { claimLocalDeviceTool, pruneLocalDeviceTools } from "./deviceToolMaintenance.ts";
+import { pruneLocalDeviceTools } from "./deviceToolMaintenance.ts";
 import { deviceToolInstallMessage } from "@t3tools/contracts";
 /**
  * The device host that is this machine.
@@ -579,14 +579,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       const inventory = yield* summary;
       yield* onPhase("installing", deviceToolInstallMessage("device hub", inventory.tools?.hub));
     }
-    yield* claimLocalDeviceTool(config.baseDir, nodePath, "hub").pipe(
-      Effect.provideService(Path.Path, path),
-      Effect.provideService(ProcessRunner.ProcessRunner, runner),
-      Effect.mapError(
-        (cause) =>
-          new DeviceHost.DeviceHostError({ hostId, step: "reserving device hub install", cause }),
-      ),
-    );
     const hubTool = yield* ensureDeviceHub(config.baseDir).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
@@ -653,18 +645,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
             deviceToolInstallMessage("agent tools", inventory.tools?.agent),
           );
         }
-        yield* claimLocalDeviceTool(config.baseDir, running.hub.nodePath, "agent").pipe(
-          Effect.provideService(Path.Path, path),
-          Effect.provideService(ProcessRunner.ProcessRunner, runner),
-          Effect.mapError(
-            (cause) =>
-              new DeviceHost.DeviceHostError({
-                hostId,
-                step: "reserving agent tools install",
-                cause,
-              }),
-          ),
-        );
         const agentTool = yield* ensureAgentDevice(config.baseDir).pipe(
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),

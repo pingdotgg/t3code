@@ -1,4 +1,3 @@
-import { claimLocalDeviceTool } from "./deviceToolMaintenance.ts";
 /**
  * Device discovery, per-thread device sessions, and the state stream clients
  * render the Device panel from.
@@ -1112,11 +1111,7 @@ export const make = Effect.gen(function* () {
   return {
     ...service,
     agentCli: resolveNodeExecutable("Device automation").pipe(
-      Effect.flatMap((nodePath) =>
-        claimLocalDeviceTool(config.baseDir, nodePath, "agent").pipe(
-          Effect.andThen(ensureAgentDevice(config.baseDir)),
-        ),
-      ),
+      Effect.andThen(ensureAgentDevice(config.baseDir)),
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
       Effect.provideService(ProcessRunner.ProcessRunner, runner),

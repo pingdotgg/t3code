@@ -5,22 +5,12 @@ import * as Path from "effect/Path";
 import * as ProcessRunner from "../processRunner.ts";
 import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
-/** Shared with the SSH bootstrap. Leases live outside installs, which npm replaces atomically. */
+/** Shared with the SSH bootstrap. Cleanup runs only after successful startup. */
 export const deviceToolMaintenanceScript = String.raw`
 const maintenanceFs = require('node:fs');
 const maintenancePath = require('node:path');
-const maintenanceIdentity = pid => {
-  const result = process.platform === 'win32'
-    ? require('node:child_process').spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '(Get-Process -Id ' + pid + ').StartTime.ToUniversalTime().Ticks'], { encoding: 'utf8', timeout: 10000 })
-    : require('node:child_process').spawnSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8', timeout: 10000, env: { ...process.env, TZ: 'UTC', LC_ALL: 'C' } });
-  return result.status === 0 ? result.stdout.trim() || null : null;
-};
-const maintenanceAlive = (pid, identity) => {
-  try {
-    process.kill(pid, 0);
-    const current = identity ? maintenanceIdentity(pid) : null;
-    return !identity || !current || identity === current;
-  }
+const maintenanceAlive = pid => {
+  try { process.kill(pid, 0); return true; }
   catch (error) { return error.code !== 'ESRCH'; }
 };
 async function withToolMaintenance(root, operation) {
@@ -29,7 +19,7 @@ async function withToolMaintenance(root, operation) {
   const nonce = require('node:crypto').randomUUID();
   const ownerFile = process.pid + '.' + nonce + '.json';
   const candidate = lock + '.' + nonce;
-  const holder = { pid: process.pid, identity: maintenanceIdentity(process.pid) };
+  const holder = { pid: process.pid };
   const deadline = Date.now() + 30000;
   const removeEmptyLock = () => {
     try { maintenanceFs.rmdirSync(lock); }
@@ -52,7 +42,7 @@ async function withToolMaintenance(root, operation) {
           const previousFile = maintenancePath.join(lock, files[0]);
           let previous;
           try { previous = JSON.parse(maintenanceFs.readFileSync(previousFile, 'utf8')); } catch {}
-          if (Number.isSafeInteger(previous?.pid) && previous.pid > 0 && !maintenanceAlive(previous.pid, previous.identity)) {
+          if (Number.isSafeInteger(previous?.pid) && previous.pid > 0 && !maintenanceAlive(previous.pid)) {
             // The unique filename belongs only to that owner. Never unlink a replacement owner's file.
             try { maintenanceFs.unlinkSync(previousFile); } catch (error) { if (error.code !== 'ENOENT') throw error; }
           }
@@ -72,17 +62,9 @@ async function withToolMaintenance(root, operation) {
     maintenanceFs.rmSync(candidate, { recursive: true, force: true });
   }
 }
-function claimTool(root, name, version, pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) throw Error("Missing device tool process identity.");
-  return withToolMaintenance(root, () => {
-    const users = maintenancePath.join(root, '.users', name + '@' + version);
-    maintenanceFs.mkdirSync(users, { recursive: true });
-    maintenanceFs.writeFileSync(maintenancePath.join(users, String(pid)), maintenanceIdentity(pid) || '');
-  });
-}
 function pruneTools(root, specs, flat) {
   return withToolMaintenance(root, () => {
-    // Also protect helpers launched by older T3 releases that predate usage records.
+    // Keep installs used by any running helper, including older T3 releases.
     const scan = process.platform === 'win32'
       ? require('node:child_process').spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine'], { encoding: 'utf8', timeout: 10000 })
       : require('node:child_process').spawnSync('ps', ['-ax', '-o', 'command='], { encoding: 'utf8', timeout: 10000 });
@@ -106,20 +88,8 @@ function pruneTools(root, specs, flat) {
       if (!completed.some(value => value.version === required)) continue;
       const previous = completed.filter(value => value.version !== required).sort((a, b) => b.modified - a.modified || b.version.localeCompare(a.version, 'en', { numeric: true }))[0]?.version;
       for (const { version, directory } of completed) {
-        const users = maintenancePath.join(root, '.users', name + '@' + version);
-        // Older releases did not register users. Never guess whether one of those installs is still in use.
-        if (!maintenanceFs.existsSync(users)) continue;
-        const leases = maintenanceFs.readdirSync(users);
-        let inUse = false;
-        for (const lease of leases) {
-          const file = maintenancePath.join(users, lease);
-          const identity = maintenanceFs.readFileSync(file, 'utf8');
-          if (!/^[1-9][0-9]*$/.test(lease) || maintenanceAlive(Number(lease), identity)) inUse = true;
-          else maintenanceFs.rmSync(file, { force: true });
-        }
-        if (version === required || version === previous || scan.stdout.includes(directory + maintenancePath.sep) || inUse) continue;
+        if (version === required || version === previous || scan.stdout.includes(directory + maintenancePath.sep)) continue;
         maintenanceFs.rmSync(directory, { recursive: true, force: true });
-        maintenanceFs.rmSync(users, { recursive: true, force: true });
       }
     }
   });
@@ -129,7 +99,7 @@ function pruneTools(root, specs, flat) {
 class DeviceToolMaintenanceError extends Schema.TaggedError<DeviceToolMaintenanceError>()(
   "DeviceToolMaintenanceError",
   {
-    operation: Schema.Literals(["claim", "prune"]),
+    operation: Schema.Literal("prune"),
     tool: Schema.Literals(["hub", "agent"]),
     exitCode: Schema.NullOr(Schema.Int),
     cause: Schema.Defect(),
@@ -143,7 +113,7 @@ class DeviceToolMaintenanceError extends Schema.TaggedError<DeviceToolMaintenanc
 const runMaintenance = Effect.fn("DeviceToolchain.maintenance")(function* (
   nodePath: string,
   script: string,
-  operation: "claim" | "prune",
+  operation: "prune",
   tool: "hub" | "agent",
 ) {
   const runner = yield* ProcessRunner.ProcessRunner;
@@ -161,24 +131,6 @@ const runMaintenance = Effect.fn("DeviceToolchain.maintenance")(function* (
     return yield* Effect.fail(
       new DeviceToolMaintenanceError({ operation, tool, exitCode: result.code, cause: result }),
     );
-});
-
-export const claimLocalDeviceTool = Effect.fn("DeviceToolchain.claim")(function* (
-  baseDir: string,
-  nodePath: string,
-  tool: "hub" | "agent",
-) {
-  const path = yield* Path.Path;
-  const [name, version] =
-    tool === "hub"
-      ? ["expo-device-hub", DEVICE_HUB_VERSION]
-      : ["agent-device", AGENT_DEVICE_VERSION];
-  yield* runMaintenance(
-    nodePath,
-    `claimTool(${JSON.stringify(path.join(baseDir, "tools"))}, ${JSON.stringify(name)}, ${JSON.stringify(version)}, ${process.pid})`,
-    "claim",
-    tool,
-  );
 });
 
 export const pruneLocalDeviceTools = Effect.fn("DeviceToolchain.prune")(function* (
