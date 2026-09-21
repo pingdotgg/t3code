@@ -1513,7 +1513,11 @@ export function PullRequestDetailPanel({
   // The pull request number carries this state in the overview and the right-panel tab mirrors
   // it. Conflicts take the action slot while they need a person, but do not change the PR state.
   const statePresentation = detail
-    ? resolvePullRequestState({ state: detail.state, isDraft: detail.isDraft })
+    ? resolvePullRequestState({
+        state: detail.state,
+        isDraft: detail.isDraft,
+        inMergeQueue: detail.inMergeQueue,
+      })
     : null;
   const checksSummary = checksStale
     ? checksState === null

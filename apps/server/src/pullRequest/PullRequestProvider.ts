@@ -79,6 +79,7 @@ export interface ProviderChangeRequest {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  readonly inMergeQueue?: boolean;
   readonly mergeability: PullRequestMergeability;
   readonly additions: number;
   readonly deletions: number;
@@ -105,6 +106,7 @@ export interface ProviderChangeRequestSummary {
   readonly state: PullRequestState;
   /** Present when the host says an open pull request is still a draft. */
   readonly isDraft?: boolean;
+  readonly inMergeQueue?: boolean;
   readonly closedAt?: string | null;
   readonly mergedAt?: string | null;
   readonly updatedAt: string;

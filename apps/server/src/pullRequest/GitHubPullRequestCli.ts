@@ -46,7 +46,6 @@ import {
   decodePullRequestActivityJson,
   decodePullRequestDetailJson,
   decodePullRequestCoreJson,
-  PULL_REQUEST_CORE_GRAPHQL_QUERY,
   type GitHubPullRequestCore,
   decodePullRequestPreviewJson,
   PULL_REQUEST_PREVIEW_GRAPHQL_QUERY,
@@ -56,6 +55,7 @@ import {
   decodePullRequestListJson,
   decodePullRequestNodeIdJson,
   decodePullRequestSearchJson,
+  decodePullRequestSummaryJson,
   decodePullRequestStacksJson,
   decodePullRequestStatsJson,
   decodeReactionSubjectScopeJson,
@@ -71,7 +71,9 @@ import {
   decodePullRequestStackMembershipsJson,
   encodeGraphQlRequestJson,
   pullRequestSearchGraphQlQuery,
+  pullRequestSummaryGraphQlQuery,
   PULL_REQUEST_SEARCH_MAX_ROWS,
+  pullRequestCoreGraphQlQuery,
   PULL_REQUEST_ACTIVITY_JSON_FIELDS,
   BASE_COMPARISON_GRAPHQL_QUERY,
   decodeBaseComparisonJson,
@@ -1566,7 +1568,7 @@ export const make = Effect.gen(function* () {
             ["-F", `number=${input.number}`],
             ["-f", `headRef=refs/pull/${input.number}/head`],
           ],
-          query: PULL_REQUEST_CORE_GRAPHQL_QUERY,
+          query: pullRequestCoreGraphQlQuery(input.host === "github.com"),
           decode: decodePullRequestCoreJson,
         }),
       ),
@@ -1844,8 +1846,8 @@ export const make = Effect.gen(function* () {
               }).pipe(
                 Effect.map((memberships) =>
                   chunk.map((item, index) => {
-                    const stack = memberships.get(index);
-                    return stack === undefined ? item : { ...item, stack };
+                    const metadata = memberships.get(index);
+                    return metadata === undefined ? item : { ...item, ...metadata };
                   }),
                 ),
                 // Optional badges must not take down a listing that already read successfully.
@@ -1885,7 +1887,11 @@ export const make = Effect.gen(function* () {
         operation: "searchPullRequests",
         // The reader's own words are in the query, so it travels over stdin rather than in argv.
         privateVariables: { q: query },
-        query: pullRequestSearchGraphQlQuery(rows, input.host === "github.com"),
+        query: pullRequestSearchGraphQlQuery(
+          rows,
+          input.host === "github.com",
+          input.host === "github.com",
+        ),
         decode: decodePullRequestSearchJson,
       }).pipe(
         Effect.map((batch) => ({
@@ -1933,56 +1939,40 @@ export const make = Effect.gen(function* () {
       ).pipe(Effect.map((results) => results.flat()));
     },
 
-    // One `gh pr view` either way; asking for the detail fields costs nothing extra and hands
-    // the thread overview its author, diff stat, review decision and checks in the same read.
     getPullRequestSummary: (input) =>
-      github
-        .execute({
-          cwd: input.cwd,
-          args: [
-            "pr",
-            "view",
-            String(input.number),
-            ...repositoryArgs(input),
-            "--json",
-            PULL_REQUEST_DETAIL_JSON_FIELDS,
-          ],
-        })
-        .pipe(
-          Effect.flatMap((result) => {
-            const decoded = decodePullRequestDetailJson(result.stdout.trim());
-            if (!Result.isSuccess(decoded)) {
-              return Effect.fail(
-                new GitHubPullRequestReadError({
-                  command: "gh",
-                  cwd: input.cwd,
-                  operation: "getPullRequestSummary",
-                  cause: decoded.failure,
-                }),
-              );
-            }
-            const detail = decoded.success;
-            return Effect.succeed({
-              number: detail.number,
-              title: detail.title,
-              url: detail.url,
-              headBranch: detail.headBranch,
-              baseBranch: detail.baseBranch,
-              state: detail.state,
-              updatedAt: detail.updatedAt,
-              closedAt: detail.closedAt ?? null,
-              mergedAt: detail.mergedAt ?? null,
-              isDraft: detail.isDraft,
-              author: detail.author,
-              additions: detail.additions,
-              deletions: detail.deletions,
-              changedFiles: detail.changedFiles,
-              reviewDecision: detail.reviewDecision,
-              checksState: detail.checksState,
-              mergeability: detail.mergeability,
-            });
-          }),
-        ),
+      graphqlRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "getPullRequestSummary",
+        variables: [
+          ["-f", `owner=${parseRepositorySelector(input.repository).owner}`],
+          ["-f", `name=${parseRepositorySelector(input.repository).name}`],
+          ["-F", `number=${input.number}`],
+        ],
+        query: pullRequestSummaryGraphQlQuery(input.host === "github.com"),
+        decode: decodePullRequestSummaryJson,
+      }).pipe(
+        Effect.map((detail) => ({
+          number: detail.number,
+          title: detail.title,
+          url: detail.url,
+          headBranch: detail.headBranch,
+          baseBranch: detail.baseBranch,
+          state: detail.state,
+          updatedAt: detail.updatedAt,
+          closedAt: detail.closedAt ?? null,
+          mergedAt: detail.mergedAt ?? null,
+          isDraft: detail.isDraft,
+          ...(detail.inMergeQueue === undefined ? {} : { inMergeQueue: detail.inMergeQueue }),
+          author: detail.author,
+          additions: detail.additions,
+          deletions: detail.deletions,
+          changedFiles: detail.changedFiles,
+          reviewDecision: detail.reviewDecision,
+          checksState: detail.checksState,
+          mergeability: detail.mergeability,
+        })),
+      ),
 
     getPullRequestDetail,
     getPullRequestPreview: (input) => {

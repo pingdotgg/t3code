@@ -739,6 +739,7 @@ export const ThreadPullRequestSnapshot = Schema.Struct({
   headBranch: TrimmedNonEmptyString,
   baseBranch: TrimmedNonEmptyString,
   isDraft: Schema.Boolean,
+  inMergeQueue: Schema.optional(Schema.Boolean),
   updatedAt: Schema.NullOr(IsoDateTime),
   syncedAt: IsoDateTime,
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),

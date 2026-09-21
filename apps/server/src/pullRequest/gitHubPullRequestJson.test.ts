@@ -15,6 +15,7 @@ import {
   decodePullRequestListJson,
   decodePullRequestNodeIdJson,
   decodePullRequestSearchJson,
+  decodePullRequestSummaryJson,
   decodePullRequestStacksJson,
   decodeLabelCandidatesJson,
   decodeReviewerCandidatesJson,
@@ -25,6 +26,8 @@ import {
   reviewThreadConversation,
   REVIEW_THREADS_GRAPHQL_QUERY,
   pullRequestSearchGraphQlQuery,
+  pullRequestSummaryGraphQlQuery,
+  pullRequestCoreGraphQlQuery,
 } from "./gitHubPullRequestJson.ts";
 
 function listJson(entries: ReadonlyArray<Record<string, unknown>>): string {
@@ -49,6 +52,15 @@ function expectSuccess<A>(result: Result.Result<A, unknown>): A {
 }
 
 describe("pull request list decoding", () => {
+  it("keeps GitHub merge queue membership on list items", () => {
+    const batch = expectSuccess(
+      decodePullRequestListJson(
+        listJson([{ isInMergeQueue: true }, { isInMergeQueue: false }, {}]),
+      ),
+    );
+    expect(batch.items.map((entry) => entry.inMergeQueue)).toEqual([true, undefined, undefined]);
+  });
+
   it("treats a merge timestamp as merged even when the state still says closed", () => {
     const [entry] = expectSuccess(
       decodePullRequestListJson(listJson([{ state: "CLOSED", mergedAt: "2026-07-03T00:00:00Z" }])),
@@ -335,6 +347,19 @@ describe("pull request detail decoding", () => {
     expect(armed({}).autoMergeEnabled).toBeUndefined();
   });
 
+  it("keeps GitHub merge queue membership on detail", () => {
+    const raw = JSON.parse(detailJson) as Record<string, unknown>;
+    expect(
+      expectSuccess(decodePullRequestDetailJson(JSON.stringify({ ...raw, isInMergeQueue: true })))
+        .inMergeQueue,
+    ).toBe(true);
+  });
+
+  it("leaves merge queue fields out of GitHub Enterprise detail queries", () => {
+    expect(pullRequestCoreGraphQlQuery(true)).toContain("isInMergeQueue");
+    expect(pullRequestCoreGraphQlQuery(false)).not.toContain("isInMergeQueue");
+  });
+
   it("shows a re-running check once, as the run that is happening now", () => {
     // What `statusCheckRollup` reports while a workflow is being re-run: the same check twice,
     // the finished run and the one that replaced it, with no id to tell them apart.
@@ -440,6 +465,54 @@ describe("pull request detail decoding", () => {
       ),
     );
     expect(detail.comments.map((comment) => comment.id)).toEqual(["c1"]);
+  });
+});
+
+describe("pull request summary decoding", () => {
+  it("keeps queue, review, and check state in the narrow summary", () => {
+    const summary = expectSuccess(
+      decodePullRequestSummaryJson(
+        JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                number: 7,
+                title: "Summary",
+                url: "https://github.com/acme/web/pull/7",
+                headRefName: "feature",
+                baseRefName: "main",
+                state: "OPEN",
+                isDraft: false,
+                isInMergeQueue: true,
+                reviewDecision: "APPROVED",
+                createdAt: "2026-07-01T00:00:00Z",
+                updatedAt: "2026-07-02T00:00:00Z",
+                commits: {
+                  nodes: [
+                    {
+                      commit: {
+                        statusCheckRollup: {
+                          contexts: {
+                            nodes: [{ name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }],
+                          },
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+    expect(summary).toMatchObject({
+      inMergeQueue: true,
+      reviewDecision: "approved",
+      checksState: "passing",
+    });
+    expect(pullRequestSummaryGraphQlQuery(true)).toContain("isInMergeQueue");
+    expect(pullRequestSummaryGraphQlQuery(false)).not.toContain("isInMergeQueue");
   });
 });
 
@@ -1869,7 +1942,27 @@ describe("pull request stack membership batches", () => {
         }),
       ),
     );
-    expect([...memberships]).toEqual([[0, { number: 3, size: 2, base: "main", position: 1 }]]);
+    expect([...memberships]).toEqual([
+      [
+        0,
+        {
+          stack: { number: 3, size: 2, base: "main", position: 1 },
+        },
+      ],
+    ]);
+  });
+
+  it("keeps merge queue membership without requiring stack membership", () => {
+    const memberships = expectSuccess(
+      decodePullRequestStackMembershipsJson(
+        JSON.stringify({
+          data: {
+            s0: { pullRequest: { isInMergeQueue: true, stack: null, stackEntry: null } },
+          },
+        }),
+      ),
+    );
+    expect([...memberships]).toEqual([[0, { inMergeQueue: true }]]);
   });
 
   it("refuses malformed responses and unsafe query selectors", () => {

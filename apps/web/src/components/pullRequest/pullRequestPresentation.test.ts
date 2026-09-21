@@ -20,6 +20,13 @@ describe("resolvePullRequestState", () => {
       "text-zinc-500 dark:text-zinc-400/80",
     ],
     [
+      "queued",
+      { state: "open", isDraft: false, inMergeQueue: true },
+      PullRequestGlyph.pullRequest,
+      "Queued",
+      "text-amber-600 dark:text-amber-300/90",
+    ],
+    [
       "closed",
       { state: "closed", isDraft: false },
       PullRequestGlyph.closed,
@@ -57,6 +64,15 @@ describe("resolvePullRequestState", () => {
       label: "Closed",
     });
   });
+
+  it.each(["closed", "merged"] as const)(
+    "keeps a %s pull request terminal when stale queue metadata is also present",
+    (state) => {
+      expect(resolvePullRequestState({ state, isDraft: false, inMergeQueue: true })).toMatchObject({
+        label: state === "merged" ? "Merged" : "Closed",
+      });
+    },
+  );
 
   it("keeps lifecycle and conflict presentation independent for an open conflicting pull request", () => {
     const input = {

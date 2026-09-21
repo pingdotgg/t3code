@@ -1100,6 +1100,7 @@ export const make = Effect.gen(function* () {
       baseBranch: input.item.baseBranch,
       state: input.item.state,
       isDraft: input.item.isDraft,
+      ...(input.item.inMergeQueue === undefined ? {} : { inMergeQueue: input.item.inMergeQueue }),
       mergeability: input.item.mergeability,
       additions: input.item.additions,
       deletions: input.item.deletions,
@@ -1577,6 +1578,9 @@ export const make = Effect.gen(function* () {
             updatedAt: changeRequest.updatedAt,
             observedAt,
             ...(changeRequest.isDraft === undefined ? {} : { isDraft: changeRequest.isDraft }),
+            ...(changeRequest.inMergeQueue === undefined
+              ? {}
+              : { inMergeQueue: changeRequest.inMergeQueue }),
             ...(changeRequest.author === undefined ? {} : { author: changeRequest.author }),
             ...(changeRequest.additions === undefined
               ? {}
@@ -1665,6 +1669,9 @@ export const make = Effect.gen(function* () {
             author: changeRequest.author,
             state: changeRequest.state,
             isDraft: changeRequest.isDraft,
+            ...(changeRequest.inMergeQueue === undefined
+              ? {}
+              : { inMergeQueue: changeRequest.inMergeQueue }),
             mergeability: changeRequest.mergeability,
             additions: changeRequest.additions,
             deletions: changeRequest.deletions,
@@ -2897,6 +2904,7 @@ export const make = Effect.gen(function* () {
     url: detail.url,
     state: detail.state,
     isDraft: detail.isDraft,
+    ...(detail.inMergeQueue === undefined ? {} : { inMergeQueue: detail.inMergeQueue }),
     author: detail.author,
     additions: detail.additions,
     deletions: detail.deletions,

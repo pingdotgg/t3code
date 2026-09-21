@@ -128,8 +128,14 @@ export function PullRequestReviewDecisionGlyph({
 export function resolvePullRequestState(input: {
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  readonly inMergeQueue?: boolean | undefined;
 }): PullRequestStatePresentation {
-  const key = input.state === "open" && input.isDraft ? "draft" : input.state;
+  const key =
+    input.state === "open" && input.inMergeQueue
+      ? "queued"
+      : input.state === "open" && input.isDraft
+        ? "draft"
+        : input.state;
   return PULL_REQUEST_STATE_PRESENTATION[key];
 }
 
@@ -158,13 +164,15 @@ export function resolvePullRequestConflict(input: {
 export function PullRequestStateGlyph({
   state,
   isDraft,
+  inMergeQueue,
   className,
 }: {
   state: PullRequestState;
   isDraft: boolean;
+  inMergeQueue?: boolean | undefined;
   className?: string;
 }) {
-  const presentation = resolvePullRequestState({ state, isDraft });
+  const presentation = resolvePullRequestState({ state, isDraft, inMergeQueue });
   return (
     <Tooltip>
       {/* The list row is itself a button, so the trigger stays a span: an interactive one would
