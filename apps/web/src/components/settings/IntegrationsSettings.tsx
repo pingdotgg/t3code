@@ -1,3 +1,5 @@
+import { DeviceHostUpdates } from "../device/DeviceHostUpdates";
+import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceHostsSettings } from "./DeviceHostsSettings";
@@ -640,7 +642,9 @@ function DeviceIntegrationControls({
   );
   const configure = useAtomCommand(deviceEnvironment.configure, { reportFailure: false });
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
-  const [pending, setPending] = useState<"hub" | "check" | "agent" | null>(null);
+  const [pending, setPending] = useState<
+    "hub" | "check" | "agent" | "update-hub" | "update-agent" | null
+  >(null);
   const busy = state.hostStatus === "installing" || state.hostStatus === "starting";
   const [platformsRevealed, setPlatformsRevealed] = useState(false);
   // Keep diagnostics visible through subsequent agent setup and refresh phases.
@@ -683,6 +687,65 @@ function DeviceIntegrationControls({
     }
   };
 
+  const [updateError, setUpdateError] = useState<{ tool: "hub" | "agent"; message: string } | null>(
+    null,
+  );
+  const localTools = state.hosts.find((host) => host.kind === "local")?.tools;
+  const versionActions = (tool: "hub" | "agent") => {
+    const version = localTools?.[tool];
+    const needsUpdate = version && !version.installedVersions.includes(version.requiredVersion);
+    return (
+      <div className="space-y-2">
+        <div className="flex flex-wrap gap-2">
+          {state.supportsToolUpdate && needsUpdate ? (
+            <Button
+              size="sm"
+              disabled={!environmentId || pending !== null || busy}
+              onClick={() => {
+                if (!environmentId) return;
+                setUpdateError(null);
+                setPending(`update-${tool}`);
+                void list({ environmentId, input: { updateTool: tool } })
+                  .then((result) => {
+                    if (result._tag === "Failure")
+                      setUpdateError({
+                        tool,
+                        message:
+                          "Update failed. Check this host's network connection and try again.",
+                      });
+                  })
+                  .finally(() => setPending(null));
+              }}
+            >
+              {pending === `update-${tool}` ? "Updating…" : `Update to v${version.requiredVersion}`}
+            </Button>
+          ) : null}
+          {state.supportsToolInspection ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!environmentId || pending !== null || busy}
+              onClick={() => {
+                if (!environmentId) return;
+                setPending("check");
+                void list({ environmentId, input: { inspectOnly: true } }).finally(() =>
+                  setPending(null),
+                );
+              }}
+            >
+              {pending === "check" ? "Checking…" : "Check versions"}
+            </Button>
+          ) : null}
+        </div>
+        {updateError?.tool === tool ? (
+          <p role="alert" className="text-xs text-destructive">
+            {updateError.message}
+          </p>
+        ) : null}
+      </div>
+    );
+  };
+
   return (
     <>
       <SettingsRow
@@ -692,6 +755,11 @@ function DeviceIntegrationControls({
         description={deviceHubDescription}
         control={
           <>
+            <DeviceToolVersions
+              action={versionActions("hub")}
+              kind="hub"
+              tools={state.hosts.find((host) => host.kind === "local")?.tools}
+            />
             {pending === "hub" ? <DeviceHubSetupStatus state={state} pending compact /> : null}
             <ScopedSwitch
               settingKeys={["enableDeviceSupport"]}
@@ -751,6 +819,11 @@ function DeviceIntegrationControls({
         description={agentDeviceDescription}
         control={
           <>
+            <DeviceToolVersions
+              action={versionActions("agent")}
+              kind="agent"
+              tools={state.hosts.find((host) => host.kind === "local")?.tools}
+            />
             {pending === "agent" ? <AgentDeviceSetupStatus state={state} pending compact /> : null}
             <ScopedSwitch
               settingKeys={["enableAgentDeviceAccess"]}
@@ -770,10 +843,11 @@ function DeviceIntegrationControls({
           </>
         }
       />
-      {state.hostStatus === "failed" && state.hostStatusDetail ? (
-        <p role="alert" className="px-4 py-3 text-xs text-destructive">
-          {state.hostStatusDetail}
-        </p>
+      {environmentId ? (
+        <DeviceHostUpdates
+          state={{ ...state, hosts: state.hosts.filter((host) => host.kind === "local") }}
+          environmentId={environmentId}
+        />
       ) : null}
       <DeviceHostsSettings environmentId={environmentId} />
     </>

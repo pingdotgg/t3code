@@ -1,3 +1,4 @@
+import { DeviceHostUpdates } from "./DeviceHostUpdates";
 import type {
   DevicePlatform,
   DeviceServiceState,
@@ -253,6 +254,7 @@ export function DevicePanel(props: {
           {state.hostStatusDetail}
         </div>
       ) : null}
+      <DeviceHostUpdates state={state} environmentId={environmentId} />
       {bootingDevices.length > 0 ? (
         <div role="status" className="border-b px-3 py-2 text-xs text-muted-foreground">
           Starting {bootingDevices.map((device) => device.name).join(", ")}… This can take a minute.
@@ -319,7 +321,7 @@ export function DevicePanel(props: {
                   ? "Opening device…"
                   : "Starting device…"
                 : state.hostStatus === "installing"
-                  ? "Installing device support…"
+                  ? (state.hostStatusDetail ?? "Installing device support…")
                   : "Finding devices…"
             }
           />
