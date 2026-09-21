@@ -602,12 +602,14 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           Effect.tapError((error) =>
             Effect.logWarning("Pi session lifecycle request failed", {
               providerSessionId: input.providerSessionId,
-              operation: error.operation,
-              reason: error.reason ?? "rpc_error",
-            }).pipe(
-              Effect.andThen(error.reason === "timeout" ? connection.terminate : Effect.void),
-            ),
+              operation: record["type"],
+              errorTag: error._tag,
+            }),
           ),
+          Effect.catchTags({
+            PiRpcTimeoutError: (error) =>
+              connection.terminate.pipe(Effect.andThen(Effect.fail(error))),
+          }),
           Effect.onInterrupt(() => connection.terminate),
         );
 
