@@ -58,6 +58,7 @@ import * as ServerConfig from "../config.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const GIT_ERROR_DETAIL_MAX_LENGTH = 1_024;
 /** T3's record of the branch, named as on the host, that a branch was cut from. */
 const branchBaseConfigKey = (branch: string) => `branch.${branch}.t3-merge-base`;
 /**
@@ -522,10 +523,54 @@ const GIT_FAILURE_REASON_DETAILS: Partial<Record<GitCommandFailureReason, string
     "Another Git process kept the repository's config locked. Wait for it to finish, then retry.",
 };
 
-function gitFailureDetail(reason: GitCommandFailureReason | null): string {
+function redactUrlSecrets(value: string): string {
+  return value.replace(/[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'`<>]+/gu, (match) => {
+    const trailing = /[),.;]+$/u.exec(match)?.[0] ?? "";
+    const candidate = trailing.length > 0 ? match.slice(0, -trailing.length) : match;
+    try {
+      const url = new URL(candidate);
+      url.username = "";
+      url.password = "";
+      url.search = "";
+      url.hash = "";
+      return `${url.toString()}${trailing}`;
+    } catch {
+      return match;
+    }
+  });
+}
+
+function printableGitDiagnostic(value: string): string {
+  let printable = "";
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    printable += codePoint !== undefined && (codePoint < 32 || codePoint === 127) ? " " : character;
+  }
+  return printable.trim().replace(/\s+/gu, " ");
+}
+
+function gitCommandFailureDetail(stderr: string, fallback: string): string {
+  const lines = stderr
+    .split(/\r?\n/gu)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const diagnostic = lines.findLast((line) => /^(?:fatal|error):/iu.test(line)) ?? lines.at(-1);
+  if (!diagnostic) return fallback;
+
+  const safe = redactUrlSecrets(printableGitDiagnostic(diagnostic))
+    .replace(/(\b[A-Za-z0-9][A-Za-z0-9._-]*=)([^\s"'`]+)/gu, "$1<redacted>")
+    .replace(
+      /(\b(?:authorization|password|passwd|token|secret|credential|api[-_]?key)\b\s*:\s*)([^\s,"'`]+)/giu,
+      "$1<redacted>",
+    )
+    .trim();
+  return safe.length > 0 ? safe.slice(0, GIT_ERROR_DETAIL_MAX_LENGTH) : fallback;
+}
+
+function gitFailureDetail(reason: GitCommandFailureReason | null, stderr: string): string {
   return (
     (reason === null ? undefined : GIT_FAILURE_REASON_DETAILS[reason]) ??
-    "Git command exited with a non-zero status."
+    gitCommandFailureDetail(stderr, "Git command exited with a non-zero status.")
   );
 }
 
@@ -1097,7 +1142,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           return yield* new GitCommandError({
             ...gitCommandContext(commandInput),
             ...(reason === null ? {} : { reason }),
-            detail: gitFailureDetail(reason),
+            detail: gitFailureDetail(reason, stderr.text),
             exitCode,
             stdoutLength: stdout.text.length,
             stderrLength: stderr.text.length,
@@ -1208,7 +1253,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           new GitCommandError({
             ...gitCommandContext({ operation, cwd, args }),
             ...(reason === null ? {} : { reason }),
-            detail: options.fallbackErrorDetail ?? gitFailureDetail(reason),
+            detail: options.fallbackErrorDetail ?? gitFailureDetail(reason, result.stderr),
             ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
             stdoutLength: result.stdout.length,
             stderrLength: result.stderr.length,
