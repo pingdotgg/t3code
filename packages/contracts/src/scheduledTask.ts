@@ -143,6 +143,44 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
 });
 export type ScheduledTaskUpsertInput = typeof ScheduledTaskUpsertInput.Type;
 
+/**
+ * Sparse workspace-strategy merge: only the provided keys are applied to the
+ * live strategy inside the update transaction, so two clients editing
+ * disjoint controls (for example `baseRef` and `startFromOrigin`) keep both
+ * changes instead of the second whole-object write reverting the first. A
+ * strategy `type` change must send the complete `workspaceStrategy` instead.
+ */
+export const ScheduledTaskWorkspaceStrategyPatch = Schema.Struct({
+  branch: Schema.optional(TrimmedNonEmptyString),
+  worktreePath: Schema.optional(TrimmedNonEmptyString),
+  baseRef: Schema.optional(TrimmedNonEmptyString),
+  startFromOrigin: Schema.optional(Schema.Boolean),
+});
+export type ScheduledTaskWorkspaceStrategyPatch = typeof ScheduledTaskWorkspaceStrategyPatch.Type;
+
+/**
+ * Atomic partial update: only the provided fields are written, and only while
+ * the task still exists in `projectId`. Implemented as a targeted UPDATE —
+ * never an insert — so an edit racing a delete cannot resurrect the task and
+ * disjoint concurrent edits keep their own columns.
+ */
+export const ScheduledTaskUpdateInput = Schema.Struct({
+  id: ScheduledTaskId,
+  projectId: ProjectId,
+  title: Schema.optional(TrimmedNonEmptyString),
+  prompt: Schema.optional(TrimmedNonEmptyString),
+  enabled: Schema.optional(Schema.Boolean),
+  schedule: Schema.optional(ScheduledTaskUpsertSchedule),
+  threadId: Schema.optional(Schema.NullOr(ThreadId)),
+  workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  workspaceStrategyPatch: Schema.optional(ScheduledTaskWorkspaceStrategyPatch),
+  modelSelection: Schema.optional(ModelSelection),
+  runtimeMode: Schema.optional(RuntimeMode),
+  /** Moves the task to another project; `projectId` stays the lookup scope. */
+  nextProjectId: Schema.optional(ProjectId),
+});
+export type ScheduledTaskUpdateInput = typeof ScheduledTaskUpdateInput.Type;
+
 /** Partial update that flips only the enabled flag — never overwrites other fields. */
 export const ScheduledTaskSetEnabledInput = Schema.Struct({
   id: ScheduledTaskId,
@@ -152,11 +190,24 @@ export type ScheduledTaskSetEnabledInput = typeof ScheduledTaskSetEnabledInput.T
 
 export const ScheduledTaskDeleteInput = Schema.Struct({
   id: ScheduledTaskId,
+  /**
+   * When set, the delete is scoped to this project: the row is deleted only if
+   * it still belongs to `projectId`, so a concurrent project move turns the
+   * delete into a typed not-found rather than a cross-project delete.
+   */
+  projectId: Schema.optional(ProjectId),
 });
 export type ScheduledTaskDeleteInput = typeof ScheduledTaskDeleteInput.Type;
 
 export const ScheduledTaskRunNowInput = Schema.Struct({
   id: ScheduledTaskId,
+  /**
+   * When set, the dispatch re-read inside the mark-running transaction also
+   * requires `project_id = projectId`, so a concurrent project move turns the
+   * manual run into a typed not-found instead of firing under the old
+   * project's authority.
+   */
+  projectId: Schema.optional(ProjectId),
 });
 export type ScheduledTaskRunNowInput = typeof ScheduledTaskRunNowInput.Type;
 

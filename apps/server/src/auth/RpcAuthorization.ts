@@ -83,6 +83,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.scheduledTasksList]: AuthOrchestrationReadScope,
   [WS_METHODS.scheduledTasksSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.scheduledTasksUpsert]: AuthOrchestrationOperateScope,
+  [WS_METHODS.scheduledTasksUpdate]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksSetEnabled]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,

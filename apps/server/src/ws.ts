@@ -83,6 +83,7 @@ import {
   PersistChatAttachmentsError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  ScheduledTaskError,
   type ProjectId,
   type ProviderDriverKind,
   type ProviderInstanceId,
@@ -1977,16 +1978,51 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.scheduledTasksUpsert, scheduledTasks.upsert(input), {
             "rpc.aggregate": "scheduledTasks",
           }),
+        [WS_METHODS.scheduledTasksUpdate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.scheduledTasksUpdate,
+            scheduledTasks.update(input).pipe(
+              Effect.flatMap((updated) =>
+                Option.isNone(updated)
+                  ? Effect.fail(
+                      new ScheduledTaskError({
+                        message: "Schedule task not found in this project.",
+                        taskId: input.id,
+                      }),
+                    )
+                  : Effect.succeed(updated.value),
+              ),
+            ),
+            {
+              "rpc.aggregate": "scheduledTasks",
+              "scheduled_task.id": input.id,
+            },
+          ),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           observeRpcEffect(WS_METHODS.scheduledTasksSetEnabled, scheduledTasks.setEnabled(input), {
             "rpc.aggregate": "scheduledTasks",
             "scheduled_task.id": input.id,
           }),
         [WS_METHODS.scheduledTasksDelete]: (input) =>
-          observeRpcEffect(WS_METHODS.scheduledTasksDelete, scheduledTasks.delete(input), {
-            "rpc.aggregate": "scheduledTasks",
-            "scheduled_task.id": input.id,
-          }),
+          observeRpcEffect(
+            WS_METHODS.scheduledTasksDelete,
+            scheduledTasks.delete(input).pipe(
+              Effect.flatMap((deleted) =>
+                Option.isNone(deleted)
+                  ? Effect.fail(
+                      new ScheduledTaskError({
+                        message: "Schedule task not found.",
+                        taskId: input.id,
+                      }),
+                    )
+                  : Effect.succeed(deleted.value),
+              ),
+            ),
+            {
+              "rpc.aggregate": "scheduledTasks",
+              "scheduled_task.id": input.id,
+            },
+          ),
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
           observeRpcEffect(WS_METHODS.scheduledTasksRunNow, scheduledTasks.runNow(input), {
             "rpc.aggregate": "scheduledTasks",
