@@ -7,6 +7,20 @@ import {
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import type * as ThreadUndo from "./threadUndo";
 
+// Undo toasts still on screen, oldest first, so the `thread.undo` shortcut
+// mirrors the newest toast's button without knowing which action it was.
+const liveUndos: Array<() => Promise<void> | null> = [];
+
+/** Runs the newest Undo whose claim still holds; false when nothing is left to undo. */
+export function undoLatestThreadAction(): boolean {
+  // A superseded entry drops itself when tried, so keep going until one
+  // runs or the list is empty.
+  while (liveUndos.length > 0) {
+    if (liveUndos[liveUndos.length - 1]?.() !== null) return true;
+  }
+  return false;
+}
+
 /** Shows a single-use Undo while its thread action still owns the claim. */
 export function showUndoToast({
   title,
@@ -23,6 +37,7 @@ export function showUndoToast({
 }) {
   if (!claim.isCurrent()) return;
   let undoStarted = false;
+  let toastId: string | undefined;
   const reportFailure = (error: unknown) => {
     toastManager.add(
       stackedThreadToast({
@@ -32,7 +47,26 @@ export function showUndoToast({
       }),
     );
   };
-  const toastId = toastManager.add({
+  const forget = () => {
+    const index = liveUndos.indexOf(run);
+    if (index !== -1) liveUndos.splice(index, 1);
+  };
+  const run = () => {
+    forget();
+    if (undoStarted || !claim.isCurrent()) return null;
+    undoStarted = true;
+    claim.finish();
+    if (toastId !== undefined) toastManager.close(toastId);
+    return undo()
+      .then((result) => {
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          reportFailure(squashAtomCommandFailure(result));
+        }
+      })
+      .catch(reportFailure);
+  };
+  liveUndos.push(run);
+  toastId = toastManager.add({
     ...stackedThreadToast({
       type: "success",
       title,
@@ -41,21 +75,13 @@ export function showUndoToast({
       actionProps: {
         children: "Undo",
         onClick: async () => {
-          if (undoStarted || !claim.isCurrent()) return;
-          undoStarted = true;
-          claim.finish();
-          toastManager.close(toastId);
-          try {
-            const result = await undo();
-            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-              reportFailure(squashAtomCommandFailure(result));
-            }
-          } catch (error) {
-            reportFailure(error);
-          }
+          await run();
         },
       },
     }),
-    onClose: claim.finish,
+    onClose: () => {
+      claim.finish();
+      forget();
+    },
   });
 }
