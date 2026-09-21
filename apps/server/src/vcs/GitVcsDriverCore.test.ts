@@ -4028,6 +4028,30 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("treats a deleted upstream preserved by a local branch rename as unpublished", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["checkout", "-b", "feature/old-name"]);
+        yield* git(cwd, ["update-ref", "refs/remotes/origin/feature/old-name", "HEAD"]);
+        yield* git(cwd, ["branch", "--set-upstream-to", "origin/feature/old-name"]);
+        yield* git(cwd, ["update-ref", "-d", "refs/remotes/origin/feature/old-name"]);
+        yield* git(cwd, ["branch", "-m", "feature/new-name"]);
+
+        const porcelain = yield* git(cwd, ["status", "--porcelain=2", "--branch"]);
+        assert.include(porcelain, "# branch.upstream origin/feature/old-name");
+        assert.notInclude(porcelain, "# branch.ab");
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.equal(status.branch, "feature/new-name");
+        assert.equal(status.upstreamRef, null);
+        assert.equal(status.hasUpstream, false);
+      }),
+    );
+
     it.effect("reports remote status on unborn HEAD without failing", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

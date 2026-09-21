@@ -2452,6 +2452,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     let refName: string | null = null;
     let upstreamRef: string | null = null;
+    let hasResolvedUpstream = false;
     let aheadCount = 0;
     let behindCount = 0;
     let aheadOfDefaultCount = 0;
@@ -2472,7 +2473,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         upstreamRef = value.length > 0 ? value : null;
         continue;
       }
-      if (includeDivergence && line.startsWith("# branch.ab ")) {
+      if (line.startsWith("# branch.ab ")) {
+        hasResolvedUpstream = true;
         const value = line.slice("# branch.ab ".length).trim();
         const parsed = parseBranchAb(value);
         aheadCount = parsed.ahead;
@@ -2494,6 +2496,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         }
       }
     }
+
+    if (!includeDivergence && upstreamRef !== null) {
+      const resolved = yield* executeGit(
+        "GitVcsDriver.statusDetails.resolveUpstream",
+        cwd,
+        ["rev-parse", "--verify", "--quiet", "@{upstream}"],
+        { allowNonZeroExit: true },
+      );
+      hasResolvedUpstream = resolved.exitCode === 0;
+    }
+    if (!hasResolvedUpstream) upstreamRef = null;
 
     const isDefaultBranch =
       refName !== null &&
