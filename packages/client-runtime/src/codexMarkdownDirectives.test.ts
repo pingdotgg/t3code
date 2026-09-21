@@ -8,6 +8,7 @@ import {
   renderCodexFileCitationsAsMarkdown,
   splitCodexArtifactTemplateMarkdown,
 } from "./codexMarkdownDirectives.js";
+import { parseMarkdownFileLink } from "./markdownLinks.js";
 
 interface TestNode {
   readonly type: string;
@@ -86,6 +87,24 @@ describe("remarkCodexDirectives", () => {
     '::artifact-template{skill_name="artifact-template-hello-world"}',
   ])("keeps malformed supported directives literal: %s", (markdown) => {
     expect(parse(markdown)).toEqual(parseOrdinaryMarkdown(markdown));
+  });
+});
+
+describe.each([
+  { name: "renderCodexDirectivesForCopy", render: renderCodexDirectivesForCopy },
+  { name: "renderCodexFileCitationsAsMarkdown", render: renderCodexFileCitationsAsMarkdown },
+])("$name file citation round trips", ({ render }) => {
+  it.each([
+    "C:\\Users\\test\\[draft]\\report.md",
+    "\\\\server\\share\\report.md",
+    "outputs/report.md",
+    "/tmp/report%5C.md",
+  ])("preserves the literal path and line: %s", (path) => {
+    const markdown = render(`:codex-file-citation{path="${path}" line_range_start="7"}`);
+    const link = parseOrdinaryMarkdown(markdown).children?.[0]?.children?.[0];
+
+    expect(link?.type).toBe("link");
+    expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path, line: 7 });
   });
 });
 
