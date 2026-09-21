@@ -154,14 +154,26 @@ describe("BrowserSession", () => {
       assert.isFunction(requestHandler);
       assert.isFunction(checkHandler);
 
-      const requestAllows = (permission: string): boolean => {
+      const loopbackUrl = "http://127.0.0.1:8765/page";
+      const loopbackOrigin = "http://127.0.0.1:8765";
+      const remoteUrl = "https://app.example.com/page";
+      const remoteOrigin = "https://app.example.com";
+
+      const requestAllows = (permission: string, requestingUrl: string): boolean => {
         let granted: boolean | undefined;
-        requestHandler(null, permission, (value: boolean) => {
-          granted = value;
-        });
+        requestHandler(
+          null,
+          permission,
+          (value: boolean) => {
+            granted = value;
+          },
+          { requestingUrl, isMainFrame: true },
+        );
         assert.isDefined(granted);
         return granted;
       };
+      const checkAllows = (permission: string, requestingOrigin: string): boolean =>
+        checkHandler(null, permission, requestingOrigin, { isMainFrame: true }) as boolean;
 
       for (const permission of [
         "clipboard-read",
@@ -169,21 +181,52 @@ describe("BrowserSession", () => {
         "notifications",
         "geolocation",
       ]) {
-        assert.isTrue(requestAllows(permission), `request handler should allow ${permission}`);
         assert.isTrue(
-          checkHandler(null, permission) as boolean,
+          requestAllows(permission, loopbackUrl),
+          `request handler should allow ${permission}`,
+        );
+        assert.isTrue(
+          checkAllows(permission, loopbackOrigin),
           `check handler should allow ${permission}`,
         );
       }
 
       // `clipboard-write` is not a real Electron permission — the async write API
       // uses `clipboard-sanitized-write` — so the stale name must not be granted,
-      // and unrelated permissions stay denied.
-      for (const permission of ["clipboard-write", "midi"]) {
-        assert.isFalse(requestAllows(permission), `request handler should deny ${permission}`);
+      // and unrelated permissions stay denied even on loopback.
+      for (const permission of ["clipboard-write", "usb"]) {
         assert.isFalse(
-          checkHandler(null, permission) as boolean,
+          requestAllows(permission, loopbackUrl),
+          `request handler should deny ${permission}`,
+        );
+        assert.isFalse(
+          checkAllows(permission, loopbackOrigin),
           `check handler should deny ${permission}`,
+        );
+      }
+
+      // Web MIDI is loopback-only: local dev servers and hardware tools get
+      // `requestMIDIAccess` (plain and SysEx), remote pages stay denied.
+      for (const permission of ["midi", "midiSysex"]) {
+        assert.isTrue(
+          requestAllows(permission, loopbackUrl),
+          `request handler should allow ${permission} on loopback`,
+        );
+        assert.isTrue(
+          checkAllows(permission, loopbackOrigin),
+          `check handler should allow ${permission} on loopback`,
+        );
+        assert.isTrue(
+          requestAllows(permission, "http://localhost:3000/"),
+          `request handler should allow ${permission} on localhost`,
+        );
+        assert.isFalse(
+          requestAllows(permission, remoteUrl),
+          `request handler should deny ${permission} for remote origins`,
+        );
+        assert.isFalse(
+          checkAllows(permission, remoteOrigin),
+          `check handler should deny ${permission} for remote origins`,
         );
       }
     }).pipe(Effect.provide(layer)),

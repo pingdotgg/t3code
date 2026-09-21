@@ -39,6 +39,36 @@ const ALLOWED_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set([
   // picker runs in the main window session, which is unaffected by this list.
 ]);
 
+// Hardware-adjacent permissions granted only when the requesting origin is
+// served by the local machine. The preview exists to host local dev servers,
+// and pages like hardware tools legitimately call `navigator.requestMIDIAccess`
+// (Web MIDI + SysEx). Remote origins stay denied — Chromium keys the check on
+// the URL hostname, so a remote domain DNS-rebinding to 127.0.0.1 keeps its
+// own hostname and does not pass.
+const ALLOWED_LOOPBACK_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set(["midi", "midiSysex"]);
+
+const isLoopbackOrigin = (url: string | undefined): boolean => {
+  if (!url) return false;
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    return false;
+  }
+  return (
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname.startsWith("127.") ||
+    hostname === "0.0.0.0" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  );
+};
+
+const allowsPreviewPermission = (permission: string, requestingUrl?: string): boolean =>
+  ALLOWED_PREVIEW_PERMISSIONS.has(permission) ||
+  (ALLOWED_LOOPBACK_PREVIEW_PERMISSIONS.has(permission) && isLoopbackOrigin(requestingUrl));
+
 export class BrowserSessionPartitionDerivationError extends Schema.TaggedError<BrowserSessionPartitionDerivationError>()(
   "BrowserSessionPartitionDerivationError",
   {
@@ -203,11 +233,14 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           // the challenge every few seconds, so logins behind it never complete
           // (#5002). Re-setting the unchanged native string is harmless, so it
           // is the rewritten string itself that trips the check.
-          browserSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-            callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission));
-          });
-          browserSession.setPermissionCheckHandler((_webContents, permission) =>
-            ALLOWED_PREVIEW_PERMISSIONS.has(permission),
+          browserSession.setPermissionRequestHandler(
+            (_webContents, permission, callback, details) => {
+              callback(allowsPreviewPermission(permission, details.requestingUrl));
+            },
+          );
+          browserSession.setPermissionCheckHandler(
+            (_webContents, permission, requestingOrigin, details) =>
+              allowsPreviewPermission(permission, requestingOrigin || details.requestingUrl),
           );
           const next = new Map(sessions);
           next.set(partition, browserSession);
