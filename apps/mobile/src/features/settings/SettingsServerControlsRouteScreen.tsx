@@ -6,6 +6,7 @@ import {
   type ServerSettings,
   type ServerSettingsPatch,
   type ThreadEnvMode,
+  type WorktreeSubmodules,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectScopedServerSettingKey,
 } from "@t3tools/contracts";
@@ -43,11 +44,30 @@ const PAGE_TITLES: Record<SettingsPage, string> = {
 };
 
 const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettingKey[]> = {
-  "new-threads": ["defaultThreadEnvMode", "defaultRuntimeMode"],
+  "new-threads": ["defaultThreadEnvMode", "worktreeSubmodules", "defaultRuntimeMode"],
   "source-control": ["defaultAutoPull", "newWorktreesStartFromOrigin"],
   "agent-behavior": ["responseStreamingMode", "enableAgentBrowserAccess"],
   maintenance: ["continueThreadsAfterServerUpdate"],
 };
+
+const SUBMODULE_CHOICES: ReadonlyArray<{
+  readonly mode: WorktreeSubmodules | null;
+  readonly label: string;
+  readonly description: string;
+}> = [
+  {
+    mode: null,
+    label: "Inherit",
+    description: "Follow the repository's t3.json, or initialize recursively.",
+  },
+  { mode: "recursive", label: "Recursive", description: "Initialize nested submodules too." },
+  {
+    mode: "top-level",
+    label: "Top level only",
+    description: "Skip submodules declared inside other submodules.",
+  },
+  { mode: "none", label: "Skip", description: "Leave submodules empty for a setup script." },
+];
 
 const WORKSPACE_CHOICES: ReadonlyArray<{
   readonly mode: ThreadEnvMode | null;
@@ -248,6 +268,29 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                         separated={index > 0}
                         disabled={disabledFor("defaultThreadEnvMode")}
                         onPress={() => write({ defaultThreadEnvMode: choice.mode })}
+                      />
+                    ))}
+                  </SettingsSection>
+                  <SettingsSection
+                    title="Worktree submodules"
+                    trailing={
+                      pendingWrites === 0 && isMixed("worktreeSubmodules") ? (
+                        <MixedValuesLabel projectSelected={projectSelected} />
+                      ) : null
+                    }
+                  >
+                    {SUBMODULE_CHOICES.map((choice, index) => (
+                      <ChoiceRow
+                        key={choice.mode ?? "inherit"}
+                        label={choice.label}
+                        description={choice.description}
+                        selected={
+                          !isMixed("worktreeSubmodules") &&
+                          uniform("worktreeSubmodules") === choice.mode
+                        }
+                        separated={index > 0}
+                        disabled={disabledFor("worktreeSubmodules")}
+                        onPress={() => write({ worktreeSubmodules: choice.mode })}
                       />
                     ))}
                   </SettingsSection>
