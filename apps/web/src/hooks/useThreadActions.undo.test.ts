@@ -199,6 +199,17 @@ describe("settle and snooze Undo", () => {
     });
   });
 
+  it("expires an older unpin Undo when the thread is settled", async () => {
+    const add = vi.spyOn(toastManager, "add").mockReturnValue("toast");
+    vi.spyOn(toastManager, "close").mockImplementation(() => {});
+    const actions = useThreadActions();
+    await actions.unpinThread(target);
+    const staleUnpinUndo = undoOf(add, 0);
+    await actions.settleThread(target);
+    await staleUnpinUndo();
+    expect(commands.pin).not.toHaveBeenCalled();
+  });
+
   it("stays silent for batch settles", async () => {
     const add = vi.spyOn(toastManager, "add").mockReturnValue("toast");
     await useThreadActions().settleThread(target, { undoToast: false });

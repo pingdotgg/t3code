@@ -2,6 +2,7 @@ const EDITABLE_SELECTOR = [
   "input",
   "textarea",
   "select",
+  '[contenteditable=""]',
   '[contenteditable="true"]',
   '[contenteditable="plaintext-only"]',
   '[role="textbox"]',
