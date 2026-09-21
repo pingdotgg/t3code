@@ -1,4 +1,5 @@
 import {
+  type DeviceListInput,
   AuthAccessReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -73,9 +74,11 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsStack]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsLinkedThreads]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsDetail]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsPreview]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsThreadComments]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsDiffFileContents]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsFilesViewed]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsRunAction]: AuthOrchestrationOperateScope,
   [WS_METHODS.pullRequestsUpdate]: AuthOrchestrationOperateScope,
   [WS_METHODS.pullRequestsComment]: AuthOrchestrationOperateScope,
@@ -84,6 +87,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsReplyToThread]: AuthOrchestrationOperateScope,
   [WS_METHODS.pullRequestsSetThreadResolution]: AuthOrchestrationOperateScope,
   [WS_METHODS.pullRequestsSetReaction]: AuthOrchestrationOperateScope,
+  [WS_METHODS.pullRequestsSetFilesViewed]: AuthOrchestrationOperateScope,
   // Read scope like the reads it un-caches: refreshing is part of reading, and a read-only
   // client pressing refresh must not be told it may not look again.
   [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
@@ -177,3 +181,9 @@ export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope 
   }
   return requiredScope;
 }
+
+/** Retrying can install or restart tools even though ordinary listing is readable. */
+export const requiredScopeForDeviceList = (input: DeviceListInput): AuthEnvironmentScope =>
+  input.retryHostId || input.updateTool
+    ? AuthOrchestrationOperateScope
+    : AuthOrchestrationReadScope;

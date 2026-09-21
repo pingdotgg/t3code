@@ -12,7 +12,7 @@ import { View } from "react-native";
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import type { MaterialMenuPopupProps } from "./MaterialMenuPopup";
-import { SymbolView, type AppSymbolName } from "./AppSymbol";
+import { isAppSymbolName, SymbolView, type AppSymbolName } from "./AppSymbol";
 
 function MenuIcon(props: {
   readonly name: AppSymbolName;
@@ -96,10 +96,10 @@ export function MaterialMenuPopup(props: MaterialMenuPopupProps) {
               ) : null}
             </Column>
           </DropdownMenuItem.Text>
-          {action.image ? (
+          {action.image && isAppSymbolName(action.image) ? (
             <DropdownMenuItem.LeadingIcon>
               <MenuIcon
-                name={action.image as AppSymbolName}
+                name={action.image}
                 destructive={action.attributes?.destructive}
                 disabled={action.attributes?.disabled}
               />

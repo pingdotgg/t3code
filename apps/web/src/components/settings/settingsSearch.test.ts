@@ -216,6 +216,32 @@ describe("searchSettings", () => {
     ]);
   });
 
+  it("finds keybinding commands by label, command id, and default key", () => {
+    expect(searchSettings("toggle sidebar")[0]?.id).toBe("keybinding-sidebar.toggle");
+    expect(searchSettings("sidebar.toggle")[0]?.id).toBe("keybinding-sidebar.toggle");
+    expect(searchSettings("mod+b")[0]?.id).toBe("keybinding-sidebar.toggle");
+    expect(searchSettings("copy link")[0]).toMatchObject({
+      id: "keybinding-thread.copyReference",
+      to: "/settings/keybindings",
+    });
+  });
+
+  it("ranks keybinding commands after other settings", () => {
+    const ids = searchSettings("model").map((item) => item.id);
+    expect(ids[0]).toBe("default-model");
+    expect(ids.indexOf("keybinding-modelPicker.toggle")).toBeGreaterThan(
+      ids.indexOf("text-generation-model"),
+    );
+  });
+
+  it("sends commands without a default binding to the section", () => {
+    expect(searchSettings("thread.stop")[0]).toMatchObject({
+      id: "keybinding-thread.stop",
+      targetId: "keybindings",
+    });
+    expect(searchSettings("sidebar.toggle")[0]?.targetId).toBeUndefined();
+  });
+
   it("keeps catalog result ids unique", () => {
     const ids = SETTINGS_SEARCH_ITEMS.map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);

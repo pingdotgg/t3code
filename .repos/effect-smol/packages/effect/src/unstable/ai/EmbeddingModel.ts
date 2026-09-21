@@ -19,23 +19,33 @@ import * as Schema from "../../Schema.ts"
 import * as AiError from "./AiError.ts"
 
 /**
- * Service tag for embedding model operations.
+ * Service key for embedding text into vectors.
  *
- * **When to use**
- *
- * Use to retrieve or provide the embedding model service for an `Effect`
- * program that embeds text into vectors.
- *
- * @see {@link Service} for the service contract provided by this tag
  * @see {@link make} for constructing an embedding model service from a provider
  * @see {@link Dimensions} for the current embedding vector size service
  *
  * @category services
  * @since 4.0.0
  */
-export class EmbeddingModel extends Context.Service<EmbeddingModel, Service>()(
+export const EmbeddingModel: Context.Service<EmbeddingModel, EmbeddingModel> = Context.Service(
   "effect/unstable/ai/EmbeddingModel"
-) {}
+)
+
+/**
+ * Brand type for `EmbeddingModel`.
+ *
+ * @category type IDs
+ * @since 4.0.0
+ */
+export type TypeId = "~effect/ai/EmbeddingModel"
+
+/**
+ * Brand for `EmbeddingModel` implementations.
+ *
+ * @category type IDs
+ * @since 4.0.0
+ */
+export const TypeId: TypeId = "~effect/ai/EmbeddingModel"
 
 /**
  * Service tag that provides the current embedding dimensions.
@@ -137,7 +147,7 @@ export interface ProviderResponse {
  * Use when you need a typed request for one embedding input while building or
  * calling a low-level embedding request resolver.
  *
- * @see {@link Service} for the resolver-bearing service contract
+ * @see {@link EmbeddingModel} for the resolver-bearing service contract
  * @see {@link make} for constructing the request resolver from a provider implementation
  * @see {@link EmbedResponse} for the response produced by this request
  *
@@ -151,12 +161,13 @@ export class EmbeddingRequest extends Request.TaggedClass("EmbeddingRequest")<
 > {}
 
 /**
- * Defines the service interface for embedding operations.
+ * Single-input and batch embedding operations.
  *
  * @category models
  * @since 4.0.0
  */
-export interface Service {
+export interface EmbeddingModel {
+  readonly [TypeId]: TypeId
   readonly resolver: RequestResolver.RequestResolver<EmbeddingRequest>
   readonly embed: (input: string) => Effect.Effect<EmbedResponse, AiError.AiError>
   readonly embedMany: (input: ReadonlyArray<string>) => Effect.Effect<EmbedManyResponse, AiError.AiError>
@@ -175,7 +186,7 @@ const invalidProviderResponse = (description: string): AiError.AiError =>
  * **When to use**
  *
  * Use to adapt a provider's batch embedding implementation into an
- * `EmbeddingModel.Service` that offers single-input and batch embedding
+ * `EmbeddingModel` that offers single-input and batch embedding
  * operations.
  *
  * **Details**
@@ -192,7 +203,7 @@ const invalidProviderResponse = (description: string): AiError.AiError =>
  * result for each requested input. If the provider returns a different number
  * of results, `embed` and `embedMany` fail with `AiError.InvalidOutputError`.
  *
- * @see {@link Service} for the service shape returned by this constructor
+ * @see {@link EmbeddingModel} for the service shape returned by this constructor
  * @see {@link ProviderOptions} for the input passed to the provider implementation
  * @see {@link ProviderResponse} for the provider response contract consumed by this constructor
  *
@@ -201,7 +212,7 @@ const invalidProviderResponse = (description: string): AiError.AiError =>
  */
 export const make: (params: {
   readonly embedMany: (options: ProviderOptions) => Effect.Effect<ProviderResponse, AiError.AiError>
-}) => Effect.Effect<Service> = Effect.fnUntraced(function*(params) {
+}) => Effect.Effect<EmbeddingModel> = Effect.fnUntraced(function*(params) {
   const resolver = RequestResolver.make<EmbeddingRequest>((entries) =>
     Effect.flatMap(
       params.embedMany({
@@ -219,6 +230,7 @@ export const make: (params: {
   )
 
   return EmbeddingModel.of({
+    [TypeId]: TypeId,
     resolver,
     embed: (input) =>
       Effect.request(new EmbeddingRequest({ input }), resolver).pipe(

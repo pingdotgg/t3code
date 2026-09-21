@@ -2,8 +2,13 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import type { PrismaManagementClient } from "../Client.ts";
-import type { App, PromoteAppResult } from "../Types.ts";
+import {
+  getService,
+  createServicePromote,
+  createServiceRollback,
+} from "@distilled.cloud/prisma/management";
+import type { ObservedApp } from "./Observed.ts";
+import type { PromoteAppResult } from "../Types.ts";
 
 export interface AppDeploymentTargetObservationOptions {
   readonly timeoutSeconds?: number;
@@ -14,11 +19,10 @@ const DEFAULT_TIMEOUT_SECONDS = 60;
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 
 export const waitForAppDeploymentTarget = Effect.fn(function* (
-  client: PrismaManagementClient,
   appId: string,
   deploymentId: string,
   options: AppDeploymentTargetObservationOptions = {},
-): Effect.fn.Return<App, Error> {
+) {
   const timeoutSeconds = options.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS;
   const intervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
@@ -43,12 +47,11 @@ export const waitForAppDeploymentTarget = Effect.fn(function* (
     );
     if (remainingBeforeObservation <= 0) break;
 
-    const observationOption = yield* client
-      .getApp(appId)
-      .pipe(
-        Effect.result,
-        Effect.timeoutOption(Duration.millis(remainingBeforeObservation)),
-      );
+    const observationOption = yield* getService({ serviceId: appId }).pipe(
+      Effect.map((response) => response.data),
+      Effect.result,
+      Effect.timeoutOption(Duration.millis(remainingBeforeObservation)),
+    );
     if (Option.isNone(observationOption)) break;
     const observation = observationOption.value;
     if (Result.isSuccess(observation)) {
@@ -88,17 +91,19 @@ export const waitForAppDeploymentTarget = Effect.fn(function* (
  * target deletion.
  */
 export const promoteAppObserved = Effect.fn(function* (
-  client: PrismaManagementClient,
   appId: string,
   deploymentId: string,
   options: AppDeploymentTargetObservationOptions = {},
-): Effect.fn.Return<PromoteAppResult, Error> {
-  const promoted = yield* client
-    .promoteApp(appId, { deploymentId })
-    .pipe(Effect.result);
+) {
+  const promoted = yield* createServicePromote({
+    serviceId: appId,
+    deploymentId,
+  }).pipe(
+    Effect.map((response) => response.data),
+    Effect.result,
+  );
   if (Result.isSuccess(promoted)) {
     const observation = yield* waitForAppDeploymentTarget(
-      client,
       appId,
       deploymentId,
       options,
@@ -117,7 +122,10 @@ export const promoteAppObserved = Effect.fn(function* (
     };
   }
 
-  const observation = yield* client.getApp(appId).pipe(Effect.result);
+  const observation = yield* getService({ serviceId: appId }).pipe(
+    Effect.map((response) => response.data),
+    Effect.result,
+  );
   if (
     Result.isSuccess(observation) &&
     observation.success.latestDeploymentId === deploymentId
@@ -127,17 +135,21 @@ export const promoteAppObserved = Effect.fn(function* (
       reassignedDomains: 0,
     };
   }
-  const repaired = yield* client
-    .rollbackApp(appId, { deploymentId })
-    .pipe(Effect.result);
+  const repaired = yield* createServiceRollback({
+    serviceId: appId,
+    deploymentId,
+  }).pipe(
+    Effect.map((response) => response.data),
+    Effect.result,
+  );
   const repairedObservation = Result.isSuccess(repaired)
-    ? yield* waitForAppDeploymentTarget(
-        client,
-        appId,
-        deploymentId,
-        options,
-      ).pipe(Effect.result)
-    : yield* client.getApp(appId).pipe(Effect.result);
+    ? yield* waitForAppDeploymentTarget(appId, deploymentId, options).pipe(
+        Effect.result,
+      )
+    : yield* getService({ serviceId: appId }).pipe(
+        Effect.map((response) => response.data),
+        Effect.result,
+      );
   if (
     Result.isSuccess(repairedObservation) &&
     repairedObservation.success.latestDeploymentId === deploymentId

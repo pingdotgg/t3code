@@ -15,7 +15,6 @@ allowBuilds:
   electron: true
   electron-winstaller: false
   esbuild: true
-  msgpackr-extract: true
   msw: false
   node-pty: true
   sharp: true
@@ -30,13 +29,13 @@ catalog:
   "@clerk/expo": 4.6.8
   "@clerk/react": 6.16.1
   "@clerk/shared": 4.33.0
-  "@effect/atom-react": 4.0.0-rc.112
-  "@effect/openapi-generator": 4.0.0-rc.112
-  "@effect/platform-node": 4.0.0-rc.112
-  "@effect/platform-node-shared": 4.0.0-rc.112
-  "@effect/sql-pg": 4.0.0-rc.112
+  "@effect/atom-react": 4.0.0-rc.115
+  "@effect/openapi-generator": 4.0.0-rc.115
+  "@effect/platform-node": 4.0.0-rc.115
+  "@effect/platform-node-shared": 4.0.0-rc.115
+  "@effect/sql-pg": 4.0.0-rc.115
   "@effect/tsgo": 0.41.0
-  "@effect/vitest": 4.0.0-rc.112
+  "@effect/vitest": 4.0.0-rc.115
   "@legendapp/list": 3.3.5
   "@noble/curves": 1.9.1
   "@noble/hashes": 1.8.0
@@ -45,7 +44,7 @@ catalog:
   "@tailwindcss/oxide": 4.3.3
   "@tailwindcss/vite": 4.3.3
   "@types/node": 24.12.4
-  effect: 4.0.0-rc.112
+  effect: 4.0.0-rc.115
   jose: 6.2.2
   lightningcss: 1.33.0
   tailwindcss: 4.3.3
@@ -61,20 +60,20 @@ minimumReleaseAgeExclude:
   - "@clerk/expo@4.6.8"
   - "@clerk/react@6.16.1"
   - "@clerk/shared@4.33.0"
-  - "@distilled.cloud/aws@0.30.2"
-  - "@distilled.cloud/axiom@0.30.2"
-  - "@distilled.cloud/cloudflare@0.30.2"
-  - "@distilled.cloud/core@0.30.2"
-  - "@distilled.cloud/neon@0.30.2"
-  - "@distilled.cloud/planetscale@0.30.2"
-  - "@effect/atom-react@4.0.0-rc.112"
-  - "@effect/openapi-generator@4.0.0-rc.112"
-  - "@effect/platform-node-shared@4.0.0-rc.112"
-  - "@effect/platform-node@4.0.0-rc.112"
-  - "@effect/sql-pg@4.0.0-rc.112"
-  - "@effect/vitest@4.0.0-rc.112"
-  - alchemy@2.0.0-beta.76
-  - effect@4.0.0-rc.112
+  - "@distilled.cloud/aws@1.0.0-rc.12"
+  - "@distilled.cloud/axiom@1.0.0-rc.12"
+  - "@distilled.cloud/cloudflare@1.0.0-rc.12"
+  - "@distilled.cloud/core@1.0.0-rc.12"
+  - "@distilled.cloud/neon@1.0.0-rc.12"
+  - "@distilled.cloud/planetscale@1.0.0-rc.12"
+  - "@effect/atom-react@4.0.0-rc.115"
+  - "@effect/openapi-generator@4.0.0-rc.115"
+  - "@effect/platform-node-shared@4.0.0-rc.115"
+  - "@effect/platform-node@4.0.0-rc.115"
+  - "@effect/sql-pg@4.0.0-rc.115"
+  - "@effect/vitest@4.0.0-rc.115"
+  - alchemy@2.0.0-beta.79
+  - effect@4.0.0-rc.115
   - "@legendapp/list@3.3.5"
   - "@expo/cli@57.0.20"
   - "@expo/env@2.4.3"
@@ -85,8 +84,16 @@ minimumReleaseAgeExclude:
   - expo-updates@57.0.19
   - expo@57.0.18
   - expo-widgets@57.0.15
-  - electron@44.1.0
-  - "@anthropic-ai/claude-agent-sdk@0.3.260"
+  - electron@44.4.2
+  - "@anthropic-ai/claude-agent-sdk@0.3.276"
+  - "@alchemy.run/cloudflare-runtime@2.0.0-beta.79"
+  - "@alchemy.run/floci@2.0.0-beta.79"
+  - "@alchemy.run/node-utils@2.0.0-beta.79"
+  - "@distilled.cloud/fly-io@1.0.0-rc.12"
+  - "@distilled.cloud/hetzner@1.0.0-rc.12"
+  - "@distilled.cloud/prisma@1.0.0-rc.12"
+  - "@distilled.cloud/railway@1.0.0-rc.12"
+  - "@distilled.cloud/stripe@1.0.0-rc.12"
 
 overrides:
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
@@ -103,6 +110,16 @@ overrides:
   "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-linux-x64-musl": "-"
   "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-win32-arm64": "-"
   "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-win32-x64": "-"
+  # Alchemy's Ink fork declares React as a hard dependency, but the relay only
+  # reaches its terminal-capability helpers; the TUI is never imported, so the
+  # extra React copy is pure install weight.
+  "@alchemy.run/sigil>react": "-"
+  "@alchemy.run/sigil>react-reconciler": "-"
+  "@alchemy.run/sigil>scheduler": "-"
+  # Alchemy only reaches @prisma/dev through a lazy import inside the Prisma
+  # database provider, which the relay never deploys. Its exact hono/valibot
+  # pins are also the bulk of our open dependency advisories.
+  "alchemy>@prisma/dev": "-"
   "@clerk/backend": "catalog:"
   "@clerk/clerk-js": "catalog:"
   "@clerk/clerk-js>@base-org/account": "-"
@@ -125,6 +142,8 @@ overrides:
   "@expo/dom-webview": 57.0.1
   "@expo/metro-config": 57.0.12
   expo-constants: 57.0.16
+  # Keep fresh resolution on the version carrying the permissions registry fix.
+  expo-modules-core: 57.0.14
   "@pierre/diffs>@shikijs/transformers": ^4.2.0
   # Keep one copy of these native-binary packages. lightningcss ships 11 platform binaries per
   # version, and the workspaces' tailwindcss ^4 ranges drift into two 4.3.x copies of the family.
@@ -158,7 +177,7 @@ packageExtensions:
 
 patchedDependencies:
   "@clerk/expo@4.6.8": patches/@clerk__expo@4.6.8.patch
-  "@effect/vitest@4.0.0-rc.112": patches/@effect__vitest@4.0.0-rc.112.patch
+  "@effect/vitest@4.0.0-rc.115": patches/@effect__vitest@4.0.0-rc.115.patch
   "@expo/metro-config@57.0.12": patches/@expo__metro-config@57.0.12.patch
   "@ff-labs/fff-node@0.9.4": patches/@ff-labs__fff-node@0.9.4.patch
   "@legendapp/list@3.3.5": patches/@legendapp__list@3.3.5.patch
@@ -167,8 +186,10 @@ patchedDependencies:
   "@react-native-menu/menu@2.0.0": patches/@react-native-menu__menu@2.0.0.patch
   "@react-navigation/native-stack@7.17.6": patches/@react-navigation%2Fnative-stack@7.17.6.patch
   dbus-next@0.10.2: patches/dbus-next@0.10.2.patch
-  effect@4.0.0-rc.112: patches/effect@4.0.0-rc.112.patch
+  effect@4.0.0-rc.115: patches/effect@4.0.0-rc.115.patch
   expo-audio@57.0.4: patches/expo-audio@57.0.4.patch
+  expo-modules-core@57.0.14: patches/expo-modules-core@57.0.14.patch
+  expo-notifications@57.0.15: patches/expo-notifications@57.0.15.patch
   expo-sharing@57.0.17: patches/expo-sharing@57.0.17.patch
   expo-widgets@57.0.15: patches/expo-widgets@57.0.15.patch
   react-native-gesture-handler@2.32.0: patches/react-native-gesture-handler@2.32.0.patch
