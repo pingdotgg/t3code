@@ -245,8 +245,8 @@ function DeviceHostList({
               <DeviceToolVersions
                 error={state.hosts.find((value) => value.id === host.id)?.toolInspectionError}
                 tools={
-                  (check?.status === "connected" ? check.tools : undefined) ??
-                  state.hosts.find((value) => value.id === host.id)?.tools
+                  state.hosts.find((value) => value.id === host.id)?.tools ??
+                  (check?.status === "connected" ? check.tools : undefined)
                 }
               />
               {check?.status === "local" ? (
