@@ -32,7 +32,8 @@ import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { getProviderInstanceEntry } from "../../providerInstances";
 import { formatShortTimestamp } from "../../timestampFormat";
 import { getTriggerDisplayModelName } from "./providerIconUtils";
-import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import { ProviderInstanceIcon, providerTextColorClassName } from "./ProviderInstanceIcon";
+import { cn } from "~/lib/utils";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { Button, InlineButton } from "../ui/button";
 import { T3Wordmark } from "../T3Wordmark";
@@ -339,7 +340,16 @@ function HandoffEndpoint(props: {
               acpRegistryIconUrl={entry?.acpRegistryIconUrl}
               iconClassName="size-3"
             />
-            <span className="truncate">{label}</span>
+            <span
+              className={cn(
+                "truncate font-medium",
+                providerTextColorClassName(
+                  entry?.driverKind ?? ProviderDriverKind.make(props.instanceId),
+                ),
+              )}
+            >
+              {label}
+            </span>
           </span>
         }
       />
