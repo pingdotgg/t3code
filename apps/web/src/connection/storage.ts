@@ -67,9 +67,8 @@ const StoredShellSnapshotJson = Schema.fromJsonString(StoredShellSnapshot);
 // thread as complete forever. Older entries fail to decode → cold cache.
 // v4 reloads pre-thinking caches: their fallback system roles cannot recover
 // settled reasoning messages by resuming afterSequence.
-// v5 reloads caches that may contain empty Codex terminal-interaction activities.
 const StoredThreadSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(5),
+  schemaVersion: Schema.Literal(4),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   snapshot: OrchestrationThreadDetailSnapshot,
@@ -682,7 +681,7 @@ export const connectionStorageLayer = Layer.effectContext(
       saveThread: (environmentId, snapshot) =>
         Effect.gen(function* () {
           const encoded = yield* encodeStoredThreadSnapshot({
-            schemaVersion: 5,
+            schemaVersion: 4,
             environmentId,
             threadId: snapshot.thread.id,
             snapshot,

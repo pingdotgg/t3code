@@ -2,6 +2,7 @@ import {
   ORCHESTRATION_WS_METHODS,
   type EnvironmentId as EnvironmentIdType,
   type OrchestrationThread,
+  type OrchestrationThreadActivity,
   type OrchestrationThreadDetailPage,
   type OrchestrationThreadDetailSnapshot,
   type OrchestrationThreadStreamItem,
@@ -38,6 +39,38 @@ import {
 
 function statusWithoutLiveData(data: Option.Option<OrchestrationThread>): EnvironmentThreadStatus {
   return Option.isSome(data) ? "cached" : "empty";
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function asTrimmedString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function isEmptyCommandInteractionUpdate(activity: OrchestrationThreadActivity): boolean {
+  if (activity.kind !== "tool.updated" || activity.summary !== "Tool updated") return false;
+  const payload = asRecord(activity.payload);
+  const data = asRecord(payload?.data);
+  return (
+    payload?.itemType === "command_execution" &&
+    asTrimmedString(payload.title) === null &&
+    asTrimmedString(payload.detail) === null &&
+    asTrimmedString(payload.status) === null &&
+    (data === null || Object.keys(data).length === 0)
+  );
+}
+
+function withoutEmptyCommandInteractionUpdates(thread: OrchestrationThread): OrchestrationThread {
+  const activities = thread.activities.filter(
+    (activity) => !isEmptyCommandInteractionUpdate(activity),
+  );
+  return activities.length === thread.activities.length ? thread : { ...thread, activities };
 }
 
 /**
@@ -202,7 +235,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           ),
         )
       : Option.none<OrchestrationThreadDetailSnapshot>();
-  const cachedThread = Option.map(cached, (snapshot) => snapshot.thread);
+  const cachedThread = Option.map(cached, (snapshot) =>
+    withoutEmptyCommandInteractionUpdates(snapshot.thread),
+  );
   const initialState: EnvironmentThreadState = retained
     ? cachedThreadState(retained.state)
     : {
@@ -453,7 +488,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       // from the replacement snapshot's cursor.
       yield* Ref.set(pendingOlderPage, null);
       yield* SubscriptionRef.set(lastSequence, item.snapshot.snapshotSequence);
-      yield* setThread(item.snapshot.thread, pageStateFromSnapshot(item.snapshot.page));
+      yield* setThread(
+        withoutEmptyCommandInteractionUpdates(item.snapshot.thread),
+        pageStateFromSnapshot(item.snapshot.page),
+      );
       return;
     }
 
@@ -468,6 +506,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       if (item.event.type === "thread.deleted") {
         yield* setDeleted();
       }
+      return;
+    }
+    if (
+      item.event.type === "thread.activity-appended" &&
+      isEmptyCommandInteractionUpdate(item.event.payload.activity)
+    ) {
+      yield* setThread(current.data.value, "keep");
+      yield* tryMergePendingOlderPage();
       return;
     }
     if (item.event.type === "thread.reverted") {
@@ -558,6 +604,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             synchronized = true;
           } else if (item.kind === "event" && item.event.sequence > sequence) {
             sequence = item.event.sequence;
+            if (
+              item.event.type === "thread.activity-appended" &&
+              isEmptyCommandInteractionUpdate(item.event.payload.activity)
+            ) {
+              continue;
+            }
             const result = applyThreadDetailEvent(thread, item.event);
             if (result.kind === "updated") {
               thread = result.thread;

@@ -9612,15 +9612,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  for (const { createBeforeDelete, oversized } of [
-    { createBeforeDelete: false, oversized: false },
-    { createBeforeDelete: true, oversized: false },
-    { createBeforeDelete: true, oversized: true },
+  for (const { createBeforeDelete, oversized, phantomBeforeDelete } of [
+    { createBeforeDelete: false, oversized: false, phantomBeforeDelete: false },
+    { createBeforeDelete: false, oversized: false, phantomBeforeDelete: true },
+    { createBeforeDelete: true, oversized: false, phantomBeforeDelete: false },
+    { createBeforeDelete: true, oversized: true, phantomBeforeDelete: false },
   ]) {
     it.effect(
       oversized
         ? "keeps the missing-snapshot error when an absent thread exceeds the replay limit"
-        : `synchronizes an absent thread and removes its shell after ${createBeforeDelete ? "creation and deletion" : "deletion"}`,
+        : `synchronizes an absent thread and removes its shell after ${phantomBeforeDelete ? "an empty terminal interaction and deletion" : createBeforeDelete ? "creation and deletion" : "deletion"}`,
       () =>
         Effect.gen(function* () {
           const store = yield* OrchestrationEventStore;
@@ -9651,6 +9652,26 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               (sequence) => store.append(makeLiveToolActivityEvent(sequence, "tool.completed")),
               { discard: true },
             );
+          }
+          if (phantomBeforeDelete) {
+            yield* store.append({
+              ...base,
+              eventId: EventId.make("phantom-before-final-delete"),
+              type: "thread.activity-appended",
+              payload: {
+                threadId: defaultThreadId,
+                activity: {
+                  ...base.payload.activity,
+                  kind: "tool.updated",
+                  summary: "Tool updated",
+                  payload: {
+                    itemType: "command_execution",
+                    toolCallId: "command-1",
+                    data: {},
+                  },
+                },
+              },
+            });
           }
           const deleted = yield* store.append({
             ...base,
