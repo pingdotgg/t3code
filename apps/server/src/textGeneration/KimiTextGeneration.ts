@@ -134,13 +134,16 @@ export const makeKimiTextGeneration = Effect.fn("makeKimiTextGeneration")(functi
       );
 
       const trimmed = (yield* Ref.get(outputRef)).trim();
+      if (promptResult.stopReason === "cancelled") {
+        return yield* new TextGenerationError({
+          operation,
+          detail: "Kimi ACP request was cancelled.",
+        });
+      }
       if (!trimmed) {
         return yield* new TextGenerationError({
           operation,
-          detail:
-            promptResult.stopReason === "cancelled"
-              ? "Kimi ACP request was cancelled."
-              : "Kimi returned empty output.",
+          detail: "Kimi returned empty output.",
         });
       }
 

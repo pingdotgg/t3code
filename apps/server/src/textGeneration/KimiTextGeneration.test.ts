@@ -181,6 +181,30 @@ it.layer(KimiTextGenerationTestLayer)("KimiTextGeneration", (it) => {
     ),
   );
 
+  it.effect("fails with the cancellation error when kimi cancels after emitting output", () =>
+    withFakeAcpKimi(
+      {
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({ title: "Partial title" }),
+        T3_ACP_PROMPT_STOP_REASON: "cancelled",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "anything",
+              modelSelection: createModelSelection(
+                ProviderInstanceId.make("kimi"),
+                "kimi-code/kimi-for-coding",
+              ),
+            }),
+          );
+          expect(error._tag).toBe("TextGenerationError");
+          expect(error.detail).toMatch(/cancelled/i);
+        }),
+    ),
+  );
+
   it.effect("surfaces unknown model ids as text generation errors", () =>
     withFakeAcpKimi(
       {
