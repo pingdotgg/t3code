@@ -1151,6 +1151,9 @@ export const layer: Layer.Layer<
           ...(message.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: message.scheduledTaskId }),
+          ...(message.senderThreadId === undefined
+            ? {}
+            : { senderThreadId: message.senderThreadId }),
         },
         modelSelection: run.modelSelection,
         runtimePolicy: resolvedRuntimePolicy,

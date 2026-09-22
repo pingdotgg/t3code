@@ -1604,6 +1604,7 @@ export function makeCursorAdapterV2(
             });
             const promptNativeId = `${nativeItemId}:prompt`;
             const promptArtifacts = makeSubagentConversationArtifacts({
+              senderThreadId: input.context.input.threadId,
               messageId: idAllocator.derive.messageFromProviderItem({
                 driver: CURSOR_PROVIDER,
                 nativeItemId: promptNativeId,

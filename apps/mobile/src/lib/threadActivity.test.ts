@@ -218,6 +218,23 @@ describe("buildThreadFeed", () => {
     });
   });
 
+  it("keeps the sender of an agent message distinct from its timeline source", () => {
+    const feed = buildThreadFeed([
+      projected(
+        {
+          ...userMessage(),
+          createdBy: "agent",
+          creationSource: "mcp",
+          senderThreadId: sourceThreadId,
+        },
+        0,
+      ),
+    ]);
+    const messageEntry = feed.find((entry) => entry.type === "message");
+    expect(messageEntry?.message.senderThreadId).toBe(sourceThreadId);
+    expect(messageEntry?.message.sourceThreadId).toBe(threadId);
+  });
+
   it("adds local feedback messages to an otherwise server-authored feed", () => {
     const feed = buildThreadFeed([], {
       localMessages: [

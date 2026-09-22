@@ -2531,6 +2531,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             });
             const promptNativeItemId = `${nativeTaskId}:prompt`;
             const promptArtifacts = makeSubagentConversationArtifacts({
+              senderThreadId: context.input.threadId,
               messageId: providerMessageId(promptNativeItemId),
               turnItemId: providerTurnItemId(promptNativeItemId),
               threadId: childThreadId,
@@ -6565,6 +6566,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               ...(turnInput.message.scheduledTaskId === undefined
                 ? {}
                 : { scheduledTaskId: turnInput.message.scheduledTaskId }),
+              ...(turnInput.message.senderThreadId === undefined
+                ? {}
+                : { senderThreadId: turnInput.message.senderThreadId }),
               id: turnInput.message.messageId,
               threadId: turnInput.threadId,
               runId: turnInput.runId,

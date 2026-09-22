@@ -1410,6 +1410,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(queuedMessage.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: queuedMessage.scheduledTaskId }),
+          ...(queuedMessage.senderThreadId === undefined
+            ? {}
+            : { senderThreadId: queuedMessage.senderThreadId }),
         }),
         inputIntent: "queued_turn",
         startedAt: now,
@@ -3285,6 +3288,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly createdBy: OrchestrationV2ConversationMessage["createdBy"];
     readonly creationSource: OrchestrationV2ConversationMessage["creationSource"];
     readonly scheduledTaskId?: OrchestrationV2ConversationMessage["scheduledTaskId"];
+    readonly senderThreadId?: OrchestrationV2ConversationMessage["senderThreadId"];
     readonly delegatedCompletion?: OrchestrationV2ConversationMessage["delegatedCompletion"];
     readonly forceRestart: boolean;
   }) =>
@@ -3430,6 +3434,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(input.scheduledTaskId === undefined
               ? {}
               : { scheduledTaskId: input.scheduledTaskId }),
+            ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
             id: input.messageId,
             threadId: input.command.threadId,
             runId: messageInput.runId,
@@ -3448,6 +3453,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(input.scheduledTaskId === undefined
               ? {}
               : { scheduledTaskId: input.scheduledTaskId }),
+            ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
             id: idAllocator.derive.userTurnItem({ messageId: input.messageId }),
             threadId: input.command.threadId,
             runId: messageInput.runId,
@@ -4288,6 +4294,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: command.scheduledTaskId }),
+          ...(command.senderThreadId === undefined
+            ? {}
+            : { senderThreadId: command.senderThreadId }),
           forceRestart: dispatchMode.type === "restart_active",
         });
         return;
@@ -4469,6 +4478,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: command.scheduledTaskId }),
+          ...(command.senderThreadId === undefined
+            ? {}
+            : { senderThreadId: command.senderThreadId }),
           id: command.messageId,
           threadId: command.threadId,
           runId,
@@ -4805,6 +4817,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: command.scheduledTaskId }),
+          ...(command.senderThreadId === undefined
+            ? {}
+            : { senderThreadId: command.senderThreadId }),
           id: command.messageId,
           threadId: command.threadId,
           runId,
@@ -4825,6 +4840,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: command.scheduledTaskId }),
+          ...(command.senderThreadId === undefined
+            ? {}
+            : { senderThreadId: command.senderThreadId }),
           id: idAllocator.derive.userTurnItem({ messageId: command.messageId }),
           threadId: command.threadId,
           runId,
@@ -5491,6 +5509,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.scheduledTaskId === undefined
           ? {}
           : { scheduledTaskId: command.scheduledTaskId }),
+        ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
         id: command.messageId,
         threadId: command.threadId,
         runId,
@@ -5511,6 +5530,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.scheduledTaskId === undefined
           ? {}
           : { scheduledTaskId: command.scheduledTaskId }),
+        ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
         id: idAllocator.derive.userTurnItem({ messageId: command.messageId }),
         threadId: command.threadId,
         runId,
@@ -6110,6 +6130,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         creationSource: command.creationSource,
         commandId: command.commandId,
         threadId: childThreadId,
+        senderThreadId: command.parentThreadId,
         messageId: childMessageId,
         text: command.task,
         attachments: [],
@@ -6795,6 +6816,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(queuedMessage.scheduledTaskId === undefined
           ? {}
           : { scheduledTaskId: queuedMessage.scheduledTaskId }),
+        ...(queuedMessage.senderThreadId === undefined
+          ? {}
+          : { senderThreadId: queuedMessage.senderThreadId }),
         forceRestart: false,
       });
     });

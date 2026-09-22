@@ -320,7 +320,7 @@ for (const target of ["new", "existing"] as const) {
   }
 }
 
-it.effect("retains automation attribution while a message waits in the queue", () => {
+it.effect("retains automation and sender attribution while a message waits in the queue", () => {
   const harness = makeHarness({ runSetup: () => Effect.never });
   return Effect.gen(function* () {
     const launches = yield* ThreadLaunch.ThreadLaunchService;
@@ -333,12 +333,14 @@ it.effect("retains automation attribution while a message waits in the queue", (
       }),
     );
     const scheduledTaskId = ScheduledTaskId.make("scheduled-task:queued");
+    const senderThreadId = ThreadId.make("thread:agent-sender");
     const queued = yield* threads.sendToThread({
       projectId,
       commandId: CommandId.make("command:automation:queued"),
       threadId: launched.threadId,
       messageId: MessageId.make("message:automation:queued"),
       scheduledTaskId,
+      senderThreadId,
       text: "Run the audit",
       attachments: [],
       mode: "queue",
@@ -349,6 +351,7 @@ it.effect("retains automation attribution while a message waits in the queue", (
     const projection = yield* threads.getThreadProjection(launched.threadId);
     const message = projection.messages.find((item) => item.id === queued.message.id);
     assert.equal(message?.scheduledTaskId, scheduledTaskId);
+    assert.equal(message?.senderThreadId, senderThreadId);
     assert.equal(message?.text, "Run the audit");
   }).pipe(Effect.provide(harness.layer));
 });

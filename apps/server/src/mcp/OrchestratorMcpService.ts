@@ -1640,6 +1640,7 @@ const make = Effect.gen(function* () {
                       index,
                     }),
                     threadId,
+                    senderThreadId: scope.threadId,
                     messageId: stableMessageId({
                       scope,
                       requestKey: key,
@@ -1840,6 +1841,7 @@ const make = Effect.gen(function* () {
               operation: "thread-send",
             }),
             threadId: input.threadId,
+            senderThreadId: scope.threadId,
             messageId,
             text: input.message,
             attachments: [],

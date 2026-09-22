@@ -2420,6 +2420,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             if (input.emitInitialPrompt && input.prompt.length > 0) {
               const promptNativeItemId = `${input.nativeItemId}:prompt`;
               const promptArtifacts = makeSubagentConversationArtifacts({
+                senderThreadId: input.context.projectionThreadId,
                 messageId: idAllocator.derive.messageFromProviderItem({
                   driver: CODEX_PROVIDER,
                   nativeItemId: promptNativeItemId,
@@ -2872,6 +2873,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             const now = yield* DateTime.now;
             const ordinal = yield* resolveItemOrdinal(context, item.id);
             const artifacts = makeSubagentConversationArtifacts({
+              senderThreadId: context.subagent.parentContext.projectionThreadId,
               messageId: idAllocator.derive.messageFromProviderItem({
                 driver: CODEX_PROVIDER,
                 nativeItemId: item.id,

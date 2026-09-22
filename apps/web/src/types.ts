@@ -14,6 +14,7 @@ import type {
   RunId,
   RuntimeMode,
   ScheduledTaskId,
+  ThreadId,
 } from "@t3tools/contracts";
 import type {
   EnvironmentProject,
@@ -98,6 +99,7 @@ export interface ChatMessage {
   readonly createdBy?: OrchestrationV2Actor;
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly scheduledTaskId?: ScheduledTaskId;
+  readonly senderThreadId?: ThreadId;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly inputIntent?: OrchestrationV2UserMessageInputIntent | undefined;

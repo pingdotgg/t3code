@@ -3533,6 +3533,7 @@ export function makeClaudeAdapterV2(
           if (existingSubagent === undefined) {
             const promptNativeItemId = `${nativeItemId}:prompt`;
             const promptArtifacts = makeSubagentConversationArtifacts({
+              senderThreadId: input.context.input.threadId,
               messageId: idAllocator.derive.messageFromProviderItem({
                 driver: CLAUDE_PROVIDER,
                 nativeItemId: promptNativeItemId,

@@ -82,6 +82,7 @@ export function makeSubagentChildThread(input: {
 
 export function makeSubagentConversationArtifacts(input: {
   readonly messageId: MessageId;
+  readonly senderThreadId?: ThreadId;
   readonly turnItemId: TurnItemId;
   readonly threadId: ThreadId;
   readonly rootNodeId: NodeId;
@@ -104,6 +105,9 @@ export function makeSubagentConversationArtifacts(input: {
     runId: null,
     nodeId: input.rootNodeId,
     role: input.role,
+    ...(input.role === "user" && input.senderThreadId !== undefined
+      ? { senderThreadId: input.senderThreadId }
+      : {}),
     text: input.text,
     attachments: [],
     streaming: false,
@@ -135,6 +139,7 @@ export function makeSubagentConversationArtifacts(input: {
           createdBy: "agent",
           creationSource: "provider",
           type: "user_message",
+          ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
           inputIntent: "turn_start",
           attachments: [],
         }
