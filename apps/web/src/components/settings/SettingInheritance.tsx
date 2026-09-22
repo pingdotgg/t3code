@@ -1,5 +1,7 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  PROJECT_FILE_BACKED_SETTINGS,
+  type ProjectFileBackedSettingKey,
   resolveEnvironmentMachineKind,
   type ServerSettings,
 } from "@t3tools/contracts";
@@ -18,7 +20,7 @@ import type { ProjectOverrideEntry, ScopedSettingsTarget } from "./scopedSetting
 import { isProjectScopedSettingKey } from "./scopedSettings";
 
 interface InheritanceLayer {
-  readonly key: "project" | "environment" | "built-in";
+  readonly key: "project" | "environment" | "t3.json" | "built-in";
   readonly label: string;
   readonly value: string;
   readonly effective: boolean;
@@ -76,42 +78,63 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
 /**
  * The layers a setting resolves through for one target, top-down: the
  * project override when the target is a project, the environment's value,
- * and the built-in default. The first layer that is set wins.
+ * the checkout's t3.json for file-backed keys, and the built-in default. The
+ * first layer that is set wins. Same order as `resolveProjectSettings`.
  */
 export function settingInheritanceLayers(
   target: ScopedSettingsTarget,
   environmentSettings: ServerSettings,
   key: keyof ServerSettings,
 ): readonly InheritanceLayer[] {
-  const builtIn = DEFAULT_SERVER_SETTINGS[key];
   const environmentValue = environmentSettings[key];
-  const projectSource = isProjectScopedSettingKey(key) ? target.sources[key] : "environment";
-  const environmentSet = !Equal.equals(environmentValue, builtIn);
+  const source = isProjectScopedSettingKey(key) ? target.sources[key] : "environment";
+  const environmentSet = !Equal.equals(environmentValue, DEFAULT_SERVER_SETTINGS[key]);
+  const fileBacked = isProjectFileBackedSettingKey(key);
   const layers: InheritanceLayer[] = [];
   if (target.projectId !== null && isProjectScopedSettingKey(key)) {
     layers.push({
       key: "project",
       label: "Project",
-      value: projectSource === "project" ? formatValue(key, target.settings[key]) : "Inherits",
-      effective: projectSource === "project",
-      set: projectSource === "project",
+      value: source === "project" ? formatValue(key, target.settings[key]) : "Inherits",
+      effective: source === "project",
+      set: source === "project",
     });
   }
   layers.push({
     key: "environment",
     label: target.label,
     value: environmentSet ? formatValue(key, environmentValue) : "Inherits",
-    effective: projectSource !== "project" && environmentSet,
+    effective: source === "environment" && environmentSet,
     set: environmentSet,
   });
+  if (fileBacked && target.projectId !== null) {
+    layers.push({
+      key: "t3.json",
+      label: "t3.json",
+      value: source === "t3.json" ? formatValue(key, target.settings[key]) : "Inherits",
+      effective: source === "t3.json",
+      set: source === "t3.json",
+    });
+  }
+  // For a file-backed key the built-in is what the resolver produced with
+  // nothing set, not the null the schema decodes to.
+  const builtIn = fileBacked
+    ? PROJECT_FILE_BACKED_SETTINGS[key].builtIn
+    : DEFAULT_SERVER_SETTINGS[key];
   layers.push({
     key: "built-in",
     label: "Default",
     value: formatValue(key, builtIn),
-    effective: projectSource !== "project" && !environmentSet,
+    effective: source === "environment" && !environmentSet,
     set: true,
   });
   return layers;
+}
+
+function isProjectFileBackedSettingKey(
+  key: keyof ServerSettings,
+): key is ProjectFileBackedSettingKey {
+  return Object.hasOwn(PROJECT_FILE_BACKED_SETTINGS, key);
 }
 
 export type SettingInheritanceState =

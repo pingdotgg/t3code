@@ -1,14 +1,11 @@
 import {
   DEFAULT_SERVER_SETTINGS,
-  EnvironmentId,
   type ModelSelection,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 
-import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -78,26 +75,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unavailable = connectedEnvironments.length === 0;
-
-  // A setting on either scope beats the checkout's t3.json, and "inherit"
-  // (null) is what lets the file decide; show what inherit resolves to once
-  // a checkout's file has been read. Other scopes have no single file to ask.
-  const checkout = scope.kind === "checkout" ? scope.checkout : null;
-  // The query is disabled without a checkout, so any id satisfies the hook.
-  const t3File = useT3ProjectFileState(
-    checkout?.environmentId ?? EnvironmentId.make("none"),
-    category === "general" && checkout ? checkout.workspaceRoot : null,
-  );
-  const fileSettled = checkout !== null && t3File.status !== "loading";
-  // The same resolver the new-thread paths use, so the label cannot disagree
-  // with what a thread would actually get.
-  const withFile = fileSettled
-    ? resolveProjectSettings(settings, checkout.id, null, t3File.file)
-    : null;
-  const inheritedEnvModeLabel =
-    withFile === null || settings.defaultThreadEnvMode !== null
-      ? null
-      : `${resolveEnvModeLabel(withFile.settings.defaultThreadEnvMode)}${withFile.sources.defaultThreadEnvMode === "t3.json" ? " (t3.json)" : ""}`;
 
   function modelDisabledReason(instanceId: ProviderInstanceId, model: string): string | null {
     const sourceEntry = entries.find((entry) => entry.instanceId === instanceId);
@@ -296,10 +273,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             title="Workspace"
             description={
               isProjectScope
-                ? "Where new threads in this project start. Inherit follows the environment, then the repository's t3.json."
-                : "Where new threads start. Inherit follows the repository's t3.json, or the current checkout."
+                ? "Where new threads in this project start."
+                : "Where new threads start. Projects and their t3.json can override it."
             }
-            status={inheritedEnvModeLabel ? `Resolves to: ${inheritedEnvModeLabel}` : undefined}
             control={
               <Select
                 value={mixedWorkspace ? null : (settings.defaultThreadEnvMode ?? "inherit")}
