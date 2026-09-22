@@ -1034,7 +1034,6 @@ export const make = Effect.gen(function* () {
     details: {
       branch: string;
       upstreamRef: string | null;
-      defaultBranch: string | null;
       localBranchExists?: boolean;
       remoteName?: string | null;
     },
@@ -1043,7 +1042,6 @@ export const make = Effect.gen(function* () {
       cwd,
       details.branch,
       details.upstreamRef ?? "",
-      details.defaultBranch ?? "",
       details.localBranchExists === false ? "0" : "1",
       details.remoteName ?? "",
       String(prLookupEpoch(cwd)),
@@ -1067,18 +1065,11 @@ export const make = Effect.gen(function* () {
   };
   const prLookupCache = yield* Cache.makeWith(
     (key: string) => {
-      const [
-        cwd = "",
-        branch = "",
-        upstreamRef = "",
-        defaultBranch = "",
-        branchExists = "1",
-        remoteName = "",
-      ] = key.split("\u0000");
+      const [cwd = "", branch = "", upstreamRef = "", branchExists = "1", remoteName = ""] =
+        key.split("\u0000");
       const details = {
         branch,
         upstreamRef: upstreamRef.length > 0 ? upstreamRef : null,
-        defaultBranch: defaultBranch.length > 0 ? defaultBranch : null,
         localBranchExists: branchExists !== "0",
         ...(remoteName.length > 0 ? { remoteName } : {}),
       };
@@ -1174,7 +1165,6 @@ export const make = Effect.gen(function* () {
     details: {
       branch: string;
       upstreamRef: string | null;
-      defaultBranch: string | null;
       isDefaultBranch: boolean;
     },
     refreshMissingPullRequest = false,
@@ -1262,7 +1252,6 @@ export const make = Effect.gen(function* () {
             {
               branch: details.branch,
               upstreamRef: details.upstreamRef,
-              defaultBranch: details.defaultBranch,
               isDefaultBranch: details.isDefaultBranch,
             },
             options?.refreshMissingPullRequest,
@@ -1490,10 +1479,9 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.orElseSucceed(() => null));
   });
 
-  // `git worktree add -b feature origin/main` makes the new local branch track
-  // origin/main. That upstream is the branch's base, not its published PR
-  // head. Looking up PRs for it can attach an old reverse merge from main and
-  // auto-settle an unrelated feature thread.
+  // A branch cut from origin/main or origin/dev tracks its base, not its
+  // published PR head. Looking up the base's PR can auto-settle an unrelated
+  // feature thread.
   //
   // The branch may still have been pushed under its own name by a plain
   // `git push <remote> feature` that never moved the upstream. When a remote
@@ -1507,20 +1495,20 @@ export const make = Effect.gen(function* () {
     details: {
       branch: string;
       upstreamRef: string | null;
-      defaultBranch: string | null;
       remoteName?: string;
     },
   ) {
     const headContext = yield* resolveBranchHeadContext(cwd, details);
-    const upstreamHeadIsDefault =
-      headContext.headBranch === details.defaultBranch ||
-      (details.defaultBranch === null &&
-        (headContext.headBranch === "main" || headContext.headBranch === "master"));
-    if (
-      headContext.headBranch === details.branch ||
-      !upstreamHeadIsDefault ||
-      headContext.isCrossRepository
-    ) {
+    // A slash-containing remote can produce a local tracking alias such as
+    // upstream/effect-atom for my-org/upstream/effect-atom. Both suffix checks
+    // distinguish that alias from v2 tracking origin/release/v2 and
+    // feature/dev tracking origin/dev.
+    const localBranchIsAliasOfHead =
+      details.branch === headContext.headBranch ||
+      (details.branch.endsWith(`/${headContext.headBranch}`) &&
+        details.upstreamRef !== null &&
+        details.upstreamRef.endsWith(`/${details.branch}`));
+    if (localBranchIsAliasOfHead || headContext.isCrossRepository) {
       return { headContext, lookup: true };
     }
     const remoteName = yield* findRemoteTrackingRemote(cwd, details.branch, headContext.remoteName);
@@ -1695,11 +1683,13 @@ export const make = Effect.gen(function* () {
       finalBranchContext?.hasUpstream === true;
 
     if (shouldLookupExistingOpenPr && finalBranchContext) {
-      latestOpenPr = yield* resolveBranchHeadContext(cwd, {
+      latestOpenPr = yield* resolveLookupHeadContext(cwd, {
         branch: finalBranchContext.branch,
         upstreamRef: finalBranchContext.upstreamRef,
       }).pipe(
-        Effect.flatMap((headContext) => findOpenPr(cwd, headContext)),
+        Effect.flatMap(({ headContext, lookup }) =>
+          lookup ? findOpenPr(cwd, headContext) : Effect.succeed(null),
+        ),
         Effect.orElseSucceed(() => null),
       );
     }
@@ -2186,7 +2176,6 @@ export const make = Effect.gen(function* () {
     const cacheKey = prLookupCacheKey(cacheCwd, {
       branch,
       upstreamRef,
-      defaultBranch,
       localBranchExists,
       ...(localBranchExists ? {} : { remoteName }),
     });
