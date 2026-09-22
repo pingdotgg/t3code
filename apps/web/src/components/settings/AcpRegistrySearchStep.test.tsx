@@ -200,10 +200,7 @@ describe("AcpRegistrySearchStep", () => {
     state.isPending = true;
     const refreshingTree = render();
     expect(
-      visitElements(
-        refreshingTree,
-        (element) => element.props.children === "Refreshing registry results...",
-      ),
+      visitElements(refreshingTree, (element) => element.props.children === "Refreshing"),
     ).not.toBeNull();
     expect(
       visitElements(
@@ -300,32 +297,5 @@ describe("AcpRegistrySearchStep", () => {
     const added = findByAriaLabel(tree, "Already added Gemini CLI");
 
     expect(added.props.disabled).toBe(true);
-  });
-
-  it("shows catalog metadata, uniquely named reference links, and a local icon fallback", () => {
-    state.result = { agents: [gemini] };
-    const tree = render();
-
-    // Author emails are stripped, registry-integrity gets no marker, and the
-    // version renders beside the name instead of inside the meta line.
-    for (const item of ["Google +1", "v1.2.3", "npx", "Apache-2.0"]) {
-      expect(visitElements(tree, (element) => element.props.children === item)).not.toBeNull();
-    }
-    for (const absent of ["Registry", "✓ checksum"]) {
-      expect(visitElements(tree, (element) => element.props.children === absent)).toBeNull();
-    }
-    expect(
-      visitElements(
-        tree,
-        (element) => element.props["aria-label"] === "Open documentation for Gemini CLI (gemini)",
-      ),
-    ).not.toBeNull();
-    expect(
-      visitElements(
-        tree,
-        (element) => element.props["aria-label"] === "Open source for Gemini CLI (gemini)",
-      ),
-    ).not.toBeNull();
-    expect(visitElements(tree, (element) => element.type === "img")).toBeNull();
   });
 });

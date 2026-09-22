@@ -308,12 +308,7 @@ export function AddProviderInstanceDialog({
       <WizardPopup>
         <WizardHeader
           title="Add provider"
-          description={
-            <>
-              Set up a provider on {environmentLabel}, or add another account for a provider you
-              already use.
-            </>
-          }
+          description={<>Set up a provider on {environmentLabel}.</>}
         >
           {isAcpRegistry ? (
             <AddProviderInstanceWizardSteps
@@ -416,9 +411,6 @@ export function AddProviderInstanceDialog({
                 {hasAttemptedSubmit && acpSelectionError ? (
                   <p className="text-[11px] text-destructive">{acpSelectionError}</p>
                 ) : null}
-                <p className="border-t border-border/70 pt-3 text-[11px] text-muted-foreground">
-                  Authentication is completed separately with the configured agent.
-                </p>
               </div>
             ) : (
               <>
