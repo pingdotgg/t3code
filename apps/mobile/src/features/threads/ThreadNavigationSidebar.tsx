@@ -905,6 +905,16 @@ function ThreadNavigationSidebarPane(
     </Text>
   );
 
+  // Android's empty branch replaces the list, so the status must render there
+  // too — otherwise a failed source loses its Retry and Manage actions.
+  const searchStatus = (
+    <ThreadSearchStatus
+      sources={threadSearch.sources}
+      retry={threadSearch.retry}
+      onOpenConnections={props.onOpenEnvironmentSettings}
+    />
+  );
+
   if (props.nativeChrome) {
     return (
       <>
@@ -971,13 +981,7 @@ function ThreadNavigationSidebarPane(
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
-                ListHeaderComponent={
-                  <ThreadSearchStatus
-                    sources={threadSearch.sources}
-                    retry={threadSearch.retry}
-                    onOpenConnections={props.onOpenEnvironmentSettings}
-                  />
-                }
+                ListHeaderComponent={searchStatus}
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>
@@ -1012,7 +1016,10 @@ function ThreadNavigationSidebarPane(
         }
       >
         {Platform.OS === "android" && listItems.length === 0 ? (
-          <View className="flex-1 items-center justify-center">{listEmpty}</View>
+          <View className="flex-1 items-center justify-center">
+            {searchStatus}
+            {listEmpty}
+          </View>
         ) : (
           <SwipeableScrollGateProvider enabled={swipeEnabled}>
             <GestureDetector gesture={sidebarScrollGesture}>
@@ -1043,13 +1050,7 @@ function ThreadNavigationSidebarPane(
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
-                ListHeaderComponent={
-                  <ThreadSearchStatus
-                    sources={threadSearch.sources}
-                    retry={threadSearch.retry}
-                    onOpenConnections={props.onOpenEnvironmentSettings}
-                  />
-                }
+                ListHeaderComponent={searchStatus}
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>
