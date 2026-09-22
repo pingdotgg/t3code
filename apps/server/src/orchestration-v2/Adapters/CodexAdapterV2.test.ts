@@ -5663,7 +5663,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("routes a resumed child roster to the new parent run", () =>
+  it.effect("rejects duplicate child starts across parent runs", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const firstDone = yield* Deferred.make<void>();
@@ -5692,6 +5692,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               : entry,
           );
         }
+        entries.push(childTurnStarted(RESUME_CHILD_TURN_1));
         entries.push(...suffix);
         const harness = yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({
@@ -5736,6 +5737,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(row?.status, "running");
         assert.equal(row?.parentNodeId, "node-cross-run-second");
         assert.isNull(row?.completedAt);
+        assert.isNotNull(row?.startedAt);
+        assert.equal(DateTime.toEpochMillis(row!.startedAt!), 1782622470000);
       }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
     ),
   );

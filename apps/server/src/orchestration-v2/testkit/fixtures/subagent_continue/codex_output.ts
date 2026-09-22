@@ -35,7 +35,8 @@ export function assertSubagentContinueOutput(
 
   const subagent = projection.subagents[0]!;
   assert.equal(subagent.status, "completed");
-  assert.equal(subagent.result, "initial subagent response");
+  assert.equal(subagent.result, "continued subagent response");
+  assert.equal(subagent.runId, projection.runs[1]!.id);
   assert.isNotNull(subagent.childThreadId);
   if (subagent.childThreadId === null) {
     throw new Error("Continued subagent is missing its child thread");
