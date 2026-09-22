@@ -55,6 +55,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         agentId: "test-agent",
         version: "1.0.0",
         distribution: "npx",
+        documentationUrl: "https://example.test/agent/setup",
       },
       probe: {
         probe: {
@@ -84,6 +85,10 @@ describe("acpRegistrySnapshotReadiness", () => {
     expect(provider.iconUrl).toBe(
       "https://cdn.agentclientprotocol.com/registry/v1/latest/test-agent.svg",
     );
+    expect(provider.setup).toMatchObject({
+      canAuthenticate: false,
+      documentationUrl: "https://example.test/agent/setup",
+    });
   });
 
   it("keeps authentication unknown when an agent permits a discovery session before sign-in", () => {

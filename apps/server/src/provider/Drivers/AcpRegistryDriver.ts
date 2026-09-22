@@ -191,6 +191,7 @@ function baseSnapshot(
     readonly version: string | null;
     readonly status: ServerProvider["status"];
     readonly auth: ServerProvider["auth"];
+    readonly documentationUrl?: string;
     readonly message?: string;
     readonly probe?: AcpRegistryConfigurationProbeResult;
   },
@@ -217,6 +218,7 @@ function baseSnapshot(
     checkedAt: input.checkedAt,
     setup: {
       canInstall: false,
+      ...(input.documentationUrl ? { documentationUrl: input.documentationUrl } : {}),
       canAuthenticate:
         input.installed &&
         (input.probe
@@ -324,6 +326,9 @@ export function buildCheckedAcpRegistrySnapshot(
     : undefined;
   return baseSnapshot({
     ...input,
+    ...(input.inspection.status === "ready" && input.inspection.documentationUrl
+      ? { documentationUrl: input.inspection.documentationUrl }
+      : {}),
     installed: readiness.installed,
     version: readiness.version,
     // A failed discovery probe on a ready installation is a warning, not an

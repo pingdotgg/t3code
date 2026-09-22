@@ -470,6 +470,7 @@ export type AcpRegistryInspection =
       readonly agentId: string;
       readonly version: string;
       readonly distribution: AcpRegistryDistributionKind;
+      readonly documentationUrl?: string;
     };
 
 export class AcpRegistryCatalog extends Context.Service<
@@ -1637,6 +1638,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       const registry = yield* loadCachedRegistry();
       const agent = registry.agents.find((candidate) => candidate.id === agentId);
       if (agent === undefined) return { status: "not_found", agentId } as const;
+      const documentationUrl = agent.website ?? agent.repository;
       const distribution = resolveAcpRegistryDistribution({
         agent,
         preference: settings.distribution,
@@ -1657,6 +1659,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
               agentId,
               version: agent.version,
               distribution: distribution.kind,
+              ...(documentationUrl ? { documentationUrl } : {}),
             } as const)
           : ({
               status: "missing_runner",
@@ -1690,6 +1693,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
                   agentId,
                   version: agent.version,
                   distribution: "binary",
+                  ...(documentationUrl ? { documentationUrl } : {}),
                 } as const;
               }
               return {
@@ -1715,6 +1719,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
               agentId,
               version: agent.version,
               distribution: "binary",
+              ...(documentationUrl ? { documentationUrl } : {}),
             } as const;
           }),
         );
@@ -1729,6 +1734,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             agentId,
             version: agent.version,
             distribution: distribution.kind,
+            ...(documentationUrl ? { documentationUrl } : {}),
           } as const)
         : ({
             status: "missing_runner",

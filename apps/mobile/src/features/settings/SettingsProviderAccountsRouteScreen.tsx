@@ -102,11 +102,22 @@ function ProviderAccount({
   const signedIn =
     provider.auth.status === "authenticated" ||
     (provider.auth.status === "unknown" && state?.phase === "succeeded");
+  const isDiscovering =
+    provider.driver === "acpRegistry" &&
+    !active &&
+    !signedIn &&
+    !auth.error &&
+    state?.methods === undefined;
+  const needsExternalSetup =
+    !active &&
+    !signedIn &&
+    (provider.setup?.canAuthenticate === false ||
+      (provider.driver === "acpRegistry" && state?.methods?.length === 0));
   const url =
     interaction?.type === "browser" || interaction?.type === "deviceCode"
       ? interaction.url
       : state?.authorizationUrl;
-  const disabled = pending || auth.error !== null;
+  const disabled = pending || auth.error !== null || isDiscovering;
   async function run(command: () => Promise<AtomCommandResult<unknown, unknown>>) {
     if (pendingRef.current) return false;
     pendingRef.current = true;
@@ -172,7 +183,11 @@ function ProviderAccount({
             ? state.message
             : signedIn
               ? "Signed in."
-              : "Connect this provider."}
+              : isDiscovering
+                ? "Discovering sign-in methods…"
+                : needsExternalSetup
+                  ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
+                  : "Connect this provider."}
         </Text>
         {signedIn && !active && provider.auth.email?.trim() ? (
           <ProviderAccountEmail key={provider.auth.email} email={provider.auth.email} />
@@ -283,7 +298,17 @@ function ProviderAccount({
           }}
         />
       ) : null}
-      {active && state?.flowId ? (
+      {needsExternalSetup && provider.setup?.documentationUrl ? (
+        <SettingsActionRow
+          icon="globe"
+          label="Open docs"
+          onPress={() => {
+            void Linking.openURL(provider.setup!.documentationUrl!).catch(() =>
+              setError("Could not open the provider docs."),
+            );
+          }}
+        />
+      ) : active && state?.flowId ? (
         <SettingsActionRow
           icon="xmark"
           label="Cancel sign-in"
@@ -292,7 +317,7 @@ function ProviderAccount({
             void run(() => cancel({ environmentId, input: { instanceId, flowId: state.flowId! } }));
           }}
         />
-      ) : !active && provider.setup?.canAuthenticate !== false ? (
+      ) : !active && !needsExternalSetup && provider.setup?.canAuthenticate !== false ? (
         <SettingsActionRow
           icon="person.crop.circle"
           label={signedIn ? "Change account" : "Sign in"}
