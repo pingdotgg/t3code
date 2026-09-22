@@ -52,11 +52,11 @@ export function ClerkUserProfileRefreshButton({
     <Button
       size="sm"
       variant="outline"
-      className={cn("text-[0.8125rem]", className)}
+      className={className}
       disabled={disabled || isPending}
       onClick={onClick}
     >
-      <RefreshIcon aria-hidden="true" className="size-3.5" refreshing={isPending} />
+      <RefreshIcon aria-hidden="true" size="sm" refreshing={isPending} />
       Refresh
     </Button>
   );

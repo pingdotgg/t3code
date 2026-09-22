@@ -150,7 +150,7 @@ export function SnapShotContentsButton({
                   aria-label={
                     includesAccessibility ? "View accessibility data" : "No accessibility data"
                   }
-                  className={cn("[--control-icon-color:currentColor]", className)}
+                  className={className}
                   onClick={(event) => event.stopPropagation()}
                   size="icon-micro"
                   variant="ghost-muted"
@@ -166,11 +166,11 @@ export function SnapShotContentsButton({
       <PopoverPopup
         side={side}
         align="center"
-        className="w-[min(24rem,calc(100vw-2rem))]"
+        width="md"
         viewportClassName="max-h-[min(28rem,70vh)]"
       >
         <div className="space-y-2">
-          <PopoverTitle className="text-sm leading-5">Accessibility data</PopoverTitle>
+          <PopoverTitle>Accessibility data</PopoverTitle>
           {accessibilityDetails ? (
             <SnapShotAccessibilityData
               details={accessibilityDetails}

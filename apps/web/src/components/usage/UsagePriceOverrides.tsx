@@ -252,7 +252,7 @@ export function UsagePriceOverrides({
             Prices apply to all past and future usage on the environments you select.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="grid gap-4">
+        <DialogPanel>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
               <Label id="usage-prices-apply-label" className="shrink-0">
@@ -269,7 +269,7 @@ export function UsagePriceOverrides({
                   </span>
                   <ChevronDownIcon className="size-3.5 shrink-0" aria-hidden />
                 </MenuTrigger>
-                <MenuPopup align="start" className="w-80 max-w-[calc(100vw-2rem)]">
+                <MenuPopup align="start">
                   <MenuCheckboxItem
                     checked={selectedIds === null}
                     closeOnClick={false}
@@ -429,7 +429,7 @@ export function UsagePriceOverrides({
                                     }
                                     autoComplete="off"
                                     disabled={locked}
-                                    className="tabular-nums"
+                                    font="mono"
                                     onChange={(event) =>
                                       editCell(row, field.key, event.target.value)
                                     }

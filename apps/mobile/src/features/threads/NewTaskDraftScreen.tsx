@@ -1465,7 +1465,7 @@ export function NewTaskDraftScreen(props: {
           <Text className="text-2xl font-t3-medium tracking-tight text-foreground">in </Text>
           <Pressable
             accessibilityHint="Opens the project picker"
-            accessibilityLabel={`Change project from ${selectedProject.title}`}
+            accessibilityLabel={selectedProject.title}
             accessibilityRole="button"
             disabled={isComposerInteractionLocked}
             onPress={chooseProject}

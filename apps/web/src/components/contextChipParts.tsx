@@ -1,4 +1,4 @@
-import type { PullRequestContextMetadata } from "@t3tools/contracts";
+import type { EnvironmentId, PullRequestContextMetadata } from "@t3tools/contracts";
 import { CircleDashedIcon, FilmIcon, ImageIcon } from "lucide-react";
 import {
   useState,
@@ -9,7 +9,7 @@ import {
 } from "react";
 
 import { cn } from "~/lib/utils";
-import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { PULL_REQUEST_STATE_PRESENTATION } from "~/components/pullRequest/pullRequestIcons";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import {
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
@@ -23,6 +23,8 @@ import { PullRequestContextDetails } from "./PullRequestContextDetails";
 import { Button } from "./ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
+import { usePullRequestPreviewTarget } from "~/lib/openPullRequestLink";
 
 /** Shared visual slots; each surface keeps ownership of payload lookup and actions. */
 export function ContextChipShell({
@@ -100,7 +102,8 @@ export function ContextChipPopover(props: {
       </PopoverTrigger>
       <PopoverPopup
         side="top"
-        className={cn("w-[min(36rem,calc(100vw-2rem))]", props.popupClassName)}
+        width="lg"
+        className={props.popupClassName}
         viewportClassName={cn("overflow-x-auto p-2", props.viewportClassName)}
       >
         <PopoverTitle className="sr-only">{props.accessibleLabel}</PopoverTitle>
@@ -112,6 +115,7 @@ export function ContextChipPopover(props: {
 
 export function PullRequestChip(props: {
   metadata: PullRequestContextMetadata;
+  environmentId: EnvironmentId | null;
   label: string;
   kindLabel: string;
   className: string;
@@ -119,29 +123,41 @@ export function PullRequestChip(props: {
   copyMarkdown?: string;
   onOpen: (event: MouseEvent<HTMLElement>, url: string) => void;
 }) {
+  const previewTarget = usePullRequestPreviewTarget(props.environmentId, props.metadata.url);
+  const displayState =
+    props.metadata.state === "open" && props.metadata.isDraft ? "draft" : props.metadata.state;
+  const StateIcon = PULL_REQUEST_STATE_PRESENTATION[displayState].Icon;
+  const button = (
+    <Button
+      variant="chip"
+      className={cn(
+        props.className,
+        CONTEXT_INLINE_CHIP_FOCUS_CLASS_NAME,
+        CONTEXT_INLINE_CHIP_INTERACTIVE_CLASS_NAME,
+        "cursor-pointer",
+      )}
+      aria-label={`Open ${props.kindLabel} ${props.label}: ${props.metadata.title}`}
+      data-markdown-copy={props.copyMarkdown}
+      onClick={(event) => props.onOpen(event, props.metadata.url)}
+    >
+      <StateIcon className={cn(COMPOSER_INLINE_CHIP_ICON_CLASS_NAME, "size-3.5")} />
+      <span className={props.labelClassName}>{props.label}</span>
+    </Button>
+  );
+  if (previewTarget !== null) {
+    return (
+      <PullRequestLinkPreview
+        link={button}
+        originalUrl={props.metadata.url}
+        target={previewTarget}
+        confirmBeforeOpen={false}
+        fallback={<PullRequestContextDetails metadata={props.metadata} />}
+      />
+    );
+  }
   return (
     <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            variant="chip"
-            className={cn(
-              props.className,
-              CONTEXT_INLINE_CHIP_FOCUS_CLASS_NAME,
-              CONTEXT_INLINE_CHIP_INTERACTIVE_CLASS_NAME,
-              "cursor-pointer",
-            )}
-            aria-label={`Open ${props.kindLabel} ${props.label}: ${props.metadata.title}`}
-            data-markdown-copy={props.copyMarkdown}
-            onClick={(event) => props.onOpen(event, props.metadata.url)}
-          >
-            <PullRequestGlyph.pullRequest
-              className={cn(COMPOSER_INLINE_CHIP_ICON_CLASS_NAME, "size-3.5")}
-            />
-            <span className={props.labelClassName}>{props.label}</span>
-          </Button>
-        }
-      />
+      <TooltipTrigger render={button} />
       <TooltipPopup side="top">
         <PullRequestContextDetails metadata={props.metadata} />
       </TooltipPopup>
@@ -286,7 +302,7 @@ export function FileChip(props: {
           )
         }
       />
-      <TooltipPopup side="top" className="max-w-80 whitespace-pre-wrap leading-tight">
+      <TooltipPopup side="top" className="whitespace-pre-wrap">
         {props.tooltip}
       </TooltipPopup>
     </Tooltip>

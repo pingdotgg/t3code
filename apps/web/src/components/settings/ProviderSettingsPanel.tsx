@@ -195,7 +195,7 @@ function ProviderSettingsPlaceholder({
   readonly children?: ReactNode;
 }) {
   return (
-    <SettingsSection {...searchableSetting("providers")} hideTitle variant="plain">
+    <SettingsSection {...searchableSetting("providers")} variant="plain">
       {deviceTabs ? (
         <div className="flex min-h-11 min-w-0 items-center px-3 sm:px-4">{deviceTabs}</div>
       ) : null}
@@ -203,7 +203,7 @@ function ProviderSettingsPlaceholder({
         divided={false}
         className={cn(providerCardHeightClassName, "flex overflow-x-hidden overflow-y-auto")}
       >
-        <Empty className="min-h-88">
+        <Empty>
           <EmptyMedia variant="icon">{icon}</EmptyMedia>
           <EmptyHeader>
             <EmptyTitle>{title}</EmptyTitle>
@@ -334,7 +334,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
     options.length === 1 && options[0]?.entry.target._tag === "PrimaryConnectionTarget";
   const deviceTabs =
     !target.scoped && !onlyPrimaryDevice && options.length > 0 ? (
-      <ScrollArea hideScrollbars scrollFade className="h-11 min-w-0 flex-1 rounded-none">
+      <ScrollArea radius="none" hideScrollbars scrollFade className="h-11 min-w-0 flex-1">
         <ToggleGroup
           aria-label="Devices"
           variant="segmented"
@@ -987,7 +987,7 @@ export function EnvironmentProviderSettings({
 
   return (
     <>
-      <SettingsSection {...searchableSetting("providers")} hideTitle variant="plain">
+      <SettingsSection {...searchableSetting("providers")} variant="plain">
         <div className="flex min-h-11 min-w-0 items-center gap-2 px-3 sm:px-4">
           {deviceTabs}
           <div className="ml-auto flex min-w-0 shrink-0 items-center gap-2">

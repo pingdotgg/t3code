@@ -100,7 +100,7 @@ function SidebarUpdateArchitectureWarningContent() {
   if (!visible || !description) return null;
 
   return (
-    <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8 text-xs">
+    <Alert variant="warning">
       <TriangleAlertIcon />
       <AlertTitle>Intel build on Apple Silicon</AlertTitle>
       <AlertDescription>{description}</AlertDescription>
@@ -393,7 +393,7 @@ function SidebarUpdateControl() {
           <PopoverPopup
             align="center"
             aria-label="Nightly update release notes"
-            className="max-w-none text-balance shadow-xl shadow-black/25"
+            className="text-balance shadow-xl shadow-black/25"
             initialFocus={false}
             onKeyDownCapture={(event) => {
               if (

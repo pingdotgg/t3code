@@ -79,9 +79,9 @@ function KeybindingPill({ value }: { value: string }) {
     return { part, key: seen === 0 ? part : `${part}-${seen}` };
   });
   return (
-    <KbdGroup className="bg-transparent p-0 shadow-none">
+    <KbdGroup>
       {parts.map(({ part, key }) => (
-        <Kbd key={key} className="min-w-6 justify-center px-1.5">
+        <Kbd key={key}>
           {part === "mod"
             ? navigator.platform.toLowerCase().includes("mac")
               ? "⌘"
@@ -261,9 +261,7 @@ function WarningTooltipIcon({
       >
         <TriangleAlertIcon className="size-3.5" />
       </TooltipTrigger>
-      <TooltipPopup side="top" className="max-w-72 whitespace-normal leading-relaxed">
-        {children}
-      </TooltipPopup>
+      <TooltipPopup side="top">{children}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -320,24 +318,15 @@ function WhenVariableSelect({
 
   return (
     <Select value={value} onValueChange={(nextValue) => nextValue && onChange(nextValue)}>
-      <SelectTrigger size="compact" className="min-w-0 flex-1 font-mono">
+      <SelectTrigger size="compact" className="min-w-0 flex-1">
         <SelectValue placeholder="Condition" className="leading-7" />
         {unknownIdentifiers && unknownIdentifiers.length > 0 ? (
           <UnknownWhenVariableWarning identifiers={unknownIdentifiers} focusable={false} />
         ) : null}
       </SelectTrigger>
-      <SelectContent
-        alignItemWithTrigger={false}
-        matchTriggerWidth={false}
-        popupClassName="w-fit"
-        className="max-h-72 w-fit min-w-44"
-      >
+      <SelectContent alignItemWithTrigger={false} matchTriggerWidth={false} className="max-h-72">
         {options.map((option) => (
-          <SelectItem
-            key={option}
-            value={option}
-            className="min-h-7 w-full py-1 font-mono text-[12px]"
-          >
+          <SelectItem key={option} value={option} className="w-full">
             <span className="truncate">{option}</span>
           </SelectItem>
         ))}
@@ -540,18 +529,9 @@ function WhenExpressionNodeEditor({
           <SelectTrigger size="compact" className="w-24">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent
-            alignItemWithTrigger={false}
-            matchTriggerWidth={false}
-            popupClassName="w-fit"
-            className="w-fit min-w-24"
-          >
-            <SelectItem value="and" className="min-h-7 py-1 font-mono text-[12px]">
-              and
-            </SelectItem>
-            <SelectItem value="or" className="min-h-7 py-1 font-mono text-[12px]">
-              or
-            </SelectItem>
+          <SelectContent alignItemWithTrigger={false} matchTriggerWidth={false}>
+            <SelectItem value="and">and</SelectItem>
+            <SelectItem value="or">or</SelectItem>
           </SelectContent>
         </Select>
         <Button type="button" variant="outline" size="compact" onClick={addCondition}>
@@ -877,7 +857,8 @@ function KeybindingKeyControl({
           value={isRecording ? "" : keyDraft}
           placeholder={isRecording ? "Press shortcut" : "Unassigned"}
           size="sm"
-          className={cn("w-44 font-mono", isRecording && "border-primary/70 bg-primary/5")}
+          font="mono"
+          className={cn("w-44", isRecording && "border-primary/70 bg-primary/5")}
           onFocus={() => setDraft({ isRecording: true })}
           onBlur={() => setDraft({ isRecording: false })}
           onChange={(event) => setDraft({ keyDraft: event.currentTarget.value })}
@@ -952,9 +933,8 @@ function KeybindingRowMenu({
         render={
           <Button
             type="button"
-            variant="ghost"
+            variant="ghost-muted"
             size="icon-sm"
-            className="text-muted-foreground hover:text-foreground"
             disabled={isSaving}
             aria-label={`Actions for ${commandLabel(row.command)}`}
           />
@@ -962,7 +942,7 @@ function KeybindingRowMenu({
       >
         <EllipsisIcon className="size-3.5" />
       </MenuTrigger>
-      <MenuPopup align="end" className="min-w-36">
+      <MenuPopup align="end">
         {canReset ? (
           <MenuItem disabled={isSaving} onClick={() => onReset(row)}>
             Reset to default
@@ -981,7 +961,7 @@ function KeybindingRowMenu({
 function KeybindingSourceBadge({ source }: { source: KeybindingRow["source"] }) {
   if (source === "Default") return null;
   return (
-    <Badge variant="outline" size="sm" className="font-normal text-muted-foreground">
+    <Badge variant="outline" size="sm">
       {source}
     </Badge>
   );
@@ -1159,13 +1139,9 @@ function NewKeybindingCommandSelect({
       <SelectTrigger size="sm" className={className}>
         <SelectValue placeholder="Command" />
       </SelectTrigger>
-      <SelectContent
-        alignItemWithTrigger={false}
-        matchTriggerWidth={false}
-        className="max-h-72 w-fit min-w-56"
-      >
+      <SelectContent alignItemWithTrigger={false} matchTriggerWidth={false} className="max-h-72">
         {commandOptions.map((command) => (
-          <SelectItem key={command} value={command} className="min-h-7 w-full py-1 text-[12px]">
+          <SelectItem key={command} value={command} className="w-full">
             <span className="truncate">{commandLabel(command)}</span>
           </SelectItem>
         ))}
@@ -1191,7 +1167,8 @@ function NewKeybindingKeyInput({
       value={draft.isRecording ? "" : draft.keyDraft}
       placeholder={draft.isRecording ? "Press shortcut" : "Unassigned"}
       size="sm"
-      className={cn("font-mono", draft.isRecording && "border-primary/70 bg-primary/5", className)}
+      font="mono"
+      className={cn(draft.isRecording && "border-primary/70 bg-primary/5", className)}
       onFocus={() => draft.setDraft({ isRecording: true })}
       onBlur={() => draft.setDraft({ isRecording: false })}
       onChange={(event) => draft.setDraft({ keyDraft: event.currentTarget.value })}
@@ -1232,9 +1209,8 @@ function NewKeybindingCancelIcon({
         render={
           <Button
             type="button"
-            variant="ghost"
+            variant="ghost-muted"
             size="icon-sm"
-            className="text-muted-foreground hover:text-foreground"
             disabled={isSaving}
             aria-label="Cancel new keybinding"
             onClick={onCancel}

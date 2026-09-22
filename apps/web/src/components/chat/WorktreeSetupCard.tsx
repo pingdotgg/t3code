@@ -19,6 +19,7 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Spinner } from "~/components/ui/spinner";
+import { MiddleTruncate } from "../ui/middle-truncate";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { cn } from "~/lib/utils";
 
@@ -60,7 +61,7 @@ function StageIcon({ status }: { status: WorktreeSetupStage["status"] }) {
     case "done":
       return <CheckIcon aria-hidden className={className} />;
     case "running":
-      return <Spinner className={className} />;
+      return <Spinner size="md" className="shrink-0" />;
     case "failed":
       return <XIcon aria-hidden className={className} />;
     case "warning":
@@ -260,19 +261,25 @@ function SetupDetails({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
       {snapshot.branch ? (
         <>
           <dt className="text-foreground/80">Branch</dt>
-          <dd className="truncate font-mono">{snapshot.branch}</dd>
+          <dd className="min-w-0 font-mono">
+            <MiddleTruncate value={snapshot.branch} className="flex" />
+          </dd>
         </>
       ) : null}
       {snapshot.baseRef ? (
         <>
           <dt className="text-foreground/80">Base</dt>
-          <dd className="truncate font-mono">{snapshot.baseRef}</dd>
+          <dd className="min-w-0 font-mono">
+            <MiddleTruncate value={snapshot.baseRef} className="flex" />
+          </dd>
         </>
       ) : null}
       {snapshot.worktreePath ? (
         <>
           <dt className="text-foreground/80">Path</dt>
-          <dd className="truncate font-mono">{snapshot.worktreePath}</dd>
+          <dd className="min-w-0 font-mono">
+            <MiddleTruncate value={snapshot.worktreePath} className="flex" />
+          </dd>
         </>
       ) : null}
       {snapshot.setupScript ? (

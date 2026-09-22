@@ -57,10 +57,10 @@ function RemoteEnvironmentRowsSkeleton() {
     <div className={ITEM_ROW_CLASSNAME}>
       <div className={ITEM_ROW_INNER_CLASSNAME}>
         <div className="min-w-0 flex-1 space-y-2">
-          <Skeleton className="h-4 w-32 rounded-full" />
-          <Skeleton className="h-3 w-20 rounded-full" />
+          <Skeleton shape="pill" className="h-4 w-32" />
+          <Skeleton shape="pill" className="h-3 w-20" />
         </div>
-        <Skeleton className="h-7 w-16 rounded-md" />
+        <Skeleton className="h-7 w-16" />
       </div>
     </div>
   );
@@ -393,9 +393,7 @@ export function CloudEnvironmentConnectRows({
                         ? "Unavailable"
                         : "Checking…"))}
             </TooltipTrigger>
-            <TooltipPopup className="max-w-80 break-words">
-              {unsupportedDetail ?? statusText}
-            </TooltipPopup>
+            <TooltipPopup>{unsupportedDetail ?? statusText}</TooltipPopup>
           </Tooltip>
         </label>
       );
@@ -454,9 +452,7 @@ export function CloudEnvironmentConnectRows({
                   Add
                 </Button>
               </TooltipTrigger>
-              <TooltipPopup className="max-w-80 break-words">
-                {unsupportedDetail ?? "Client not supported"}
-              </TooltipPopup>
+              <TooltipPopup>{unsupportedDetail ?? "Client not supported"}</TooltipPopup>
             </Tooltip>
           ) : savedConnection ? (
             <Button size="sm" variant="outline" disabled>

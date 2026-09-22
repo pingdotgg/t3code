@@ -16,7 +16,7 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 import { FolderGit2Icon, TerminalIcon } from "lucide-react";
 import { useMemo, type MouseEvent } from "react";
-import { buttonVariants, InlineButton } from "./ui/button";
+import { Button, InlineButton } from "./ui/button";
 import { cn } from "../lib/utils";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -76,15 +76,24 @@ export function useLinkedThreadPullRequest(
   );
   const fallback =
     current === null ? ((!supportsLinks ? linkedPullRequest : null) ?? branchPullRequest) : null;
-  const host = fallback == null ? undefined : parseChangeRequestUrl(fallback.url)?.host;
-  const reference =
-    fallback == null ? null : { ...fallback, ...(host === undefined ? {} : { host }) };
+  // Stable per link: the shared summary effect keys on this object, and a sidebar row must not
+  // touch the cache on every render.
+  const reference = useMemo(() => {
+    if (fallback == null) return null;
+    const host = parseChangeRequestUrl(fallback.url)?.host;
+    return { ...fallback, ...(host === undefined ? {} : { host }) };
+  }, [fallback]);
   const queried = useEnvironmentQuery(
     !enabled || environmentId === null || reference === null
       ? null
       : linkedPullRequestDetailAtom({ environmentId, input: reference }),
-  ).data;
-  const detail = useSharedPullRequestSummary(environmentId, reference, queried);
+  );
+  const detail = useSharedPullRequestSummary(
+    environmentId,
+    reference,
+    queried.data,
+    queried.dataUpdatedAt,
+  );
 
   return useMemo(() => {
     if (current !== null) return linkedPullRequestSnapshotStatus(current);
@@ -198,50 +207,52 @@ export function ThreadPullRequestBadgeControl({
   url?: string | undefined;
   status: PrStatusIndicator | null;
   onOpenStack: () => void;
-  onOpenPullRequest: (event: MouseEvent<HTMLAnchorElement>) => void;
+  onOpenPullRequest: (event: MouseEvent<HTMLElement>) => void;
 }) {
   const presentation = resolveThreadPullRequestBadgePresentation({ badge, number, url, status });
   if (presentation === null) return null;
   const isStack = badge?.kind === "stack";
-  const className = cn(
-    variant === "ghost"
-      ? buttonVariants({ variant: "ghost", size: "xs" })
-      : "inline-flex shrink-0 cursor-pointer items-center gap-0.5 whitespace-nowrap border-b border-transparent hover:border-current focus-visible:outline-2 focus-visible:outline-ring",
-    "text-xs tabular-nums",
-    variant === "ghost" &&
-      "font-normal text-xs! active:scale-100 [--control-icon-color:currentColor]",
-    presentation.toneClassName,
-  );
   const content = (
     <>
       <presentation.Icon aria-hidden className="size-3 shrink-0" />
       {presentation.text}
     </>
   );
+  const linkProps = isStack
+    ? {
+        onClick: (event: MouseEvent<HTMLElement>) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onOpenStack();
+        },
+      }
+    : { onClick: onOpenPullRequest };
+  const element = isStack ? (
+    <button type="button" />
+  ) : (
+    <a href={url} target="_blank" rel="noopener noreferrer" />
+  );
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          isStack ? (
-            <InlineButton
-              className={className}
+          variant === "ghost" ? (
+            <Button
+              render={element}
+              variant="ghost"
+              size="xs"
+              className={presentation.toneClassName}
               aria-label={presentation.label}
               onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onOpenStack();
-              }}
+              {...linkProps}
             />
           ) : (
-            <a
-              href={url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={className}
+            <InlineButton
+              render={element}
+              className={presentation.toneClassName}
               aria-label={presentation.label}
               onPointerDown={(event) => event.stopPropagation()}
-              onClick={onOpenPullRequest}
+              {...linkProps}
             />
           )
         }
