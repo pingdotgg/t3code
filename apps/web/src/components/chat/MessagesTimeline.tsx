@@ -2076,7 +2076,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           {senderThreadId ? (
             <InlineButton
               onClick={() => ctx.onOpenThread(senderThreadId)}
-              className="rounded-sm hover:text-muted-foreground hover:underline"
+              underline
               aria-label="Open sending thread"
             >
               Sent by another agent
