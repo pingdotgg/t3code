@@ -5,7 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { ProviderAuthResponse, ServerProvider } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import { Alert, Linking, ScrollView, TextInput, View } from "react-native";
+import { Alert, Linking, Pressable, ScrollView, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
@@ -164,11 +164,13 @@ function ProviderAccount({
         <Text accessibilityLiveRegion="polite" className="text-sm text-foreground-muted">
           {active || state?.phase === "failed" || state?.phase === "cancelled"
             ? state.message
-            : provider.auth.status === "authenticated" ||
-                (provider.auth.status === "unknown" && state?.phase === "succeeded")
-              ? (provider.auth.email ?? "Signed in.")
+            : signedIn
+              ? "Signed in."
               : "Connect this provider."}
         </Text>
+        {signedIn && !active && provider.auth.email?.trim() ? (
+          <ProviderAccountEmail key={provider.auth.email} email={provider.auth.email} />
+        ) : null}
         {interaction?.type === "deviceCode" ? (
           <Text selectable className="text-foreground">
             Enter code {interaction.userCode} on the sign-in page.
@@ -318,5 +320,19 @@ function ProviderAccount({
         />
       ) : null}
     </View>
+  );
+}
+
+function ProviderAccountEmail({ email }: { readonly email: string }) {
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={revealed ? "Hide account email" : "Reveal account email"}
+      onPress={() => setRevealed((value) => !value)}
+      className="min-h-[44px] justify-center"
+    >
+      <Text className="text-sm text-foreground-muted">{revealed ? email : "••••••@••••••"}</Text>
+    </Pressable>
   );
 }

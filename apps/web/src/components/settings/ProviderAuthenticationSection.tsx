@@ -23,6 +23,7 @@ import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsRow } from "./settingsLayout";
+import { RedactedSensitiveText } from "./RedactedSensitiveText";
 
 const ProviderAuthTerminal = lazy(() => import("./ProviderAuthTerminal"));
 
@@ -73,9 +74,7 @@ export function ProviderAuthenticationSection({
             ? "Enter your credentials below."
             : "Finish signing in in your browser."
     : signedIn
-      ? provider.auth.email
-        ? `Signed in as ${provider.auth.email}.`
-        : "Signed in."
+      ? "Signed in."
       : `Sign in on ${environmentLabel}.`;
   const statusMessage = auth?.phase === "failed" ? auth.message : null;
   const disabled = readOnly || pending || query.error !== null;
@@ -143,7 +142,23 @@ export function ProviderAuthenticationSection({
   return (
     <SettingsRow
       title="Account"
-      description={<span role="status">{accountDescription}</span>}
+      description={
+        signedIn && !active && provider.auth.email?.trim() ? (
+          <span>
+            Signed in as{" "}
+            <RedactedSensitiveText
+              key={provider.auth.email}
+              value={provider.auth.email}
+              ariaLabel="Toggle account email visibility"
+              revealTooltip="Click to reveal email"
+              hideTooltip="Click to hide email"
+              className="max-w-full truncate"
+            />
+          </span>
+        ) : (
+          <span role="status">{accountDescription}</span>
+        )
+      }
       status={
         statusMessage ? (
           <p role="status" className="[overflow-wrap:anywhere]">
