@@ -69,6 +69,39 @@ describe("mobile project settings scope", () => {
     expect(secondSettings.responseStreamingMode).toBe("token");
   });
 
+  it("removes a project override when a picker sends null for a key that cannot store it", () => {
+    const settings: ServerSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [firstProject]: { defaultThreadEnvMode: "worktree", defaultAutoPull: true },
+      },
+    };
+    const targets = resolveMobileSettingsTargets(
+      [environment(firstId, settings)],
+      [{ environmentId: firstId, id: firstProject }],
+    );
+    expect(planMobileScopedSettingsPatch(targets, true, { defaultThreadEnvMode: null })).toEqual([
+      {
+        environmentId: firstId,
+        patch: { projectSettingsOverrides: { [firstProject]: { defaultAutoPull: true } } },
+      },
+    ]);
+    expect(planMobileScopedSettingsPatch(targets, true, { defaultModelSelection: null })).toEqual([
+      {
+        environmentId: firstId,
+        patch: {
+          projectSettingsOverrides: {
+            [firstProject]: {
+              defaultThreadEnvMode: "worktree",
+              defaultAutoPull: true,
+              defaultModelSelection: null,
+            },
+          },
+        },
+      },
+    ]);
+  });
+
   it("resets only the selected page's override and rejects environment-wide writes", () => {
     const settings: ServerSettings = {
       ...DEFAULT_SERVER_SETTINGS,

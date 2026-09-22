@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
   ForwardCompatibleNullable,
+  OmittedWhenNull,
   ProjectId,
   TrimmedNonEmptyString,
   TrimmedString,
@@ -1041,6 +1042,26 @@ export const ProjectSettingsOverrides = Schema.Struct({
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 
+/**
+ * Whether `null` is a stored override value for this key rather than "unset".
+ * Clients writing a project override treat null for every other key as a
+ * request to remove the override, so a picker's "Inherit" item and the row's
+ * reset do the same thing.
+ */
+export function isNullableProjectSettingsOverride(key: ProjectScopedServerSettingKey): boolean {
+  return NULLABLE_PROJECT_SETTINGS_OVERRIDES.has(key);
+}
+const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettingKey> = new Set<
+  {
+    [K in ProjectScopedServerSettingKey]: null extends ProjectSettingsOverrides[K] ? K : never;
+  }[ProjectScopedServerSettingKey]
+>([
+  "defaultModelSelection",
+  "sourceControlWriterModelSelection",
+  "pullRequestMergeMethod",
+  "sidebarAutoSettleAfterDays",
+]);
+
 export const StorageCleanupSettings = Schema.Struct({
   worktreeAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   worktreeOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -1176,9 +1197,14 @@ export const ServerSettings = Schema.Struct({
   environmentIcon: ForwardCompatibleNullable(EnvironmentMachineKind).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
-  defaultThreadEnvMode: ThreadEnvMode.pipe(
-    Schema.withDecodingDefault(Effect.succeed("local" as const satisfies ThreadEnvMode)),
-  ),
+  /**
+   * Null means inherit: the repository's t3.json, then "local". The old
+   * default "local" was never persisted (defaults are stripped on write), so
+   * it now decodes as inherit, which resolves the same way because the old
+   * chain also let t3.json outrank the environment. Null stays off the wire
+   * so older clients, which require a literal here, keep decoding.
+   */
+  defaultThreadEnvMode: OmittedWhenNull(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
@@ -1471,7 +1497,7 @@ export const ServerSettingsPatch = Schema.Struct({
   providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
   backgroundActivityProfile: Schema.optionalKey(BackgroundActivityProfile),
   environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
-  defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
+  defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),

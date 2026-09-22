@@ -50,10 +50,16 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
 };
 
 const WORKSPACE_CHOICES: ReadonlyArray<{
-  readonly mode: ThreadEnvMode;
+  readonly mode: ThreadEnvMode | null;
   readonly label: string;
   readonly description: string;
 }> = [
+  // Only offered at environment scope; a project falls back through "Use defaults".
+  {
+    mode: null,
+    label: "Inherit",
+    description: "Use the repository's t3.json, or the current checkout.",
+  },
   {
     mode: "local",
     label: "Current checkout",
@@ -126,6 +132,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     const value = reference.settings[key];
     return displayTargets.every((entry) => entry.settings[key] === value) ? value : null;
   };
+  // `uniform` folds a real null into "mixed"; nullable keys need the distinction.
+  const isMixed = (key: keyof ServerSettings) =>
+    reference === null ||
+    displayTargets.some((entry) => entry.settings[key] !== reference.settings[key]);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "environment settings update",
     reportFailure: true,
@@ -219,17 +229,22 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   <SettingsSection
                     title="Default workspace"
                     trailing={
-                      pendingWrites === 0 && uniform("defaultThreadEnvMode") === null ? (
+                      pendingWrites === 0 && isMixed("defaultThreadEnvMode") ? (
                         <MixedValuesLabel projectSelected={projectSelected} />
                       ) : null
                     }
                   >
-                    {WORKSPACE_CHOICES.map((choice, index) => (
+                    {WORKSPACE_CHOICES.filter(
+                      (choice) => choice.mode !== null || !projectSelected,
+                    ).map((choice, index) => (
                       <ChoiceRow
-                        key={choice.mode}
+                        key={choice.mode ?? "inherit"}
                         label={choice.label}
                         description={choice.description}
-                        selected={uniform("defaultThreadEnvMode") === choice.mode}
+                        selected={
+                          !isMixed("defaultThreadEnvMode") &&
+                          uniform("defaultThreadEnvMode") === choice.mode
+                        }
                         separated={index > 0}
                         disabled={disabledFor("defaultThreadEnvMode")}
                         onPress={() => write({ defaultThreadEnvMode: choice.mode })}

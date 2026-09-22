@@ -1,13 +1,12 @@
 import {
   DEFAULT_SERVER_SETTINGS,
-  EnvironmentId,
   type ModelSelection,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 
-import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -75,25 +74,16 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
-  const workspaceSource = useScopedSettingSource(["defaultThreadEnvMode"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unavailable = connectedEnvironments.length === 0;
-
-  // A checkout's t3.json wins over the environment default when the project
-  // has no override of its own; show which one "inherit" resolves to.
-  const checkout = scope.kind === "checkout" ? scope.checkout : null;
-  // The query is disabled without a checkout, so any id satisfies the hook.
-  const t3File = useT3ProjectFileState(
-    checkout?.environmentId ?? EnvironmentId.make("none"),
-    category === "general" && checkout ? checkout.workspaceRoot : null,
-  );
-  const repositoryEnvMode = t3File.file?.defaultThreadEnvMode ?? null;
-  const inheritedEnvModeLabel =
-    workspaceSource === "project"
-      ? null
-      : repositoryEnvMode
-        ? `${resolveEnvModeLabel(repositoryEnvMode)} (t3.json)`
-        : null;
+  // File-backed keys show their effective value; the target already carries
+  // the checkout's t3.json, and a null file here only fills the built-in.
+  // The reset arrow beside the title clears the tier (SettingsRow handles a
+  // project override, the environment value is cleared here), so the picker
+  // has no "inherit" item.
+  const effective = target
+    ? resolveProjectSettings(target.settings, null, null, null).settings
+    : null;
 
   function modelDisabledReason(instanceId: ProviderInstanceId, model: string): string | null {
     const sourceEntry = entries.find((entry) => entry.instanceId === instanceId);
@@ -292,27 +282,20 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             title="Workspace"
             description={
               isProjectScope
-                ? "Where new threads in this project start. A t3.json preference applies when the project has no override."
-                : "Where new threads start, unless overridden by the project or t3.json."
-            }
-            status={
-              inheritedEnvModeLabel ? `Repository default: ${inheritedEnvModeLabel}` : undefined
+                ? "Where new threads in this project start."
+                : "Where new threads start. Projects and their t3.json can override it."
             }
             resetAction={
-              settings.defaultThreadEnvMode !== DEFAULT_SERVER_SETTINGS.defaultThreadEnvMode ? (
+              !isProjectScope && settings.defaultThreadEnvMode !== null ? (
                 <SettingResetButton
                   label="default workspace"
-                  onClick={() =>
-                    updateSettings({
-                      defaultThreadEnvMode: DEFAULT_SERVER_SETTINGS.defaultThreadEnvMode,
-                    })
-                  }
+                  onClick={() => updateSettings({ defaultThreadEnvMode: null })}
                 />
               ) : null
             }
             control={
               <Select
-                value={mixedWorkspace ? null : settings.defaultThreadEnvMode}
+                value={mixedWorkspace ? null : (effective?.defaultThreadEnvMode ?? null)}
                 onValueChange={(value) => {
                   if (value === "local" || value === "worktree")
                     updateSettings({ defaultThreadEnvMode: value });
