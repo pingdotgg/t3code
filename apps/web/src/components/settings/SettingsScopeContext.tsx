@@ -6,7 +6,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { createContext, type ReactNode, useContext, useMemo } from "react";
 
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
-import { getProjectFileQueryAtom } from "../files/projectFilesQueryState";
+import { getProjectFileQueryAtom, optimisticFileAtom } from "../files/projectFilesQueryState";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import { resolveScopedSettingsTargets, selectScopedSettingsEnvironments } from "./scopedSettings";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
@@ -32,7 +32,15 @@ function useMemberProjectFiles(scope: ReturnType<typeof resolveSettingsScope>) {
               ),
             );
             if (result.waiting) continue;
-            const data = Option.getOrNull(AsyncResult.value(result));
+            // A pending in-app save overlays the query, like useProjectFileQuery.
+            const data =
+              get(
+                optimisticFileAtom(
+                  member.environmentId,
+                  member.workspaceRoot,
+                  T3_PROJECT_FILE_NAME,
+                ),
+              )?.data ?? Option.getOrNull(AsyncResult.value(result));
             files.set(
               member.physicalProjectKey,
               data === null || data.truncated ? null : parseT3ProjectFile(data.contents),
