@@ -9,6 +9,7 @@ import { createModelSelection } from "./model.ts";
 import {
   clearProjectSettingsOverrides,
   hasProjectSettingsOverrides,
+  resolveProjectFileBackedSetting,
   resolveProjectSettings,
   resolveWorktreeCleanup,
   withProjectSettingsOverrides,
@@ -185,6 +186,23 @@ describe("resolveProjectSettings with a t3.json", () => {
       resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId, null, {}).sources
         .defaultThreadEnvMode,
     ).toBe("environment");
+  });
+
+  it("resolves one key from the settings tier, then the file, then the built-in", () => {
+    expect(
+      resolveProjectFileBackedSetting("worktreeSubmodules", "none", {
+        worktreeSubmodules: "top-level",
+      }),
+    ).toEqual({ value: "none", source: "environment" });
+    expect(
+      resolveProjectFileBackedSetting("worktreeSubmodules", null, {
+        worktreeSubmodules: "top-level",
+      }),
+    ).toEqual({ value: "top-level", source: "t3.json" });
+    expect(resolveProjectFileBackedSetting("worktreeSubmodules", null, null)).toEqual({
+      value: "recursive",
+      source: "environment",
+    });
   });
 
   it("leaves settings untouched when no file is passed", () => {

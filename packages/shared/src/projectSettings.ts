@@ -2,6 +2,7 @@ import {
   type ModelSelection,
   PROJECT_FILE_BACKED_SETTINGS,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
+  type ProjectFileBackedSettingKey,
   type ProjectId,
   type ProjectScopedServerSettingKey,
   type ProjectSettingsOverrides,
@@ -104,20 +105,40 @@ function applyProjectFile(
 ): ResolvedProjectSettings {
   let effective: Record<string, unknown> | null = null;
   let sources: Record<ProjectScopedServerSettingKey, ProjectSettingSource> | null = null;
-  for (const [key, { field, builtIn }] of Object.entries(PROJECT_FILE_BACKED_SETTINGS)) {
-    const settingKey = key as ProjectScopedServerSettingKey;
-    if (resolved.settings[settingKey] !== null) continue;
-    const fromFile = projectFile?.[field];
+  for (const key of Object.keys(PROJECT_FILE_BACKED_SETTINGS) as ProjectFileBackedSettingKey[]) {
+    if (resolved.settings[key] !== null) continue;
+    const { value, source } = resolveProjectFileBackedSetting(key, null, projectFile);
     effective ??= { ...resolved.settings };
     sources ??= { ...resolved.sources };
-    effective[settingKey] = fromFile ?? builtIn;
+    effective[key] = value;
     // A project override of null defers like an unset one, so the value did
     // not come from the project either way.
-    sources[settingKey] = fromFile === undefined ? "environment" : "t3.json";
+    sources[key] = source;
   }
   return effective === null || sources === null
     ? resolved
     : { ...resolved, settings: effective as ServerSettings, sources };
+}
+
+/**
+ * The file and built-in tiers for one key, given the project-over-environment
+ * value (`null` when neither is set). For callers that hold the settings tier
+ * but only see the file later, such as the git driver reading the t3.json of
+ * the checkout it just created. Same chain as `resolveProjectSettings`.
+ */
+export function resolveProjectFileBackedSetting<K extends ProjectFileBackedSettingKey>(
+  key: K,
+  setting: ServerSettings[K],
+  projectFile: T3ProjectFile | null,
+): { value: ResolvedServerSettings[K]; source: ProjectSettingSource } {
+  if (setting !== null) {
+    return { value: setting as ResolvedServerSettings[K], source: "environment" };
+  }
+  const { field, builtIn } = PROJECT_FILE_BACKED_SETTINGS[key];
+  const fromFile = projectFile?.[field] as ResolvedServerSettings[K] | undefined;
+  return fromFile === undefined
+    ? { value: builtIn as ResolvedServerSettings[K], source: "environment" }
+    : { value: fromFile, source: "t3.json" };
 }
 
 function resolveProjectOverrides(
