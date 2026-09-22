@@ -59,8 +59,8 @@ import {
 } from "../acp/AcpRegistryProbe.ts";
 import { AcpRegistryCatalog, type AcpRegistryInspection } from "../acp/AcpRegistrySupport.ts";
 import { AcpRegistryRuntimeCoordinator } from "../acp/AcpRegistryRuntimeCoordinator.ts";
-import { makeAcpRegistryAuth } from "../acp/AcpRegistryAuth.ts";
-import { makeAcpRegistryAuthenticationState } from "../acp/AcpRegistryAuthenticationState.ts";
+import * as AcpRegistryAuth from "../acp/AcpRegistryAuth.ts";
+import * as AcpRegistryAuthenticationState from "../acp/AcpRegistryAuthenticationState.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -516,13 +516,14 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         settings: effectiveConfig,
         environment: processEnvironment,
       };
-      const confirmedAuthentication = yield* makeAcpRegistryAuthenticationState({
-        cacheDir: serverConfig.providerStatusCacheDir,
-        instanceId,
-        settings: effectiveConfig,
-        environment,
-        processEnvironment,
-      });
+      const confirmedAuthentication =
+        yield* AcpRegistryAuthenticationState.makeAcpRegistryAuthenticationState({
+          cacheDir: serverConfig.providerStatusCacheDir,
+          instanceId,
+          settings: effectiveConfig,
+          environment,
+          processEnvironment,
+        });
       const withLiveRuntimeState = (input: ServerProvider) =>
         Effect.gen(function* () {
           if (input.auth.status === "unauthenticated") yield* confirmedAuthentication.set(false);
@@ -747,7 +748,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             .clearLiveConfiguration(instanceId)
             .pipe(Effect.andThen(runtimeCoordinator.value.clearAvailableCommands(instanceId)))
         : Effect.void;
-      const controller = yield* makeAcpRegistryAuth({
+      const controller = yield* AcpRegistryAuth.makeAcpRegistryAuth({
         instanceId,
         settings: effectiveConfig,
         cwd: serverConfig.cwd,
