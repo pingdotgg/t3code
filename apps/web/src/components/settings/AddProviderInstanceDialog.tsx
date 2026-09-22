@@ -304,11 +304,11 @@ export function AddProviderInstanceDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <WizardPopup>
         <WizardHeader
-          title="Add provider instance"
+          title="Add provider"
           description={
             <>
-              Configure an additional provider instance on {environmentLabel}. For example, add a
-              second Codex install pointed at a different workspace.
+              Set up a provider on {environmentLabel}, or add another account for a provider you
+              already use.
             </>
           }
         >
