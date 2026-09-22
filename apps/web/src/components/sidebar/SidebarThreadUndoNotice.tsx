@@ -8,6 +8,7 @@ import { isEditableFocused } from "../../lib/editableFocus";
 import { isTerminalFocused } from "../../lib/terminalFocus";
 import { isModelPickerOpen } from "../../modelPickerVisibility";
 import { primaryServerKeybindingsAtom } from "../../state/server";
+import { Button } from "../ui/button";
 
 export function SidebarThreadUndoNotice() {
   const notice = useThreadUndoNotice((state) => state.notice);
@@ -37,13 +38,14 @@ export function SidebarThreadUndoNotice() {
   return (
     <div role="status" className="px-2 py-1.5 text-[11px] text-sidebar-muted-foreground">
       {notice.action} {notice.count} thread{notice.count === 1 ? "" : "s"},{" "}
-      <button
-        type="button"
+      <Button
+        variant="link"
+        size="micro"
         onClick={undoLatestThreadAction}
-        className="cursor-pointer rounded-sm hover:text-sidebar-foreground focus-visible:outline-2 focus-visible:outline-ring"
+        className="h-auto border-0 p-0 font-normal hover:text-sidebar-foreground"
       >
         {shortcut ? `${shortcut} to undo` : "Undo"}
-      </button>
+      </Button>
     </div>
   );
 }
