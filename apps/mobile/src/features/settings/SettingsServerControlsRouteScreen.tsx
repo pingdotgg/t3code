@@ -58,7 +58,7 @@ const SUBMODULE_CHOICES: ReadonlyArray<{
   {
     mode: null,
     label: "Inherit",
-    description: "Follow the next tier: the environment, the repository's t3.json, or recursive.",
+    description: "Use the environment's setting or the repository's t3.json.",
   },
   { mode: "recursive", label: "Recursive", description: "Initialize nested submodules too." },
   {
