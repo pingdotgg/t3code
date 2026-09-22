@@ -152,11 +152,7 @@ export function ThreadDetailsCustomize(props: {
                   <li key={section.id} className="py-1">
                     <div className="flex items-center justify-between gap-2 px-1">
                       <label className="flex min-w-0 cursor-pointer items-center gap-2">
-                        <Checkbox
-                          aria-label={`Show ${section.title}`}
-                          checked
-                          onCheckedChange={() => excludeSection(section)}
-                        />
+                        <Checkbox checked onCheckedChange={() => excludeSection(section)} />
                         <span className="truncate">{section.title}</span>
                       </label>
                       <SectionVisibilitySegmentedControl
