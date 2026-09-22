@@ -412,8 +412,8 @@ function ProjectDetail({
         <Alert variant="info">
           <InfoIcon aria-hidden />
           <AlertDescription>
-            This project stays selected in the picker above as you move between settings pages, so
-            any other setting you change there applies to this project only.
+            Can't find the setting you're after? Any of them can be tweaked just for this project.
+            Keep it picked above and wander through the other settings pages.
           </AlertDescription>
         </Alert>
         <SettingsSection id="project-overview" title="Project" hideTitle>
