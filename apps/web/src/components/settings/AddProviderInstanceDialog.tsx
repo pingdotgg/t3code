@@ -95,6 +95,7 @@ interface AddProviderInstanceDialogProps {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly onOpenChange: (open: boolean) => void;
+  readonly onCreated?: (instanceId: ProviderInstanceId) => void;
 }
 
 export function AddProviderInstanceDialog({
@@ -102,6 +103,7 @@ export function AddProviderInstanceDialog({
   environmentId,
   environmentLabel,
   onOpenChange,
+  onCreated,
 }: AddProviderInstanceDialogProps) {
   const settings = useEnvironmentSettings(environmentId);
   const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
@@ -286,22 +288,14 @@ export function AddProviderInstanceDialog({
       });
       return;
     }
-    const referenceUrl = selectedAcp?.website ?? selectedAcp?.repository;
     toastManager.add({
       type: "success",
       title: "Provider instance added",
       description: isAcpRegistry
-        ? `${selectedAcp?.name ?? manualAgentId} was added. Complete the agent's advertised authentication on the server; T3 Code detects it automatically.`
+        ? `${selectedAcp?.name ?? manualAgentId} was added. Continue sign-in under Setup.`
         : `${driverOption.label} instance '${instanceId}' was added.`,
-      ...(referenceUrl
-        ? {
-            actionProps: {
-              children: selectedAcp?.website ? "Agent docs" : "Agent source",
-              onClick: () => window.open(referenceUrl, "_blank", "noopener,noreferrer"),
-            },
-          }
-        : {}),
     });
+    onCreated?.(brandedId);
     onOpenChange(false);
   };
 
