@@ -117,7 +117,6 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
       const context = yield* Layer.build(
         AcpSessionRuntime.layer({
           ...runtimeInput,
-          authenticateOnAuthRequired: false,
           spawn:
             processEnvironment === undefined
               ? resolved.spawn

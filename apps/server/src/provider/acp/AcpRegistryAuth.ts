@@ -90,7 +90,9 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         );
       if (inspected.status !== "ready")
         return yield* failure("methods", "Prepare this ACP agent before signing in.");
-      if (knownMethods !== undefined && knownMethods.version === inspected.version)
+      // An unversioned command (a path override) can change in place, so only
+      // registry versions reuse earlier discovery.
+      if (inspected.version !== null && knownMethods?.version === inspected.version)
         return knownMethods.methods;
       const resolved = yield* resolve;
       const runtime = yield* makeRuntime(resolved.spawn);

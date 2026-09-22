@@ -58,7 +58,11 @@ const BoundedAgentId = Schema.String.check(
   Schema.isPattern(/^[a-z0-9][a-z0-9._-]*$/u),
 );
 const BoundedName = TrimmedNonEmptyString.check(Schema.isMaxLength(160));
-const BoundedVersion = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+// Versions become install directory names, so "." and ".." must not decode.
+const BoundedVersion = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(128),
+  Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._+-]*$/u),
+);
 const BoundedDescription = Schema.String.check(Schema.isMaxLength(1_024));
 const BoundedMetadata = Schema.String.check(Schema.isMaxLength(256));
 const BoundedArgument = Schema.String.check(Schema.isMaxLength(1_024));

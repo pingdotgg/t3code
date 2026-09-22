@@ -813,7 +813,7 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect("discards registry agents with blank names or versions", () => {
+  it.effect("discards registry agents with blank names or unsafe versions", () => {
     const distribution = {
       binary: {
         "linux-x86_64": { archive: archiveUrl, cmd: "example-agent" },
@@ -822,6 +822,7 @@ describe("AcpRegistrySupport", () => {
     const valid = makeAgent(distribution);
     const blankName = { ...valid, id: "blank-name", name: "   " };
     const blankVersion = { ...valid, id: "blank-version", version: "\t" };
+    const parentVersion = { ...valid, id: "parent-version", version: ".." };
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -845,7 +846,7 @@ describe("AcpRegistrySupport", () => {
               new Response(
                 JSON.stringify({
                   version: "1.0.0",
-                  agents: [blankName, blankVersion, valid],
+                  agents: [blankName, blankVersion, parentVersion, valid],
                 }),
               ),
             ),
