@@ -409,6 +409,13 @@ function ProjectDetail({
   return (
     <>
       <SettingsPageContainer className="gap-6">
+        <Alert variant="info">
+          <InfoIcon aria-hidden />
+          <AlertDescription>
+            This project stays selected in the picker above as you move between settings pages, so
+            any other setting you change there applies to this project only.
+          </AlertDescription>
+        </Alert>
         <SettingsSection id="project-overview" title="Project" hideTitle>
           <SettingsRow
             title="Name"
@@ -484,13 +491,6 @@ function ProjectDetail({
           />
         </SettingsSection>
         <ProjectDefaultsSettings category="project" />
-        <Alert variant="info">
-          <InfoIcon aria-hidden />
-          <AlertDescription>
-            Any other setting can be changed for this project too. Choose it in the scope picker at
-            the top of any settings page.
-          </AlertDescription>
-        </Alert>
         <ProjectActionsSettings />
         {hasMultipleCheckouts ? checkoutChoices : null}
         <SettingsSection title="Danger">
