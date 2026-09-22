@@ -25,6 +25,7 @@ function PopoverPopup({
   sideOffset = 4,
   alignOffset = 0,
   tooltipStyle = false,
+  keepMounted = false,
   anchor,
   ...props
 }: PopoverPrimitive.Popup.Props & {
@@ -34,10 +35,14 @@ function PopoverPopup({
   sideOffset?: PopoverPrimitive.Positioner.Props["sideOffset"];
   alignOffset?: PopoverPrimitive.Positioner.Props["alignOffset"];
   tooltipStyle?: boolean;
+  keepMounted?: PopoverPrimitive.Portal.Props["keepMounted"];
   anchor?: PopoverPrimitive.Positioner.Props["anchor"];
 }) {
+  // Viewport rekeys its children when the active trigger clears on close. Persistent
+  // single-trigger forms need a stable container to retain drafts and submit guards.
+  const Viewport = keepMounted ? "div" : PopoverPrimitive.Viewport;
   return (
-    <PopoverPrimitive.Portal>
+    <PopoverPrimitive.Portal keepMounted={keepMounted}>
       <PopoverPrimitive.Positioner
         align={align}
         alignOffset={alignOffset}
@@ -59,7 +64,7 @@ function PopoverPopup({
           data-slot="popover-popup"
           {...props}
         >
-          <PopoverPrimitive.Viewport
+          <Viewport
             className={cn(
               "relative size-full max-h-(--available-height) overflow-clip px-(--viewport-inline-padding) py-4 [--viewport-inline-padding:--spacing(4)] has-data-[slot=calendar]:p-2 data-instant:transition-none **:data-current:data-ending-style:opacity-0 **:data-current:data-starting-style:opacity-0 **:data-previous:data-ending-style:opacity-0 **:data-previous:data-starting-style:opacity-0 **:data-current:w-[calc(var(--popup-width)-2*var(--viewport-inline-padding)-2px)] **:data-previous:w-[calc(var(--popup-width)-2*var(--viewport-inline-padding)-2px)] **:data-current:opacity-100 **:data-previous:opacity-100 **:data-current:transition-opacity **:data-previous:transition-opacity",
               tooltipStyle
@@ -70,7 +75,7 @@ function PopoverPopup({
             data-slot="popover-viewport"
           >
             {children}
-          </PopoverPrimitive.Viewport>
+          </Viewport>
         </PopoverPrimitive.Popup>
       </PopoverPrimitive.Positioner>
     </PopoverPrimitive.Portal>

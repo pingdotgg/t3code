@@ -61,7 +61,7 @@ function StageIcon({ status }: { status: WorktreeSetupStage["status"] }) {
     case "done":
       return <CheckIcon aria-hidden className={className} />;
     case "running":
-      return <Spinner className={className} />;
+      return <Spinner size="md" className="shrink-0" />;
     case "failed":
       return <XIcon aria-hidden className={className} />;
     case "warning":
