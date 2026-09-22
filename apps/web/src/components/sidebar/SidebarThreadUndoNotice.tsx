@@ -3,8 +3,8 @@ import { useAtomValue } from "@effect/atom-react";
 import { undoLatestThreadAction, useThreadUndoNotice } from "../../hooks/showThreadUndoNotice";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { primaryServerKeybindingsAtom } from "../../state/server";
-import { Button } from "../ui/button";
 import { Alert, AlertDescription } from "../ui/alert";
+import { InlineButton } from "../ui/button";
 
 export function SidebarThreadUndoNotice() {
   const notice = useThreadUndoNotice((state) => state.notice);
@@ -20,14 +20,13 @@ export function SidebarThreadUndoNotice() {
     >
       <AlertDescription className="block text-[11px] leading-4 text-sidebar-muted-foreground">
         {notice.action} {notice.count} thread{notice.count === 1 ? "" : "s"},{" "}
-        <Button
-          variant="link"
-          size="micro"
+        <InlineButton
+          underline
           onClick={undoLatestThreadAction}
-          className="h-auto border-0 p-0 font-normal hover:text-sidebar-foreground"
+          className="hover:text-sidebar-foreground"
         >
           {shortcut ? `${shortcut} to undo` : "Undo"}
-        </Button>
+        </InlineButton>
       </AlertDescription>
     </Alert>
   );
