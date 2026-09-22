@@ -2,11 +2,25 @@ import { cva, type VariantProps } from "class-variance-authority";
 
 import { cn } from "~/lib/utils";
 
-function Empty({ className, ...props }: React.ComponentProps<"div">) {
+// Size sets how much room the state claims and how large its title reads:
+// "compact" is a card-sized notice, "hero" fills a whole route.
+const emptySizeClassName = {
+  compact:
+    "min-h-64 gap-4 p-6 md:p-10 [&_[data-slot=empty-media]]:mb-0 [&_[data-slot=empty-title]]:text-[1.0625rem] [&_[data-slot=empty-title]]:leading-6 [&_[data-slot=empty-description]]:text-[0.8125rem] [&_[data-slot=empty-description]]:leading-[1.125rem]",
+  default: "gap-6 p-6 md:p-12",
+  hero: "gap-6 p-6 md:p-12 [&_[data-slot=empty-title]]:text-2xl sm:[&_[data-slot=empty-title]]:text-3xl",
+} as const;
+
+function Empty({
+  className,
+  size = "default",
+  ...props
+}: React.ComponentProps<"div"> & { size?: keyof typeof emptySizeClassName }) {
   return (
     <div
       className={cn(
-        "flex min-w-0 flex-1 flex-col items-center justify-center gap-6 text-balance p-6 text-center md:p-12",
+        "flex min-w-0 flex-1 flex-col items-center justify-center text-balance text-center",
+        emptySizeClassName[size],
         className,
       )}
       data-slot="empty"

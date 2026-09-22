@@ -87,13 +87,13 @@ function MobileClientsSkeleton() {
 
 function EmptyMobileClients() {
   return (
-    <Empty className="min-h-64 gap-4 border-t px-6 py-10 md:p-10">
-      <EmptyMedia className="mb-0" variant="icon">
+    <Empty size="compact">
+      <EmptyMedia variant="icon">
         <SmartphoneIcon />
       </EmptyMedia>
       <EmptyHeader>
-        <EmptyTitle className="text-[1.0625rem] leading-6">No mobile clients</EmptyTitle>
-        <EmptyDescription className="text-[0.8125rem] leading-[1.125rem]">
+        <EmptyTitle>No mobile clients</EmptyTitle>
+        <EmptyDescription>
           Sign in to T3 Code on your iPhone to register it for push notifications and Live
           Activities.
         </EmptyDescription>
@@ -147,7 +147,9 @@ export function MobileClientsUserProfilePage() {
             ))}
           </ul>
         ) : (
-          <EmptyMobileClients />
+          <div className="border-t">
+            <EmptyMobileClients />
+          </div>
         )}
       </div>
     </ClerkUserProfilePage>
