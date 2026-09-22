@@ -17,6 +17,7 @@ import { reactHookHarness as hooks } from "../../test/reactHookHarness";
 const atoms = vi.hoisted(() => ({
   providers: null as ReadonlyArray<ServerProvider> | null,
   providersAtom: Symbol("providers"),
+  settingsAtom: Symbol("settings"),
   refreshProviders: Symbol("refreshProviders"),
   updateProvider: Symbol("updateProvider"),
   updateSettings: Symbol("updateSettings"),
@@ -76,6 +77,7 @@ vi.mock("../../state/server", () => ({
   EMPTY_SERVER_PROVIDERS: [],
   serverEnvironment: {
     providersValueAtom: () => atoms.providersAtom,
+    settingsValueAtom: () => atoms.settingsAtom,
     refreshProviders: atoms.refreshProviders,
     updateProvider: atoms.updateProvider,
     updateSettings: atoms.updateSettings,
@@ -89,6 +91,7 @@ vi.mock("../../state/use-atom-command", () => ({
       : atom === atoms.updateSettings
         ? commands.saveSettings
         : commands.updateProvider,
+  useAtomReader: () => () => settingsState.value,
 }));
 
 vi.mock("../../hooks/useSettings", () => ({
