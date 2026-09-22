@@ -866,11 +866,39 @@ const program = Effect.gen(function* () {
       promptCount += 1;
 
       if (vibeRetryOutcome !== undefined) {
-        for (const noticeSessionId of [
+        if (vibeRetryOutcome === "recovered") {
+          yield* Effect.sync(() =>
+            writeJsonRpcNotification("session/update", {
+              sessionId: requestedSessionId,
+              update: {
+                sessionUpdate: "tool_call",
+                toolCallId: "tool-before-retry",
+                title: "Read file",
+                kind: "read",
+                status: "in_progress",
+              },
+            }),
+          );
+        }
+        for (const [index, noticeSessionId] of [
           "unrelated-session",
           requestedSessionId,
           requestedSessionId,
-        ]) {
+        ].entries()) {
+          // Progress from an earlier tool must not end the retry.
+          if (index === 2 && vibeRetryOutcome === "recovered") {
+            yield* Effect.sync(() =>
+              writeJsonRpcNotification("session/update", {
+                sessionId: requestedSessionId,
+                update: {
+                  sessionUpdate: "tool_call_update",
+                  toolCallId: "tool-before-retry",
+                  status: "in_progress",
+                  rawOutput: { progress: "still reading" },
+                },
+              }),
+            );
+          }
           yield* Effect.sync(() =>
             writeJsonRpcNotification("_session/retrying", {
               sessionId: noticeSessionId,

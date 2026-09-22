@@ -4163,7 +4163,15 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           // Re-check after the activeSessionId yield: idle/prompt settle can
           // finalize the same context object while we waited.
           if (context.finalized) return;
-          if (acpRootSessionUpdateIngestsOutput(notification)) {
+          // Only fresh model output proves a retry recovered; progress on
+          // tools and plans that started earlier can arrive mid-retry.
+          if (
+            update.sessionUpdate !== "tool_call_update" &&
+            update.sessionUpdate !== "plan" &&
+            update.sessionUpdate !== "plan_update" &&
+            update.sessionUpdate !== "plan_removed" &&
+            acpRootSessionUpdateIngestsOutput(notification)
+          ) {
             yield* emitProviderRetry(context, "completed");
           }
           switch (update.sessionUpdate) {
