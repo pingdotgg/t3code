@@ -4391,11 +4391,11 @@ export default function Sidebar() {
     <>
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent
-        className="gap-0 min-h-full"
+        className="min-h-full"
         fixedHeader={
           // Lifted above the stage backdrop, whose fade bleeds below the
           // header and would otherwise paint across the search row's outline.
-          <SidebarGroup className="relative z-[1] p-[var(--sidebar-content-inset)] pt-1">
+          <SidebarGroup className="z-[1]">
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
@@ -4554,7 +4554,7 @@ export default function Sidebar() {
           </SidebarGroup>
         }
       >
-        <SidebarGroup className="ps-[calc(var(--sidebar-content-inset)+1px)] pe-[var(--sidebar-content-inset)] pb-1 pt-0 flex-1">
+        <SidebarGroup className="flex-1 ps-[calc(var(--sidebar-content-inset)+1px)]">
           {isSearchingThreads ? (
             threadSearchResults.length > 0 ? (
               <TooltipProvider
