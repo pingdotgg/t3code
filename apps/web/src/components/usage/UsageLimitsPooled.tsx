@@ -121,6 +121,37 @@ function AccountName({
   );
 }
 
+/**
+ * "<provider> · <instance>", so two accounts on one provider are told apart by
+ * the name their owner gave them. An account with no name of its own would
+ * render the provider label twice, so it keeps the provider label alone.
+ */
+function PoolRowName({
+  account,
+  providerLabel,
+  className,
+}: {
+  readonly account: LimitAccount;
+  readonly providerLabel: string;
+  readonly className?: string;
+}) {
+  // An unnamed instance carries the provider's own name, which would print twice.
+  const named = account.displayName
+    ? account.displayName.toLowerCase() !== providerLabel.toLowerCase()
+    : account.email !== undefined;
+  return (
+    <span className={className}>
+      {providerLabel}
+      {named ? (
+        <>
+          <span className="text-muted-foreground"> · </span>
+          <AccountName account={account} className="min-w-0" />
+        </>
+      ) : null}
+    </span>
+  );
+}
+
 function Row({ label, children }: { readonly label: string; readonly children: ReactNode }) {
   return (
     <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-3">
@@ -284,11 +315,11 @@ function PoolSegment({
           </span>
           <div className="relative hidden h-full min-w-0 items-center gap-1.5 px-2 text-xs @2xl/pool:flex">
             {showAccountName ? (
-              <span className="min-w-0 truncate font-medium text-foreground">
-                {providerLabel}
-                <span className="text-muted-foreground"> · </span>
-                <AccountName account={account} className="min-w-0" />
-              </span>
+              <PoolRowName
+                account={account}
+                providerLabel={providerLabel}
+                className="min-w-0 truncate font-medium text-foreground"
+              />
             ) : null}
             <span className="shrink-0 font-semibold text-foreground tabular-nums">
               {remaining}%
@@ -383,11 +414,11 @@ function LegendRow({
         <span className="sr-only">Segment </span>
         <span className="relative">{index}</span>
       </span>
-      <span className="min-w-0 truncate font-medium text-foreground">
-        {providerLabel}
-        <span className="text-muted-foreground"> · </span>
-        <AccountName account={account} className="min-w-0" />
-      </span>
+      <PoolRowName
+        account={account}
+        providerLabel={providerLabel}
+        className="min-w-0 truncate font-medium text-foreground"
+      />
       <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
       <span className="ms-auto flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground tabular-nums">
         {resetsIn?.replace("resets in ", "↻ ") ?? ""}
