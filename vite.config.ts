@@ -208,7 +208,6 @@ export default defineConfig({
           "apps/mobile/src/features/review/ReviewSheet.tsx",
           "apps/mobile/src/features/review/useNativeReviewDiffBridge.ts",
           "apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx",
-          "apps/mobile/src/features/settings/appearance/components/AppearancePreviews.tsx",
           "apps/mobile/src/features/threads/GitActionProgressOverlay.tsx",
           "apps/mobile/src/features/threads/NewTaskDraftScreen.tsx",
           "apps/mobile/src/features/threads/ThreadComposer.tsx",
