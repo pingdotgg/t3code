@@ -307,7 +307,7 @@ export function AddProviderInstanceDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <WizardPopup>
+      <WizardPopup className="max-w-2xl">
         <WizardHeader
           title="Add provider"
           description={<>Set up a provider on {environmentLabel}.</>}
