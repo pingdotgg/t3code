@@ -4,9 +4,11 @@ import { TurnId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  canPauseSession,
   canSnooze,
   effectiveSnoozed,
   hasQueuedTurnStart,
+  isSessionPaused,
   resolveSnoozePresets,
   snoozeWakeLabel,
   threadRaisedHandWhileSnoozed,
@@ -369,5 +371,56 @@ describe("resolveSnoozePresets", () => {
     ]);
     const tomorrow = new Date(presets.find((preset) => preset.id === "tomorrow")!.snoozedUntil);
     expect(tomorrow.getDay()).toBe(1);
+  });
+});
+
+type PauseShell = Pick<OrchestrationThreadShell, "session">;
+
+function makePauseShell(
+  session: PauseShell["session"],
+  activeTurnId: TurnId | null = null,
+): PauseShell {
+  if (session === null) return { session: null };
+  return { session: { ...session, activeTurnId } };
+}
+
+function pauseSession(
+  status: NonNullable<PauseShell["session"]>["status"],
+): NonNullable<PauseShell["session"]> {
+  return {
+    threadId: ThreadId.make("thread-1"),
+    status,
+    providerName: "Codex",
+    runtimeMode: "full-access",
+    activeTurnId: null,
+    lastError: null,
+    updatedAt: "2026-04-10T11:00:00.000Z",
+  };
+}
+
+describe("session pause predicates", () => {
+  it("reports paused only for a cleanly stopped session", () => {
+    expect(isSessionPaused(makePauseShell(pauseSession("stopped")))).toBe(true);
+    expect(isSessionPaused(makePauseShell(pauseSession("ready")))).toBe(false);
+    expect(isSessionPaused(makePauseShell(null))).toBe(false);
+    // A stopped session carrying a failure still reads as failed.
+    expect(isSessionPaused(makePauseShell({ ...pauseSession("stopped"), lastError: "boom" }))).toBe(
+      false,
+    );
+  });
+
+  it("pauses idle sessions but never starting, mid-turn, stopped, or unstarted ones", () => {
+    expect(canPauseSession(makePauseShell(pauseSession("ready")))).toBe(true);
+    expect(
+      canPauseSession(makePauseShell({ ...pauseSession("running"), activeTurnId: null })),
+    ).toBe(true);
+    // A starting session may be adopting a turn mid-stop.
+    expect(canPauseSession(makePauseShell(pauseSession("starting")))).toBe(false);
+    // Running with a live turn must be interrupted first (archive guard twin).
+    expect(canPauseSession(makePauseShell(pauseSession("running"), TurnId.make("turn-1")))).toBe(
+      false,
+    );
+    expect(canPauseSession(makePauseShell(pauseSession("stopped")))).toBe(false);
+    expect(canPauseSession(makePauseShell(null))).toBe(false);
   });
 });

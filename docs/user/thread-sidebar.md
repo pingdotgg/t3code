@@ -107,6 +107,14 @@ rules to connected environments that support shared settings. Offline environmen
 and older servers keep their previous values. Changing a rule does not reopen
 already settled threads.
 
+## Pause a session
+
+Choose **Pause session** from a thread's menu to stop its provider session and
+free its memory without settling the thread. The conversation is kept. Send a
+message to resume — the session restarts on the next turn. A starting session
+or running turn must finish or be interrupted first. Settled threads already
+park their session, so Pause is not offered there.
+
 ## Link a pull request
 
 The server finds the PR for each unsettled thread's saved branch, even when your
