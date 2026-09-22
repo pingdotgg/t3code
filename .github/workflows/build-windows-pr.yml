@@ -19,15 +19,17 @@ jobs:
           ref: fix/antigravity-system-message-leak
           fetch-depth: 1
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.10.0
+          run_install: false
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24.13.1
           cache: pnpm
-
-      - name: Enable Corepack
-        shell: pwsh
-        run: corepack enable
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
