@@ -19,7 +19,6 @@
  */
 
 export interface DebugLogger {
-  readonly namespace: string;
   readonly isEnabled: () => boolean;
   readonly log: (event: string, data?: Record<string, unknown>) => void;
 }
@@ -61,5 +60,5 @@ export function createDebugLogger(
       console.log(`[t3-${namespace}] ${event}`, data);
     }
   };
-  return { namespace, isEnabled, log };
+  return { isEnabled, log };
 }

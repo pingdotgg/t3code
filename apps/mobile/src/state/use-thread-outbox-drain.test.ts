@@ -145,6 +145,7 @@ import { editingQueuedMessageIdsAtom } from "./use-thread-outbox";
 import {
   completeQueuedMessageDelivery,
   logThreadOutboxDeliveryFailure,
+  logThreadOutboxUploadFailure,
   prepareQueuedMessageAttachments,
   recoverEditedCreationAfterDelivery,
   removeAcknowledgedExistingThreadMessage,
@@ -775,27 +776,58 @@ describe("thread outbox recovery rollback", () => {
 });
 
 describe("thread outbox failure logging", () => {
-  it("keeps ordinary transport retries out of console.warn and silent by default", () => {
+  // Tagged errors match shouldRetryThreadOutboxDelivery's transport tags, so
+  // the assertions cover the real failure classification, not a
+  // predetermined action argument.
+  const transportError = { _tag: "RpcClientError" };
+  const serverDecidedError = { _tag: "OrchestrationDispatchCommandError" };
+
+  function failureLogging(input: Parameters<typeof logThreadOutboxDeliveryFailure>[0]): {
+    readonly action: string;
+    readonly warnCalls: ReadonlyArray<unknown[]>;
+    readonly logCalls: ReadonlyArray<unknown[]>;
+  } {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
-      logThreadOutboxDeliveryFailure("retry", { messageId: "m1" });
-      expect(warn).not.toHaveBeenCalled();
-      expect(log).not.toHaveBeenCalled();
+      return {
+        action: logThreadOutboxDeliveryFailure(input),
+        warnCalls: [...warn.mock.calls],
+        logCalls: [...log.mock.calls],
+      };
     } finally {
       warn.mockRestore();
       log.mockRestore();
     }
+  }
+
+  it("keeps offline transport retries silent by default at both stages", () => {
+    for (const stage of ["settings-sync", "start-turn"] as const) {
+      const { action, warnCalls, logCalls } = failureLogging({
+        stage,
+        error: transportError,
+        interrupted: false,
+        context: { messageId: "m1" },
+      });
+      expect(action).toBe("retry");
+      expect(warnCalls).toEqual([]);
+      expect(logCalls).toEqual([]);
+    }
   });
 
-  it("surfaces retry details when the thread-outbox debug filter is enabled", () => {
+  it("surfaces transport retry details when the thread-outbox debug filter is enabled", () => {
     vi.stubGlobal("__T3_DEBUG__", ["thread-outbox"]);
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
-      logThreadOutboxDeliveryFailure("retry", { messageId: "m1" });
+      logThreadOutboxDeliveryFailure({
+        stage: "start-turn",
+        error: transportError,
+        interrupted: false,
+        context: { messageId: "m1" },
+      });
       expect(log).toHaveBeenCalledWith(
         "[t3-thread-outbox] queued message delivery failed",
-        expect.objectContaining({ messageId: "m1" }),
+        expect.objectContaining({ messageId: "m1", action: "retry" }),
       );
     } finally {
       log.mockRestore();
@@ -803,16 +835,68 @@ describe("thread outbox failure logging", () => {
     }
   });
 
-  it("still warns when the server decided the message must be restored", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      logThreadOutboxDeliveryFailure("restore", { messageId: "m2" });
-      expect(warn).toHaveBeenCalledWith(
+  it("warns when the server decided the message must be restored", () => {
+    const { action, warnCalls } = failureLogging({
+      stage: "start-turn",
+      error: serverDecidedError,
+      interrupted: false,
+      context: { messageId: "m2" },
+    });
+    expect(action).toBe("restore");
+    expect(warnCalls).toEqual([
+      [
         "[thread-outbox] queued message delivery failed",
-        expect.objectContaining({ messageId: "m2" }),
+        expect.objectContaining({ messageId: "m2", action: "restore" }),
+      ],
+    ]);
+  });
+
+  it("warns on a nontransport settings-sync failure even though it resolves to a retry", () => {
+    const { action, warnCalls } = failureLogging({
+      stage: "settings-sync",
+      error: serverDecidedError,
+      interrupted: false,
+      context: { messageId: "m3" },
+    });
+    expect(action).toBe("retry");
+    expect(warnCalls).toEqual([
+      [
+        "[thread-outbox] queued message delivery failed",
+        expect.objectContaining({ stage: "settings-sync", action: "retry" }),
+      ],
+    ]);
+  });
+
+  it("routes retryable attachment-upload failures to the debug log and warns on the rest", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      logThreadOutboxUploadFailure(transportError);
+      expect(warn).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalled();
+
+      logThreadOutboxUploadFailure(serverDecidedError);
+      expect(warn).toHaveBeenCalledWith(
+        "[thread-outbox] failed to upload attachments",
+        serverDecidedError,
       );
     } finally {
       warn.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  it("logs retryable attachment-upload failures when the debug filter is enabled", () => {
+    vi.stubGlobal("__T3_DEBUG__", ["thread-outbox"]);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      logThreadOutboxUploadFailure(transportError);
+      expect(log).toHaveBeenCalledWith("[t3-thread-outbox] attachment upload failed; retrying", {
+        error: transportError,
+      });
+    } finally {
+      log.mockRestore();
+      vi.unstubAllGlobals();
     }
   });
 });

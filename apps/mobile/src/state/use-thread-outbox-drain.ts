@@ -87,28 +87,46 @@ import {
 // Ordinary offline behavior (a socket dropping mid-request, a retryable
 // attachment upload failure) must not spam `console.warn` on every backoff
 // retry; it goes to the filterable `[t3-thread-outbox]` debug log instead.
-// Failures the server decided — the ones that restore the message with a
-// user-visible error — stay on `console.warn`.
+// Failures the server decided stay on `console.warn`.
 const threadOutboxDebug = createDebugLogger("thread-outbox");
 
 /**
- * Routes one queued-message delivery failure by outcome: ordinary transport
- * retries to the debug log, server-decided restores to `console.warn`.
+ * Logs one queued-message delivery failure and returns the retry-or-restore
+ * decision for the caller. Ordinary transport retries — what an offline
+ * device or a flapping socket produces on every backoff attempt — go to the
+ * debug log. Server-decided failures warn. Settings-sync failures always
+ * resolve to a retry even when the server rejected the command, so the
+ * error, not the resolved action, must decide the log level there; routing
+ * every retry to debug could hide a permanently rejected update forever.
  * Exported for tests.
  */
-export function logThreadOutboxDeliveryFailure(
-  action: ThreadOutboxFailureAction,
-  details: Record<string, unknown>,
-): void {
-  if (action === "restore") {
+export function logThreadOutboxDeliveryFailure(input: {
+  readonly stage: ThreadOutboxCommandStage;
+  readonly error: unknown;
+  readonly interrupted: boolean;
+  readonly context: Record<string, unknown>;
+}): ThreadOutboxFailureAction {
+  const action = resolveThreadOutboxFailureAction({
+    stage: input.stage,
+    error: input.error,
+    interrupted: input.interrupted,
+  });
+  const details = { ...input.context, stage: input.stage, action };
+  const ordinaryTransportRetry =
+    action === "retry" &&
+    (input.interrupted ||
+      input.stage !== "settings-sync" ||
+      shouldRetryThreadOutboxDelivery(input.error));
+  if (ordinaryTransportRetry) {
+    threadOutboxDebug.log("queued message delivery failed", details);
+  } else {
     console.warn("[thread-outbox] queued message delivery failed", details);
-    return;
   }
-  threadOutboxDebug.log("queued message delivery failed", details);
+  return action;
 }
 
-/** Attachment uploads retry like delivery: transport failures are ordinary offline noise. */
-function logThreadOutboxUploadFailure(error: unknown): void {
+/** Attachment uploads retry like delivery: transport failures are ordinary offline noise. Exported for tests. */
+export function logThreadOutboxUploadFailure(error: unknown): void {
   if (shouldRetryThreadOutboxDelivery(error)) {
     threadOutboxDebug.log("attachment upload failed; retrying", { error });
   } else {
@@ -700,18 +718,16 @@ export function useThreadOutboxDrain(): void {
         return null;
       }
       const error = Cause.squash(commandResult.cause);
-      const action = resolveThreadOutboxFailureAction({
+      const action = logThreadOutboxDeliveryFailure({
         stage,
         error,
         interrupted: Cause.hasInterruptsOnly(commandResult.cause),
-      });
-      logThreadOutboxDeliveryFailure(action, {
-        environmentId: queuedMessage.environmentId,
-        threadId: queuedMessage.threadId,
-        messageId: queuedMessage.messageId,
-        stage,
-        cause: commandResult.cause,
-        action,
+        context: {
+          environmentId: queuedMessage.environmentId,
+          threadId: queuedMessage.threadId,
+          messageId: queuedMessage.messageId,
+          cause: commandResult.cause,
+        },
       });
       return {
         action,
