@@ -574,6 +574,21 @@ function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fields>(
   );
 }
 
+// Voices the Codex realtime V3 session accepts (`thread/realtime/listVoices`
+// v1 list). An empty value lets Codex use its own configured default.
+export const CODEX_VOICE_OPTIONS = [
+  { value: "", label: "Codex default" },
+  { value: "cove", label: "Cove" },
+  { value: "juniper", label: "Juniper" },
+  { value: "maple", label: "Maple" },
+  { value: "spruce", label: "Spruce" },
+  { value: "ember", label: "Ember" },
+  { value: "vale", label: "Vale" },
+  { value: "breeze", label: "Breeze" },
+  { value: "arbor", label: "Arbor" },
+  { value: "sol", label: "Sol" },
+] as const satisfies ReadonlyArray<ProviderSettingsFormOption>;
+
 export const CodexSettings = makeProviderSettingsSchema(
   {
     setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])).pipe(
@@ -624,9 +639,21 @@ export const CodexSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    voice: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Voice",
+        description: "Voice used by voice conversations. Applies to the next conversation.",
+        providerSettingsForm: {
+          control: "select",
+          options: CODEX_VOICE_OPTIONS,
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs"],
+    order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs", "voice"],
   },
 );
 export type CodexSettings = typeof CodexSettings.Type;
@@ -1509,6 +1536,7 @@ const CodexSettingsPatch = Schema.Struct({
   shadowHomePath: Schema.optionalKey(TrimmedString),
   launchArgs: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
+  voice: Schema.optionalKey(TrimmedString),
 });
 
 const ClaudeSettingsPatch = Schema.Struct({

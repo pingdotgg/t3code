@@ -106,6 +106,10 @@ import {
   codexAppServerArgs,
   resolveCodexLaunchArgs,
 } from "../../provider/Layers/codexLaunchArgs.ts";
+import {
+  makeCodexVoice,
+  readRealtimeDelegationFromItem,
+} from "../../provider/Layers/CodexVoice.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
@@ -1698,6 +1702,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         // terminal, otherwise the root terminal can strand child projections.
         const deferredRootTerminals = yield* Ref.make(new Map<string, DeferredCodexRootTerminal>());
         const offeredContinuationItemsByTurn = yield* Ref.make(new Map<string, Set<string>>());
+        const sessionScope = yield* Effect.scope;
+        const voice = yield* makeCodexVoice(client, sessionScope);
+        /** The provider thread holding the voice conversation, while one runs. */
+        const voiceProviderThread = yield* Ref.make<OrchestrationV2ProviderThread | undefined>(
+          undefined,
+        );
+        /** Native turns Codex started for a voice handoff -> the spoken request. */
+        const voiceResubmits = yield* Ref.make(new Map<string, string>());
         const finalAnswerItemIdsByTurn = yield* Ref.make(new Map<string, Set<string>>());
         const completedFinalAnswerTextsByTurn = yield* Ref.make(new Map<string, Set<string>>());
         // Native completion and the interrupt timeout share one finalization
@@ -4025,6 +4037,27 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
 
         yield* client.handleServerNotification("item/started", (payload) =>
           Effect.gen(function* () {
+            if (payload.item.type === "userMessage") {
+              const handoff = readRealtimeDelegationFromItem(payload.item);
+              const voiceThread = yield* Ref.get(voiceProviderThread);
+              if (
+                handoff !== undefined &&
+                voiceThread?.nativeThreadRef?.nativeId === payload.threadId &&
+                !(yield* Ref.get(activeTurns)).has(payload.turnId) &&
+                !(yield* Ref.get(pendingRootTurns)).has(payload.threadId)
+              ) {
+                // Codex started this turn itself for a voice handoff. V2 runs
+                // are orchestrator-owned, so stop it and resubmit the request
+                // as an ordinary run once it settles (see turn/completed).
+                yield* Ref.update(voiceResubmits, (current) =>
+                  new Map(current).set(payload.turnId, handoff),
+                );
+                yield* client
+                  .request("turn/interrupt", { threadId: payload.threadId, turnId: payload.turnId })
+                  .pipe(Effect.ignore, Effect.forkIn(sessionScope));
+                return;
+              }
+            }
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
               return;
@@ -5307,6 +5340,27 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
 
         yield* client.handleServerNotification("turn/completed", (payload) =>
           Effect.gen(function* () {
+            const voiceResubmit = (yield* Ref.get(voiceResubmits)).get(payload.turn.id);
+            if (voiceResubmit !== undefined) {
+              yield* Ref.update(voiceResubmits, (current) => {
+                const updated = new Map(current);
+                updated.delete(payload.turn.id);
+                return updated;
+              });
+              const voiceThread = yield* Ref.get(voiceProviderThread);
+              if (voiceThread !== undefined && continuationRequests !== undefined) {
+                yield* voice.expectSpokenTurn(voiceResubmit);
+                yield* continuationRequests.offer({
+                  threadId: voiceThread.appThreadId ?? input.threadId,
+                  providerThreadId: voiceThread.id,
+                  driver: CODEX_PROVIDER,
+                  detail: voiceResubmit,
+                  delivery: "message_text",
+                  origin: "voice",
+                });
+              }
+              return;
+            }
             const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
             if (context === undefined) {
               return;
@@ -6053,6 +6107,33 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                       driver: CODEX_PROVIDER,
                       requestId: requestInput.requestId,
                       cause,
+                    }),
+              ),
+            ),
+          startVoiceSession: (voiceInput) =>
+            Stream.unwrap(
+              Effect.gen(function* () {
+                const nativeThreadId = yield* getNativeThreadId(voiceInput.providerThread);
+                yield* ensureInitialized;
+                yield* Ref.set(voiceProviderThread, voiceInput.providerThread);
+                return voice.start({
+                  providerThreadId: nativeThreadId,
+                  offerSdp: voiceInput.offerSdp,
+                  ...(adapterOptions.settings.voice
+                    ? { voice: adapterOptions.settings.voice }
+                    : {}),
+                });
+              }),
+            ).pipe(
+              Stream.ensuring(Ref.set(voiceProviderThread, undefined)),
+              Stream.mapError((cause) =>
+                cause._tag === "ProviderAdapterProtocolError"
+                  ? cause
+                  : new ProviderAdapterProtocolError({
+                      driver: CODEX_PROVIDER,
+                      detail:
+                        cause._tag === "CodexVoiceSessionError" ? cause.detail : cause.message,
+                      payload: cause,
                     }),
               ),
             ),
