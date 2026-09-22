@@ -286,10 +286,7 @@ export function SettingInheritance({
                     <div className="flex items-center justify-between gap-3 px-2 text-xs text-muted-foreground">
                       <span>Overridden by</span>
                       {onClearOverrides ? (
-                        <InlineButton
-                          className="font-medium text-foreground underline-offset-2 hover:underline"
-                          onClick={() => onClearOverrides(overriding)}
-                        >
+                        <InlineButton onClick={() => onClearOverrides(overriding)}>
                           Reset {overriding.length === 1 ? "it" : "all"}
                         </InlineButton>
                       ) : null}
@@ -300,10 +297,7 @@ export function SettingInheritance({
                           key={project.projectId}
                           className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-2 py-1"
                         >
-                          <InlineButton
-                            className="min-w-0 justify-start text-left text-foreground underline-offset-2 hover:underline"
-                            onClick={project.open}
-                          >
+                          <InlineButton className="min-w-0 justify-start" onClick={project.open}>
                             <span className="truncate">{project.label}</span>
                           </InlineButton>
                           <span className="max-w-32 truncate text-muted-foreground tabular-nums">

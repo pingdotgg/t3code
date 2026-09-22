@@ -19,7 +19,7 @@ export function ProcessSignalActions({
             <InlineButton
               disabled={disabled}
               aria-label="Send SIGINT"
-              className="text-[11px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              tone="muted"
               onClick={() => onSignal("SIGINT")}
             >
               INT
@@ -34,7 +34,7 @@ export function ProcessSignalActions({
             <InlineButton
               disabled={disabled}
               aria-label="Send SIGKILL"
-              className="text-[11px] font-medium text-destructive underline-offset-2 hover:underline"
+              tone="destructive"
               onClick={() => onSignal("SIGKILL")}
             >
               KILL
