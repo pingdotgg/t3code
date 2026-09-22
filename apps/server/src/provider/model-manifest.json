@@ -1,16 +1,15 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-22T17:51:55Z",
+  "updatedAt": "2026-09-22T19:42:55Z",
   "currentModels": {
     "codex": [
       "gpt-6-astra",
-      "gpt-5.6-luna",
-      "gpt-5.6-terra",
-      "gpt-5.6-sol",
+      "gpt-6-luna",
+      "gpt-6-sol",
       "gpt-daybreak-blue-latest",
       "gpt-daybreak-red-latest"
     ],
-    "claudeAgent": ["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5"],
+    "claudeAgent": ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5"],
     "antigravity": ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"]
   },
   "providers": {
