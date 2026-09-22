@@ -1234,6 +1234,14 @@ export const ServerSettings = Schema.Struct({
       }),
     ),
   ),
+  /**
+   * Whether T3 may ask a model to name or rename a thread. On by default.
+   * When off, no title-generation LLM call is made: a new thread keeps the
+   * deterministic title derived from its first prompt, and refinement and
+   * manual regeneration are skipped. Environment-wide, not project-scoped,
+   * because the title path is server-owned and must not vary per project.
+   */
+  generateThreadTitles: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sourceControlWritingStyle: SourceControlWritingStyleSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1513,6 +1521,7 @@ export const ServerSettingsPatch = Schema.Struct({
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  generateThreadTitles: Schema.optionalKey(Schema.Boolean),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({
       mode: Schema.optionalKey(SourceControlWritingStyleMode),

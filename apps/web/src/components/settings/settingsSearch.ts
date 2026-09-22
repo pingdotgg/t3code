@@ -455,6 +455,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated thread titles source control content default provider"],
   },
   {
+    id: "generate-thread-titles",
+    title: "Generate thread titles with AI",
+    to: "/settings/general",
+    scope: "environment-defaults",
+    searchTerms: [
+      "ai title thread name automatic title first prompt llm rename generated naming disable off",
+    ],
+  },
+  {
     id: "diagnostics",
     title: "Diagnostics",
     to: "/settings/general",

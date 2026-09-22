@@ -963,9 +963,9 @@ const make = Effect.gen(function* () {
     }) {
       const attachments = input.attachments ?? [];
       yield* Effect.gen(function* () {
-        const { textGenerationModelSelection: modelSelection } = yield* projectSettingsForThread(
-          input.threadId,
-        );
+        const { textGenerationModelSelection: modelSelection, generateThreadTitles } =
+          yield* projectSettingsForThread(input.threadId);
+        if (!generateThreadTitles) return;
 
         const generated = yield* textGeneration
           .generateThreadTitle({
@@ -1022,6 +1022,8 @@ const make = Effect.gen(function* () {
       thread.session?.status !== "ready"
     )
       return;
+    const { generateThreadTitles } = yield* projectSettingsForThread(threadId);
+    if (!generateThreadTitles) return;
     const detail = yield* resolveThreadDetail(threadId);
     if (!detail || detail.messages.filter((message) => message.role === "user").length !== 1)
       return;
@@ -1061,10 +1063,11 @@ const make = Effect.gen(function* () {
         thread,
         projects: project ? [project] : [],
       }) ?? process.cwd();
-    const { textGenerationModelSelection: modelSelection } = resolveProjectSettings(
-      yield* serverSettingsService.getSettings,
-      thread.projectId,
-    ).settings;
+    const { textGenerationModelSelection: modelSelection, generateThreadTitles } =
+      resolveProjectSettings(yield* serverSettingsService.getSettings, thread.projectId).settings;
+    if (!generateThreadTitles) {
+      return { _tag: "Completed", title: undefined } as const;
+    }
     const generated = yield* textGeneration.generateThreadTitle({
       cwd,
       message,

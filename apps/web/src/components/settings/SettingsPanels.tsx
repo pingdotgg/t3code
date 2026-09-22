@@ -3187,6 +3187,35 @@ export function GeneralSettingsPanel() {
             )
           }
         />
+
+        <SettingsRow
+          serverScoped
+          settingKeys={["generateThreadTitles"]}
+          {...searchableSetting("generate-thread-titles")}
+          description="When off, new threads use the first prompt as their title instead of asking a model to name them."
+          resetAction={
+            settings.generateThreadTitles !== DEFAULT_UNIFIED_SETTINGS.generateThreadTitles ? (
+              <SettingResetButton
+                label="AI thread titles"
+                onClick={() =>
+                  updateSettings({
+                    generateThreadTitles: DEFAULT_UNIFIED_SETTINGS.generateThreadTitles,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["generateThreadTitles"]}
+              checked={settings.generateThreadTitles}
+              onCheckedChange={(checked) =>
+                updateSettings({ generateThreadTitles: Boolean(checked) })
+              }
+              aria-label="Generate thread titles with AI"
+            />
+          }
+        />
       </SettingsSection>
 
       <SettingsSection id="about" title="About">

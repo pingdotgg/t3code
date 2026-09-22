@@ -670,6 +670,25 @@ describe("ServerSettings thread settlement", () => {
   });
 });
 
+describe("ServerSettings thread titles", () => {
+  it("defaults AI thread title generation on", () => {
+    expect(decodeServerSettings({}).generateThreadTitles).toBe(true);
+    expect(DEFAULT_SERVER_SETTINGS.generateThreadTitles).toBe(true);
+  });
+
+  it("accepts disabling AI thread title generation", () => {
+    expect(decodeServerSettings({ generateThreadTitles: false }).generateThreadTitles).toBe(false);
+    expect(decodeServerSettingsPatch({ generateThreadTitles: false }).generateThreadTitles).toBe(
+      false,
+    );
+  });
+
+  it("rejects non-boolean thread title settings", () => {
+    expect(() => decodeServerSettings({ generateThreadTitles: "off" })).toThrow();
+    expect(() => decodeServerSettingsPatch({ generateThreadTitles: "off" })).toThrow();
+  });
+});
+
 describe("ClientSettings pull request merge methods", () => {
   it("defaults to no project overrides and accepts supported methods", () => {
     expect(decodeClientSettings({}).pullRequestMergeMethodOverrides).toEqual({});
