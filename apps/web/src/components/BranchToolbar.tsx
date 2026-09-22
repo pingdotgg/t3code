@@ -26,6 +26,7 @@ import { useProject, useThreadShell, useThreadShellsForProjectRefs } from "../st
 import {
   type EnvMode,
   type EnvironmentOption,
+  resolveContextStripLabelHiddenWidth,
   resolveContextStripLabelsCompact,
   resolveCurrentWorkspaceLabel,
   resolveEnvModeLabel,
@@ -319,6 +320,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
 const COMPOSER_CONTEXT_MOTION_DURATION_MS = 180;
 const COMPOSER_CONTEXT_MOTION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 const COMPOSER_CONTEXT_LABEL_SELECTOR = "[data-composer-label]";
+const COMPOSER_CONTEXT_LABEL_MOTION_SELECTOR = "[data-composer-label-motion]";
 
 function useLabelsOverflow(element: HTMLDivElement | null): boolean {
   const [overflows, setOverflows] = useState(false);
@@ -380,17 +382,23 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
       needed += width;
     }
     needed += stripGap * Math.max(0, groups - 1);
-    for (const label of current.querySelectorAll<HTMLElement>("[data-composer-label]")) {
-      // The clipping can happen below the marker (SelectValue truncates
-      // internally), where the outer span's scrollWidth matches its clipped
-      // box. The text's real width is the largest scrollWidth in the subtree.
-      let textWidth = label.scrollWidth;
+    for (const label of current.querySelectorAll<HTMLElement>(COMPOSER_CONTEXT_LABEL_SELECTOR)) {
+      // Sum the leaf spans so a middle-truncated head and tail count together.
+      // The motion element keeps its max-width in both states; the marker's
+      // collapses to zero while compact.
+      const leafWidths: number[] = [];
       for (const inner of label.querySelectorAll<HTMLElement>("*")) {
-        textWidth = Math.max(textWidth, inner.scrollWidth);
+        if (inner.children.length === 0) leafWidths.push(inner.scrollWidth);
       }
-      // Subtract the visible width even during an animation. The content
-      // sum already includes it; only the hidden text needs reserving.
-      needed += Math.max(0, textWidth - label.getBoundingClientRect().width);
+      const motion = label.querySelector<HTMLElement>(COMPOSER_CONTEXT_LABEL_MOTION_SELECTOR);
+      const maxWidth = motion ? Number.parseFloat(getComputedStyle(motion).maxWidth) : Number.NaN;
+      needed += resolveContextStripLabelHiddenWidth({
+        leafWidths: leafWidths.length > 0 ? leafWidths : [label.scrollWidth],
+        maxWidth: Number.isFinite(maxWidth) ? maxWidth : Number.POSITIVE_INFINITY,
+        // Subtract the visible width even during an animation. The content
+        // sum already includes it; only the hidden text needs reserving.
+        visibleWidth: label.getBoundingClientRect().width,
+      });
     }
     const nextOverflows = resolveContextStripLabelsCompact({
       compact,

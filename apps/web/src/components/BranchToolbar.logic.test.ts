@@ -12,6 +12,8 @@ import {
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
   resolveBranchToolbarValue,
+  resolveContextStripLabelHiddenWidth,
+  resolveContextStripLabelsCompact,
   resolveLockedWorkspaceLabel,
   resolveLocalCheckoutBranchMismatch,
   resolvePreviousWorktreeLabel,
@@ -832,5 +834,70 @@ describe("sanitizeNewRefName", () => {
   it("does not collapse dashes the user typed", () => {
     expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
     expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
+  });
+});
+
+describe("resolveContextStripLabelHiddenWidth", () => {
+  it("reserves the whole text while compact and nothing once expanded", () => {
+    expect(
+      resolveContextStripLabelHiddenWidth({ leafWidths: [120], maxWidth: 240, visibleWidth: 0 }),
+    ).toBe(120);
+    expect(
+      resolveContextStripLabelHiddenWidth({ leafWidths: [120], maxWidth: 240, visibleWidth: 120 }),
+    ).toBe(0);
+  });
+
+  it("counts a middle-truncated head and tail together, capped at the expanded width", () => {
+    expect(
+      resolveContextStripLabelHiddenWidth({
+        leafWidths: [100, 60],
+        maxWidth: 240,
+        visibleWidth: 0,
+      }),
+    ).toBe(160);
+    expect(
+      resolveContextStripLabelHiddenWidth({
+        leafWidths: [200, 60],
+        maxWidth: 240,
+        visibleWidth: 0,
+      }),
+    ).toBe(240);
+    expect(
+      resolveContextStripLabelHiddenWidth({
+        leafWidths: [200, 60],
+        maxWidth: 240,
+        visibleWidth: 240,
+      }),
+    ).toBe(0);
+  });
+
+  it("settles the compact decision in one pass at every strip width", () => {
+    // Compact and expanded passes disagreeing by more than the hysteresis
+    // flip forever until React throws error #185 (#12891).
+    const controlsWidth = 300;
+    const label = { leafWidths: [200, 60], maxWidth: 240 };
+    const needed = (compact: boolean) => {
+      const visibleWidth = compact ? 0 : Math.min(200 + 60, label.maxWidth);
+      return (
+        controlsWidth +
+        visibleWidth +
+        resolveContextStripLabelHiddenWidth({ ...label, visibleWidth })
+      );
+    };
+    for (let availableWidth = 400; availableWidth <= 700; availableWidth += 1) {
+      for (const compact of [false, true]) {
+        const next = resolveContextStripLabelsCompact({
+          compact,
+          neededWidth: needed(compact),
+          availableWidth,
+        });
+        const settled = resolveContextStripLabelsCompact({
+          compact: next,
+          neededWidth: needed(next),
+          availableWidth,
+        });
+        expect(settled).toBe(next);
+      }
+    }
   });
 });

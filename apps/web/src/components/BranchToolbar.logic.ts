@@ -88,6 +88,20 @@ export function resolveContextStripLabelsCompact(input: {
     : input.neededWidth > input.availableWidth;
 }
 
+/**
+ * Width of a strip label's text that its current box hides. Leaf spans are
+ * summed so a middle-truncated head and tail count together, and capped at
+ * the expanded max-width so compact and expanded passes measure the same need.
+ */
+export function resolveContextStripLabelHiddenWidth(input: {
+  leafWidths: readonly number[];
+  maxWidth: number;
+  visibleWidth: number;
+}): number {
+  const naturalWidth = input.leafWidths.reduce((sum, width) => sum + width, 0);
+  return Math.max(0, Math.min(naturalWidth, input.maxWidth) - input.visibleWidth);
+}
+
 export function resolveEnvModeLabel(mode: EnvMode): string {
   return mode === "worktree" ? "New worktree" : "Current checkout";
 }
