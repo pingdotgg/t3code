@@ -17,6 +17,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
 
+import { createDebugLogger } from "../lib/debugLog";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
 import { serializeComposerMessageForServer, uploadedComposerContext } from "../lib/composerContext";
@@ -55,6 +56,7 @@ import {
   type QueuedThreadCreation,
   type QueuedThreadMessage,
   type ThreadOutboxCommandStage,
+  type ThreadOutboxFailureAction,
 } from "./thread-outbox-model";
 import { environmentThreadShells, threadEnvironment } from "./threads";
 import {
@@ -81,6 +83,38 @@ import {
   setPendingConnectionError,
   useRemoteConnectionStatus,
 } from "./use-remote-environment-registry";
+
+// Ordinary offline behavior (a socket dropping mid-request, a retryable
+// attachment upload failure) must not spam `console.warn` on every backoff
+// retry; it goes to the filterable `[t3-thread-outbox]` debug log instead.
+// Failures the server decided — the ones that restore the message with a
+// user-visible error — stay on `console.warn`.
+const threadOutboxDebug = createDebugLogger("thread-outbox");
+
+/**
+ * Routes one queued-message delivery failure by outcome: ordinary transport
+ * retries to the debug log, server-decided restores to `console.warn`.
+ * Exported for tests.
+ */
+export function logThreadOutboxDeliveryFailure(
+  action: ThreadOutboxFailureAction,
+  details: Record<string, unknown>,
+): void {
+  if (action === "restore") {
+    console.warn("[thread-outbox] queued message delivery failed", details);
+    return;
+  }
+  threadOutboxDebug.log("queued message delivery failed", details);
+}
+
+/** Attachment uploads retry like delivery: transport failures are ordinary offline noise. */
+function logThreadOutboxUploadFailure(error: unknown): void {
+  if (shouldRetryThreadOutboxDelivery(error)) {
+    threadOutboxDebug.log("attachment upload failed; retrying", { error });
+  } else {
+    console.warn("[thread-outbox] failed to upload attachments", error);
+  }
+}
 
 function beginDispatchingQueuedMessage(queuedMessageId: MessageId): void {
   appAtomRegistry.set(dispatchingQueuedMessageIdAtom, queuedMessageId);
@@ -215,14 +249,13 @@ export async function completeQueuedMessageDelivery(
     );
     if (!removed) {
       forgetAcknowledgedThreadMessage(queuedMessage);
-      console.warn(
-        "[thread-outbox] delivered message was edited before cleanup; keeping the newer message",
-        {
-          environmentId: queuedMessage.environmentId,
-          threadId: queuedMessage.threadId,
-          messageId: queuedMessage.messageId,
-        },
-      );
+      // Losing the cleanup race to a user edit is an expected outcome the
+      // caller handles by keeping the newer message; it is not a warning.
+      threadOutboxDebug.log("delivered message was edited before cleanup", {
+        environmentId: queuedMessage.environmentId,
+        threadId: queuedMessage.threadId,
+        messageId: queuedMessage.messageId,
+      });
       return "edited";
     }
     return "removed";
@@ -672,7 +705,7 @@ export function useThreadOutboxDrain(): void {
         error,
         interrupted: Cause.hasInterruptsOnly(commandResult.cause),
       });
-      console.warn("[thread-outbox] queued message delivery failed", {
+      logThreadOutboxDeliveryFailure(action, {
         environmentId: queuedMessage.environmentId,
         threadId: queuedMessage.threadId,
         messageId: queuedMessage.messageId,
@@ -772,7 +805,7 @@ export function useThreadOutboxDrain(): void {
           return true;
         }
       } catch (error) {
-        console.warn("[thread-outbox] failed to upload attachments", error);
+        logThreadOutboxUploadFailure(error);
         if (!shouldRetryThreadOutboxDelivery(error)) {
           return restoreQueuedMessage(
             queuedMessage,
@@ -900,7 +933,7 @@ export function useThreadOutboxDrain(): void {
           return true;
         }
       } catch (error) {
-        console.warn("[thread-outbox] failed to upload attachments", error);
+        logThreadOutboxUploadFailure(error);
         if (!shouldRetryThreadOutboxDelivery(error)) {
           return restoreQueuedMessage(
             queuedMessage,

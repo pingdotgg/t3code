@@ -144,6 +144,7 @@ import { recoverFailedThreadDraft } from "./recover-failed-thread-draft";
 import { editingQueuedMessageIdsAtom } from "./use-thread-outbox";
 import {
   completeQueuedMessageDelivery,
+  logThreadOutboxDeliveryFailure,
   prepareQueuedMessageAttachments,
   recoverEditedCreationAfterDelivery,
   removeAcknowledgedExistingThreadMessage,
@@ -426,7 +427,16 @@ describe("thread outbox drain delivery cleanup", () => {
     const edited = { ...message, text: "edited while the turn delivered" };
     await harness.manager.update(edited);
 
-    await expect(completeQueuedMessageDelivery(message, deliveryRevision)).resolves.toBe("edited");
+    // Losing the cleanup race to an edit is expected; it must not warn.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let outcome: "edited" | "failed" | "removed";
+    try {
+      outcome = await completeQueuedMessageDelivery(message, deliveryRevision);
+    } finally {
+      warn.mockRestore();
+    }
+    expect(outcome).toBe("edited");
+    expect(warn).not.toHaveBeenCalled();
 
     expect(remainingMessages()).toEqual([edited]);
     expect(harness.removePersistedFile).not.toHaveBeenCalled();
@@ -761,5 +771,48 @@ describe("thread outbox recovery rollback", () => {
     );
     expect(remainingMessages()).toEqual([]);
     expect(harness.setPendingConnectionError).toHaveBeenCalledWith("too large");
+  });
+});
+
+describe("thread outbox failure logging", () => {
+  it("keeps ordinary transport retries out of console.warn and silent by default", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      logThreadOutboxDeliveryFailure("retry", { messageId: "m1" });
+      expect(warn).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  it("surfaces retry details when the thread-outbox debug filter is enabled", () => {
+    vi.stubGlobal("__T3_DEBUG__", ["thread-outbox"]);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      logThreadOutboxDeliveryFailure("retry", { messageId: "m1" });
+      expect(log).toHaveBeenCalledWith(
+        "[t3-thread-outbox] queued message delivery failed",
+        expect.objectContaining({ messageId: "m1" }),
+      );
+    } finally {
+      log.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("still warns when the server decided the message must be restored", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      logThreadOutboxDeliveryFailure("restore", { messageId: "m2" });
+      expect(warn).toHaveBeenCalledWith(
+        "[thread-outbox] queued message delivery failed",
+        expect.objectContaining({ messageId: "m2" }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
