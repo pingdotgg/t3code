@@ -105,6 +105,31 @@ describe("composer attachment upload queue", () => {
     queue.dispose();
   });
 
+  it("retries a failed attachment when the worker restores requests after reconnect", async () => {
+    let states: Readonly<Record<string, ComposerAttachmentUploadState>> = {};
+    const upload = vi.fn().mockRejectedValueOnce(new Error("Disconnected")).mockResolvedValue(true);
+    const queue = createComposerAttachmentUploadQueue({
+      upload,
+      onChange: (next) => {
+        states = next;
+      },
+    });
+    const local = request("failed-upload");
+    const key = composerAttachmentUploadKey(environmentId, local.attachment.id);
+    queue.sync([local]);
+    await queue.settled();
+    expect(states[key]?.status).toBe("failed");
+    queue.sync([local]);
+    await queue.settled();
+    expect(upload).toHaveBeenCalledTimes(1);
+    queue.sync([]);
+    queue.sync([local]);
+    await queue.settled();
+    expect(upload).toHaveBeenCalledTimes(2);
+    expect(states[key]?.status).toBe("ready");
+    queue.dispose();
+  });
+
   it("ignores a late completion after removal or environment switch", async () => {
     const gate = Promise.withResolvers<boolean>();
     const started = Promise.withResolvers<void>();
