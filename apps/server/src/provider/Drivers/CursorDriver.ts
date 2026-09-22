@@ -95,7 +95,15 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies CursorSettings;
-      const credentials = yield* makeCursorCredentialStore(instanceId).pipe(
+      const credentials = yield* makeCursorCredentialStore(
+        instanceId,
+        path.join(
+          (yield* ServerConfig).stateDir,
+          "provider-auth",
+          encodeURIComponent(instanceId),
+          "cursor.json",
+        ),
+      ).pipe(
         Effect.provide(ServerSecretStore.layer),
         Effect.mapError(
           (cause) =>

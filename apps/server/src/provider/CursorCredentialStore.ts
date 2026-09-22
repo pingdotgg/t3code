@@ -1,6 +1,7 @@
 import type { SdkCredentialStore } from "@cursor/sdk";
 import { ProviderSetupError, type ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -20,11 +21,34 @@ const Credentials = Schema.fromJsonString(
 const decodeCredentials = Schema.decodeUnknownEffect(Credentials);
 const encodeCredentials = Schema.encodeEffect(Credentials);
 
-/** The SDK owns the credential format; persistence uses the environment's secret store. */
+/**
+ * The SDK owns the credential format; persistence uses the environment's secret store.
+ * `legacyFile` is the SDK file store earlier versions used; its sign-in moves into
+ * the secret store once and the file is deleted.
+ */
 export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(function* (
   instanceId: ProviderInstanceId,
+  legacyFile?: string,
 ) {
   const credentials = yield* makeProviderCredentialStore("cursor", instanceId);
+  if (legacyFile !== undefined) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    yield* Effect.gen(function* () {
+      const legacy = yield* fileSystem.readFileString(legacyFile).pipe(Effect.option);
+      if (Option.isNone(legacy)) return;
+      if (
+        Option.isNone(yield* credentials.get) &&
+        Option.isSome(yield* decodeCredentials(legacy.value).pipe(Effect.option))
+      ) {
+        yield* credentials.set(new TextEncoder().encode(legacy.value));
+      }
+      yield* fileSystem.remove(legacyFile);
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Could not migrate legacy Cursor credentials", error),
+      ),
+    );
+  }
   const store: SdkCredentialStore = {
     load: () =>
       Effect.runPromise(
