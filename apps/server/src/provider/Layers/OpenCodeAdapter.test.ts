@@ -7155,27 +7155,27 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const values = Map.prototype.values;
       yield* Effect.acquireRelease(
         Effect.sync(() =>
-          vi
-            .spyOn(Map.prototype, "values")
-            .mockImplementation(function (this: Map<unknown, unknown>) {
-              const iterator = values.call(this);
-              const next = iterator.next.bind(iterator);
-              iterator.next = () => {
-                const result = next();
-                const value: unknown = result.value;
-                if (
-                  typeof value === "object" &&
-                  value !== null &&
-                  "id" in value &&
-                  typeof value.id === "string" &&
-                  value.id.startsWith("history-part-")
-                ) {
-                  visitedHistoryParts += 1;
-                }
-                return result;
-              };
-              return iterator;
-            }),
+          vi.spyOn(Map.prototype, "values").mockImplementation(function (
+            this: Map<unknown, unknown>,
+          ) {
+            const iterator = values.call(this);
+            const next = iterator.next.bind(iterator);
+            iterator.next = () => {
+              const result = next();
+              const value: unknown = result.value;
+              if (
+                typeof value === "object" &&
+                value !== null &&
+                "id" in value &&
+                typeof value.id === "string" &&
+                value.id.startsWith("history-part-")
+              ) {
+                visitedHistoryParts += 1;
+              }
+              return result;
+            };
+            return iterator;
+          }),
         ),
         (spy) => Effect.sync(() => spy.mockRestore()),
       );
