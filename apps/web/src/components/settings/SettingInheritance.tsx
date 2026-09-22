@@ -208,22 +208,18 @@ export function SettingInheritance({
                   size="icon-micro"
                   variant="ghost-muted"
                   aria-label={`${overrideSummary}. Show where this value comes from`}
-                  className={cn(
-                    "[--control-icon-color:currentColor]",
-                    state === "overridden"
-                      ? "text-primary hover:text-primary"
-                      : state === "mixed"
-                        ? "text-warning hover:text-warning"
-                        : state === "environment"
-                          ? "text-foreground/70 hover:text-foreground"
-                          : "text-muted-foreground/60 hover:text-foreground",
-                  )}
                 />
               }
             />
           }
         >
-          <LayersIcon className="size-3" />
+          <LayersIcon
+            className={cn(
+              "size-3",
+              state === "overridden" && "text-primary",
+              state === "mixed" && "text-warning",
+            )}
+          />
         </TooltipTrigger>
         <TooltipPopup side="top">{overrideSummary}</TooltipPopup>
       </Tooltip>

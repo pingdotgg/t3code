@@ -559,7 +559,7 @@ function RightPanelEmptyState(props: {
                       render={
                         <Button
                           aria-label="Open browser in a profile"
-                          className="absolute top-1/2 right-8 -translate-y-1/2 [--control-icon-color:currentColor]"
+                          className="absolute top-1/2 right-8 -translate-y-1/2"
                           size="icon-xs"
                           variant="ghost-muted"
                         />
