@@ -10,6 +10,8 @@ import {
   MenuGroup,
   MenuItem,
   MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
   MenuSeparator,
   MenuTrigger,
 } from "~/components/ui/menu";
@@ -141,39 +143,51 @@ function BreadcrumbMenuContent(props: {
               : "This folder is empty."}
           </MenuItem>
         ) : (
-          children.map((entry) => {
-            const isCurrentFile = entry.kind === "file" && entry.path === props.currentFilePath;
-            return (
-              <MenuItem
-                key={entry.path}
-                closeOnClick={entry.kind === "file"}
-                aria-current={isCurrentFile ? "page" : undefined}
-                className={cn(
-                  isCurrentFile && "bg-foreground/[0.08]",
-                  entry.ignored && "text-muted-foreground",
-                )}
-                onClick={() => {
-                  if (entry.kind === "directory") {
-                    props.onDirectoryChange(entry.path);
-                    return;
-                  }
-                  props.onOpenChange(false);
-                  props.onOpenFile(entry.path);
-                }}
-              >
-                <PierreEntryIcon pathValue={entry.path} kind={entry.kind} theme={resolvedTheme} />
-                <Tooltip>
-                  <TooltipTrigger render={<span className="min-w-0 flex-1 truncate" />}>
-                    {entry.label}
-                  </TooltipTrigger>
-                  <TooltipPopup side="right" className="max-w-80">
-                    {entry.path}
-                  </TooltipPopup>
-                </Tooltip>
-                {entry.kind === "directory" ? <ChevronRightIcon /> : null}
-              </MenuItem>
-            );
-          })
+          // Files form a radio group keyed by path so the open file is marked as checked;
+          // directories only navigate the menu, so they stay plain items.
+          <MenuRadioGroup
+            value={props.currentFilePath}
+            onValueChange={(path) => {
+              props.onOpenChange(false);
+              props.onOpenFile(path);
+            }}
+          >
+            {children.map((entry) => {
+              const isCurrentFile = entry.kind === "file" && entry.path === props.currentFilePath;
+              const row = (
+                <>
+                  <PierreEntryIcon pathValue={entry.path} kind={entry.kind} theme={resolvedTheme} />
+                  <Tooltip>
+                    <TooltipTrigger render={<span className="min-w-0 flex-1 truncate" />}>
+                      {entry.label}
+                    </TooltipTrigger>
+                    <TooltipPopup side="right">{entry.path}</TooltipPopup>
+                  </Tooltip>
+                </>
+              );
+              return entry.kind === "directory" ? (
+                <MenuItem
+                  key={entry.path}
+                  closeOnClick={false}
+                  className={entry.ignored ? "text-muted-foreground" : undefined}
+                  onClick={() => props.onDirectoryChange(entry.path)}
+                >
+                  {row}
+                  <ChevronRightIcon />
+                </MenuItem>
+              ) : (
+                <MenuRadioItem
+                  key={entry.path}
+                  value={entry.path}
+                  closeOnClick
+                  aria-current={isCurrentFile ? "page" : undefined}
+                  className={entry.ignored ? "text-muted-foreground" : undefined}
+                >
+                  <span className="flex min-w-0 items-center gap-2">{row}</span>
+                </MenuRadioItem>
+              );
+            })}
+          </MenuRadioGroup>
         )}
       </MenuGroup>
       {entriesQuery.error && entriesQuery.data !== null ? (

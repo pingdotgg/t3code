@@ -70,6 +70,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "../ui/menu";
 import { toastManager } from "../ui/toast";
@@ -1076,31 +1078,31 @@ function PullRequestCodeTab({
               <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-80">
-              <DropdownMenuItem
-                className={commit === null ? "bg-foreground/[0.08]" : undefined}
-                onClick={() => onSelectedCommitChange(null)}
+              <DropdownMenuRadioGroup
+                value={commit ?? "all"}
+                onValueChange={(value) => onSelectedCommitChange(value === "all" ? null : value)}
               >
-                <span>All commits</span>
-              </DropdownMenuItem>
-              {orderedCommits.slice(0, visibleCommitCount).map((entry) => (
-                <DropdownMenuItem
-                  key={entry.oid}
-                  className={entry.oid === commit ? "bg-foreground/[0.08]" : undefined}
-                  onClick={() => onSelectedCommitChange(entry.oid)}
-                >
-                  {/* Headlines run long, and the abbreviated oid after one is what a reader
-                      matches against the commit list on the host. */}
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={<span className="min-w-0 truncate">{entry.messageHeadline}</span>}
-                    />
-                    <TooltipPopup side="top">{entry.messageHeadline}</TooltipPopup>
-                  </Tooltip>
-                  <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
-                    {entry.oid.slice(0, 7)}
-                  </span>
-                </DropdownMenuItem>
-              ))}
+                <DropdownMenuRadioItem value="all" closeOnClick>
+                  <span>All commits</span>
+                </DropdownMenuRadioItem>
+                {orderedCommits.slice(0, visibleCommitCount).map((entry) => (
+                  <DropdownMenuRadioItem key={entry.oid} value={entry.oid} closeOnClick>
+                    {/* Headlines run long, and the abbreviated oid after one is what a reader
+                        matches against the commit list on the host. */}
+                    <span className="flex items-center gap-2">
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={<span className="min-w-0 truncate">{entry.messageHeadline}</span>}
+                        />
+                        <TooltipPopup side="top">{entry.messageHeadline}</TooltipPopup>
+                      </Tooltip>
+                      <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
+                        {entry.oid.slice(0, 7)}
+                      </span>
+                    </span>
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
               {orderedCommits.length > visibleCommitCount ? (
                 // Kept out of the radio group: it changes how much of the list is on screen
                 // rather than what the diff is scoped to.
