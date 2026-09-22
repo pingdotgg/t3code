@@ -26,6 +26,7 @@ import { useProject, useThreadShell, useThreadShellsForProjectRefs } from "../st
 import {
   type EnvMode,
   type EnvironmentOption,
+  measureContextStripLabelWidth,
   resolveContextStripLabelsCompact,
   resolveCurrentWorkspaceLabel,
   resolveEnvModeLabel,
@@ -381,13 +382,7 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
     }
     needed += stripGap * Math.max(0, groups - 1);
     for (const label of current.querySelectorAll<HTMLElement>("[data-composer-label]")) {
-      // The clipping can happen below the marker (SelectValue truncates
-      // internally), where the outer span's scrollWidth matches its clipped
-      // box. The text's real width is the largest scrollWidth in the subtree.
-      let textWidth = label.scrollWidth;
-      for (const inner of label.querySelectorAll<HTMLElement>("*")) {
-        textWidth = Math.max(textWidth, inner.scrollWidth);
-      }
+      const textWidth = measureContextStripLabelWidth(label);
       // Subtract the visible width even during an animation. The content
       // sum already includes it; only the hidden text needs reserving.
       needed += Math.max(0, textWidth - label.getBoundingClientRect().width);

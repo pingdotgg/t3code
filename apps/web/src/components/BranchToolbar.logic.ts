@@ -78,6 +78,17 @@ export function shouldShowComposerContextStrip(input: {
 // hysteresis on the way back out keeps the boundary from flapping.
 const CONTEXT_STRIP_COMPACT_EXPAND_HYSTERESIS_PX = 16;
 
+export function measureContextStripLabelWidth(label: HTMLElement): number {
+  return Array.from(label.querySelectorAll<HTMLElement>("*")).reduce((width, inner) => {
+    // Sum both halves of middle-truncated text, even when collapsed.
+    const innerWidth =
+      inner.dataset.slot === "middle-truncate"
+        ? Array.from(inner.children).reduce((total, child) => total + child.scrollWidth, 0)
+        : inner.scrollWidth;
+    return Math.max(width, innerWidth);
+  }, label.scrollWidth);
+}
+
 export function resolveContextStripLabelsCompact(input: {
   compact: boolean;
   neededWidth: number;

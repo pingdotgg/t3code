@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
+  measureContextStripLabelWidth,
   resolveEnvironmentOptionLabel,
   resolveBranchSelectionTarget,
   resolveCurrentWorkspaceLabel,
@@ -24,6 +25,21 @@ import {
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+
+it.each([200, 100, 0])("measures the full branch-name width when rendered at %ipx", (width) => {
+  const head = { scrollWidth: 120, dataset: {} };
+  const tail = { scrollWidth: 80, dataset: {} };
+  const text = {
+    scrollWidth: Math.max(width, tail.scrollWidth),
+    dataset: { slot: "middle-truncate" },
+    children: [head, tail],
+  };
+  const label = {
+    scrollWidth: width,
+    querySelectorAll: () => [text, head, tail],
+  } as unknown as HTMLElement;
+  expect(measureContextStripLabelWidth(label)).toBe(200);
+});
 
 describe("resolvePreviousWorktreeSeed", () => {
   it("picks the most recently updated worktree thread", () => {

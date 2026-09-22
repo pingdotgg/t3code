@@ -28,6 +28,7 @@ export function MiddleTruncate({
   const split = splitForMiddleTruncate(value, tail);
   return (
     <span
+      data-slot="middle-truncate"
       {...(showTitle ? { title: value } : {})}
       className={cn("inline-flex min-w-0 max-w-full overflow-hidden whitespace-nowrap", className)}
       {...props}
