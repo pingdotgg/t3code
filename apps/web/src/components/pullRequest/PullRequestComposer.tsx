@@ -131,7 +131,7 @@ export function PullRequestComposer({
               </Toggle>
             </ToggleGroup>
           ) : (
-            <PopoverTitle className="text-sm">
+            <PopoverTitle>
               {mode === "review" ? "Review pull request" : "Comment on pull request"}
             </PopoverTitle>
           )}

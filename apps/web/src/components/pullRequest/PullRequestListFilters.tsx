@@ -359,7 +359,6 @@ function PullRequestLabelFilter({
             return (
               <MenuCheckboxItem
                 key={key}
-                className="grid-cols-[1rem_minmax(0,1fr)]"
                 checked={checked}
                 onCheckedChange={(next) =>
                   onChange(
