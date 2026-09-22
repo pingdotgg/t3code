@@ -2678,11 +2678,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     hiddenBlockCount: restingControlsHiddenBlockCount,
     iconOnlyBlockCount: restingControlsIconOnlyBlockCount,
     controlsVisible: restingControlsVisible,
-  } = useRestingComposerControlsLayout(
-    restingControlsHost,
-    false,
-    showUsageLimitsMeter ? 1 : 0,
-  );
+  } = useRestingComposerControlsLayout(restingControlsHost, false, showUsageLimitsMeter ? 1 : 0);
   const expandedControlsLayout = useRestingComposerControlsLayout(null, true);
   const pendingPrimaryAction = useMemo(
     () =>
