@@ -19,7 +19,7 @@ const VersionRange = TrimmedNonEmptyString.pipe(
     Schema.makeFilter((value) =>
       value.split("||").every((group) => {
         const tokens = group.trim().split(/\s+/);
-        return tokens.every((token) => /^(?:\^|>=|>|<=|<|=)?\d+(?:\.\d+){0,2}$/.test(token));
+        return tokens.every((token) => /^(?:\^|>=|>|<=|<|=)?v?\d+(?:\.\d+){0,2}$/.test(token));
       }),
     ),
   ),

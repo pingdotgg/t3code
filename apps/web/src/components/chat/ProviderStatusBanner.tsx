@@ -100,6 +100,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
     <div className="pointer-events-auto mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
       <Alert
         variant={isWarning ? "warning" : "error"}
+        role={isWarning && status.status === "ready" ? "status" : "alert"}
         surface="glass"
         controlAlignment="first-line"
       >

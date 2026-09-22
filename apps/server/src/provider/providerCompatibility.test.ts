@@ -116,6 +116,20 @@ describe("provider compatibility", () => {
   it("rejects invalid ranges and recommendations outside the first supported match", () => {
     const decode = Schema.decodeUnknownSync(ProviderCompatibilityPolicy);
     assert.doesNotThrow(() => decode(policy));
+    const prefixed = decode({
+      ...policy,
+      t3CodeRange: ">=v0.0.42 <v0.1",
+      recommendedRange: "^v2",
+      ranges: [{ range: ">=v2.0 <v3", status: "supported" }],
+    });
+    assert.strictEqual(
+      resolveProviderCompatibility([prefixed], driver, "2.0.0")?.status,
+      "supported",
+    );
+    assert.strictEqual(
+      resolveProviderCompatibility([prefixed], driver, "3.0.0")?.status,
+      "unknown",
+    );
     for (const invalid of [
       { ...policy, t3CodeRange: "*" },
       { ...policy, recommendedVersion: "3.0.0" },

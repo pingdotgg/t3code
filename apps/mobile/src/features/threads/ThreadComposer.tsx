@@ -652,7 +652,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         ) : null}
 
         {selectedProviderStatus?.compatibilityAdvisory?.message ? (
-          <Text accessibilityRole="alert" className="px-3 py-2 text-xs text-foreground">
+          <Text
+            accessibilityRole={
+              selectedProviderStatus.compatibilityAdvisory.status === "broken" ? "alert" : undefined
+            }
+            accessibilityLiveRegion={
+              selectedProviderStatus.compatibilityAdvisory.status === "broken"
+                ? "assertive"
+                : "polite"
+            }
+            className="px-3 py-2 text-xs text-foreground"
+          >
             {selectedProviderStatus.compatibilityAdvisory.message}
           </Text>
         ) : null}
