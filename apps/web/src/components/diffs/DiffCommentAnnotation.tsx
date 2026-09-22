@@ -1,4 +1,4 @@
-import { MessageCircle, Trash2 } from "lucide-react";
+import { MessageCircle, Pencil, Trash2 } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -21,6 +21,7 @@ interface DiffCommentAnnotationProps {
   onCancel: () => void;
   onComment: (text: string) => void;
   onDelete?: () => void;
+  onEdit?: (text: string) => void;
   placeholder?: string;
   submitLabel?: string;
   pending?: boolean;
@@ -37,6 +38,7 @@ export function DiffCommentAnnotation({
   onCancel,
   onComment,
   onDelete,
+  onEdit,
   placeholder = "Add a comment…",
   submitLabel = "Comment",
   pending = false,
@@ -44,19 +46,21 @@ export function DiffCommentAnnotation({
   focusOnMount = true,
 }: DiffCommentAnnotationProps) {
   const [localDraftText, setLocalDraftText] = useState("");
-  const displayedText = kind === "draft" && !onTextChange ? localDraftText : text;
-  const trimmedText = displayedText.trim();
+  // A rewrite is buffered here so cancelling leaves the saved comment as it was.
+  const [editedText, setEditedText] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const editing = editedText !== null;
+  const showsForm = kind === "draft" || editing;
 
   useLayoutEffect(() => {
-    if (kind !== "draft" || !focusOnMount) return;
+    if (!showsForm || !focusOnMount) return;
     const frame = window.requestAnimationFrame(() => {
       textareaRef.current?.focus({ preventScroll: true });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [focusOnMount, kind]);
+  }, [focusOnMount, showsForm]);
 
-  if (kind === "comment") {
+  if (!showsForm) {
     return (
       <div
         data-diff-comment-annotation
@@ -65,21 +69,40 @@ export function DiffCommentAnnotation({
         onPointerDown={(event) => event.stopPropagation()}
       >
         <MessageCircle className="mt-0.5 size-3.5 shrink-0 text-primary/70" aria-hidden="true" />
-        <p className="min-w-0 flex-1 whitespace-pre-wrap text-[13px] leading-5">{displayedText}</p>
-        {onDelete ? (
-          <Button
-            className="-my-1 -mr-1 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/comment:opacity-100 focus-visible:opacity-100 max-sm:opacity-100"
-            variant="ghost"
-            size="icon-xs"
-            aria-label="Delete comment"
-            onClick={onDelete}
-          >
-            <Trash2 className="size-3" />
-          </Button>
+        <p className="min-w-0 flex-1 whitespace-pre-wrap text-[13px] leading-5">{text}</p>
+        {onEdit || onDelete ? (
+          <div className="-my-1 -mr-1 flex shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/comment:opacity-100 focus-within:opacity-100 max-sm:opacity-100">
+            {onEdit ? (
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Edit comment"
+                onClick={() => setEditedText(text)}
+              >
+                <Pencil className="size-3" />
+              </Button>
+            ) : null}
+            {onDelete ? (
+              <Button variant="ghost" size="icon-xs" aria-label="Delete comment" onClick={onDelete}>
+                <Trash2 className="size-3" />
+              </Button>
+            ) : null}
+          </div>
         ) : null}
       </div>
     );
   }
+
+  const displayedText = editedText ?? (onTextChange ? text : localDraftText);
+  const trimmedText = displayedText.trim();
+  const changeText = editing ? setEditedText : (onTextChange ?? setLocalDraftText);
+  const cancelForm = editing ? () => setEditedText(null) : onCancel;
+  const submitForm = editing
+    ? (value: string) => {
+        onEdit?.(value);
+        setEditedText(null);
+      }
+    : onComment;
 
   return (
     <div
@@ -97,7 +120,7 @@ export function DiffCommentAnnotation({
         value={displayedText}
         placeholder={placeholder}
         aria-label={`Comment on lines ${rangeLabel}`}
-        onChange={(event) => (onTextChange ?? setLocalDraftText)(event.target.value)}
+        onChange={(event) => changeText(event.target.value)}
         onFocus={(event) => {
           const end = event.currentTarget.value.length;
           event.currentTarget.setSelectionRange(end, end);
@@ -105,11 +128,11 @@ export function DiffCommentAnnotation({
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.preventDefault();
-            onCancel();
+            cancelForm();
           }
           if (isCommentSubmitShortcut(event, trimmedText, pending)) {
             event.preventDefault();
-            onComment(trimmedText);
+            submitForm(trimmedText);
           }
         }}
       />
@@ -119,7 +142,7 @@ export function DiffCommentAnnotation({
           className="text-muted-foreground hover:text-foreground"
           variant="ghost"
           size="xs"
-          onClick={onCancel}
+          onClick={cancelForm}
         >
           Cancel
         </Button>
@@ -134,8 +157,12 @@ export function DiffCommentAnnotation({
             {secondaryAction.label}
           </Button>
         ) : null}
-        <Button size="xs" disabled={pending || !trimmedText} onClick={() => onComment(trimmedText)}>
-          {submitLabel}
+        <Button
+          size="xs"
+          disabled={pending || !trimmedText}
+          onClick={() => submitForm(trimmedText)}
+        >
+          {editing ? "Save" : submitLabel}
         </Button>
       </div>
     </div>

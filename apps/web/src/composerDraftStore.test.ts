@@ -2983,6 +2983,19 @@ describe("composerDraftStore inline context references", () => {
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("look");
   });
 
+  it("keeps a rewritten review comment where the writer left it", () => {
+    const store = useComposerDraftStore.getState();
+    const second = { ...reviewComment, id: "rc-2", rangeLabel: "L9", text: "And this one?" };
+    store.addReviewComment(threadRef, reviewComment);
+    store.addReviewComment(threadRef, second);
+    store.addReviewComment(threadRef, { ...reviewComment, text: "Why not?" });
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.reviewComments).toEqual([
+      { ...reviewComment, text: "Why not?" },
+      second,
+    ]);
+  });
+
   it("can add another reference while upserting one backing review record", () => {
     const store = useComposerDraftStore.getState();
     store.addReviewComment(threadRef, reviewComment);
