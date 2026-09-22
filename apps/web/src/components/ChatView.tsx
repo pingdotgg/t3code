@@ -1,3 +1,4 @@
+import { threadWidthStyle, useThreadWidth } from "~/hooks/useThreadWidth";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
@@ -1464,6 +1465,7 @@ function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | n
 }
 
 export default function ChatView(props: ChatViewProps) {
+  const [threadWidthExpansion] = useThreadWidth();
   const {
     environmentId,
     threadId,
@@ -9798,6 +9800,7 @@ export default function ChatView(props: ChatViewProps) {
           rightPanelMaximized ? "w-0 flex-none" : "flex-1",
         )}
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
+        style={threadWidthStyle(threadWidthExpansion)}
       >
         {/* Top bar */}
         <WorkspacePageHeader
@@ -10013,7 +10016,7 @@ export default function ChatView(props: ChatViewProps) {
               >
                 <div
                   data-chat-composer-stack="true"
-                  className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-3xl"
+                  className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-[var(--thread-content-max-width,48rem)]"
                 >
                   {isDraftHeroState ? (
                     <div className="absolute inset-x-0 bottom-full z-0">
@@ -10035,8 +10038,9 @@ export default function ChatView(props: ChatViewProps) {
                       </div>
                     </div>
                   ) : null}
+                  {/* The stack already applies the width; nested composer surfaces fill it. */}
                   <div
-                    className="relative"
+                    className="relative [--thread-content-max-width:100%]"
                     style={
                       forceExpandedMobileComposer
                         ? { viewTransitionName: MOBILE_COMPOSER_VIEW_TRANSITION_NAME }

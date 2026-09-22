@@ -1,3 +1,4 @@
+import { ThreadWidthControl } from "./ThreadWidthControl";
 import {
   type EnvironmentId,
   type EditorId,
@@ -498,6 +499,7 @@ export const ChatHeader = memo(function ChatHeader({
           "[[data-panel-animations=true]_&]:motion-safe:transition-[padding-right] [[data-panel-animations=true]_&]:motion-safe:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:motion-safe:ease-out",
         )}
       >
+        <ThreadWidthControl />
         <Menu open={actionsCollapsed && actionsOpen} onOpenChange={setActionsOpen}>
           <MenuTrigger
             className={
