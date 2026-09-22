@@ -55,10 +55,11 @@ const SUBMODULE_CHOICES: ReadonlyArray<{
   readonly label: string;
   readonly description: string;
 }> = [
+  // Only offered at environment scope; a project falls back through "Use defaults".
   {
     mode: null,
     label: "Inherit",
-    description: "Use the environment's setting or the repository's t3.json.",
+    description: "Use the repository's t3.json, or initialize recursively.",
   },
   { mode: "recursive", label: "Recursive", description: "Initialize nested submodules too." },
   {
@@ -279,7 +280,9 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       ) : null
                     }
                   >
-                    {SUBMODULE_CHOICES.map((choice, index) => (
+                    {SUBMODULE_CHOICES.filter(
+                      (choice) => choice.mode !== null || !projectSelected,
+                    ).map((choice, index) => (
                       <ChoiceRow
                         key={choice.mode ?? "inherit"}
                         label={choice.label}

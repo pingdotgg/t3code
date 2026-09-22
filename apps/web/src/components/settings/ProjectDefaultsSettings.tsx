@@ -336,30 +336,33 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 ? "How new worktrees in this project populate git submodules."
                 : "How new worktrees populate git submodules. Projects and their t3.json can override it."
             }
+            resetAction={
+              !isProjectScope && settings.worktreeSubmodules !== null ? (
+                <SettingResetButton
+                  label="worktree submodules"
+                  onClick={() => updateSettings({ worktreeSubmodules: null })}
+                />
+              ) : null
+            }
             control={
               <Select
-                value={mixedSubmodules ? null : (settings.worktreeSubmodules ?? "inherit")}
+                value={mixedSubmodules ? null : (effective?.worktreeSubmodules ?? null)}
                 onValueChange={(value) => {
-                  if (value === "inherit") updateSettings({ worktreeSubmodules: null });
-                  else if (isWorktreeSubmodules(value))
-                    updateSettings({ worktreeSubmodules: value });
+                  if (isWorktreeSubmodules(value)) updateSettings({ worktreeSubmodules: value });
                 }}
               >
                 <SelectTrigger size="sm" aria-label="Worktree submodules">
                   <SelectValue>
                     {(value: string | null) =>
-                      value === "inherit"
-                        ? "Inherit"
-                        : isWorktreeSubmodules(value)
-                          ? WORKTREE_SUBMODULES_LABELS[value]
-                          : unavailable
-                            ? "Unavailable"
-                            : "Mixed"
+                      isWorktreeSubmodules(value)
+                        ? WORKTREE_SUBMODULES_LABELS[value]
+                        : unavailable
+                          ? "Unavailable"
+                          : "Mixed"
                     }
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="inherit">Inherit</SelectItem>
                   {WORKTREE_SUBMODULES_OPTIONS.map((option) => (
                     <SelectItem key={option} value={option}>
                       {WORKTREE_SUBMODULES_LABELS[option]}
