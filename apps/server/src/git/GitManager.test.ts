@@ -5,8 +5,11 @@ import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
+import * as TestClock from "effect/testing/TestClock";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -74,6 +77,8 @@ interface FakeGhScenario {
   failWith?: GitHubCli.GitHubCliError;
   /** Let this many gh calls succeed before failWith kicks in (default 0 = fail immediately). */
   failAfterCalls?: number;
+  /** Runs before a `pr list` answers, so a test can hold one lookup open. */
+  beforePrList?: (headSelector: string) => Effect.Effect<void>;
 }
 
 function fakeGhOutput(stdout: string): VcsProcess.VcsProcessOutput {
@@ -396,7 +401,9 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           ? scenario.prListByHeadSelector?.[headSelector]
           : undefined;
       const stdout = (mappedQueue ?? mappedStdout ?? prListQueue.shift() ?? "[]") + "\n";
-      return Effect.succeed(fakeGhOutput(stdout));
+      return (scenario.beforePrList?.(headSelector ?? "") ?? Effect.void).pipe(
+        Effect.as(fakeGhOutput(stdout)),
+      );
     }
 
     if (args[0] === "pr" && args[1] === "create") {
@@ -703,9 +710,12 @@ function makeManager(input?: {
     serverSettingsLayer,
   ).pipe(Layer.provideMerge(sourceControlRegistryLayer), Layer.provideMerge(NodeServices.layer));
 
-  return GitManager.make.pipe(
+  return Effect.all({
+    manager: GitManager.make,
+    serverSettings: ServerSettings.ServerSettingsService,
+  }).pipe(
     Effect.provide(managerLayer),
-    Effect.map((manager) => ({ manager, ghCalls })),
+    Effect.map(({ manager, serverSettings }) => ({ manager, serverSettings, ghCalls })),
   );
 }
 
@@ -1063,6 +1073,86 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         { refreshUpstream: false, refreshMissingPullRequest: true },
       );
       expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
+    }),
+  );
+
+  it.effect.each([
+    ["balanced", 5],
+    ["performance", 1],
+  ] as const)(
+    "asks the host for an unchanged branch once per %s lookup interval",
+    ([profile, minutes]) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/lookup-interval"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/lookup-interval"]);
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: { prListSequence: ["[]"] },
+          serverSettings: { backgroundActivity: { profile } },
+        });
+        const lookups = () => ghCalls.filter((call) => call.startsWith("pr list ")).length;
+        const ask = manager.branchPullRequest({ cwd: repoDir, branch: "feature/lookup-interval" });
+
+        yield* ask;
+        yield* TestClock.adjust(Duration.seconds(minutes * 60 - 1));
+        yield* ask;
+        expect(lookups()).toBe(1);
+
+        yield* TestClock.adjust("2 seconds");
+        yield* ask;
+        expect(lookups()).toBe(2);
+
+        // Turn ends and explicit refreshes do not wait for the interval.
+        yield* manager.branchPullRequest(
+          { cwd: repoDir, branch: "feature/lookup-interval" },
+          { refresh: true },
+        );
+        expect(lookups()).toBe(3);
+      }),
+  );
+
+  it.effect("keeps a lookup's own interval when another branch's lookup overlaps it", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      for (const branch of ["feature/slow", "feature/fast"]) {
+        yield* runGit(repoDir, ["checkout", "-b", branch]);
+        yield* runGit(repoDir, ["push", "-u", "origin", branch]);
+      }
+      const slowStarted = yield* Deferred.make<void>();
+      const releaseSlow = yield* Deferred.make<void>();
+      const { manager, serverSettings, ghCalls } = yield* makeManager({
+        ghScenario: {
+          beforePrList: (headSelector) =>
+            headSelector.includes("slow")
+              ? Deferred.succeed(slowStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseSlow)),
+                )
+              : Effect.void,
+        },
+        serverSettings: { backgroundActivity: { profile: "balanced" } },
+      });
+      const askSlow = manager.branchPullRequest({ cwd: repoDir, branch: "feature/slow" });
+      const slowLookups = () => ghCalls.filter((call) => call.includes("slow")).length;
+
+      const slow = yield* Effect.forkChild(askSlow);
+      yield* Deferred.await(slowStarted);
+      // The interval changes and another branch is looked up while the first is still open.
+      yield* serverSettings.updateSettings({ backgroundActivity: { profile: "performance" } });
+      yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/fast" });
+      yield* Deferred.succeed(releaseSlow, undefined);
+      yield* Fiber.join(slow);
+      const lookupsSoFar = slowLookups();
+
+      // Started under the five-minute interval, so two minutes later it is still fresh.
+      yield* TestClock.adjust("2 minutes");
+      yield* askSlow;
+      expect(slowLookups()).toBe(lookupsSoFar);
     }),
   );
 

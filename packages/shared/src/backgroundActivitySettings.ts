@@ -4,6 +4,7 @@ import {
   DEFAULT_BACKGROUND_ACTIVITY_PROFILE,
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
+  DEFAULT_PULL_REQUEST_LOOKUP_INTERVAL,
   type ServerSettings,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -12,6 +13,8 @@ export interface ResolvedBackgroundActivitySettings {
   readonly profile: BackgroundActivityProfile;
   readonly automaticGitFetchInterval: Duration.Duration;
   readonly providerHealthRefreshInterval: Duration.Duration;
+  /** How long a branch keeps its last pull request lookup before the hosting CLI is asked again. */
+  readonly pullRequestLookupInterval: Duration.Duration;
   readonly hostPowerMonitorActiveInterval: Duration.Duration;
   readonly hostPowerMonitorIdleInterval: Duration.Duration;
   readonly idleClientTtl: Duration.Duration;
@@ -26,6 +29,7 @@ const PRESET_SETTINGS: Record<BackgroundActivityProfile, ResolvedBackgroundActiv
     profile: "performance",
     automaticGitFetchInterval: Duration.seconds(15),
     providerHealthRefreshInterval: Duration.minutes(1),
+    pullRequestLookupInterval: Duration.minutes(1),
     hostPowerMonitorActiveInterval: Duration.seconds(30),
     hostPowerMonitorIdleInterval: Duration.minutes(2),
     idleClientTtl: Duration.seconds(45),
@@ -38,6 +42,7 @@ const PRESET_SETTINGS: Record<BackgroundActivityProfile, ResolvedBackgroundActiv
     profile: "balanced",
     automaticGitFetchInterval: DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
     providerHealthRefreshInterval: DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
+    pullRequestLookupInterval: DEFAULT_PULL_REQUEST_LOOKUP_INTERVAL,
     hostPowerMonitorActiveInterval: Duration.seconds(30),
     hostPowerMonitorIdleInterval: Duration.minutes(5),
     idleClientTtl: Duration.seconds(45),
@@ -50,6 +55,7 @@ const PRESET_SETTINGS: Record<BackgroundActivityProfile, ResolvedBackgroundActiv
     profile: "battery-saver",
     automaticGitFetchInterval: Duration.seconds(0),
     providerHealthRefreshInterval: Duration.minutes(15),
+    pullRequestLookupInterval: Duration.minutes(15),
     hostPowerMonitorActiveInterval: Duration.minutes(1),
     hostPowerMonitorIdleInterval: Duration.minutes(10),
     idleClientTtl: Duration.seconds(45),
@@ -87,6 +93,8 @@ export function resolveBackgroundActivitySettings(
       overrides.automaticGitFetchInterval ?? preset.automaticGitFetchInterval,
     providerHealthRefreshInterval:
       overrides.providerHealthRefreshInterval ?? preset.providerHealthRefreshInterval,
+    pullRequestLookupInterval:
+      overrides.pullRequestLookupInterval ?? preset.pullRequestLookupInterval,
     hostPowerMonitorActiveInterval:
       overrides.hostPowerMonitorActiveInterval ?? preset.hostPowerMonitorActiveInterval,
     hostPowerMonitorIdleInterval:
@@ -110,6 +118,7 @@ function resolvedSettingsEqual(
   return (
     durationsEqual(a.automaticGitFetchInterval, b.automaticGitFetchInterval) &&
     durationsEqual(a.providerHealthRefreshInterval, b.providerHealthRefreshInterval) &&
+    durationsEqual(a.pullRequestLookupInterval, b.pullRequestLookupInterval) &&
     durationsEqual(a.hostPowerMonitorActiveInterval, b.hostPowerMonitorActiveInterval) &&
     durationsEqual(a.hostPowerMonitorIdleInterval, b.hostPowerMonitorIdleInterval) &&
     durationsEqual(a.idleClientTtl, b.idleClientTtl) &&
@@ -159,6 +168,9 @@ export function normalizeBackgroundActivitySettings(
       preset.providerHealthRefreshInterval,
     )
       ? { providerHealthRefreshInterval: resolved.providerHealthRefreshInterval }
+      : {}),
+    ...(!durationsEqual(resolved.pullRequestLookupInterval, preset.pullRequestLookupInterval)
+      ? { pullRequestLookupInterval: resolved.pullRequestLookupInterval }
       : {}),
     ...(!durationsEqual(
       resolved.hostPowerMonitorActiveInterval,
@@ -258,6 +270,7 @@ export function normalizeServerBackgroundActivitySettings(
     overrides: {
       automaticGitFetchInterval: resolved.automaticGitFetchInterval,
       providerHealthRefreshInterval: resolved.providerHealthRefreshInterval,
+      pullRequestLookupInterval: resolved.pullRequestLookupInterval,
       hostPowerMonitorActiveInterval: resolved.hostPowerMonitorActiveInterval,
       hostPowerMonitorIdleInterval: resolved.hostPowerMonitorIdleInterval,
       idleClientTtl: resolved.idleClientTtl,
