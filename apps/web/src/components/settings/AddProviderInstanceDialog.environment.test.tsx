@@ -69,16 +69,6 @@ function findByChildren(tree: ReturnType<typeof render>, children: string) {
 }
 
 async function selectPreparedAcp() {
-  const initial = render();
-  const driverGroup = visitElements(
-    initial,
-    (element) => element.props["aria-labelledby"] === "add-instance-driver-label",
-  );
-  (driverGroup?.props.onValueChange as ((value: string) => void) | undefined)?.("acpRegistry");
-
-  const driverStep = render();
-  (findByChildren(driverStep, "Next").props.onClick as (() => void) | undefined)?.();
-
   const searchStep = render();
   const search = visitElements(
     searchStep,
@@ -199,6 +189,48 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(settingsHooks.mutate).toHaveBeenCalledTimes(1);
     (authentication!.props.onFinish as () => void)();
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("configures a manually entered registry agent from the first provider screen", async () => {
+    let tree = render();
+    const search = visitElements(
+      tree,
+      (element) =>
+        typeof element.type === "function" && element.type.name === "AcpRegistrySearchStep",
+    );
+    (search!.props.onManualConfiguration as () => void)();
+    tree = render();
+    const configuration = visitElements(
+      tree,
+      (element) => element.props.idPrefix === "add-provider-acpRegistry-manual",
+    );
+    (configuration!.props.onChange as (value: Record<string, unknown>) => void)({
+      agentId: "devin",
+    });
+    tree = render();
+    (findByChildren(tree, "Next").props.onClick as () => void)();
+    tree = render();
+    (findByChildren(tree, "Continue to sign-in").props.onClick as () => void)();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settingsHooks.mutate).toHaveBeenCalledWith({
+      operation: "create",
+      instanceId: "acpRegistry_custom",
+      instance: {
+        driver: "acpRegistry",
+        enabled: true,
+        config: { agentId: "devin" },
+      },
+    });
+    tree = render();
+    expect(
+      visitElements(
+        tree,
+        (element) =>
+          typeof element.type === "function" &&
+          element.type.name === "ProviderWizardAuthenticationStep",
+      ),
+    ).not.toBeNull();
   });
 
   it("keeps the dialog open when the atomic upsert fails", async () => {

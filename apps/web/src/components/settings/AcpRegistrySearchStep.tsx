@@ -36,6 +36,7 @@ interface AcpRegistrySearchStepProps {
   readonly onPrepared: (agent: AcpRegistrySearchAgent) => void;
   readonly onManualConfiguration: () => void;
   readonly onLoadingChange?: (loading: boolean) => void;
+  readonly onPreparingChange?: (preparing: boolean) => void;
 }
 
 function applyAcpRegistryPrepareResult(
@@ -56,6 +57,7 @@ export function AcpRegistrySearchStep({
   onPrepared,
   onManualConfiguration,
   onLoadingChange,
+  onPreparingChange,
 }: AcpRegistrySearchStepProps) {
   const [query, setQuery] = useState("");
   // An empty registry query is the compact compatible catalog. Start there so
@@ -77,8 +79,9 @@ export function AcpRegistrySearchStep({
   useEffect(
     () => () => {
       prepareGeneration.current += 1;
+      onPreparingChange?.(false);
     },
-    [],
+    [onPreparingChange],
   );
 
   const submitSearch = (nextQuery: string) => {
@@ -101,9 +104,11 @@ export function AcpRegistrySearchStep({
     const generation = ++prepareGeneration.current;
     setPrepareError(null);
     setPreparingId(agent.id);
+    onPreparingChange?.(true);
     const result = await prepareAgent({ environmentId, input: { agentId: agent.id } });
     if (prepareGeneration.current !== generation) return;
     setPreparingId(null);
+    onPreparingChange?.(false);
     if (result._tag === "Success") {
       onPrepared(applyAcpRegistryPrepareResult(agent, result.value));
       return;
@@ -136,7 +141,6 @@ export function AcpRegistrySearchStep({
           </InputGroupAddon>
           <InputGroupInput
             aria-label="Search ACP Registry"
-            autoFocus
             onChange={(event) => setQuery(event.currentTarget.value)}
             placeholder="Search agents…"
             size="sm"
@@ -199,7 +203,7 @@ export function AcpRegistrySearchStep({
             <p className="mt-1 text-xs text-muted-foreground">Try a broader search.</p>
           </div>
         ) : (
-          <ScrollArea scrollFade className="max-h-72 border-t border-border/70">
+          <ScrollArea scrollFade className="max-h-48 border-t border-border/70">
             {/* The overlay scrollbar takes no layout space, so the rows
                 reserve its lane explicitly. */}
             <div className="divide-y divide-border/70 pr-2.5">
@@ -281,7 +285,7 @@ export function AcpRegistrySearchStep({
           size="xs"
           variant="ghost"
         >
-          Configure manually
+          Enter manually
         </Button>
       </div>
     </section>
