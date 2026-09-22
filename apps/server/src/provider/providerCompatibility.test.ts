@@ -75,9 +75,8 @@ describe("provider compatibility", () => {
       "cursor",
       "grok",
       "opencode",
-      "pi",
       "antigravity",
-      "acpRegistry",
+      "customDriver",
     ]) {
       const adapter = ProviderDriverKind.make(kind);
       assert.strictEqual(
@@ -158,7 +157,7 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
             makeManualOnlyProviderMaintenanceCapabilities({ provider: driver, packageName: null }),
           ),
       },
-      orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+      adapter: {} as ProviderInstance["adapter"],
       textGeneration: {} as ProviderInstance["textGeneration"],
     };
     const refresh = Deferred.succeed(started, undefined).pipe(
@@ -176,6 +175,7 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
       Layer.succeed(ModelManifest.ModelManifest, {
         current: Ref.get(manifest),
         refresh,
+        forceRefresh: refresh,
         refreshInBackground: Effect.void,
       }),
       Layer.succeed(ProviderInstanceRegistry, {

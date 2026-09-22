@@ -7,12 +7,6 @@
       "t3CodeRange": ">=0.0.42",
       "recommendedRange": ">=1.14.19",
       "ranges": [{ "range": "<1.14.19", "status": "broken" }]
-    },
-    {
-      "driver": "pi",
-      "t3CodeRange": ">=0.0.42",
-      "recommendedRange": ">=0.80.5",
-      "ranges": [{ "range": "<0.80.5", "status": "unsupported" }]
     }
   ],
   "currentModels": {

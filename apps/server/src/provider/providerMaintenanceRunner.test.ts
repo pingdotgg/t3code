@@ -222,6 +222,7 @@ const makeTestRunner = (
             Layer.succeed(ModelManifest.ModelManifest, {
               current: Effect.succeed(manifest),
               refresh: Effect.succeed(manifest),
+              forceRefresh: Effect.succeed(manifest),
               refreshInBackground: Effect.void,
             }),
             // Fresh per runner so a version cached by one test cannot leak into another.
