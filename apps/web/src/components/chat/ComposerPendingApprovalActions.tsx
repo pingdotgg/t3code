@@ -59,9 +59,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
         return option.warning ? (
           <Tooltip key={option.decision}>
             <TooltipTrigger render={button} />
-            <TooltipPopup side="top" className="max-w-72 text-xs leading-snug">
-              {option.warning}
-            </TooltipPopup>
+            <TooltipPopup side="top">{option.warning}</TooltipPopup>
           </Tooltip>
         ) : (
           button
@@ -98,9 +96,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
               return option.warning ? (
                 <Tooltip key={option.decision}>
                   <TooltipTrigger render={item} />
-                  <TooltipPopup side="top" className="max-w-64 text-xs leading-snug">
-                    {option.warning}
-                  </TooltipPopup>
+                  <TooltipPopup side="top">{option.warning}</TooltipPopup>
                 </Tooltip>
               ) : (
                 item

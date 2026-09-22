@@ -146,9 +146,7 @@ export function DraftHeroHeadline({
           {activeProjectDisplayName ?? "Choose a project"}
         </TooltipTrigger>
         {activeProjectDisplayName ? (
-          <TooltipPopup side="top" className="max-w-80">
-            {activeProjectDisplayName}
-          </TooltipPopup>
+          <TooltipPopup side="top">{activeProjectDisplayName}</TooltipPopup>
         ) : null}
       </Tooltip>
       <MenuPopup align="center" className="max-h-80 min-w-40! w-max max-w-64 overflow-y-auto">
@@ -202,9 +200,7 @@ export function DraftHeroHeadline({
                   <TooltipTrigger render={<span className="block min-w-0 truncate" />}>
                     {group.displayName}
                   </TooltipTrigger>
-                  <TooltipPopup side="top" className="max-w-80">
-                    {group.displayName}
-                  </TooltipPopup>
+                  <TooltipPopup side="top">{group.displayName}</TooltipPopup>
                 </Tooltip>
                 {showProjectEnvironments ? (
                   <ProjectEnvironmentBadge

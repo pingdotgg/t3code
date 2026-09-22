@@ -301,7 +301,7 @@ export function FileChip(props: {
           )
         }
       />
-      <TooltipPopup side="top" className="max-w-80 whitespace-pre-wrap leading-tight">
+      <TooltipPopup side="top" className="whitespace-pre-wrap">
         {props.tooltip}
       </TooltipPopup>
     </Tooltip>

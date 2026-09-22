@@ -17,7 +17,7 @@ export function StartTruncatedPath({ path, className }: { path: string; classNam
       >
         <bdi>{path}</bdi>
       </TooltipTrigger>
-      <TooltipPopup side="top" className="max-w-sm break-all font-mono">
+      <TooltipPopup side="top" variant="code">
         {path}
       </TooltipPopup>
     </Tooltip>

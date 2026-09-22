@@ -53,7 +53,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
         <AlertDescription>
           <Tooltip>
             <TooltipTrigger render={<div className="line-clamp-3" />}>{error}</TooltipTrigger>
-            <TooltipPopup side="top" className="max-w-96 whitespace-pre-wrap">
+            <TooltipPopup side="top" className="whitespace-pre-wrap">
               {error}
             </TooltipPopup>
           </Tooltip>

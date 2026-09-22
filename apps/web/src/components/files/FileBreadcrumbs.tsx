@@ -61,9 +61,7 @@ function BreadcrumbLabel(props: {
       >
         {props.label}
       </TooltipTrigger>
-      <TooltipPopup side="top" className="max-w-80">
-        {props.pathLabel}
-      </TooltipPopup>
+      <TooltipPopup side="top">{props.pathLabel}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -241,9 +239,7 @@ function DirectoryBreadcrumb(props: FileBreadcrumbsProps & { readonly crumb: Fil
         >
           <span className="block truncate">{props.crumb.label}</span>
         </TooltipTrigger>
-        <TooltipPopup side="top" className="max-w-80">
-          {props.crumb.path || props.projectName}
-        </TooltipPopup>
+        <TooltipPopup side="top">{props.crumb.path || props.projectName}</TooltipPopup>
       </Tooltip>
       {open ? (
         <BreadcrumbMenuContent

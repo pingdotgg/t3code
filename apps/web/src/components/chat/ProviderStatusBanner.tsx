@@ -100,7 +100,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
             <TooltipTrigger
               render={<div className="line-clamp-3 text-muted-foreground">{message}</div>}
             />
-            <TooltipPopup side="top" className="max-w-96 whitespace-pre-wrap">
+            <TooltipPopup side="top" className="whitespace-pre-wrap">
               {message}
             </TooltipPopup>
           </Tooltip>

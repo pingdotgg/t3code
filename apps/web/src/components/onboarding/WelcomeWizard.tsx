@@ -1453,7 +1453,7 @@ function ImportCandidateRow({
             </span>
           ) : null}
         </TooltipTrigger>
-        <TooltipPopup className="max-w-96 break-all font-mono">{candidate.path}</TooltipPopup>
+        <TooltipPopup variant="code">{candidate.path}</TooltipPopup>
       </Tooltip>
       <ImportRowMeta
         sources={nested ? null : candidate.sources}

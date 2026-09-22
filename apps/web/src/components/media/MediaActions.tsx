@@ -186,9 +186,7 @@ export function MediaActions({
           void showMenu({ x: bounds.left, y: bounds.bottom });
         }}
       />
-      <TooltipPopup className="max-w-[min(40rem,calc(100vw-2rem))] break-all font-mono text-[11px] leading-tight">
-        {tooltip}
-      </TooltipPopup>
+      <TooltipPopup variant="code">{tooltip}</TooltipPopup>
     </Tooltip>
   );
 }

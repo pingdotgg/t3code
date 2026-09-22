@@ -393,9 +393,7 @@ export function CloudEnvironmentConnectRows({
                         ? "Unavailable"
                         : "Checking…"))}
             </TooltipTrigger>
-            <TooltipPopup className="max-w-80 break-words">
-              {unsupportedDetail ?? statusText}
-            </TooltipPopup>
+            <TooltipPopup>{unsupportedDetail ?? statusText}</TooltipPopup>
           </Tooltip>
         </label>
       );
@@ -454,9 +452,7 @@ export function CloudEnvironmentConnectRows({
                   Add
                 </Button>
               </TooltipTrigger>
-              <TooltipPopup className="max-w-80 break-words">
-                {unsupportedDetail ?? "Client not supported"}
-              </TooltipPopup>
+              <TooltipPopup>{unsupportedDetail ?? "Client not supported"}</TooltipPopup>
             </Tooltip>
           ) : savedConnection ? (
             <Button size="sm" variant="outline" disabled>

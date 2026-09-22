@@ -145,7 +145,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   return (
     <Tooltip>
       <TooltipTrigger render={row} />
-      <TooltipPopup side="left" align="center" className="max-w-64 text-balance leading-snug">
+      <TooltipPopup side="left" align="center">
         {props.disabledReason}
       </TooltipPopup>
     </Tooltip>

@@ -23,7 +23,8 @@ function TooltipPopup({
   align?: TooltipPrimitive.Positioner.Props["align"];
   side?: TooltipPrimitive.Positioner.Props["side"];
   sideOffset?: TooltipPrimitive.Positioner.Props["sideOffset"];
-  variant?: "default" | "glass";
+  /** `code` renders monospace content that breaks anywhere, for paths and commands. */
+  variant?: "default" | "glass" | "code";
   anchor?: TooltipPrimitive.Positioner.Props["anchor"];
 }) {
   return (
@@ -42,6 +43,10 @@ function TooltipPopup({
             variant === "glass"
               ? "dropdown-glass shadow-xl shadow-black/25 before:hidden"
               : "border bg-popover not-dark:bg-clip-padding shadow-md/5",
+            // One wrap width for prose; code dumps get more room and break anywhere.
+            variant === "code"
+              ? "max-w-120 wrap-anywhere text-left font-mono text-[11px] leading-relaxed"
+              : "max-w-80 wrap-anywhere whitespace-normal leading-snug",
             className,
           )}
           data-slot="tooltip-popup"

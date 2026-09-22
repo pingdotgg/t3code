@@ -109,12 +109,7 @@ function StatBlock({
                 </button>
               }
             />
-            <TooltipPopup
-              side="top"
-              className="max-w-[min(300px,calc(100vw-2rem))] whitespace-normal text-left text-[11px] leading-relaxed text-wrap"
-            >
-              {tooltip}
-            </TooltipPopup>
+            <TooltipPopup side="top">{tooltip}</TooltipPopup>
           </Tooltip>
         ) : null}
       </div>
@@ -225,10 +220,7 @@ function TraceIdCell({ traceId }: { traceId: string }) {
             </span>
           }
         />
-        <TooltipPopup
-          side="top"
-          className="max-w-[min(520px,calc(100vw-2rem))] break-all font-mono text-[11px]"
-        >
+        <TooltipPopup side="top" variant="code">
           {traceId}
         </TooltipPopup>
       </Tooltip>
@@ -300,10 +292,7 @@ function ProcessNameCell({
         <TooltipTrigger
           render={<span className="min-w-0 truncate font-medium text-foreground">{name}</span>}
         />
-        <TooltipPopup
-          side="top"
-          className="max-w-[min(440px,calc(100vw-2rem))] whitespace-normal break-words text-left font-mono text-[11px] leading-relaxed text-wrap"
-        >
+        <TooltipPopup side="top" variant="code">
           {process.command}
         </TooltipPopup>
       </Tooltip>
@@ -411,10 +400,7 @@ function ProcessDiagnosticsTable({
                   <TooltipTrigger
                     render={<span className="block truncate">{process.command}</span>}
                   />
-                  <TooltipPopup
-                    side="top"
-                    className="max-w-[min(440px,calc(100vw-2rem))] whitespace-normal break-words text-left font-mono text-[11px] leading-relaxed text-wrap"
-                  >
+                  <TooltipPopup side="top" variant="code">
                     {process.command}
                   </TooltipPopup>
                 </Tooltip>
@@ -484,10 +470,7 @@ function ResourceHistoryProcessNameCell({
         <TooltipTrigger
           render={<span className="min-w-0 truncate font-medium text-foreground">{name}</span>}
         />
-        <TooltipPopup
-          side="top"
-          className="max-w-[min(440px,calc(100vw-2rem))] whitespace-normal break-words text-left font-mono text-[11px] leading-relaxed text-wrap"
-        >
+        <TooltipPopup side="top" variant="code">
           {process.command}
         </TooltipPopup>
       </Tooltip>
@@ -654,10 +637,7 @@ function ProcessResourceHistoryTable({
                   <TooltipTrigger
                     render={<span className="block truncate">{process.command}</span>}
                   />
-                  <TooltipPopup
-                    side="top"
-                    className="max-w-[min(440px,calc(100vw-2rem))] whitespace-normal break-words text-left font-mono text-[11px] leading-relaxed text-wrap"
-                  >
+                  <TooltipPopup side="top" variant="code">
                     {process.command}
                   </TooltipPopup>
                 </Tooltip>

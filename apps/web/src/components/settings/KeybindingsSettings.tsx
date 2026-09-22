@@ -261,9 +261,7 @@ function WarningTooltipIcon({
       >
         <TriangleAlertIcon className="size-3.5" />
       </TooltipTrigger>
-      <TooltipPopup side="top" className="max-w-72 whitespace-normal leading-relaxed">
-        {children}
-      </TooltipPopup>
+      <TooltipPopup side="top">{children}</TooltipPopup>
     </Tooltip>
   );
 }

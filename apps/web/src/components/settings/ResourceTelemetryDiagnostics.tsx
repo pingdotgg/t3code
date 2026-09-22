@@ -503,10 +503,7 @@ function ProcessTreeName({
         <TooltipTrigger
           render={<span className="min-w-0 truncate font-medium text-foreground">{name}</span>}
         />
-        <TooltipPopup
-          side="top"
-          className="max-w-[min(520px,calc(100vw-2rem))] whitespace-normal break-words text-left font-mono text-[11px]"
-        >
+        <TooltipPopup side="top" variant="code">
           {process.command || process.name}
         </TooltipPopup>
       </Tooltip>
@@ -721,10 +718,7 @@ function HistoryProcessTable({
                       </span>
                     }
                   />
-                  <TooltipPopup
-                    side="top"
-                    className="max-w-[min(520px,calc(100vw-2rem))] whitespace-normal break-words text-left font-mono text-[11px]"
-                  >
+                  <TooltipPopup side="top" variant="code">
                     {process.command || process.name}
                   </TooltipPopup>
                 </Tooltip>
