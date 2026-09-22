@@ -158,6 +158,7 @@ const runtimeMock = {
     runVersionError: null as Error | null,
     runVersionPending: false,
     versionStdout: DEFAULT_VERSION_STDOUT,
+    serverVersion: "1.14.19",
     inventoryError: null as Error | null,
     connectionError: null as Error | null,
     inventoryCwd: null as string | null,
@@ -177,6 +178,7 @@ const runtimeMock = {
     this.state.runVersionError = null;
     this.state.runVersionPending = false;
     this.state.versionStdout = DEFAULT_VERSION_STDOUT;
+    this.state.serverVersion = "1.14.19";
     this.state.inventoryError = null;
     this.state.connectionError = null;
     this.state.inventoryCwd = null;
@@ -208,7 +210,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         ...(effectiveServerPassword !== undefined
           ? { serverPassword: effectiveServerPassword }
           : {}),
-        version: "1.14.19",
+        version: runtimeMock.state.serverVersion,
         isRunning: Effect.succeed(true),
         exitCode: Effect.never,
       };
@@ -232,7 +234,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       return {
         url: serverUrl ?? "http://127.0.0.1:4301",
         ...(serverPassword ? { serverPassword } : {}),
-        version: "1.14.19",
+        version: runtimeMock.state.serverVersion,
         exitCode: null,
         external: Boolean(serverUrl),
       };
@@ -376,6 +378,28 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         "Failed to execute OpenCode CLI health check: OpenCode CLI version probe timed out after 4 seconds.",
       );
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("reports the upgraded CLI version while the owned server still runs the old one", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode 1.18.32\n";
+      runtimeMock.state.serverVersion = "1.18.31";
+
+      const snapshot = yield* checkProvider(makeOpenCodeSettings());
+
+      NodeAssert.equal(snapshot.version, "1.18.32");
+    }),
+  );
+
+  it.effect("keeps the server version when it is newer than the CLI probe", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode 1.14.19\n";
+      runtimeMock.state.serverVersion = "1.18.31";
+
+      const snapshot = yield* checkProvider(makeOpenCodeSettings());
+
+      NodeAssert.equal(snapshot.version, "1.18.31");
+    }),
   );
 
   it.effect("emits OpenCode variant defaults so trait picker can resolve a visible selection", () =>
