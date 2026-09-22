@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Tabs } from "@base-ui/react/tabs";
 import { create } from "zustand";
 import {
@@ -7,13 +7,15 @@ import {
   resolveCustomSnooze,
   type CustomSnoozeInput,
 } from "@t3tools/client-runtime/state/thread-settled";
+import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { Button } from "./ui/button";
-import { CalendarIcon } from "lucide-react";
+import { CalendarIcon, ClockIcon } from "lucide-react";
 import { Calendar } from "./ui/calendar";
 import { weekStartsOn } from "../timestampFormat";
 import { Popover, PopoverTrigger, PopoverPopup } from "./ui/popover";
-import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import { useClientSettings } from "../hooks/useSettings";
+import { cn } from "~/lib/utils";
 import { toggleVariants } from "./ui/toggle";
 import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "./ui/select";
 import {
@@ -166,15 +168,11 @@ function CustomSnoozeDialog() {
                       htmlFor={`${id}-time`}
                     >
                       Time
-                      <Input
-                        nativeInput
+                      <TimeField
                         id={`${id}-time`}
-                        className="h-9 sm:h-8"
-                        type="time"
-                        required
-                        value={time}
-                        onChange={(event) => {
-                          setTime(event.target.value);
+                        time={time}
+                        onChange={(next) => {
+                          setTime(next);
                           setError(null);
                         }}
                       />
@@ -243,5 +241,193 @@ function CustomSnoozeDialog() {
         </form>
       </DialogPopup>
     </Dialog>
+  );
+}
+
+function parseSnoozeTime(time: string): { hour: number; minute: number } {
+  const [rawHour, rawMinute] = time.split(":");
+  const hour = Number(rawHour);
+  const minute = Number(rawMinute);
+  return {
+    hour: Number.isInteger(hour) && hour >= 0 && hour < 24 ? hour : 9,
+    minute: Number.isInteger(minute) && minute >= 0 && minute < 60 ? minute : 0,
+  };
+}
+
+function formatSnoozeTime(hour: number, minute: number): string {
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function resolve12HourClock(timestampFormat: TimestampFormat | undefined): boolean {
+  if (timestampFormat === "12-hour") return true;
+  if (timestampFormat === "24-hour") return false;
+  // "locale" (or still hydrating): mirror what the runtime locale renders —
+  // a dayPeriod part means the locale uses AM/PM.
+  const parts = new Intl.DateTimeFormat(undefined, { hour: "numeric" }).formatToParts(
+    new Date(2026, 0, 1, 13, 0),
+  );
+  return parts.some((part) => part.type === "dayPeriod");
+}
+
+const HOUR_12_OPTIONS = Array.from({ length: 12 }, (_, index) => {
+  const hour12 = index + 1;
+  return { value: String(hour12), label: String(hour12).padStart(2, "0") };
+});
+const HOUR_24_OPTIONS = Array.from({ length: 24 }, (_, hour) => ({
+  value: String(hour),
+  label: String(hour).padStart(2, "0"),
+}));
+const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, minute) => ({
+  value: String(minute),
+  label: String(minute).padStart(2, "0"),
+}));
+const PERIOD_OPTIONS = [
+  { value: "AM", label: "AM" },
+  { value: "PM", label: "PM" },
+];
+
+/**
+ * Time picker that shares the date picker's styling: an outline trigger
+ * button opening a PopoverPopup with the same dropdown-glass surface and
+ * primary/accent selection tokens as the calendar. The native
+ * `<input type="time">` rendered an unstyled browser popup that matched
+ * neither the calendar nor the rest of the app.
+ */
+function TimeField({
+  id,
+  time,
+  onChange,
+}: {
+  id: string;
+  time: string;
+  onChange: (next: string) => void;
+}) {
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
+  const use12Hour = useMemo(() => resolve12HourClock(timestampFormat), [timestampFormat]);
+  const [open, setOpen] = useState(false);
+  const { hour, minute } = parseSnoozeTime(time);
+  const period = hour >= 12 ? "PM" : "AM";
+  const hour12 = hour % 12 === 0 ? 12 : hour % 12;
+
+  const display = use12Hour
+    ? `${String(hour12).padStart(2, "0")}:${String(minute).padStart(2, "0")} ${period}`
+    : formatSnoozeTime(hour, minute);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={<Button id={id} variant="outline" className="w-full justify-between font-normal" />}
+      >
+        {display}
+        <ClockIcon className="size-4 text-muted-foreground" />
+      </PopoverTrigger>
+      <PopoverPopup
+        align="start"
+        aria-label="Choose snooze time"
+        viewportClassName="py-2 [--viewport-inline-padding:--spacing(2)]"
+      >
+        <div className="flex gap-0.5">
+          <TimeColumn
+            label={use12Hour ? "Hour (12-hour)" : "Hour"}
+            options={use12Hour ? HOUR_12_OPTIONS : HOUR_24_OPTIONS}
+            value={use12Hour ? String(hour12) : String(hour)}
+            onSelect={(next) => {
+              const nextHour = use12Hour
+                ? (Number(next) % 12) + (period === "PM" ? 12 : 0)
+                : Number(next);
+              onChange(formatSnoozeTime(nextHour, minute));
+            }}
+            open={open}
+          />
+          <TimeColumn
+            label="Minute"
+            options={MINUTE_OPTIONS}
+            value={String(minute)}
+            onSelect={(next) => onChange(formatSnoozeTime(hour, Number(next)))}
+            open={open}
+          />
+          {use12Hour && (
+            <TimeColumn
+              label="AM or PM"
+              options={PERIOD_OPTIONS}
+              value={period}
+              onSelect={(next) => {
+                const nextHour = (hour12 % 12) + (next === "PM" ? 12 : 0);
+                onChange(formatSnoozeTime(nextHour, minute));
+              }}
+              open={open}
+            />
+          )}
+        </div>
+      </PopoverPopup>
+    </Popover>
+  );
+}
+
+function TimeColumn({
+  label,
+  options,
+  value,
+  onSelect,
+  open,
+}: {
+  label: string;
+  options: ReadonlyArray<{ value: string; label: string }>;
+  value: string;
+  onSelect: (value: string) => void;
+  open: boolean;
+}) {
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (open) {
+      listRef.current?.querySelector('[aria-checked="true"]')?.scrollIntoView({ block: "nearest" });
+    }
+  }, [open]);
+  return (
+    <div
+      ref={listRef}
+      role="radiogroup"
+      aria-label={label}
+      className="flex max-h-48 min-w-14 flex-col overflow-y-auto p-1"
+    >
+      {options.map((option, optionIndex) => {
+        const selected = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => onSelect(option.value)}
+            onKeyDown={(event) => {
+              const nextIndex =
+                event.key === "ArrowDown"
+                  ? (optionIndex + 1) % options.length
+                  : event.key === "ArrowUp"
+                    ? (optionIndex - 1 + options.length) % options.length
+                    : event.key === "Home"
+                      ? 0
+                      : event.key === "End"
+                        ? options.length - 1
+                        : null;
+
+              if (nextIndex === null || nextIndex === optionIndex) return;
+              const nextOption = options[nextIndex];
+              if (!nextOption) return;
+              event.preventDefault();
+              onSelect(nextOption.value);
+              listRef.current?.querySelectorAll<HTMLButtonElement>("button")[nextIndex]?.focus();
+            }}
+            className={cn(
+              "flex h-8 shrink-0 cursor-pointer items-center justify-center rounded-md px-2 text-base outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 sm:text-sm",
+              selected ? "bg-primary text-primary-foreground" : "text-foreground hover:bg-accent",
+            )}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
