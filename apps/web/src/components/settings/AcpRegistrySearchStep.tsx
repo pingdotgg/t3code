@@ -65,6 +65,7 @@ export function AcpRegistrySearchStep({
   const [preparingId, setPreparingId] = useState<string | null>(null);
   const [prepareError, setPrepareError] = useState<string | null>(null);
   const prepareGeneration = useRef(0);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const search = useEnvironmentQuery(
     serverEnvironment.searchAcpRegistry({
       environmentId,
@@ -78,12 +79,14 @@ export function AcpRegistrySearchStep({
   useEffect(
     () => () => {
       prepareGeneration.current += 1;
+      if (searchTimer.current !== null) clearTimeout(searchTimer.current);
       onPreparingChange?.(false);
     },
     [onPreparingChange],
   );
 
   const submitSearch = (nextQuery: string) => {
+    if (searchTimer.current !== null) clearTimeout(searchTimer.current);
     const trimmed = nextQuery.trim();
     setQuery(trimmed);
     setPrepareError(null);
@@ -140,21 +143,23 @@ export function AcpRegistrySearchStep({
           </InputGroupAddon>
           <InputGroupInput
             aria-label="Search ACP Registry"
-            onChange={(event) => setQuery(event.currentTarget.value)}
+            disabled={preparingId !== null}
+            onChange={(event) => {
+              const nextQuery = event.currentTarget.value;
+              setQuery(nextQuery);
+              setPrepareError(null);
+              if (searchTimer.current !== null) clearTimeout(searchTimer.current);
+              searchTimer.current = setTimeout(() => {
+                searchTimer.current = null;
+                setSubmittedQuery(nextQuery.trim());
+              }, 300);
+            }}
             placeholder="Search agents…"
             size="sm"
             type="search"
             value={query}
           />
         </InputGroup>
-        <Button
-          disabled={search.isPending || preparingId !== null}
-          size="sm"
-          type="submit"
-          variant="outline"
-        >
-          {isRefreshing ? "Refreshing" : "Search"}
-        </Button>
         <Button
           disabled={preparingId !== null}
           onClick={onManualConfiguration}
