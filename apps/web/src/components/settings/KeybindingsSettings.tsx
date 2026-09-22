@@ -326,7 +326,7 @@ function WhenVariableSelect({
       </SelectTrigger>
       <SelectContent alignItemWithTrigger={false} matchTriggerWidth={false} className="max-h-72">
         {options.map((option) => (
-          <SelectItem key={option} value={option} className="min-h-7 w-full py-1 text-[12px]">
+          <SelectItem key={option} value={option} className="w-full">
             <span className="truncate">{option}</span>
           </SelectItem>
         ))}
@@ -530,12 +530,8 @@ function WhenExpressionNodeEditor({
             <SelectValue />
           </SelectTrigger>
           <SelectContent alignItemWithTrigger={false} matchTriggerWidth={false}>
-            <SelectItem value="and" className="min-h-7 py-1 text-[12px]">
-              and
-            </SelectItem>
-            <SelectItem value="or" className="min-h-7 py-1 text-[12px]">
-              or
-            </SelectItem>
+            <SelectItem value="and">and</SelectItem>
+            <SelectItem value="or">or</SelectItem>
           </SelectContent>
         </Select>
         <Button type="button" variant="outline" size="compact" onClick={addCondition}>
@@ -1145,7 +1141,7 @@ function NewKeybindingCommandSelect({
       </SelectTrigger>
       <SelectContent alignItemWithTrigger={false} matchTriggerWidth={false} className="max-h-72">
         {commandOptions.map((command) => (
-          <SelectItem key={command} value={command} className="min-h-7 w-full py-1 text-[12px]">
+          <SelectItem key={command} value={command} className="w-full">
             <span className="truncate">{commandLabel(command)}</span>
           </SelectItem>
         ))}
