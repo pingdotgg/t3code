@@ -30,6 +30,7 @@ export class SshConnectionProfile extends Schema.TaggedClass<SshConnectionProfil
   {
     ...ConnectionProfileBase,
     target: DesktopSshEnvironmentTargetSchema,
+    resolvedTarget: Schema.optionalKey(DesktopSshEnvironmentTargetSchema),
   },
 ) {}
 

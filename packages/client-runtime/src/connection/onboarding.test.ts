@@ -234,13 +234,13 @@ describe("connection onboarding", () => {
     }),
   );
 
-  it.effect("prepares an SSH registration from the provisioned platform environment", () =>
+  it.effect.each([null, 2222])("preserves requested SSH overrides with port %s", (port) =>
     Effect.gen(function* () {
       const target = {
         alias: "devbox",
         hostname: "devbox.example.test",
-        username: "developer",
-        port: 22,
+        username: port === null ? null : "developer",
+        port,
       };
       const registration = yield* prepareSshRegistration({
         target,
@@ -253,7 +253,12 @@ describe("connection onboarding", () => {
                 environmentId: EnvironmentId.make("environment-ssh"),
                 label: "Remote development box",
                 bootstrap: {
-                  target,
+                  target: {
+                    ...target,
+                    hostname: "resolved.example.test",
+                    username: "resolved-user",
+                    port: 4567,
+                  },
                   httpBaseUrl: "http://127.0.0.1:3201",
                   wsBaseUrl: "ws://127.0.0.1:3201",
                   pairingToken: "pairing-token",
@@ -278,6 +283,12 @@ describe("connection onboarding", () => {
           label: "Remote development box",
           connectionId: "ssh:environment-ssh",
           target,
+          resolvedTarget: {
+            ...target,
+            hostname: "resolved.example.test",
+            username: "resolved-user",
+            port: 4567,
+          },
         },
       });
     }),

@@ -211,7 +211,8 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
       connectionId: profile.connectionId,
       environmentId: profile.environmentId,
       label: profile.label,
-      target: prepared.bootstrap.target,
+      target: profile.target,
+      resolvedTarget: prepared.bootstrap.target,
     });
     if (
       gitHubRoutingConnectionKey(entry) !==
