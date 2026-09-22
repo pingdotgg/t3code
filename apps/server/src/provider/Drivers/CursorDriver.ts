@@ -45,7 +45,7 @@ import {
 } from "../providerUpdateSettings.ts";
 import { probeCursorSkills } from "./CursorSkills.ts";
 import { makeCursorAuth } from "../CursorAuth.ts";
-import { makeCursorCredentialStore } from "../CursorCredentialStore.ts";
+import * as CursorCredentialStore from "../CursorCredentialStore.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as CursorAgentSdk from "../../orchestration-v2/Adapters/CursorAgentSdk.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
@@ -65,6 +65,7 @@ export type CursorDriverEnv =
   | HttpClient.HttpClient
   | BackgroundPolicy.BackgroundPolicy
   | ServerConfig
+  | ServerSecretStore.ServerSecretStore
   | ServerSettingsService;
 
 export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
@@ -95,7 +96,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies CursorSettings;
-      const credentials = yield* makeCursorCredentialStore(
+      const credentials = yield* CursorCredentialStore.makeCursorCredentialStore(
         instanceId,
         path.join(
           (yield* ServerConfig).stateDir,
@@ -104,7 +105,6 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
           "cursor.json",
         ),
       ).pipe(
-        Effect.provide(ServerSecretStore.layer),
         Effect.mapError(
           (cause) =>
             new ProviderDriverError({

@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
@@ -20,9 +21,10 @@ import { layer as idAllocatorLayer } from "../../orchestration-v2/IdAllocator.ts
 import { ProviderAdapterV2RuntimePolicy } from "../../orchestration-v2/ProviderAdapter.ts";
 import { Cursor } from "../cursorSdk.ts";
 
-const testLayer = ServerConfig.layerTest(process.cwd(), {
-  prefix: "t3-cursor-driver-copy-command-",
-}).pipe(
+const testLayer = ServerSecretStore.layer.pipe(
+  Layer.provideMerge(
+    ServerConfig.layerTest(process.cwd(), { prefix: "t3-cursor-driver-copy-command-" }),
+  ),
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(idAllocatorLayer),
   Layer.provideMerge(

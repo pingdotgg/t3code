@@ -53,8 +53,14 @@ it.effect.each([
   {
     name: "keeps a newer stored sign-in",
     legacy: legacyFileText,
-    stored: "test-only-current-key",
+    stored: legacyFileText.replace("test-only-legacy-key", "test-only-current-key"),
     expected: "test-only-current-key",
+  },
+  {
+    name: "replaces a damaged stored sign-in",
+    legacy: legacyFileText,
+    stored: "damaged",
+    expected: "test-only-legacy-key",
   },
   {
     name: "discards a damaged legacy file",
@@ -69,16 +75,16 @@ it.effect.each([
     const legacyFile = path.join(yield* fileSystem.makeTempDirectoryScoped(), "cursor.json");
     yield* fileSystem.writeFileString(legacyFile, legacy);
     const { secrets } = makeSecrets();
-    const open = makeCursorCredentialStore(ProviderInstanceId.make("personal"), legacyFile).pipe(
-      Effect.provideService(ServerSecretStore, secrets),
-    );
+    const instanceId = ProviderInstanceId.make("personal");
     if (stored !== undefined) {
-      const current = yield* makeCursorCredentialStore(ProviderInstanceId.make("personal")).pipe(
+      const current = yield* makeCursorCredentialStore(instanceId).pipe(
         Effect.provideService(ServerSecretStore, secrets),
       );
-      yield* Effect.tryPromise(() => current.store.save({ ...legacyCredentials, apiKey: stored }));
+      yield* secrets.set(current.binding.key, new TextEncoder().encode(stored));
     }
-    const migrated = yield* open;
+    const migrated = yield* makeCursorCredentialStore(instanceId, legacyFile).pipe(
+      Effect.provideService(ServerSecretStore, secrets),
+    );
     assert.strictEqual((yield* Effect.tryPromise(() => migrated.store.load()))?.apiKey, expected);
     assert.isFalse(yield* fileSystem.exists(legacyFile));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

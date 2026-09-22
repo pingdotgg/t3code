@@ -36,8 +36,15 @@ export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(
     yield* Effect.gen(function* () {
       const legacy = yield* fileSystem.readFileString(legacyFile).pipe(Effect.option);
       if (Option.isNone(legacy)) return;
+      // A stored sign-in wins unless it is damaged; the SDK would ignore it anyway.
+      const stored = yield* credentials.get;
+      const storedIsValid =
+        Option.isSome(stored) &&
+        Option.isSome(
+          yield* decodeCredentials(new TextDecoder().decode(stored.value)).pipe(Effect.option),
+        );
       if (
-        Option.isNone(yield* credentials.get) &&
+        !storedIsValid &&
         Option.isSome(yield* decodeCredentials(legacy.value).pipe(Effect.option))
       ) {
         yield* credentials.set(new TextEncoder().encode(legacy.value));

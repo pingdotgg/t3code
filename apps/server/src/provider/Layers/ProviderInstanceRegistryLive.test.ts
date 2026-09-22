@@ -1,3 +1,4 @@
+import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as CodexResetCredit from "./codexResetCredit.ts";
 /**
  * Multi-instance validation slices for `ProviderInstanceRegistryLive`.
@@ -450,6 +451,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
   // `FileSystem` dep while keeping everything else surfaced to the test.
   const infraLayer = OpenCodeRuntimeLive.pipe(Layer.provideMerge(NodeServices.layer));
   const baseLayer = AntigravityInstallation.layer.pipe(
+    Layer.provideMerge(ServerSecretStore.layer),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), {
         prefix: "provider-instance-registry-all-drivers-test",

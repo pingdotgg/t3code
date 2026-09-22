@@ -1,3 +1,4 @@
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { SourceControlProviderRegistry } from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -68,6 +69,10 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe
     Layer.mergeAll(
       serverConfigLayer.pipe(Layer.provide(PlatformTestLayer)),
       serverSettingsLayer,
+      ServerSecretStore.layer.pipe(
+        Layer.provide(serverConfigLayer),
+        Layer.provide(PlatformTestLayer),
+      ),
       NodeServices.layer,
       FetchHttpClient.layer,
       OpenCodeRuntimeLive.pipe(Layer.provide(PlatformTestLayer)),

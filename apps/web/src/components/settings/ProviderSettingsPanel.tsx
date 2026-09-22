@@ -1044,6 +1044,14 @@ export function EnvironmentProviderSettings({
               provider={liveProvider}
               readOnly={readOnly}
             />
+          ) : mode === "editor" &&
+            !readOnly &&
+            row.driver === "cursor" &&
+            liveProvider?.setup?.canAuthenticate === false ? (
+            <SettingsRow
+              title="Cursor account"
+              description="Using CURSOR_API_KEY. Remove it from this provider's environment to use browser sign-in."
+            />
           ) : null
         }
         onUpdate={(next) => {
