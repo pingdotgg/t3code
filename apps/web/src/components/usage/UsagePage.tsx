@@ -523,7 +523,9 @@ export function UsagePage() {
                         <tr className="border-b border-border text-left text-xs text-muted-foreground">
                           <th className="py-2 font-normal">Model</th>
                           <th className="py-2 text-right font-normal">Cost</th>
-                          <th className="py-2 text-right font-normal">Share</th>
+                          <th className="py-2 text-right font-normal">
+                            {metric === "tokens" ? "Token share" : "Cost share"}
+                          </th>
                           <th className="py-2 text-right font-normal">Tokens</th>
                         </tr>
                       </thead>
@@ -546,7 +548,12 @@ export function UsagePage() {
                                   {model.model}
                                 </span>
                               </td>
-                              <td className="py-2 text-right text-foreground tabular-nums">
+                              <td
+                                className={cn(
+                                  "py-2 text-right tabular-nums",
+                                  metric === "cost" ? "text-foreground" : "text-muted-foreground",
+                                )}
+                              >
                                 {isModelCostUnknown(model) ? (
                                   <span className="text-muted-foreground">Unpriced</span>
                                 ) : (
@@ -554,9 +561,18 @@ export function UsagePage() {
                                 )}
                               </td>
                               <td className="py-2 text-right text-muted-foreground tabular-nums">
-                                {isModelCostUnknown(model) ? "—" : formatPercent(model.costShare)}
+                                {metric === "tokens"
+                                  ? formatPercent(model.tokenShare)
+                                  : isModelCostUnknown(model)
+                                    ? "—"
+                                    : formatPercent(model.costShare)}
                               </td>
-                              <td className="py-2 text-right text-muted-foreground tabular-nums">
+                              <td
+                                className={cn(
+                                  "py-2 text-right tabular-nums",
+                                  metric === "tokens" ? "text-foreground" : "text-muted-foreground",
+                                )}
+                              >
                                 {formatTokens(model.totalTokens)}
                               </td>
                             </tr>
