@@ -150,6 +150,12 @@ pairing links and revoke client sessions. Revoking an unused link prevents new
 pairings; revoke a device's session to remove its existing access. Command-line
 management is available through `t3 auth --help`.
 
+Direct-pairing sessions expire after 30 days by default. To change the lifetime
+for new sessions, set `T3CODE_SESSION_TTL` to a positive duration such as
+`90 days` in the server environment and restart the server. Existing sessions
+keep their original expiry. Explicit session lifetimes, including T3 Connect's
+short-lived credentials, take precedence. Activity does not extend expiry.
+
 A session with an open connection stays listed after its access credential
 expires.
 
