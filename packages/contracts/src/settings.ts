@@ -184,7 +184,7 @@ export const ThemeBackgroundTransparency = Schema.Int.check(
   }),
 );
 export type ThemeBackgroundTransparency = typeof ThemeBackgroundTransparency.Type;
-const DEFAULT_THEME_BACKGROUND_TRANSPARENCY: ThemeBackgroundTransparency = 30;
+const DEFAULT_THEME_BACKGROUND_TRANSPARENCY: ThemeBackgroundTransparency = 20;
 
 export const SnapShotKeyChord = KeybindingShortcut.check(
   Schema.makeFilter(
