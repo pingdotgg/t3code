@@ -124,6 +124,12 @@ On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads
 across connected environments. Message search starts after two characters and
 includes your messages and final agent responses.
 
+To find text inside the open thread, press `Cmd/Ctrl+F` or choose **Find in
+thread** from the command palette. Matches are highlighted in messages and
+plans, Enter and Shift+Enter move between them, and Escape closes the bar.
+Thinking and tool output are not searched. Find covers the turns loaded in the
+view. Choose **Load earlier** in the bar to include older history.
+
 Use **Settings → Keybindings** to find or customize shortcuts for searching files
 and copying a thread reference. A copied reference uses the thread's pull request
 link when available, otherwise its thread ID. See [keybindings](./keybindings.md)

@@ -175,6 +175,7 @@ import {
 } from "../types";
 import { useTheme } from "../hooks/useTheme";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
+import { useChatFindStore } from "../chatFindStore";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { subscribeSnapShotComposerFocus } from "../lib/desktopSnapShot";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
@@ -6847,6 +6848,22 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "chat.find") {
+        // The file editor has its own find, a modal owns the keyboard while
+        // open, and a maximized panel hides the timeline the bar would search.
+        if (
+          rightPanelMaximized ||
+          (event.target instanceof Element &&
+            event.target.closest(".file-preview-virtualizer, [role=dialog]") !== null)
+        ) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) useChatFindStore.getState().show();
+        return;
+      }
+
       if (command === "modelPicker.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -6938,6 +6955,7 @@ export default function ChatView(props: ChatViewProps) {
     onInterrupt,
     onToggleDiff,
     pinThread,
+    rightPanelMaximized,
     settleThread,
     supportsPinning,
     supportsSettlement,

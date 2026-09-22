@@ -1,5 +1,6 @@
 import { ArrowUpIcon, ClockIcon } from "lucide-react";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
+import { useChatFindStore } from "~/chatFindStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import {
   getQuestionAnswerPreview,
@@ -174,7 +175,9 @@ import {
   type AssistantCitationRequest,
   type AssistantCitationTarget,
 } from "./AssistantCitationSource";
+import { ChatFindBar } from "./ChatFindBar";
 import { useAssistantCitationTarget, type CitationHistoryPage } from "./useAssistantCitationTarget";
+import { useChatFind } from "./useChatFind";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRowsWithState,
@@ -295,6 +298,8 @@ interface TimelineRowSharedState {
   onToggleSpawnRow: (entryId: string, expanded: boolean) => void;
   onToggleReasoning: (messageId: string, expanded: boolean, anchorKey: string) => void;
   expandedReasoningMessageIds: ReadonlySet<string>;
+  /** Entry holding the active find match; clipped bodies expand to show it. */
+  chatFindRevealEntryId: string | null;
   workGroupViewState: WorkGroupViewState;
   agentPanelModel: AgentPanelModel;
   expandedSpawnEntryIds: ReadonlySet<string>;
@@ -956,8 +961,41 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     onExpandTurn: expandCitedTurn,
     onManualNavigation,
   });
+  const findStoreOpen = useChatFindStore((store) => store.open);
+  const findFocusRequestId = useChatFindStore((store) => store.focusRequestId);
+  const hideFind = useChatFindStore((store) => store.hide);
+  // Find binds to the thread that had rows on screen when it was requested.
+  // A request that predates this mount, or arrives while nothing is rendered,
+  // is consumed without opening, so a remounted timeline never brings the bar
+  // back or steals focus; switching threads in place closes it in the same
+  // render rather than one effect later.
+  const [findScope, setFindScope] = useState<{ requestId: number; threadKey: string | null }>(
+    () => ({ requestId: findFocusRequestId, threadKey: null }),
+  );
+  if (findScope.requestId !== findFocusRequestId) {
+    setFindScope({
+      requestId: findFocusRequestId,
+      threadKey: rows.length > 0 ? listIdentityKey : null,
+    });
+  }
+  const findOpen = findStoreOpen && findScope.threadKey === listIdentityKey;
+  useEffect(() => {
+    if (findStoreOpen && !findOpen) hideFind();
+  }, [findOpen, findStoreOpen, hideFind]);
+  const chatFind = useChatFind({
+    enabled: findOpen,
+    entries: timelineEntries,
+    rows,
+    listRef,
+    viewport: timelineViewportElement,
+    cwd: markdownCwd,
+    bottomInset: contentInsetEndAdjustment,
+    onExpandTurn: expandCitedTurn,
+    onManualNavigation,
+  });
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
-  const alwaysRender = citationAlwaysRender ?? restoringAlwaysRender;
+  const alwaysRender = citationAlwaysRender ?? chatFind.alwaysRender ?? restoringAlwaysRender;
+  const chatFindRevealEntryId = findOpen ? chatFind.activeEntryId : null;
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const [minimapCurrentIndex, setMinimapCurrentIndex] = useState<number | null>(null);
   const handleAnchorReady = useCallback(
@@ -1156,6 +1194,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleSpawnRow,
       onToggleReasoning,
       expandedReasoningMessageIds: paintedExpandedReasoningMessageIds,
+      chatFindRevealEntryId,
       workGroupViewState,
       agentPanelModel: agentPanelModel ?? EMPTY_AGENT_PANEL_MODEL,
       expandedSpawnEntryIds: paintedExpandedSpawnEntryIds,
@@ -1191,6 +1230,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleSpawnRow,
       onToggleReasoning,
       paintedExpandedReasoningMessageIds,
+      chatFindRevealEntryId,
       workGroupViewState,
       agentPanelModel,
       paintedExpandedSpawnEntryIds,
@@ -1274,6 +1314,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               viewport={timelineViewportElement}
               threadRef={citationThreadRef}
               onCite={onCiteAssistantText}
+            />
+          ) : null}
+          {findOpen ? (
+            <ChatFindBar
+              query={chatFind.query}
+              onQueryChange={chatFind.setQuery}
+              matchCount={chatFind.matches.length}
+              activeIndex={chatFind.activeIndex}
+              onStep={chatFind.step}
+              onClose={hideFind}
+              focusRequestId={findFocusRequestId}
+              loadEarlier={loadEarlier}
             />
           ) : null}
           <LegendList<MessagesTimelineRow>
@@ -2197,6 +2249,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             renderContextReference={renderContextReference}
             skills={ctx.skills}
             markdownCwd={ctx.markdownCwd}
+            revealed={ctx.chatFindRevealEntryId === row.id}
           />
         </div>
       </div>
@@ -2500,6 +2553,7 @@ function ProposedPlanTimelineRow({
         threadRef={ctx.threadRef ?? undefined}
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
+        revealed={ctx.chatFindRevealEntryId === row.id}
       />
     </div>
   );
@@ -4008,8 +4062,17 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   markdownCwd: string | undefined;
   footer?: ReactNode;
+  /** A find match landed inside; expand the clipped body so it can be seen. */
+  revealed?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // A find match inside the clipped body expands it for real, so the collapse
+  // button keeps working and the text stays once find closes.
+  const [revealedSeen, setRevealedSeen] = useState(props.revealed === true);
+  if ((props.revealed === true) !== revealedSeen) {
+    setRevealedSeen(props.revealed === true);
+    if (props.revealed) setExpanded(true);
+  }
   const hasVisibleBody = props.text.trim().length > 0;
   const canCollapse = hasVisibleBody && shouldCollapseUserMessage(props.text);
   const isCollapsed = canCollapse && !expanded;
@@ -4053,12 +4116,12 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
               type="button"
               size="xs"
               variant="ghost"
-              aria-expanded={expanded}
+              aria-expanded={!isCollapsed}
               data-scroll-anchor-ignore
-              onClick={() => setExpanded((value) => !value)}
+              onClick={() => setExpanded(isCollapsed)}
               className="-ml-1 h-6 rounded-md px-1.5 text-secondary-label text-xs hover:bg-muted/55 hover:text-message-foreground"
             >
-              {expanded ? "Show less" : "Show full message"}
+              {isCollapsed ? "Show full message" : "Show less"}
             </Button>
           ) : null}
           {props.footer ? (
