@@ -23,7 +23,6 @@ import { isConfiguredAcpRegistryAgent } from "./AddProviderInstanceDialog.logic"
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 
-const SUGGESTED_SEARCHES = ["Codex", "Copilot", "Kimi"] as const;
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message.trim()
     ? error.message
@@ -158,22 +157,6 @@ export function AcpRegistrySearchStep({
         </Button>
       </form>
 
-      {!isInitialSearch ? (
-        <div className="flex flex-wrap items-center gap-1.5">
-          {SUGGESTED_SEARCHES.map((suggestion) => (
-            <Button
-              key={suggestion}
-              disabled={search.isPending || preparingId !== null}
-              onClick={() => submitSearch(suggestion)}
-              size="xs"
-              variant="ghost"
-            >
-              {suggestion}
-            </Button>
-          ))}
-        </div>
-      ) : null}
-
       <div className="sr-only" role="status">
         {isInitialSearch
           ? "Searching the ACP Registry."
@@ -203,10 +186,10 @@ export function AcpRegistrySearchStep({
             <p className="mt-1 text-xs text-muted-foreground">Try a broader search.</p>
           </div>
         ) : (
-          <ScrollArea scrollFade className="max-h-48 border-t border-border/70">
+          <ScrollArea scrollFade className="max-h-48">
             {/* The overlay scrollbar takes no layout space, so the rows
                 reserve its lane explicitly. */}
-            <div className="divide-y divide-border/70 pr-2.5">
+            <div className="pr-2.5">
               {results.map((agent) => {
                 const alreadyAdded = isConfiguredAcpRegistryAgent(providerInstances, agent.id);
                 const isPreparing = preparingId === agent.id;
@@ -278,7 +261,7 @@ export function AcpRegistrySearchStep({
         )
       ) : null}
 
-      <div className="flex justify-end border-t border-border/70 pt-2">
+      <div className="flex justify-end">
         <Button
           disabled={preparingId !== null}
           onClick={onManualConfiguration}

@@ -182,8 +182,19 @@ describe("AcpRegistrySearchStep", () => {
 
   it("keeps same-query refreshes visible and announced while retaining results", () => {
     const first = render();
-    const suggestion = visitElements(first, (element) => element.props.children === "Codex");
-    (suggestion?.props.onClick as (() => void) | undefined)?.();
+    const input = findByAriaLabel(first, "Search ACP Registry");
+    (input.props.onChange as ((event: { currentTarget: { value: string } }) => void) | undefined)?.(
+      {
+        currentTarget: { value: "Codex" },
+      },
+    );
+    const draft = render();
+    const searchForm = visitElements(draft, (element) => element.type === "form");
+    (searchForm?.props.onSubmit as ((event: { preventDefault: () => void }) => void) | undefined)?.(
+      {
+        preventDefault: vi.fn(),
+      },
+    );
 
     state.result = { agents: [gemini] };
     const resultTree = render();

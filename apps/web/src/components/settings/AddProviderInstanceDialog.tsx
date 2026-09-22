@@ -408,7 +408,7 @@ export function AddProviderInstanceDialog({
               </div>
 
               {wizardStep === 0 ? (
-                <div className="space-y-4">
+                <div className="space-y-4 pt-4">
                   <div className="flex items-center gap-3 text-xs text-muted-foreground">
                     <div aria-hidden className="flex-1 border-t border-border/70" />
                     <span>Or choose from ACP Registry</span>
