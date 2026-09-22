@@ -129,9 +129,10 @@ export function isNativeMaintenanceCommand(message: {
 }
 
 /** Compaction and sign-out runs cannot take a steer or a restart, so a message
- *  sent while one runs still belongs after it rather than as a rejected send.
- *  Whether to keep this silent downgrade or reject the steer with an error is
- *  a maintainer decision; clients currently label the send as a queue. */
+ *  sent while one runs queues behind it: the rejected send was a dead end, the
+ *  queue-follow-up default already delivers this exact send as a queued run,
+ *  and a queued run stays reorderable, cancellable, and promotable after the
+ *  maintenance run finishes. */
 function queueBehindMaintenanceRun(
   projection: OrchestrationV2ThreadProjection,
   decision: MessageDispatchMode,
