@@ -412,8 +412,7 @@ function ProjectDetail({
         <Alert variant="info">
           <InfoIcon aria-hidden />
           <AlertDescription>
-            Can't find the setting you're after? Any of them can be tweaked just for this project.
-            Keep it picked above and wander through the other settings pages.
+            Can't find a setting? Keep this project picked above and hop to any other settings page.
           </AlertDescription>
         </Alert>
         <SettingsSection id="project-overview" title="Project" hideTitle>
