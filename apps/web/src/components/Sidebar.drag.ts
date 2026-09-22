@@ -19,9 +19,10 @@ type Layout = Parameters<SortingStrategy>[0];
 export function restrictBelowSidebarLabel(
   { transform, containerNodeRect, draggingNodeRect }: Parameters<Modifier>[0],
   offset: number,
+  listTop = containerNodeRect?.top,
 ) {
-  if (!containerNodeRect || !draggingNodeRect) return transform;
-  const minimumY = containerNodeRect.top + offset - draggingNodeRect.top;
+  if (listTop === undefined || !draggingNodeRect) return transform;
+  const minimumY = listTop + offset - draggingNodeRect.top;
   return transform.y < minimumY ? { ...transform, y: minimumY } : transform;
 }
 
