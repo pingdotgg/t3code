@@ -977,7 +977,7 @@ function KeybindingRowMenu({
 function KeybindingSourceBadge({ source }: { source: KeybindingRow["source"] }) {
   if (source === "Default") return null;
   return (
-    <Badge variant="outline" size="sm" className="font-normal text-muted-foreground">
+    <Badge variant="outline" size="sm">
       {source}
     </Badge>
   );

@@ -57,14 +57,8 @@ export function PullRequestLabelChip({
   return (
     <Badge
       size={size}
-      variant="secondary"
-      className={cn(
-        "min-w-0 max-w-40 shrink justify-start gap-1 rounded-full px-2",
-        size === "sm" && "h-4 text-[.625rem]",
-        color &&
-          "bg-[color-mix(in_srgb,var(--label)_8%,transparent)] text-[color-mix(in_srgb,var(--label)_30%,var(--color-foreground))] dark:bg-[color-mix(in_srgb,var(--label)_12%,transparent)] dark:text-[color-mix(in_srgb,var(--label)_45%,var(--color-foreground))]",
-        className,
-      )}
+      variant={color ? "label" : "secondary"}
+      className={cn("min-w-0 max-w-40 shrink justify-start", className)}
       {...(color ? { style: { "--label": color } as CSSProperties } : {})}
     >
       <span className="truncate">{label.name}</span>
@@ -411,7 +405,7 @@ export function PullRequestReviewOutcomeBadge({
 }) {
   const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
   return (
-    <Badge size="sm" variant={presentation.badgeVariant} className={cn("gap-1", className)}>
+    <Badge size="sm" variant={presentation.badgeVariant} className={className}>
       <presentation.Icon aria-hidden className="size-3" />
       {presentation.label}
     </Badge>

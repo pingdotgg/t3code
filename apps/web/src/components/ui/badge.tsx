@@ -34,6 +34,9 @@ const badgeVariants = cva(
         secondary: "bg-secondary text-secondary-foreground [button&,a&]:hover:bg-secondary/90",
         success: "bg-success/8 text-success-foreground dark:bg-success/16",
         warning: "bg-warning/8 text-warning-foreground dark:bg-warning/16",
+        // A code-host label tinted from the --label color the consumer sets in style.
+        label:
+          "bg-[color-mix(in_srgb,var(--label)_8%,transparent)] text-[color-mix(in_srgb,var(--label)_30%,var(--color-foreground))] dark:bg-[color-mix(in_srgb,var(--label)_12%,transparent)] dark:text-[color-mix(in_srgb,var(--label)_45%,var(--color-foreground))]",
       },
     },
   },
