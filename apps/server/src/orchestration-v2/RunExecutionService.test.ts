@@ -3371,7 +3371,7 @@ function childThreadCreatedEvent(ids: BackgroundScenarioIds): ProviderAdapterV2E
 
 function childBackgroundTurnItemEvent(
   ids: BackgroundScenarioIds,
-  status: "running" | "completed",
+  status: "running" | "completed" | "idle",
   ordinal: number,
 ): ProviderAdapterV2Event {
   return {
@@ -3392,7 +3392,7 @@ function childBackgroundTurnItemEvent(
 function backgroundTurnItemEvent(
   ids: BackgroundScenarioIds,
   type: "command_execution" | "dynamic_tool" | "subagent",
-  status: "running" | "completed",
+  status: "running" | "completed" | "idle",
   ordinal: number,
   itemId?: TurnItemId,
 ): ProviderAdapterV2Event {
@@ -3415,7 +3415,7 @@ function backgroundTurnItemEventForRun(
   ids: BackgroundScenarioIds,
   runId: RunId,
   type: "command_execution" | "dynamic_tool" | "subagent",
-  status: "running" | "completed",
+  status: "running" | "completed" | "idle",
   ordinal: number,
 ): ProviderAdapterV2Event {
   const event = backgroundTurnItemEvent(ids, type, status, ordinal);
@@ -3427,7 +3427,7 @@ function backgroundTurnItemEventForRun(
 
 function subagentEvent(
   ids: BackgroundScenarioIds,
-  status: "running" | "completed",
+  status: "running" | "completed" | "idle",
 ): ProviderAdapterV2Event {
   return {
     type: "subagent.updated",
@@ -3772,3 +3772,26 @@ function runBackgroundItemScenario(
     return yield* Ref.get(observed);
   });
 }
+
+it.effect("releases ingestion after idle subagent rows and items settle", () =>
+  Effect.gen(function* () {
+    const observed = yield* runBackgroundItemScenario(
+      "subagent-idle",
+      (ids) => [
+        subagentEvent(ids, "running"),
+        backgroundTurnItemEvent(ids, "subagent", "running", 1),
+        subagentEvent(ids, "idle"),
+        backgroundTurnItemEvent(ids, "subagent", "idle", 2),
+        rootTerminalEvent(ids, "completed"),
+      ],
+      { keepEventStreamOpen: true },
+    );
+    assert.deepEqual(observed, [
+      "subagent:running",
+      "turn_item:running",
+      "subagent:idle",
+      "turn_item:idle",
+      "root-finalized",
+    ]);
+  }),
+);

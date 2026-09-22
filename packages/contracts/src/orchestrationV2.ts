@@ -604,6 +604,13 @@ export const OrchestrationV2Subagent = Schema.Struct({
 });
 export type OrchestrationV2Subagent = typeof OrchestrationV2Subagent.Type;
 
+/** Idle work is resumable, but does not keep a turn or its subscription alive. */
+export function isOrchestrationV2WorkActive(
+  status: OrchestrationV2ExecutionNode["status"],
+): boolean {
+  return status === "pending" || status === "running" || status === "waiting";
+}
+
 export const OrchestrationV2CheckpointScope = Schema.Struct({
   id: CheckpointScopeId,
   threadId: ThreadId,

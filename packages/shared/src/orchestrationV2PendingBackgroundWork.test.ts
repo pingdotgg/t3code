@@ -28,6 +28,16 @@ describe("derivePendingBackgroundWork", () => {
     expect(tasks).toEqual([]);
   });
 
+  it("does not keep a settled parent waiting for an idle child", () => {
+    expect(
+      derivePendingBackgroundWork({
+        latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+        providerThreads: [],
+        turnItems: [{ id: "idle-child", type: "subagent", status: "idle", title: "Review" }],
+      }),
+    ).toEqual([]);
+  });
+
   it("returns pending work when the latest run is waiting (post-success, pre-checkpoint)", () => {
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-1" as never, ordinal: 1, status: "waiting" },

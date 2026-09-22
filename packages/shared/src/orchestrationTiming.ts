@@ -1,3 +1,25 @@
+import { isOrchestrationV2WorkActive, type OrchestrationV2Subagent } from "@t3tools/contracts";
+
+/** Unknown settled timing must not turn a task's age into its work duration. */
+export function deriveSubagentElapsedMs(
+  agent: {
+    readonly status: OrchestrationV2Subagent["status"];
+    readonly startedAt: string | null;
+    readonly completedAt: string | null;
+  },
+  nowMs: number,
+): number | null {
+  if (agent.startedAt === null) return null;
+  const end = isOrchestrationV2WorkActive(agent.status)
+    ? nowMs
+    : agent.completedAt === null
+      ? null
+      : Date.parse(agent.completedAt);
+  if (end === null) return null;
+  const start = Date.parse(agent.startedAt);
+  return Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start) : null;
+}
+
 type LatestRunTiming = {
   readonly runId: string | null;
   /** Set when the turn is created; `startedAt` waits for the provider. */

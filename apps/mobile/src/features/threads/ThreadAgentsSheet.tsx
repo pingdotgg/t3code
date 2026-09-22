@@ -1,7 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { ThreadTurnSubagents } from "@t3tools/client-runtime/state/thread-subagents";
-import type { EnvironmentId, OrchestrationV2Subagent, ThreadId } from "@t3tools/contracts";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import {
+  isOrchestrationV2WorkActive,
+  type EnvironmentId,
+  type OrchestrationV2Subagent,
+  type ThreadId,
+} from "@t3tools/contracts";
+import { deriveSubagentElapsedMs, formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import * as DateTime from "effect/DateTime";
 import * as Haptics from "expo-haptics";
@@ -175,19 +180,23 @@ function AgentRow(props: {
  * shared second tick, so a settled sheet never repaints.
  */
 function useSubagentElapsed(
-  subagent: Pick<OrchestrationV2Subagent, "startedAt" | "completedAt">,
+  subagent: Pick<OrchestrationV2Subagent, "status" | "startedAt" | "completedAt">,
   tickSeconds: boolean,
 ): string | null {
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const running = subagent.completedAt === null;
+  const running = isOrchestrationV2WorkActive(subagent.status);
   useEffect(() => {
     if (!tickSeconds || !running) return;
     const intervalId = setInterval(() => setNowMs(Date.now()), 1_000);
     return () => clearInterval(intervalId);
   }, [running, tickSeconds]);
-  if (subagent.startedAt === null) return null;
-  const startedAtMs = DateTime.toEpochMillis(subagent.startedAt);
-  const endMs =
-    subagent.completedAt === null ? nowMs : DateTime.toEpochMillis(subagent.completedAt);
-  return endMs <= startedAtMs ? null : formatDuration(endMs - startedAtMs);
+  const elapsedMs = deriveSubagentElapsedMs(
+    {
+      status: subagent.status,
+      startedAt: subagent.startedAt === null ? null : DateTime.formatIso(subagent.startedAt),
+      completedAt: subagent.completedAt === null ? null : DateTime.formatIso(subagent.completedAt),
+    },
+    nowMs,
+  );
+  return elapsedMs === null || elapsedMs === 0 ? null : formatDuration(elapsedMs);
 }

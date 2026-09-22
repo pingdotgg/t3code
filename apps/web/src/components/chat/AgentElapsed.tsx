@@ -1,4 +1,6 @@
 import type { RuntimeSubagent } from "@t3tools/client-runtime/state/subagentRuntime";
+import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
+import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
 import { useEffect, useRef } from "react";
 
 function formatElapsedSeconds(totalSeconds: number): string {
@@ -14,15 +16,6 @@ function formatElapsedSeconds(totalSeconds: number): string {
   return `${hours}h ${String(minutes % 60).padStart(2, "0")}m`;
 }
 
-function elapsedBetween(startedAt: string, endIso: string | null): string {
-  const start = Date.parse(startedAt);
-  const end = endIso ? Date.parse(endIso) : Date.now();
-  if (Number.isNaN(start) || Number.isNaN(end)) {
-    return "";
-  }
-  return formatElapsedSeconds((end - start) / 1000);
-}
-
 /**
  * Elapsed time for the current activation. Live agents self-tick via DOM
  * writes (zero React commits per tick); settled agents freeze at completedAt.
@@ -33,29 +26,37 @@ export function AgentElapsed({
   agent: Pick<RuntimeSubagent, "status" | "startedAt" | "completedAt">;
 }) {
   const textRef = useRef<HTMLSpanElement>(null);
-  const live = agent.status === "running" || agent.status === "waiting";
+  const live = isOrchestrationV2WorkActive(agent.status);
   const startedAt = agent.startedAt;
+  const completedAt = agent.completedAt;
 
   useEffect(() => {
-    if (!live || !startedAt) {
+    if (!startedAt) {
       return;
     }
     const update = () => {
       if (textRef.current) {
-        textRef.current.textContent = elapsedBetween(startedAt, null);
+        const elapsedMs = deriveSubagentElapsedMs(
+          { status: agent.status, startedAt, completedAt },
+          Date.now(),
+        );
+        textRef.current.textContent =
+          elapsedMs === null ? "" : formatElapsedSeconds(elapsedMs / 1000);
       }
     };
     update();
+    if (!live) return;
     const id = setInterval(update, 1000);
     return () => clearInterval(id);
-  }, [live, startedAt]);
+  }, [live, startedAt, completedAt, agent.status]);
 
-  if (!startedAt) {
+  const elapsedMs = deriveSubagentElapsedMs(agent, 0);
+  if (elapsedMs === null) {
     return null;
   }
   return (
     <span ref={textRef} className="tabular-nums">
-      {elapsedBetween(startedAt, live ? null : agent.completedAt)}
+      {formatElapsedSeconds(elapsedMs / 1000)}
     </span>
   );
 }

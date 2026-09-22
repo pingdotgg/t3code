@@ -4,18 +4,12 @@ import type {
   OrchestrationV2Run,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 
 const BACKGROUND_TURN_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
   "command_execution",
   "dynamic_tool",
   "subagent",
-]);
-
-const TERMINAL_TURN_ITEM_STATUSES = new Set<OrchestrationV2TurnItem["status"]>([
-  "completed",
-  "interrupted",
-  "failed",
-  "cancelled",
 ]);
 
 /**
@@ -74,10 +68,6 @@ type PendingBackgroundWorkTurnItem = {
   readonly prompt?: string | undefined;
 };
 
-function isTerminalTurnItemStatus(status: OrchestrationV2TurnItem["status"]): boolean {
-  return TERMINAL_TURN_ITEM_STATUSES.has(status);
-}
-
 function isLatestRunSettledForBackgroundWait(
   latestRun: PendingBackgroundWorkRun | null | undefined,
 ): boolean {
@@ -128,7 +118,7 @@ function nativeTaskIdFromTurnItem(item: PendingBackgroundWorkTurnItem): string {
  *
  * Sources:
  * - Provider-thread roster (Claude SDK background tasks)
- * - Nonterminal command_execution / dynamic_tool / subagent turn items
+ * - Active command_execution / dynamic_tool / subagent turn items
  *
  * Gated on latest root run settlement. Dedupes by native task ID. Excludes
  * the roster while any interruptible foreground run remains active. Excludes
@@ -191,7 +181,7 @@ export function derivePendingBackgroundWork(input: {
     if (!BACKGROUND_TURN_ITEM_TYPES.has(item.type)) {
       continue;
     }
-    if (isTerminalTurnItemStatus(item.status)) {
+    if (!isOrchestrationV2WorkActive(item.status)) {
       continue;
     }
     if (item.type === "dynamic_tool" && isPersistentDynamicToolInput(item.input)) {

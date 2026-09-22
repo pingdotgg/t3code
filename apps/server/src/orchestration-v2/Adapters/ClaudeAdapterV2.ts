@@ -3408,7 +3408,8 @@ export function makeClaudeAdapterV2(
             ...(input.model === undefined ? {} : { model: input.model }),
             ...(input.progress === undefined ? {} : { progress: input.progress }),
             ...(input.result === undefined ? {} : { result: input.result }),
-            completedAt: input.status === "running" ? null : now,
+            ...(isReopen ? { startedAt: now } : {}),
+            completedAt: input.status === "running" ? null : (priorTask?.completedAt ?? now),
             updatedAt: now,
           } satisfies OrchestrationV2Subagent;
           const subagent = {
@@ -3505,7 +3506,7 @@ export function makeClaudeAdapterV2(
                 runtimeRequestId: null,
                 checkpointScopeId: null,
                 startedAt: task.startedAt,
-                completedAt: input.status === "running" ? null : now,
+                completedAt: task.completedAt,
               },
             });
             yield* emitProviderEvent({
@@ -3526,7 +3527,7 @@ export function makeClaudeAdapterV2(
                 runtimeRequestId: null,
                 checkpointScopeId: null,
                 startedAt: task.startedAt,
-                completedAt: input.status === "running" ? null : now,
+                completedAt: task.completedAt,
               },
             });
           }
@@ -4389,6 +4390,7 @@ export function makeClaudeAdapterV2(
                   ...priorTask,
                   status: "running",
                   result: null,
+                  startedAt: now,
                   completedAt: null,
                   updatedAt: now,
                 },

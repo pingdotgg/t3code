@@ -10,6 +10,7 @@ import type {
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import {
   CursorSettings,
+  isOrchestrationV2WorkActive,
   defaultInstanceIdForDriver,
   type ChatAttachment,
   type ModelSelection,
@@ -812,6 +813,7 @@ interface ActiveCursorToolCall {
 
 interface ActiveCursorSubagent {
   task: OrchestrationV2Subagent;
+  toolCall: Extract<ToolCall, { readonly type: "task" }>;
   readonly callId: string;
   readonly childThreadId: ThreadId;
   readonly childRootNodeId: OrchestrationV2ExecutionNode["id"];
@@ -1493,17 +1495,26 @@ export function makeCursorAdapterV2(
           readonly callId: string;
           readonly toolCall: Extract<ToolCall, { readonly type: "task" }>;
           readonly completed: boolean;
+          readonly status?: OrchestrationV2Subagent["status"];
         }) {
           const args = input.toolCall.args;
           const result =
             input.toolCall.result?.status === "success" ? input.toolCall.result.value : undefined;
           const existing = input.context.subagents.get(input.callId);
+          if (
+            existing !== undefined &&
+            !isOrchestrationV2WorkActive(existing.task.status) &&
+            !input.completed
+          )
+            return;
           const now = yield* DateTime.now;
-          const status: OrchestrationV2Subagent["status"] = input.completed
-            ? cursorToolFailed(input.toolCall)
-              ? "failed"
-              : "completed"
-            : "running";
+          const status: OrchestrationV2Subagent["status"] =
+            input.status ??
+            (input.completed
+              ? cursorToolFailed(input.toolCall)
+                ? "failed"
+                : "completed"
+              : "running");
           const resultText = [
             ...assistantTextsFromConversationSteps(result?.conversationSteps ?? []),
             ...(result?.resultSuffix === undefined ? [] : [result.resultSuffix]),
@@ -1559,11 +1570,12 @@ export function makeCursorAdapterV2(
             },
             status,
             result: resultText.length === 0 ? (existing?.task.result ?? null) : resultText,
-            completedAt: input.completed ? now : null,
+            completedAt: input.completed ? (existing?.task.completedAt ?? now) : null,
             updatedAt: now,
           };
           const subagent: ActiveCursorSubagent = {
             task,
+            toolCall: input.toolCall,
             callId: input.callId,
             childThreadId,
             childRootNodeId,
@@ -1657,7 +1669,7 @@ export function makeCursorAdapterV2(
               runtimeRequestId: null,
               checkpointScopeId: null,
               startedAt: task.startedAt,
-              completedAt: input.completed ? now : null,
+              completedAt: task.completedAt,
             },
           });
           yield* emitProviderEvent({
@@ -1678,7 +1690,7 @@ export function makeCursorAdapterV2(
               runtimeRequestId: null,
               checkpointScopeId: null,
               startedAt: task.startedAt,
-              completedAt: input.completed ? now : null,
+              completedAt: task.completedAt,
             },
           });
           yield* emitProviderEvent({
@@ -1942,6 +1954,19 @@ export function makeCursorAdapterV2(
             yield* emitToolArtifacts({ active: tool, completed: true });
           }
           input.context.tools.clear();
+          // This interaction stops delivering updates at finalization. Tasks
+          // without a completion have an unknown outcome. Background launch
+          // acknowledgements have already settled their rows.
+          for (const subagent of input.context.subagents.values()) {
+            if (!isOrchestrationV2WorkActive(subagent.task.status)) continue;
+            yield* emitSubagent({
+              context: input.context,
+              callId: subagent.callId,
+              toolCall: subagent.toolCall,
+              completed: true,
+              status: input.status === "completed" ? "idle" : input.status,
+            });
+          }
           yield* completeReasoning(input.context);
           yield* completeAssistant(input.context);
           yield* emitProviderEvent({

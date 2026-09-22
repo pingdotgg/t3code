@@ -17,6 +17,7 @@ import type {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 
 function trimmed(value: string | null | undefined): string | undefined {
   const result = value?.trim();
@@ -229,7 +230,7 @@ export function delegatedTaskProgress(projection: {
   const children =
     projection.subagents.some(
       (task) =>
-        !terminal(task.status) ||
+        isOrchestrationV2WorkActive(task.status) ||
         // Publishing a child's result precedes scheduling its parent's wake.
         // The parent still owes that follow-up even between those transactions.
         task.completionDelivery?.state === "pending" ||

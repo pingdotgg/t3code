@@ -279,13 +279,7 @@ function isoOrNull(value: DateTime.Utc | null | undefined): string | null {
   return value ? DateTime.formatIso(value) : null;
 }
 
-/**
- * The agents panel timer counts to now when a settled agent has no completion
- * time, which would show a card's age as work duration. Show nothing instead.
- */
 export function SubagentElapsed({ agent }: { agent: Parameters<typeof AgentElapsed>[0]["agent"] }) {
-  const live = agent.status === "running" || agent.status === "waiting";
-  if (!live && agent.completedAt === null) return null;
   return <AgentElapsed agent={agent} />;
 }
 

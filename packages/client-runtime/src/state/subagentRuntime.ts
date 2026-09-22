@@ -19,6 +19,7 @@
  */
 import * as DateTime from "effect/DateTime";
 import type { OrchestrationThreadActivity, OrchestrationV2Subagent } from "@t3tools/contracts";
+import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 
 export type RuntimeSubagentStatus =
   | "pending"
@@ -102,7 +103,7 @@ export function isTerminalSubagentStatus(status: RuntimeSubagentStatus): boolean
 /** Active = the user may still need to care while it runs. Idle is settled-ish
  * but resumable; waiting counts as active because it needs the user. */
 export function isActiveSubagentStatus(status: RuntimeSubagentStatus): boolean {
-  return status === "pending" || status === "running" || status === "waiting";
+  return isOrchestrationV2WorkActive(status);
 }
 
 const RECENT_ACTIVITY_LIMIT = 6;
