@@ -28,6 +28,8 @@ import {
 } from "../opencodeRuntime.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
+import * as Native from "../OpenCode2Client.ts";
+import * as OpenCode2Inventory from "../OpenCode2Inventory.ts";
 
 const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",
@@ -495,12 +497,16 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     }
   }
 
-  const loadInventory = (server: {
+  const loadInventory = Effect.fn("OpenCodeProvider.loadInventory")(function* (server: {
     readonly url: string;
     readonly serverPassword?: string;
     readonly version: string;
-  }) =>
-    openCodeRuntime
+  }) {
+    if (server.version.startsWith("2."))
+      return yield* OpenCode2Inventory.load(Native.make(server), cwd).pipe(
+        Effect.map((inventory) => ({ ...inventory, version: server.version })),
+      );
+    return yield* openCodeRuntime
       .loadOpenCodeInventory(
         openCodeRuntime.createOpenCodeSdkClient({
           baseUrl: server.url,
@@ -508,7 +514,16 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           ...(server.serverPassword !== undefined ? { serverPassword: server.serverPassword } : {}),
         }),
       )
-      .pipe(Effect.map((inventory) => ({ inventory, version: server.version })));
+      .pipe(
+        Effect.map((inventory) => ({
+          models: flattenOpenCodeModels(inventory),
+          skills: openCodeSkillsToServerProviderSkills(inventory.skills),
+          slashCommands: openCodeCommandsToServerProviderSlashCommands(inventory.commands),
+          connectedCount: inventory.providerList.connected.length,
+          version: server.version,
+        })),
+      );
+  });
   const inventoryEffect = isExternalServer
     ? openCodeRuntime
         .connectToOpenCodeServer({
@@ -535,21 +550,19 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   version = inventoryExit.value.version;
 
   const models = providerModelsFromSettings(
-    flattenOpenCodeModels(inventoryExit.value.inventory),
+    inventoryExit.value.models,
     customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
-  const skills = openCodeSkillsToServerProviderSkills(inventoryExit.value.inventory.skills);
-  const connectedCount = inventoryExit.value.inventory.providerList.connected.length;
+  const skills = inventoryExit.value.skills;
+  const connectedCount = inventoryExit.value.connectedCount;
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,
     enabled: true,
     checkedAt,
     models,
     skills,
-    slashCommands: openCodeCommandsToServerProviderSlashCommands(
-      inventoryExit.value.inventory.commands,
-    ),
+    slashCommands: inventoryExit.value.slashCommands,
     probe: {
       installed: true,
       version,

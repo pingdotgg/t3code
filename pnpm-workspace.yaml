@@ -95,6 +95,9 @@ minimumReleaseAgeExclude:
   - "@distilled.cloud/prisma@1.0.0-rc.12"
   - "@distilled.cloud/railway@1.0.0-rc.12"
   - "@distilled.cloud/stripe@1.0.0-rc.12"
+  - "@opencode/client@2.0.10"
+  - "@opencode/protocol@2.0.10"
+  - "@opencode/schema@2.0.10"
 
 overrides:
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.

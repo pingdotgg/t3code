@@ -511,6 +511,30 @@
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) 2025 opencode"]
       }
+    },
+    {
+      "name": "@opencode/client",
+      "sourceUrl": "https://github.com/anomalyco/opencode/blob/dev/LICENSE",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2025 opencode"]
+      }
+    },
+    {
+      "name": "@opencode/protocol",
+      "sourceUrl": "https://github.com/anomalyco/opencode/blob/dev/LICENSE",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2025 opencode"]
+      }
+    },
+    {
+      "name": "@opencode/schema",
+      "sourceUrl": "https://github.com/anomalyco/opencode/blob/dev/LICENSE",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2025 opencode"]
+      }
     }
   ]
 }

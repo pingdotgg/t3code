@@ -5,17 +5,29 @@ enable it in **Settings > Providers**. See [provider setup](./install.md#provide
 T3 Code requires OpenCode 1.14.19 or newer, including when you connect an existing
 OpenCode server.
 
+OpenCode 2.0.10 or newer uses the same provider entry and settings, alongside OpenCode 1 support.
+Update OpenCode 2 with its own installer or package manager.
+
+The native integration supports chat, tool activity, approvals, ordinary questions,
+Stop, history, conversation forks, rollback, and background text generation.
+Provider-native subagents and T3's injected MCP tools are not enabled yet. Conditional,
+hidden, and external forms are declined rather than shown as incomplete questions.
+Only the built-in `/compact` command is currently advertised for OpenCode 2.
+
 ## Local or external server
 
 Leave **Server URL** empty to let T3 Code start OpenCode locally. A password in
 provider settings applies to both that server and T3 Code's connection. With no
 password setting, the local server uses `OPENCODE_SERVER_PASSWORD` from its
 environment.
+OpenCode 2 can also use `OPENCODE_PASSWORD`; otherwise its generated local password
+is captured automatically.
 
 To use an existing OpenCode server, set **Server URL** and its password in provider
 settings. T3 Code uses only that configured password for an external server; it
 does not forward a local `OPENCODE_SERVER_PASSWORD`. If connection or version checks
 fail, check the URL, credentials, and OpenCode version, then refresh provider status.
+An explicitly configured provider-instance `OPENCODE_PASSWORD` is also accepted.
 
 After a lost connection, send another prompt to reconnect to the same OpenCode
 session.

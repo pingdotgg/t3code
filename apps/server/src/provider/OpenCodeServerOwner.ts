@@ -20,6 +20,12 @@ interface OpenCodeServerOwnerState {
 export class OpenCodeServerOwner extends Context.Service<
   OpenCodeServerOwner,
   {
+    /** Keep a server lease for a provider session's entire scope. */
+    readonly acquire: Effect.Effect<
+      OpenCodeRuntime.OpenCodeServerProcess,
+      OpenCodeRuntime.OpenCodeRuntimeError,
+      Scope.Scope
+    >;
     readonly withServer: <A, E, R>(
       use: (server: OpenCodeRuntime.OpenCodeServerProcess) => Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | OpenCodeRuntime.OpenCodeRuntimeError, R>;
@@ -165,6 +171,7 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
   );
 
   return OpenCodeServerOwner.of({
+    acquire: Effect.acquireRelease(acquireServer, releaseServer),
     withServer: (use) =>
       Effect.uninterruptibleMask((restore) =>
         restore(acquireServer).pipe(

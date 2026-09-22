@@ -76,8 +76,14 @@ describe("resolveOpenCodeServerPassword", () => {
   it("does not send an inherited local password to an external server", () => {
     expect(
       resolveOpenCodeServerPassword(
-        { external: true, environment: { OPENCODE_SERVER_PASSWORD: "local-secret" } },
-        { OPENCODE_SERVER_PASSWORD: "inherited-secret" },
+        {
+          external: true,
+          environment: {
+            OPENCODE_SERVER_PASSWORD: "local-secret",
+            OPENCODE_PASSWORD: "local-v2-secret",
+          },
+        },
+        { OPENCODE_SERVER_PASSWORD: "inherited-secret", OPENCODE_PASSWORD: "inherited-v2-secret" },
       ),
     ).toBeUndefined();
   });

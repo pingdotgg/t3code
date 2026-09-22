@@ -28,6 +28,8 @@ import {
 } from "./TextGenerationUtils.ts";
 import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
 import * as OpenCodeServerOwner from "../provider/OpenCodeServerOwner.ts";
+import * as Native from "../provider/OpenCode2Client.ts";
+import * as OpenCode2Generation from "./OpenCode2Generation.ts";
 
 const OpenCodeTextGenerationOperation = Schema.Literals([
   "generateCommitMessage",
@@ -172,6 +174,7 @@ function getOpenCodeTextResponse(parts: ReadonlyArray<unknown> | undefined): str
 
 export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration")(function* (
   openCodeSettings: OpenCodeSettings,
+  environment?: NodeJS.ProcessEnv,
 ) {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
@@ -206,6 +209,30 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           "url" | "serverPassword" | "version"
         >,
       ) {
+        if (server.version.startsWith("2.")) {
+          const variant = getModelSelectionStringOptionValue(input.modelSelection, "variant");
+          const agent = getModelSelectionStringOptionValue(input.modelSelection, "agent");
+          return yield* OpenCode2Generation.generate(Native.make(server), {
+            cwd: input.cwd,
+            prompt: input.prompt,
+            model: {
+              providerID: parsedModel.providerID,
+              id: parsedModel.modelID,
+              ...(variant ? { variant } : {}),
+            },
+            ...(agent ? { agent } : {}),
+            files: fileParts.map((file) => ({ uri: file.url })),
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new TextGenerationError({
+                  operation: input.operation,
+                  detail: "OpenCode 2 text generation failed.",
+                  cause,
+                }),
+            ),
+          );
+        }
         const client = openCodeRuntime.createOpenCodeSdkClient({
           baseUrl: server.url,
           directory: input.cwd,
@@ -325,6 +352,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
               binaryPath: openCodeSettings.binaryPath,
               directory: input.cwd,
               serverUrl: openCodeSettings.serverUrl,
+              ...(environment ? { environment } : {}),
               ...(openCodeSettings.serverPassword
                 ? { serverPassword: openCodeSettings.serverPassword }
                 : {}),
