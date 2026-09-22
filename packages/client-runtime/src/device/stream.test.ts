@@ -523,6 +523,34 @@ describe("Android keyframe handshake", () => {
     client.stop();
   });
 
+  it("drops a configure whose session was resized while support was being checked", async () => {
+    const { client, sockets, decoders, drawImage, Decoder, sps } = recoveryFixture(
+      "android",
+      false,
+    );
+    let resolveSupport!: (support: { supported: boolean }) => void;
+    Decoder.isConfigSupported.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSupport = resolve;
+        }),
+    );
+    client.start();
+    const socket = sockets[0]!;
+    socket.onopen?.();
+    socket.onmessage?.({ data: videoSession(576, 1280) });
+    socket.onmessage?.({ data: sps });
+    // The device rotates before the support check comes back, so the keyframe
+    // that configure captured belongs to a session that no longer exists.
+    socket.onmessage?.({ data: videoSession(1280, 576) });
+    resolveSupport({ supported: true });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(decoders.every((decoder) => decoder.state !== "configured")).toBe(true);
+    expect(drawImage).not.toHaveBeenCalled();
+    client.stop();
+  });
+
   it("does not reset video for deltas that arrive while the decoder is configuring", async () => {
     const { client, sockets, sps } = recoveryFixture("android", false);
     client.start();
