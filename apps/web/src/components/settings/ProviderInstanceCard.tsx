@@ -347,6 +347,150 @@ function ProviderEnvironmentSection(props: {
   );
 }
 
+type ProviderVersionAdvisoryPresentation = NonNullable<
+  ReturnType<typeof getProviderVersionAdvisoryPresentation>
+>;
+
+/**
+ * Shared update glyph for the list row and the editor header. Both open the
+ * same "Update available" popover so copy-command vs in-place-update are not
+ * two identical-looking buttons. Copy stays on the explicit copy control
+ * inside the popover.
+ */
+function ProviderUpdateAvailableControl(props: {
+  readonly displayName: string;
+  readonly versionAdvisory: ProviderVersionAdvisoryPresentation;
+  readonly onRunUpdate?: (() => void) | undefined;
+  readonly isUpdating: boolean;
+  readonly compact?: boolean | undefined;
+}) {
+  const updateCommand = props.versionAdvisory.updateCommand;
+  const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
+    onCopy: ({ providerName }) => {
+      toastManager.add({
+        type: "success",
+        title: `${providerName} update command copied`,
+        description: "Run it in a terminal when you are ready to update.",
+      });
+    },
+    onError: (error, { providerName }) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `Could not copy ${providerName} update command`,
+          description: error.message,
+        }),
+      );
+    },
+  });
+
+  return (
+    <Popover>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <PopoverTrigger
+              render={
+                <Button
+                  type="button"
+                  size={props.compact ? "icon-micro" : "icon-xs"}
+                  variant={props.compact ? "ghost-muted" : "ghost"}
+                  className={cn(
+                    props.compact
+                      ? "pointer-events-auto relative shrink-0"
+                      : "[--control-icon-color:currentColor]",
+                    !props.compact &&
+                      (props.versionAdvisory.emphasis === "strong"
+                        ? "text-warning hover:text-warning"
+                        : "text-muted-foreground hover:text-foreground"),
+                  )}
+                  aria-label="Update available — view details"
+                >
+                  {props.compact ? (
+                    <ArrowUpCircleIcon className="size-3.5" />
+                  ) : (
+                    <ArrowUpCircleIcon />
+                  )}
+                </Button>
+              }
+            />
+          }
+        />
+        <TooltipPopup side="top">Update available</TooltipPopup>
+      </Tooltip>
+      <PopoverPopup
+        side="bottom"
+        align="end"
+        className="w-[min(21rem,calc(100vw-1.5rem))] [--popup-width:min(21rem,calc(100vw-1.5rem))]"
+      >
+        <div className="grid min-w-0 gap-3">
+          <div className="grid gap-0.5">
+            <p className="text-[13px] font-semibold leading-tight text-foreground">
+              Update available
+            </p>
+            <p
+              className={cn(
+                "text-xs leading-snug",
+                props.versionAdvisory.emphasis === "strong"
+                  ? "text-warning"
+                  : "text-muted-foreground",
+              )}
+            >
+              {props.versionAdvisory.detail}
+            </p>
+          </div>
+          {props.onRunUpdate ? (
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              className="w-full"
+              disabled={props.isUpdating}
+              onClick={props.onRunUpdate}
+            >
+              {props.isUpdating ? <Spinner /> : <DownloadIcon />}
+              {props.isUpdating ? "Updating" : "Update now"}
+            </Button>
+          ) : null}
+          {props.onRunUpdate && updateCommand ? (
+            <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              <span aria-hidden className="h-px flex-1 bg-border" />
+              or, update manually using
+              <span aria-hidden className="h-px flex-1 bg-border" />
+            </div>
+          ) : null}
+          {updateCommand ? (
+            <div className="flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-muted/40 py-0.5 pr-0.5 pl-2">
+              <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground">
+                {updateCommand}
+              </code>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost"
+                      className="shrink-0 text-muted-foreground hover:text-foreground"
+                      onClick={() =>
+                        copyToClipboard(updateCommand, { providerName: props.displayName })
+                      }
+                      aria-label="Copy update command"
+                    >
+                      <CopyIcon className="size-3" />
+                    </Button>
+                  }
+                />
+                <TooltipPopup side="top">Copy command</TooltipPopup>
+              </Tooltip>
+            </div>
+          ) : null}
+        </div>
+      </PopoverPopup>
+    </Popover>
+  );
+}
+
 interface ProviderInstanceCardProps {
   readonly instanceId: ProviderInstanceId;
   readonly instance: ProviderInstanceConfig;
@@ -442,29 +586,19 @@ export function ProviderInstanceCard({
       : null;
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
   const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
-  const updateCommand = versionAdvisory?.updateCommand ?? null;
   const FallbackIconComponent = driverOption?.icon;
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
-  const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
-    onCopy: ({ providerName }) => {
-      toastManager.add({
-        type: "success",
-        title: `${providerName} update command copied`,
-        description: "Run it in a terminal when you are ready to update.",
-      });
-    },
-    onError: (error, { providerName }) => {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: `Could not copy ${providerName} update command`,
-          description: error.message,
-        }),
-      );
-    },
-  });
+  const updateAvailableControl = versionAdvisory ? (
+    <ProviderUpdateAvailableControl
+      displayName={displayName}
+      versionAdvisory={versionAdvisory}
+      onRunUpdate={readOnly ? undefined : onRunUpdate}
+      isUpdating={isUpdating}
+      compact={mode === "list"}
+    />
+  ) : null;
 
   // Narrow `instance.driver` for callers that key on the closed
   // `ProviderDriverKind` union (e.g. `normalizeModelSlug`'s alias table). Custom
@@ -631,33 +765,7 @@ export function ProviderInstanceCard({
                   {versionLabel}
                 </code>
               ) : null}
-              {versionAdvisory ? (
-                updateCommand ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          type="button"
-                          size="icon-micro"
-                          variant="ghost-muted"
-                          className="pointer-events-auto relative shrink-0"
-                          aria-label={`Copy ${displayName} update command`}
-                          onClick={() =>
-                            copyToClipboard(updateCommand, { providerName: displayName })
-                          }
-                        >
-                          <ArrowUpCircleIcon className="size-3.5" />
-                        </Button>
-                      }
-                    />
-                    <TooltipPopup side="top">Copy update command</TooltipPopup>
-                  </Tooltip>
-                ) : (
-                  <span role="img" aria-label="Update available" className="inline-flex shrink-0">
-                    <ArrowUpCircleIcon className="size-3.5 text-muted-foreground" />
-                  </span>
-                )
-              ) : null}
+              {updateAvailableControl}
             </span>
             <span className="mt-0.5 flex items-start gap-1.5 text-[13px] leading-[1.45] text-muted-foreground/80">
               {statusDotNode ? (
@@ -690,117 +798,29 @@ export function ProviderInstanceCard({
         </Badge>
       ) : null}
       {versionCodeNode}
-      <span
-        inert={readOnly}
-        aria-disabled={readOnly || undefined}
-        className={cn("inline-flex items-center gap-1", readOnly && "opacity-50")}
-      >
-        {versionAdvisory ? (
-          <Popover>
-            <PopoverTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  className={cn(
-                    "[--control-icon-color:currentColor]",
-                    versionAdvisory.emphasis === "strong"
-                      ? "text-warning hover:text-warning"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                  aria-label="Update available — view details"
-                >
-                  <ArrowUpCircleIcon />
-                </Button>
-              }
-            />
-            <PopoverPopup
-              side="bottom"
-              align="end"
-              className="w-[min(21rem,calc(100vw-1.5rem))] [--popup-width:min(21rem,calc(100vw-1.5rem))]"
+      {updateAvailableControl}
+      {titleTailNode || onDelete ? (
+        <span
+          inert={readOnly}
+          aria-disabled={readOnly || undefined}
+          className={cn("inline-flex items-center gap-1", readOnly && "opacity-50")}
+        >
+          {titleTailNode}
+          {onDelete ? (
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost-muted"
+              disabled={readOnly}
+              className="[--control-icon-color:currentColor] hover:text-destructive"
+              onClick={onDelete}
+              aria-label={`Delete instance ${instanceId}`}
             >
-              <div className="grid min-w-0 gap-3">
-                <div className="grid gap-0.5">
-                  <p className="text-[13px] font-semibold leading-tight text-foreground">
-                    Update available
-                  </p>
-                  <p
-                    className={cn(
-                      "text-xs leading-snug",
-                      versionAdvisory.emphasis === "strong"
-                        ? "text-warning"
-                        : "text-muted-foreground",
-                    )}
-                  >
-                    {versionAdvisory.detail}
-                  </p>
-                </div>
-                {onRunUpdate ? (
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant="outline"
-                    className="w-full"
-                    disabled={isUpdating}
-                    onClick={onRunUpdate}
-                  >
-                    {isUpdating ? <Spinner /> : <DownloadIcon />}
-                    {isUpdating ? "Updating" : "Update now"}
-                  </Button>
-                ) : null}
-                {onRunUpdate && updateCommand ? (
-                  <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                    <span aria-hidden className="h-px flex-1 bg-border" />
-                    or, update manually using
-                    <span aria-hidden className="h-px flex-1 bg-border" />
-                  </div>
-                ) : null}
-                {updateCommand ? (
-                  <div className="flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-muted/40 py-0.5 pr-0.5 pl-2">
-                    <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground">
-                      {updateCommand}
-                    </code>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            type="button"
-                            size="icon-xs"
-                            variant="ghost"
-                            className="shrink-0 text-muted-foreground hover:text-foreground"
-                            onClick={() =>
-                              copyToClipboard(updateCommand, { providerName: displayName })
-                            }
-                            aria-label="Copy update command"
-                          >
-                            <CopyIcon className="size-3" />
-                          </Button>
-                        }
-                      />
-                      <TooltipPopup side="top">Copy command</TooltipPopup>
-                    </Tooltip>
-                  </div>
-                ) : null}
-              </div>
-            </PopoverPopup>
-          </Popover>
-        ) : null}
-        {titleTailNode}
-        {onDelete ? (
-          <Button
-            type="button"
-            size="icon-xs"
-            variant="ghost-muted"
-            disabled={readOnly}
-            className="[--control-icon-color:currentColor] hover:text-destructive"
-            onClick={onDelete}
-            aria-label={`Delete instance ${instanceId}`}
-          >
-            <Trash2Icon />
-          </Button>
-        ) : null}
-      </span>
+              <Trash2Icon />
+            </Button>
+          ) : null}
+        </span>
+      ) : null}
     </div>
   );
 

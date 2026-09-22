@@ -972,15 +972,13 @@ export function EnvironmentProviderSettings({
           })
         }
         onRunUpdate={
-          mode === "editor" && showInlineUpdateButton && updateCandidate
+          showInlineUpdateButton && updateCandidate
             ? () => {
                 if (canRunInlineUpdate) void runProviderUpdate(updateCandidate);
               }
             : undefined
         }
-        isUpdating={
-          mode === "editor" && showInlineUpdateButton ? isInstanceUpdateRunning : undefined
-        }
+        isUpdating={showInlineUpdateButton ? isInstanceUpdateRunning : undefined}
       />
     );
   };

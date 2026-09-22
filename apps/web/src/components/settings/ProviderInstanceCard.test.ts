@@ -161,3 +161,61 @@ describe("deriveProviderModelsForDisplay", () => {
     }
   });
 });
+
+describe("ProviderInstanceCard update affordance", () => {
+  const instanceId = ProviderInstanceId.make("codex");
+  const driver = ProviderDriverKind.make("codex");
+  const liveProvider: ServerProvider = {
+    instanceId,
+    driver,
+    enabled: true,
+    installed: true,
+    version: "2.1.273",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-09-21T12:00:00.000Z",
+    models: [],
+    slashCommands: [],
+    skills: [],
+    versionAdvisory: {
+      status: "behind_latest",
+      currentVersion: "2.1.273",
+      latestVersion: "2.1.280",
+      updateCommand: "/home/me/.local/bin/claude update",
+      canUpdate: true,
+      checkedAt: "2026-09-21T12:00:00.000Z",
+      message: "Install the update now or review provider settings.",
+    },
+  };
+  const props = {
+    instanceId,
+    instance: { driver },
+    driverOption: undefined,
+    liveProvider,
+    onUpdate: () => undefined,
+    hiddenModels: [],
+    favoriteModels: [],
+    modelOrder: [],
+    onHiddenModelsChange: () => undefined,
+    onFavoriteModelsChange: () => undefined,
+    onModelOrderChange: () => undefined,
+    onRunUpdate: () => undefined,
+  } as const;
+
+  it("opens the same update popover from the list glyph as the editor header", () => {
+    for (const mode of ["list", "editor"] as const) {
+      const markup = renderToStaticMarkup(createElement(ProviderInstanceCard, { ...props, mode }));
+      expect(markup).toContain('aria-label="Update available — view details"');
+      expect(markup).toContain('aria-haspopup="dialog"');
+      expect(markup).not.toContain("Copy codex update command");
+    }
+  });
+
+  it("keeps the editor update glyph outside the read-only inert wrapper", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ProviderInstanceCard, { ...props, mode: "editor", readOnly: true }),
+    );
+    expect(markup).toContain('aria-label="Update available — view details"');
+    expect(markup).not.toMatch(/inert[\s\S]*aria-label="Update available — view details"/);
+  });
+});

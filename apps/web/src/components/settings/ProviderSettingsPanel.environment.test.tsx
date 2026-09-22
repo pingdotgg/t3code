@@ -201,13 +201,23 @@ describe("EnvironmentProviderSettings routing", () => {
       input: { refreshModels: true },
     });
 
-    const providerCard = visitElements(
+    const listCard = visitElements(
       panel,
       (element) =>
-        element.props.instanceId === codexId && typeof element.props.onRunUpdate === "function",
+        element.props.instanceId === codexId &&
+        element.props.mode === "list" &&
+        typeof element.props.onRunUpdate === "function",
     );
-    expect(providerCard).not.toBeNull();
-    (providerCard?.props.onRunUpdate as (() => void) | undefined)?.();
+    const editorCard = visitElements(
+      panel,
+      (element) =>
+        element.props.instanceId === codexId &&
+        element.props.mode === "editor" &&
+        typeof element.props.onRunUpdate === "function",
+    );
+    expect(listCard).not.toBeNull();
+    expect(editorCard).not.toBeNull();
+    (listCard?.props.onRunUpdate as (() => void) | undefined)?.();
     await flushPromises();
 
     expect(commands.updateProvider).toHaveBeenCalledWith({
