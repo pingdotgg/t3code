@@ -110,7 +110,7 @@ export function createProjectFaviconImageLoader(input: {
     const mimeType = contentType?.startsWith("image/") ? contentType : mediaMimeType(url);
     if (!mimeType) throw new Error("Project icon has no image type.");
     const bytes = await readBounded(response, PROJECT_FAVICON_MAX_SOURCE_BYTES);
-    signal.throwIfAborted();
+    if (signal.aborted) throw new Error("Project icon download was cancelled.");
     const dataUrl = `data:${mimeType};base64,${Encoding.encodeBase64(bytes)}`;
     if (isImageDataUrl(dataUrl)) return dataUrl;
     if (mimeType === "image/svg+xml") throw new Error("Project icon exceeds the cache limit.");

@@ -10,6 +10,8 @@ import {
 } from "@t3tools/shared/projectFavicon";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/unstable/reactivity";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
+import { resolveFaviconUrlAppearance } from "../lib/projectFaviconAppearance";
 import { projectFaviconUrlAtom } from "../state/assets";
 
 import {
@@ -91,6 +93,14 @@ function ProjectFaviconImage(props: {
 
   const requestIsActive = faviconRequest !== null && activeFaviconRequest === faviconRequest;
   const showImage = requestIsActive && status === "loaded";
+  const { themeAppearance } = useAppearancePreferences();
+  const sourceUri = useMemo(
+    () =>
+      faviconRequest === null
+        ? null
+        : resolveFaviconUrlAppearance(faviconRequest.faviconUrl, themeAppearance),
+    [faviconRequest, themeAppearance],
+  );
 
   return (
     <View
@@ -112,13 +122,13 @@ function ProjectFaviconImage(props: {
       ) : null}
 
       {/* Favicon image (hidden until loaded) */}
-      {requestIsActive ? (
+      {requestIsActive && sourceUri !== null ? (
         <Image
-          key={faviconRequest.faviconUrl}
+          key={sourceUri}
           source={
-            faviconRequest.faviconUrl.startsWith("data:")
-              ? { uri: faviconRequest.faviconUrl }
-              : { uri: faviconRequest.faviconUrl, cacheKey: faviconRequest.cacheKey }
+            sourceUri.startsWith("data:")
+              ? { uri: sourceUri }
+              : { uri: sourceUri, cacheKey: faviconRequest.cacheKey }
           }
           cachePolicy={faviconRequest.faviconUrl.startsWith("data:") ? "memory" : "memory-disk"}
           recyclingKey={faviconRequest.cacheKey}

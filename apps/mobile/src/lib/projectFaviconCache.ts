@@ -44,11 +44,11 @@ export async function downscaleProjectFavicon(
     import("expo-file-system"),
   ]);
   for (const size of [PROJECT_FAVICON_THUMBNAIL_SIZE, PROJECT_FAVICON_THUMBNAIL_SIZE / 2]) {
-    signal.throwIfAborted();
+    if (signal.aborted) throw new Error("Project icon download was cancelled.");
     const decoded = await Image.loadAsync(image.url, { maxWidth: size, maxHeight: size });
     const cacheKey = `t3-favicon-thumbnail:${size}:${image.url}`;
     try {
-      signal.throwIfAborted();
+      if (signal.aborted) throw new Error("Project icon download was cancelled.");
       if (decoded.width > size || decoded.height > size) {
         throw new Error("Project icon was not resized.");
       }
