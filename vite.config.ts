@@ -178,7 +178,21 @@ export default defineConfig({
         files: ["apps/web/src/**"],
         excludeFiles: ["apps/web/src/components/ui/**"],
         rules: {
-          "shadcn/no-restyle": ["warn", { allow: ["layout"] }],
+          "shadcn/no-restyle": [
+            "warn",
+            {
+              allow: ["layout"],
+              contracts: [
+                {
+                  // CollapsibleTrigger is a bare button with no styled counterpart
+                  // (a disclosure row is not a Button), so its className is the API.
+                  // Every other trigger has one: style them with render={<Button …/>}.
+                  pattern: "^CollapsibleTrigger$",
+                  allow: ["layout", "color", "typography", "spacing", "shape", "effects", "motion"],
+                },
+              ],
+            },
+          ],
         },
       },
       {
