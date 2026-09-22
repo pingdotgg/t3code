@@ -13,6 +13,8 @@ import {
   makeAntigravityUserInputResponse,
   normalizeAntigravitySessionUpdate,
   normalizeAntigravityToolCall,
+  parseAntigravityBackgroundTaskMessage,
+  processAntigravitySystemMessages,
   sanitizeAntigravityToolPayload,
   selectAntigravityPermissionOptionId,
 } from "./AntigravityProtocol.ts";
@@ -481,5 +483,162 @@ describe("Antigravity tool results", () => {
       mergeToolCallState(running, parseToolUpdate(commandCompleted).toolCall),
     );
     expect(isAntigravityOpenCommand(completed)).toBe(false);
+  });
+});
+
+describe("Antigravity background task notifications and system messages", () => {
+  it("parses completed background task notification with exit code and execution output", () => {
+    const raw =
+      "Background task fb2c9a16-96f0-4cca-a8dc-6502f8f67d95/task-1183 has completed. Task exit code: 0 Execution output:\nAll 45 test suites passed.\nDone in 3.4s.";
+    const parsed = parseAntigravityBackgroundTaskMessage(raw);
+    expect(parsed).toEqual({
+      taskId: "fb2c9a16-96f0-4cca-a8dc-6502f8f67d95/task-1183",
+      status: "completed",
+      exitCode: 0,
+      output: "All 45 test suites passed.\nDone in 3.4s.",
+    });
+  });
+
+  it("parses failed background task notification with non-zero exit code", () => {
+    const raw =
+      "Background task task-99 failed. Task exit code: 1 Execution output:\nAssertionError: expected true to be false";
+    const parsed = parseAntigravityBackgroundTaskMessage(raw);
+    expect(parsed).toEqual({
+      taskId: "task-99",
+      status: "failed",
+      exitCode: 1,
+      output: "AssertionError: expected true to be false",
+    });
+  });
+
+  it("parses cancelled and stopped background task notifications even with non-zero exit codes", () => {
+    expect(
+      parseAntigravityBackgroundTaskMessage("Background task task-100 was cancelled."),
+    ).toEqual({
+      taskId: "task-100",
+      status: "stopped",
+    });
+    expect(
+      parseAntigravityBackgroundTaskMessage(
+        "Background task task-100 was cancelled. Task exit code: 1 Execution output:\nStopped by user",
+      ),
+    ).toEqual({
+      taskId: "task-100",
+      status: "stopped",
+      exitCode: 1,
+      output: "Stopped by user",
+    });
+    expect(
+      parseAntigravityBackgroundTaskMessage(
+        "Background task task-101 stopped. Task exit code: 130 Execution output:\nProcess terminated",
+      ),
+    ).toEqual({
+      taskId: "task-101",
+      status: "stopped",
+      exitCode: 130,
+      output: "Process terminated",
+    });
+    expect(parseAntigravityBackgroundTaskMessage("Background task task-101 stopped.")).toEqual({
+      taskId: "task-101",
+      status: "stopped",
+    });
+  });
+
+  it("returns null for non-task system message content", () => {
+    expect(parseAntigravityBackgroundTaskMessage("Environment profile updated.")).toBeNull();
+    expect(parseAntigravityBackgroundTaskMessage("")).toBeNull();
+  });
+
+  it("strips complete system message from assistant text and extracts task", () => {
+    const text =
+      "Starting next step. <system_message> Background task task-1 has completed. Task exit code: 0 Execution output:\nDone\n</system_message> Continuing analysis.";
+    const result = processAntigravitySystemMessages(text);
+    expect(result.sanitizedText).toBe("Starting next step.  Continuing analysis.");
+    expect(result.tasks).toEqual([
+      {
+        taskId: "task-1",
+        status: "completed",
+        exitCode: 0,
+        output: "Done",
+      },
+    ]);
+    expect(result.pendingText).toBe("");
+  });
+
+  it("strips non-task system messages without generating task completions", () => {
+    const text =
+      "<system_message> Notice: environment variable changed </system_message> The answer is 42.";
+    const result = processAntigravitySystemMessages(text);
+    expect(result.sanitizedText).toBe(" The answer is 42.");
+    expect(result.tasks).toEqual([]);
+    expect(result.pendingText).toBe("");
+  });
+
+  it("buffers partial tag prefixes across streaming chunks", () => {
+    const chunk1 = "Processing data: <sys";
+    const result1 = processAntigravitySystemMessages(chunk1);
+    expect(result1.sanitizedText).toBe("Processing data: ");
+    expect(result1.pendingText).toBe("<sys");
+    expect(result1.tasks).toEqual([]);
+
+    const chunk2 =
+      "tem_message> Background task task-2 has completed. Task exit code: 0 Execution output: OK </system_message> Finished.";
+    const result2 = processAntigravitySystemMessages(result1.pendingText + chunk2);
+    expect(result2.sanitizedText).toBe(" Finished.");
+    expect(result2.tasks).toEqual([
+      {
+        taskId: "task-2",
+        status: "completed",
+        exitCode: 0,
+        output: "OK",
+      },
+    ]);
+    expect(result2.pendingText).toBe("");
+  });
+
+  it("holds unclosed system message until flushed at turn settlement", () => {
+    const chunk =
+      "Here is output <system_message> Background task task-3 has completed. Task exit code: 0 Execution output: In progress...";
+    const streamingResult = processAntigravitySystemMessages(chunk);
+    expect(streamingResult.sanitizedText).toBe("Here is output ");
+    expect(streamingResult.pendingText).toBe(
+      "<system_message> Background task task-3 has completed. Task exit code: 0 Execution output: In progress...",
+    );
+    expect(streamingResult.tasks).toEqual([]);
+
+    const flushedResult = processAntigravitySystemMessages(streamingResult.pendingText, {
+      flush: true,
+    });
+    expect(flushedResult.sanitizedText).toBe("");
+    expect(flushedResult.tasks).toEqual([
+      {
+        taskId: "task-3",
+        status: "completed",
+        exitCode: 0,
+        output: "In progress...",
+      },
+    ]);
+    expect(flushedResult.pendingText).toBe("");
+  });
+
+  it("handles multiple system messages in a single turn", () => {
+    const text =
+      "<system_message> Background task task-1 has completed. Task exit code: 0 Execution output: Output 1 </system_message> middle <system_message> Background task task-2 failed. Task exit code: 2 Execution output: Output 2 </system_message> end";
+    const result = processAntigravitySystemMessages(text);
+    expect(result.sanitizedText).toBe(" middle  end");
+    expect(result.tasks).toEqual([
+      {
+        taskId: "task-1",
+        status: "completed",
+        exitCode: 0,
+        output: "Output 1",
+      },
+      {
+        taskId: "task-2",
+        status: "failed",
+        exitCode: 2,
+        output: "Output 2",
+      },
+    ]);
   });
 });
