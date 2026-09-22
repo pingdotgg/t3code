@@ -445,6 +445,13 @@ function makeLocalCommandHarness(input: {
     start: Effect.gen(function* () {
       yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({ threadId, runId });
     }).pipe(Effect.provide(layer)),
+    startWithRetry: Effect.gen(function* () {
+      yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({
+        threadId,
+        runId,
+        willRetry: true,
+      });
+    }).pipe(Effect.provide(layer)),
   };
 }
 
@@ -479,6 +486,21 @@ effectIt.effect("terminalizes a starting run when its provider session cannot op
         },
       },
     ]);
+  }),
+);
+
+effectIt.effect("leaves the run starting when a session-open failure will be retried", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      openFailure: new Error("provider session rejected"),
+    });
+
+    const error = yield* harness.startWithRetry.pipe(Effect.flip);
+
+    expect(error._tag).toBe("ProviderTurnStartError");
+    expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("starting");
   }),
 );
 

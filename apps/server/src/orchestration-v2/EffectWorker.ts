@@ -67,8 +67,13 @@ export function isNonRetryableProviderTurnControlFailure(
 }
 
 export interface OrchestrationEffectExecutorV2Shape {
+  /**
+   * Runs one claimed effect. `willRetry` is true when the worker will retry a
+   * failure, so a step can fail and try again instead of settling the run.
+   */
   readonly execute: (
     effect: OrchestrationEffectV2,
+    options?: { readonly willRetry: boolean },
   ) => Effect.Effect<void, OrchestrationEffectExecutionError>;
 }
 
@@ -103,7 +108,8 @@ export const executorLayer: Layer.Layer<
     const threads = yield* ThreadManagementService;
     const settings = yield* ServerSettingsService;
     return OrchestrationEffectExecutorV2.of({
-      execute: (effect) => {
+      execute: (effect, options) => {
+        const willRetry = options?.willRetry ?? false;
         switch (effect.request.type) {
           case "provider-runtime.continue":
             return continueRestartedRun({
@@ -143,7 +149,7 @@ export const executorLayer: Layer.Layer<
               );
           case "provider-turn.start":
             return providerTurnStart
-              .start({ threadId: effect.threadId, runId: effect.request.runId })
+              .start({ threadId: effect.threadId, runId: effect.request.runId, willRetry })
               .pipe(
                 Effect.mapError(
                   (cause) =>
@@ -297,6 +303,7 @@ export const executorLayer: Layer.Layer<
                   providerTurnStart.start({
                     threadId: effect.threadId,
                     runId: effect.request.runId,
+                    willRetry,
                   }),
                 ),
                 Effect.mapError(
@@ -596,7 +603,9 @@ export const layerWithOptions = (
           }).pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
           if (cancelledBeforeExecution) return true;
 
-          const execution = executor.execute(effect).pipe(Effect.as("executed" as const));
+          const execution = executor
+            .execute(effect, { willRetry: effect.attemptCount < maxAttempts })
+            .pipe(Effect.as("executed" as const));
           const exit = yield* Effect.exit(Effect.raceFirst(execution, cancellation)).pipe(
             Effect.ensuring(outbox.clearCancellation(effect.id)),
           );

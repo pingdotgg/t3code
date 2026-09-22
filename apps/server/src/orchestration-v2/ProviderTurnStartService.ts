@@ -61,9 +61,15 @@ export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStart
 const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
 
 export interface ProviderTurnStartServiceV2Shape {
+  /**
+   * Starts the run's provider turn. When `willRetry` is true, a session open
+   * failure is returned so the caller can retry. Otherwise the run is settled
+   * as failed.
+   */
   readonly start: (input: {
     readonly threadId: ThreadId;
     readonly runId: RunId;
+    readonly willRetry?: boolean;
   }) => Effect.Effect<void, ProviderTurnStartError>;
 }
 
@@ -205,6 +211,7 @@ export const layer: Layer.Layer<
     const start = Effect.fn("orchestrationV2.providerTurnStart.start")(function* (input: {
       readonly threadId: ThreadId;
       readonly runId: RunId;
+      readonly willRetry?: boolean;
     }) {
       const { runId } = input;
       const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
@@ -531,6 +538,7 @@ export const layer: Layer.Layer<
         }),
       );
       if (sessionResult._tag === "Failure") {
+        if (input.willRetry === true) return yield* sessionResult.failure;
         const failedAt = yield* DateTime.now;
         const openError = sessionResult.failure;
         const nestedCause = "cause" in openError ? openError.cause : undefined;
