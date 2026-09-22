@@ -1,5 +1,6 @@
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import {
+  canSnooze,
   effectiveSnoozed,
   hasQueuedTurnStart,
   QUEUED_TURN_START_GRACE_MS,
@@ -16,6 +17,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
+import { relativeTime } from "../../lib/time";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
 import {
@@ -244,6 +246,19 @@ export interface ThreadListV2ThreadListItem {
   readonly item: ThreadListV2Item;
   /** Precomputed so recycled-list equality can see a minute-tick change. */
   readonly snoozeWakeLabelText: string | undefined;
+  /** Row timestamp precomputed against the parent clock so the recycler's
+      equality only sees a change on rows that actually draw a time. Blank
+      while the row renders a status label or the wake countdown instead. */
+  readonly timeLabel: string;
+  /** Minute clock feeding the row's native snooze menu, carried only on rows
+      whose menu holds snooze presets (capability-gated cards the user may
+      snooze). Keeping it out of the list's `extraData` means the minute tick
+      re-renders just these rows instead of every visible one. */
+  readonly snoozePresetMinute: string | undefined;
+  /** Inset hairline drawn under the row. Precomputed from the final order so
+      a neighbour change (e.g. the queued block appearing) updates the row
+      through recycled-list equality instead of leaving a stale divider. */
+  readonly showTrailingDivider: boolean;
 }
 
 export interface ThreadListV2PendingListItem {
@@ -252,6 +267,9 @@ export interface ThreadListV2PendingListItem {
   readonly pendingTask: PendingNewTask;
   /** First queued row after the active block draws the PENDING divider. */
   readonly showPendingDivider: boolean;
+  /** Same rule as the thread rows: a hairline unless the next row carries its
+      own section rule or none follows. */
+  readonly showTrailingDivider: boolean;
 }
 
 export interface ThreadListV2SnoozedShelfListItem {
@@ -274,6 +292,85 @@ export type ThreadListV2ListItem =
   | ThreadListV2SnoozedShelfListItem
   | ThreadListV2SettledShelfListItem;
 
+/** Narrows a wider list-item union (e.g. the sidebar's legacy + v2 mix) to
+    the v2 item kinds the shared equality understands. */
+export function isThreadListV2ListItem(value: {
+  readonly type: string;
+}): value is ThreadListV2ListItem {
+  return (
+    value.type === "v2-thread" ||
+    value.type === "v2-pending" ||
+    value.type === "v2-snoozed-shelf" ||
+    value.type === "v2-settled-shelf"
+  );
+}
+
+/** Recycled-list equality for the flat v2 list (Home + iPad sidebar).
+    Item objects are rebuilt on every minute tick and every partition run;
+    without this the lists would consider every mounted row changed and
+    re-render all of them (each carrying a swipeable + a PR subscription).
+    The clock-derived fields are per-row precomputed text, so a minute tick
+    only flips equality on rows whose visible text (or snooze menu) actually
+    moved. Thread references are stable across rebuilds. */
+export function threadListV2ListItemsAreEqual(
+  previous: ThreadListV2ListItem,
+  item: ThreadListV2ListItem,
+): boolean {
+  switch (item.type) {
+    case "v2-thread":
+      return (
+        previous.type === "v2-thread" &&
+        previous.key === item.key &&
+        previous.item.thread === item.item.thread &&
+        previous.item.variant === item.item.variant &&
+        previous.item.snoozed === item.item.snoozed &&
+        previous.item.pinned === item.item.pinned &&
+        previous.snoozeWakeLabelText === item.snoozeWakeLabelText &&
+        previous.timeLabel === item.timeLabel &&
+        previous.snoozePresetMinute === item.snoozePresetMinute &&
+        previous.showTrailingDivider === item.showTrailingDivider
+      );
+    case "v2-pending":
+      return (
+        previous.type === "v2-pending" &&
+        previous.key === item.key &&
+        previous.pendingTask === item.pendingTask &&
+        previous.showPendingDivider === item.showPendingDivider &&
+        previous.showTrailingDivider === item.showTrailingDivider
+      );
+    case "v2-snoozed-shelf":
+      return (
+        previous.type === "v2-snoozed-shelf" &&
+        previous.count === item.count &&
+        previous.expanded === item.expanded
+      );
+    case "v2-settled-shelf":
+      return (
+        previous.type === "v2-settled-shelf" &&
+        previous.count === item.count &&
+        previous.expanded === item.expanded
+      );
+  }
+}
+
+/** The timestamp a row renders when it shows no status label: the settle
+    stamp on settled slim rows, otherwise the latest activity. Blank for
+    status-labelled cards and snoozed rows with a wake countdown — those
+    never draw a time, so their minute tick must not invalidate the cell. */
+function resolveThreadListV2ItemTimeLabel(
+  item: ThreadListV2Item,
+  showSnoozeWakeLabel: boolean,
+): string {
+  const { thread, variant, snoozed } = item;
+  if (showSnoozeWakeLabel) return "";
+  if (variant === "card" && resolveThreadListV2Status(thread) !== "ready") return "";
+  const settledTimestamp =
+    variant === "slim" && !snoozed ? resolveSettledThreadTimestamp(thread) : null;
+  return relativeTime(
+    settledTimestamp ?? thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
+  );
+}
+
 /**
  * Builds the shared mobile order: active → pending → snoozed shelf → settled.
  * Pending tasks are waiting rather than asking, and parked work remains
@@ -289,21 +386,43 @@ export function buildThreadListV2ListItems(input: {
   readonly settledShelfExpanded?: boolean;
   readonly settledShelfHeaderIndex?: number | null;
   readonly snoozeLabelNow?: string;
+  /** Environments whose server supports thread.snooze. Rows on other
+      environments never carry the minute clock that feeds the snooze menu.
+      Absent = no gating (tests). */
+  readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
 }): ThreadListV2ListItem[] {
-  const threadItems = input.items.map((item): ThreadListV2ListItem => ({
-    type: "v2-thread",
-    key: `v2-thread:${item.thread.environmentId}:${item.thread.id}`,
-    item,
-    snoozeWakeLabelText:
+  const threadItems = input.items.map((item): ThreadListV2ListItem => {
+    const snoozeWakeLabelText =
       item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
         ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow })
-        : undefined,
-  }));
+        : undefined;
+    // The minute clock belongs on the item, not the list's extraData, so the
+    // recycler's equality can confine the per-minute re-render to rows whose
+    // snooze menu actually shows preset times.
+    const snoozePresetMinute =
+      item.variant === "card" &&
+      !item.snoozed &&
+      input.snoozeLabelNow !== undefined &&
+      (input.snoozeEnvironmentIds?.has(item.thread.environmentId) ?? true) &&
+      canSnooze(item.thread, { now: input.snoozeLabelNow })
+        ? input.snoozeLabelNow
+        : undefined;
+    return {
+      type: "v2-thread",
+      key: `v2-thread:${item.thread.environmentId}:${item.thread.id}`,
+      item,
+      snoozeWakeLabelText,
+      timeLabel: resolveThreadListV2ItemTimeLabel(item, snoozeWakeLabelText !== undefined),
+      snoozePresetMinute,
+      showTrailingDivider: false,
+    };
+  });
   const pendingItems = input.pendingTasks.map((pendingTask, index): ThreadListV2ListItem => ({
     type: "v2-pending",
     key: `v2-${pendingTask.key}`,
     pendingTask,
     showPendingDivider: index === 0,
+    showTrailingDivider: false,
   }));
   const snoozedCount = input.snoozedCount ?? 0;
   const snoozedShelfHeaderIndex = input.snoozedShelfHeaderIndex ?? null;
@@ -330,7 +449,17 @@ export function buildThreadListV2ListItems(input: {
     });
     result.push(...threadItems.slice(settledShelfHeaderIndex));
   }
-  return result;
+  // Hairlines depend on the final neighbour, so they are stamped after the
+  // splice: a recycled cell only re-renders when its divider actually flips.
+  return result.map((entry, index) => {
+    if (entry.type !== "v2-thread" && entry.type !== "v2-pending") return entry;
+    const next = result[index + 1];
+    const showTrailingDivider =
+      next?.type === "v2-thread" || (next?.type === "v2-pending" && !next.showPendingDivider);
+    return showTrailingDivider === entry.showTrailingDivider
+      ? entry
+      : { ...entry, showTrailingDivider };
+  });
 }
 
 /**
