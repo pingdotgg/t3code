@@ -15,28 +15,34 @@ export function StandalonePage({
   masthead,
   children,
 }: {
-  readonly tone: keyof typeof backdropClassNames;
+  readonly tone: keyof typeof backdropClassNames | "plain";
   readonly masthead?: ReactNode;
   readonly children: ReactNode;
 }) {
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">
-      <div className="pointer-events-none absolute inset-0 opacity-80" aria-hidden>
-        <div className={backdropClassNames[tone]} />
-        {tone === "pairing" ? (
-          <div className="absolute inset-y-0 left-0 w-72 bg-[radial-gradient(28rem_18rem_at_left,color-mix(in_srgb,var(--color-sky-500)_10%,transparent),transparent)]" />
-        ) : null}
-        <div
-          className={
-            tone === "brand"
-              ? "absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_94%,var(--color-black))_0%,var(--background)_62%)]"
-              : "absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_90%,var(--color-black))_0%,var(--background)_55%)]"
-          }
-        />
-      </div>
+      {tone !== "plain" ? (
+        <div className="pointer-events-none absolute inset-0 opacity-80" aria-hidden>
+          <div className={backdropClassNames[tone]} />
+          {tone === "pairing" ? (
+            <div className="absolute inset-y-0 left-0 w-72 bg-[radial-gradient(28rem_18rem_at_left,color-mix(in_srgb,var(--color-sky-500)_10%,transparent),transparent)]" />
+          ) : null}
+          <div
+            className={
+              tone === "brand"
+                ? "absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_94%,var(--color-black))_0%,var(--background)_62%)]"
+                : "absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_90%,var(--color-black))_0%,var(--background)_55%)]"
+            }
+          />
+        </div>
+      ) : null}
 
       <section
-        className={`relative w-full max-w-xl rounded-2xl border border-border/80 shadow-2xl shadow-black/20 backdrop-blur-md ${tone === "brand" ? "overflow-hidden bg-card/94" : "bg-card/90"}`}
+        className={
+          tone === "plain"
+            ? "relative w-full max-w-lg rounded-2xl border bg-card"
+            : `relative w-full max-w-xl rounded-2xl border border-border/80 shadow-2xl shadow-black/20 backdrop-blur-md ${tone === "brand" ? "overflow-hidden bg-card/94" : "bg-card/90"}`
+        }
       >
         {masthead}
         <div className="p-6 sm:p-8">{children}</div>

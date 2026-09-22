@@ -1,4 +1,4 @@
-import { useAuth, useClerk } from "@clerk/react";
+import { useAuth, useClerk, useUser } from "@clerk/react";
 import { readConnectAuthorizeRequest } from "@t3tools/shared/connectAuth";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -7,49 +7,28 @@ import {
   connectCliSignInRedirectUrl,
 } from "../../cloud/connectCliAuth";
 import { isElectron } from "../../env";
-import { AuthSurfaceShell } from "../auth/AuthSurfaceShell";
+import { AuthSurfaceMessage, AuthSurfaceShell } from "../auth/AuthSurfaceShell";
 import { resolveClerkSignInProps } from "../clerk/authRedirect";
 import { Button } from "../ui/button";
 
-function ConnectCliAuthMessage({
-  eyebrow,
-  title,
-  description,
-}: {
-  readonly eyebrow?: string;
-  readonly title: string;
-  readonly description: string;
-}) {
-  return (
-    <>
-      {eyebrow ? (
-        <p className="text-[10px] font-semibold tracking-[0.18em] text-blue-600 uppercase dark:text-blue-400">
-          {eyebrow}
-        </p>
-      ) : null}
-      <h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
-      <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{description}</p>
-    </>
-  );
+function ConnectCommand() {
+  return <code className="font-mono text-[0.9em] text-foreground">t3 connect</code>;
 }
 
-const invalidLinkMessage = {
-  eyebrow: "Authorization request",
-  title: "This connect link is incomplete",
-  description:
-    "The link is missing its authorization request. Re-run `t3 connect` in your terminal and open the freshly printed URL.",
-} as const;
+function useClerkAccountLabel(): string | null {
+  const { user } = useUser();
+  return user?.primaryEmailAddress?.emailAddress ?? user?.username ?? null;
+}
 
 /**
- * /connect: the URL the CLI prints for the loopback flow. Waits for a Clerk
- * session, then forwards the CLI's PKCE request to Clerk's authorize endpoint
- * with the loopback redirect URI so the code returns straight to the waiting
- * CLI. Headless hosts use Clerk's device authorization page instead.
+ * /connect forwards the CLI's PKCE request to Clerk with its loopback redirect.
+ * Headless hosts use Clerk's device authorization page instead.
  */
 export function ConnectCliAuthorizeSurface() {
   const [request] = useState(() => readConnectAuthorizeRequest(new URL(window.location.href)));
   const clerk = useClerk();
   const { isLoaded, isSignedIn } = useAuth();
+  const accountLabel = useClerkAccountLabel();
   const signInOpened = useRef(false);
   const redirecting = useRef(false);
 
@@ -87,20 +66,41 @@ export function ConnectCliAuthorizeSurface() {
   if (!request) {
     return (
       <AuthSurfaceShell>
-        <ConnectCliAuthMessage {...invalidLinkMessage} />
+        <AuthSurfaceMessage
+          title="This link is incomplete"
+          description={
+            <>
+              The authorization request is missing or invalid. Copy the whole link, or run{" "}
+              <ConnectCommand /> again.
+            </>
+          }
+        />
       </AuthSurfaceShell>
     );
   }
 
   return (
     <AuthSurfaceShell>
-      <ConnectCliAuthMessage
-        eyebrow="Browser authorization"
+      <AuthSurfaceMessage
         title="Connecting your terminal"
         description={
-          isSignedIn
-            ? "Redirecting to authorize T3 Connect for your CLI…"
-            : "Sign in to continue authorizing T3 Connect for your CLI."
+          isSignedIn ? (
+            <>
+              Sending you to authorize T3 Connect
+              {accountLabel ? (
+                <>
+                  {" "}
+                  as <span className="text-foreground">{accountLabel}</span>
+                </>
+              ) : null}
+              .
+            </>
+          ) : (
+            <>
+              Your terminal ran <ConnectCommand /> and is waiting. Sign in here and it finishes on
+              its own.
+            </>
+          )
         }
       />
       {isLoaded && !isSignedIn ? (
