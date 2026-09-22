@@ -21,7 +21,6 @@ import {
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Button } from "../ui/button";
-import { Gemini, GithubCopilotIcon, type Icon } from "../Icons";
 import { Dialog } from "../ui/dialog";
 import { Badge } from "../ui/badge";
 import { Input } from "../ui/input";
@@ -72,25 +71,6 @@ const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 const ACP_REGISTRY_DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const DEFAULT_DRIVER_OPTION = DRIVER_OPTIONS[0]!;
 const EMPTY_CONFIG_DRAFT: Record<string, unknown> = {};
-interface ComingSoonDriverOption {
-  readonly value: ProviderDriverKind;
-  readonly label: string;
-  readonly icon: Icon;
-}
-
-const COMING_SOON_DRIVER_OPTIONS: readonly ComingSoonDriverOption[] = [
-  {
-    value: ProviderDriverKind.make("githubCopilot"),
-    label: "Github Copilot",
-    icon: GithubCopilotIcon,
-  },
-  {
-    value: ProviderDriverKind.make("gemini"),
-    label: "Gemini",
-    icon: Gemini,
-  },
-];
-
 /**
  * Validate an instance id against the same slug rules the server applies in
  * `ProviderInstanceId` (see `packages/contracts/src/providerInstance.ts`).
@@ -376,27 +356,6 @@ export function AddProviderInstanceDialog({
                         {option.badgeLabel}
                       </Badge>
                     ) : null}
-                  </RadioPrimitive.Root>
-                );
-              })}
-              {COMING_SOON_DRIVER_OPTIONS.map((option) => {
-                const IconComponent = option.icon;
-                return (
-                  <RadioPrimitive.Root
-                    key={option.value}
-                    value={option.value}
-                    disabled
-                    className={cn(
-                      "relative flex cursor-not-allowed items-center gap-3 rounded-lg bg-card/60 px-3 py-3 text-left opacity-55 outline-none ring-1 ring-black/5 dark:bg-white/2 dark:ring-white/5",
-                    )}
-                  >
-                    <IconComponent className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                      {option.label}
-                    </span>
-                    <Badge variant="warning" size="sm">
-                      Coming Soon
-                    </Badge>
                   </RadioPrimitive.Root>
                 );
               })}
