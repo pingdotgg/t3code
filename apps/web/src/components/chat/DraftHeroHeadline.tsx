@@ -4,9 +4,12 @@ import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/c
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { FolderPlusIcon } from "lucide-react";
 import { useCallback, useMemo } from "react";
+import { useRouter } from "@tanstack/react-router";
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { useClientSettings } from "~/hooks/useSettings";
+import { readLocalApi } from "~/localApi";
 import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
 import { selectProjectGroupingSettings } from "~/logicalProject";
 import {
@@ -43,6 +46,7 @@ export function DraftHeroHeadline({
   activeProjectTitle,
 }: DraftHeroHeadlineProps) {
   const projects = useProjects();
+  const router = useRouter();
   const threads = useThreadShells();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -130,6 +134,24 @@ export function DraftHeroHeadline({
   const hasResolvedProject = activeProjectTitle !== null;
   const canChooseProject = projectPickerEntries.length > 0;
   const shouldShowProjectMenu = canChooseProject;
+  const openProjectSettingsMenu = useCallback(
+    async (projectKey: string, position: { x: number; y: number }) => {
+      const api = readLocalApi();
+      if (!api) return;
+      const result = await settlePromise(() =>
+        api.contextMenu.show(
+          [{ id: "project-settings", label: "Project settings", icon: "settings" }],
+          position,
+        ),
+      );
+      if (result._tag === "Failure" || result.value !== "project-settings") return;
+      void router.navigate({
+        to: "/projects/$projectKey",
+        params: { projectKey },
+      });
+    },
+    [router],
+  );
 
   const projectSelector = shouldShowProjectMenu ? (
     <Menu>
@@ -140,7 +162,33 @@ export function DraftHeroHeadline({
             // project title) so the hero sentence reads naturally: an
             // aria-label here would replace the title with an action phrase
             // mid-sentence and baffle screen-reader users.
-            <MenuTrigger className="pointer-events-auto inline-block max-w-64 truncate border-foreground/60 border-b border-dotted align-baseline text-foreground transition-colors hover:border-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring" />
+            <MenuTrigger
+              onContextMenu={(event) => {
+                if (!activeProjectGroup) return;
+                event.preventDefault();
+                event.stopPropagation();
+                void openProjectSettingsMenu(activeProjectGroup.projectKey, {
+                  x: event.clientX,
+                  y: event.clientY,
+                });
+              }}
+              onKeyDown={(event) => {
+                if (
+                  !activeProjectGroup ||
+                  (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10"))
+                ) {
+                  return;
+                }
+                const rect = event.currentTarget.getBoundingClientRect();
+                event.preventDefault();
+                event.stopPropagation();
+                void openProjectSettingsMenu(activeProjectGroup.projectKey, {
+                  x: rect.left,
+                  y: rect.bottom,
+                });
+              }}
+              className="pointer-events-auto inline-block max-w-64 truncate border-foreground/60 border-b border-dotted align-baseline text-foreground transition-colors hover:border-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+            />
           }
         >
           {activeProjectDisplayName ?? "Choose a project"}
@@ -195,6 +243,26 @@ export function DraftHeroHeadline({
                 key={group.projectKey}
                 value={group.projectKey}
                 closeOnClick
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void openProjectSettingsMenu(group.projectKey, {
+                    x: event.clientX,
+                    y: event.clientY,
+                  });
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) {
+                    return;
+                  }
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void openProjectSettingsMenu(group.projectKey, {
+                    x: rect.left,
+                    y: rect.bottom,
+                  });
+                }}
                 className="[&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
               >
                 <ProjectFavicon project={group} className="size-4 shrink-0" />
