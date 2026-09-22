@@ -220,6 +220,8 @@ export function useCopyToClipboard<TContext = void>({
   const onErrorRef = React.useRef(onError);
   const targetRef = React.useRef(target);
   const timeoutRef = React.useRef(timeout);
+  // Writes settle in completion order, not click order: only the newest attempt may report.
+  const attemptRef = React.useRef(0);
 
   onCopyRef.current = onCopy;
   onErrorRef.current = onError;
@@ -229,9 +231,17 @@ export function useCopyToClipboard<TContext = void>({
   extraFlavorsRef.current = extraFlavors;
 
   const copyToClipboard = React.useCallback((value: string, ctx: TContext): void => {
+    const attempt = ++attemptRef.current;
+    setIsCopied(false);
     void writeTextToClipboard(value, targetRef.current, extraFlavorsRef.current).then(
       (didCopy) => {
-        if (!didCopy) return;
+        if (attempt !== attemptRef.current) return;
+        if (!didCopy) {
+          const error = new Error(`Copying ${targetRef.current} produced no write.`);
+          console.error(error);
+          onErrorRef.current?.(error, ctx);
+          return;
+        }
         if (timeoutIdRef.current) {
           clearTimeout(timeoutIdRef.current);
         }
@@ -247,15 +257,17 @@ export function useCopyToClipboard<TContext = void>({
         }
       },
       (error) => {
+        if (attempt !== attemptRef.current) return;
         console.error(error);
         onErrorRef.current?.(error, ctx);
       },
     );
   }, []);
 
-  // Cleanup timeout on unmount
+  // Cleanup timeout on unmount and invalidate any in-flight write's callbacks.
   React.useEffect(() => {
     return (): void => {
+      attemptRef.current += 1;
       if (timeoutIdRef.current) {
         clearTimeout(timeoutIdRef.current);
       }

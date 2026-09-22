@@ -739,29 +739,30 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
       format === "markdown"
         ? serializeTableElementToMarkdown(table)
         : serializeTableElementToCsv(table);
-    void writeTextToClipboard(text, "table").then(
-      (didCopy) => {
-        if (!didCopy) return;
-        if (copiedTimerRef.current != null) {
-          clearTimeout(copiedTimerRef.current);
-        }
-        setCopied(true);
-        copiedTimerRef.current = setTimeout(() => {
-          setCopied(false);
-          copiedTimerRef.current = null;
-        }, 1200);
-      },
-      (cause) => {
-        reportMarkdownActionFailure({ operation: "copy-table", format }, cause);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to copy table",
-            description: cause instanceof Error ? cause.message : "An error occurred.",
-          }),
-        );
-      },
-    );
+    const reportFailure = (cause: unknown) => {
+      reportMarkdownActionFailure({ operation: "copy-table", format }, cause);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy table",
+          description: cause instanceof Error ? cause.message : "An error occurred.",
+        }),
+      );
+    };
+    void writeTextToClipboard(text, "table").then((didCopy) => {
+      if (!didCopy) {
+        reportFailure(new Error("Clipboard write produced no result."));
+        return;
+      }
+      if (copiedTimerRef.current != null) {
+        clearTimeout(copiedTimerRef.current);
+      }
+      setCopied(true);
+      copiedTimerRef.current = setTimeout(() => {
+        setCopied(false);
+        copiedTimerRef.current = null;
+      }, 1200);
+    }, reportFailure);
   }, []);
 
   useEffect(
@@ -942,36 +943,37 @@ function MarkdownCodeBlock({
   const copyLabel = copied ? "Copied" : "Copy code";
 
   const handleCopy = useCallback(() => {
-    void writeTextToClipboard(code, "code").then(
-      (didCopy) => {
-        if (!didCopy) return;
-        if (copiedTimerRef.current != null) {
-          clearTimeout(copiedTimerRef.current);
-        }
-        setCopied(true);
-        copiedTimerRef.current = setTimeout(() => {
-          setCopied(false);
-          copiedTimerRef.current = null;
-        }, 1200);
-      },
-      (cause) => {
-        reportMarkdownActionFailure(
-          {
-            operation: "copy-code-block",
-            language,
-            ...(fenceTitle ? { fenceTitle } : {}),
-          },
-          cause,
-        );
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to copy code",
-            description: cause instanceof Error ? cause.message : "An error occurred.",
-          }),
-        );
-      },
-    );
+    const reportFailure = (cause: unknown) => {
+      reportMarkdownActionFailure(
+        {
+          operation: "copy-code-block",
+          language,
+          ...(fenceTitle ? { fenceTitle } : {}),
+        },
+        cause,
+      );
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy code",
+          description: cause instanceof Error ? cause.message : "An error occurred.",
+        }),
+      );
+    };
+    void writeTextToClipboard(code, "code").then((didCopy) => {
+      if (!didCopy) {
+        reportFailure(new Error("Clipboard write produced no result."));
+        return;
+      }
+      if (copiedTimerRef.current != null) {
+        clearTimeout(copiedTimerRef.current);
+      }
+      setCopied(true);
+      copiedTimerRef.current = setTimeout(() => {
+        setCopied(false);
+        copiedTimerRef.current = null;
+      }, 1200);
+    }, reportFailure);
   }, [code, fenceTitle, language]);
 
   useEffect(

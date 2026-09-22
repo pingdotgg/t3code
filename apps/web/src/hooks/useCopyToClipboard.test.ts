@@ -343,4 +343,111 @@ describe("useCopyToClipboard", () => {
     expect(latest!.isCopied).toBe(true);
     expect(onCopy).toHaveBeenCalledOnce();
   });
+
+  it("routes an empty write's no-op result to onError instead of showing copied", async () => {
+    const writeText = vi.fn();
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await act(async () => {
+      root.render(createElement(Probe));
+    });
+
+    await act(async () => {
+      latest!.copyToClipboard("", undefined);
+    });
+
+    expect(writeText).not.toHaveBeenCalled();
+    expect(latest!.isCopied).toBe(false);
+    expect(onCopy).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledOnce();
+  });
+
+  it("ignores a stale failure once a newer attempt already succeeded", async () => {
+    let rejectFirst!: (error: Error) => void;
+    const writeText = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_, reject) => {
+            rejectFirst = reject;
+          }),
+      )
+      .mockResolvedValueOnce(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await act(async () => {
+      root.render(createElement(Probe));
+    });
+
+    await act(async () => {
+      latest!.copyToClipboard("first", undefined);
+      latest!.copyToClipboard("second", undefined);
+    });
+
+    await act(async () => {
+      rejectFirst(new Error("denied"));
+    });
+
+    expect(latest!.isCopied).toBe(true);
+    expect(onCopy).toHaveBeenCalledOnce();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("ignores a stale success once a newer attempt already failed", async () => {
+    let resolveFirst!: () => void;
+    const writeText = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockRejectedValueOnce(new Error("denied"));
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await act(async () => {
+      root.render(createElement(Probe));
+    });
+
+    await act(async () => {
+      latest!.copyToClipboard("first", undefined);
+      latest!.copyToClipboard("second", undefined);
+    });
+    expect(latest!.isCopied).toBe(false);
+
+    await act(async () => {
+      resolveFirst();
+    });
+
+    expect(latest!.isCopied).toBe(false);
+    expect(onCopy).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledOnce();
+  });
+
+  it("does not report a write that resolves after unmount", async () => {
+    let resolveWrite!: () => void;
+    const writeText = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveWrite = resolve;
+        }),
+    );
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    await act(async () => {
+      root.render(createElement(Probe));
+    });
+
+    await act(async () => {
+      latest!.copyToClipboard("report", undefined);
+    });
+    await act(() => root.unmount());
+
+    await act(async () => {
+      resolveWrite();
+    });
+
+    expect(onCopy).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+  });
 });

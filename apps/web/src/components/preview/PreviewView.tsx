@@ -349,29 +349,30 @@ export function PreviewView({
             let pathCopied = false;
             let toastId: ReturnType<typeof toastManager.add>;
 
-            const copyPath = () => {
-              void writeTextToClipboard(artifact.path, "recording path").then(
-                (didCopy) => {
-                  if (!didCopy) return;
-                  pathCopied = true;
-                  updateRecordingToast();
-                  window.setTimeout(() => {
-                    pathCopied = false;
-                    updateRecordingToast();
-                  }, 2_000);
-                },
-                (error) => {
-                  toastManager.update(
-                    toastId,
-                    stackedThreadToast({
-                      type: "error",
-                      title: "Unable to copy recording path",
-                      description: error instanceof Error ? error.message : "An error occurred.",
-                      actionProps: revealAction,
-                    }),
-                  );
-                },
+            const reportCopyFailure = (error: unknown) => {
+              toastManager.update(
+                toastId,
+                stackedThreadToast({
+                  type: "error",
+                  title: "Unable to copy recording path",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                  actionProps: revealAction,
+                }),
               );
+            };
+            const copyPath = () => {
+              void writeTextToClipboard(artifact.path, "recording path").then((didCopy) => {
+                if (!didCopy) {
+                  reportCopyFailure(new Error("Clipboard write produced no result."));
+                  return;
+                }
+                pathCopied = true;
+                updateRecordingToast();
+                window.setTimeout(() => {
+                  pathCopied = false;
+                  updateRecordingToast();
+                }, 2_000);
+              }, reportCopyFailure);
             };
 
             const revealAction = {
