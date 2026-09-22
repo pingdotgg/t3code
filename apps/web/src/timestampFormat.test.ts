@@ -4,6 +4,7 @@ import {
   formatDayAwareTimestamp,
   formatElapsedDurationLabel,
   formatExpiresInLabel,
+  formatFullTimestamp,
   formatRelativeTime,
   formatRelativeTimeLabel,
   formatShortTimestamp,
@@ -75,6 +76,45 @@ describe("resolveWeekStartsOn", () => {
     expect(weekStartsOn).toBe(1);
     vi.unstubAllGlobals();
     vi.resetModules();
+  });
+});
+
+describe("full timestamp details", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it.each([
+    ["en-US", "3:44:09 PM", "Apr 7, 2025"],
+    ["en-GB", "15:44:09", "7 Apr 2025"],
+  ])(
+    "retains date and seconds while changing clock preference in %s",
+    async (locale, localTime, fullDate) => {
+      vi.stubGlobal("window", { desktopBridge: { getSystemLocale: () => locale } });
+      vi.resetModules();
+      const { formatFullTimestamp: full, formatShortTimestamp: short } =
+        await import("./timestampFormat");
+      const date = new Date(2025, 3, 7, 15, 44, 9).toISOString();
+      const normalize = (value: string) => value.replace(/[  ]/g, " ");
+
+      expect(normalize(full(date, "locale"))).toContain(localTime);
+      const twelveHour = normalize(full(date, "12-hour"));
+      expect(twelveHour).toContain(fullDate);
+      expect(twelveHour).toMatch(/3:44:09 [ap]m/i);
+      expect(full(date, "24-hour")).toContain("15:44:09");
+      expect(full(date, "24-hour", false)).toContain("15:44");
+      expect(full(date, "24-hour", false)).not.toContain(":09");
+      expect(short(date, "24-hour", true)).toBe("15:44:09");
+      // Switching back in the same module must not reuse another preference's cached formatter.
+      expect(normalize(full(date, "12-hour"))).toBe(twelveHour);
+    },
+  );
+
+  it("leaves invalid timestamp presentation to the caller", () => {
+    expect(formatFullTimestamp("not-a-date", "24-hour")).toBe("");
+    expect(formatFullTimestamp("not-a-date", "12-hour", false)).toBe("");
+    expect(formatShortTimestamp("not-a-date", "24-hour", true)).toBe("");
   });
 });
 

@@ -20,7 +20,8 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { cn } from "~/lib/utils";
 import { useOpenLink } from "~/browser/useOpenLink";
-import { formatRelativeTimeLabel } from "~/timestampFormat";
+import { useClientSettings } from "~/hooks/useSettings";
+import { formatFullTimestamp, formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Button } from "../ui/button";
 import { PullRequestEditButton } from "./PullRequestEditButton";
@@ -71,6 +72,7 @@ function CommentIdentity({
   comment: PullRequestComment;
   detail: PullRequestDetailView;
 }) {
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const actor = comment.author;
   const profileUrl =
     detail.provider === "github" && actor && !actor.login.endsWith("[bot]")
@@ -101,7 +103,7 @@ function CommentIdentity({
           <time dateTime={comment.createdAt}>{formatRelativeTimeLabel(comment.createdAt)}</time>
         </TooltipTrigger>
         <TooltipPopup>
-          {new Date(comment.createdAt).toLocaleString()}
+          {formatFullTimestamp(comment.createdAt, timestampFormat) || "Invalid Date"}
           {comment.url ? " · Open comment on host" : ""}
         </TooltipPopup>
       </Tooltip>
@@ -366,6 +368,7 @@ function CommentGroup({
   children: ReactNode;
   onOpenChange?: (open: boolean) => void;
 }) {
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const authors = [
     ...new Map(
       comments.map((comment) => [reviewerKey(comment.author?.login ?? "ghost"), comment.author]),
@@ -430,7 +433,9 @@ function CommentGroup({
                     <TooltipTrigger render={<time dateTime={latest} />}>
                       {formatRelativeTimeLabel(latest)}
                     </TooltipTrigger>
-                    <TooltipPopup>{new Date(latest).toLocaleString()}</TooltipPopup>
+                    <TooltipPopup>
+                      {formatFullTimestamp(latest, timestampFormat) || "Invalid Date"}
+                    </TooltipPopup>
                   </Tooltip>
                 </span>
               ) : null}

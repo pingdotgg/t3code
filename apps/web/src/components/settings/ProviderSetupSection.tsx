@@ -14,6 +14,8 @@ import {
 import { useRef, useState } from "react";
 import { Trash2Icon } from "lucide-react";
 
+import { useClientSettings } from "../../hooks/useSettings";
+import { formatShortTimestamp } from "../../timestampFormat";
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { ensureLocalApi } from "../../localApi";
 import { useEnvironmentQuery } from "../../state/query";
@@ -112,6 +114,17 @@ export function ProviderSetupSection(props: ProviderSetupSectionProps) {
         />
       )}
     </section>
+  );
+}
+
+// Kept as its own component so the hook stays out of ProviderSetupActions, which
+// tests invoke as a plain function to inspect the actions tree.
+function AuthLinkExpiry({ expiresAt }: { expiresAt: string }) {
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
+  return (
+    <time dateTime={expiresAt}>
+      {formatShortTimestamp(expiresAt, timestampFormat) || "Invalid Date"}
+    </time>
   );
 }
 
@@ -463,14 +476,7 @@ function ProviderSetupActions({
               <>
                 {auth?.expiresAt ? (
                   <p className="text-muted-foreground">
-                    Link expires at{" "}
-                    <time dateTime={auth.expiresAt}>
-                      {new Date(auth.expiresAt).toLocaleTimeString([], {
-                        hour: "numeric",
-                        minute: "2-digit",
-                      })}
-                    </time>
-                    .
+                    Link expires at <AuthLinkExpiry expiresAt={auth.expiresAt} />.
                   </p>
                 ) : null}
                 <form

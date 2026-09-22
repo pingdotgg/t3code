@@ -1,6 +1,7 @@
 import type { RelayClientDeviceRecord } from "@t3tools/contracts/relay";
 import { SmartphoneIcon } from "lucide-react";
 
+import { useClientSettings } from "../../hooks/useSettings";
 import { useManagedRelayDevices } from "../../cloud/managedRelayState";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -34,6 +35,7 @@ function MobileClientStatusBadge({
 }
 
 function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord }) {
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   return (
     <ClerkUserProfileRow icon={<SmartphoneIcon className="size-4" />}>
       <div className="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
@@ -46,7 +48,7 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
           </p>
         </div>
         <p className="shrink-0 text-[0.6875rem] leading-4 text-muted-foreground/75">
-          {mobileClientUpdatedAtLabel(device.updatedAt)}
+          {mobileClientUpdatedAtLabel(device.updatedAt, timestampFormat)}
         </p>
       </div>
       <div className="mt-2 flex flex-wrap gap-1.5">
