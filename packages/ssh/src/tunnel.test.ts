@@ -16,6 +16,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { SshPasswordPrompt } from "./auth.ts";
+import { collectProcessOutput } from "./command.ts";
 import { SshCommandError } from "./errors.ts";
 import {
   buildRemoteLaunchScript,
@@ -334,9 +335,62 @@ describe("ssh tunnel scripts", () => {
     return Effect.gen(function* () {
       const result = yield* launchOrReuseRemoteServer(target, undefined, ARCHIVE);
       assert.equal(result.remotePort, 3774);
-      assert.deepEqual(spawnedCommands[0]?.slice(-5, -1), ["sh", "-l", "-s", "--"]);
+      assert.deepEqual(spawnedCommands[0]?.slice(-5, -3), ["sh", "-c"]);
     }).pipe(Effect.provide(processLayer));
   });
+
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "loads the user shell environment before running the POSIX bootstrap",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-login-" });
+        const profile = `${root}/bash-env`;
+        yield* fs.writeFileString(
+          profile,
+          'function load_login_env() { export T3_TEST_LOGIN="loaded"; }; load_login_env\n',
+        );
+        let remoteCommand = "";
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.sync(() => {
+            const args = commandArgs(command);
+            remoteCommand = args.slice(args.indexOf("login-test") + 1).join(" ");
+            return makeSuccessfulProcess('{"remotePort":3774}\n');
+          }),
+        );
+        yield* launchOrReuseRemoteServer(
+          { alias: "login-test", hostname: "login-test", username: null, port: null },
+          undefined,
+          ARCHIVE,
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+
+        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        for (const shell of ["/bin/bash", "/bin/sh", ""]) {
+          const child = yield* realSpawner.spawn(
+            ChildProcess.make("/bin/sh", ["-c", remoteCommand], {
+              env: { SHELL: shell, BASH_ENV: profile },
+              stdin: {
+                stream: Stream.make(
+                  new TextEncoder().encode('printf "%s:%s" "${T3_TEST_LOGIN:-posix}" "$1"'),
+                ),
+                endOnDone: true,
+              },
+            }),
+          );
+          const [stdout, stderr, exitCode] = yield* Effect.all(
+            [
+              collectProcessOutput(child.stdout),
+              collectProcessOutput(child.stderr),
+              child.exitCode,
+            ],
+            { concurrency: "unbounded" },
+          );
+          assert.equal(Number(exitCode), 0, stderr);
+          assert.match(stdout, shell === "/bin/bash" ? /^loaded:/ : /^posix:/);
+          assert.match(stdout, /:[a-f0-9]{16}$/);
+        }
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   it.effect("allows cold remote launches to exceed the default SSH command timeout", () => {
     const target = {
@@ -505,7 +559,7 @@ describe("ssh tunnel scripts", () => {
               tunnelKillCount += 1;
             });
           }
-          if (args.includes("sh") && args.includes("--")) {
+          if (args.includes("sh") && args.includes("-c")) {
             return makeSuccessfulProcess('{"remotePort":3773}\n');
           }
           if (args.includes("sh")) {
@@ -626,7 +680,7 @@ describe("ssh tunnel scripts", () => {
               }
               return tunnel;
             }
-            if (args.includes("--")) {
+            if (args.includes("-c")) {
               if (isTarget) {
                 launches += 1;
                 remoteRunning = true;

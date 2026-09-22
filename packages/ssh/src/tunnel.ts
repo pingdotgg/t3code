@@ -879,7 +879,14 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       stateKey: remoteStateKey(target),
     });
     const result = yield* runSshCommand(target, {
-      remoteCommandArgs: ["sh", "-l", "-s", "--", remoteStateKey(target)],
+      // Load the profile with its own shell, then feed the POSIX bootstrap to sh.
+      remoteCommandArgs: [
+        "sh",
+        "-c",
+        shellSingleQuote('exec "${SHELL:-/bin/sh}" -l -c "$1"'),
+        "sh",
+        shellSingleQuote(`exec sh -s -- ${remoteStateKey(target)}`),
+      ],
       stdin: buildRemoteLaunchScript(runner),
       timeoutMs: isNodeScriptRunner(runner)
         ? REMOTE_LAUNCH_TIMEOUT_MS
