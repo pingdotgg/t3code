@@ -4,6 +4,7 @@ import {
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
@@ -75,6 +76,14 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unavailable = connectedEnvironments.length === 0;
+  // File-backed keys show their effective value; the target already carries
+  // the checkout's t3.json, and a null file here only fills the built-in.
+  // The reset arrow beside the title clears the tier (SettingsRow handles a
+  // project override, the environment value is cleared here), so the picker
+  // has no "inherit" item.
+  const effective = target
+    ? resolveProjectSettings(target.settings, null, null, null).settings
+    : null;
 
   function modelDisabledReason(instanceId: ProviderInstanceId, model: string): string | null {
     const sourceEntry = entries.find((entry) => entry.instanceId === instanceId);
@@ -276,30 +285,34 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 ? "Where new threads in this project start."
                 : "Where new threads start. Projects and their t3.json can override it."
             }
+            resetAction={
+              !isProjectScope && settings.defaultThreadEnvMode !== null ? (
+                <SettingResetButton
+                  label="default workspace"
+                  onClick={() => updateSettings({ defaultThreadEnvMode: null })}
+                />
+              ) : null
+            }
             control={
               <Select
-                value={mixedWorkspace ? null : (settings.defaultThreadEnvMode ?? "inherit")}
+                value={mixedWorkspace ? null : (effective?.defaultThreadEnvMode ?? null)}
                 onValueChange={(value) => {
-                  if (value === "inherit") updateSettings({ defaultThreadEnvMode: null });
-                  else if (value === "local" || value === "worktree")
+                  if (value === "local" || value === "worktree")
                     updateSettings({ defaultThreadEnvMode: value });
                 }}
               >
                 <SelectTrigger size="sm" aria-label="Default workspace">
                   <SelectValue>
                     {(value: string | null) =>
-                      value === "inherit"
-                        ? "Inherit"
-                        : value === "local" || value === "worktree"
-                          ? resolveEnvModeLabel(value)
-                          : unavailable
-                            ? "Unavailable"
-                            : "Mixed"
+                      value === "local" || value === "worktree"
+                        ? resolveEnvModeLabel(value)
+                        : unavailable
+                          ? "Unavailable"
+                          : "Mixed"
                     }
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="inherit">Inherit</SelectItem>
                   <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
                   <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
                 </SelectPopup>

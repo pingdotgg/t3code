@@ -54,10 +54,11 @@ const WORKSPACE_CHOICES: ReadonlyArray<{
   readonly label: string;
   readonly description: string;
 }> = [
+  // Only offered at environment scope; a project falls back through "Use defaults".
   {
     mode: null,
     label: "Inherit",
-    description: "Use the environment's setting or the repository's t3.json.",
+    description: "Use the repository's t3.json, or the current checkout.",
   },
   {
     mode: "local",
@@ -233,7 +234,9 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       ) : null
                     }
                   >
-                    {WORKSPACE_CHOICES.map((choice, index) => (
+                    {WORKSPACE_CHOICES.filter(
+                      (choice) => choice.mode !== null || !projectSelected,
+                    ).map((choice, index) => (
                       <ChoiceRow
                         key={choice.mode ?? "inherit"}
                         label={choice.label}
