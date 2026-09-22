@@ -91,9 +91,13 @@ import {
 const threadOutboxDebug = createDebugLogger("thread-outbox");
 
 /**
- * The RPC transport tags also cover client-side response-decoding defects —
- * abnormal server responses, not offline behavior. Those still retry, but
- * they must not hide behind the ordinary-offline debug log.
+ * On the queued-request path (settings sync, startTurn) the RPC client
+ * reports ordinary transport drops as the raw socket/worker reason tags, and
+ * reserves `RpcClientDefect` for client-side protocol violations and decoding
+ * failures — unlike the shared config-subscription stream, which
+ * deliberately re-wraps transport causes under that tag. Defects still retry,
+ * but they are not ordinary offline behavior and must not hide behind the
+ * offline debug log.
  */
 function isRpcClientDecodeDefect(error: unknown): boolean {
   if (
