@@ -18,6 +18,9 @@ import {
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 
 const ROW_SELECTOR = "[data-timeline-row-id]";
+/** The parts of a row whose text is counted; row chrome such as the hidden author heading is not. */
+const BODY_SELECTOR =
+  "[data-user-message-body], [data-assistant-citation-source], [data-chat-find-body]";
 const REVEAL_EDGE_MARGIN = 48;
 /** Frames to wait for a pinned row to be measured before giving up on the fine scroll. */
 const MAX_REVEAL_ATTEMPTS = 60;
@@ -35,6 +38,8 @@ export function useChatFind({
   rows,
   listRef,
   viewport,
+  cwd,
+  bottomInset,
   onExpandTurn,
   onManualNavigation,
 }: {
@@ -43,44 +48,54 @@ export function useChatFind({
   rows: ReadonlyArray<MessagesTimelineRow>;
   listRef: RefObject<LegendListRef | null>;
   viewport: HTMLElement | null;
+  cwd: string | undefined;
+  /** Height of the composer overlay covering the bottom of the scroll node. */
+  bottomInset: number;
   onExpandTurn: (turnId: TurnId) => void;
   onManualNavigation: () => void;
 }) {
   const [query, setQueryState] = useState("");
   const pattern = useMemo(() => (enabled ? buildChatFindPattern(query) : null), [enabled, query]);
-  const matches = useMemo(() => collectChatFindMatches(entries, pattern), [entries, pattern]);
+  const matches = useMemo(
+    () => collectChatFindMatches(entries, pattern, cwd),
+    [cwd, entries, pattern],
+  );
   // The stepped-to match, kept by identity while history prepends or streams.
   const [selection, setSelection] = useState<ChatFindMatch | null>(null);
+  // Each step is its own reveal request, so Enter re-reveals a lone result
+  // and re-unfolds a turn that folded again since the last visit.
+  const [revealRequest, setRevealRequest] = useState(0);
   // A new query restarts from the first match; stepping picks one explicitly.
   const setQuery = useCallback((next: string) => {
     setQueryState(next);
     setSelection(null);
   }, []);
+  // The first match is adopted as the selection so a prepended page cannot move it.
+  if (selection === null && matches.length > 0) setSelection(matches[0]!);
   const activeIndex = resolveActiveMatchIndex(matches, selection);
   const activeMatch = activeIndex >= 0 ? (matches[activeIndex] ?? null) : null;
   const targetKey = activeMatch
-    ? JSON.stringify([query, activeMatch.entryId, activeMatch.occurrence])
+    ? JSON.stringify([query, activeMatch.entryId, activeMatch.occurrence, revealRequest])
     : null;
 
   const navigatedKeyRef = useRef<string | null>(null);
   const expandedKeyRef = useRef<string | null>(null);
   const pendingRevealRef = useRef<{ rowId: string; attempts: number } | null>(null);
   const scheduleRef = useRef<() => void>(() => {});
-  const paintStateRef = useRef({ pattern, matches, activeMatch });
+  const paintStateRef = useRef({ pattern, matches, activeMatch, bottomInset });
   // The painter reads the latest matches at frame time instead of re-subscribing per update.
   useEffect(() => {
-    paintStateRef.current = { pattern, matches, activeMatch };
+    paintStateRef.current = { pattern, matches, activeMatch, bottomInset };
     scheduleRef.current();
-  }, [pattern, matches, activeMatch]);
+  }, [activeMatch, bottomInset, matches, pattern]);
 
   const step = useCallback(
     (direction: 1 | -1) => {
       const next = stepChatFindIndex(activeIndex, matches.length, direction);
       const match = next >= 0 ? matches[next] : undefined;
       if (!match) return;
-      // Re-reveal even when the match is unchanged, as with a single result.
-      navigatedKeyRef.current = null;
       setSelection(match);
+      setRevealRequest((request) => request + 1);
     },
     [activeIndex, matches],
   );
@@ -142,24 +157,35 @@ export function useChatFind({
       for (const rowElement of scrollNode.querySelectorAll<HTMLElement>(ROW_SELECTOR)) {
         const rowId = rowElement.dataset.timelineRowId;
         if (rowId === undefined || !matchedEntryIds.has(rowId)) continue;
-        const rowRanges = collectChatFindRanges(rowElement, state.pattern);
+        const bodies = rowElement.querySelectorAll<HTMLElement>(BODY_SELECTOR);
+        const rowRanges = collectChatFindRanges(
+          bodies.length > 0 ? bodies : [rowElement],
+          state.pattern,
+        );
         if (state.activeMatch !== null && rowId === state.activeMatch.entryId) {
-          activeRange =
-            rowRanges[Math.min(state.activeMatch.occurrence, rowRanges.length - 1)] ?? null;
+          // Source text can count hits the renderer never shows; fall back to
+          // the last painted one so stepping still lands in the right row.
+          const exact = rowRanges[state.activeMatch.occurrence];
+          activeRange = exact ?? rowRanges[rowRanges.length - 1] ?? null;
           const pending = pendingRevealRef.current;
           if (pending?.rowId === rowId) {
             const listState = list.getState();
             const index = listState.indexByKey(rowId);
             const settled = index !== undefined && listState.sizeAtIndex(index) > 0;
-            // Estimated rows have not settled, or clipped content is still
-            // expanding for this match; try again after the next layout.
-            if (settled && activeRange) {
+            // Wait until the row is measured and the exact range exists: a
+            // clipped body may still be expanding and a code block may still
+            // show its loading fallback.
+            if (
+              settled &&
+              exact !== undefined &&
+              revealRange(exact, scrollNode, list, state.bottomInset)
+            ) {
               pendingRevealRef.current = null;
-              revealRange(activeRange, scrollNode, list);
             } else if (pending.attempts++ < MAX_REVEAL_ATTEMPTS) {
               schedule();
             } else {
               pendingRevealRef.current = null;
+              if (activeRange) revealRange(activeRange, scrollNode, list, state.bottomInset);
             }
           }
         }
@@ -170,11 +196,20 @@ export function useChatFind({
     scheduleRef.current = schedule;
     const observer = new MutationObserver(schedule);
     observer.observe(scrollNode, { childList: true, characterData: true, subtree: true });
+    // The user taking over the scroll position ends a pending reveal.
+    const cancelReveal = () => {
+      pendingRevealRef.current = null;
+    };
+    const cancelEvents = ["wheel", "touchmove", "pointerdown"] as const;
+    for (const type of cancelEvents) {
+      scrollNode.addEventListener(type, cancelReveal, { passive: true });
+    }
     schedule();
     return () => {
       stopped = true;
       scheduleRef.current = () => {};
       observer.disconnect();
+      for (const type of cancelEvents) scrollNode.removeEventListener(type, cancelReveal);
       if (frame !== null) cancelAnimationFrame(frame);
       clearChatFindHighlights();
     };
@@ -196,23 +231,28 @@ export function useChatFind({
   };
 }
 
-function revealRange(range: Range, scrollNode: HTMLElement, list: LegendListRef) {
+/**
+ * Scrolls the range into the part of the viewport not covered by the composer.
+ * Returns false while the target is not reachable yet, because the list has
+ * not measured the row's expanded size, so the caller retries next frame.
+ */
+function revealRange(
+  range: Range,
+  scrollNode: HTMLElement,
+  list: LegendListRef,
+  bottomInset: number,
+): boolean {
   const rect = range.getBoundingClientRect();
   const scrollRect = scrollNode.getBoundingClientRect();
-  if (rect.height <= 0 || scrollNode.clientHeight <= 0) return;
-  const visible =
-    rect.top >= scrollRect.top + REVEAL_EDGE_MARGIN &&
-    rect.bottom <= scrollRect.bottom - REVEAL_EDGE_MARGIN;
-  if (visible) return;
-  const offset = Math.max(
-    0,
-    Math.min(
-      scrollNode.scrollHeight - scrollNode.clientHeight,
-      list.getState().scroll +
-        rect.top -
-        scrollRect.top -
-        Math.min(160, scrollNode.clientHeight / 3),
-    ),
-  );
-  void list.scrollToOffset({ offset, animated: false });
+  if (rect.height <= 0 || scrollNode.clientHeight <= 0) return false;
+  const visibleTop = scrollRect.top + REVEAL_EDGE_MARGIN;
+  const visibleBottom = scrollRect.bottom - bottomInset - REVEAL_EDGE_MARGIN;
+  if (rect.top >= visibleTop && rect.bottom <= visibleBottom) return true;
+  const maxOffset = scrollNode.scrollHeight - scrollNode.clientHeight;
+  const current = list.getState().scroll;
+  const wanted = current + rect.top - scrollRect.top - Math.min(160, scrollNode.clientHeight / 3);
+  const offset = Math.max(0, Math.min(maxOffset, wanted));
+  if (Math.abs(offset - current) >= 1) void list.scrollToOffset({ offset, animated: false });
+  // A clamped scroll from anywhere but the end means the row is not measured yet.
+  return wanted <= maxOffset || current >= maxOffset - 1;
 }

@@ -961,22 +961,35 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     onExpandTurn: expandCitedTurn,
     onManualNavigation,
   });
-  const findOpen = useChatFindStore((store) => store.open);
+  const findStoreOpen = useChatFindStore((store) => store.open);
   const findFocusRequestId = useChatFindStore((store) => store.focusRequestId);
   const hideFind = useChatFindStore((store) => store.hide);
-  // Find is scoped to one thread; switching threads closes it.
-  const findThreadKeyRef = useRef(listIdentityKey);
+  // Find binds to the thread that had rows on screen when it was requested.
+  // A request that predates this mount, or arrives while nothing is rendered,
+  // is consumed without opening, so a remounted timeline never brings the bar
+  // back or steals focus; switching threads in place closes it in the same
+  // render rather than one effect later.
+  const [findScope, setFindScope] = useState<{ requestId: number; threadKey: string | null }>(
+    () => ({ requestId: findFocusRequestId, threadKey: null }),
+  );
+  if (findScope.requestId !== findFocusRequestId) {
+    setFindScope({
+      requestId: findFocusRequestId,
+      threadKey: rows.length > 0 ? listIdentityKey : null,
+    });
+  }
+  const findOpen = findStoreOpen && findScope.threadKey === listIdentityKey;
   useEffect(() => {
-    if (findThreadKeyRef.current === listIdentityKey) return;
-    findThreadKeyRef.current = listIdentityKey;
-    hideFind();
-  }, [hideFind, listIdentityKey]);
+    if (findStoreOpen && !findOpen) hideFind();
+  }, [findOpen, findStoreOpen, hideFind]);
   const chatFind = useChatFind({
     enabled: findOpen,
     entries: timelineEntries,
     rows,
     listRef,
     viewport: timelineViewportElement,
+    cwd: markdownCwd,
+    bottomInset: contentInsetEndAdjustment,
     onExpandTurn: expandCitedTurn,
     onManualNavigation,
   });
@@ -4050,14 +4063,20 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   markdownCwd: string | undefined;
   footer?: ReactNode;
-  /** A find match landed inside; open the clipped body so it can be seen. */
+  /** A find match landed inside; expand the clipped body so it can be seen. */
   revealed?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // A find match inside the clipped body expands it for real, so the collapse
+  // button keeps working and the text stays once find closes.
+  const [revealedSeen, setRevealedSeen] = useState(props.revealed === true);
+  if ((props.revealed === true) !== revealedSeen) {
+    setRevealedSeen(props.revealed === true);
+    if (props.revealed) setExpanded(true);
+  }
   const hasVisibleBody = props.text.trim().length > 0;
   const canCollapse = hasVisibleBody && shouldCollapseUserMessage(props.text);
-  // The find bar holds the body open while its active match is inside.
-  const isCollapsed = canCollapse && !expanded && props.revealed !== true;
+  const isCollapsed = canCollapse && !expanded;
 
   return (
     <div>

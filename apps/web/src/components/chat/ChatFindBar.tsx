@@ -60,7 +60,7 @@ export function ChatFindBar({
       aria-label="Find in thread"
       className="surface-glass absolute top-2 right-4 z-30 flex items-center gap-0.5 rounded-lg border border-border/60 p-1 shadow-sm"
       onKeyDown={(event) => {
-        if (event.nativeEvent.isComposing) return;
+        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
         if (event.key === "Escape") {
           event.preventDefault();
           event.stopPropagation();

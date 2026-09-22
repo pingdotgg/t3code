@@ -46,10 +46,17 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   threadRef?: ScopedThreadRef | undefined;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
-  /** A find match landed inside; open the collapsed preview so it can be seen. */
+  /** A find match landed inside; expand the collapsed preview so it can be seen. */
   revealed?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // A find match inside the clipped preview opens the plan for real, so the
+  // collapse button keeps working and the text stays once find closes.
+  const [revealedSeen, setRevealedSeen] = useState(revealed);
+  if (revealed !== revealedSeen) {
+    setRevealedSeen(revealed);
+    if (revealed) setExpanded(true);
+  }
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [savePath, setSavePath] = useState("");
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
@@ -72,8 +79,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   const title = proposedPlanTitle(planMarkdown) ?? "Proposed plan";
   const lineCount = planMarkdown.split("\n").length;
   const canCollapse = planMarkdown.length > 900 || lineCount > 20;
-  // The find bar holds the plan open while its active match is inside.
-  const isCollapsed = canCollapse && !expanded && !revealed;
+  const isCollapsed = canCollapse && !expanded;
   const displayedPlanMarkdown = stripDisplayedPlanMarkdown(planMarkdown);
   const collapsedPreview = canCollapse
     ? buildCollapsedProposedPlanPreviewMarkdown(planMarkdown, { maxLines: 10 })
@@ -157,7 +163,9 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
           <Badge variant="secondary">Plan</Badge>
           {/* Same heading level as the message author headings in the timeline,
               so a plan's own headings nest beneath it in the outline. */}
-          <h3 className="truncate text-sm font-medium text-foreground">{title}</h3>
+          <h3 className="truncate text-sm font-medium text-foreground" data-chat-find-body="true">
+            {title}
+          </h3>
         </div>
         <Menu>
           <MenuTrigger
@@ -177,7 +185,10 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         </Menu>
       </div>
       <div className="mt-4">
-        <div className={cn("relative", isCollapsed && "max-h-104 overflow-hidden")}>
+        <div
+          className={cn("relative", isCollapsed && "max-h-104 overflow-hidden")}
+          data-chat-find-body="true"
+        >
           {isCollapsed ? (
             <ChatMarkdown
               text={collapsedPreview ?? ""}

@@ -81,9 +81,48 @@ describe("markdownSearchText", () => {
     expect(
       markdownSearchText("Use **bold** and _em_ with `code` and [docs](https://x.test/a)."),
     ).toBe("Use bold and em with code and docs.");
-    expect(markdownSearchText("![alt text](https://x.test/i.png) <https://x.test>")).toBe(
-      "alt text https://x.test",
+    // Images render no text, so their alt is not counted.
+    expect(markdownSearchText("![alt text](https://x.test/i.png) <https://x.test>").trim()).toBe(
+      "https://x.test",
     );
+  });
+
+  it("keeps escaped punctuation and character references as rendered", () => {
+    expect(
+      markdownSearchText("**MAX\\_RETRIES** and \\*not em\\* &lt;div&gt; &amp; &#39;x&#39; &#x41;"),
+    ).toBe("MAX_RETRIES and *not em* <div> & 'x' A");
+  });
+
+  it("drops table pipes but keeps cell text", () => {
+    const text = markdownSearchText("| a | b |\n|---|---|\n| alpha | beta |");
+    expect(text.replace(/\s+/g, " ").trim()).toBe("a b alpha beta");
+    expect(text).not.toContain("|");
+  });
+
+  it("restores code that was captured inside another fence", () => {
+    const text = markdownSearchText("~~~~\n```sh\nnpm install\n```\n~~~~");
+    expect(text).toContain("npm install");
+    expect(text).not.toContain("\uE000");
+  });
+
+  it("keeps raw HTML literal when the renderer does", () => {
+    expect(markdownSearchText("Why does <Suspense> fail?", { rawHtml: false })).toBe(
+      "Why does <Suspense> fail?",
+    );
+    expect(markdownSearchText("Why does <Suspense> fail?")).toBe("Why does  fail?");
+  });
+
+  it("replaces file paths with the chip label the renderer shows", () => {
+    expect(
+      markdownSearchText("I changed `apps/web/src/ChatView.tsx` and `src/wsServer.ts:120`.", {
+        cwd: "/repo",
+      }),
+    ).toBe("I changed ChatView.tsx and wsServer.ts · L120.");
+    expect(
+      markdownSearchText("see [the file](</repo/src/bar.ts>) and [docs](https://x.test)"),
+    ).toBe("see bar.ts and docs");
+    // Without a workspace, a relative path is plain code.
+    expect(markdownSearchText("run `src/index.ts`")).toBe("run src/index.ts");
   });
 
   it("drops block markers but keeps content", () => {
@@ -137,6 +176,43 @@ describe("collectChatFindMatches", () => {
 
   it("skips entries that are not messages or plans", () => {
     expect(chatFindEntrySource({ kind: "work" } as unknown as TimelineEntry)).toBeNull();
+  });
+
+  it("counts user text the way the user row renders it", () => {
+    const entries = [
+      message("u1", "Why does <Suspense> not catch it? [ctx](t3-context://v1/file/abc123)"),
+    ];
+    expect(collectChatFindMatches(entries, buildChatFindPattern("suspense"))).toHaveLength(1);
+    // Context chips are buttons with no text.
+    expect(collectChatFindMatches(entries, buildChatFindPattern("ctx"))).toEqual([]);
+  });
+
+  it("counts Codex file citations by the chip label they render as", () => {
+    const entries = [
+      message("a1", 'See :codex-file-citation{path="/repo/apps/web/src/lib/bar.ts"} now.', {
+        role: "assistant",
+      }),
+    ];
+    expect(collectChatFindMatches(entries, buildChatFindPattern("bar.ts"))).toHaveLength(1);
+    expect(collectChatFindMatches(entries, buildChatFindPattern("src"))).toEqual([]);
+  });
+
+  it("counts a plan as its card shows it: title, then body without the title heading", () => {
+    const entries = [plan("p1", "# Fix login\n\n## Summary\n\nDo X to fix login")];
+    expect(collectChatFindMatches(entries, buildChatFindPattern("fix login"))).toHaveLength(2);
+    expect(collectChatFindMatches(entries, buildChatFindPattern("summary"))).toEqual([]);
+    expect(
+      collectChatFindMatches([plan("p2", "Just do it")], buildChatFindPattern("proposed plan")),
+    ).toHaveLength(1);
+  });
+
+  it("reuses the normalized text while an entry is unchanged", () => {
+    const entry = message("m1", "**bold** text");
+    const first = chatFindEntrySource(entry)!.text;
+    expect(chatFindEntrySource(entry)!.text).toBe(first);
+    expect(
+      chatFindEntrySource({ ...entry, message: { ...entry.message, text: "plain" } })!.text,
+    ).toBe("plain");
   });
 
   it("skips thinking and system messages, which have no row of their own", () => {

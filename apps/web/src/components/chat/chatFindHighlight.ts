@@ -1,10 +1,10 @@
 import { readAssistantText, type RenderedTextChunk } from "../../lib/assistantTextSelection";
 import { findPatternSpans, type TextSpan } from "./ChatFind.logic";
 
-export const CHAT_FIND_HIGHLIGHT_NAME = "t3-chat-find";
-export const CHAT_FIND_ACTIVE_HIGHLIGHT_NAME = "t3-chat-find-active";
+const CHAT_FIND_HIGHLIGHT_NAME = "t3-chat-find";
+const CHAT_FIND_ACTIVE_HIGHLIGHT_NAME = "t3-chat-find-active";
 
-export function supportsChatFindHighlights(): boolean {
+function supportsChatFindHighlights(): boolean {
   return (
     typeof Highlight !== "undefined" && typeof CSS !== "undefined" && CSS.highlights !== undefined
   );
@@ -33,17 +33,22 @@ export function resolveChunkBoundaries<TChunk extends { start: number; end: numb
   };
 }
 
-/** Ranges for every match rendered inside `root`, in document order. */
-export function collectChatFindRanges(root: HTMLElement, pattern: RegExp): Range[] {
-  const stream = readAssistantText(root);
+/**
+ * Ranges for every match rendered inside `roots`, in document order. Roots are
+ * the body elements of one row, given in the order their text is counted.
+ */
+export function collectChatFindRanges(roots: Iterable<HTMLElement>, pattern: RegExp): Range[] {
   const ranges: Range[] = [];
-  for (const span of findPatternSpans(stream.text, pattern)) {
-    const boundaries = resolveChunkBoundaries<RenderedTextChunk>(stream.chunks, span);
-    if (boundaries === null) continue;
-    const range = root.ownerDocument.createRange();
-    range.setStart(boundaries.start.chunk.node, boundaries.start.offset);
-    range.setEnd(boundaries.end.chunk.node, boundaries.end.offset);
-    if (!range.collapsed) ranges.push(range);
+  for (const root of roots) {
+    const stream = readAssistantText(root);
+    for (const span of findPatternSpans(stream.text, pattern)) {
+      const boundaries = resolveChunkBoundaries<RenderedTextChunk>(stream.chunks, span);
+      if (boundaries === null) continue;
+      const range = root.ownerDocument.createRange();
+      range.setStart(boundaries.start.chunk.node, boundaries.start.offset);
+      range.setEnd(boundaries.end.chunk.node, boundaries.end.offset);
+      if (!range.collapsed) ranges.push(range);
+    }
   }
   return ranges;
 }
