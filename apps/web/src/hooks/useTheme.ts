@@ -294,6 +294,13 @@ function resolveBrowserChromeSurface(): HTMLElement {
 export function syncBrowserChromeTheme() {
   if (typeof document === "undefined" || typeof getComputedStyle === "undefined") return;
   const rootStyles = getComputedStyle(document.documentElement);
+  // With a background scene active, the scene's solid canvas tint is the
+  // stable chrome color: the live surface colors are translucent glass and
+  // would hand the OS window frame a semi-transparent fill.
+  const backdropTint =
+    document.documentElement.dataset.appBackdrop === "on"
+      ? normalizeThemeColor(rootStyles.getPropertyValue("--app-backdrop-tint"))
+      : null;
   const themeChromeColor = document.documentElement.dataset.themeId
     ? normalizeThemeColor(rootStyles.getPropertyValue("--app-chrome-background"))
     : null;
@@ -301,7 +308,7 @@ export function syncBrowserChromeTheme() {
     getComputedStyle(resolveBrowserChromeSurface()).backgroundColor,
   );
   const fallbackColor = normalizeThemeColor(getComputedStyle(document.body).backgroundColor);
-  const backgroundColor = themeChromeColor ?? surfaceColor ?? fallbackColor;
+  const backgroundColor = backdropTint ?? themeChromeColor ?? surfaceColor ?? fallbackColor;
   if (!backgroundColor) return;
 
   document.documentElement.style.backgroundColor = backgroundColor;
