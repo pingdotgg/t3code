@@ -1,6 +1,9 @@
 name: Build Windows Installer (PR)
 
 on:
+  push:
+    branches:
+      - fix/antigravity-system-message-leak
   workflow_dispatch:
 
 jobs:
