@@ -63,6 +63,17 @@ export function ProviderAuthenticationSection({
   const signedIn =
     provider.auth.status === "authenticated" ||
     (provider.auth.status === "unknown" && auth?.phase === "succeeded");
+  const isDiscovering =
+    provider.driver === "acpRegistry" &&
+    !active &&
+    !signedIn &&
+    !query.error &&
+    auth?.methods === undefined;
+  const needsExternalSetup =
+    !active &&
+    !signedIn &&
+    (provider.setup?.canAuthenticate === false ||
+      (provider.driver === "acpRegistry" && auth?.methods?.length === 0));
   const accountDescription = active
     ? auth?.phase === "starting"
       ? "Starting sign-in…"
@@ -75,9 +86,13 @@ export function ProviderAuthenticationSection({
             : "Finish signing in in your browser."
     : signedIn
       ? "Signed in."
-      : `Sign in on ${environmentLabel}.`;
+      : isDiscovering
+        ? "Discovering sign-in methods…"
+        : needsExternalSetup
+          ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
+          : `Sign in on ${environmentLabel}.`;
   const statusMessage = auth?.phase === "failed" ? auth.message : null;
-  const disabled = readOnly || pending || query.error !== null;
+  const disabled = readOnly || pending || query.error !== null || isDiscovering;
   const draftId = `${auth?.flowId ?? ""}:${interaction?.id ?? ""}`;
   const values = draft.id === draftId ? draft.values : {};
   const url =
@@ -229,7 +244,17 @@ export function ProviderAuthenticationSection({
             </>
           ) : null}
           <>
-            {active && auth?.flowId ? (
+            {needsExternalSetup && provider.setup?.documentationUrl ? (
+              <Button
+                size="sm"
+                variant="outline"
+                render={
+                  <a href={provider.setup.documentationUrl} target="_blank" rel="noreferrer" />
+                }
+              >
+                Open docs
+              </Button>
+            ) : active && auth?.flowId ? (
               <Button
                 size="sm"
                 variant="ghost-muted"
@@ -243,7 +268,7 @@ export function ProviderAuthenticationSection({
               >
                 Cancel
               </Button>
-            ) : !active && provider.setup?.canAuthenticate !== false ? (
+            ) : !active && !needsExternalSetup && provider.setup?.canAuthenticate !== false ? (
               <Button
                 size="sm"
                 variant="outline"

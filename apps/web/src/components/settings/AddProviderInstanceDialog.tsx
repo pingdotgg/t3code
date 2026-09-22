@@ -356,6 +356,7 @@ export function AddProviderInstanceDialog({
         ) : (
           <>
             <WizardPanel
+              className={cn(isAcpRegistry && wizardStep === identityStep && "min-h-72")}
               holdHeight={wizardStep === 0 && !isManualAcpConfiguration && isRegistryLoading}
             >
               <div className={cn("grid gap-2", wizardStep !== 0 && "hidden")}>

@@ -63,7 +63,6 @@ export const makeProviderAuthFlow = Effect.fn("makeProviderAuthFlow")(function* 
     expiresAt: null,
     message: null,
     interaction: null,
-    methods: [],
     credentialOwner: options.credentialBinding.owner,
   };
   const snapshot = yield* SubscriptionRef.make({ owner: null as string | null, state: empty });
@@ -108,7 +107,12 @@ export const makeProviderAuthFlow = Effect.fn("makeProviderAuthFlow")(function* 
         state: { ...current.state, methods },
       })),
     ),
-    Effect.catch(() => Effect.void),
+    Effect.catch((error) =>
+      SubscriptionRef.update(snapshot, (current) => ({
+        ...current,
+        state: { ...current.state, methods: [], message: error.detail },
+      })),
+    ),
   );
   yield* refreshMethods.pipe(Effect.forkIn(scope));
 

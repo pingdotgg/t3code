@@ -33,26 +33,54 @@ export function ProviderWizardAuthenticationStep({
   const signedIn =
     provider?.auth.status === "authenticated" ||
     (provider?.auth.status === "unknown" && auth?.phase === "succeeded");
+  const isDiscovering = !signedIn && !query.error && auth?.methods === undefined;
+  const canAuthenticate = (auth?.methods?.length ?? 0) > 0;
 
   return (
     <>
-      <WizardPanel>
+      <WizardPanel className="min-h-72">
         <SettingsGroup variant="plain">
-          {provider && (provider.setup?.canAuthenticate || signedIn) ? (
+          {provider && (canAuthenticate || signedIn) ? (
             <ProviderAuthenticationSection
               environmentId={environmentId}
               environmentLabel={environmentLabel}
               instanceId={instanceId}
-              provider={provider}
+              provider={{
+                ...provider,
+                setup: {
+                  ...provider.setup,
+                  canInstall: provider.setup?.canInstall ?? false,
+                  canAuthenticate,
+                },
+              }}
               readOnly={false}
             />
           ) : (
             <SettingsRow
               title="Account"
               description={
-                provider?.installed
-                  ? "This agent does not advertise in-app sign-in. You can finish setup later."
-                  : (provider?.message ?? "Preparing provider sign-in…")
+                isDiscovering
+                  ? "Discovering sign-in methods…"
+                  : (query.error ??
+                    auth?.message ??
+                    "No in-app sign-in advertised. Follow the provider's docs to finish setup.")
+              }
+              control={
+                isDiscovering ? (
+                  <Button disabled size="sm" variant="outline">
+                    Sign in
+                  </Button>
+                ) : provider?.setup?.documentationUrl ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    render={
+                      <a href={provider.setup.documentationUrl} target="_blank" rel="noreferrer" />
+                    }
+                  >
+                    Open docs
+                  </Button>
+                ) : undefined
               }
             />
           )}

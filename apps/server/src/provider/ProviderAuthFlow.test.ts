@@ -12,6 +12,30 @@ import { makeProviderAuthFlow } from "./ProviderAuthFlow.ts";
 const instanceId = ProviderInstanceId.make("auth-flow-test");
 const method = { id: "browser", name: "Browser", description: null, type: "agent" as const };
 
+it.effect("distinguishes pending method discovery from an agent with no sign-in methods", () =>
+  Effect.gen(function* () {
+    const discovered = yield* Deferred.make<ReadonlyArray<typeof method>>();
+    const controller = yield* makeProviderAuthFlow({
+      instanceId,
+      credentialBinding: { owner: "provider", key: "shared-agent" },
+      methods: Deferred.await(discovered),
+      authenticate: () => Effect.void,
+      logout: Effect.void,
+    });
+    const pending = yield* controller
+      .subscribe("owner")
+      .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+    assert.isUndefined(pending.methods);
+    yield* Deferred.succeed(discovered, []);
+    const ready = yield* controller.subscribe("owner").pipe(
+      Stream.filter((state) => state.methods !== undefined),
+      Stream.runHead,
+      Effect.map(Option.getOrThrow),
+    );
+    assert.deepEqual(ready.methods, []);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 const makeHarness = Effect.gen(function* () {
   const approved = yield* Deferred.make<void>();
   const verified = yield* Deferred.make<void>();
