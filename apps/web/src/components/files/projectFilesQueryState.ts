@@ -129,7 +129,8 @@ export function resolveProjectFileQueryData(
   relativePath: string | null,
   data: ProjectReadFileResult | null,
 ): ProjectReadFileResult | null {
-  if (relativePath === null) return data;
+  // A truncated read has no write authority; an optimistic draft must not hide it.
+  if (relativePath === null || data?.truncated) return data;
   return appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath))?.data ?? data;
 }
 
@@ -226,7 +227,8 @@ export function useProjectFileQuery(
   const cause = failureCause(result);
 
   return {
-    data: optimisticFile?.data ?? data,
+    // A truncated read has no write authority; an optimistic draft must not hide it.
+    data: data?.truncated ? data : (optimisticFile?.data ?? data),
     error: errorMessage(cause),
     isNotFile: isProjectReadFileError(cause) && cause.failure === "path_not_file",
     isPending: result.waiting,
