@@ -431,13 +431,15 @@ describe("thread outbox drain delivery cleanup", () => {
     // Losing the cleanup race to an edit is expected; it must not warn.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     let outcome: "edited" | "failed" | "removed";
+    let warnCalls: ReadonlyArray<unknown[]>;
     try {
       outcome = await completeQueuedMessageDelivery(message, deliveryRevision);
+      warnCalls = [...warn.mock.calls];
     } finally {
       warn.mockRestore();
     }
     expect(outcome).toBe("edited");
-    expect(warn).not.toHaveBeenCalled();
+    expect(warnCalls).toEqual([]);
 
     expect(remainingMessages()).toEqual([edited]);
     expect(harness.removePersistedFile).not.toHaveBeenCalled();
@@ -779,7 +781,8 @@ describe("thread outbox failure logging", () => {
   // Tagged errors match shouldRetryThreadOutboxDelivery's transport tags, so
   // the assertions cover the real failure classification, not a
   // predetermined action argument.
-  const transportError = { _tag: "RpcClientError" };
+  const transportError = { _tag: "RpcClientError", reason: { _tag: "SocketClose" } };
+  const decodeDefectError = { _tag: "RpcClientError", reason: { _tag: "RpcClientDefect" } };
   const serverDecidedError = { _tag: "OrchestrationDispatchCommandError" };
 
   function failureLogging(input: Parameters<typeof logThreadOutboxDeliveryFailure>[0]): {
@@ -867,33 +870,59 @@ describe("thread outbox failure logging", () => {
     ]);
   });
 
+  it("warns on an rpc response-decoding defect even though it resolves to a retry", () => {
+    const { action, warnCalls } = failureLogging({
+      stage: "start-turn",
+      error: decodeDefectError,
+      interrupted: false,
+      context: { messageId: "m4" },
+    });
+    expect(action).toBe("retry");
+    expect(warnCalls).toEqual([
+      [
+        "[thread-outbox] queued message delivery failed",
+        expect.objectContaining({ stage: "start-turn", action: "retry" }),
+      ],
+    ]);
+  });
+
   it("routes retryable attachment-upload failures to the debug log and warns on the rest", () => {
+    const message = queuedMessage({ messageId: "m-upload", text: "with file" });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
-      logThreadOutboxUploadFailure(transportError);
+      logThreadOutboxUploadFailure(message, transportError);
       expect(warn).not.toHaveBeenCalled();
       expect(log).not.toHaveBeenCalled();
 
-      logThreadOutboxUploadFailure(serverDecidedError);
-      expect(warn).toHaveBeenCalledWith(
-        "[thread-outbox] failed to upload attachments",
-        serverDecidedError,
-      );
+      logThreadOutboxUploadFailure(message, serverDecidedError);
+      expect(warn).toHaveBeenCalledWith("[thread-outbox] failed to upload attachments", {
+        environmentId: message.environmentId,
+        threadId: message.threadId,
+        messageId: "m-upload",
+        error: serverDecidedError,
+      });
     } finally {
       warn.mockRestore();
       log.mockRestore();
     }
   });
 
-  it("logs retryable attachment-upload failures when the debug filter is enabled", () => {
+  it("logs retryable attachment-upload failures with message identifiers when the debug filter is enabled", () => {
     vi.stubGlobal("__T3_DEBUG__", ["thread-outbox"]);
+    const message = queuedMessage({ messageId: "m-upload", text: "with file" });
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
-      logThreadOutboxUploadFailure(transportError);
-      expect(log).toHaveBeenCalledWith("[t3-thread-outbox] attachment upload failed; retrying", {
-        error: transportError,
-      });
+      logThreadOutboxUploadFailure(message, transportError);
+      expect(log).toHaveBeenCalledWith(
+        "[t3-thread-outbox] attachment upload failed; retrying",
+        expect.objectContaining({
+          messageId: "m-upload",
+          environmentId: message.environmentId,
+          threadId: message.threadId,
+          error: transportError,
+        }),
+      );
     } finally {
       log.mockRestore();
       vi.unstubAllGlobals();

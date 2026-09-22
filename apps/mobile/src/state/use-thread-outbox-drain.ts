@@ -91,6 +91,33 @@ import {
 const threadOutboxDebug = createDebugLogger("thread-outbox");
 
 /**
+ * The RPC transport tags also cover client-side response-decoding defects —
+ * abnormal server responses, not offline behavior. Those still retry, but
+ * they must not hide behind the ordinary-offline debug log.
+ */
+function isRpcClientDecodeDefect(error: unknown): boolean {
+  if (
+    typeof error !== "object" ||
+    error === null ||
+    !("_tag" in error) ||
+    error._tag !== "RpcClientError"
+  ) {
+    return false;
+  }
+  const reason: unknown = (error as { readonly reason?: unknown }).reason;
+  return (
+    typeof reason === "object" &&
+    reason !== null &&
+    "_tag" in reason &&
+    reason._tag === "RpcClientDefect"
+  );
+}
+
+function isOrdinaryThreadOutboxTransportFailure(error: unknown): boolean {
+  return shouldRetryThreadOutboxDelivery(error) && !isRpcClientDecodeDefect(error);
+}
+
+/**
  * Logs one queued-message delivery failure and returns the retry-or-restore
  * decision for the caller. Ordinary transport retries — what an offline
  * device or a flapping socket produces on every backoff attempt — go to the
@@ -114,6 +141,7 @@ export function logThreadOutboxDeliveryFailure(input: {
   const details = { ...input.context, stage: input.stage, action };
   const ordinaryTransportRetry =
     action === "retry" &&
+    !isRpcClientDecodeDefect(input.error) &&
     (input.interrupted ||
       input.stage !== "settings-sync" ||
       shouldRetryThreadOutboxDelivery(input.error));
@@ -126,11 +154,19 @@ export function logThreadOutboxDeliveryFailure(input: {
 }
 
 /** Attachment uploads retry like delivery: transport failures are ordinary offline noise. Exported for tests. */
-export function logThreadOutboxUploadFailure(error: unknown): void {
-  if (shouldRetryThreadOutboxDelivery(error)) {
-    threadOutboxDebug.log("attachment upload failed; retrying", { error });
+export function logThreadOutboxUploadFailure(
+  queuedMessage: QueuedThreadMessage,
+  error: unknown,
+): void {
+  const context = {
+    environmentId: queuedMessage.environmentId,
+    threadId: queuedMessage.threadId,
+    messageId: queuedMessage.messageId,
+  };
+  if (isOrdinaryThreadOutboxTransportFailure(error)) {
+    threadOutboxDebug.log("attachment upload failed; retrying", { ...context, error });
   } else {
-    console.warn("[thread-outbox] failed to upload attachments", error);
+    console.warn("[thread-outbox] failed to upload attachments", { ...context, error });
   }
 }
 
@@ -821,7 +857,7 @@ export function useThreadOutboxDrain(): void {
           return true;
         }
       } catch (error) {
-        logThreadOutboxUploadFailure(error);
+        logThreadOutboxUploadFailure(queuedMessage, error);
         if (!shouldRetryThreadOutboxDelivery(error)) {
           return restoreQueuedMessage(
             queuedMessage,
@@ -949,7 +985,7 @@ export function useThreadOutboxDrain(): void {
           return true;
         }
       } catch (error) {
-        logThreadOutboxUploadFailure(error);
+        logThreadOutboxUploadFailure(queuedMessage, error);
         if (!shouldRetryThreadOutboxDelivery(error)) {
           return restoreQueuedMessage(
             queuedMessage,
