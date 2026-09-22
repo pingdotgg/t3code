@@ -2,11 +2,11 @@ import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { LayersIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { cn } from "../../lib/utils";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { InlineButton } from "../ui/button";
 import {
   Menu,
   MenuPopup,
@@ -111,10 +111,8 @@ function ScopeMenu({
     <Menu>
       <MenuTrigger
         aria-label={ariaLabel}
-        className={cn(
-          "inline-flex min-w-0 max-w-56 cursor-pointer items-center gap-1.5 rounded-sm text-left transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
-          narrowed ? "text-foreground" : "text-muted-foreground hover:text-foreground",
-        )}
+        render={<InlineButton tone={narrowed ? "default" : "muted"} />}
+        className="min-w-0 max-w-56 gap-1.5"
       >
         {icon}
         <span className="min-w-0 truncate">{label}</span>

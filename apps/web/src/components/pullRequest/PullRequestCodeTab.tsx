@@ -1071,7 +1071,8 @@ function PullRequestCodeTab({
         {orderedCommits.length > 0 ? (
           <DropdownMenu>
             <DropdownMenuTrigger
-              className="inline-flex h-6 min-w-0 max-w-64 items-center gap-1 rounded-md bg-accent px-2 text-xs font-medium text-accent-foreground outline-none transition-colors hover:bg-accent/80 focus-visible:ring-2 focus-visible:ring-ring"
+              render={<Button size="xs" variant="secondary" />}
+              className="min-w-0 max-w-64"
               aria-label={`Diff scope: ${scopeLabel}`}
             >
               <span className="truncate">{scopeLabel}</span>

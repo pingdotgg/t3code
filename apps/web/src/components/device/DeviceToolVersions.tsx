@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { DeviceToolVersions as ToolVersions } from "@t3tools/contracts";
+import { InlineButton } from "~/components/ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/components/ui/popover";
 
 export function DeviceToolVersions({
@@ -32,7 +33,7 @@ export function DeviceToolVersions({
             ? `${label}: ${version ? `version ${version}` : selected ? "not installed" : "version unknown"}. Show details`
             : undefined
         }
-        className="rounded text-xs text-muted-foreground underline decoration-muted-foreground/40 underline-offset-4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+        render={<InlineButton tone="muted" />}
       >
         {kind
           ? version
