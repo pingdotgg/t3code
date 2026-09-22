@@ -231,8 +231,8 @@ export const prepareSshRegistration = Effect.fn(
       connectionId,
       environmentId: provisioned.environmentId,
       label,
-      target: input.target,
-      resolvedTarget: provisioned.bootstrap.target,
+      target: provisioned.bootstrap.target,
+      requestedTarget: input.target,
     }),
   });
 });

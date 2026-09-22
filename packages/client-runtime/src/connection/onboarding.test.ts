@@ -282,8 +282,8 @@ describe("connection onboarding", () => {
           environmentId: "environment-ssh",
           label: "Remote development box",
           connectionId: "ssh:environment-ssh",
-          target,
-          resolvedTarget: {
+          requestedTarget: target,
+          target: {
             ...target,
             hostname: "resolved.example.test",
             username: "resolved-user",

@@ -27,7 +27,7 @@ export function gitHubRoutingConnectionKey(entry: ConnectionCatalogEntry): strin
   const profile = Option.getOrNull(entry.profile);
   if (target._tag === "SshConnectionTarget") {
     if (profile?._tag !== "SshConnectionProfile") return null;
-    const { alias, hostname, username, port } = profile.resolvedTarget ?? profile.target;
+    const { alias, hostname, username, port } = profile.target;
     return JSON.stringify([target._tag, target.environmentId, alias, hostname, username, port]);
   }
   const baseUrls =

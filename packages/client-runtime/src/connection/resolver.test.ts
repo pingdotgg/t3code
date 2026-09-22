@@ -445,8 +445,8 @@ describe("ConnectionResolver", () => {
           connectionId: target.connectionId,
           environmentId: ENVIRONMENT_ID,
           label: "SSH",
-          target: { ...SSH_TARGET, username: null, port: null },
-          resolvedTarget: SSH_TARGET,
+          target: SSH_TARGET,
+          requestedTarget: { ...SSH_TARGET, username: null, port: null },
         });
         const entry = catalogEntry(target, Option.some(profile));
         const preparedTarget =
@@ -487,15 +487,18 @@ describe("ConnectionResolver", () => {
               }),
             remove: () => Effect.die("unused"),
           },
-          prepareSsh: () =>
-            Effect.succeed({
-              bootstrap: {
-                target: preparedTarget,
-                httpBaseUrl: "http://127.0.0.1:4010",
-                wsBaseUrl: "ws://127.0.0.1:4010",
-                pairingToken: null,
-              },
-              bearerToken: "ssh-bearer",
+          prepareSsh: (input) =>
+            Effect.sync(() => {
+              expect(input.target).toEqual(profile.requestedTarget);
+              return {
+                bootstrap: {
+                  target: preparedTarget,
+                  httpBaseUrl: "http://127.0.0.1:4010",
+                  wsBaseUrl: "ws://127.0.0.1:4010",
+                  pairingToken: null,
+                },
+                bearerToken: "ssh-bearer",
+              };
             }),
           authorizeBearer: (input) =>
             Effect.sync(() => {
@@ -522,8 +525,8 @@ describe("ConnectionResolver", () => {
         } else {
           expect((yield* prepare).socketUrl).toContain("wsTicket=ssh");
           expect(savedProfile).toMatchObject({
-            target: profile.target,
-            resolvedTarget: preparedTarget,
+            target: preparedTarget,
+            requestedTarget: profile.requestedTarget,
           });
           expect(calls).toEqual(
             scenario === "unchanged"
@@ -540,7 +543,10 @@ describe("ConnectionResolver", () => {
             .prepare(catalogEntry(target, Option.some(savedProfile)))
             .pipe(Effect.provideService(GitHubRoutingPermissions, permissions));
           expect(calls).toEqual(["profile", "authorize"]);
-          expect(savedProfile).toMatchObject({ target: profile.target });
+          expect(savedProfile).toMatchObject({
+            target: preparedTarget,
+            requestedTarget: profile.requestedTarget,
+          });
         }
       }),
     );
