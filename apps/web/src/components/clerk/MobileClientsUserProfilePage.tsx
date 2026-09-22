@@ -69,7 +69,7 @@ function MobileClientsSkeleton() {
       {MOBILE_CLIENT_SKELETON_ROWS.map((row) => (
         <div key={row} className="py-4">
           <div className="flex gap-3">
-            <Skeleton className="size-8 shrink-0 rounded-lg" />
+            <Skeleton shape="card" className="size-8 shrink-0" />
             <div className="flex-1 space-y-2">
               <Skeleton className="h-3.5 w-36" />
               <Skeleton className="h-3 w-28" />
