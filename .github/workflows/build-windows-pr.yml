@@ -1,0 +1,50 @@
+name: Build Windows Installer (PR)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows-installer:
+    name: Windows NSIS installer
+    runs-on: windows-2025
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/antigravity-system-message-leak
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.13.1
+          cache: pnpm
+
+      - name: Enable Corepack
+        shell: pwsh
+        run: corepack enable
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Windows NSIS installer
+        shell: pwsh
+        run: node scripts/build-desktop-artifact.ts --platform win --target nsis --arch x64
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: t3code-windows-x64-nsis
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/*.yml
+          if-no-files-found: error
+          retention-days: 7
