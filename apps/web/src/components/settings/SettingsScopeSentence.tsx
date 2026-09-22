@@ -92,7 +92,7 @@ function ScopeMenu({
   return (
     <Menu>
       <MenuTrigger
-        aria-label={ariaLabel}
+        aria-label={`${ariaLabel}: ${label}`}
         render={<InlineButton tone="picker" />}
         className="min-w-0 max-w-72"
       >

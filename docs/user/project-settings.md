@@ -1,7 +1,8 @@
 # Settings and project overrides
 
-On web and desktop, the "Applying settings for …" sentence at the top of each Settings page picks
-the project and environment a change applies to. They start at **All projects** and **All environments**
+On web and desktop, the "Applying settings for …" sentence at the top of Settings pages picks
+the project and environment a change applies to. Pages that only hold device preferences, such as
+Appearance, don't show it. They start at **All projects** and **All environments**
 and stay selected as you move between categories or search for a setting.
 
 Preferences saved on this device, such as appearance, confirmations and browser profiles, always
