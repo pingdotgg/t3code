@@ -11,6 +11,7 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import { lazy, Suspense, useRef, useState } from "react";
+import { CopyIcon } from "lucide-react";
 
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { ensureLocalApi } from "../../localApi";
@@ -19,6 +20,8 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsRow } from "./settingsLayout";
 
 const ProviderAuthTerminal = lazy(() => import("./ProviderAuthTerminal"));
@@ -59,13 +62,22 @@ export function ProviderAuthenticationSection({
   const signedIn =
     provider.auth.status === "authenticated" ||
     (provider.auth.status === "unknown" && auth?.phase === "succeeded");
-  const accountDescription = signedIn
-    ? provider.auth.email
-      ? `Signed in as ${provider.auth.email}.`
-      : "Signed in."
-    : `Sign in on ${environmentLabel}.`;
-  const statusMessage =
-    active || auth?.phase === "failed" || auth?.phase === "cancelled" ? auth?.message : null;
+  const accountDescription = active
+    ? auth?.phase === "starting"
+      ? "Starting sign-in…"
+      : auth?.phase === "verifying"
+        ? "Checking your account…"
+        : interaction?.type === "terminal"
+          ? "Complete sign-in in the terminal below."
+          : interaction?.type === "credentials"
+            ? "Enter your credentials below."
+            : "Finish signing in in your browser."
+    : signedIn
+      ? provider.auth.email
+        ? `Signed in as ${provider.auth.email}.`
+        : "Signed in."
+      : `Sign in on ${environmentLabel}.`;
+  const statusMessage = auth?.phase === "failed" ? auth.message : null;
   const disabled = readOnly || pending || query.error !== null;
   const draftId = `${auth?.flowId ?? ""}:${interaction?.id ?? ""}`;
   const values = draft.id === draftId ? draft.values : {};
@@ -131,69 +143,82 @@ export function ProviderAuthenticationSection({
   return (
     <SettingsRow
       title="Account"
-      description={accountDescription}
-      status={statusMessage ? <p role="status">{statusMessage}</p> : undefined}
+      description={<span role="status">{accountDescription}</span>}
+      status={
+        statusMessage ? (
+          <p role="status" className="[overflow-wrap:anywhere]">
+            {statusMessage}
+          </p>
+        ) : undefined
+      }
       control={
-        <div className="flex min-w-0 flex-col gap-2 text-[13px] leading-[1.45] sm:max-w-72 sm:items-end">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           {!active && (auth?.methods?.length ?? 0) > 1 ? (
-            <label className="grid gap-1">
-              Sign-in method
-              <select
-                className="rounded-md border border-input bg-background px-2 py-1 text-xs"
-                value={auth?.methods?.some((method) => method.id === methodId) ? methodId : ""}
-                disabled={disabled}
-                onChange={(event) => setMethodId(event.target.value)}
-              >
-                <option value="">Provider default</option>
+            <Select
+              value={auth?.methods?.some((method) => method.id === methodId) ? methodId : ""}
+              disabled={disabled}
+              onValueChange={(value) => setMethodId(value ?? "")}
+            >
+              <SelectTrigger size="sm" aria-label="Sign-in method" className="w-44">
+                <SelectValue>
+                  {auth?.methods?.find((method) => method.id === methodId)?.name ??
+                    "Provider default"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value="">Provider default</SelectItem>
                 {auth?.methods?.map((method) => (
-                  <option key={method.id} value={method.id}>
+                  <SelectItem key={method.id} value={method.id}>
                     {method.name}
-                  </option>
+                  </SelectItem>
                 ))}
-              </select>
-            </label>
+              </SelectPopup>
+            </Select>
           ) : null}
           {url ? (
-            <div className="flex flex-wrap gap-2">
+            <>
               <Button
                 size="sm"
                 variant="outline"
                 disabled={disabled}
                 onClick={() => void openBrowser()}
               >
-                Open sign-in page
+                Open browser
               </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={disabled}
-                onClick={() => {
-                  void (async () => {
-                    if (
-                      interaction?.type === "browser" &&
-                      interaction.requiresConsent &&
-                      !(await send({ type: "browser", action: "accept" }))
-                    )
-                      return;
-                    await writeTextToClipboard(url, "Provider sign-in link");
-                  })().catch(() => setError("Could not copy the sign-in link."));
-                }}
-              >
-                Copy sign-in link
-              </Button>
-            </div>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      aria-label="Copy sign-in link"
+                      size="icon-sm"
+                      variant="ghost-muted"
+                      disabled={disabled}
+                      onClick={() => {
+                        void (async () => {
+                          if (
+                            interaction?.type === "browser" &&
+                            interaction.requiresConsent &&
+                            !(await send({ type: "browser", action: "accept" }))
+                          )
+                            return;
+                          await writeTextToClipboard(url, "Provider sign-in link");
+                        })().catch(() => setError("Could not copy the sign-in link."));
+                      }}
+                    >
+                      <CopyIcon />
+                    </Button>
+                  }
+                />
+                <TooltipPopup>Copy sign-in link</TooltipPopup>
+              </Tooltip>
+            </>
           ) : null}
-          {interaction?.type === "deviceCode" ? (
-            <p>
-              Enter code <code className="select-all font-mono">{interaction.userCode}</code> on the
-              sign-in page.
-            </p>
-          ) : null}
-          <div className="flex flex-wrap gap-2">
+          <>
             {active && auth?.flowId ? (
               <Button
                 size="sm"
-                variant="ghost"
+                variant="ghost-muted"
+                aria-label="Cancel sign-in"
                 disabled={disabled}
                 onClick={() =>
                   void run(() =>
@@ -201,13 +226,13 @@ export function ProviderAuthenticationSection({
                   )
                 }
               >
-                Cancel sign-in
+                Cancel
               </Button>
             ) : !active ? (
               <Button
                 size="sm"
                 variant="outline"
-                disabled={disabled || !provider.enabled || !provider.installed || auth === null}
+                disabled={disabled || !provider.enabled || !provider.installed || !auth}
                 onClick={() =>
                   void run(() =>
                     start({
@@ -233,7 +258,7 @@ export function ProviderAuthenticationSection({
               <Button
                 size="sm"
                 variant="ghost"
-                disabled={disabled || auth === null}
+                disabled={disabled || !auth}
                 onClick={() => {
                   void ensureLocalApi()
                     .dialogs.confirm(
@@ -247,130 +272,159 @@ export function ProviderAuthenticationSection({
                 Sign out
               </Button>
             ) : null}
-          </div>
+          </>
         </div>
       }
     >
-      {interaction?.type === "terminal" ? (
-        <div className="py-2">
-          <Suspense fallback={<p>Loading sign-in terminal.</p>}>
-            <ProviderAuthTerminal
-              key={`${auth?.flowId}:${interaction.id}`}
-              output={interaction.output}
-              outputOffset={interaction.outputOffset}
-              onResponse={(response) => {
-                if (readOnly || !auth?.flowId) return;
-                for (let offset = 0; offset < Math.max(1, response.data.length); offset += 4_096) {
-                  terminalQueue.current.push({
-                    instanceId,
-                    flowId: auth.flowId,
-                    interactionId: interaction.id,
-                    response: { ...response, data: response.data.slice(offset, offset + 4_096) },
-                  });
+      {interaction?.type === "terminal" ||
+      interaction?.type === "credentials" ||
+      interaction?.type === "deviceCode" ||
+      (url && (interaction?.type === "browser" ? interaction.acceptsCallback : !interaction)) ||
+      error ||
+      query.error ? (
+        <>
+          {interaction?.type === "deviceCode" ? (
+            <p className="py-2 text-[13px] text-muted-foreground">
+              Enter code{" "}
+              <code className="select-all font-mono text-foreground">{interaction.userCode}</code>{" "}
+              in your browser.
+            </p>
+          ) : null}
+          {interaction?.type === "terminal" ? (
+            <div className="py-2">
+              <Suspense
+                fallback={
+                  <p className="text-xs text-muted-foreground">Loading sign-in terminal…</p>
                 }
-                if (terminalSending.current) return;
-                terminalSending.current = true;
-                void (async () => {
-                  while (terminalQueue.current.length > 0) {
-                    const input = terminalQueue.current.shift()!;
-                    const result = await respond({ environmentId, input });
-                    if (result._tag !== "Success") {
-                      terminalQueue.current = [];
-                      if (!isAtomCommandInterrupted(result))
-                        setError("The provider sign-in terminal is no longer available.");
-                      break;
+              >
+                <ProviderAuthTerminal
+                  key={`${auth?.flowId}:${interaction.id}`}
+                  output={interaction.output}
+                  outputOffset={interaction.outputOffset}
+                  onResponse={(response) => {
+                    if (readOnly || !auth?.flowId) return;
+                    for (
+                      let offset = 0;
+                      offset < Math.max(1, response.data.length);
+                      offset += 4_096
+                    ) {
+                      terminalQueue.current.push({
+                        instanceId,
+                        flowId: auth.flowId,
+                        interactionId: interaction.id,
+                        response: {
+                          ...response,
+                          data: response.data.slice(offset, offset + 4_096),
+                        },
+                      });
                     }
-                  }
-                })()
-                  .catch(() => {
-                    terminalQueue.current = [];
-                    setError("Could not send input to the provider sign-in terminal.");
-                  })
-                  .finally(() => {
-                    terminalSending.current = false;
-                  });
+                    if (terminalSending.current) return;
+                    terminalSending.current = true;
+                    void (async () => {
+                      while (terminalQueue.current.length > 0) {
+                        const input = terminalQueue.current.shift()!;
+                        const result = await respond({ environmentId, input });
+                        if (result._tag !== "Success") {
+                          terminalQueue.current = [];
+                          if (!isAtomCommandInterrupted(result))
+                            setError("The provider sign-in terminal is no longer available.");
+                          break;
+                        }
+                      }
+                    })()
+                      .catch(() => {
+                        terminalQueue.current = [];
+                        setError("Could not send input to the provider sign-in terminal.");
+                      })
+                      .finally(() => {
+                        terminalSending.current = false;
+                      });
+                  }}
+                />
+              </Suspense>
+            </div>
+          ) : null}
+          {interaction?.type === "credentials" ? (
+            <form
+              className="grid gap-2 py-2 text-[13px] leading-[1.45]"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void send({ type: "credentials", values }).then((sent) => {
+                  if (sent) setDraft({ id: "", values: {} });
+                });
               }}
-            />
-          </Suspense>
-        </div>
-      ) : null}
-      {interaction?.type === "credentials" ? (
-        <form
-          className="grid gap-2 py-2 text-[13px] leading-[1.45]"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void send({ type: "credentials", values }).then((sent) => {
-              if (sent) setDraft({ id: "", values: {} });
-            });
-          }}
-        >
-          {interaction.fields.map((field) => (
-            <label key={field.name} className="grid gap-1">
-              {field.label}
-              <Input
-                type={field.secret ? "password" : "text"}
-                autoComplete="off"
-                value={values[field.name] ?? ""}
+            >
+              {interaction.fields.map((field) => (
+                <label key={field.name} className="grid gap-1">
+                  {field.label}
+                  <Input
+                    size="sm"
+                    type={field.secret ? "password" : "text"}
+                    autoComplete="off"
+                    value={values[field.name] ?? ""}
+                    disabled={disabled}
+                    maxLength={16_384}
+                    onChange={(event) => updateDraft(field.name, event.target.value)}
+                  />
+                </label>
+              ))}
+              <Button
+                type="submit"
+                size="sm"
+                variant="outline"
+                className="w-fit"
                 disabled={disabled}
-                maxLength={16_384}
-                onChange={(event) => updateDraft(field.name, event.target.value)}
-              />
-            </label>
-          ))}
-          <Button type="submit" size="sm" variant="outline" className="w-fit" disabled={disabled}>
-            Connect
-          </Button>
-        </form>
-      ) : null}
-      {url && (interaction?.type === "browser" ? interaction.acceptsCallback : !interaction) ? (
-        <form
-          className="grid gap-2 py-2 text-[13px] leading-[1.45]"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!auth?.flowId || !values.callback?.trim()) return;
-            void run(() =>
-              complete({
-                environmentId,
-                input: { instanceId, flowId: auth.flowId!, callbackUrl: values.callback! },
-              }),
-            ).then((sent) => {
-              if (sent) setDraft({ id: "", values: {} });
-            });
-          }}
-        >
-          <label className="grid gap-1">
-            If the final localhost page does not load, paste its full URL here.
-            <Input
-              id={`provider-callback-${instanceId}`}
-              type="url"
-              autoComplete="off"
-              value={values.callback ?? ""}
-              disabled={disabled}
-              maxLength={16_384}
-              onChange={(event) => updateDraft("callback", event.target.value)}
-            />
-          </label>
-          <Button
-            type="submit"
-            size="sm"
-            variant="outline"
-            className="w-fit"
-            disabled={disabled || !values.callback?.trim()}
-          >
-            Continue
-          </Button>
-        </form>
-      ) : null}
-      {auth?.expiresAt && active ? (
-        <p className="text-xs text-muted-foreground">
-          Sign-in expires at{" "}
-          <time dateTime={auth.expiresAt}>{new Date(auth.expiresAt).toLocaleTimeString()}</time>.
-        </p>
-      ) : null}
-      {error || query.error ? (
-        <p role="alert" className="py-2 text-xs text-destructive">
-          {error ?? query.error}
-        </p>
+              >
+                Connect
+              </Button>
+            </form>
+          ) : null}
+          {url && (interaction?.type === "browser" ? interaction.acceptsCallback : !interaction) ? (
+            <form
+              className="grid gap-2 py-2 text-[13px] leading-[1.45]"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!auth?.flowId || !values.callback?.trim()) return;
+                void run(() =>
+                  complete({
+                    environmentId,
+                    input: { instanceId, flowId: auth.flowId!, callbackUrl: values.callback! },
+                  }),
+                ).then((sent) => {
+                  if (sent) setDraft({ id: "", values: {} });
+                });
+              }}
+            >
+              <label className="grid gap-1">
+                If the final localhost page does not load, paste its full URL here.
+                <Input
+                  size="sm"
+                  id={`provider-callback-${instanceId}`}
+                  type="url"
+                  autoComplete="off"
+                  value={values.callback ?? ""}
+                  disabled={disabled}
+                  maxLength={16_384}
+                  onChange={(event) => updateDraft("callback", event.target.value)}
+                />
+              </label>
+              <Button
+                type="submit"
+                size="sm"
+                variant="outline"
+                className="w-fit"
+                disabled={disabled || !values.callback?.trim()}
+              >
+                Continue
+              </Button>
+            </form>
+          ) : null}
+          {error || query.error ? (
+            <p role="alert" className="py-2 text-xs text-destructive">
+              {error ?? query.error}
+            </p>
+          ) : null}
+        </>
       ) : null}
     </SettingsRow>
   );
