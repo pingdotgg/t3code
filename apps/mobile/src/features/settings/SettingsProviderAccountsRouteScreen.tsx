@@ -177,11 +177,6 @@ function ProviderAccount({
         {signedIn && !active && provider.auth.email?.trim() ? (
           <ProviderAccountEmail key={provider.auth.email} email={provider.auth.email} />
         ) : null}
-        {signedIn && provider.driver === "acpRegistry" && provider.auth.canLogout === false ? (
-          <Text className="text-sm text-foreground-muted">
-            This agent does not support in-app sign-out. Use its CLI to sign out.
-          </Text>
-        ) : null}
         {interaction?.type === "deviceCode" ? (
           <Text selectable className="text-foreground">
             Enter code {interaction.userCode} on the sign-in page.
