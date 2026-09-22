@@ -21,7 +21,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import type { ProviderAuthController } from "./Services/ProviderAuthService.ts";
+import type * as ProviderAuthService from "./Services/ProviderAuthService.ts";
 
 export interface ProviderAuthFlowContext {
   readonly flowId: string;
@@ -55,7 +55,9 @@ interface Flow {
 /** Adapters do login and credential handling; this owns client consent and flow lifetime. */
 export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
   readonly instanceId: ProviderInstanceId;
-  readonly credentialBinding: NonNullable<ProviderAuthController["credentialBinding"]>;
+  readonly credentialBinding: NonNullable<
+    ProviderAuthService.ProviderAuthController["credentialBinding"]
+  >;
   readonly methods: Effect.Effect<ReadonlyArray<ProviderAuthMethod>, ProviderSetupError>;
   readonly defaultMethodId?: string;
   /** Fail with ProviderSetupError containing safe text for the user, never native token data. */
@@ -125,16 +127,17 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
         state: { ...current.state, methods },
       })),
     ),
+    // Keep the last known methods when a refresh fails or is interrupted.
     Effect.catch((error) =>
       SubscriptionRef.update(snapshot, (current) => ({
         ...current,
-        state: { ...current.state, methods: [], message: error.detail },
+        state: { ...current.state, methods: current.state.methods ?? [], message: error.detail },
       })),
     ),
   );
   yield* refreshMethods.pipe(Effect.forkIn(scope));
 
-  const controller: ProviderAuthController = {
+  const controller: ProviderAuthService.ProviderAuthController = {
     credentialBinding: options.credentialBinding,
     refreshMethods,
     invalidate: lock.withPermit(
@@ -452,7 +455,8 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
       active = undefined;
       if (flow?.responseFiber) yield* Fiber.interrupt(flow.responseFiber);
       if (flow?.fiber) yield* Fiber.interrupt(flow.fiber);
-      yield* stopOwnedSessions;
+      // Settings edits rebuild instances; admitted sessions (including those of
+      // peers sharing this binding) end with their own scopes, not this one.
     }),
   );
   return controller;
