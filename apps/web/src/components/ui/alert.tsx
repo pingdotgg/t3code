@@ -6,9 +6,15 @@ import { cn } from "~/lib/utils";
 
 const alertVariants = cva("relative rounded-xl border px-3.5 py-3 text-card-foreground text-sm", {
   defaultVariants: {
+    surface: "default",
     variant: "default",
   },
   variants: {
+    // "glass" floats the alert over content; alert-glass tints from data-variant.
+    surface: {
+      default: "",
+      glass: "alert-glass",
+    },
     variant: {
       default: "bg-transparent dark:bg-input/32 [&_svg]:text-muted-foreground",
       sidebar:
@@ -45,6 +51,7 @@ function alertChildSlot(child: React.ReactElement): string | undefined {
 function Alert({
   className,
   variant,
+  surface,
   controlAlignment = "center",
   children,
   ...props
@@ -73,8 +80,9 @@ function Alert({
 
   return (
     <div
-      className={cn(alertVariants({ variant }), className)}
+      className={cn(alertVariants({ surface, variant }), className)}
       data-slot="alert"
+      data-variant={variant ?? "default"}
       role="alert"
       {...props}
     >
