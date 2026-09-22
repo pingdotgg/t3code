@@ -16,6 +16,7 @@ interface AddProviderInstanceWizardStepsProps {
     readonly error: string | null;
   };
   readonly onNavigation: (navigation: WizardNavigation) => void;
+  readonly disabled?: boolean;
 }
 
 export function AddProviderInstanceWizardSteps({
@@ -26,12 +27,14 @@ export function AddProviderInstanceWizardSteps({
   identityStep,
   prerequisite,
   onNavigation,
+  disabled = false,
 }: AddProviderInstanceWizardStepsProps) {
   return (
     <WizardSteps
       steps={steps}
       currentStep={currentStep}
       summaries={summaries}
+      isStepDisabled={() => disabled}
       onStepChange={(requestedStep) =>
         onNavigation(
           resolveWizardNavigation(currentStep, requestedStep, steps.length, {

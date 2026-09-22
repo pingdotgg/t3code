@@ -164,7 +164,9 @@ describe("AddProviderInstanceDialog environment routing", () => {
         return content?.includes("4.2.0") === true && content.includes("binary");
       }),
     ).not.toBeNull();
-    (findByChildren(identityStep, "Add instance").props.onClick as (() => void) | undefined)?.();
+    (
+      findByChildren(identityStep, "Continue to sign-in").props.onClick as (() => void) | undefined
+    )?.();
     expect(settingsHooks.mutate).toHaveBeenCalledWith({
       operation: "create",
       instanceId: "acpRegistry_kilo_code",
@@ -184,6 +186,18 @@ describe("AddProviderInstanceDialog environment routing", () => {
     resolveMutation({ _tag: "Success", value: {} });
     await Promise.resolve();
     await Promise.resolve();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    const signInStep = render(onOpenChange);
+    const authentication = visitElements(
+      signInStep,
+      (element) =>
+        typeof element.type === "function" &&
+        element.type.name === "ProviderWizardAuthenticationStep",
+    );
+    expect(authentication?.props.instanceId).toBe("acpRegistry_kilo_code");
+    expect(authentication?.props.environmentId).toBe(remoteEnvironmentId);
+    expect(settingsHooks.mutate).toHaveBeenCalledTimes(1);
+    (authentication!.props.onFinish as () => void)();
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
@@ -193,7 +207,9 @@ describe("AddProviderInstanceDialog environment routing", () => {
     await selectPreparedAcp();
 
     const identityStep = render(onOpenChange);
-    (findByChildren(identityStep, "Add instance").props.onClick as (() => void) | undefined)?.();
+    (
+      findByChildren(identityStep, "Continue to sign-in").props.onClick as (() => void) | undefined
+    )?.();
     await Promise.resolve();
     await Promise.resolve();
 

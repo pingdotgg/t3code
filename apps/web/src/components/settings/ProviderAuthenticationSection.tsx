@@ -76,7 +76,12 @@ export function ProviderAuthenticationSection({
     : signedIn
       ? "Signed in."
       : `Sign in on ${environmentLabel}.`;
-  const statusMessage = auth?.phase === "failed" ? auth.message : null;
+  const statusMessage =
+    auth?.phase === "failed"
+      ? auth.message
+      : signedIn && provider.driver === "acpRegistry" && provider.auth.canLogout === false
+        ? "This agent does not support in-app sign-out. Use its CLI to sign out."
+        : null;
   const disabled = readOnly || pending || query.error !== null;
   const draftId = `${auth?.flowId ?? ""}:${interaction?.id ?? ""}`;
   const values = draft.id === draftId ? draft.values : {};
@@ -243,7 +248,7 @@ export function ProviderAuthenticationSection({
               >
                 Cancel
               </Button>
-            ) : !active ? (
+            ) : !active && provider.setup?.canAuthenticate !== false ? (
               <Button
                 size="sm"
                 variant="outline"
