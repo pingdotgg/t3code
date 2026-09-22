@@ -170,7 +170,11 @@ describe("AddProviderInstanceDialog acknowledged save", () => {
       control(prepare(), "Add instance").onClick();
       cleanup?.();
       if (transition === "reopen") hooks.reset();
-      render(EnvironmentId.make("another-device"));
+      render(
+        transition === "environment change"
+          ? EnvironmentId.make("another-device")
+          : remoteEnvironmentId,
+      );
       cleanup = state.effect?.();
       receipt.resolve(AsyncResult.success(null));
       await flush();
