@@ -93,6 +93,9 @@ function ProviderAccount({
   const values = draft.id === draftId ? draft.values : {};
   const active =
     state?.phase === "starting" || state?.phase === "waiting" || state?.phase === "verifying";
+  const signedIn =
+    provider.auth.status === "authenticated" ||
+    (provider.auth.status === "unknown" && state?.phase === "succeeded");
   const url =
     interaction?.type === "browser" || interaction?.type === "deviceCode"
       ? interaction.url
@@ -284,13 +287,13 @@ function ProviderAccount({
       ) : !active ? (
         <SettingsActionRow
           icon="person.crop.circle"
-          label={provider.auth.status === "authenticated" ? "Change account" : "Sign in"}
+          label={signedIn ? "Change account" : "Sign in"}
           disabled={disabled || !provider.enabled || !provider.installed || state === null}
           loading={pending}
           onPress={chooseMethod}
         />
       ) : null}
-      {!active && (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (
+      {!active && signedIn && (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (
         <SettingsActionRow
           icon="person.crop.circle"
           label="Sign out"

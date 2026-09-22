@@ -46,7 +46,7 @@ import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { DriverOption, ProviderEnvironmentFieldDefinition } from "./providerDriverMeta";
-import { ProviderSettingsForm } from "./ProviderSettingsForm";
+import { deriveProviderSettingsFields, ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
@@ -1003,35 +1003,61 @@ export function ProviderInstanceCard({
         />
       </SettingsSection>
 
-      {setup ? <SettingsSection title="Setup">{setup}</SettingsSection> : null}
+      {setup || environmentFields.length > 0 ? (
+        <SettingsSection title="Setup">
+          {setup}
+          <div
+            inert={readOnly}
+            aria-disabled={readOnly || undefined}
+            className={readOnly ? "opacity-50 select-none" : undefined}
+          >
+            {environmentFields.length > 0 ? (
+              <div className="grid gap-3 px-3 py-3 sm:px-4">
+                {environmentFields.map((field) => (
+                  <ProviderEnvironmentFieldRow
+                    key={field.name}
+                    field={field}
+                    variable={readProviderEnvironmentVariable(instance.environment, field.name)}
+                    idPrefix={`provider-instance-${instanceId}`}
+                    onCommit={updateEnvironmentField}
+                    onRemove={removeEnvironmentField}
+                  />
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </SettingsSection>
+      ) : null}
 
-      <SettingsSection
-        title="Runtime"
-        inert={readOnly}
-        aria-disabled={readOnly || undefined}
-        className={readOnly ? "opacity-50 select-none" : undefined}
-      >
-        {driverOption ? (
-          <ProviderSettingsForm
-            definition={driverOption}
-            value={instance.config}
-            idPrefix={`provider-instance-${instanceId}`}
-            variant="settings"
-            onChange={updateConfig}
-          />
-        ) : (
-          <SettingsRow
-            title="Driver"
-            description={
-              <span>
-                This instance uses{" "}
-                <code className="text-foreground">{String(instance.driver)}</code>, which is not
-                available in this build. Its configuration is preserved.
-              </span>
-            }
-          />
-        )}
-      </SettingsSection>
+      {!driverOption || deriveProviderSettingsFields(driverOption).length > 0 ? (
+        <SettingsSection
+          title="Runtime"
+          inert={readOnly}
+          aria-disabled={readOnly || undefined}
+          className={readOnly ? "opacity-50 select-none" : undefined}
+        >
+          {driverOption ? (
+            <ProviderSettingsForm
+              definition={driverOption}
+              value={instance.config}
+              idPrefix={`provider-instance-${instanceId}`}
+              variant="settings"
+              onChange={updateConfig}
+            />
+          ) : (
+            <SettingsRow
+              title="Driver"
+              description={
+                <span>
+                  This instance uses{" "}
+                  <code className="text-foreground">{String(instance.driver)}</code>, which is not
+                  available in this build. Its configuration is preserved.
+                </span>
+              }
+            />
+          )}
+        </SettingsSection>
+      ) : null}
 
       <SettingsSection
         title="Environment"
@@ -1039,20 +1065,6 @@ export function ProviderInstanceCard({
         aria-disabled={readOnly || undefined}
         className={readOnly ? "opacity-50 select-none" : undefined}
       >
-        {environmentFields.length > 0 ? (
-          <div className="grid gap-3 px-3 py-3 sm:px-4">
-            {environmentFields.map((field) => (
-              <ProviderEnvironmentFieldRow
-                key={field.name}
-                field={field}
-                variable={readProviderEnvironmentVariable(instance.environment, field.name)}
-                idPrefix={`provider-instance-${instanceId}`}
-                onCommit={updateEnvironmentField}
-                onRemove={removeEnvironmentField}
-              />
-            ))}
-          </div>
-        ) : null}
         <ProviderEnvironmentSection
           environment={genericEnvironment}
           onChange={updateGenericEnvironment}

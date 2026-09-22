@@ -56,6 +56,16 @@ export function ProviderAuthenticationSection({
   const interaction = auth?.interaction;
   const active =
     auth?.phase === "starting" || auth?.phase === "waiting" || auth?.phase === "verifying";
+  const signedIn =
+    provider.auth.status === "authenticated" ||
+    (provider.auth.status === "unknown" && auth?.phase === "succeeded");
+  const accountDescription = signedIn
+    ? provider.auth.email
+      ? `Signed in as ${provider.auth.email}.`
+      : "Signed in."
+    : `Sign in on ${environmentLabel}.`;
+  const statusMessage =
+    active || auth?.phase === "failed" || auth?.phase === "cancelled" ? auth?.message : null;
   const disabled = readOnly || pending || query.error !== null;
   const draftId = `${auth?.flowId ?? ""}:${interaction?.id ?? ""}`;
   const values = draft.id === draftId ? draft.values : {};
@@ -121,21 +131,10 @@ export function ProviderAuthenticationSection({
   return (
     <SettingsRow
       title="Account"
-      description={`Sign in on ${environmentLabel}.`}
+      description={accountDescription}
+      status={statusMessage ? <p role="status">{statusMessage}</p> : undefined}
       control={
-        <div className="flex min-w-0 flex-col gap-2 sm:max-w-72 sm:items-end sm:text-right">
-          <p role="status" className="text-muted-foreground [overflow-wrap:anywhere]">
-            {active || auth?.phase === "failed" || auth?.phase === "cancelled"
-              ? auth?.message
-              : provider.auth.status === "authenticated" ||
-                  (provider.auth.status === "unknown" && auth?.phase === "succeeded")
-                ? provider.auth.email
-                  ? `Signed in as ${provider.auth.email}.`
-                  : "Signed in."
-                : auth?.phase === "idle"
-                  ? (auth.message ?? "Connect this provider.")
-                  : "Connect this provider."}
-          </p>
+        <div className="flex min-w-0 flex-col gap-2 text-[13px] leading-[1.45] sm:max-w-72 sm:items-end">
           {!active && (auth?.methods?.length ?? 0) > 1 ? (
             <label className="grid gap-1">
               Sign-in method
@@ -223,14 +222,14 @@ export function ProviderAuthenticationSection({
                   )
                 }
               >
-                {provider.auth.status === "authenticated"
+                {signedIn
                   ? "Change account"
                   : auth?.phase === "failed" || auth?.phase === "cancelled"
                     ? "Retry sign-in"
                     : "Sign in"}
               </Button>
             ) : null}
-            {!active && (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (
+            {!active && signedIn && (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (
               <Button
                 size="sm"
                 variant="ghost"
@@ -297,7 +296,7 @@ export function ProviderAuthenticationSection({
       ) : null}
       {interaction?.type === "credentials" ? (
         <form
-          className="grid gap-2 py-2"
+          className="grid gap-2 py-2 text-[13px] leading-[1.45]"
           onSubmit={(event) => {
             event.preventDefault();
             void send({ type: "credentials", values }).then((sent) => {
@@ -325,7 +324,7 @@ export function ProviderAuthenticationSection({
       ) : null}
       {url && (interaction?.type === "browser" ? interaction.acceptsCallback : !interaction) ? (
         <form
-          className="grid gap-2 py-2"
+          className="grid gap-2 py-2 text-[13px] leading-[1.45]"
           onSubmit={(event) => {
             event.preventDefault();
             if (!auth?.flowId || !values.callback?.trim()) return;
@@ -363,13 +362,13 @@ export function ProviderAuthenticationSection({
         </form>
       ) : null}
       {auth?.expiresAt && active ? (
-        <p className="text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           Sign-in expires at{" "}
           <time dateTime={auth.expiresAt}>{new Date(auth.expiresAt).toLocaleTimeString()}</time>.
         </p>
       ) : null}
       {error || query.error ? (
-        <p role="alert" className="py-2 text-destructive">
+        <p role="alert" className="py-2 text-xs text-destructive">
           {error ?? query.error}
         </p>
       ) : null}

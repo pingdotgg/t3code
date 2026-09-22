@@ -247,7 +247,7 @@ describe("Antigravity setup", () => {
       input: { instanceId, flowId: "flow-1", callbackUrl },
     });
     let view = renderSetup();
-    expect(visitElements(view, (element) => element.props.children === "Signed in.")).toBeNull();
+    expect(visitElements(view, (element) => element.props.description === "Signed in.")).toBeNull();
     expect(
       visitElements(view, (element) => element.props.id === `provider-callback-${instanceId}`)
         ?.props.value,
@@ -255,14 +255,14 @@ describe("Antigravity setup", () => {
 
     setup.auth = authState({ phase: "verifying", authorizationUrl: null });
     expect(
-      visitElements(renderSetup(), (element) => element.props.children === "Signed in."),
+      visitElements(renderSetup(), (element) => element.props.description === "Signed in."),
     ).toBeNull();
     setup.auth = authState({ phase: "succeeded", authorizationUrl: null });
     view = renderSetup({
       provider: { ...provider, status: "ready", auth: { status: "authenticated" } },
     });
     expect(
-      visitElements(view, (element) => element.props.children === "Signed in."),
+      visitElements(view, (element) => element.props.description === "Signed in."),
     ).not.toBeNull();
   });
 
@@ -277,7 +277,9 @@ describe("Antigravity setup", () => {
     });
     const expired = renderSetup();
     expect(button(expired, "Sign in")).not.toBeNull();
-    expect(visitElements(expired, (element) => element.props.children === "Signed in.")).toBeNull();
+    expect(
+      visitElements(expired, (element) => element.props.description === "Signed in."),
+    ).toBeNull();
     expect(
       visitElements(expired, (element) => element.props.children === "Google sign-in complete."),
     ).toBeNull();
@@ -357,7 +359,7 @@ describe("Antigravity setup", () => {
   });
 
   it.each([true, false])(
-    "can sign out an unchecked account when its instance is enabled=%s",
+    "can sign out a verified account when its instance is enabled=%s",
     async (enabled) => {
       setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
       setup.confirm.mockResolvedValue(true);
@@ -368,7 +370,7 @@ describe("Antigravity setup", () => {
           enabled,
           installed: false,
           status: enabled ? "warning" : "disabled",
-          auth: { status: "unknown" },
+          auth: { status: "authenticated" },
         },
       });
       click(view, "Sign out");
@@ -376,6 +378,27 @@ describe("Antigravity setup", () => {
       expect(setup.logoutAuth).toHaveBeenCalledWith({ environmentId, input: { instanceId } });
     },
   );
+
+  it.each(["unauthenticated", "unknown"] as const)(
+    "does not offer sign-out for an unverified %s account",
+    (status) => {
+      setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
+      const view = renderSetup({
+        provider: { ...provider, auth: { status, canLogout: true } },
+      });
+      expect(button(view, "Sign in")).not.toBeNull();
+      expect(button(view, "Sign out")).toBeNull();
+      expect(button(view, "Change account")).toBeNull();
+    },
+  );
+
+  it("offers account actions after verified login when discovery cannot identify auth", () => {
+    setup.auth = authState({ phase: "succeeded", flowId: null, authorizationUrl: null });
+    const view = renderSetup({ provider: { ...provider, auth: { status: "unknown" } } });
+    expect(button(view, "Change account")).not.toBeNull();
+    expect(button(view, "Sign out")).not.toBeNull();
+    expect(button(view, "Sign in")).toBeNull();
+  });
 
   it("does not let a shared managed install hide an invalid custom binary path", () => {
     setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
