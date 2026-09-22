@@ -195,7 +195,7 @@ export function AcpRegistrySearchStep({
             <p className="mt-1 text-xs text-muted-foreground">Try a broader search.</p>
           </div>
         ) : (
-          <ScrollArea scrollFade className="max-h-48">
+          <ScrollArea scrollFade className="max-h-64">
             {/* The overlay scrollbar takes no layout space, so the rows
                 reserve its lane explicitly. */}
             <div className="pr-2.5">
