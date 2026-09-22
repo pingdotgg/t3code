@@ -320,7 +320,7 @@ function WhenVariableSelect({
 
   return (
     <Select value={value} onValueChange={(nextValue) => nextValue && onChange(nextValue)}>
-      <SelectTrigger size="compact" className="min-w-0 flex-1 font-mono">
+      <SelectTrigger size="compact" className="min-w-0 flex-1">
         <SelectValue placeholder="Condition" className="leading-7" />
         {unknownIdentifiers && unknownIdentifiers.length > 0 ? (
           <UnknownWhenVariableWarning identifiers={unknownIdentifiers} focusable={false} />
@@ -333,11 +333,7 @@ function WhenVariableSelect({
         className="max-h-72 w-fit min-w-44"
       >
         {options.map((option) => (
-          <SelectItem
-            key={option}
-            value={option}
-            className="min-h-7 w-full py-1 font-mono text-[12px]"
-          >
+          <SelectItem key={option} value={option} className="min-h-7 w-full py-1 text-[12px]">
             <span className="truncate">{option}</span>
           </SelectItem>
         ))}
@@ -546,10 +542,10 @@ function WhenExpressionNodeEditor({
             popupClassName="w-fit"
             className="w-fit min-w-24"
           >
-            <SelectItem value="and" className="min-h-7 py-1 font-mono text-[12px]">
+            <SelectItem value="and" className="min-h-7 py-1 text-[12px]">
               and
             </SelectItem>
-            <SelectItem value="or" className="min-h-7 py-1 font-mono text-[12px]">
+            <SelectItem value="or" className="min-h-7 py-1 text-[12px]">
               or
             </SelectItem>
           </SelectContent>
@@ -877,7 +873,8 @@ function KeybindingKeyControl({
           value={isRecording ? "" : keyDraft}
           placeholder={isRecording ? "Press shortcut" : "Unassigned"}
           size="sm"
-          className={cn("w-44 font-mono", isRecording && "border-primary/70 bg-primary/5")}
+          font="mono"
+          className={cn("w-44", isRecording && "border-primary/70 bg-primary/5")}
           onFocus={() => setDraft({ isRecording: true })}
           onBlur={() => setDraft({ isRecording: false })}
           onChange={(event) => setDraft({ keyDraft: event.currentTarget.value })}
@@ -1190,7 +1187,8 @@ function NewKeybindingKeyInput({
       value={draft.isRecording ? "" : draft.keyDraft}
       placeholder={draft.isRecording ? "Press shortcut" : "Unassigned"}
       size="sm"
-      className={cn("font-mono", draft.isRecording && "border-primary/70 bg-primary/5", className)}
+      font="mono"
+      className={cn(draft.isRecording && "border-primary/70 bg-primary/5", className)}
       onFocus={() => draft.setDraft({ isRecording: true })}
       onBlur={() => draft.setDraft({ isRecording: false })}
       onChange={(event) => draft.setDraft({ keyDraft: event.currentTarget.value })}

@@ -56,7 +56,8 @@ function ProviderCustomColorPanel(props: {
             props.onCommit(nextColor);
           }}
           onBlur={() => setHexDraft(null)}
-          className="font-mono text-xs"
+          font="mono"
+          className="text-xs"
           aria-label="Custom hex accent color"
           spellCheck={false}
         />

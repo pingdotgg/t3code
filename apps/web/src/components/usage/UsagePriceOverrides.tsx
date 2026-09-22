@@ -429,7 +429,7 @@ export function UsagePriceOverrides({
                                     }
                                     autoComplete="off"
                                     disabled={locked}
-                                    className="tabular-nums"
+                                    font="mono"
                                     onChange={(event) =>
                                       editCell(row, field.key, event.target.value)
                                     }
