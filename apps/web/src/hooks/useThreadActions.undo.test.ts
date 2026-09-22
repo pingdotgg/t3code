@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { useThreadActions } from "./useThreadActions";
 import { threadEnvironment } from "../state/threads";
 import { toastManager } from "../components/ui/toast";
+import { useThreadUndoNotice } from "./showThreadUndoNotice";
 
 const commands = vi.hoisted(() => ({
   pin: vi.fn(),
@@ -78,18 +79,14 @@ const target = {
   environmentId: EnvironmentId.make("undo-env"),
   threadId: ThreadId.make("thread"),
 };
-const event = {} as Parameters<NonNullable<React.ComponentProps<"button">["onClick"]>>[0];
-
-function undoOf(
-  add: { mock: { calls: Array<[Parameters<typeof toastManager.add>[0]]> } },
-  index: number,
-) {
-  const onClick = add.mock.calls[index]?.[0].actionProps?.onClick;
-  expect(onClick).toBeTypeOf("function");
-  return () => onClick?.(event);
+function currentUndo() {
+  const notice = useThreadUndoNotice.getState().notice;
+  expect(notice).not.toBeNull();
+  return notice!.undo;
 }
 
 beforeEach(() => {
+  vi.useFakeTimers();
   for (const command of Object.values(commands)) {
     command.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
   }
@@ -98,19 +95,21 @@ beforeEach(() => {
   threadShell.pinnedAt = null;
   threadShell.snoozedUntil = null;
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.runAllTimers();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe("unpin Undo", () => {
-  it("ignores an old toast across hook instances and still restores the latest unpin", async () => {
-    const add = vi.spyOn(toastManager, "add").mockReturnValue("toast");
-    vi.spyOn(toastManager, "close").mockImplementation(() => {});
+  it("ignores an old notice across hook instances and still restores the latest unpin", async () => {
     const sidebar = useThreadActions();
     const header = useThreadActions();
     await sidebar.unpinThread(target);
-    const staleUndo = undoOf(add, 0);
+    const staleUndo = currentUndo();
     await header.pinThread(target, { orderKey: "a1" });
     await header.unpinThread(target);
-    const latestUndo = undoOf(add, 1);
+    const latestUndo = currentUndo();
     await staleUndo();
     expect(commands.pin).toHaveBeenCalledTimes(1);
     await latestUndo();
@@ -127,15 +126,15 @@ describe("unpin Undo", () => {
 describe("archive Undo", () => {
   it("unarchives and returns to the thread when archiving left it", async () => {
     const add = vi.spyOn(toastManager, "add").mockReturnValue("toast");
-    vi.spyOn(toastManager, "close").mockImplementation(() => {});
     router.state.matches[0]!.params = {
       environmentId: target.environmentId,
       threadId: target.threadId,
     };
     const actions = useThreadActions();
     await actions.archiveThread(target);
-    expect(add).toHaveBeenCalledWith(expect.objectContaining({ title: "Thread archived" }));
-    await undoOf(add, 0)();
+    expect(useThreadUndoNotice.getState().notice).toMatchObject({ action: "Archived", count: 1 });
+    expect(add).not.toHaveBeenCalled();
+    await currentUndo()();
     expect(commands.unarchive).toHaveBeenCalledExactlyOnceWith({
       environmentId: target.environmentId,
       input: { threadId: target.threadId },
@@ -149,11 +148,9 @@ describe("archive Undo", () => {
   });
 
   it("stays put when the archived thread was not open", async () => {
-    const add = vi.spyOn(toastManager, "add").mockReturnValue("toast");
-    vi.spyOn(toastManager, "close").mockImplementation(() => {});
     const actions = useThreadActions();
     await actions.archiveThread(target);
-    await undoOf(add, 0)();
+    await currentUndo()();
     expect(commands.unarchive).toHaveBeenCalledOnce();
     expect(router.navigate).not.toHaveBeenCalled();
   });
@@ -167,27 +164,25 @@ describe("archive Undo", () => {
 });
 
 describe("settle and snooze Undo", () => {
-  it("un-settles from the toast and expires the Undo after a manual un-settle", async () => {
+  it("un-settles from the notice and expires the Undo after a manual un-settle", async () => {
     const add = vi.spyOn(toastManager, "add").mockReturnValue("toast");
-    vi.spyOn(toastManager, "close").mockImplementation(() => {});
     const actions = useThreadActions();
     await actions.settleThread(target);
-    expect(add).toHaveBeenCalledWith(expect.objectContaining({ title: "Thread settled" }));
-    const undo = undoOf(add, 0);
+    expect(useThreadUndoNotice.getState().notice).toMatchObject({ action: "Settled", count: 1 });
+    expect(add).not.toHaveBeenCalled();
+    const undo = currentUndo();
     await actions.unsettleThread(target);
     await undo();
     expect(commands.unsettle).toHaveBeenCalledOnce();
   });
 
   it("re-pins and re-snoozes a thread that settling had cleared", async () => {
-    const add = vi.spyOn(toastManager, "add").mockReturnValue("toast");
-    vi.spyOn(toastManager, "close").mockImplementation(() => {});
     const snoozedUntil = "2030-01-01T09:00:00.000Z";
     threadShell.pinnedAt = "2026-01-01T00:00:00.000Z";
     threadShell.snoozedUntil = snoozedUntil;
     const actions = useThreadActions();
     await actions.settleThread(target);
-    await undoOf(add, 0)();
+    await currentUndo()();
     expect(commands.unsettle).toHaveBeenCalledOnce();
     expect(commands.pin).toHaveBeenCalledExactlyOnceWith({
       environmentId: target.environmentId,
@@ -200,31 +195,21 @@ describe("settle and snooze Undo", () => {
   });
 
   it("expires an older unpin Undo when the thread is settled", async () => {
-    const add = vi.spyOn(toastManager, "add").mockReturnValue("toast");
-    vi.spyOn(toastManager, "close").mockImplementation(() => {});
     const actions = useThreadActions();
     await actions.unpinThread(target);
-    const staleUnpinUndo = undoOf(add, 0);
+    const staleUnpinUndo = currentUndo();
     await actions.settleThread(target);
     await staleUnpinUndo();
     expect(commands.pin).not.toHaveBeenCalled();
   });
 
-  it("stays silent for batch settles", async () => {
+  it("wakes the thread from the snooze notice", async () => {
     const add = vi.spyOn(toastManager, "add").mockReturnValue("toast");
-    await useThreadActions().settleThread(target, { undoToast: false });
-    expect(add).not.toHaveBeenCalled();
-  });
-
-  it("wakes the thread from the snooze toast", async () => {
-    const add = vi.spyOn(toastManager, "add").mockReturnValue("toast");
-    vi.spyOn(toastManager, "close").mockImplementation(() => {});
     const actions = useThreadActions();
     await actions.snoozeThread(target, new Date(Date.now() + 60_000).toISOString());
-    expect(add).toHaveBeenCalledWith(
-      expect.objectContaining({ title: expect.stringMatching(/^Snoozed until /) }),
-    );
-    await undoOf(add, 0)();
+    expect(useThreadUndoNotice.getState().notice).toMatchObject({ action: "Snoozed", count: 1 });
+    expect(add).not.toHaveBeenCalled();
+    await currentUndo()();
     expect(commands.unsnooze).toHaveBeenCalledExactlyOnceWith({
       environmentId: target.environmentId,
       input: { threadId: target.threadId, reason: "user" },
