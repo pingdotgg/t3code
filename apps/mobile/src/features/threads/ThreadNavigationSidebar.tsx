@@ -524,6 +524,23 @@ function ThreadNavigationSidebarPane(
     nowMinute,
     snoozeWakeTick,
   ]);
+  // Move up/down availability stamped onto the list items (see
+  // buildThreadListV2ListItems): a recycled cell ignores the render closure,
+  // so availability that changes without a shell update — a reorder in
+  // flight, its commit — has to ride on the item through list equality.
+  const resolveMoveAvailability = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      if (pendingOrder !== null) return { canMoveUp: false, canMoveDown: false };
+      const planner =
+        thread.pinnedAt != null ? threadMovePlanners.pinned : threadMovePlanners.active;
+      const movedId = `${thread.environmentId}:${thread.id}`;
+      return {
+        canMoveUp: planner(movedId, "up") !== null,
+        canMoveDown: planner(movedId, "down") !== null,
+      };
+    },
+    [pendingOrder, threadMovePlanners],
+  );
   const threadListV2Layout = useMemo(() => {
     if (!threadListV2Enabled)
       return {
@@ -613,6 +630,9 @@ function ThreadNavigationSidebarPane(
       settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
       snoozeLabelNow: `${nowMinute}:00.000Z`,
       snoozeEnvironmentIds,
+      queuedThreadKeys,
+      resolveMoveAvailability,
+      shelfPreferencesLoading: !shelfPreferencesLoaded,
     });
     if (settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0) {
       items.push({
@@ -628,8 +648,11 @@ function ThreadNavigationSidebarPane(
     options.selectedEnvironmentId,
     pendingTasks,
     props.searchQuery,
+    queuedThreadKeys,
+    resolveMoveAvailability,
     selectedProjectRefs,
     settledShelfExpanded,
+    shelfPreferencesLoaded,
     snoozedShelfExpanded,
     snoozeEnvironmentIds,
     threadListV2Enabled,
@@ -886,17 +909,13 @@ function ThreadNavigationSidebarPane(
         }
         case "v2-thread": {
           const thread = item.item.thread;
-          const movePlanner = item.item.pinned
-            ? threadMovePlanners.pinned
-            : threadMovePlanners.active;
-          const movedId = `${thread.environmentId}:${thread.id}`;
           const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
           return (
             <ThreadListV2Row
               onNewThreadOnBranch={props.onNewThreadOnBranch}
               thread={thread}
               variant={item.item.variant}
-              hasQueuedMessages={queuedThreadKeys.has(`${thread.environmentId}:${thread.id}`)}
+              hasQueuedMessages={item.hasQueuedMessages}
               snoozed={item.item.snoozed}
               pinned={item.item.pinned}
               snoozePresetMinute={item.snoozePresetMinute ?? ""}
@@ -938,8 +957,8 @@ function ThreadNavigationSidebarPane(
                   ? pinReorderEnvironmentIds.has(thread.environmentId)
                   : activeReorderEnvironmentIds.has(thread.environmentId)
               }
-              canMoveUp={pendingOrder === null && movePlanner(movedId, "up") !== null}
-              canMoveDown={pendingOrder === null && movePlanner(movedId, "down") !== null}
+              canMoveUp={item.canMoveUp}
+              canMoveDown={item.canMoveDown}
               onSnoozeThread={snoozeThread}
               onUnsnoozeThread={unsnoozeThread}
               onUnsettleThread={unsettleThread}
@@ -956,7 +975,7 @@ function ThreadNavigationSidebarPane(
           return (
             <ThreadListV2SnoozedShelfHeader
               count={item.count}
-              disabled={!shelfPreferencesLoaded}
+              disabled={item.disabled}
               expanded={item.expanded}
               onToggle={toggleSnoozedShelf}
               pane="sidebar"
@@ -966,7 +985,7 @@ function ThreadNavigationSidebarPane(
           return (
             <ThreadListV2SettledShelfHeader
               count={item.count}
-              disabled={!shelfPreferencesLoaded}
+              disabled={item.disabled}
               expanded={item.expanded}
               onToggle={toggleSettledShelf}
               pane="sidebar"
@@ -1063,8 +1082,6 @@ function ThreadNavigationSidebarPane(
     [
       archiveThread,
       activeReorderEnvironmentIds,
-      threadMovePlanners,
-      pendingOrder,
       queuedThreadKeys,
       confirmDeletePendingTask,
       confirmDeleteThread,
@@ -1087,7 +1104,6 @@ function ThreadNavigationSidebarPane(
       props.selectedThreadKey,
       props.width,
       savedConnectionsById,
-      shelfPreferencesLoaded,
       threadSearchMatchByKey,
       titleRegenerationEnvironmentIds,
       settleThread,

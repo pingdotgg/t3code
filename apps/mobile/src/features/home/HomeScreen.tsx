@@ -699,6 +699,23 @@ export function HomeScreen(props: HomeScreenProps) {
     nowMinute,
     snoozeWakeTick,
   ]);
+  // Move up/down availability stamped onto the list items (see
+  // buildThreadListV2ListItems): a recycled cell ignores the render closure,
+  // so availability that changes without a shell update — a reorder in
+  // flight, its commit — has to ride on the item through list equality.
+  const resolveMoveAvailability = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      if (pendingOrder !== null) return { canMoveUp: false, canMoveDown: false };
+      const planner =
+        thread.pinnedAt != null ? threadMovePlanners.pinned : threadMovePlanners.active;
+      const movedId = `${thread.environmentId}:${thread.id}`;
+      return {
+        canMoveUp: planner(movedId, "up") !== null,
+        canMoveDown: planner(movedId, "down") !== null,
+      };
+    },
+    [pendingOrder, threadMovePlanners],
+  );
   const threadListV2Layout = useMemo(() => {
     if (!threadListV2Enabled)
       return {
@@ -792,10 +809,16 @@ export function HomeScreen(props: HomeScreenProps) {
         settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
         snoozeLabelNow: `${nowMinute}:00.000Z`,
         snoozeEnvironmentIds,
+        queuedThreadKeys,
+        resolveMoveAvailability,
+        shelfPreferencesLoading: !shelfPreferencesLoaded,
       }),
     [
       nowMinute,
+      queuedThreadKeys,
+      resolveMoveAvailability,
       settledShelfExpanded,
+      shelfPreferencesLoaded,
       snoozedShelfExpanded,
       snoozeEnvironmentIds,
       threadListV2Layout,
@@ -838,7 +861,7 @@ export function HomeScreen(props: HomeScreenProps) {
         return (
           <ThreadListV2SnoozedShelfHeader
             count={item.count}
-            disabled={!shelfPreferencesLoaded}
+            disabled={item.disabled}
             expanded={item.expanded}
             onToggle={toggleSnoozedShelf}
           />
@@ -848,21 +871,19 @@ export function HomeScreen(props: HomeScreenProps) {
         return (
           <ThreadListV2SettledShelfHeader
             count={item.count}
-            disabled={!shelfPreferencesLoaded}
+            disabled={item.disabled}
             expanded={item.expanded}
             onToggle={toggleSettledShelf}
           />
         );
       }
       const thread = item.item.thread;
-      const movePlanner = item.item.pinned ? threadMovePlanners.pinned : threadMovePlanners.active;
-      const movedId = `${thread.environmentId}:${thread.id}`;
       return (
         <ThreadListV2Row
           onNewThreadOnBranch={props.onNewThreadOnBranch}
           thread={thread}
           variant={item.item.variant}
-          hasQueuedMessages={queuedThreadKeys.has(movedId)}
+          hasQueuedMessages={item.hasQueuedMessages}
           snoozed={item.item.snoozed}
           pinned={item.item.pinned}
           snoozePresetMinute={item.snoozePresetMinute ?? ""}
@@ -904,8 +925,8 @@ export function HomeScreen(props: HomeScreenProps) {
               ? pinReorderEnvironmentIds.has(thread.environmentId)
               : activeReorderEnvironmentIds.has(thread.environmentId)
           }
-          canMoveUp={pendingOrder === null && movePlanner(movedId, "up") !== null}
-          canMoveDown={pendingOrder === null && movePlanner(movedId, "down") !== null}
+          canMoveUp={item.canMoveUp}
+          canMoveDown={item.canMoveDown}
           onSnoozeThread={handleSnoozeThread}
           onUnsnoozeThread={handleUnsnoozeThread}
           onUnsettleThread={handleUnsettleThread}
@@ -920,9 +941,6 @@ export function HomeScreen(props: HomeScreenProps) {
     [
       handleDeleteThread,
       activeReorderEnvironmentIds,
-      threadMovePlanners,
-      pendingOrder,
-      queuedThreadKeys,
       handleMoveThread,
       handlePinThread,
       handleRegenerateThreadTitle,
@@ -945,7 +963,6 @@ export function HomeScreen(props: HomeScreenProps) {
       props.onNewThreadOnBranch,
       props.savedConnectionsById,
       resolveProviderInstance,
-      shelfPreferencesLoaded,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
       threadSearchMatchByKey,

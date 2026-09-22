@@ -259,6 +259,15 @@ export interface ThreadListV2ThreadListItem {
       a neighbour change (e.g. the queued block appearing) updates the row
       through recycled-list equality instead of leaving a stale divider. */
   readonly showTrailingDivider: boolean;
+  /** A message for this thread is waiting in the outbox. Carried on the item
+      so an outbox write (which never touches the thread shell) reaches the
+      row through recycled-list equality instead of leaving a stale icon. */
+  readonly hasQueuedMessages: boolean;
+  /** Move up/down availability in the row's card section. Carried on the item
+      for the same reason: a reorder in flight (or its commit) changes menu
+      availability without changing any shell. */
+  readonly canMoveUp: boolean;
+  readonly canMoveDown: boolean;
 }
 
 export interface ThreadListV2PendingListItem {
@@ -277,6 +286,11 @@ export interface ThreadListV2SnoozedShelfListItem {
   readonly key: "v2-snoozed-shelf";
   readonly count: number;
   readonly expanded: boolean;
+  /** Shelf preferences still loading: the toggle is disabled until they
+      arrive. Carried on the item because a recycled cell ignores the render
+      closure — without it the header would stay visibly disabled (or enabled
+      too early) after the preference load lands. */
+  readonly disabled: boolean;
 }
 
 export interface ThreadListV2SettledShelfListItem {
@@ -284,6 +298,8 @@ export interface ThreadListV2SettledShelfListItem {
   readonly key: "v2-settled-shelf";
   readonly count: number;
   readonly expanded: boolean;
+  /** See the snoozed shelf header's field. */
+  readonly disabled: boolean;
 }
 
 export type ThreadListV2ListItem =
@@ -328,7 +344,10 @@ export function threadListV2ListItemsAreEqual(
         previous.snoozeWakeLabelText === item.snoozeWakeLabelText &&
         previous.timeLabel === item.timeLabel &&
         previous.snoozePresetMinute === item.snoozePresetMinute &&
-        previous.showTrailingDivider === item.showTrailingDivider
+        previous.showTrailingDivider === item.showTrailingDivider &&
+        previous.hasQueuedMessages === item.hasQueuedMessages &&
+        previous.canMoveUp === item.canMoveUp &&
+        previous.canMoveDown === item.canMoveDown
       );
     case "v2-pending":
       return (
@@ -342,13 +361,15 @@ export function threadListV2ListItemsAreEqual(
       return (
         previous.type === "v2-snoozed-shelf" &&
         previous.count === item.count &&
-        previous.expanded === item.expanded
+        previous.expanded === item.expanded &&
+        previous.disabled === item.disabled
       );
     case "v2-settled-shelf":
       return (
         previous.type === "v2-settled-shelf" &&
         previous.count === item.count &&
-        previous.expanded === item.expanded
+        previous.expanded === item.expanded &&
+        previous.disabled === item.disabled
       );
   }
 }
@@ -390,6 +411,17 @@ export function buildThreadListV2ListItems(input: {
       environments never carry the minute clock that feeds the snooze menu.
       Absent = no gating (tests). */
   readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
+  /** Thread keys (`environmentId:threadId`) with a message waiting in the
+      outbox; stamped onto the matching rows as `hasQueuedMessages`. */
+  readonly queuedThreadKeys?: ReadonlySet<string>;
+  /** Menu availability for Move up/down, per thread (only consulted for card
+      rows — slim menus omit the moves). Absent = never available (tests). */
+  readonly resolveMoveAvailability?: (
+    thread: EnvironmentThreadShell,
+  ) => { readonly canMoveUp: boolean; readonly canMoveDown: boolean } | undefined;
+  /** True while the shelf expansion preferences are still loading; stamped
+      onto both shelf headers so the disabled state reaches recycled cells. */
+  readonly shelfPreferencesLoading?: boolean;
 }): ThreadListV2ListItem[] {
   const threadItems = input.items.map((item): ThreadListV2ListItem => {
     const snoozeWakeLabelText =
@@ -398,15 +430,17 @@ export function buildThreadListV2ListItems(input: {
         : undefined;
     // The minute clock belongs on the item, not the list's extraData, so the
     // recycler's equality can confine the per-minute re-render to rows whose
-    // snooze menu actually shows preset times.
+    // snooze menu actually shows preset times. The swipe-revealed snooze menu
+    // exists on slim rows too (the variant only swaps the primary action),
+    // so the gate follows actual snooze availability, not the variant.
     const snoozePresetMinute =
-      item.variant === "card" &&
       !item.snoozed &&
       input.snoozeLabelNow !== undefined &&
       (input.snoozeEnvironmentIds?.has(item.thread.environmentId) ?? true) &&
       canSnooze(item.thread, { now: input.snoozeLabelNow })
         ? input.snoozeLabelNow
         : undefined;
+    const move = item.variant === "card" ? input.resolveMoveAvailability?.(item.thread) : undefined;
     return {
       type: "v2-thread",
       key: `v2-thread:${item.thread.environmentId}:${item.thread.id}`,
@@ -415,6 +449,10 @@ export function buildThreadListV2ListItems(input: {
       timeLabel: resolveThreadListV2ItemTimeLabel(item, snoozeWakeLabelText !== undefined),
       snoozePresetMinute,
       showTrailingDivider: false,
+      hasQueuedMessages:
+        input.queuedThreadKeys?.has(`${item.thread.environmentId}:${item.thread.id}`) === true,
+      canMoveUp: move?.canMoveUp === true,
+      canMoveDown: move?.canMoveDown === true,
     };
   });
   const pendingItems = input.pendingTasks.map((pendingTask, index): ThreadListV2ListItem => ({
@@ -431,12 +469,14 @@ export function buildThreadListV2ListItems(input: {
   const activeEnd = snoozedShelfHeaderIndex ?? settledShelfHeaderIndex ?? threadItems.length;
   const snoozedEnd = settledShelfHeaderIndex ?? threadItems.length;
   const result: ThreadListV2ListItem[] = [...threadItems.slice(0, activeEnd), ...pendingItems];
+  const shelfDisabled = input.shelfPreferencesLoading === true;
   if (snoozedShelfHeaderIndex !== null && snoozedCount > 0) {
     result.push({
       type: "v2-snoozed-shelf",
       key: "v2-snoozed-shelf",
       count: snoozedCount,
       expanded: input.snoozedShelfExpanded === true,
+      disabled: shelfDisabled,
     });
     result.push(...threadItems.slice(snoozedShelfHeaderIndex, snoozedEnd));
   }
@@ -446,6 +486,7 @@ export function buildThreadListV2ListItems(input: {
       key: "v2-settled-shelf",
       count: settledCount,
       expanded: input.settledShelfExpanded !== false,
+      disabled: shelfDisabled,
     });
     result.push(...threadItems.slice(settledShelfHeaderIndex));
   }
