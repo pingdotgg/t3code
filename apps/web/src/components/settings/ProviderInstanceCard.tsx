@@ -1071,15 +1071,13 @@ export function ProviderInstanceCard({
           onChange={updateGenericEnvironment}
         />
         {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? (
-          <div className="px-3 py-3 sm:px-4">
-            <AcpSessionManagementSection
-              environmentId={environmentId}
-              instanceId={instanceId}
-              provider={liveProvider}
-              projects={acpProjects}
-              readOnly={readOnly}
-            />
-          </div>
+          <AcpSessionManagementSection
+            environmentId={environmentId}
+            instanceId={instanceId}
+            provider={liveProvider}
+            projects={acpProjects}
+            readOnly={readOnly}
+          />
         ) : null}
       </SettingsSection>
 
