@@ -11,6 +11,7 @@ import {
   immediateThreadRelationships,
   isParentThreadRelationship,
   orderWebThreadLineageRows,
+  resolveChildAgentDisplayState,
   resolveMergeBackTargetThreadId,
   type ThreadRelationshipEdge,
   type ThreadRelationshipWalkRow,
@@ -21,6 +22,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-workflows";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
 import { groupBy } from "effect/Array";
+import * as DateTime from "effect/DateTime";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
@@ -171,22 +173,6 @@ export function ThreadRelationshipsPanel(props: {
   const ref = scopeThreadRef(props.environmentId, props.threadId);
   const projection = useThreadProjection(ref)?.projection ?? null;
   const providers = useServerConfigs().get(props.environmentId)?.providers;
-  const subagentsByThreadId = useMemo(
-    () =>
-      new Map(
-        (projection?.subagents ?? [])
-          .filter((subagent) => subagent.childThreadId !== null)
-          .map((subagent) => [
-            subagent.childThreadId,
-            {
-              ...projectedSubagentsToRuntime([subagent])[0]!,
-              driver: subagent.driver,
-              providerInstanceId: subagent.providerInstanceId,
-            },
-          ]),
-      ),
-    [projection?.subagents],
-  );
   const threadShells = useThreadShells();
   const projects = useProjects().filter((project) => project.environmentId === props.environmentId);
   const archived = useArchivedThreadSnapshots([props.environmentId]);
@@ -202,6 +188,36 @@ export function ThreadRelationshipsPanel(props: {
     ];
     return deriveThreadRelationshipGraph({ threads: shells, projection });
   }, [archivedShells, projection, props.environmentId, threadShells]);
+  // Rows show the child's current state (see resolveChildAgentDisplayState);
+  // the record's result stays as the delegated task's history.
+  const subagentsByThreadId = useMemo(
+    () =>
+      new Map(
+        (projection?.subagents ?? []).flatMap((subagent) => {
+          if (subagent.childThreadId === null) return [];
+          const display = resolveChildAgentDisplayState({
+            subagent,
+            childThread: graph.nodes.get(subagent.childThreadId)?.thread ?? null,
+          });
+          return [
+            [
+              subagent.childThreadId,
+              {
+                ...projectedSubagentsToRuntime([subagent])[0]!,
+                status: display.status,
+                startedAt:
+                  display.startedAt === null ? null : DateTime.formatIso(display.startedAt),
+                completedAt:
+                  display.completedAt === null ? null : DateTime.formatIso(display.completedAt),
+                driver: subagent.driver,
+                providerInstanceId: subagent.providerInstanceId,
+              },
+            ] as const,
+          ];
+        }),
+      ),
+    [graph, projection?.subagents],
+  );
   const currentThread = projection?.thread ?? graph.nodes.get(props.threadId)?.thread;
   const currentProject = projects.find((project) => project.id === currentThread?.projectId);
   const navigate = useNavigate();
@@ -242,8 +258,12 @@ export function ThreadRelationshipsPanel(props: {
     { id: "previous", label: "Previous agents", rows: previous, expanded: false },
   ];
   const runningCount =
-    projection?.subagents.filter((agent) => agent.status === "running").length ??
-    active.filter(({ edge }) => edge.status === "running").length;
+    projection === null
+      ? active.filter(({ edge }) => edge.status === "running").length
+      : projection.subagents.filter(
+          (agent) => agent.childThreadId === null && agent.status === "running",
+        ).length +
+        [...subagentsByThreadId.values()].filter((agent) => agent.status === "running").length;
 
   if (relationshipRows.length === 0 && runningCount === 0) {
     return null;

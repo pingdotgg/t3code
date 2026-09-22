@@ -180,6 +180,106 @@ it("shows the matching child agent details and refreshes them when the agent set
   expect(text()).toContain("Lineage · 1 running");
 });
 
+it("follows a reused child thread's current run instead of its completed task record", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+  vi.setSystemTime(new Date("2026-09-22T00:42:25.467Z"));
+  state.showTooltips = true;
+  // The parent record keeps the first delegated task: completed, 2m 28s.
+  const record = {
+    id: "agent-1",
+    origin: "app_owned",
+    driver: "codex",
+    providerInstanceId: "codex",
+    childThreadId: "child-1",
+    title: "Calibrate grading",
+    prompt: "Calibrate",
+    model: "gpt-5.4",
+    status: "completed",
+    result: "Calibration done",
+    startedAt: DateTime.makeUnsafe("2026-09-21T23:46:43.632Z"),
+    completedAt: DateTime.makeUnsafe("2026-09-21T23:49:12.589Z"),
+    updatedAt: DateTime.makeUnsafe("2026-09-21T23:51:07.914Z"),
+  };
+  state.projection = {
+    thread: { id: "parent", lineage: { relationshipToParent: null }, activeProviderThreadId: null },
+    runs: [],
+    providerThreads: [],
+    providerSessions: [],
+    contextTransfers: [],
+    subagents: [record],
+  };
+  // The child thread has since taken a third turn, running for one minute.
+  const child = {
+    id: "child-1",
+    projectId: "main",
+    title: "Score findings",
+    modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+    lineage: { parentThreadId: "parent", relationshipToParent: "subagent" },
+    forkedFrom: null,
+    status: "running",
+    activeRunId: "run-3",
+    activityRunStatus: "running",
+    activityRunStartedAt: DateTime.makeUnsafe("2026-09-22T00:41:25.467Z"),
+    latestRunStartedAt: DateTime.makeUnsafe("2026-09-22T00:41:25.467Z"),
+    latestRunCompletedAt: null,
+  };
+  state.shells = [{ environmentId: "test", source: child }];
+  const panel = (
+    <ThreadRelationshipsPanel
+      environmentId={EnvironmentId.make("test")}
+      threadId={ThreadId.make("parent")}
+    />
+  );
+  await act(async () => {
+    renderer = create(panel);
+  });
+  const text = () =>
+    renderer.root
+      .findAll((node) => typeof node.type === "string")
+      .flatMap((node) => node.children.filter((child) => typeof child === "string"))
+      .join(" ")
+      .replace(/\s+/g, " ");
+  const elapsed = () =>
+    renderer.root.findAll((node) => node.props.className === "tabular-nums")[0]!.children.join("");
+
+  expect(text()).toContain("Lineage · 1 running");
+  expect(text()).toContain("Score findings");
+  expect(text()).not.toContain("Previous agents");
+  expect(text()).toContain("running");
+  expect(text()).not.toContain("completed");
+  // The tooltip still shows the delegated task's result as history.
+  expect(renderer.root.findAllByProps({ value: "Calibration done" })).not.toHaveLength(0);
+  expect(elapsed()).toBe("1m 00s");
+  expect(text()).not.toContain("2m 28s");
+
+  // The later run completes: the timer freezes on that run, not the old task.
+  state.shells = [
+    {
+      environmentId: "test",
+      source: {
+        ...child,
+        status: "completed",
+        activeRunId: null,
+        activityRunStatus: null,
+        activityRunStartedAt: null,
+        latestRunCompletedAt: DateTime.makeUnsafe("2026-09-22T00:45:00.467Z"),
+      },
+    },
+  ];
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(renderer.root.findByType("h3").children).toEqual(["Lineage"]);
+  expect(text()).toContain("Previous agents (1)");
+  await act(async () =>
+    renderer.root.findByProps({ type: "button", "aria-expanded": false }).props.onClick(),
+  );
+  expect(text()).toContain("Score findings");
+  expect(text()).toContain("completed");
+  expect(text()).toContain("3m 35s");
+  expect(text()).not.toContain("2m 28s");
+  vi.useRealTimers();
+});
+
 it("shows readable models and only differing workspace details in agent tooltips", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.showTooltips = true;

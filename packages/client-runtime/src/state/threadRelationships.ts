@@ -1,4 +1,5 @@
 import type {
+  OrchestrationV2Subagent,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadShell,
   ThreadId,
@@ -43,6 +44,90 @@ export function resolveMergeBackTargetThreadId(
 
 function edgeKey(edge: ThreadRelationshipEdge): string {
   return `${edge.sourceThreadId}\u001f${edge.targetThreadId}\u001f${edge.kind}`;
+}
+
+export interface ChildAgentDisplayState {
+  readonly status: OrchestrationV2Subagent["status"];
+  readonly startedAt: DateTime.Utc | null;
+  readonly completedAt: DateTime.Utc | null;
+}
+
+/** Shell status is the child's latest run status; `idle` means it has no runs. */
+function subagentStatusFromShellStatus(
+  status: OrchestrationV2ThreadShell["status"],
+): OrchestrationV2Subagent["status"] | null {
+  switch (status) {
+    case "preparing":
+    case "starting":
+    case "running":
+      return "running";
+    case "waiting":
+      return "waiting";
+    case "queued":
+      return "pending";
+    case "completed":
+    case "failed":
+    case "cancelled":
+    case "interrupted":
+      return status;
+    case "rolled_back":
+      return "cancelled";
+    case "idle":
+      return null;
+  }
+}
+
+/**
+ * Status and timing to show for a child agent in Lineage.
+ *
+ * The parent's subagent record is the original delegated task. Once its result
+ * is published the server keeps that status, result, and timestamps, even when
+ * the child thread later takes follow-up turns. The child shell is the live
+ * thread, so for an app-owned child with a shell its activity run (or latest
+ * run) decides the status and the timer anchors. Provider-native subagents and
+ * children without a shell keep the record. The record's result stays the
+ * delegated task's history either way.
+ */
+export function resolveChildAgentDisplayState(input: {
+  readonly subagent: Pick<
+    OrchestrationV2Subagent,
+    "origin" | "status" | "startedAt" | "completedAt"
+  >;
+  readonly childThread: Pick<
+    OrchestrationV2ThreadShell,
+    | "status"
+    | "activityRunStatus"
+    | "activityRunStartedAt"
+    | "latestRunStartedAt"
+    | "latestRunCompletedAt"
+  > | null;
+}): ChildAgentDisplayState {
+  const { subagent, childThread } = input;
+  const record: ChildAgentDisplayState = {
+    status: subagent.status,
+    startedAt: subagent.startedAt,
+    completedAt: subagent.completedAt,
+  };
+  if (subagent.origin !== "app_owned" || childThread === null) return record;
+  const activityRunStatus = childThread.activityRunStatus ?? null;
+  if (activityRunStatus !== null) {
+    // Preparing and starting count as running so the timer ticks from the
+    // activity run's anchor, the same anchor the sidebar working timer uses.
+    return {
+      status: activityRunStatus === "waiting" ? "waiting" : "running",
+      startedAt: childThread.activityRunStartedAt ?? subagent.startedAt,
+      completedAt: null,
+    };
+  }
+  const status = subagentStatusFromShellStatus(childThread.status);
+  if (status === null) return record;
+  // A queued follow-up has not started, so there is nothing to time yet.
+  if (status === "pending") return { status, startedAt: null, completedAt: null };
+  return {
+    status,
+    startedAt: childThread.latestRunStartedAt ?? subagent.startedAt,
+    completedAt: childThread.latestRunCompletedAt ?? subagent.completedAt,
+  };
 }
 
 export function deriveThreadRelationshipGraph(input: {
@@ -96,7 +181,10 @@ export function deriveThreadRelationshipGraph(input: {
         sourceThreadId: ownerThreadId,
         targetThreadId: subagent.childThreadId,
         kind: "subagent",
-        status: subagent.status,
+        status: resolveChildAgentDisplayState({
+          subagent,
+          childThread: threadsById.get(subagent.childThreadId) ?? null,
+        }).status,
       });
     }
     for (const transfer of input.projection.contextTransfers) {

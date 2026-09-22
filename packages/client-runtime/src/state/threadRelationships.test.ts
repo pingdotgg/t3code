@@ -7,6 +7,7 @@ import {
   immediateThreadRelationships,
   orderWebThreadLineageRows,
   relatedThreadIds,
+  resolveChildAgentDisplayState,
   resolveMergeBackTargetThreadId,
   walkThreadRelationships,
 } from "./threadRelationships.ts";
@@ -180,6 +181,156 @@ describe("thread relationships", () => {
       }),
     ]);
     expect(graph.nodes.has(staleParent)).toBe(false);
+  });
+
+  it("shows a reused app-owned child's current run over its completed task record", () => {
+    // The parent's record keeps the first delegated task's completion. The
+    // child shell reports the follow-up run, which is what Lineage must show.
+    const parent = ThreadId.make("thread-parent");
+    const child = ThreadId.make("thread-child");
+    const childShell = {
+      id: child,
+      title: "Score findings",
+      status: "running",
+      activityRunStatus: "running",
+      forkedFrom: null,
+      lineage: { rootThreadId: parent, parentThreadId: parent, relationshipToParent: "subagent" },
+    };
+    const projection = {
+      thread: { id: parent },
+      subagents: [{ childThreadId: child, origin: "app_owned", status: "completed" }],
+      contextTransfers: [],
+    };
+
+    expect(
+      deriveThreadRelationshipGraph({
+        threads: [childShell] as never,
+        projection: projection as never,
+      }).edges,
+    ).toEqual([expect.objectContaining({ targetThreadId: child, status: "running" })]);
+    // Without a shell the record is all we have.
+    expect(
+      deriveThreadRelationshipGraph({ threads: [], projection: projection as never }).edges,
+    ).toEqual([expect.objectContaining({ targetThreadId: child, status: "completed" })]);
+    // Provider-native subagents own their lifecycle; the record stays.
+    expect(
+      deriveThreadRelationshipGraph({
+        threads: [childShell] as never,
+        projection: {
+          ...projection,
+          subagents: [{ childThreadId: child, origin: "provider_native", status: "completed" }],
+        } as never,
+      }).edges,
+    ).toEqual([expect.objectContaining({ targetThreadId: child, status: "completed" })]);
+  });
+
+  it("anchors the child agent timer to the child's current run", () => {
+    const record = {
+      origin: "app_owned" as const,
+      status: "completed" as const,
+      startedAt: DateTime.makeUnsafe("2026-09-21T23:46:43.632Z"),
+      completedAt: DateTime.makeUnsafe("2026-09-21T23:49:12.589Z"),
+    };
+    const settledShell = {
+      status: "completed" as const,
+      activityRunStatus: null,
+      activityRunStartedAt: null,
+      latestRunStartedAt: DateTime.makeUnsafe("2026-09-21T23:46:44.553Z"),
+      latestRunCompletedAt: DateTime.makeUnsafe("2026-09-21T23:49:11.458Z"),
+    };
+    const laterRunStart = DateTime.makeUnsafe("2026-09-22T00:41:25.467Z");
+    const laterRunEnd = DateTime.makeUnsafe("2026-09-22T00:52:00.000Z");
+
+    const recordDisplay = {
+      status: record.status,
+      startedAt: record.startedAt,
+      completedAt: record.completedAt,
+    };
+
+    expect(resolveChildAgentDisplayState({ subagent: record, childThread: null })).toEqual(
+      recordDisplay,
+    );
+    expect(resolveChildAgentDisplayState({ subagent: record, childThread: settledShell })).toEqual({
+      status: "completed",
+      startedAt: settledShell.latestRunStartedAt,
+      completedAt: settledShell.latestRunCompletedAt,
+    });
+
+    // A later turn starts: running, timed from that run, not the old task.
+    const running = {
+      status: "running" as const,
+      activityRunStatus: "running" as const,
+      activityRunStartedAt: laterRunStart,
+      latestRunStartedAt: laterRunStart,
+      latestRunCompletedAt: null,
+    };
+    expect(resolveChildAgentDisplayState({ subagent: record, childThread: running })).toEqual({
+      status: "running",
+      startedAt: laterRunStart,
+      completedAt: null,
+    });
+    for (const activityRunStatus of ["preparing", "starting"] as const) {
+      expect(
+        resolveChildAgentDisplayState({
+          subagent: record,
+          childThread: { ...running, status: activityRunStatus, activityRunStatus },
+        }).status,
+      ).toBe("running");
+    }
+    expect(
+      resolveChildAgentDisplayState({
+        subagent: record,
+        childThread: { ...running, status: "waiting", activityRunStatus: "waiting" },
+      }),
+    ).toEqual({ status: "waiting", startedAt: laterRunStart, completedAt: null });
+
+    // Queued follow-up: pending with nothing to time yet.
+    expect(
+      resolveChildAgentDisplayState({
+        subagent: record,
+        childThread: { ...settledShell, status: "queued" },
+      }),
+    ).toEqual({ status: "pending", startedAt: null, completedAt: null });
+
+    // The later turn completes: the timer freezes on that run's span.
+    expect(
+      resolveChildAgentDisplayState({
+        subagent: record,
+        childThread: {
+          ...settledShell,
+          latestRunStartedAt: laterRunStart,
+          latestRunCompletedAt: laterRunEnd,
+        },
+      }),
+    ).toEqual({ status: "completed", startedAt: laterRunStart, completedAt: laterRunEnd });
+    expect(
+      resolveChildAgentDisplayState({
+        subagent: record,
+        childThread: { ...settledShell, status: "rolled_back" },
+      }).status,
+    ).toBe("cancelled");
+
+    // A shell with no runs yet says nothing about the task.
+    expect(
+      resolveChildAgentDisplayState({
+        subagent: { ...record, status: "pending", startedAt: null, completedAt: null },
+        childThread: {
+          status: "idle",
+          activityRunStatus: null,
+          activityRunStartedAt: null,
+          latestRunStartedAt: null,
+          latestRunCompletedAt: null,
+        },
+      }),
+    ).toEqual({ status: "pending", startedAt: null, completedAt: null });
+
+    // Provider-native subagents keep the record even with a live shell.
+    expect(
+      resolveChildAgentDisplayState({
+        subagent: { ...record, origin: "provider_native" },
+        childThread: running,
+      }),
+    ).toEqual(recordDisplay);
   });
 
   it("resolves merge-back only for forks and prefers the recorded fork source", () => {
