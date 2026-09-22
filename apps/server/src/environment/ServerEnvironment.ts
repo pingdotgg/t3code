@@ -19,6 +19,7 @@ import { readAgentActivityPublishingActive } from "../cloud/config.ts";
 import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
+import { collapseHomePath } from "../pathExpansion.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
@@ -214,6 +215,11 @@ export const make = Effect.gen(function* () {
     },
     serverVersion: packageJson.version,
     orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+    // Shown as placeholders, so keep them short: `~` rather than the full home.
+    defaultDirectories: {
+      repositories: "~",
+      worktrees: collapseHomePath(serverConfig.worktreesDir),
+    },
     capabilities: {
       repositoryIdentity: true,
       connectionProbe: true,
@@ -245,6 +251,7 @@ export const make = Effect.gen(function* () {
       serverResolvedCommandContext: true,
       environmentIcon: true,
       projectCloneTracking: true,
+      worktreeBaseDirectory: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       // V2 restart recovery uses the environment-owned opt-in. The old
       // per-update request flag is not wired into the V2 update RPC path.

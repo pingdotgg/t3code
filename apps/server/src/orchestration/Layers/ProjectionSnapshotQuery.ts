@@ -2804,7 +2804,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       ),
     );
   };
-
   const getProjectShellById: ProjectionSnapshotQueryShape["getProjectShellById"] = (projectId) =>
     getActiveProjectRowById({ projectId }).pipe(
       Effect.mapError(

@@ -337,6 +337,7 @@ const ProjectCloneTrackerLayerLive = ProjectCloneTracker.layer.pipe(
 );
 
 const ReviewLayerLive = ReviewService.layer.pipe(
+  Layer.provide(ServerSettingsLayerLive),
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(VcsDriverRegistryLayerLive),
 );

@@ -34,6 +34,7 @@ import * as VcsProjectConfig from "../src/vcs/VcsProjectConfig.ts";
 import * as GitVcsDriver from "../src/vcs/GitVcsDriver.ts";
 import * as ProcessRunner from "../src/processRunner.ts";
 import * as ServerConfig from "../src/config.ts";
+import * as ServerSettings from "../src/serverSettings.ts";
 
 const { values } = NodeUtil.parseArgs({
   options: {
@@ -167,6 +168,7 @@ await Effect.runPromise(
         Layer.provideMerge(
           ServerConfig.layerTest(process.cwd(), { prefix: "t3-title-evaluation-state-" }),
         ),
+        Layer.provideMerge(ServerSettings.layerTest()),
         Layer.provideMerge(NodeServices.layer),
       ),
     ),

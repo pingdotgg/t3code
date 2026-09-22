@@ -341,6 +341,19 @@ describe("searchSettings", () => {
     expect(searchSettings("writing style", available)[0]?.id).toBe("source-control-writing-style");
     expect(searchSettings("auto-settle", available)).toHaveLength(3);
   });
+
+  it("finds the directory defaults in general", () => {
+    const available = filterAvailableSettingsSearchItems({
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: true,
+    });
+    expect(searchSettings("worktrees directory", available)[0]?.id).toBe("worktrees-directory");
+    expect(searchSettings("add project", available)[0]?.id).toBe("repositories-directory");
+  });
 });
 
 describe("settings search targets", () => {
