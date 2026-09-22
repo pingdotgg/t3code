@@ -739,6 +739,12 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
       format === "markdown"
         ? serializeTableElementToMarkdown(table)
         : serializeTableElementToCsv(table);
+    // A retry must not keep showing the previous attempt's Copied state.
+    if (copiedTimerRef.current != null) {
+      clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = null;
+    }
+    setCopied(false);
     const reportFailure = (cause: unknown) => {
       reportMarkdownActionFailure({ operation: "copy-table", format }, cause);
       toastManager.add(
@@ -943,6 +949,12 @@ function MarkdownCodeBlock({
   const copyLabel = copied ? "Copied" : "Copy code";
 
   const handleCopy = useCallback(() => {
+    // A retry must not keep showing the previous attempt's Copied state.
+    if (copiedTimerRef.current != null) {
+      clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = null;
+    }
+    setCopied(false);
     const reportFailure = (cause: unknown) => {
       reportMarkdownActionFailure(
         {

@@ -361,6 +361,10 @@ export function PreviewView({
               );
             };
             const copyPath = () => {
+              if (pathCopied) {
+                pathCopied = false;
+                updateRecordingToast();
+              }
               void writeTextToClipboard(artifact.path, "recording path").then((didCopy) => {
                 if (!didCopy) {
                   reportCopyFailure(new Error("Clipboard write produced no result."));
