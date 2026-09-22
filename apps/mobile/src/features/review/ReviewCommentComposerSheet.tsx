@@ -1,7 +1,7 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { TextInputWrapper } from "expo-paste-input";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, View, useWindowDimensions } from "react-native";
 import { KeyboardAvoidingView, KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -60,6 +60,13 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   >({});
   const [attachments, setAttachments] = useState<ReadonlyArray<DraftComposerImageAttachment>>([]);
   const [pendingImages, setPendingImages] = useState(0);
+  // The dismissal guard reads this ref synchronously: a paste followed by a back gesture inside
+  // the same frame must still count the conversion React has not rendered yet.
+  const pendingImagesRef = useRef(0);
+  const changePendingImages = useCallback((delta: number) => {
+    pendingImagesRef.current += delta;
+    setPendingImages(pendingImagesRef.current);
+  }, []);
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
 
   const selectedLines = useMemo(
@@ -89,7 +96,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   useReviewCommentDismissal({
     commentText,
     attachmentCount: attachments.length,
-    pendingImages,
+    pendingImages: pendingImagesRef,
     submitted,
     accepted,
   });
@@ -103,7 +110,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   const dismissComposer = useCallback(() => navigation.goBack(), [navigation]);
   const handleNativePaste = useNativePaste((uris) => {
     if (submitted) return;
-    setPendingImages((count) => count + 1);
+    changePendingImages(1);
     void (async () => {
       try {
         const images = await convertPastedImagesToAttachments({
@@ -116,7 +123,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
       } catch (error) {
         console.error("[review comment] error converting pasted images", error);
       } finally {
-        setPendingImages((count) => count - 1);
+        changePendingImages(-1);
       }
     })();
   });
@@ -151,7 +158,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
 
   async function handlePickImages(): Promise<void> {
     if (submitted) return;
-    setPendingImages((count) => count + 1);
+    changePendingImages(1);
     try {
       const result = await pickComposerImages({ existingCount: attachments.length });
       if (result.images.length > 0) {
@@ -161,7 +168,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
         setPendingConnectionError(result.error);
       }
     } finally {
-      setPendingImages((count) => count - 1);
+      changePendingImages(-1);
     }
   }
 
