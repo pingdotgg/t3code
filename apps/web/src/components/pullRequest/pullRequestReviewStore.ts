@@ -6,8 +6,15 @@
  * hosts that have no pending review of their own. That also means a draft lives only as long
  * as the tab does, which is why this is deliberately not persisted.
  */
-import type { PullRequestRef, PullRequestReviewCommentDraft } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  PullRequestRef,
+  PullRequestReviewCommentDraft,
+  PullRequestReviewPosition,
+} from "@t3tools/contracts";
 import { create } from "zustand";
+import type { SelectedLineRange } from "@pierre/diffs";
+import type { ReviewCommentContext } from "~/reviewCommentContext";
 
 export type PendingReviewComment = PullRequestReviewCommentDraft & { readonly id: string };
 
@@ -34,7 +41,38 @@ export function pullRequestReviewKey(reference: PullRequestRef): string {
   ]);
 }
 
+export interface InlineReviewDraft {
+  readonly fileKey: string;
+  readonly range: SelectedLineRange;
+  readonly text: string;
+  readonly comment: ReviewCommentContext;
+}
+
+export interface PullRequestLineDraft {
+  readonly fileKey: string;
+  readonly path: string;
+  readonly oldPath: string | null;
+  readonly position: PullRequestReviewPosition;
+  readonly range: SelectedLineRange;
+  readonly text: string;
+}
+
+export function reviewEditorKey(
+  environmentId: EnvironmentId,
+  reference: PullRequestRef,
+  subject: string,
+): string {
+  return JSON.stringify([environmentId, pullRequestReviewKey(reference), subject]);
+}
+
 interface PullRequestReviewStoreState {
+  readonly editorDrafts: Readonly<Record<string, string>>;
+  readonly inlineDrafts: Readonly<Record<string, InlineReviewDraft>>;
+  readonly lineDrafts: Readonly<Record<string, PullRequestLineDraft>>;
+  readonly setEditorDraft: (key: string, text: string) => void;
+  readonly clearEditorDraft: (key: string, submittedText: string) => void;
+  readonly setInlineDraft: (key: string, draft: InlineReviewDraft | null) => void;
+  readonly setLineDraft: (key: string, draft: PullRequestLineDraft | null) => void;
   readonly drafts: Readonly<Record<string, ReadonlyArray<PendingReviewComment>>>;
   readonly summaries: Readonly<Record<string, string>>;
   readonly addComment: (key: string, comment: PendingReviewComment) => void;
@@ -48,6 +86,27 @@ interface PullRequestReviewStoreState {
 const EMPTY: ReadonlyArray<PendingReviewComment> = [];
 
 export const usePullRequestReviewStore = create<PullRequestReviewStoreState>()((set) => ({
+  editorDrafts: {},
+  inlineDrafts: {},
+  lineDrafts: {},
+  setEditorDraft: (key, text) =>
+    set((state) => ({ editorDrafts: { ...state.editorDrafts, [key]: text } })),
+  clearEditorDraft: (key, submittedText) =>
+    set((state) => {
+      if (state.editorDrafts[key] !== submittedText) return state;
+      const { [key]: _removed, ...rest } = state.editorDrafts;
+      return { editorDrafts: rest };
+    }),
+  setInlineDraft: (key, draft) =>
+    set((state) => {
+      const { [key]: _removed, ...rest } = state.inlineDrafts;
+      return { inlineDrafts: draft === null ? rest : { ...rest, [key]: draft } };
+    }),
+  setLineDraft: (key, draft) =>
+    set((state) => {
+      const { [key]: _removed, ...rest } = state.lineDrafts;
+      return { lineDrafts: draft === null ? rest : { ...rest, [key]: draft } };
+    }),
   drafts: {},
   summaries: {},
   addComment: (key, comment) =>

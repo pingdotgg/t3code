@@ -1,14 +1,18 @@
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
+  COMPOSER_CONTEXT_MAX_RECORDS,
   ComposerContextId,
   EnvironmentId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ThreadId,
 } from "@t3tools/contracts";
 import { onTestFinished, vi } from "vite-plus/test";
+
+vi.mock("../lib/uuid", () => ({ uuidv4: () => crypto.randomUUID() }));
 
 const composerDraftFileMocks = vi.hoisted(() => {
   let document = JSON.stringify({ schemaVersion: 1, drafts: {} });
@@ -185,6 +189,7 @@ import {
   retargetNewTaskDraft,
   setComposerDraftText,
   insertComposerDraftContext,
+  appendComposerDraftReviewComment,
   insertComposerDraftText,
   rememberComposerDraftSelection,
   setComposerDraftAttachmentUpload,
@@ -238,6 +243,76 @@ function contextDraft(start: number, count: number): ComposerDraft {
 }
 
 describe("mobile composer drafts", () => {
+  const reviewText =
+    '<review_comment sectionId="working" sectionTitle="Working tree" filePath="src/a.ts" startIndex="0" endIndex="0" rangeLabel="1">\nKeep this comment\n```diff\n@@ -1,1 +1,1 @@\n line\n```\n</review_comment>';
+  const reviewImage = {
+    type: "image" as const,
+    id: "review-image",
+    name: "review.png",
+    mimeType: "image/png" as const,
+    sizeBytes: 4,
+    dataUrl: "data:image/png;base64,YWJj",
+    previewUri: "data:image/png;base64,YWJj",
+  };
+
+  it("adds a review snapshot and image together to its scoped destination without replacing selected text", () => {
+    const key = "review-environment:review-thread";
+    setComposerDraftText(key, "Existing draft");
+    setComposerDraftText("other-environment:review-thread", "Other draft");
+    rememberComposerDraftSelection(key, "Existing draft", { start: 0, end: 8 });
+    expect(appendComposerDraftReviewComment(key, reviewText, [reviewImage])).toBe(true);
+    const draft = getComposerDraftSnapshot(key);
+    expect(draft.text).toMatch(/^Existing draft /);
+    expect(draft.attachments).toEqual([reviewImage]);
+    expect(draft.context?.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "review-comment", filePath: "src/a.ts" }),
+        expect.objectContaining({ kind: "image", attachmentId: "review-image" }),
+      ]),
+    );
+    expect(getComposerDraftSnapshot("other-environment:review-thread").text).toBe("Other draft");
+  });
+
+  it("leaves the destination and editor attachments intact when context capacity rejects a review", () => {
+    const key = "review-environment:full-context";
+    const before = contextDraft(0, COMPOSER_CONTEXT_MAX_RECORDS);
+    appAtomRegistry.set(composerDraftsAtom, { [key]: before });
+    expect(appendComposerDraftReviewComment(key, reviewText, [reviewImage])).toBe(false);
+    expect(getComposerDraftSnapshot(key)).toEqual(before);
+    expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
+  });
+
+  it("does not insert the comment or release its files when the attachment limit rejects the transfer", () => {
+    const key = "review-environment:full-attachments";
+    const before = {
+      text: "Existing draft",
+      attachments: Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS }, (_, index) => ({
+        ...reviewImage,
+        id: `held-${index}`,
+      })),
+    };
+    appAtomRegistry.set(composerDraftsAtom, { [key]: before });
+    expect(appendComposerDraftReviewComment(key, reviewText, [reviewImage])).toBe(false);
+    expect(getComposerDraftSnapshot(key)).toEqual(before);
+    expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
+  });
+
+  it("keeps a rejected review available for a successful retry", () => {
+    const key = "review-environment:retry";
+    appAtomRegistry.set(composerDraftsAtom, {
+      [key]: contextDraft(0, COMPOSER_CONTEXT_MAX_RECORDS),
+    });
+    expect(appendComposerDraftReviewComment(key, reviewText, [reviewImage])).toBe(false);
+    setComposerDraftText(key, "Room now");
+    expect(appendComposerDraftReviewComment(key, reviewText, [reviewImage])).toBe(true);
+    expect(getComposerDraftSnapshot(key).attachments).toEqual([reviewImage]);
+    expect(
+      getComposerDraftSnapshot(key).context?.records.filter(
+        (record) => record.kind === "review-comment",
+      ),
+    ).toHaveLength(1);
+  });
+
   it.each([false, true])(
     "restores visible file chips from legacy drafts (archived: %s)",
     async (archived) => {

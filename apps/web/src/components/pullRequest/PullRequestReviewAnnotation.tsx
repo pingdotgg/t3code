@@ -33,7 +33,11 @@ import { PullRequestActorLabel } from "./pullRequestPresentation";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
-import type { PendingReviewComment } from "./pullRequestReviewStore";
+import {
+  reviewEditorKey,
+  usePullRequestReviewStore,
+  type PendingReviewComment,
+} from "./pullRequestReviewStore";
 
 const CARD_CLASS =
   "mx-3 my-2 rounded-xl border border-border/70 bg-background p-3 text-sm shadow-sm";
@@ -136,7 +140,10 @@ export function ReviewThreadCard({
   // A resolved thread is finished work, so it opens collapsed and stays one line until asked for.
   const [expanded, setExpanded] = useState(!thread.isResolved);
   const [replying, setReplying] = useState(false);
-  const [reply, setReply] = useState("");
+  const replyKey = reviewEditorKey(environmentId, reference, `reply:${thread.id}`);
+  const reply = usePullRequestReviewStore((store) => store.editorDrafts[replyKey] ?? "");
+  const setReply = (text: string) =>
+    usePullRequestReviewStore.getState().setEditorDraft(replyKey, text);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const sendingRef = useRef(false);
@@ -156,6 +163,9 @@ export function ReviewThreadCard({
     const saved = await onEditComment(commentId, body);
     setSavingEdit(false);
     if (saved) {
+      usePullRequestReviewStore
+        .getState()
+        .clearEditorDraft(reviewEditorKey(environmentId, reference, `comment:${commentId}`), body);
       setLoadedPage((previous) =>
         previous?.threadId === thread.id
           ? {
@@ -186,7 +196,7 @@ export function ReviewThreadCard({
               }
             : previous,
         );
-        setReply("");
+        usePullRequestReviewStore.getState().clearEditorDraft(replyKey, reply);
         setReplying(false);
       }
     } finally {
@@ -280,6 +290,7 @@ export function ReviewThreadCard({
                 {editingId === comment.id ? (
                   <PullRequestMarkdownEditor
                     className="mt-1"
+                    draftKey={reviewEditorKey(environmentId, reference, `comment:${comment.id}`)}
                     value={comment.body}
                     cwd={workspaceRoot}
                     environmentId={environmentId}

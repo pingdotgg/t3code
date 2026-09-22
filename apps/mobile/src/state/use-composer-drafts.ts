@@ -29,6 +29,9 @@ import {
   sanitizeComposerContextLabel,
   replaceComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
+import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
+import { reidentifyComposerContext } from "../lib/composerContext";
+import { uuidv4 } from "../lib/uuid";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
@@ -243,6 +246,38 @@ export function setComposerDraftContext(
     ...current,
     [draftKey]: { ...normalizeDraft(current[draftKey]), context },
   }));
+}
+
+/** Transfers a review comment as one snapshot; rejected input remains owned by its editor. */
+export function appendComposerDraftReviewComment(
+  draftKey: string,
+  text: string,
+  attachments: ReadonlyArray<DraftComposerAttachment> = [],
+): boolean {
+  const upgraded = upgradeLegacyContextMessage(text);
+  const content = reidentifyComposerContext(upgraded.text, upgraded.records, uuidv4);
+  const records = attachments.map((attachment) => attachmentContextRecord(attachment));
+  let inserted = false;
+  updateComposerDrafts((current) => {
+    const draft = normalizeDraft(current[draftKey]);
+    if (draft.attachments.length + attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+      return current;
+    }
+    // Append to the destination, without replacing its saved editor selection.
+    const next = draftWithInsertedContext(
+      draftKey,
+      { ...draft, attachments: [...draft.attachments, ...attachments] },
+      {
+        text: [content.text, ...records.map(formatComposerContextReference)].join(" "),
+        context: { version: 1, records: [...content.context.records, ...records] },
+      },
+      { text: draft.text, start: draft.text.length, end: draft.text.length },
+    );
+    if (!next) return current;
+    inserted = true;
+    return { ...current, [draftKey]: next };
+  });
+  return inserted;
 }
 
 export function insertComposerDraftContext(

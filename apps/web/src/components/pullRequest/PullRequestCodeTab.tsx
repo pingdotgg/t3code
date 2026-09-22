@@ -27,6 +27,7 @@ import {
 import { useAtomRefresh } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
@@ -149,6 +150,47 @@ interface DraftAnchor {
   readonly range: SelectedLineRange;
 }
 
+/**
+ * The draft card subscribes to the stored text itself so a keystroke re-renders this one editor
+ * instead of the code tab, whose renderAnnotation feeds the viewer's portal memoization.
+ */
+function LineDraftAnnotation({
+  lineDraftKey,
+  anchor,
+  fileMissing,
+  secondaryAction,
+  onCancel,
+  onComment,
+}: {
+  readonly lineDraftKey: string;
+  readonly anchor: DraftAnchor;
+  readonly fileMissing: boolean;
+  readonly secondaryAction:
+    | { readonly label: string; readonly onAction: (text: string) => void }
+    | undefined;
+  readonly onCancel: () => void;
+  readonly onComment: (text: string) => void;
+}) {
+  const text = usePullRequestReviewStore((store) => store.lineDrafts[lineDraftKey]?.text ?? "");
+  return (
+    <DiffCommentAnnotation
+      kind="draft"
+      rangeLabel={`${anchor.path}:${getReviewPositionAnchor(anchor.position).line}`}
+      text={text}
+      onTextChange={(next) => {
+        const store = usePullRequestReviewStore.getState();
+        const current = store.lineDrafts[lineDraftKey];
+        if (current) store.setLineDraft(lineDraftKey, { ...current, text: next });
+      }}
+      submitLabel="Add to review"
+      submitDisabled={fileMissing}
+      {...(secondaryAction ? { secondaryAction } : {})}
+      onCancel={onCancel}
+      onComment={onComment}
+    />
+  );
+}
+
 /** A range of the diff and the reader's request for the agent. */
 export interface PullRequestAgentSelectionInput {
   /** The marked lines, already in the shape the composer draws and the agent reads. */
@@ -241,7 +283,6 @@ function PullRequestCodeTab({
     id: string;
     range: SelectedLineRange;
   } | null>(null);
-  const [draft, setDraft] = useState<DraftAnchor | null>(null);
   const [threadPending, setThreadPending] = useState(false);
   const [orphansOpen, setOrphansOpen] = useState(false);
   // Which pull request the slices belong to travels with them, so a render taken before the
@@ -259,10 +300,28 @@ function PullRequestCodeTab({
   // One commit's own changes and the whole change are two different diffs, paged separately, so
   // everything below is keyed by both.
   const scopeKey = commit === null ? referenceKey : `${referenceKey}@${commit}`;
-  // The panel keeps this mounted across pull requests, so an open composer would otherwise
-  // survive the switch and attach its comment to whichever one is on screen when it is sent.
+  const lineDraftKey = JSON.stringify([environmentId, scopeKey]);
+  // Anchor fields only: the stored draft gets a new identity on every keystroke, and the
+  // callbacks below feed the viewer's portal memoization, so subscribing to `text` here would
+  // remount every visible file header on each character typed.
+  const draft = usePullRequestReviewStore(
+    useShallow((store) => {
+      const current = store.lineDrafts[lineDraftKey];
+      if (!current) return null;
+      const { text: _text, ...anchor } = current;
+      return anchor;
+    }),
+  );
+  const setLineDraft = usePullRequestReviewStore((store) => store.setLineDraft);
+  const setDraft = useCallback(
+    (next: DraftAnchor | null) => {
+      setLineDraft(lineDraftKey, next === null ? null : { ...next, text: "" });
+    },
+    [lineDraftKey, setLineDraft],
+  );
+
+  // The editor is keyed separately; resetting the viewer must not discard its draft.
   useEffect(() => {
-    setDraft(null);
     setSelectedLines(null);
     setToggledFiles(new Set());
     setFoldOverride(null);
@@ -689,7 +748,7 @@ function PullRequestCodeTab({
 
   const beginComment = useCallback(
     (range: SelectedLineRange | null, context: { item: CodeViewItem<ReviewAnnotationGroup> }) => {
-      if (!range || !canCommentOnLines) return;
+      if (!range || !canCommentOnLines || draft) return;
       const item = context.item;
       if (item.type !== "diff") return;
       const file = files.find((candidate) => buildFileDiffRenderKey(candidate) === item.id);
@@ -714,7 +773,7 @@ function PullRequestCodeTab({
         range,
       });
     },
-    [canCommentOnLines, files, parsedSlices],
+    [canCommentOnLines, draft, files, parsedSlices, setDraft],
   );
 
   // Built here because the parsed diff only lives here, and built by the same function the
@@ -735,11 +794,12 @@ function PullRequestCodeTab({
               range: anchor.range,
               text,
             });
+      if (comment === null) return;
+      onFinish(comment);
       setDraft(null);
       setSelectedLines(null);
-      if (comment !== null) onFinish(comment);
     },
-    [detail.number, files],
+    [detail.number, files, setDraft],
   );
 
   // The viewer's SlotPortals memoizes each visible file's header/annotation portal on these
@@ -1001,27 +1061,27 @@ function PullRequestCodeTab({
           />
         ))}
         {annotation.metadata.draft && draft ? (
-          <DiffCommentAnnotation
-            kind="draft"
-            rangeLabel={`${draft.path}:${getReviewPositionAnchor(draft.position).line}`}
-            text=""
-            submitLabel="Add to review"
-            {...(onAddToAgentSelection
-              ? {
-                  secondaryAction: {
+          <LineDraftAnnotation
+            lineDraftKey={lineDraftKey}
+            anchor={draft}
+            fileMissing={!files.some((file) => buildFileDiffRenderKey(file) === draft.fileKey)}
+            secondaryAction={
+              onAddToAgentSelection
+                ? {
                     label: "Add to agent",
                     onAction: (text: string) =>
                       finishSelection(draft, text, (comment) =>
                         onAddToAgentSelection({ comment, request: text }),
                       ),
-                  },
-                }
-              : {})}
+                  }
+                : undefined
+            }
             onCancel={() => {
               setDraft(null);
               setSelectedLines(null);
             }}
             onComment={(body) => {
+              if (!files.some((file) => buildFileDiffRenderKey(file) === draft.fileKey)) return;
               addComment(reviewKey, {
                 id: nextPendingReviewCommentId(),
                 path: draft.path,
@@ -1040,12 +1100,29 @@ function PullRequestCodeTab({
       addComment,
       draft,
       finishSelection,
+      files,
       onAddToAgentSelection,
       removeComment,
       renderThreadCard,
       reviewKey,
+      setDraft,
     ],
   );
+
+  const detachedDraft =
+    draft && !files.some((file) => buildFileDiffRenderKey(file) === draft.fileKey) ? (
+      <div className="shrink-0 border-b border-border/60 px-3 py-2">
+        <p className="text-xs text-muted-foreground">
+          Draft for {draft.path}. The original lines are not currently available; your text is
+          retained.
+        </p>
+        {renderAnnotation({
+          side: "additions",
+          lineNumber: 1,
+          metadata: { threads: [], pending: [], draft: true },
+        })}
+      </div>
+    ) : null;
 
   // A rebase or a force-push can take the scoped commit out of the change. Its diff may still
   // be reachable on the host, but it is no longer part of what is being reviewed, so the scope
@@ -1324,6 +1401,7 @@ function PullRequestCodeTab({
   const withToolbar = (body: ReactNode) => (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}
+      {detachedDraft}
       <div className="min-h-0 flex-1 overflow-auto">{body}</div>
     </div>
   );
@@ -1401,6 +1479,7 @@ function PullRequestCodeTab({
   return (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}
+      {detachedDraft}
       {/* Above the code, closed, and counted: these belong to the change rather than to any
             line of it, and in the stream they read as cards dropped into the patch. */}
       {orphanFiles.size > 0 ? (
