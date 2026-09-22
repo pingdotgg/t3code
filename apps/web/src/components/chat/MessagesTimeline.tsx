@@ -141,7 +141,7 @@ import type {
   ComposerContextRecord,
   KnownComposerContextRecord,
 } from "@t3tools/contracts";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { useAssetUrlRefresh, useAssetUrls, useAssetUrlState } from "../../assets/assetUrls";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
@@ -2074,14 +2074,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           data-user-message-attribution="agent"
         >
           {senderThreadId ? (
-            <button
-              type="button"
+            <InlineButton
               onClick={() => ctx.onOpenThread(senderThreadId)}
-              className="rounded-sm hover:text-muted-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+              className="rounded-sm hover:text-muted-foreground hover:underline"
               aria-label="Open sending thread"
             >
               Sent by another agent
-            </button>
+            </InlineButton>
           ) : (
             "Sent by another agent"
           )}
