@@ -19,29 +19,45 @@ jobs:
           ref: fix/antigravity-system-message-leak
           fetch-depth: 1
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb
         with:
-          version: 11.10.0
-          run_install: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.13.1
-          cache: pnpm
+          node-version-file: package.json
+          cache: false
+          run-install: false
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
         with:
+          toolchain: stable
           targets: x86_64-pc-windows-msvc
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Install desktop dependencies
+        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Install Spectre-mitigated MSVC libs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -products * -latest -property installationPath
+          if ([string]::IsNullOrWhiteSpace($installPath)) {
+            throw "Visual Studio installation was not found on the runner."
+          }
+          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          $proc = Start-Process -FilePath $setupExe -ArgumentList @(
+            "modify", "--installPath", "`"$installPath`"",
+            "--add", "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre",
+            "--quiet", "--norestart"
+          ) -Wait -PassThru -NoNewWindow
+          if ($null -eq $proc -or $proc.ExitCode -ne 0) {
+            $code = if ($null -ne $proc) { $proc.ExitCode } else { 1 }
+            throw "Visual Studio Installer failed with exit code $code"
+          }
 
       - name: Build Windows NSIS installer
-        shell: pwsh
-        run: node scripts/build-desktop-artifact.ts --platform win --target nsis --arch x64
+        shell: bash
+        run: vp run dist:desktop:artifact --platform win --target nsis --arch x64 --verbose
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
