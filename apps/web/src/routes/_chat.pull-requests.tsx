@@ -1310,6 +1310,7 @@ function PullRequestsRouteView() {
           {
             state: entry.state,
             isDraft: entry.isDraft,
+            ...(entry.inMergeQueue === undefined ? {} : { inMergeQueue: entry.inMergeQueue }),
           },
         ]),
       ),

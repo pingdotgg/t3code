@@ -93,6 +93,7 @@ function LinkRow({
         <PullRequestRowGlyph
           state={snapshot.state}
           isDraft={snapshot.isDraft}
+          inMergeQueue={snapshot.inMergeQueue}
           mergeability={snapshot.mergeability}
           baseBranch={snapshot.baseBranch}
         />
@@ -115,7 +116,7 @@ function LinkRow({
           }
           title={snapshot?.title ?? link.repository}
           signals={
-            snapshot?.state === "open" ? (
+            snapshot?.state === "open" && snapshot.inMergeQueue !== true ? (
               <>
                 {snapshot.checksState ? <ChecksGlyph state={snapshot.checksState} /> : null}
                 {snapshot.reviewDecision ? (

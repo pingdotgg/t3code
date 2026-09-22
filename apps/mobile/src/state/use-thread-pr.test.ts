@@ -74,6 +74,42 @@ function linkedPr(
 }
 
 describe("presentThreadLinkedPullRequests", () => {
+  it("presents an open queued pull request as queued", () => {
+    expect(
+      presentThreadLinkedPullRequests([
+        linkedPr(1, { snapshot: { ...linkedPr(1).snapshot!, inMergeQueue: true } }),
+      ]),
+    ).toMatchObject({
+      state: "open",
+      inMergeQueue: true,
+      accessibilityLabel: "#1 pull request queued",
+      textClassName: "text-adaptive-amber-600-400",
+    });
+  });
+
+  it("presents a queued stack as queued", () => {
+    const bottom = linkedPr(1, {
+      stack: {
+        kind: "native",
+        id: "stack-1",
+        number: 1,
+        url: "https://github.com/acme/repo/stacks/1",
+        base: "main",
+        layers: [
+          { number: 1, headBranch: "feature-1", state: "open" },
+          { number: 2, headBranch: "feature-2", state: "open" },
+        ],
+      },
+      snapshot: { ...linkedPr(1).snapshot!, inMergeQueue: true },
+    });
+    const top = linkedPr(2, { stack: bottom.stack });
+    expect(presentThreadLinkedPullRequests([bottom, top])).toMatchObject({
+      kind: "stack",
+      inMergeQueue: true,
+      accessibilityLabel: "2 pull requests in stack, queued",
+    });
+  });
+
   it("renders unsynced links with neutral pending status", () => {
     expect(presentThreadLinkedPullRequests([linkedPr(1, { snapshot: null })])).toMatchObject({
       number: 1,

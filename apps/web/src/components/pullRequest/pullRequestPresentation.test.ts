@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolvePullRequestConflict, resolvePullRequestState } from "./pullRequestPresentation";
+import {
+  resolvePullRequestConflict,
+  resolvePullRequestState,
+  shouldShowPullRequestStatusDetails,
+} from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
 describe("resolvePullRequestState", () => {
@@ -18,6 +22,13 @@ describe("resolvePullRequestState", () => {
       PullRequestGlyph.draft,
       "Draft",
       "text-zinc-500 dark:text-zinc-400/80",
+    ],
+    [
+      "queued",
+      { state: "open", isDraft: false, inMergeQueue: true },
+      PullRequestGlyph.pullRequest,
+      "Queued",
+      "text-amber-600 dark:text-amber-300/90",
     ],
     [
       "closed",
@@ -58,6 +69,15 @@ describe("resolvePullRequestState", () => {
     });
   });
 
+  it.each(["closed", "merged"] as const)(
+    "keeps a %s pull request terminal when stale queue metadata is also present",
+    (state) => {
+      expect(resolvePullRequestState({ state, isDraft: false, inMergeQueue: true })).toMatchObject({
+        label: state === "merged" ? "Merged" : "Closed",
+      });
+    },
+  );
+
   it("keeps lifecycle and conflict presentation independent for an open conflicting pull request", () => {
     const input = {
       state: "open" as const,
@@ -75,6 +95,15 @@ describe("resolvePullRequestState", () => {
       label: "Conflicts with main",
       toneClassName: "text-destructive",
     });
+  });
+});
+
+describe("shouldShowPullRequestStatusDetails", () => {
+  it("hides review and check details only while an open pull request is queued", () => {
+    expect(shouldShowPullRequestStatusDetails({ state: "open", inMergeQueue: true })).toBe(false);
+    expect(shouldShowPullRequestStatusDetails({ state: "open", inMergeQueue: false })).toBe(true);
+    expect(shouldShowPullRequestStatusDetails({ state: "closed", inMergeQueue: true })).toBe(true);
+    expect(shouldShowPullRequestStatusDetails({ state: "merged", inMergeQueue: true })).toBe(true);
   });
 });
 

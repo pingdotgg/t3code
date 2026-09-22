@@ -115,6 +115,7 @@ function PullRequestRowImpl({
       <PullRequestRowGlyph
         state={entry.state}
         isDraft={entry.isDraft}
+        inMergeQueue={entry.inMergeQueue}
         mergeability={entry.mergeability}
         baseBranch={entry.baseBranch}
         // On the title line rather than between the lines, as main aligns it.
@@ -141,26 +142,28 @@ function PullRequestRowImpl({
         }
         title={entry.title}
         signals={
-          <>
-            {entry.checksState === undefined ? null : (
-              <PullRequestChecksPopover
-                checksState={entry.checksState}
-                environmentId={entry.environmentId}
-                reference={{
-                  projectId: entry.projectId,
-                  repository: entry.repository,
-                  number: entry.number,
-                }}
-              />
-            )}
-            {/* Only a verdict the host actually reports: an approval, a request for changes,
+          entry.state === "open" && entry.inMergeQueue ? null : (
+            <>
+              {entry.checksState === undefined ? null : (
+                <PullRequestChecksPopover
+                  checksState={entry.checksState}
+                  environmentId={entry.environmentId}
+                  reference={{
+                    projectId: entry.projectId,
+                    repository: entry.repository,
+                    number: entry.number,
+                  }}
+                />
+              )}
+              {/* Only a verdict the host actually reports: an approval, a request for changes,
                 or a review the branch rules still require. No glyph on the common case of a
                 pull request nobody has reviewed, so a row only wears a person when the person
                 has said something. */}
-            {entry.reviewDecision === undefined ? null : (
-              <PullRequestReviewDecisionGlyph decision={entry.reviewDecision} />
-            )}
-          </>
+              {entry.reviewDecision === undefined ? null : (
+                <PullRequestReviewDecisionGlyph decision={entry.reviewDecision} />
+              )}
+            </>
+          )
         }
         status={
           <>

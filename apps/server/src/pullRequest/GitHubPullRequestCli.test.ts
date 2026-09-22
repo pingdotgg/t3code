@@ -457,30 +457,44 @@ layer("GitHubPullRequestCli.layer", (it) => {
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
           output(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
-            JSON.stringify({
-              number: 7,
-              title: "Reuse the summary",
-              url: "https://github.com/acme/web/pull/7",
-              author: { login: "octocat", name: "Octo Cat" },
-              baseRefName: "main",
-              headRefName: "feat/summary",
-              state: "OPEN",
-              isDraft: false,
-              mergeable: "MERGEABLE",
-              reviewDecision: "APPROVED",
-              additions: 12,
-              deletions: 3,
-              changedFiles: 2,
-              createdAt: "2026-08-20T00:00:00.000Z",
-              updatedAt: "2026-08-24T12:34:56.000Z",
-              reviewRequests: [],
-              labels: [],
-              statusCheckRollup: [
-                { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS", name: "ci" },
-              ],
-              body: "",
-            }),
+            encodeJson(
+              coreResponse({
+                title: "Reuse the summary",
+                author: { login: "octocat", name: "Octo Cat" },
+                headRefName: "feat/summary",
+                isDraft: false,
+                isInMergeQueue: true,
+                mergeable: "MERGEABLE",
+                reviewDecision: "APPROVED",
+                additions: 12,
+                deletions: 3,
+                changedFiles: 2,
+                updatedAt: "2026-08-24T12:34:56.000Z",
+                reviewRequests: undefined,
+                labels: undefined,
+                commits: {
+                  nodes: [
+                    {
+                      commit: {
+                        statusCheckRollup: {
+                          contexts: {
+                            nodes: [
+                              {
+                                __typename: "CheckRun",
+                                status: "COMPLETED",
+                                conclusion: "SUCCESS",
+                                name: "ci",
+                              },
+                            ],
+                            pageInfo: { hasNextPage: false },
+                          },
+                        },
+                      },
+                    },
+                  ],
+                },
+              }),
+            ),
           ),
         ),
       );
@@ -499,6 +513,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
           state: summary.state,
           headBranch: summary.headBranch,
           isDraft: summary.isDraft,
+          inMergeQueue: summary.inMergeQueue,
           author: summary.author?.login,
           additions: summary.additions,
           deletions: summary.deletions,
@@ -512,6 +527,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
           state: "open",
           headBranch: "feat/summary",
           isDraft: false,
+          inMergeQueue: true,
           author: "octocat",
           additions: 12,
           deletions: 3,
@@ -522,15 +538,8 @@ layer("GitHubPullRequestCli.layer", (it) => {
         },
       );
       expect(mockedExecute).toHaveBeenCalledOnce();
-      expect(mockedExecute.mock.calls[0]?.[0]?.args).toEqual([
-        "pr",
-        "view",
-        "7",
-        "--repo",
-        "github.com/acme/web",
-        "--json",
-        expect.stringContaining("statusCheckRollup"),
-      ]);
+      expect(callAt(0).args).toContain("graphql");
+      expect(callAt(0).args.at(-1)).toContain("isInMergeQueue");
       expect(mockedGetPullRequest).not.toHaveBeenCalled();
     }),
   );
@@ -1045,6 +1054,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
               data: {
                 s0: {
                   pullRequest: {
+                    isInMergeQueue: true,
                     stack: { number: 3, size: 2, baseRefName: "main" },
                     stackEntry: { position: 1 },
                   },
@@ -1068,6 +1078,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
       });
       expect(batch.items.map((item) => item.number)).toEqual([4, 5]);
       expect(batch.items[0]?.stack).toEqual({ number: 3, size: 2, base: "main", position: 1 });
+      expect(batch.items[0]?.inMergeQueue).toBe(true);
       expect(batch.items[1]?.stack).toBeUndefined();
       expect(batch.truncated).toBe(true);
       expect(batch.continues).toBe(false);

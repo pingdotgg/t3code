@@ -8,6 +8,7 @@ import { PullRequestRow } from "./PullRequestRow";
 import {
   pullRequestChecksState,
   pullRequestCheckStatusLabel,
+  PullRequestReviewDecisionGlyph,
   summarizePullRequestChecks,
 } from "./pullRequestPresentation";
 
@@ -115,5 +116,23 @@ describe("PullRequestRow checks indicator", () => {
   it("shows the indicator only for a row the host reported a rollup for", () => {
     expect(indicators(row({ checksState: "failing" }))).toBe(1);
     expect(indicators(row({}))).toBe(0);
+  });
+
+  it("hides checks while an open pull request is queued", () => {
+    expect(indicators(row({ checksState: "passing", inMergeQueue: true }))).toBe(0);
+    expect(indicators(row({ state: "merged", checksState: "passing", inMergeQueue: true }))).toBe(
+      1,
+    );
+  });
+
+  it("hides approval only while an open pull request is queued", () => {
+    const approvals = (node: ReactNode) =>
+      flatten(node).filter(
+        (element) => (element as { type?: unknown }).type === PullRequestReviewDecisionGlyph,
+      ).length;
+    expect(approvals(row({ reviewDecision: "approved", inMergeQueue: true }))).toBe(0);
+    expect(
+      approvals(row({ state: "merged", reviewDecision: "approved", inMergeQueue: true })),
+    ).toBe(1);
   });
 });

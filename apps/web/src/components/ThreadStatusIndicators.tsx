@@ -127,6 +127,7 @@ export function linkedPullRequestSnapshotStatus(
       title: snapshot.title,
       state: snapshot.state,
       isDraft: snapshot.isDraft,
+      ...(snapshot.inMergeQueue === undefined ? {} : { inMergeQueue: snapshot.inMergeQueue }),
       headRef: snapshot.headBranch,
       baseRef: snapshot.baseBranch,
       ...(snapshot.updatedAt === null ? {} : { updatedAt: snapshot.updatedAt }),
@@ -284,7 +285,11 @@ export function ThreadPullRequestsMiniList({
         const presentation =
           snapshot === null
             ? null
-            : resolvePullRequestState({ state: snapshot.state, isDraft: snapshot.isDraft });
+            : resolvePullRequestState({
+                state: snapshot.state,
+                isDraft: snapshot.isDraft,
+                inMergeQueue: snapshot.inMergeQueue,
+              });
         return (
           <li
             key={`${line.link.host}/${line.link.repository}#${line.link.number}`}
@@ -326,7 +331,11 @@ export function prStatusIndicator(
 ): PrStatusIndicator | null {
   if (!pr) return null;
   const presentation = resolveChangeRequestPresentation(provider);
-  const state = resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true });
+  const state = resolvePullRequestState({
+    state: pr.state,
+    isDraft: pr.isDraft === true,
+    inMergeQueue: pr.inMergeQueue,
+  });
 
   const tooltipLead = `${presentation.shortName} #${pr.number} - ${state.label}`;
   return {
@@ -343,12 +352,14 @@ export function prStatusIndicator(
 export function ChangeRequestStatusIcon({
   state,
   isDraft = false,
+  inMergeQueue,
   className,
 }: Pick<NonNullable<ThreadPr>, "state"> & {
   readonly isDraft?: boolean | undefined;
+  readonly inMergeQueue?: boolean | undefined;
   readonly className?: string | undefined;
 }) {
-  const presentation = resolvePullRequestState({ state, isDraft });
+  const presentation = resolvePullRequestState({ state, isDraft, inMergeQueue });
   return <presentation.Icon className={className} />;
 }
 

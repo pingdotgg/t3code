@@ -4539,6 +4539,7 @@ it.effect(
               Effect.succeed({
                 ...changeRequest(1, "2026-07-02T00:00:00Z"),
                 isDraft: true,
+                inMergeQueue: true,
                 reviewDecision: "approved",
                 checksState: "passing",
               }),
@@ -4556,6 +4557,7 @@ it.effect(
       const detail = yield* service.detail(reference);
       const summary = yield* service.summary(reference);
       assert.strictEqual(summary.isDraft, false);
+      assert.isUndefined(summary.inMergeQueue);
       assert.deepStrictEqual(summary.author, detail.author);
       assert.strictEqual(summary.additions, 14);
       assert.strictEqual(summary.deletions, 3);

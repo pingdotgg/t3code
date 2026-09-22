@@ -104,6 +104,7 @@ const RawListItemSchema = Schema.Struct({
   baseRefName: Schema.String,
   state: Schema.optional(Schema.NullOr(Schema.String)),
   isDraft: Schema.optional(Schema.Boolean),
+  isInMergeQueue: Schema.optional(Schema.Boolean),
   mergeable: Schema.optional(Schema.NullOr(Schema.String)),
   reviewDecision: Schema.optional(Schema.NullOr(Schema.String)),
   additions: Schema.optional(Schema.Int),
@@ -148,6 +149,7 @@ const RawSearchItemSchema = Schema.Struct({
   baseRefName: Schema.String,
   state: Schema.optional(Schema.NullOr(Schema.String)),
   isDraft: Schema.optional(Schema.Boolean),
+  isInMergeQueue: Schema.optional(Schema.Boolean),
   mergeable: Schema.optional(Schema.NullOr(Schema.String)),
   reviewDecision: Schema.optional(Schema.NullOr(Schema.String)),
   latestReviews: Schema.optional(
@@ -250,7 +252,16 @@ const RawStatsSchema = Schema.Struct({
 const RawStackMembershipsSchema = Schema.Struct({
   data: Schema.Record(
     Schema.String,
-    Schema.NullOr(Schema.Struct({ pullRequest: Schema.NullOr(RawStackMembershipSchema) })),
+    Schema.NullOr(
+      Schema.Struct({
+        pullRequest: Schema.NullOr(
+          Schema.Struct({
+            ...RawStackMembershipSchema.fields,
+            isInMergeQueue: Schema.optional(Schema.Boolean),
+          }),
+        ),
+      }),
+    ),
   ),
 });
 
@@ -657,6 +668,33 @@ const RawCoreSchema = Schema.Struct({
 });
 const decodeCore = decodeJsonResult(RawCoreSchema);
 
+const RawSummarySchema = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      pullRequest: Schema.Struct({
+        ...RawDetailSchema.fields,
+        commits: Schema.Struct({
+          nodes: Schema.Array(
+            Schema.Struct({
+              commit: Schema.Struct({
+                statusCheckRollup: Schema.NullOr(
+                  Schema.Struct({
+                    contexts: Schema.Struct({
+                      nodes: Schema.Array(RawCheckSchema),
+                      pageInfo: Schema.Struct({ hasNextPage: Schema.Boolean }),
+                    }),
+                  }),
+                ),
+              }),
+            }),
+          ),
+        }),
+      }),
+    }),
+  }),
+});
+const decodeSummary = decodeJsonResult(RawSummarySchema);
+
 const RawPullRequestFileSchema = Schema.Struct({
   filename: Schema.String,
   status: Schema.optional(Schema.NullOr(Schema.String)),
@@ -707,11 +745,12 @@ export const PULL_REQUEST_LIST_JSON_FIELDS =
 export const PULL_REQUEST_DETAIL_JSON_FIELDS = `${PULL_REQUEST_LIST_JSON_FIELDS},body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest`;
 
 /** Pull refs let the comparison share the detail read without first resolving a fork branch. */
-export const PULL_REQUEST_CORE_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!, $headRef: String!) {
+export function pullRequestCoreGraphQlQuery(includeMergeQueue: boolean): string {
+  return `query($owner: String!, $name: String!, $number: Int!, $headRef: String!) {
   repository(owner: $owner, name: $name) {
     mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission
     pullRequest(number: $number) {
-      number title url body state isDraft mergeable reviewDecision
+      number title url body state isDraft ${includeMergeQueue ? "isInMergeQueue " : ""}mergeable reviewDecision
       additions deletions changedFiles createdAt updatedAt mergedAt closedAt
       headRefName baseRefName headRefOid isCrossRepository
       headRepositoryOwner { login }
@@ -739,6 +778,32 @@ export const PULL_REQUEST_CORE_GRAPHQL_QUERY = `query($owner: String!, $name: St
     }
   }
 }`;
+}
+
+export const PULL_REQUEST_CORE_GRAPHQL_QUERY = pullRequestCoreGraphQlQuery(true);
+
+export function pullRequestSummaryGraphQlQuery(includeMergeQueue: boolean): string {
+  return `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      number title url state isDraft ${includeMergeQueue ? "isInMergeQueue " : ""}mergeable reviewDecision
+      additions deletions changedFiles createdAt updatedAt mergedAt closedAt
+      headRefName baseRefName
+      author { login avatarUrl ... on User { id name } }
+      commits(last: 1) {
+        nodes { commit { statusCheckRollup { contexts(first: 100) {
+          nodes {
+            __typename
+            ... on StatusContext { context state targetUrl createdAt description }
+            ... on CheckRun { name status conclusion startedAt completedAt detailsUrl }
+          }
+          pageInfo { hasNextPage }
+        } } } }
+      }
+    }
+  }
+}`;
+}
 
 export const PULL_REQUEST_PREVIEW_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
@@ -804,7 +869,11 @@ export const PULL_REQUEST_SEARCH_MAX_ROWS = GRAPHQL_PAGE_SIZE;
  * than twenty labels shows twenty, and one that has asked more than twenty people for a review
  * is already past what a row can say.
  */
-export function pullRequestSearchGraphQlQuery(rows: number, includeStacks = false): string {
+export function pullRequestSearchGraphQlQuery(
+  rows: number,
+  includeStacks = false,
+  includeMergeQueue = false,
+): string {
   return `query($q: String!) {
   search(query: $q, type: ISSUE, first: ${Math.min(Math.max(Math.trunc(rows), 1), PULL_REQUEST_SEARCH_MAX_ROWS)}) {
     pageInfo { hasNextPage }
@@ -819,6 +888,7 @@ export function pullRequestSearchGraphQlQuery(rows: number, includeStacks = fals
         baseRefName
         state
         isDraft
+        ${includeMergeQueue ? "isInMergeQueue" : ""}
         mergeable
         reviewDecision
         latestReviews(first: 20) { nodes { state author { login } } }
@@ -1180,6 +1250,7 @@ export interface GitHubPullRequestListItem {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  readonly inMergeQueue?: boolean;
   readonly mergeability: PullRequestMergeability;
   /** Null where GitHub has no verdict to summarise, which includes a draft nobody has reviewed. */
   readonly reviewDecision: PullRequestReviewDecision | null;
@@ -1591,6 +1662,7 @@ function toListItem(raw: Schema.Schema.Type<typeof RawListItemSchema>): GitHubPu
     baseBranch: raw.baseRefName,
     state: toState(raw),
     isDraft: raw.isDraft ?? false,
+    ...(raw.isInMergeQueue === true ? { inMergeQueue: true } : {}),
     mergeability: toMergeability(raw.mergeable),
     reviewDecision: toReviewDecisionWithReviews(raw.reviewDecision, raw.latestReviews),
     additions: raw.additions ?? 0,
@@ -1797,7 +1869,7 @@ export function buildPullRequestStackMembershipsGraphQlQuery(
   for (const [index, number] of numbers.entries()) {
     if (!Number.isSafeInteger(number) || number <= 0) return null;
     selections.push(
-      `  s${index}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${number}) { stack { number size baseRefName } stackEntry { position } } }`,
+      `  s${index}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${number}) { isInMergeQueue stack { number size baseRefName } stackEntry { position } } }`,
     );
   }
   return `query PullRequestStackMemberships {\n${selections.join("\n")}\n}`;
@@ -1807,15 +1879,30 @@ const decodeStackMemberships = decodeJsonResult(RawStackMembershipsSchema);
 
 export function decodePullRequestStackMembershipsJson(
   raw: string,
-): Result.Result<ReadonlyMap<number, PullRequestStackMembership>, DecodeFailure> {
+): Result.Result<
+  ReadonlyMap<
+    number,
+    { readonly stack?: PullRequestStackMembership; readonly inMergeQueue?: boolean }
+  >,
+  DecodeFailure
+> {
   const decoded = decodeStackMemberships(raw);
   if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
-  const memberships = new Map<number, PullRequestStackMembership>();
+  const memberships = new Map<
+    number,
+    { readonly stack?: PullRequestStackMembership; readonly inMergeQueue?: boolean }
+  >();
   for (const [alias, value] of Object.entries(decoded.success.data)) {
     const index = /^s(\d+)$/.exec(alias)?.[1];
     if (index === undefined || value?.pullRequest == null) continue;
     const stack = toStackMembership(value.pullRequest);
-    if (stack !== undefined) memberships.set(Number(index), stack);
+    const inMergeQueue = value.pullRequest.isInMergeQueue === true;
+    if (stack !== undefined || inMergeQueue) {
+      memberships.set(Number(index), {
+        ...(stack === undefined ? {} : { stack }),
+        ...(inMergeQueue ? { inMergeQueue: true } : {}),
+      });
+    }
   }
   return Result.succeed(memberships);
 }
@@ -1893,6 +1980,21 @@ export function decodePullRequestCoreJson(
           },
     checksTruncated: contexts?.pageInfo.hasNextPage === true,
   });
+}
+
+export function decodePullRequestSummaryJson(
+  raw: string,
+): Result.Result<GitHubPullRequestDetail, DecodeFailure> {
+  const decoded = decodeSummary(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const pullRequest = decoded.success.data.repository.pullRequest;
+  const contexts = pullRequest.commits.nodes[0]?.commit.statusCheckRollup?.contexts;
+  return Result.succeed(
+    toDetail({
+      ...pullRequest,
+      statusCheckRollup: contexts?.pageInfo.hasNextPage === true ? [] : (contexts?.nodes ?? []),
+    }),
+  );
 }
 
 export function decodePullRequestDetailJson(

@@ -39,6 +39,7 @@ export const PULL_REQUEST_ROW_NUMBER_CLASS =
 export function PullRequestRowGlyph({
   state,
   isDraft,
+  inMergeQueue,
   mergeability,
   baseBranch,
   below,
@@ -46,6 +47,7 @@ export function PullRequestRowGlyph({
 }: {
   state: PullRequestState;
   isDraft: boolean;
+  inMergeQueue?: boolean | undefined;
   mergeability?: PullRequestMergeability | undefined;
   baseBranch?: string | undefined;
   /** Under the lifecycle glyph, level with the second line: the checks glyph. */
@@ -55,7 +57,7 @@ export function PullRequestRowGlyph({
   return (
     <span className={cn("flex w-4 shrink-0 flex-col items-center gap-0.5", className)}>
       <span className="relative inline-flex">
-        <PullRequestStateGlyph state={state} isDraft={isDraft} />
+        <PullRequestStateGlyph state={state} isDraft={isDraft} inMergeQueue={inMergeQueue} />
         {/* The wrapper takes the offset, not the icon, so the tooltip trigger inside keeps the
             badge's size and anchors the popup to it. */}
         <span className="absolute -right-1 -bottom-1 inline-flex">
