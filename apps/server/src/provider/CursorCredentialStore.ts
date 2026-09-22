@@ -5,7 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { makeProviderCredentialStore } from "./ProviderCredentialStore.ts";
+import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 
 const Credentials = Schema.fromJsonString(
   Schema.Struct({
@@ -30,7 +30,10 @@ export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(
   instanceId: ProviderInstanceId,
   legacyFile?: string,
 ) {
-  const credentials = yield* makeProviderCredentialStore("cursor", instanceId);
+  const credentials = yield* ProviderCredentialStore.makeProviderCredentialStore(
+    "cursor",
+    instanceId,
+  );
   if (legacyFile !== undefined) {
     const fileSystem = yield* FileSystem.FileSystem;
     yield* Effect.gen(function* () {
