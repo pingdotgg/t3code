@@ -24,8 +24,7 @@ export function DiffFilePathCopyButton({ filePath }: { filePath: string }) {
           <Button
             ref={ref}
             size="icon-micro"
-            variant="ghost"
-            className="text-muted-foreground [:hover,[data-pressed]]:bg-transparent"
+            variant="ghost-muted"
             aria-label="Copy file path"
             onClick={() => copyToClipboard(filePath, undefined)}
           />

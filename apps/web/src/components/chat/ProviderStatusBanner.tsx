@@ -117,10 +117,10 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
         </div>
         <Button
           aria-label={`Dismiss ${providerName} provider ${status.status}`}
-          className="absolute top-2 right-2 size-6 text-muted-foreground hover:text-foreground"
+          className="absolute top-2 right-2 size-6"
           onClick={onDismiss}
           size="icon-xs"
-          variant="ghost"
+          variant="ghost-muted"
         >
           <XIcon aria-hidden className="size-3.5" />
         </Button>

@@ -53,8 +53,8 @@ export function ProjectActionsList({
             ) : null}
             <Button
               size="icon-xs"
-              variant="ghost"
-              className="shrink-0 text-muted-foreground opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
+              variant="ghost-muted"
+              className="shrink-0 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
               aria-label={`Edit ${script.name}`}
               disabled={disabled}
               onClick={() => onEdit(script)}

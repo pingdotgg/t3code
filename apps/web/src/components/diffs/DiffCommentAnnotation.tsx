@@ -68,8 +68,8 @@ export function DiffCommentAnnotation({
         <p className="min-w-0 flex-1 whitespace-pre-wrap text-[13px] leading-5">{displayedText}</p>
         {onDelete ? (
           <Button
-            className="-my-1 -mr-1 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/comment:opacity-100 focus-visible:opacity-100 max-sm:opacity-100"
-            variant="ghost"
+            className="-my-1 -mr-1 shrink-0 opacity-0 transition-opacity group-hover/comment:opacity-100 focus-visible:opacity-100 max-sm:opacity-100"
+            variant="ghost-muted"
             size="icon-xs"
             aria-label="Delete comment"
             onClick={onDelete}
@@ -115,12 +115,7 @@ export function DiffCommentAnnotation({
       />
       <div className="mt-1.5 flex items-center gap-1">
         <span className="mr-auto text-[10px] text-muted-foreground/70">⌘/Ctrl Enter to send</span>
-        <Button
-          className="text-muted-foreground hover:text-foreground"
-          variant="ghost"
-          size="xs"
-          onClick={onCancel}
-        >
+        <Button variant="ghost-muted" size="xs" onClick={onCancel}>
           Cancel
         </Button>
         {secondaryAction ? (

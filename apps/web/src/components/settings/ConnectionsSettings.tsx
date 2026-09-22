@@ -1626,9 +1626,8 @@ function SavedBackendListRow({
           render={
             <Button
               type="button"
-              variant="ghost"
+              variant="ghost-muted"
               size="icon-xs"
-              className="text-muted-foreground hover:text-foreground"
               disabled={isRemoving}
               aria-label={`More actions for ${environment.label}`}
             />
@@ -3292,9 +3291,8 @@ export function ConnectionsSettings() {
                     render={
                       <Button
                         type="button"
-                        variant="ghost"
+                        variant="ghost-muted"
                         size="icon-xs"
-                        className="text-muted-foreground hover:text-foreground"
                         aria-label="More actions for this machine"
                       />
                     }

@@ -952,9 +952,8 @@ function KeybindingRowMenu({
         render={
           <Button
             type="button"
-            variant="ghost"
+            variant="ghost-muted"
             size="icon-sm"
-            className="text-muted-foreground hover:text-foreground"
             disabled={isSaving}
             aria-label={`Actions for ${commandLabel(row.command)}`}
           />
@@ -1232,9 +1231,8 @@ function NewKeybindingCancelIcon({
         render={
           <Button
             type="button"
-            variant="ghost"
+            variant="ghost-muted"
             size="icon-sm"
-            className="text-muted-foreground hover:text-foreground"
             disabled={isSaving}
             aria-label="Cancel new keybinding"
             onClick={onCancel}

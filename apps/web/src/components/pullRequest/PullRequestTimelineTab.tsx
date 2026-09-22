@@ -166,8 +166,8 @@ function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: (url: s
   return url === null ? null : (
     <Button
       size="icon-xs"
-      variant="ghost"
-      className="-mr-1 -mt-1 shrink-0 text-muted-foreground"
+      variant="ghost-muted"
+      className="-mr-1 -mt-1 shrink-0"
       aria-label="Open activity on host"
       onClick={() => onOpen(url)}
     >
