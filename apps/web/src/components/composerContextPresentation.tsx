@@ -199,7 +199,7 @@ function ImageContextChip(props: {
           />
         }
       />
-      <TooltipPopup side="top" className="max-w-80 whitespace-pre-wrap leading-tight">
+      <TooltipPopup side="top" className="whitespace-pre-wrap">
         {attachmentTooltip(props.record, props.upload)}
       </TooltipPopup>
     </Tooltip>

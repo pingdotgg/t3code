@@ -169,10 +169,7 @@ export function PullRequestDetailGhost({
                 <span className="min-w-0 truncate font-medium">{seed.repository}</span>
                 <InlineButton
                   onClick={() => void readLocalApi()?.shell.openExternal(seed.url)}
-                  className={cn(
-                    "font-medium underline-offset-2 hover:underline",
-                    statePresentation?.toneClassName,
-                  )}
+                  className={statePresentation?.toneClassName}
                   aria-label={`Open pull request #${seed.number} on host`}
                 >
                   #{seed.number}

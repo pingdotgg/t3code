@@ -10,6 +10,7 @@ import {
 import { Button } from "./ui/button";
 import { CalendarIcon } from "lucide-react";
 import { Calendar } from "./ui/calendar";
+import { weekStartsOn } from "../timestampFormat";
 import { Popover, PopoverTrigger, PopoverPopup } from "./ui/popover";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -93,7 +94,7 @@ function CustomSnoozeDialog() {
             <DialogTitle>Custom snooze</DialogTitle>
             <DialogDescription>Choose when snoozed threads return to your inbox.</DialogDescription>
           </DialogHeader>
-          <DialogPanel className="flex flex-col gap-4 text-base sm:text-sm">
+          <DialogPanel className="text-base sm:text-sm">
             <Tabs.Root
               value={mode}
               onValueChange={(value) => {
@@ -149,6 +150,7 @@ function CustomSnoozeDialog() {
                             required
                             selected={date}
                             defaultMonth={date}
+                            {...(weekStartsOn === undefined ? {} : { weekStartsOn })}
                             disabled={{ before: new Date(new Date().setHours(0, 0, 0, 0)) }}
                             onSelect={(selected) => {
                               setDate(selected);

@@ -109,7 +109,10 @@ export default defineConfig({
       "apps/mobile/uniwind-types.d.ts",
     ],
     plugins: ["eslint", "oxc", "react", "unicorn", "typescript"],
-    jsPlugins: ["./oxlint-plugin-t3code/index.ts"],
+    jsPlugins: ["./oxlint-plugin-t3code/index.ts", "@shadcn/lint"],
+    settings: {
+      shadcn: { ui: "~/components/ui" },
+    },
     categories: {
       correctness: "warn",
       suspicious: "warn",
@@ -166,6 +169,31 @@ export default defineConfig({
       {
         files: ["apps/mobile/src/**"],
         rules: { "t3code/no-mobile-uniwind-theme-escape-hatches": "error" },
+      },
+      {
+        // components/ui exports own their look. App code picks a variant or size instead
+        // of restyling with className; layout classes (width, flex, margin, position) stay
+        // allowed because placement belongs to the parent. Warn-only until the existing
+        // overrides are migrated to variants; the ceiling below stops the count growing.
+        files: ["apps/web/src/**"],
+        excludeFiles: ["apps/web/src/components/ui/**"],
+        rules: {
+          "shadcn/no-restyle": [
+            "warn",
+            {
+              allow: ["layout"],
+              contracts: [
+                {
+                  // CollapsibleTrigger is a bare button with no styled counterpart
+                  // (a disclosure row is not a Button), so its className is the API.
+                  // Every other trigger has one: style them with render={<Button …/>}.
+                  pattern: "^CollapsibleTrigger$",
+                  allow: ["layout", "color", "typography", "spacing", "shape", "effects", "motion"],
+                },
+              ],
+            },
+          ],
+        },
       },
       {
         // Shared client code must not call APIs missing from Hermes. Our ESNext

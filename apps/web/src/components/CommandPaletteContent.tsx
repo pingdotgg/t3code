@@ -52,7 +52,7 @@ export function CommandPaletteContent({
         <CommandPanel className={panelClassName}>{children}</CommandPanel>
         <CommandFooter className="gap-3 max-sm:flex-col max-sm:items-start">
           <div className="flex items-center gap-3">
-            <KbdGroup className="items-center gap-1.5">
+            <KbdGroup>
               <Kbd>
                 <ArrowUpIcon />
               </Kbd>
@@ -62,18 +62,18 @@ export function CommandPaletteContent({
               <span>Navigate</span>
             </KbdGroup>
             {footerActionLabel !== undefined ? (
-              <KbdGroup className="items-center gap-1.5">
+              <KbdGroup>
                 <Kbd>Enter</Kbd>
                 <span>{footerActionLabel}</span>
               </KbdGroup>
             ) : null}
             {showBackHint ? (
-              <KbdGroup className="items-center gap-1.5">
+              <KbdGroup>
                 <Kbd>Backspace</Kbd>
                 <span>Back</span>
               </KbdGroup>
             ) : null}
-            <KbdGroup className="items-center gap-1.5">
+            <KbdGroup>
               <Kbd>Esc</Kbd>
               <span>{escapeLabel}</span>
             </KbdGroup>

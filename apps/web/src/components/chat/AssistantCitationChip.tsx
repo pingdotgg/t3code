@@ -186,7 +186,7 @@ export function AssistantCitationChip({
                 return false;
               }}
               aria-label="Edit citation comment"
-              className="w-72 max-w-[calc(100vw-1rem)]"
+              width="md"
               viewportClassName="p-3"
               onPointerDown={(event) => event.stopPropagation()}
             >

@@ -130,7 +130,7 @@ import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
-import { PullRequestCommentComposer } from "./PullRequestCommentComposer";
+import { PullRequestComposer } from "./PullRequestComposer";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
 import {
@@ -458,7 +458,12 @@ export function PullRequestDetailPanel({
    * An action changed this pull request on the host, so a list showing it is now out of date.
    * Told rather than assumed: only the page knows whether it is showing one.
    */
-  onActed?: () => void;
+  /**
+   * Each host action as it goes: "sent" the moment it leaves, so a list can answer before the
+   * host does; "done" or "failed" when the host has spoken. Undefined for one the caller cannot
+   * name, which is only ever "done".
+   */
+  onActed?: (action?: PullRequestAction, phase?: "sent" | "done" | "failed") => void;
   /** Page-owned detail columns use this to clear the selected pull request. */
   onClose?: () => void;
   /**
@@ -961,6 +966,7 @@ export function PullRequestDetailPanel({
     method?: PullRequestMergeMethod,
     updateMethod?: PullRequestUpdateMethod,
   ) => {
+    onActed?.(action, "sent");
     const result = await runAction({
       environmentId,
       input: {
@@ -988,6 +994,7 @@ export function PullRequestDetailPanel({
         title: ACTION_FAILURE_LABELS[action],
         description: readableFailure(failure, hint),
       });
+      onActed?.(action, "failed");
       return false;
     }
     toastManager.add({ type: "success", title: ACTION_SUCCESS_LABELS[action] });
@@ -1001,7 +1008,7 @@ export function PullRequestDetailPanel({
     } else {
       refreshDetail();
     }
-    onActed?.();
+    onActed?.(action, "done");
     return true;
   };
 
@@ -1562,7 +1569,7 @@ export function PullRequestDetailPanel({
           />
           <TooltipPopup>Check out this pull request</TooltipPopup>
         </Tooltip>
-        <MenuPopup align="end" side="bottom" className="min-w-72">
+        <MenuPopup align="end" side="bottom">
           <MenuItem onClick={() => startCheckout("worktree")}>
             <GitBranchIcon className="mt-1 size-3.5 shrink-0 self-start" />
             <span className="flex min-w-0 flex-col">
@@ -1993,7 +2000,6 @@ export function PullRequestDetailPanel({
                             aria-label={
                               refreshing ? "Refreshing pull request" : "More pull request actions"
                             }
-                            className="size-6"
                             size="icon-xs"
                             variant="ghost-muted"
                           />
@@ -2003,7 +2009,7 @@ export function PullRequestDetailPanel({
                             the spinning glyph in place of the dots: the reader sees the panel
                             is fetching without a control appearing or the row shifting. */}
                         {refreshing ? (
-                          <RefreshIcon refreshing className="size-4" />
+                          <RefreshIcon refreshing size="md" />
                         ) : (
                           <MoreHorizontalIcon className="size-4" />
                         )}
@@ -2014,7 +2020,7 @@ export function PullRequestDetailPanel({
                     {refreshing ? "Refreshing pull request" : "More pull request actions"}
                   </TooltipPopup>
                 </Tooltip>
-                <MenuPopup align="end" side="bottom" className="min-w-72">
+                <MenuPopup align="end" side="bottom">
                   <PullRequestThreadLinks
                     display="menu-item"
                     environmentId={environmentId}
@@ -2027,7 +2033,7 @@ export function PullRequestDetailPanel({
                     onPickerOpenChange={setThreadPickerOpen}
                   />
                   <MenuItem disabled={refreshing} onClick={() => void refreshFromHost()}>
-                    <RefreshIcon className="size-3.5" refreshing={refreshing} />
+                    <RefreshIcon size="sm" refreshing={refreshing} />
                     Refresh
                   </MenuItem>
                   <MenuItem disabled={handoff !== null} onClick={askAboutPullRequest}>
@@ -2786,9 +2792,9 @@ export function PullRequestDetailPanel({
       </div>
 
       {/* Float over the content; do not reserve a footer or padding in the PR tabs. */}
-      {detail?.capabilities.comment && detail.viewerPermissions.comment ? (
+      {detail ? (
         <div className="absolute right-4 bottom-3 z-20">
-          <PullRequestCommentComposer
+          <PullRequestComposer
             key={JSON.stringify([
               environmentId,
               reference.projectId,
@@ -2802,6 +2808,7 @@ export function PullRequestDetailPanel({
             actionPending={actionPending}
             onCommentAction={performCommentAction}
             onCommented={refreshDetail}
+            onReviewSubmitted={refreshDetail}
           />
         </div>
       ) : null}

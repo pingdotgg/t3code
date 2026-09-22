@@ -237,12 +237,7 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
     <NodeViewWrapper as="span" className={COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME}>
       <Tooltip>
         <TooltipTrigger render={chip} />
-        <TooltipPopup
-          side="top"
-          className="max-w-120 whitespace-normal leading-tight wrap-anywhere"
-        >
-          {path}
-        </TooltipPopup>
+        <TooltipPopup side="top">{path}</TooltipPopup>
       </Tooltip>
     </NodeViewWrapper>
   );
