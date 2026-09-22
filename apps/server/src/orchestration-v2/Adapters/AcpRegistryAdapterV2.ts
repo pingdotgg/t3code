@@ -34,6 +34,8 @@ import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.
 import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { IdAllocatorV2 } from "../IdAllocator.ts";
+import { makeProviderFailure } from "../ProviderFailure.ts";
+import { MISTRAL_VIBE_RATE_LIMITED, registerMistralVibeAcpExtensions } from "./MistralVibeAcp.ts";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
@@ -50,6 +52,7 @@ export const ACP_REGISTRY_PROVIDER = ProviderDriverKind.make("acpRegistry");
 export const ACP_REGISTRY_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(ACP_REGISTRY_PROVIDER);
 
 const DEFAULT_ACP_REGISTRY_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({});
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 
 export interface AcpRegistryAdapterV2Options {
   readonly instanceId: Parameters<typeof makeAcpAdapterV2>[0]["instanceId"];
@@ -72,6 +75,22 @@ export interface AcpRegistryAdapterV2Options {
     Crypto.Crypto | Scope.Scope
   >;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
+}
+
+export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
+  return makeProviderFailure({
+    cause,
+    ...(isAcpRequestError(cause)
+      ? {
+          message: cause.errorMessage,
+          code: String(cause.code),
+          class:
+            agentId === "mistral-vibe" && cause.code === MISTRAL_VIBE_RATE_LIMITED
+              ? ("usage_limit" as const)
+              : ("provider_error" as const),
+        }
+      : { class: "provider_error" as const }),
+  });
 }
 
 function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
@@ -125,6 +144,10 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
   const flavor: AcpAdapterV2Flavor = {
     driver: ACP_REGISTRY_PROVIDER,
     capabilities: AcpProviderCapabilitiesV2,
+    promptFailure: (cause) => acpRegistryPromptFailure(options.settings.agentId, cause),
+    ...(options.settings.agentId === "mistral-vibe"
+      ? { registerExtensions: registerMistralVibeAcpExtensions }
+      : {}),
     ...(isDevin
       ? {
           clientCapabilitiesMeta: {

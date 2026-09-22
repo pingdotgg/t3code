@@ -10,6 +10,7 @@ import {
   type OrchestrationV2PlanStep,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
+  type OrchestrationV2ProviderRetry,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderThreadNativeMetadata,
@@ -100,7 +101,7 @@ import {
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import { type ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
-import { makeProviderFailure } from "../ProviderFailure.ts";
+import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
 import { acpSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
   isProviderNativeImageAttachment,
@@ -166,6 +167,10 @@ export interface AcpAdapterV2UserInputRequest {
 
 export interface AcpAdapterV2ExtensionContext {
   readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
+  readonly reportProviderRetry: (input: {
+    readonly sessionId: string;
+    readonly failure: OrchestrationV2ProviderFailure;
+  }) => Effect.Effect<void>;
   /**
    * Session-scoped background-task lifecycle reported via extension
    * notifications (e.g. Grok `x.ai/task_backgrounded`; older builds use the
@@ -1004,6 +1009,14 @@ interface ActiveAcpTurn {
   readonly user: ActiveTextStream;
   readonly assistant: ActiveTextStream;
   readonly reasoning: ActiveTextStream;
+  providerRetry?:
+    | {
+        readonly failure: OrchestrationV2ProviderFailure;
+        readonly retry: OrchestrationV2ProviderRetry;
+        readonly startedAt: DateTime.Utc;
+        readonly itemOrdinal: number;
+      }
+    | undefined;
   contextUsage: ThreadTokenUsageSnapshot | null;
   nativeMetadata: OrchestrationV2ProviderThreadNativeMetadata | null;
   readonly tools: Map<string, AcpToolCallState>;
@@ -1980,6 +1993,60 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             return updated;
           });
           return ordinal;
+        });
+
+        const emitProviderRetry = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          status: "running" | "completed" | "interrupted" | "cancelled",
+        ) {
+          const state = context.providerRetry;
+          if (state === undefined) return;
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver,
+            turnItem: makeProviderRetryTurnItem({
+              idAllocator,
+              driver,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId: context.input.rootNodeId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              ...state,
+              status,
+              updatedAt: yield* DateTime.now,
+            }),
+          });
+          if (status !== "running") context.providerRetry = undefined;
+        });
+
+        const reportProviderRetry = Effect.fnUntraced(function* (notice: {
+          readonly sessionId: string;
+          readonly failure: OrchestrationV2ProviderFailure;
+        }) {
+          const context = yield* Ref.get(activeTurn);
+          if (
+            context === null ||
+            context.finalized ||
+            context.interrupted ||
+            context.nativeThreadId !== notice.sessionId ||
+            (yield* Ref.get(stoppedRunQuarantine))
+          )
+            return;
+          const previous = context.providerRetry;
+          context.providerRetry = {
+            failure: notice.failure,
+            retry: {
+              attempt: (previous?.retry.attempt ?? 0) + 1,
+              maxAttempts: null,
+              retryDelayMs: null,
+            },
+            startedAt: previous?.startedAt ?? (yield* DateTime.now),
+            itemOrdinal:
+              previous?.itemOrdinal ??
+              (yield* resolveItemOrdinal(context, `terminal-failure:${context.providerTurnId}`)),
+          };
+          yield* emitProviderRetry(context, "running");
         });
 
         const lastCapturedProposedPlan = yield* Ref.make<{
@@ -4096,6 +4163,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           // Re-check after the activeSessionId yield: idle/prompt settle can
           // finalize the same context object while we waited.
           if (context.finalized) return;
+          if (acpRootSessionUpdateIngestsOutput(notification)) {
+            yield* emitProviderRetry(context, "completed");
+          }
           switch (update.sessionUpdate) {
             case "state_update": {
               const toolCallId = `${context.nativeTurnId}:requires-action`;
@@ -5473,6 +5543,10 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           if (flavor.registerExtensions !== undefined) {
             yield* flavor.registerExtensions({
               runtime: targetRuntime,
+              reportProviderRetry: (notice) =>
+                runRuntimeCallbackAtGeneration(handlerGeneration, reportProviderRetry(notice)).pipe(
+                  Effect.asVoid,
+                ),
               requestUserInput,
               captureProposedPlan,
               lastProposedPlanMarkdown,
@@ -6094,6 +6168,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             });
           }
           yield* closeTextStreams(context);
+          if (settledStatus !== "failed") {
+            yield* emitProviderRetry(context, settledStatus);
+          }
           const now = yield* DateTime.now;
           if (
             flavor.supportsCompaction === true &&
@@ -6170,6 +6247,12 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                   ),
                   status: settledStatus,
                   failure: failure ?? makeProviderFailure({ class: "provider_error" }),
+                  ...(context.providerRetry === undefined
+                    ? {}
+                    : {
+                        retry: context.providerRetry.retry,
+                        retryStartedAt: context.providerRetry.startedAt,
+                      }),
                   threadDisposition: "reusable",
                 }
               : {

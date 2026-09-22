@@ -91,6 +91,8 @@ import {
 } from "./AcpAdapterV2.ts";
 
 import { makeGrokAdapterV2 } from "./GrokAdapterV2.ts";
+import { registerMistralVibeAcpExtensions } from "./MistralVibeAcp.ts";
+import { acpRegistryPromptFailure } from "./AcpRegistryAdapterV2.ts";
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 
@@ -547,6 +549,97 @@ function makeTurnInput(input: {
 }
 
 describe("AcpAdapterV2", () => {
+  for (const outcome of ["failed", "recovered", "completed", "cancelled"] as const) {
+    it.live(`projects Mistral retry notices and their ${outcome} outcome`, () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const instanceId = ProviderInstanceId.make(`vibe-retry-${outcome}`);
+        const threadId = ThreadId.make(`thread-vibe-retry-${outcome}`);
+        const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
+          instanceId,
+          fileSystem: yield* FileSystem.FileSystem,
+          idAllocator: yield* IdAllocatorV2,
+          serverConfig: yield* ServerConfig,
+          selfInvocation: yield* resolveSelfInvocation(),
+          flavor: {
+            driver: ProviderDriverKind.make("acpRegistry"),
+            capabilities: AcpProviderCapabilitiesV2,
+            registerExtensions: registerMistralVibeAcpExtensions,
+            promptFailure: (cause) => acpRegistryPromptFailure("mistral-vibe", cause),
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+              mockAgentPath: yield* path.fromFileUrl(
+                new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+              ),
+              environment: { T3_ACP_VIBE_RETRY_OUTCOME: outcome },
+            }),
+          },
+        });
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(`session-vibe-retry-${outcome}`),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        );
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        );
+        const retries = events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "error"
+            ? [event.turnItem]
+            : [],
+        );
+        const running = retries.filter((item) => item.status === "running");
+        assert.deepEqual(
+          running.map((item) => item.retry?.attempt),
+          [1, 2],
+        );
+        assert.equal(new Set(retries.map((item) => item.id)).size, 1);
+        assert.include(running[0]!.failure.message, "Rate limit reached");
+        assert.notInclude(running[0]!.failure.message, "private-key");
+        const terminal = events.find((event) => event.type === "turn.terminal");
+        assert.isDefined(terminal);
+        if (terminal?.type !== "turn.terminal") return yield* Effect.die("Missing terminal");
+        if (outcome === "failed") {
+          assert.equal(terminal.status, "failed");
+          assert.equal(terminal.failure?.class, "usage_limit");
+          assert.include(terminal.failure?.message ?? "", "Rate limit exceeded for mistral");
+          if (terminal.status === "failed") assert.equal(terminal.retry?.attempt, 2);
+        } else if (outcome === "cancelled") {
+          assert.equal(terminal.status, "cancelled");
+          assert.equal(retries.at(-1)?.status, "cancelled");
+          assert.equal(retries.at(-1)?.title, "Provider retry stopped");
+        } else {
+          assert.equal(terminal.status, "completed");
+          assert.equal(retries.at(-1)?.status, "completed");
+          assert.equal(retries.at(-1)?.title, "Provider recovered");
+        }
+      }).pipe(Effect.provide(testLayer), Effect.scoped),
+    );
+  }
+
   it("preserves legacy ids and scopes v2 ids by provider instance", () => {
     const instanceId = ProviderInstanceId.make("acp-identity-test");
     assert.equal(

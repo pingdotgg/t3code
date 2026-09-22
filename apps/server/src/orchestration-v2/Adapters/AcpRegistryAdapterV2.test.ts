@@ -12,6 +12,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import { ServerConfig } from "../../config.ts";
 import type {
@@ -26,6 +27,7 @@ import {
   ACP_REGISTRY_PROVIDER,
   AcpRegistryAdapterV2Driver,
   makeAcpRegistryAdapterV2,
+  acpRegistryPromptFailure,
 } from "./AcpRegistryAdapterV2.ts";
 
 const registryUrl = "https://registry.test/registry.json";
@@ -81,6 +83,33 @@ const testLayer = Layer.mergeAll(
 );
 
 describe("AcpRegistryAdapterV2", () => {
+  it("preserves and sanitizes structured ACP errors without exposing arbitrary defects", () => {
+    const limit = new EffectAcpErrors.AcpRequestError({
+      code: -31001,
+      errorMessage: "Rate limit exceeded for mistral (model: mistral-vibe-cli-latest).",
+    });
+    assert.deepEqual(acpRegistryPromptFailure("mistral-vibe", limit), {
+      class: "usage_limit",
+      message: limit.errorMessage,
+      code: "-31001",
+      retryable: null,
+    });
+    assert.equal(acpRegistryPromptFailure("other-agent", limit).class, "provider_error");
+    assert.equal(
+      acpRegistryPromptFailure("mistral-vibe", new Error("private defect")).message,
+      "Provider turn failed.",
+    );
+    const rejected = acpRegistryPromptFailure(
+      "any-agent",
+      new EffectAcpErrors.AcpRequestError({
+        code: -32603,
+        errorMessage: "Request rejected. api_key=private-key https://example.test/?token=secret",
+      }),
+    );
+    assert.include(rejected.message, "Request rejected.");
+    assert.notInclude(rejected.message, "private-key");
+    assert.notInclude(rejected.message, "token=secret");
+  });
   it("is registered as a generic provider driver with schema defaults", () => {
     assert.isTrue(BUILT_IN_PROVIDER_ADAPTER_DRIVER_KINDS_V2.has(ACP_REGISTRY_PROVIDER));
     assert.equal(AcpRegistryAdapterV2Driver.driverKind, ACP_REGISTRY_PROVIDER);
