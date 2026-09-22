@@ -17,7 +17,7 @@ import {
   resolveEnvironmentMachineKind,
   resolveProviderInstanceEnabled,
 } from "@t3tools/contracts";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { DEFAULT_SERVER_SETTINGS, DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import {
   getBackgroundActivityPresetSettings,
   resolveServerBackgroundActivitySettings,
@@ -47,7 +47,7 @@ import {
 } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useEnvironmentSessionState } from "../../state/session";
-import { useAtomCommand } from "../../state/use-atom-command";
+import { useAtomCommand, useAtomReader } from "../../state/use-atom-command";
 import { getRelativeTimeState } from "../../timestampFormat";
 import {
   ConnectionStatusDot,
@@ -575,6 +575,7 @@ export function EnvironmentProviderSettings({
   const saveProviderSettings = useAtomCommand(serverEnvironment.updateSettings, {
     reportFailure: false,
   });
+  const readAtom = useAtomReader();
   const updateClientSettings = useUpdateClientSettings();
   const serverProviders =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
@@ -934,11 +935,15 @@ export function EnvironmentProviderSettings({
           ) : null
         }
         onSaveCustomModels={async (next) => {
+          // Read settings at dispatch time: building the patch from this render's snapshot
+          // would spread away a provider write queued ahead of this one.
+          const latestSettings =
+            readAtom(serverEnvironment.settingsValueAtom(environmentId)) ?? DEFAULT_SERVER_SETTINGS;
           const result = await saveProviderSettings({
             environmentId,
             input: {
               patch: buildProviderInstanceUpdatePatch({
-                settings,
+                settings: latestSettings,
                 instanceId: row.instanceId,
                 instance: next,
                 driver: row.driver,
