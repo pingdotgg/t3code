@@ -37,7 +37,8 @@ export function HomeRouteScreen() {
   const nativePrimaryColumn = use(NativePrimaryColumnContext);
   const columnMetrics = useNativeColumnLayoutMetrics();
   const headerWidth = nativePrimaryColumn ? (columnMetrics?.width ?? windowWidth) : windowWidth;
-  const { layout, panes, primarySidebarSearchQuery, setPrimarySidebarSearchQuery } = useAdaptiveWorkspaceLayout();
+  const { layout, panes, primarySidebarSearchQuery, setPrimarySidebarSearchQuery } =
+    useAdaptiveWorkspaceLayout();
   const projects = useProjects();
   // Streaming turns rewrite thread shells many times a second. While a Thread
   // covers Home, rebuilding this list is invisible work.

@@ -3,10 +3,7 @@ import { act, createElement, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import {
-  HomeListOptionsProvider,
-  useHomeListOptions,
-} from "./home-list-options";
+import { HomeListOptionsProvider, useHomeListOptions } from "./home-list-options";
 
 describe("home list options across layout changes", () => {
   const environmentId = EnvironmentId.make("environment-1");
@@ -61,34 +58,38 @@ describe("home list options across layout changes", () => {
     vi.unstubAllGlobals();
   });
 
-  it("retains filters in both directions and does not restore a cleared project", async () => {
-    await showLayout("compact");
-    await act(() => {
-      latest.setSelectedEnvironmentId(environmentId);
-      latest.setSelectedProjectKey("repository:one");
-      latest.setProjectSortOrder("created_at");
-    });
+  it.each([
+    ["compact", "sidebar"],
+    ["sidebar", "compact"],
+  ] as const)(
+    "retains filters through repeated %s → %s round trips and keeps clears",
+    async (initialLayout, otherLayout) => {
+      await showLayout(initialLayout);
 
-    await showLayout("sidebar");
-    expect(latest.options).toEqual({
-      selectedEnvironmentId: environmentId,
-      selectedProjectKey: "repository:one",
-      projectSortOrder: "created_at",
-      projectGroupingMode: "repository",
-    });
-
-    await act(() => latest.setSelectedProjectKey("repository:two"));
-    await showLayout("compact");
-    expect(latest.options.selectedProjectKey).toBe("repository:two");
-
-    await act(() => latest.setSelectedProjectKey(null));
-    await showLayout("sidebar");
-    await showLayout("compact");
-    expect(latest.options).toEqual({
-      selectedEnvironmentId: environmentId,
-      selectedProjectKey: null,
-      projectSortOrder: "created_at",
-      projectGroupingMode: "repository",
-    });
-  });
+      for (const [selectedEnvironmentId, selectedProjectKey] of [
+        [environmentId, "repository:one"],
+        [environmentId, "repository:two"],
+        [environmentId, null],
+        [null, null],
+        [null, "repository:one"],
+      ] as const) {
+        await act(() => {
+          latest.setSelectedEnvironmentId(selectedEnvironmentId);
+          latest.setSelectedProjectKey(selectedProjectKey);
+        });
+        for (let cycle = 0; cycle < 3; cycle += 1) {
+          for (const layout of [otherLayout, initialLayout]) {
+            await showLayout(layout);
+            expect(latest.options).toMatchObject({
+              selectedEnvironmentId,
+              selectedProjectKey,
+              projectGroupingMode: "repository",
+            });
+          }
+        }
+        // Make the next selection (or clear it) from the opposite layout.
+        await showLayout(otherLayout);
+      }
+    },
+  );
 });
