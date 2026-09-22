@@ -1,7 +1,7 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { getProviderSummary } from "./providerStatus";
+import { getProviderSummary, getProviderVersionAdvisoryPresentation } from "./providerStatus";
 
 const provider: ServerProvider = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -68,4 +68,30 @@ describe("getProviderSummary", () => {
   it("treats a disabled provider status as disabled even before its enabled flag updates", () => {
     expect(getProviderSummary({ ...provider, status: "disabled" }).headline).toBe("Disabled");
   });
+});
+
+it("does not suggest copying a command that installs an incompatible latest version", () => {
+  const advisory = {
+    status: "behind_latest" as const,
+    currentVersion: "1.0.0",
+    latestVersion: "2.0.0",
+    updateCommand: "npm install -g fixture@latest",
+    canUpdate: true,
+    checkedAt: provider.checkedAt,
+    message: null,
+  };
+  const compatibility = {
+    status: "supported" as const,
+    latestVersionStatus: "broken" as const,
+    message: null,
+    recommendedRange: null,
+    recommendedVersion: null,
+  };
+  expect(getProviderVersionAdvisoryPresentation(advisory, compatibility)).toBeNull();
+  expect(
+    getProviderVersionAdvisoryPresentation(advisory, {
+      ...compatibility,
+      latestVersionStatus: "supported",
+    }),
+  ).not.toBeNull();
 });

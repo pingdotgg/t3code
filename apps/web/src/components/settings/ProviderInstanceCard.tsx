@@ -377,6 +377,7 @@ interface ProviderInstanceCardProps {
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
   readonly onRunUpdate?: (() => void) | undefined;
+  readonly onInstallRecommended?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
 }
 
@@ -419,9 +420,11 @@ export function ProviderInstanceCard({
   onFavoriteModelsChange,
   onModelOrderChange,
   onRunUpdate,
+  onInstallRecommended,
   isUpdating = false,
 }: ProviderInstanceCardProps) {
   const enabled = resolveProviderInstanceEnabled(instance);
+  const compatibility = enabled ? liveProvider?.compatibilityAdvisory : undefined;
   // A locally disabled provider reads "Disabled" with a muted dot even if its
   // last server status is stale. Enabled providers use the server status.
   const statusKey: ProviderStatusKey = enabled
@@ -438,7 +441,10 @@ export function ProviderInstanceCard({
       ? (liveProvider.auth.label ?? liveProvider.auth.type ?? null)
       : null;
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
-  const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
+  const versionAdvisory = getProviderVersionAdvisoryPresentation(
+    liveProvider?.versionAdvisory,
+    compatibility,
+  );
   const updateCommand = versionAdvisory?.updateCommand ?? null;
   const FallbackIconComponent = driverOption?.icon;
   const displayName =
@@ -663,6 +669,7 @@ export function ProviderInstanceCard({
               <span className="line-clamp-2 [overflow-wrap:anywhere]">
                 {summary.headline}
                 {needsAttention && summary.detail ? ` · ${summary.detail}` : null}
+                {compatibility?.message ? ` · ${compatibility.message}` : null}
               </span>
             </span>
           </span>
@@ -795,6 +802,20 @@ export function ProviderInstanceCard({
   return (
     <>
       <SettingsSection title={displayName} icon={titleIconNode} headerAction={editorHeaderAction}>
+        {compatibility?.message ? (
+          <SettingsRow title="Provider compatibility" description={compatibility.message}>
+            {onInstallRecommended && compatibility.recommendedVersion ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={readOnly || isUpdating}
+                onClick={onInstallRecommended}
+              >
+                Install {compatibility.recommendedVersion}
+              </Button>
+            ) : null}
+          </SettingsRow>
+        ) : null}
         <SettingsRow
           title="Display name"
           status={

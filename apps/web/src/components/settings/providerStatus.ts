@@ -1,4 +1,8 @@
-import type { ServerProvider, ServerProviderVersionAdvisory } from "@t3tools/contracts";
+import type {
+  ServerProvider,
+  ServerProviderVersionAdvisory,
+  ServerProviderCompatibilityAdvisory,
+} from "@t3tools/contracts";
 
 /**
  * Visual treatment for each server-reported provider status. Centralized so
@@ -101,12 +105,19 @@ export function getProviderVersionLabel(version: string | null | undefined) {
 
 export function getProviderVersionAdvisoryPresentation(
   advisory: ServerProviderVersionAdvisory | undefined,
+  compatibility?: ServerProviderCompatibilityAdvisory | undefined,
 ): {
   readonly detail: string;
   readonly updateCommand: string | null;
   readonly emphasis: "normal" | "strong";
 } | null {
-  if (!advisory || advisory.status === "current" || advisory.status === "unknown") {
+  if (
+    !advisory ||
+    advisory.status === "current" ||
+    advisory.status === "unknown" ||
+    compatibility?.latestVersionStatus === "broken" ||
+    compatibility?.latestVersionStatus === "unsupported"
+  ) {
     return null;
   }
 
