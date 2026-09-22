@@ -4,7 +4,9 @@ import type {
   PullRequestCheck,
   PullRequestCheckStatus,
   PullRequestChecksState,
+  PullRequestLabel,
   PullRequestMergeability,
+  PullRequestReviewDecision,
   PullRequestState,
 } from "@t3tools/contracts";
 import {
@@ -12,94 +14,174 @@ import {
   CircleDashedIcon,
   CircleDotIcon,
   CircleXIcon,
-  GitMergeIcon,
-  GitPullRequestClosedIcon,
-  GitPullRequestDraftIcon,
-  GitPullRequestIcon,
-  TriangleAlertIcon,
   UserCheckIcon,
+  UserRoundIcon,
+  UserRoundXIcon,
 } from "lucide-react";
-import { Children, isValidElement, type ReactNode } from "react";
+import { Children, type CSSProperties, isValidElement, type ReactNode, useState } from "react";
 
 import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { PullRequestReviewOutcome } from "./pullRequestDetail.logic";
+import { pullRequestLabelColor } from "./pullRequestList.logic";
+import {
+  PULL_REQUEST_STATE_PRESENTATION,
+  PullRequestGlyph,
+  type PullRequestStatePresentation,
+  type PullRequestGlyphIcon,
+} from "./pullRequestIcons";
 
-interface StatePresentation {
-  readonly label: string;
-  readonly toneClassName: string;
-  readonly Icon: typeof GitPullRequestIcon;
+/**
+ * A host label as a flat tinted tag in the label's own color: a wash of it behind, the name
+ * in a mix of it and the theme foreground. The mix leans to the foreground because hosts hand
+ * out any color at all: at 30% of the label on light and 45% on dark, white, black and
+ * GitHub's pale yellows all clear 4.5:1 on their wash, selected row included, and
+ * saturated colors sit well above.
+ * A label with no usable color falls back to the muted tag. Children ride after the name,
+ * for an overflow count. The height is pinned so a labeled row is as tall as one without.
+ */
+export function PullRequestLabelChip({
+  label,
+  size = "sm",
+  className,
+  children,
+}: {
+  label: Pick<PullRequestLabel, "name" | "color">;
+  size?: "sm" | "default";
+  className?: string;
+  children?: ReactNode;
+}) {
+  const color = pullRequestLabelColor(label.color);
+  return (
+    <Badge
+      size={size}
+      variant="secondary"
+      className={cn(
+        "min-w-0 max-w-40 shrink justify-start gap-1 rounded-full px-2",
+        size === "sm" && "h-4 text-[.625rem]",
+        color &&
+          "bg-[color-mix(in_srgb,var(--label)_8%,transparent)] text-[color-mix(in_srgb,var(--label)_30%,var(--color-foreground))] dark:bg-[color-mix(in_srgb,var(--label)_12%,transparent)] dark:text-[color-mix(in_srgb,var(--label)_45%,var(--color-foreground))]",
+        className,
+      )}
+      {...(color ? { style: { "--label": color } as CSSProperties } : {})}
+    >
+      <span className="truncate">{label.name}</span>
+      {children}
+    </Badge>
+  );
 }
 
-export function PullRequestApprovalGlyph() {
+/**
+ * The review verdict as one glyph beside the checks glyph, so a row answers both "does it
+ * build" and "did someone say yes" in the same spot. "Awaiting review" is only drawn when the
+ * host reports it, which on GitHub means the branch rules require a review nobody has given.
+ */
+function reviewDecisionPresentation(decision: PullRequestReviewDecision) {
+  switch (decision) {
+    case "approved":
+      return {
+        Icon: UserCheckIcon,
+        label: "Approved",
+        toneClassName: CHECK_STATUS_PRESENTATION.success.toneClassName,
+      };
+    case "changes-requested":
+      return {
+        Icon: UserRoundXIcon,
+        label: "Changes requested",
+        toneClassName: "text-amber-600/90 dark:text-amber-400/80",
+      };
+    case "review-required":
+      return {
+        Icon: UserRoundIcon,
+        label: "Awaiting review",
+        toneClassName: "text-muted-foreground/60",
+      };
+  }
+}
+
+export function PullRequestReviewDecisionGlyph({
+  decision,
+}: {
+  decision: PullRequestReviewDecision;
+}) {
+  const presentation = reviewDecisionPresentation(decision);
   return (
     <Tooltip>
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-        <UserCheckIcon
-          aria-hidden
-          className={cn("size-3.5", CHECK_STATUS_PRESENTATION.success.toneClassName)}
-        />
-        <span className="sr-only">Approved</span>
+        <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
+        <span className="sr-only">{presentation.label}</span>
       </TooltipTrigger>
-      <TooltipPopup>Approved</TooltipPopup>
+      <TooltipPopup>{presentation.label}</TooltipPopup>
     </Tooltip>
   );
 }
 
 /**
- * How a pull request's state reads on this page. Open, closed, merged, and draft use the same
- * ink as the thread badge in `ThreadStatusIndicators`, so one pull request cannot look like two
- * different things in two places.
+ * How a pull request's state reads anywhere it appears: the thread badge, the right-panel tab,
+ * the list, and the detail header all resolve through here so one pull request cannot look like
+ * two different things in two places.
  *
- * Draft outranks conflicts: a draft is not heading for a merge yet, so conflicts only surface
- * once it is real work.
+ * Closed and merged take precedence over a stale draft flag.
  */
 export function resolvePullRequestState(input: {
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+}): PullRequestStatePresentation {
+  const key = input.state === "open" && input.isDraft ? "draft" : input.state;
+  return PULL_REQUEST_STATE_PRESENTATION[key];
+}
+
+export interface PullRequestConflictPresentation {
+  readonly label: string;
+  readonly toneClassName: string;
+  readonly Icon: PullRequestGlyphIcon;
+}
+
+export function resolvePullRequestConflict(input: {
+  readonly state: PullRequestState;
+  readonly isDraft: boolean;
   readonly mergeability?: PullRequestMergeability;
   readonly baseBranch?: string;
-}): StatePresentation {
-  if (input.state === "merged") {
-    return {
-      label: "Merged",
-      toneClassName: "text-violet-600 dark:text-violet-300/90",
-      Icon: GitMergeIcon,
-    };
-  }
-  if (input.state === "closed") {
-    return {
-      label: "Closed",
-      toneClassName: "text-red-600 dark:text-red-300/90",
-      Icon: GitPullRequestClosedIcon,
-    };
-  }
-  if (input.isDraft) {
-    return {
-      label: "Draft",
-      toneClassName: "text-zinc-500 dark:text-zinc-400/80",
-      Icon: GitPullRequestDraftIcon,
-    };
-  }
-  if (input.mergeability === "conflicting") {
-    return {
-      // "Has conflicts" leaves out the one thing a reader wants when the warning triangle catches
-      // their eye, so name the branch it collides with wherever the caller knows it.
-      label: input.baseBranch ? `Conflicts with ${input.baseBranch}` : "Has conflicts",
-      toneClassName: "text-destructive",
-      Icon: TriangleAlertIcon,
-    };
+}): PullRequestConflictPresentation | null {
+  if (input.state !== "open" || input.isDraft || input.mergeability !== "conflicting") {
+    return null;
   }
   return {
-    label: "Open",
-    toneClassName: "text-emerald-600 dark:text-emerald-300/90",
-    Icon: GitPullRequestIcon,
+    label: input.baseBranch ? `Conflicts with ${input.baseBranch}` : "Has conflicts",
+    toneClassName: "text-destructive",
+    Icon: PullRequestGlyph.conflicting,
   };
 }
 
 export function PullRequestStateGlyph({
+  state,
+  isDraft,
+  className,
+}: {
+  state: PullRequestState;
+  isDraft: boolean;
+  className?: string;
+}) {
+  const presentation = resolvePullRequestState({ state, isDraft });
+  return (
+    <Tooltip>
+      {/* The list row is itself a button, so the trigger stays a span: an interactive one would
+          nest a control inside that button and steal the row's click target. */}
+      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+        <presentation.Icon
+          role="img"
+          aria-label={presentation.label}
+          className={cn("size-4 shrink-0", presentation.toneClassName, className)}
+        />
+      </TooltipTrigger>
+      <TooltipPopup>{presentation.label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+export function PullRequestConflictGlyph({
   state,
   isDraft,
   mergeability,
@@ -112,16 +194,15 @@ export function PullRequestStateGlyph({
   baseBranch?: string;
   className?: string;
 }) {
-  const presentation = resolvePullRequestState({
+  const presentation = resolvePullRequestConflict({
     state,
     isDraft,
-    ...(mergeability ? { mergeability } : {}),
-    ...(baseBranch ? { baseBranch } : {}),
+    ...(mergeability === undefined ? {} : { mergeability }),
+    ...(baseBranch === undefined ? {} : { baseBranch }),
   });
+  if (presentation === null) return null;
   return (
     <Tooltip>
-      {/* The list row is itself a button, so the trigger stays a span: an interactive one would
-          nest a control inside that button and steal the row's click target. */}
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
         <presentation.Icon
           role="img"
@@ -346,8 +427,9 @@ export function PullRequestActorAvatar({
 }) {
   const login = actor?.login ?? "ghost";
   const avatarUrl = actor?.avatarUrl ?? null;
-  return avatarUrl === null ? (
-    // Not every host reports an avatar, so the initial stands in where none arrives.
+  const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
+  return avatarUrl === null || failedAvatarUrl === avatarUrl ? (
+    // Not every host reports an avatar, and a private host may refuse the browser's request.
     <span
       aria-hidden
       className={cn(
@@ -364,6 +446,7 @@ export function PullRequestActorAvatar({
       src={avatarUrl}
       loading="lazy"
       className={cn("size-4 shrink-0 rounded-full bg-muted object-cover", className)}
+      onError={() => setFailedAvatarUrl(avatarUrl)}
     />
   );
 }
@@ -416,7 +499,10 @@ export function PullRequestActorLabel({
       >
         {label}
       </TooltipTrigger>
-      <TooltipPopup side="top">{profileUrl ? `Open ${login}'s profile` : login}</TooltipPopup>
+      <TooltipPopup side="top">
+        {actor?.name && actor.name !== login ? `${actor.name} (@${login})` : login}
+        {profileUrl ? " · Open profile" : ""}
+      </TooltipPopup>
     </Tooltip>
   );
 }

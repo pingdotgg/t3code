@@ -62,7 +62,8 @@ export const getUnenv = (options: BasePluginOptions) =>
 export const nodejsUnenvPlugin = createPlugin<"nodejs-unenv", UnenvApi>(
   "nodejs-unenv",
   (options) => {
-    if (!hasNodejsCompat(options.compatibilityFlags)) return;
+    if (!hasNodejsCompat(options.compatibilityFlags, options.compatibilityDate))
+      return;
     const { alias, inject, polyfill, external } = getUnenv(options);
     const entries = new Set(Object.values(alias));
     for (const globalInject of Object.values(inject)) {
@@ -93,14 +94,18 @@ export const nodejsUnenvPlugin = createPlugin<"nodejs-unenv", UnenvApi>(
     return {
       shared: {
         api: {
-          polyfill,
+          // Virtual entries have no package directory for bare-import resolution.
+          polyfill: polyfill.map((id) => toPosixPath(require.resolve(id))),
           inject: Object.fromEntries(
             Object.entries(inject).map(([injectedName, moduleSpecifier]) => {
               assert(
                 typeof moduleSpecifier === "string",
                 `expected moduleSpecifier to be a string`,
               );
-              return [injectedName, moduleSpecifier];
+              return [
+                injectedName,
+                toPosixPath(require.resolve(moduleSpecifier)),
+              ];
             }),
           ),
         },
@@ -237,7 +242,8 @@ const supportsMissingImportRegistration = (environment: {
 export const nodejsImportWarningPlugin = createPlugin(
   "nodejs-import-warning",
   (options) => {
-    if (hasNodejsCompat(options.compatibilityFlags)) return;
+    if (hasNodejsCompat(options.compatibilityFlags, options.compatibilityDate))
+      return;
     const imports = new Map<string, Set<string>>();
     let root = process.cwd();
     return {

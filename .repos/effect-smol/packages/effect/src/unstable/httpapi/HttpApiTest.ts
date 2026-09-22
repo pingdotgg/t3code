@@ -20,6 +20,7 @@ import type { HttpPlatform } from "../http/HttpPlatform.ts"
 import * as HttpRouter from "../http/HttpRouter.ts"
 import * as HttpServerRequest from "../http/HttpServerRequest.ts"
 import * as HttpServerResponse from "../http/HttpServerResponse.ts"
+import * as preResponseHandler from "../http/internal/preResponseHandler.ts"
 import type * as HttpApi from "./HttpApi.ts"
 import type { HandlerRuntime } from "./HttpApiBuilder.ts"
 import * as HttpApiBuilder from "./HttpApiBuilder.ts"
@@ -100,10 +101,14 @@ export const groups = Effect.fnUntraced(function*<
   const httpClient = HttpClient.make(Effect.fnUntraced(function*(request) {
     const serverRequest = HttpServerRequest.fromClientRequest(request)
     const response = yield* handler.pipe(
+      Effect.flatMap((response) => {
+        const preResponse = preResponseHandler.requestPreResponseHandlers.get(serverRequest.source)
+        return preResponse === undefined ? Effect.succeed(response) : preResponse(serverRequest, response)
+      }),
       Effect.provideService(HttpServerRequest.HttpServerRequest, serverRequest),
       Effect.orDie
     )
-    return HttpServerResponse.toClientResponse(response)
+    return HttpServerResponse.toClientResponse(response, { request })
   }, Effect.scoped))
 
   return yield* HttpApiClient.makeWith(api, {

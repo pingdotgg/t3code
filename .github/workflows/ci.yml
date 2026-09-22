@@ -52,6 +52,9 @@ jobs:
       - name: Check
         run: vp check
 
+      - name: Check className overrides on components/ui do not grow
+        run: vp run lint:restyle-ceiling
+
       - name: Typecheck
         run: vpr typecheck
 
@@ -102,6 +105,9 @@ jobs:
         run: |
           sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+
+      - name: Test preview artifact validation
+        run: python3 -B .github/scripts/stage-preview-bundle.test.py
 
       - name: Test nightly release checks
         run: node --test .github/scripts/check-nightly-release.test.cjs

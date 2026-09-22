@@ -25,7 +25,7 @@ import * as Result from "./Result.ts"
 import * as String from "./String.ts"
 import type { Mutable } from "./Types.ts"
 
-const TypeId = "~effect/time/Cron"
+const TypeId = "~effect/Cron"
 
 /**
  * Represents a cron schedule with time constraints and timezone information.
@@ -435,7 +435,7 @@ const lookup = {
   }
 }
 
-const CronParseErrorTypeId = "~effect/time/Cron/CronParseError"
+const CronParseErrorTypeId = "~effect/Cron/CronParseError"
 
 /**
  * Represents an error that occurs when parsing a cron expression fails.

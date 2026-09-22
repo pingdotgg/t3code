@@ -3,8 +3,9 @@ import { ReadOnlySourcePreview } from "./files/AttachmentFilePreview";
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { videoMimeType } from "@t3tools/shared/video";
-import { GitPullRequestIcon, MessageCircleIcon, MousePointerClickIcon } from "lucide-react";
+import { MessageCircleIcon, MousePointerClickIcon } from "lucide-react";
 import { createContext, type MouseEvent, type ReactElement, type ReactNode, use } from "react";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "~/composerDraftStore";
 import { composerFileNeedsReattach } from "~/composerDraftStore";
@@ -14,6 +15,7 @@ import {
   type AttachmentUploadState,
 } from "~/lib/attachmentUploadState";
 import { cn } from "~/lib/utils";
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import {
   fileContextReference,
   imageContextReference,
@@ -65,6 +67,7 @@ export type ComposerDraftContextRecord =
 
 /** What a chip can do beyond showing itself; the composer supplies the handlers. */
 export interface ComposerContextActions {
+  environmentId: EnvironmentId | null;
   expandImage: (imageId: string) => void;
   expandVideo: (fileId: string) => void;
   openFile: (fileId: string) => void;
@@ -73,6 +76,7 @@ export interface ComposerContextActions {
 }
 
 export const ComposerContextActionsContext = createContext<ComposerContextActions>({
+  environmentId: null,
   expandImage: () => {},
   expandVideo: () => {},
   openFile: () => {},
@@ -246,6 +250,7 @@ function PullRequestContextChip(props: { record: ReviewCommentContext; toneClass
   return (
     <PullRequestChip
       metadata={metadata}
+      environmentId={actions.environmentId}
       label={reviewCommentContextLabel(props.record)}
       kindLabel={pullRequestContextKindLabel(props.record)}
       className={cn(COMPOSER_INLINE_CHIP_CLASS_NAME, props.toneClassName)}
@@ -392,7 +397,7 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
           <ContextChip
             icon={
               isPullRequest ? (
-                <GitPullRequestIcon
+                <PullRequestGlyph.pullRequest
                   className={cn(
                     COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
                     CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES["pull-request"],

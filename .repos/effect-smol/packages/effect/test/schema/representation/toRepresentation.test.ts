@@ -145,11 +145,26 @@ describe("SchemaRepresentation.toRepresentation", () => {
             { _tag: "String", checks: [] },
             { _tag: "BigInt", checks: [] }
           ],
-          mode: "anyOf",
           checks: []
         },
         references: {}
       })
+    })
+
+    it("preserves supplied Union options and omits absent options", () => {
+      const unionOptions: SchemaAST.UnionOptions = { mode: "oneOf" }
+      const union = SchemaRepresentation.toRepresentation(
+        new SchemaAST.Union([Schema.String.ast, Schema.Number.ast], unionOptions)
+      ).representation
+
+      assert.strictEqual(union._tag, "Union")
+      if (union._tag === "Union") assert.strictEqual(union.options, unionOptions)
+
+      const withoutOptions = SchemaRepresentation.toRepresentation(
+        Schema.Union([Schema.String, Schema.Number]).ast
+      ).representation
+      assert.strictEqual(withoutOptions._tag, "Union")
+      assert.isFalse(Object.hasOwn(withoutOptions, "options"))
     })
   })
 
@@ -399,8 +414,8 @@ describe("SchemaRepresentation.toRepresentation", () => {
                 payload: { source: "^[A-Z]", flags: "" }
               },
               annotations: {
-                arbitrary: { constraint: { patterns: ["^[A-Z]"] } },
-                expected: "a string matching the RegExp ^[A-Z]"
+                expected: "a string matching the RegExp ^[A-Z]",
+                arbitraryConstraint: { patterns: [{ source: "^[A-Z]", flags: "" }] }
               },
               aborted: false
             }]

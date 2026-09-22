@@ -55,8 +55,13 @@ back from the device after a change.
 When an agent opens a device, it floats over the chat in web and desktop clients
 connected to the thread, the same way an agent-driven browser does. Turn off
 **Auto-show floating preview** in **Settings → Integrations → Browser** to open a
-right-panel tab instead. Mobile clients show device activity in the thread
-timeline. Agents drive the device through the `agent-device` command line. T3
+right-panel tab instead. In the mobile app, open the agent's thread and tap the
+device button above the composer to watch the live screen and control it.
+If the thread has several devices open, choose one in the viewer. Closing the
+viewer stops streaming and leaves the device available to the agent. Device
+activity also appears in the thread timeline.
+
+Agents drive the device through the `agent-device` command line. T3
 Code installs and starts it only after **Agent device access** is enabled. iOS
 taps build a small test runner on first use, which takes a couple of minutes
 once per server. Restart an existing agent session after granting access so it
@@ -75,14 +80,16 @@ still-image stream and Android cannot show video.
 
 ## SSH device hosts
 
-In Settings → Integrations → Devices, select one connected environment
-and add a host under **Device hosts**. Enter an SSH alias or `user@host`, with
+In Settings → Integrations → Devices, choose the environments that should use
+the host and add it under **Device hosts**. Enter an SSH alias or `user@host`, with
 an optional identity file and port. These resolve on the environment server,
 so use the SSH configuration and keys available there. Password prompts are
 not supported.
 
 **Test connection** checks SSH, Node, npm, and platform tools without installing
-anything. The first device listing installs pinned device tools on the host.
+anything, with a result for each selected environment. Targets that resolve to
+the environment’s own machine are skipped, since its devices are already local.
+The first device listing installs pinned device tools on the host.
 Node 22 or newer and npm must be available to non-interactive SSH commands.
 T3 checks common Homebrew and Android SDK locations; custom installations need
 the appropriate PATH and ANDROID_HOME on the host.
@@ -95,3 +102,9 @@ T3 provides discovery, streaming, and control. Arrange app builds,
 installation, and connectivity to development servers such as Metro separately.
 A simulator on another machine cannot reach Metro through your environment's
 localhost without forwarding or another reachable address.
+
+## Device tool updates
+
+The connected T3 server manages the device hub and agent tools on its own machine and configured SSH hosts. Required versions install automatically the next time those tools are used. Settings → Integrations → Check device tool versions reads installed versions without installing tools or starting devices.
+
+To receive newer tool versions on a remote environment, update that environment's T3 server. Updating only the browser or mobile app does not update the remote server. An offline host keeps its installed files, but an update needs network access before device support can start; T3 does not fall back to an older version. Reconnect the host and use Retry if installation fails. Existing device and agent-access settings are preserved.

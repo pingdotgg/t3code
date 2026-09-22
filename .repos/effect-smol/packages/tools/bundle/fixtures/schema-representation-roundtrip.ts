@@ -11,5 +11,5 @@ const json = SchemaRepresentation.toJson(SchemaRepresentation.toRepresentation(s
 
 export const roundtrip = SchemaRepresentation.fromRepresentation(
   SchemaRepresentation.fromJson(JSON.parse(JSON.stringify(json))),
-  { revivers: [Schema.isFiniteReviver] }
+  { revivers: [SchemaRepresentation.isFiniteReviver] }
 )
