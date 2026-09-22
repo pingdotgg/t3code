@@ -17,6 +17,16 @@ Terms whose meaning matters across T3 Code. Architecture and lifecycle constrain
 | Activity       | A non-message timeline item, such as a tool action, approval, or failure.                         |
 | T3 home        | The base data directory. Runtime state normally lives under its `userdata` directory.             |
 
+## Thread lifecycle
+
+| Term            | Meaning                                                                                                                               |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Settled thread  | A live thread in the thread list's Settled section. Unsettling it or beginning new work returns it to the active list.                |
+| Archived thread | A thread removed from the live thread list while its history remains available in Archive. It can be restored or permanently deleted. |
+| Deleted thread  | A permanently removed thread, distinct from reversible archiving.                                                                     |
+
+See the [Archive user guide](../user/archive.md).
+
 ## Orchestration
 
 | Term                    | Meaning                                                                                      |

@@ -15,7 +15,6 @@ import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
-import { useComposerDraftStore } from "../composerDraftStore";
 import { terminalEnvironment } from "../state/terminal";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
@@ -23,7 +22,7 @@ import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
-import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
+import { discardComposerDraft } from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
 import {
   readEnvironmentSupportsPinning,
@@ -222,10 +221,6 @@ export function useThreadActions() {
   const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
   const confirmThreadUnpin = useClientSettings((settings) => settings.confirmThreadUnpin);
-  const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
-  const clearProjectDraftThreadById = useComposerDraftStore(
-    (store) => store.clearProjectDraftThreadById,
-  );
   const clearTerminalUiState = useTerminalUiStateStore((state) => state.clearTerminalUiState);
   const markThreadVisited = useUiStateStore((state) => state.markThreadVisited);
   const router = useRouter();
@@ -441,12 +436,7 @@ export function useThreadActions() {
         return deleteResult;
       }
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
-      releaseComposerDraftUploads(threadRef);
-      clearComposerDraftForThread(threadRef);
-      clearProjectDraftThreadById(
-        scopeProjectRef(threadRef.environmentId, thread.projectId),
-        threadRef,
-      );
+      discardComposerDraft(threadRef);
       clearTerminalUiState(threadRef);
 
       if (shouldNavigateToFallback) {
@@ -518,8 +508,6 @@ export function useThreadActions() {
       return deleteResult;
     },
     [
-      clearComposerDraftForThread,
-      clearProjectDraftThreadById,
       clearTerminalUiState,
       closeTerminal,
       deleteThreadMutation,
