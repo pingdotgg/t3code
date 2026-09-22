@@ -811,7 +811,8 @@ export function ProviderInstanceCard({
                 disabled={readOnly || isUpdating}
                 onClick={onInstallRecommended}
               >
-                Install {compatibility.recommendedVersion}
+                {isUpdating ? <Spinner /> : <DownloadIcon />}
+                {isUpdating ? "Updating" : `Install ${compatibility.recommendedVersion}`}
               </Button>
             ) : null}
           </SettingsRow>
