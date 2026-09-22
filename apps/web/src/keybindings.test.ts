@@ -160,6 +160,11 @@ const DEFAULT_BINDINGS = compile([
     command: "thread.settle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
+  {
+    shortcut: modShortcut("/"),
+    command: "composer.toggleRichText",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("1"), command: "thread.jump.1" },
   { shortcut: modShortcut("2"), command: "thread.jump.2" },
   { shortcut: modShortcut("3"), command: "thread.jump.3" },
@@ -1213,6 +1218,30 @@ describe("composer and pull request shortcuts", () => {
       }
     },
   );
+
+  it("binds mod+/ to the composer rich text toggle on every platform", () => {
+    assert.equal(
+      resolveShortcutCommand(event({ key: "/", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "composer.toggleRichText",
+    );
+    assert.equal(
+      resolveShortcutCommand(event({ key: "/", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "composer.toggleRichText",
+    );
+    assert.notEqual(
+      resolveShortcutCommand(event({ key: "/", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+      "composer.toggleRichText",
+    );
+  });
 
   const shortcuts = [
     ["h", "composer.host"],

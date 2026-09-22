@@ -12,6 +12,50 @@ becomes an attachment when inserting it would exceed the message limit. On a
 hardware keyboard, use `Cmd+Shift+V` on Apple devices or `Ctrl+Shift+V` elsewhere
 to keep a large paste editable in the composer instead.
 
+## Formatting
+
+The composer writes Markdown and shows it styled as you type. Bold, italic,
+strikethrough and inline code are marked up as usual; the markers stay in the
+text and appear beside the styled words when your cursor is on them, so nothing
+you typed is ever hidden from you. Task lists come from `- [ ]` and get
+checkboxes you can click.
+
+Lists render as lists: `- `, `* ` or `+ ` starts a bulleted item and `1. ` or
+`1) ` a numbered one. Inside an item, **Shift+Enter** continues the list (a
+numbered list counts up), Shift+Enter on an empty item leaves the list, and
+**Tab** nests the item. Enter still sends. `- [ ] ` and `- [x] ` make task
+items, and `[ ] ` at the start of an existing bulleted item turns it into
+one. The list is stored exactly as you wrote it: the marker you typed and the
+numbers you used are what the agent receives.
+
+`> ` at the start of a line opens a quote. Each line inside it is quoted, so
+Shift+Enter continues the quote and Shift+Enter on an empty line leaves it.
+Quotes hold prose: list markers and further `>` marks inside one stay literal.
+
+Three dashes on their own line become a horizontal rule as you type them;
+`***` or `___` followed by a space do the same. The rule is stored as the
+characters you typed.
+
+`# ` through `###### ` at the start of a line make a heading; the space after
+the hashes is what makes it one, so `#1234` still looks up a pull request.
+Shift+Enter after a heading starts an ordinary line.
+
+Start a fenced code block with three backticks, optionally followed by a
+language, then press Enter or Space. Inside a fence:
+
+- **Enter** starts a new line at the current indentation.
+- **Tab** and **Shift+Tab** indent and outdent the lines your selection touches.
+- Two blank lines at the end leave the block and return to prose.
+
+Code is syntax highlighted using your current theme, and the language you
+declared is named in the corner of the block.
+
+Press `mod+/` to switch the composer to literal Markdown, with every marker
+shown as you typed it and nothing styled, and again to come back. Chips,
+attachments and your cursor survive the switch. The same switch lives in
+Settings as the rich text composer option, and the shortcut can be changed
+under Settings → Keybindings.
+
 ## Attach files
 
 Attach up to 100 files per message. Each image can be up to 10 MiB, with at most
