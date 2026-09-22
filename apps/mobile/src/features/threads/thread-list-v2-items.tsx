@@ -1177,7 +1177,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           return (
             <View
               className="flex-row items-center"
-              style={{ backgroundColor: rowAppearance.swipeBackgroundColor }}
+              style={{
+                // rowAppearance.style already carries the selected surface; the
+                // trailing control must not leave an unselected strip beside the
+                // selected row.
+                backgroundColor:
+                  rowAppearance.style?.backgroundColor ?? rowAppearance.swipeBackgroundColor,
+              }}
             >
               <View className="min-w-0 flex-1">{row}</View>
               <ControlPillMenu
@@ -1194,7 +1200,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   <SymbolView
                     name="ellipsis"
                     size={18}
-                    tintColorClassName={rowAppearance.mutedIconTintClassName}
+                    tintColorClassName={
+                      selected
+                        ? selectedThreadRowColors.mutedIconTintClassName
+                        : rowAppearance.mutedIconTintClassName
+                    }
                   />
                 </View>
               </ControlPillMenu>
