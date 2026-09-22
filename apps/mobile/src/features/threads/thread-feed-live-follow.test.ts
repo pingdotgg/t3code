@@ -217,6 +217,16 @@ describe("resolveThreadFeedLiveFollow", () => {
     ).toBe(true);
   });
 
+  it("does not resume following when completion briefly reports the reader at the end", () => {
+    expect(
+      resolveThreadFeedLiveFollow(false, {
+        type: "scroll",
+        isAtEnd: true,
+        userScrollSessionActive: false,
+      }),
+    ).toBe(false);
+  });
+
   it("re-arms after an explicit reset", () => {
     expect(resolveThreadFeedLiveFollow(false, { type: "reset" })).toBe(true);
   });

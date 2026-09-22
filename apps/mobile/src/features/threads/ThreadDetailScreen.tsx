@@ -58,6 +58,7 @@ import Animated, {
   FadeInDown,
   FadeOut,
   ReduceMotion,
+  runOnJS,
   useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
@@ -336,6 +337,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
   const [submittedMessageId, setSubmittedMessageId] = useState<MessageId | null>(null);
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
+  const [endFollowRequest, setEndFollowRequest] = useState(0);
   // Android keys the safe-area padding on keyboard visibility (#5988): the
   // back gesture closes the keyboard while the editor stays focused, and a
   // focus-keyed inset would leave the toolbar under the gesture bar. iOS must
@@ -404,17 +406,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     }
     return null;
   })();
-  const showWorkingControl = floatingStatus !== null;
-  // Connection and working status occupy the same space. Keep the feed inset
-  // stable when reconnecting hands off to syncing and then to a running turn.
-  const showFloatingStatus =
-    showWorkingControl ||
-    devicePreviews.length > 0 ||
-    props.connectionStateLabel !== "connected" ||
-    props.queuedMessages.length > 0 ||
-    props.selectedThreadFeed.some(
-      (entry) => "acknowledged" in entry && entry.acknowledged === true,
-    );
   const selectedThreadFeed = props.selectedThreadFeed;
   const hasCompactableConversation =
     selectedThreadFeed.some(
@@ -553,26 +544,52 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const userInputCardProgress = useSharedValue(1);
   const userInputInsetProgress = useSharedValue(1);
   const userInputCardCoverage = useSharedValue(0);
-  const floatingControlCoverage = useSharedValue(
-    showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0,
+  // Release the status strip with the native inset animation when its pill
+  // disappears. Keeping it reserved while idle leaves a blank pill-sized gap.
+  const [pendingWorkingCoverageTurnId, setPendingWorkingCoverageTurnId] = useState<string | null>(
+    null,
   );
   useEffect(() => {
-    floatingControlCoverage.value = withTiming(
-      showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0,
-      { duration: 180, reduceMotion: ReduceMotion.System },
+    if (props.activeWorkStartedAt !== null) {
+      setPendingWorkingCoverageTurnId(props.selectedThread.latestTurn?.turnId ?? null);
+    }
+  }, [props.activeWorkStartedAt, props.selectedThread.latestTurn?.turnId]);
+  const releaseWorkingCoverage = useCallback(() => setPendingWorkingCoverageTurnId(null), []);
+  const floatingControlCoverage =
+    floatingStatus !== null ||
+    devicePreviews.length > 0 ||
+    (pendingWorkingCoverageTurnId !== null &&
+      pendingWorkingCoverageTurnId === props.selectedThread.latestTurn?.turnId)
+      ? FLOATING_WORKING_CONTROL_COVERAGE
+      : 0;
+  const animatedFloatingControlCoverage = useSharedValue(floatingControlCoverage);
+  const previousFloatingControlCoverage = useRef(floatingControlCoverage);
+  const [animatingFloatingCoverage, setAnimatingFloatingCoverage] = useState(false);
+  useEffect(() => {
+    if (previousFloatingControlCoverage.current === floatingControlCoverage) return;
+    previousFloatingControlCoverage.current = floatingControlCoverage;
+    // KeyboardChatScrollView adjusts the offset with this inset on the UI
+    // thread. A simultaneous LegendList end-scroll fights those adjustments.
+    setAnimatingFloatingCoverage(true);
+    animatedFloatingControlCoverage.value = withTiming(
+      floatingControlCoverage,
+      { duration: COMPOSER_TRANSITION_DURATION_MS, reduceMotion: ReduceMotion.System },
+      (finished) => {
+        if (finished) runOnJS(setAnimatingFloatingCoverage)(false);
+      },
     );
-  }, [floatingControlCoverage, showFloatingStatus]);
+  }, [animatedFloatingControlCoverage, floatingControlCoverage]);
   // Android renders the expanded card in-flow (it cannot hit-test the iOS
   // overlay outside the bar's bounds), so its measured overlay height already
   // includes the card — the coverage extra is iOS-only.
   const userInputCoverageApplies = Platform.OS === "ios" && activeUserInputRequestId !== null;
   const combinedContentInsetEndAdjustment = useSharedValue(
-    Math.max(0, estimatedOverlayHeight - nativeInsetOvercount),
+    Math.max(0, estimatedOverlayHeight - nativeInsetOvercount) + floatingControlCoverage,
   );
   useAnimatedReaction(
     () =>
       contentInsetEndAdjustment.value +
-      floatingControlCoverage.value +
+      animatedFloatingControlCoverage.value +
       (userInputCoverageApplies ? userInputInsetProgress.value * userInputCardCoverage.value : 0),
     (value) => {
       combinedContentInsetEndAdjustment.value = value;
@@ -583,10 +600,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const endFollowEnabledRef = useRef(true);
   endFollowEnabledRef.current = endFollowEnabled;
   const overlayRepinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const previousWorkingControlStateRef = useRef({
-    threadKey: selectedThreadKey,
-    visible: false,
-  });
   // The list's own corrections for these inset changes drift on short
   // content (and the error compounds across toggles), so deterministically
   // re-pin the end once a toggle settles: a no-op when the resting position
@@ -618,23 +631,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     },
     [],
   );
-  useEffect(() => {
-    const previous = previousWorkingControlStateRef.current;
-    const threadChanged = previous.threadKey !== selectedThreadKey;
-    const visibilityChanged = previous.visible !== showFloatingStatus;
-    previousWorkingControlStateRef.current = {
-      threadKey: selectedThreadKey,
-      visible: showFloatingStatus,
-    };
-    if ((!threadChanged && !visibilityChanged) || (threadChanged && !showFloatingStatus)) {
-      return;
-    }
-    // LegendList applies the larger inset but does not re-anchor short
-    // followed conversations when this floating coverage changes after the
-    // initial load. Re-pin after the finite inset transition; the callback
-    // checks follow state again so a user who scrolled up stays put.
-    scheduleOverlayRepin(230);
-  }, [scheduleOverlayRepin, selectedThreadKey, showFloatingStatus]);
   const handleToggleUserInputCollapsed = useCallback(() => {
     if (activeUserInputRequestId === null) {
       return;
@@ -767,6 +763,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     const hasUserMessage = selectedThreadFeed.some(
       (entry) => entry.type === "message" && entry.message.role === "user",
     );
+    // Finish the native inset transition before inserting the pending row.
+    // Changing both together makes UIKit briefly clamp to the wrong end.
+    composerEditorRef.current?.blur();
+    await KeyboardController.dismiss();
+    if (selectedThreadKeyRef.current !== targetThreadKey) return null;
     const messageId = await props.onSendMessage();
     if (messageId === null || selectedThreadKeyRef.current !== targetThreadKey) {
       return messageId;
@@ -785,7 +786,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         queuedMessageCount: props.selectedThreadQueueCount,
       }),
     );
-    composerEditorRef.current?.blur();
     return messageId;
   }, [
     anchorMessageId,
@@ -834,6 +834,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   );
 
   const handleScrollToEnd = useCallback(() => {
+    setEndFollowRequest((request) => request + 1);
     void Haptics.selectionAsync();
     void scrollMessageToEnd({ animated: true, closeKeyboard: false }).catch(() => {
       freeze.set(false);
@@ -911,16 +912,17 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             freeze={freeze}
             anchorMessageId={anchorMessageId}
             submittedMessageId={submittedMessageId}
+            endFollowRequest={endFollowRequest}
+            endFollowSuspended={animatingFloatingCoverage}
             contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
             contentTopInset={0}
-            contentBottomInset={
-              estimatedOverlayHeight + (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
-            }
+            contentBottomInset={estimatedOverlayHeight + floatingControlCoverage}
             contentMaxWidth={contentMaxWidth}
             layoutVariant={layoutVariant}
             usesAutomaticContentInsets={props.usesAutomaticContentInsets}
             onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
             onEndFollowEnabledChange={setEndFollowEnabled}
+            onCompletionSettled={releaseWorkingCoverage}
             skills={selectedProviderSkills}
             onUseArtifactTemplate={handleUseArtifactTemplate}
             loadEarlier={props.loadEarlier ?? null}

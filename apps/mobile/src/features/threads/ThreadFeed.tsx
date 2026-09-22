@@ -88,7 +88,12 @@ import { isPdfFile } from "../../lib/filePreview";
 import { flattenThemeColor } from "../../lib/mobileTheme";
 import { PresentationSource } from "../../components/NativePresentation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Animated, { FadeIn, type SharedValue } from "react-native-reanimated";
+import Animated, {
+  FadeIn,
+  ReduceMotion,
+  useReducedMotion,
+  type SharedValue,
+} from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { useFontFamily } from "../../lib/useFontFamily";
@@ -235,6 +240,13 @@ const THREAD_FEED_DISCLOSURE_ENTER_TRANSITION = FadeIn.delay(
   THREAD_DISCLOSURE_TRANSITION_MS,
 ).duration(140);
 
+// Allow native end-follow to make room before appended text becomes visible.
+// Thinking/tool swaps need the same reveal: the live slot can move down
+// when commentary is inserted immediately above it.
+const THREAD_FEED_ROW_ENTER_TRANSITION = FadeIn.delay(500)
+  .duration(160)
+  .reduceMotion(ReduceMotion.System);
+
 // Entering animations must only play for rows born just now — LegendList
 // remounts rows when they scroll back into view, and replaying an entrance for
 // old content would be its own kind of jank.
@@ -262,6 +274,9 @@ export interface ThreadFeedProps {
   readonly freeze: SharedValue<boolean>;
   readonly anchorMessageId: MessageId | null;
   readonly submittedMessageId: MessageId | null;
+  readonly endFollowRequest?: number;
+  readonly endFollowSuspended?: boolean;
+  readonly onCompletionSettled?: () => void;
   readonly contentInsetEndAdjustment: SharedValue<number>;
   readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
@@ -1689,11 +1704,9 @@ function renderFeedEntry(
     // bubbles: wide markdown blocks cause children to be positioned at
     // intrinsic width before the container is clamped, overlapping the
     // timestamp/copy button row. Pinning the width removes that pass.
-    const enterAnimated = isFreshTimestamp(message.createdAt);
     return (
       <Animated.View
         className={cn(showAssistantMeta ? "mb-5 px-1" : "mb-1 px-1", hasWideBlock && "w-full")}
-        {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
       >
         {renderedText.trim().length > 0 ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
@@ -1983,6 +1996,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // yanked users off history they were reading every time a stream chunk grew
   // a row. Scrolling away or expanding a disclosure above the end breaks
   // follow; reaching the end (or sending / switching threads) re-arms it.
+  const reducedMotion = useReducedMotion();
+  const [loadedListKey, setLoadedListKey] = useState<string | null>(null);
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
   const endFollowEnabledRef = useRef(true);
   // A "user scroll session" spans from drag start through the end of its
@@ -2280,6 +2295,47 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // One definition of "still live", shared with the fold derivation: two
   // copies of this test are what let a row and the fold beside it disagree.
   const unsettledTurnId = deriveUnsettledTurnId(props.latestTurn ?? null);
+  // Wait for both the final footer measurement and the native end-follow
+  // scroll before folding work rows. Folding during that scroll changes its
+  // destination mid-flight and briefly exposes the wrong reading position.
+  const [presentationTurn, setPresentationTurn] = useState(props.latestTurn);
+  const measuredCompletionTurnRef = useRef<string | null>(null);
+  const finishCompletedPresentation = useCallback(
+    (atNativeEnd = false) => {
+      if (
+        unsettledTurnId === null &&
+        props.latestTurn != null &&
+        measuredCompletionTurnRef.current === props.latestTurn.turnId &&
+        props.listRef.current?.getState().isAtEnd
+      ) {
+        if (presentationTurn !== props.latestTurn) {
+          setPresentationTurn(props.latestTurn);
+        } else if (atNativeEnd) {
+          props.onCompletionSettled?.();
+        }
+      }
+    },
+    [unsettledTurnId, presentationTurn, props.latestTurn, props.listRef, props.onCompletionSettled],
+  );
+  if (
+    presentationTurn !== props.latestTurn &&
+    (unsettledTurnId !== null || presentationTurn?.turnId !== props.latestTurn?.turnId)
+  ) {
+    setPresentationTurn(props.latestTurn);
+  }
+  useLayoutEffect(() => {
+    const hasAssistant = props.feed.some(
+      (entry) =>
+        entry.type === "message" &&
+        entry.message.role === "assistant" &&
+        entry.message.turnId === props.latestTurn?.turnId,
+    );
+    if (!endFollowEnabled || !hasAssistant) {
+      setPresentationTurn(props.latestTurn);
+      if (unsettledTurnId === null) props.onCompletionSettled?.();
+    }
+  }, [endFollowEnabled, props.latestTurn, props.feed, unsettledTurnId, props.onCompletionSettled]);
+
   // LegendList does not invalidate visible rows when only the renderItem closure changes.
   // Include turn completion so unchanged message rows reveal their footer and spacing
   // even when the final message update arrives before the turn settles.
@@ -2335,11 +2391,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       // header height back or the material toggles a full header too late.
       reportHeaderMaterialVisibility(event.nativeEvent.contentOffset.y + anchorTopInset > 6);
       // LegendList recomputes its inset-aware end distance before invoking
-      // this handler, so getState() is current. Only the actual end re-arms
-      // follow: its broader maintain-scroll threshold is large enough for a
-      // streaming chunk to pull a user back before their upward drag escapes.
-      // A live user-scroll session still wins even if the first scroll event
-      // remains inside LegendList's at-end tolerance.
+      // this handler, so getState() is current. Layout-driven scroll events
+      // cannot resume follow after the reader leaves the end. A completed
+      // user gesture or an explicit return-to-end request can.
+      const { contentOffset, contentSize, contentInset, layoutMeasurement } = event.nativeEvent;
+      // The keyboard wrapper's inset can still be ahead of LegendList's JS
+      // geometry. Only release overlay space after UIKit reaches its real end.
+      const nativeDistanceFromEnd =
+        contentSize.height + contentInset.bottom - layoutMeasurement.height - contentOffset.y;
+      finishCompletedPresentation(nativeDistanceFromEnd <= 1);
       const listState = props.listRef.current?.getState();
       if (listState) {
         transitionEndFollow({
@@ -2349,7 +2409,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         });
       }
     },
-    [reportHeaderMaterialVisibility, anchorTopInset, props.listRef, transitionEndFollow],
+    [
+      reportHeaderMaterialVisibility,
+      anchorTopInset,
+      props.listRef,
+      transitionEndFollow,
+      finishCompletedPresentation,
+    ],
   );
   const clearUserScrollSettle = useCallback(() => {
     if (userScrollSettleTimerRef.current !== null) {
@@ -2430,7 +2496,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     clearUserScrollSettle();
     userScrollSessionRef.current = false;
     transitionEndFollow({ type: "reset" });
-  }, [clearUserScrollSettle, feedThreadKey, transitionEndFollow]);
+  }, [clearUserScrollSettle, feedThreadKey, props.endFollowRequest, transitionEndFollow]);
   useEffect(() => {
     if (props.submittedMessageId !== null) {
       clearUserScrollSettle();
@@ -2453,7 +2519,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       appendPendingThreadMessages(
         deriveThreadFeedPresentation(
           props.feed,
-          props.latestTurn,
+          presentationTurn,
           expandedTurnIds,
           expandedWorkGroupIds,
           props.activeWorkStartedAt,
@@ -2465,6 +2531,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.queuedMessages,
       expandedTurnIds,
       expandedWorkGroupIds,
+      presentationTurn,
       props.activeWorkStartedAt,
       props.feed,
       props.latestTurn,
@@ -2591,11 +2658,31 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     settleDisclosureAfterLayout,
   ]);
 
-  const handleItemSizeChanged = useCallback(() => {
-    if (disclosureAnchorKeyRef.current !== null) {
-      settleDisclosureAfterLayout();
-    }
-  }, [settleDisclosureAfterLayout]);
+  const handleItemSizeChanged = useCallback(
+    (info: { itemData: PendingThreadFeedEntry }) => {
+      if (
+        unsettledTurnId === null &&
+        info.itemData.type === "message" &&
+        info.itemData.message.role === "assistant" &&
+        info.itemData.message.turnId === props.latestTurn?.turnId
+      ) {
+        measuredCompletionTurnRef.current = props.latestTurn?.turnId ?? null;
+        finishCompletedPresentation();
+      }
+      if (disclosureAnchorKeyRef.current !== null) {
+        settleDisclosureAfterLayout();
+      }
+    },
+    [settleDisclosureAfterLayout, unsettledTurnId, props.latestTurn, finishCompletedPresentation],
+  );
+
+  const shouldPreserveCompletedAnswer = useCallback(
+    (entry: ThreadFeedEntry) =>
+      entry.type === "message" &&
+      entry.message.turnId === props.latestTurn?.turnId &&
+      terminalAssistantMessageIds.has(entry.message.id),
+    [props.latestTurn?.turnId, terminalAssistantMessageIds],
+  );
 
   const shouldRestoreVisibleContentPosition = useCallback((entry: ThreadFeedEntry) => {
     const disclosureAnchorKey = disclosureAnchorKeyRef.current;
@@ -2746,8 +2833,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const renderItem = useCallback(
     (info: { item: PendingThreadFeedEntry; index: number }) => (
       <Animated.View
-        key={info.item.id}
-        entering={disclosureToggleSettling ? THREAD_FEED_DISCLOSURE_ENTER_TRANSITION : undefined}
+        key={`${info.item.id}:${info.item.type}`}
+        entering={
+          disclosureToggleSettling
+            ? THREAD_FEED_DISCLOSURE_ENTER_TRANSITION
+            : info.item.type === "thinking" ||
+                ((info.item.type !== "message" || info.item.message.role !== "user") &&
+                  isFreshTimestamp(info.item.createdAt))
+              ? THREAD_FEED_ROW_ENTER_TRANSITION
+              : undefined
+        }
       >
         <ThreadMediaVisibility>
           {renderFeedEntry(info, {
@@ -2906,13 +3001,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             // targets land one safe-area short of the true resting offset.
             adjustedInsetCompensation={usesNativeAutomaticInsets ? insets.bottom : 0}
             freeze={props.freeze}
-            // Follow the measured end immediately. Animating toward an estimated
-            // end races row measurement when a pending message is acknowledged.
+            // End-follow retargets measured rows without queuing native animations.
+            // Keep it animated through completion too, when the thinking row leaves.
+            // The explicit user-scroll latch stops follow. A large incoming
+            // response must not disable it merely by outgrowing the viewport.
+            maintainScrollAtEndThreshold={Number.POSITIVE_INFINITY}
             maintainScrollAtEnd={
-              disclosureToggleSettling || !endFollowEnabled
+              disclosureToggleSettling || !endFollowEnabled || props.endFollowSuspended
                 ? false
                 : {
-                    animated: false,
+                    animated: !reducedMotion && loadedListKey === listMountKey && !anchoredEndSpace,
                     on: {
                       dataChange: true,
                       itemLayout: true,
@@ -2921,7 +3019,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                   }
             }
             maintainVisibleContentPosition={
-              endFollowEnabled && !disclosureToggleSettling ? false : maintainVisibleContentPosition
+              endFollowEnabled && !disclosureToggleSettling
+                ? {
+                    data:
+                      unsettledTurnId === null &&
+                      props.queuedMessages.length === 0 &&
+                      presentationTurn === props.latestTurn,
+                    size: false,
+                    shouldRestorePosition: shouldPreserveCompletedAnswer,
+                  }
+                : maintainVisibleContentPosition
             }
             data={presentedFeed}
             extraData={listAppearanceData}
@@ -2934,6 +3041,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             getFixedItemSize={getFixedItemSize}
             // Virtualized rows must move with their measurements. Native layout
             // transitions can retain stale positions during sync, even at duration 0.
+            onLoad={() => setLoadedListKey(listMountKey)}
             onItemSizeChanged={handleItemSizeChanged}
             // Measure rows well before they scroll into view so estimate→actual
             // corrections land offscreen instead of under the user's finger.

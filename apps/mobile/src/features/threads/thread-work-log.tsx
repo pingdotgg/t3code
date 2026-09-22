@@ -930,6 +930,22 @@ export function ThreadWorkGroupToggle(props: {
   readonly shimmer: boolean;
   readonly onToggle: () => void;
 }) {
+  const previousSummary = useRef(props.summary);
+  const summaryOpacity = useSharedValue(1);
+  useLayoutEffect(() => {
+    if (previousSummary.current === props.summary) return;
+    previousSummary.current = props.summary;
+    // Keep the label mounted so rapid tool updates do not reset its shimmer
+    // or measurement. Only the changed summary briefly fades into place.
+    summaryOpacity.set(
+      withSequence(
+        ReduceMotion.System,
+        withTiming(0.45, { duration: 0 }),
+        withTiming(1, { duration: 180, easing: Easing.out(Easing.quad) }),
+      ),
+    );
+  }, [props.summary, summaryOpacity]);
+  const summaryStyle = useAnimatedStyle(() => ({ opacity: summaryOpacity.value }));
   const accessibilityLabel = props.hasFailure
     ? `${props.summary}, tool call failed`
     : props.summary;
@@ -954,37 +970,42 @@ export function ThreadWorkGroupToggle(props: {
         className="min-h-8 flex-row items-center gap-1.5 rounded-md px-0.5 py-0 active:bg-subtle"
         style={{ minHeight: props.rowSizing.estimatedRowHeight }}
       >
-        {props.shimmer ? (
-          <ShimmeringWorkContent
-            key={props.rowSizing.textSizeKey}
-            environmentId={props.environmentId}
-            icon={icon}
-            iconSubtleColor={props.iconSubtleColor}
-            label={props.summary}
-            showIcon
-            themeAppearance={props.themeAppearance}
-            toolIcon={props.toolIcon}
-          />
-        ) : (
-          <>
-            <View className="h-6 w-6 items-center justify-center">
-              <ToolActivityIconView
-                environmentId={props.environmentId}
-                icon={props.toolIcon}
-                fallback={icon}
-                fallbackColor={props.iconSubtleColor}
-                themeAppearance={props.themeAppearance}
-              />
-            </View>
-            <Text
+        <Animated.View
+          className="min-w-0 flex-1 flex-row items-center gap-1.5"
+          style={summaryStyle}
+        >
+          {props.shimmer ? (
+            <ShimmeringWorkContent
               key={props.rowSizing.textSizeKey}
-              className="min-w-0 flex-1 text-sm text-foreground-muted"
-              numberOfLines={1}
-            >
-              {props.summary}
-            </Text>
-          </>
-        )}
+              environmentId={props.environmentId}
+              icon={icon}
+              iconSubtleColor={props.iconSubtleColor}
+              label={props.summary}
+              showIcon
+              themeAppearance={props.themeAppearance}
+              toolIcon={props.toolIcon}
+            />
+          ) : (
+            <>
+              <View className="h-6 w-6 items-center justify-center">
+                <ToolActivityIconView
+                  environmentId={props.environmentId}
+                  icon={props.toolIcon}
+                  fallback={icon}
+                  fallbackColor={props.iconSubtleColor}
+                  themeAppearance={props.themeAppearance}
+                />
+              </View>
+              <Text
+                key={props.rowSizing.textSizeKey}
+                className="min-w-0 flex-1 text-sm text-foreground-muted"
+                numberOfLines={1}
+              >
+                {props.summary}
+              </Text>
+            </>
+          )}
+        </Animated.View>
         <ThreadDisclosureChevron
           expanded={props.expanded}
           collapsedDirection="down"

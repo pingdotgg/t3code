@@ -82,9 +82,8 @@ export function resolveThreadFeedLiveFollow(
       if (event.userScrollSessionActive) {
         return false;
       }
-      if (event.isAtEnd) {
-        return true;
-      }
+      // Layout changes can temporarily report an end position while rows
+      // collapse. Only an explicit reset or completed user gesture re-arms.
       return current;
   }
 }
