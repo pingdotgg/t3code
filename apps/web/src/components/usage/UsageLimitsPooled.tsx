@@ -224,6 +224,7 @@ function SegmentPopover({
  */
 function PoolSegment({
   account,
+  providerLabel,
   window,
   reset,
   color,
@@ -232,6 +233,7 @@ function PoolSegment({
   showAccountName,
 }: {
   readonly account: LimitAccount;
+  readonly providerLabel: string;
   readonly window: LimitPoolMember["window"];
   readonly reset: LimitPoolWindow["resets"][number] | undefined;
   readonly color: string;
@@ -246,68 +248,79 @@ function PoolSegment({
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        openOnHover
-        render={
-          <button
-            type="button"
-            style={{ gridColumn: index, gridRow: 1 }}
-            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
-            className="relative h-5 min-w-0 cursor-pointer overflow-hidden rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-border @2xl/pool:h-8"
-          />
-        }
-      >
-        {/* Translucent so the label reads over the fill for any provider colour and theme. */}
-        <div
-          aria-hidden
-          className="absolute inset-y-0 left-0 rounded-md opacity-35"
-          style={{ width: `${remaining}%`, backgroundColor: color }}
-        />
-        {/* The spent share is hatched, not blank: it is what the countdown restores. */}
-        {remaining < 100 && reset ? (
+      <div className="flex min-w-0 flex-col">
+        <PopoverTrigger
+          openOnHover
+          render={
+            <button
+              type="button"
+              aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
+              className="relative h-5 min-w-0 cursor-pointer overflow-hidden rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-border @2xl/pool:h-8"
+            />
+          }
+        >
+          {/* Translucent so the label reads over the fill for any provider colour and theme. */}
           <div
             aria-hidden
-            className="absolute inset-y-0 right-0 opacity-20"
-            style={{
-              width: `${100 - remaining}%`,
-              backgroundImage: `repeating-linear-gradient(135deg, ${color} 0 1px, transparent 1px 5px)`,
-            }}
+            className="absolute inset-y-0 left-0 rounded-md opacity-35"
+            style={{ width: `${remaining}%`, backgroundColor: color }}
           />
-        ) : null}
-        <span
-          aria-hidden
-          className="absolute inset-0 flex items-center justify-center text-3xs leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
-        >
-          {index}
-        </span>
-        <div className="relative hidden h-full min-w-0 items-center gap-1.5 px-2 text-xs @2xl/pool:flex">
-          {showAccountName ? (
-            <AccountName
-              account={account}
-              className="min-w-0 truncate font-medium text-foreground"
+          {/* The spent share is hatched, not blank: it is what the countdown restores. */}
+          {remaining < 100 && reset ? (
+            <div
+              aria-hidden
+              className="absolute inset-y-0 right-0 opacity-20"
+              style={{
+                width: `${100 - remaining}%`,
+                backgroundImage: `repeating-linear-gradient(135deg, ${color} 0 1px, transparent 1px 5px)`,
+              }}
             />
           ) : null}
-          <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
-          {/* Countdown and badge get their own plate: fill and hatching run under them otherwise. */}
-          <span className="ms-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs text-foreground tabular-nums">
-            {resetsIn?.replace("resets in ", "↻ ") ?? ""}
-            {credits ? (
-              <>
-                {resetsIn ? (
-                  <span aria-hidden className="text-muted-foreground">
-                    ·
-                  </span>
-                ) : null}
-                <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
-                  <TicketIcon className="size-3" aria-hidden />
-                  {credits}
-                </span>
-              </>
-            ) : null}
+          <span
+            aria-hidden
+            className="absolute inset-0 flex items-center justify-center text-3xs leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
+          >
+            {index}
           </span>
-        </div>
-      </PopoverTrigger>
-      <LegendRow account={account} window={window} color={color} now={now} index={index} />
+          <div className="relative hidden h-full min-w-0 items-center gap-1.5 px-2 text-xs @2xl/pool:flex">
+            {showAccountName ? (
+              <span className="min-w-0 truncate font-medium text-foreground">
+                {providerLabel}
+                <span className="text-muted-foreground"> · </span>
+                <AccountName account={account} className="min-w-0" />
+              </span>
+            ) : null}
+            <span className="shrink-0 font-semibold text-foreground tabular-nums">
+              {remaining}%
+            </span>
+            {/* Countdown and badge get their own plate: fill and hatching run under them otherwise. */}
+            <span className="ms-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs text-foreground tabular-nums">
+              {resetsIn?.replace("resets in ", "↻ ") ?? ""}
+              {credits ? (
+                <>
+                  {resetsIn ? (
+                    <span aria-hidden className="text-muted-foreground">
+                      ·
+                    </span>
+                  ) : null}
+                  <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
+                    <TicketIcon className="size-3" aria-hidden />
+                    {credits}
+                  </span>
+                </>
+              ) : null}
+            </span>
+          </div>
+        </PopoverTrigger>
+        <LegendRow
+          account={account}
+          providerLabel={providerLabel}
+          window={window}
+          color={color}
+          now={now}
+          index={index}
+        />
+      </div>
       {account.redeem ? (
         <RedeemableSegmentPopup
           account={account}
@@ -340,12 +353,14 @@ function PoolSegment({
  */
 function LegendRow({
   account,
+  providerLabel,
   window,
   color,
   now,
   index,
 }: {
   readonly account: LimitAccount;
+  readonly providerLabel: string;
   readonly window: LimitPoolMember["window"];
   readonly color: string;
   readonly now: number;
@@ -356,7 +371,6 @@ function LegendRow({
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
     <PopoverTrigger
-      style={{ gridColumn: "1 / -1", gridRow: index + 1 }}
       render={<Button variant="ghost" size="compact" />}
       className="min-w-0 @2xl/pool:hidden"
     >
@@ -369,7 +383,11 @@ function LegendRow({
         <span className="sr-only">Segment </span>
         <span className="relative">{index}</span>
       </span>
-      <AccountName account={account} className="min-w-0 truncate font-medium text-foreground" />
+      <span className="min-w-0 truncate font-medium text-foreground">
+        {providerLabel}
+        <span className="text-muted-foreground"> · </span>
+        <AccountName account={account} className="min-w-0" />
+      </span>
       <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
       <span className="ms-auto flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground tabular-nums">
         {resetsIn?.replace("resets in ", "↻ ") ?? ""}
@@ -451,35 +469,33 @@ function RedeemableSegmentPopup({
  */
 function PoolBar({
   pool,
+  providerLabel,
   color,
   now,
 }: {
   readonly pool: LimitPoolWindow;
+  readonly providerLabel: string;
   readonly color: string;
   readonly now: number;
 }) {
   const restores = new Map(pool.resets.map((reset) => [reset.member.account.key, reset]));
   return (
-    <div className="@container/pool min-w-0">
-      <div
-        className="grid gap-x-1 gap-y-1"
-        style={{ gridTemplateColumns: `repeat(${pool.columns.length}, minmax(0, 1fr))` }}
-      >
-        {pool.columns.map((member, position) =>
-          member.window ? (
-            <PoolSegment
-              key={member.account.key}
-              account={member.account}
-              window={member.window}
-              reset={restores.get(member.account.key)}
-              color={color}
-              now={now}
-              index={position + 1}
-              showAccountName={pool.columns.length > 1}
-            />
-          ) : null,
-        )}
-      </div>
+    <div className="@container/pool flex min-w-0 flex-col gap-1">
+      {pool.columns.map((member, position) =>
+        member.window ? (
+          <PoolSegment
+            key={member.account.key}
+            account={member.account}
+            providerLabel={providerLabel}
+            window={member.window}
+            reset={restores.get(member.account.key)}
+            color={color}
+            now={now}
+            index={position + 1}
+            showAccountName={pool.columns.length > 1}
+          />
+        ) : null,
+      )}
     </div>
   );
 }
@@ -490,12 +506,14 @@ function PoolBar({
  */
 function PoolWindowCard({
   pool,
+  providerLabel,
   color,
   now,
   label,
   description,
 }: {
   readonly pool: LimitPoolWindow;
+  readonly providerLabel: string;
   readonly color: string;
   readonly now: number;
   readonly label?: string | undefined;
@@ -520,7 +538,7 @@ function PoolWindowCard({
           </span>
         ) : null}
       </div>
-      <PoolBar pool={pool} color={color} now={now} />
+      <PoolBar pool={pool} providerLabel={providerLabel} color={color} now={now} />
       {description ? (
         <p className="text-xs text-muted-foreground md:col-span-2">{description}</p>
       ) : null}
@@ -550,6 +568,7 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
           <PoolWindowCard
             key={`${window.kind}:${window.id}`}
             pool={window}
+            providerLabel={label}
             color={color}
             now={now}
             label={details?.label}
