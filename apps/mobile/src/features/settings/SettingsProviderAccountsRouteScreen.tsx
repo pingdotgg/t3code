@@ -41,7 +41,11 @@ export function SettingsProviderAccountsRouteScreen() {
             selectedTargets.map((environment) => (
               <SettingsSection key={environment.environmentId} title={environment.label}>
                 {environment.serverConfig.providers
-                  .filter((provider) => provider.setup?.canAuthenticate)
+                  .filter(
+                    (provider) =>
+                      provider.setup?.canAuthenticate ||
+                      (provider.driver === "acpRegistry" && provider.installed),
+                  )
                   .map((provider) => (
                     <ProviderAccount
                       key={provider.instanceId}
@@ -50,7 +54,9 @@ export function SettingsProviderAccountsRouteScreen() {
                     />
                   ))}
                 {!environment.serverConfig.providers.some(
-                  (provider) => provider.setup?.canAuthenticate,
+                  (provider) =>
+                    provider.setup?.canAuthenticate ||
+                    (provider.driver === "acpRegistry" && provider.installed),
                 ) ? (
                   <Text className="p-4 text-foreground-muted">
                     Configure a provider with in-app sign-in in web or desktop Settings.
@@ -171,6 +177,11 @@ function ProviderAccount({
         {signedIn && !active && provider.auth.email?.trim() ? (
           <ProviderAccountEmail key={provider.auth.email} email={provider.auth.email} />
         ) : null}
+        {signedIn && provider.driver === "acpRegistry" && provider.auth.canLogout === false ? (
+          <Text className="text-sm text-foreground-muted">
+            This agent does not support in-app sign-out. Use its CLI to sign out.
+          </Text>
+        ) : null}
         {interaction?.type === "deviceCode" ? (
           <Text selectable className="text-foreground">
             Enter code {interaction.userCode} on the sign-in page.
@@ -286,7 +297,7 @@ function ProviderAccount({
             void run(() => cancel({ environmentId, input: { instanceId, flowId: state.flowId! } }));
           }}
         />
-      ) : !active ? (
+      ) : !active && provider.setup?.canAuthenticate !== false ? (
         <SettingsActionRow
           icon="person.crop.circle"
           label={signedIn ? "Change account" : "Sign in"}

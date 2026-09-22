@@ -548,6 +548,38 @@ describe("EnvironmentProviderSettings routing", () => {
     });
   });
 
+  it("keeps the signed-in ACP account visible when login methods are no longer advertised", () => {
+    const instanceId = ProviderInstanceId.make("acpRegistry_devin");
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [instanceId]: {
+          driver: ProviderDriverKind.make("acpRegistry"),
+          enabled: true,
+          config: { agentId: "devin" },
+        },
+      },
+    };
+    atoms.providers = [
+      {
+        ...provider(),
+        instanceId,
+        driver: ProviderDriverKind.make("acpRegistry"),
+        auth: { status: "authenticated", canLogout: false },
+        setup: { canAuthenticate: false, canInstall: false },
+      },
+    ];
+    const panel = renderPanel({ targetInstanceId: instanceId });
+    expect(
+      visitElements(
+        panel,
+        (element) =>
+          typeof element.type === "function" &&
+          element.type.name === "ProviderAuthenticationSection",
+      ),
+    ).not.toBeNull();
+  });
+
   it("routes explicit ACP browser authentication consent to the selected environment", async () => {
     const instanceId = ProviderInstanceId.make("acpRegistry_antigravity");
     const action = {
