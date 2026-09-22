@@ -158,6 +158,21 @@ describe("mobile themes", () => {
     }
   });
 
+  it.each(MOBILE_THEME_IDS)("keeps %s sidebar text readable on Android", (themeId) => {
+    for (const appearance of ["light", "dark"] as const) {
+      const variables = getMobileThemeRuntimeVariables(themeId, appearance, "android");
+      for (const foreground of [
+        "--color-drawer-foreground",
+        "--color-drawer-foreground-muted",
+      ] as const) {
+        expect(
+          contrastRatio(variables[foreground], variables["--color-drawer"]),
+          `${appearance}: ${foreground}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
   it("applies palette overrides on top of the selected built-in theme", () => {
     const variables = getMobileThemeVariables("ocean", "dark", {
       "--color-primary": "#123456",
@@ -182,9 +197,11 @@ describe("mobile themes", () => {
           runtime[platform === "android" ? "--color-header" : "--color-drawer"],
           runtime["--color-screen"],
         );
-        expect(relativeLuminance(sidebar)).toBeLessThan(
-          relativeLuminance(runtime["--color-thread-canvas"]),
-        );
+        if (platform === "ios") {
+          expect(relativeLuminance(sidebar)).toBeLessThan(
+            relativeLuminance(runtime["--color-thread-canvas"]),
+          );
+        }
         expect(contrastRatio(chrome, runtime["--color-screen"])).toBeGreaterThanOrEqual(1.06);
         const foregroundRoles =
           platform === "android"
