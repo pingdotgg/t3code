@@ -20,6 +20,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import { Argument, Flag } from "effect/unstable/cli";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
+import { isRemoteReachableHost } from "../auth/utils.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 
@@ -78,6 +79,12 @@ const tailscaleServeFlag = Flag.Boolean("tailscale-serve").pipe(
 const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.withSchema(PortSchema),
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale-serve is enabled."),
+  Flag.optional,
+);
+const unsafeNoAuthFlag = Flag.Boolean("unsafe-no-auth").pipe(
+  Flag.withDescription(
+    "Disable T3 Code authentication entirely. Only use behind a trusted authenticating proxy (for example Cloudflare Access) — anyone who can reach the port gets full administrative access.",
+  ),
   Flag.optional,
 );
 
@@ -156,6 +163,10 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  unsafeNoAuth: Config.Boolean("T3CODE_UNSAFE_NO_AUTH").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 const DevAuthTokenConfig = Config.Redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
@@ -191,6 +202,7 @@ export interface CliServerFlags {
   readonly logWebSocketEvents: Option.Option<boolean>;
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
+  readonly unsafeNoAuth: Option.Option<boolean>;
 }
 
 export interface CliAuthLocationFlags {
@@ -225,6 +237,7 @@ export const sharedServerCommandFlags = {
   logWebSocketEvents: logWebSocketEventsFlag,
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
+  unsafeNoAuth: unsafeNoAuthFlag,
 } as const;
 
 const resolveOptionPrecedence = <Value>(
@@ -248,6 +261,8 @@ export const resolveServerConfig = (
   options?: {
     readonly startupPresentation?: ServerConfig.StartupPresentation;
     readonly forceAutoBootstrapProjectFromCwd?: boolean;
+    /** Set by server commands so env-only warnings only fire when a server actually binds. */
+    readonly isServerStartup?: boolean;
   },
 ) =>
   Effect.gen(function* () {
@@ -268,6 +283,7 @@ export const resolveServerConfig = (
       logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
       tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
       tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
+      unsafeNoAuth: flags.unsafeNoAuth ?? Option.none(),
     } satisfies CliServerFlags;
     const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
     const bootstrapEnvelope =
@@ -375,6 +391,13 @@ export const resolveServerConfig = (
       ),
       () => 443,
     );
+    const unsafeNoAuth = Option.getOrElse(
+      resolveOptionPrecedence(
+        normalizedFlags.unsafeNoAuth,
+        Option.fromUndefinedOr(env.unsafeNoAuth),
+      ),
+      () => false,
+    );
     const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(
@@ -384,6 +407,18 @@ export const resolveServerConfig = (
       ),
       () => (mode === "desktop" ? "127.0.0.1" : undefined),
     );
+    if (
+      options?.isServerStartup === true &&
+      unsafeNoAuth &&
+      (tailscaleServeEnabled || isRemoteReachableHost(host))
+    ) {
+      // The escape hatch hands admin access to whoever can reach the port.
+      // Surface loudly when the bind itself is network-reachable instead of
+      // hiding behind a proxy like it's meant to.
+      yield* Effect.logWarning(
+        "unsafe-no-auth is enabled on a network-reachable bind; anyone who can reach this port gets full administrative access.",
+      );
+    }
     const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 
     // T3 Code's own OTLP variables name no signal, so the one answer they give
@@ -433,6 +468,7 @@ export const resolveServerConfig = (
       desktopTelemetryControlFd,
       resourceMonitorPath,
       autoBootstrapProjectFromCwd,
+      unsafeNoAuth,
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
@@ -459,6 +495,7 @@ export const resolveCliAuthConfig = (
       logWebSocketEvents: Option.none(),
       tailscaleServeEnabled: Option.none(),
       tailscaleServePort: Option.none(),
+      unsafeNoAuth: Option.none(),
     },
     cliLogLevel,
   );

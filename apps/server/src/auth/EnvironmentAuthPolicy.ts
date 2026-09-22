@@ -20,21 +20,33 @@ export const make = Effect.gen(function* () {
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const isRemoteReachable = isRemoteReachableHost(config.host);
 
-  const policy =
-    config.mode === "desktop"
-      ? isRemoteReachable
-        ? "remote-reachable"
-        : "desktop-managed-local"
-      : isRemoteReachable
-        ? "remote-reachable"
-        : "loopback-browser";
+  let policy: ServerAuthDescriptor["policy"];
+  if (config.unsafeNoAuth) {
+    policy = "unsafe-no-auth";
+  } else if (config.mode === "desktop") {
+    policy = isRemoteReachable ? "remote-reachable" : "desktop-managed-local";
+  } else {
+    policy = isRemoteReachable ? "remote-reachable" : "loopback-browser";
+  }
 
-  const bootstrapMethods: ServerAuthDescriptor["bootstrapMethods"] =
-    policy === "desktop-managed-local"
-      ? ["desktop-bootstrap"]
-      : config.mode === "desktop" && policy === "remote-reachable"
-        ? ["desktop-bootstrap", "one-time-token"]
-        : ["one-time-token"];
+  const bootstrapMethods: ServerAuthDescriptor["bootstrapMethods"] = (() => {
+    switch (policy) {
+      case "unsafe-no-auth":
+        return [];
+      case "desktop-managed-local":
+        return ["desktop-bootstrap"];
+      case "remote-reachable":
+        return config.mode === "desktop"
+          ? ["desktop-bootstrap", "one-time-token"]
+          : ["one-time-token"];
+      case "loopback-browser":
+        return ["one-time-token"];
+      default: {
+        const _exhaustive: never = policy;
+        return _exhaustive;
+      }
+    }
+  })();
 
   const descriptor: ServerAuthDescriptor = {
     policy,

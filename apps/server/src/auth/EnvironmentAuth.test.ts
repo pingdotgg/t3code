@@ -78,6 +78,32 @@ const requestMetadata = {
 };
 
 it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
+  it.effect("authenticates every request as the owner in unsafe-no-auth mode", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const unauthenticatedRequest = {
+        cookies: {},
+        headers: {},
+      } as unknown as Parameters<
+        EnvironmentAuth.EnvironmentAuth["Service"]["authenticateHttpRequest"]
+      >[0];
+
+      const session = yield* serverAuth.authenticateHttpRequest(unauthenticatedRequest);
+      const sessionState = yield* serverAuth.getSessionState(unauthenticatedRequest);
+      const upgrade = yield* serverAuth.authenticateWebSocketUpgrade(unauthenticatedRequest);
+
+      expect(session.sessionId).toBe("unsafe-no-auth-session");
+      expect(session.scopes).toEqual(AuthAdministrativeScopes);
+      expect(sessionState).toMatchObject({
+        authenticated: true,
+        sessionMethod: "browser-session-cookie",
+        scopes: AuthAdministrativeScopes,
+      });
+      expect(sessionState.auth.policy).toBe("unsafe-no-auth");
+      expect(upgrade.sessionId).toBe("unsafe-no-auth-session");
+    }).pipe(Effect.provide(makeEnvironmentAuthLayer({ unsafeNoAuth: true }))),
+  );
+
   it.effect("uses the reusable dev cookie without overriding a normal scoped cookie", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;

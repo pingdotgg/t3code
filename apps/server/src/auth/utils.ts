@@ -1,7 +1,8 @@
-import type {
-  AuthClientMetadata,
-  AuthClientMetadataDeviceType,
-  AuthClientPresentationMetadata,
+import {
+  AuthSessionId,
+  type AuthClientMetadata,
+  type AuthClientMetadataDeviceType,
+  type AuthClientPresentationMetadata,
 } from "@t3tools/contracts";
 import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as NodeCrypto from "node:crypto";
@@ -9,6 +10,17 @@ import * as Encoding from "effect/Encoding";
 import * as Result from "effect/Result";
 
 const SESSION_COOKIE_NAME = "t3_session";
+
+// `unsafe-no-auth` mode answers every request with this synthetic owner
+// session instead of looking up a credential. The id is stable so scopes and
+// revocation checks behave like a normal administrative session. Shared by
+// EnvironmentAuth (authentication) and SessionStore (websocket tickets).
+export const UNSAFE_NO_AUTH_SUBJECT = "unsafe-no-auth-owner";
+// Separate literal from the subject: this id is compared against the `sid`
+// claim in websocket tickets, so it must stay stable even if the subject
+// label ever changes.
+export const UNSAFE_NO_AUTH_SESSION_ID = AuthSessionId.make("unsafe-no-auth-session");
+export const UNSAFE_NO_AUTH_METHOD = "browser-session-cookie" as const;
 
 /**
  * Cookies are scoped by host but *not* by port, so any two servers that can be

@@ -342,6 +342,7 @@ const makePairServerConfig = Effect.fn(function* (input: {
     desktopTelemetryControlFd: undefined,
     resourceMonitorPath: undefined,
     autoBootstrapProjectFromCwd: false,
+    unsafeNoAuth: false,
     logWebSocketEvents: false,
     tailscaleServeEnabled: false,
     tailscaleServePort: DEFAULT_TAILSCALE_SERVE_PORT,

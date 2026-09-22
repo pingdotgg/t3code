@@ -597,6 +597,7 @@ const buildAppUnderTest = (options?: {
       autoBootstrapProjectFromCwd: false,
       logWebSocketEvents: false,
       tailscaleServeEnabled: false,
+      unsafeNoAuth: false,
       tailscaleServePort: 443,
       ...options?.config,
     };
