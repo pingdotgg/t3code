@@ -15,11 +15,11 @@ import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as AcpSchema from "effect-acp/compat";
 
-import { PtyAdapter } from "../../terminal/PtyAdapter.ts";
+import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
 import { makeProviderAuthFlow, type ProviderAuthFlowContext } from "../ProviderAuthFlow.ts";
 import { normalizeAcpRegistryAuthMethods, normalizeAcpRegistryWebUrl } from "./AcpRegistryProbe.ts";
-import { AcpRegistryCatalog, type ResolvedAcpRegistryAgent } from "./AcpRegistrySupport.ts";
-import { AcpRegistryRuntimeCoordinator } from "./AcpRegistryRuntimeCoordinator.ts";
+import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
+import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 type Runtime = Pick<
@@ -38,11 +38,13 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
     spawn: AcpSessionRuntime.AcpSpawnInput,
   ) => Effect.Effect<Runtime, ProviderSetupError, Scope.Scope>;
 }) {
-  const catalog = yield* AcpRegistryCatalog;
+  const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const crypto = yield* Crypto.Crypto;
-  const pty = yield* Effect.serviceOption(PtyAdapter);
-  const coordinator = yield* Effect.serviceOption(AcpRegistryRuntimeCoordinator);
+  const pty = yield* Effect.serviceOption(PtyAdapter.PtyAdapter);
+  const coordinator = yield* Effect.serviceOption(
+    AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+  );
   const failure = (operation: string, detail: string, cause?: unknown) =>
     new ProviderSetupError({ instanceId: options.instanceId, operation, detail, cause });
   const resolve = catalog
@@ -153,7 +155,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
     : discoverMethods;
 
   const runTerminal = Effect.fnUntraced(function* (
-    resolved: ResolvedAcpRegistryAgent,
+    resolved: AcpRegistrySupport.ResolvedAcpRegistryAgent,
     method: Extract<AcpSchema.AuthMethod, { readonly type: "terminal" }>,
     context: ProviderAuthFlowContext,
   ) {
