@@ -350,40 +350,38 @@ function ConnectionStep({
             onToggleEnvironment={onToggleEnvironment}
           />
         ) : null}
-        <Collapsible
-          open={pairingOpen}
-          onOpenChange={setPairingOpen}
-          className="rounded-lg border border-border bg-background"
-        >
-          <CollapsibleTrigger
-            disabled={isPairing}
-            render={
-              <Button
-                variant="ghost"
-                className="h-auto min-h-14 w-full justify-start gap-3 px-3 py-3 text-left whitespace-normal sm:h-auto"
+        <div className="rounded-lg border border-border bg-background">
+          <Collapsible open={pairingOpen} onOpenChange={setPairingOpen}>
+            <CollapsibleTrigger
+              disabled={isPairing}
+              render={
+                <Button
+                  variant="ghost"
+                  className="h-auto min-h-14 w-full justify-start gap-3 px-3 py-3 text-left whitespace-normal sm:h-auto"
+                />
+              }
+            >
+              <LinkIcon className="size-4 text-muted-foreground" />
+              <span className="flex-1">Add a computer</span>
+              <ChevronRightIcon
+                className={cn("size-4 text-muted-foreground", pairingOpen && "rotate-90")}
               />
-            }
-          >
-            <LinkIcon className="size-4 text-muted-foreground" />
-            <span className="flex-1">Add a computer</span>
-            <ChevronRightIcon
-              className={cn("size-4 text-muted-foreground", pairingOpen && "rotate-90")}
-            />
-          </CollapsibleTrigger>
-          <CollapsiblePanel>
-            <div className="px-3 pb-3">
-              <PairingForm
-                isPairing={isPairing}
-                setIsPairing={setIsPairing}
-                onPaired={(environmentId) => {
-                  setPairingOpen(false);
-                  onPaired(environmentId);
-                  requestAnimationFrame(() => continueRef.current?.focus());
-                }}
-              />
-            </div>
-          </CollapsiblePanel>
-        </Collapsible>
+            </CollapsibleTrigger>
+            <CollapsiblePanel>
+              <div className="px-3 pb-3">
+                <PairingForm
+                  isPairing={isPairing}
+                  setIsPairing={setIsPairing}
+                  onPaired={(environmentId) => {
+                    setPairingOpen(false);
+                    onPaired(environmentId);
+                    requestAnimationFrame(() => continueRef.current?.focus());
+                  }}
+                />
+              </div>
+            </CollapsiblePanel>
+          </Collapsible>
+        </div>
       </div>
       <div className="mt-6 flex items-center justify-end gap-3">
         <Button
@@ -419,69 +417,67 @@ function ConnectAccountOption({
   const onDiscoveryReady = useCallback(() => setDiscoveryReady(true), []);
 
   return (
-    <Collapsible
-      open={expanded && !!isSignedIn && discoveryReady}
-      onOpenChange={setExpanded}
-      className="rounded-lg border border-border bg-background"
-    >
-      <CollapsibleTrigger
-        disabled={disabled || !isLoaded}
-        onClick={(event) => {
-          if (!isSignedIn) {
-            event.preventDefault();
-            setExpanded(true);
-            openAuthPrompt();
+    <div className="rounded-lg border border-border bg-background">
+      <Collapsible open={expanded && !!isSignedIn && discoveryReady} onOpenChange={setExpanded}>
+        <CollapsibleTrigger
+          disabled={disabled || !isLoaded}
+          onClick={(event) => {
+            if (!isSignedIn) {
+              event.preventDefault();
+              setExpanded(true);
+              openAuthPrompt();
+            }
+          }}
+          render={
+            <Button
+              variant="ghost"
+              className="h-auto min-h-14 w-full justify-start gap-3 px-3 py-3 text-left whitespace-normal sm:h-auto"
+            />
           }
-        }}
-        render={
-          <Button
-            variant="ghost"
-            className="h-auto min-h-14 w-full justify-start gap-3 px-3 py-3 text-left whitespace-normal sm:h-auto"
+        >
+          <CloudIcon className="size-4 text-muted-foreground" />
+          <span className="flex-1">T3 Connect</span>
+          <span className="text-xs text-muted-foreground">
+            {!isLoaded
+              ? "Loading sign-in…"
+              : !isSignedIn
+                ? "Sign in"
+                : !discoveryReady
+                  ? "Loading computers…"
+                  : null}
+          </span>
+          <ChevronRightIcon
+            className={cn("size-4 text-muted-foreground", expanded && isSignedIn && "rotate-90")}
           />
-        }
-      >
-        <CloudIcon className="size-4 text-muted-foreground" />
-        <span className="flex-1">T3 Connect</span>
-        <span className="text-xs text-muted-foreground">
-          {!isLoaded
-            ? "Loading sign-in…"
-            : !isSignedIn
-              ? "Sign in"
-              : !discoveryReady
-                ? "Loading computers…"
-                : null}
-        </span>
-        <ChevronRightIcon
-          className={cn("size-4 text-muted-foreground", expanded && isSignedIn && "rotate-90")}
-        />
-      </CollapsibleTrigger>
-      <CollapsiblePanel keepMounted>
-        <div className="px-3 pb-3">
-          <div className="mb-3 space-y-1.5">
-            {isSignedIn ? (
-              <CloudEnvironmentConnectRows
-                primaryEnvironmentId={null}
-                savedEnvironments={environments}
-                showSavedEnvironments
-                onDiscoveryReady={onDiscoveryReady}
-                selection={{ selectedIds, onChange: onToggleEnvironment, autoSelectedComputers }}
-                refreshWhileEmpty
-                empty={
-                  <p className="py-3 text-sm text-muted-foreground">No computers linked yet.</p>
-                }
-              />
-            ) : null}
+        </CollapsibleTrigger>
+        <CollapsiblePanel keepMounted>
+          <div className="px-3 pb-3">
+            <div className="mb-3 space-y-1.5">
+              {isSignedIn ? (
+                <CloudEnvironmentConnectRows
+                  primaryEnvironmentId={null}
+                  savedEnvironments={environments}
+                  showSavedEnvironments
+                  onDiscoveryReady={onDiscoveryReady}
+                  selection={{ selectedIds, onChange: onToggleEnvironment, autoSelectedComputers }}
+                  refreshWhileEmpty
+                  empty={
+                    <p className="py-3 text-sm text-muted-foreground">No computers linked yet.</p>
+                  }
+                />
+              ) : null}
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Run this on each computer you want to connect.
+            </p>
+            <CommandBlock command="npx t3 connect" className="mt-3" />
+            <p className="mt-3 text-xs text-muted-foreground">
+              Keep T3 Code running. Select the computers you want to set up above.
+            </p>
           </div>
-          <p className="text-sm text-muted-foreground">
-            Run this on each computer you want to connect.
-          </p>
-          <CommandBlock command="npx t3 connect" className="mt-3" />
-          <p className="mt-3 text-xs text-muted-foreground">
-            Keep T3 Code running. Select the computers you want to set up above.
-          </p>
-        </div>
-      </CollapsiblePanel>
-    </Collapsible>
+        </CollapsiblePanel>
+      </Collapsible>
+    </div>
   );
 }
 

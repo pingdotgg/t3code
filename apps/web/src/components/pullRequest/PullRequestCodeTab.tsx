@@ -1406,63 +1406,63 @@ function PullRequestCodeTab({
       {/* Above the code, closed, and counted: these belong to the change rather than to any
             line of it, and in the stream they read as cards dropped into the patch. */}
       {orphanFiles.size > 0 ? (
-        <Collapsible
-          className="shrink-0 border-b border-border/60"
-          open={orphansOpen}
-          onOpenChange={setOrphansOpen}
-        >
-          {/* Still a heading, so the section keeps its place in a screen reader's outline;
+        <div className="shrink-0 border-b border-border/60">
+          <Collapsible open={orphansOpen} onOpenChange={setOrphansOpen}>
+            {/* Still a heading, so the section keeps its place in a screen reader's outline;
                 the count is spelled out there rather than left as a bare number. */}
-          <h2>
-            <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground">
-              {/* While slices are still arriving a conversation may simply belong to a file
+            <h2>
+              <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground">
+                {/* While slices are still arriving a conversation may simply belong to a file
                     that has not landed yet, which is not the same as being off the diff. */}
-              <span>
-                {nextCursor === null
-                  ? "Conversations not on the current diff"
-                  : "Conversations not on the diff loaded so far"}
-              </span>
-              <ChevronRightIcon
-                aria-hidden
-                className={cn("size-3.5 transition-transform", orphansOpen && "rotate-90")}
-              />
-              <span aria-hidden className="tabular-nums">
-                {orphanThreads.length}
-              </span>
-              <span className="sr-only">
-                {orphanThreads.length === 1
-                  ? "1 conversation"
-                  : `${orphanThreads.length} conversations`}
-              </span>
-            </CollapsibleTrigger>
-          </h2>
-          <CollapsiblePanel>
-            {/* Capped: opened on a change with dozens of them, this would otherwise leave no
+                <span>
+                  {nextCursor === null
+                    ? "Conversations not on the current diff"
+                    : "Conversations not on the diff loaded so far"}
+                </span>
+                <ChevronRightIcon
+                  aria-hidden
+                  className={cn("size-3.5 transition-transform", orphansOpen && "rotate-90")}
+                />
+                <span aria-hidden className="tabular-nums">
+                  {orphanThreads.length}
+                </span>
+                <span className="sr-only">
+                  {orphanThreads.length === 1
+                    ? "1 conversation"
+                    : `${orphanThreads.length} conversations`}
+                </span>
+              </CollapsibleTrigger>
+            </h2>
+            <CollapsiblePanel>
+              {/* Capped: opened on a change with dozens of them, this would otherwise leave no
                   room for the diff it sits above. */}
-            <div className="max-h-64 space-y-3 overflow-auto px-4 pb-3">
-              {[...orphanFiles].map(([path, threads]) => (
-                <div key={path}>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={<p className="truncate px-3 text-xs text-muted-foreground">{path}</p>}
-                    />
-                    <TooltipPopup side="top">{path}</TooltipPopup>
-                  </Tooltip>
-                  <div className="mt-1 space-y-2">
-                    {threads.map((thread) => (
-                      <div key={thread.id}>
-                        {thread.line === null ? null : (
-                          <p className="px-3 text-xs text-muted-foreground">Line {thread.line}</p>
-                        )}
-                        {renderThreadCard(thread)}
-                      </div>
-                    ))}
+              <div className="max-h-64 space-y-3 overflow-auto px-4 pb-3">
+                {[...orphanFiles].map(([path, threads]) => (
+                  <div key={path}>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <p className="truncate px-3 text-xs text-muted-foreground">{path}</p>
+                        }
+                      />
+                      <TooltipPopup side="top">{path}</TooltipPopup>
+                    </Tooltip>
+                    <div className="mt-1 space-y-2">
+                      {threads.map((thread) => (
+                        <div key={thread.id}>
+                          {thread.line === null ? null : (
+                            <p className="px-3 text-xs text-muted-foreground">Line {thread.line}</p>
+                          )}
+                          {renderThreadCard(thread)}
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </CollapsiblePanel>
-        </Collapsible>
+                ))}
+              </div>
+            </CollapsiblePanel>
+          </Collapsible>
+        </div>
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Relative wrapper so the review overlay floats over the diff rather than pushing it
