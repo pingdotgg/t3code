@@ -99,6 +99,7 @@ function ProjectOverviewContent(props: {
           projectTitle={displayName}
           workspaceRoot={representative.workspaceRoot}
           faviconPath={representative.faviconPath}
+          revision={representative.updatedAt}
           size={48}
         />
         <View className="min-w-0 flex-1">

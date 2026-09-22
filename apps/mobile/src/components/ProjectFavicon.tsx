@@ -30,6 +30,8 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
   readonly projectTitle: string;
   readonly workspaceRoot?: string | null;
   readonly faviconPath?: string | null;
+  /** The project's `updatedAt`, so a changed project asks for its icon again. */
+  readonly revision: string;
 }) {
   const size = props.size ?? 42;
   const faviconUrl = useAtomValue(
@@ -39,6 +41,7 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
           environmentId: props.environmentId,
           cwd: props.workspaceRoot,
           faviconPath: props.faviconPath,
+          revision: props.revision,
         }),
   );
   const renderableFaviconUrl = useMemo(

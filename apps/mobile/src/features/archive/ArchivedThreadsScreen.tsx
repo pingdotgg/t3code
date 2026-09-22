@@ -151,6 +151,7 @@ function ProjectGroupLabel(props: {
       <ProjectFavicon
         environmentId={props.project.environmentId}
         faviconPath={props.project.faviconPath}
+        revision={props.project.updatedAt}
         projectTitle={props.project.title}
         size={18}
         workspaceRoot={props.project.workspaceRoot}

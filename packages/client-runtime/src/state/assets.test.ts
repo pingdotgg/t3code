@@ -318,6 +318,44 @@ describe("project favicon URL cache", () => {
     }
   });
 
+  it("asks again when the project revision changes after an answer arrived", () => {
+    const registry = AtomRegistry.make();
+    let requests = 0;
+    let relativeUrl = "/api/assets/token-a/project-favicon-missing";
+    const loaded = Atom.make(false);
+    const result = Atom.make((get): AsyncResult.AsyncResult<AssetCreateUrlResult, unknown> => {
+      requests += 1;
+      return get(loaded)
+        ? AsyncResult.success({ expiresAt: 4_000_000_000_000, relativeUrl })
+        : AsyncResult.initial();
+    });
+    const connection = Atom.make(Option.some({ httpBaseUrl: "https://remote.test" }));
+    const favicons = createProjectFaviconUrlAtomFamily({
+      createUrl: () => result,
+      preparedConnection: () => connection,
+    });
+    const target = { environmentId: EnvironmentId.make("remote"), cwd: "/workspace" };
+    const created = favicons({ ...target, revision: "created" });
+    const cloned = favicons({ ...target, revision: "cloned" });
+    const unmountCreated = registry.mount(created);
+    try {
+      registry.set(loaded, true);
+      expect(registry.get(created)).toBe(
+        "https://remote.test/api/assets/token-a/project-favicon-missing",
+      );
+      expect(requests).toBe(2);
+
+      relativeUrl = "/api/assets/token-b/favicon.svg";
+      const unmountCloned = registry.mount(cloned);
+      expect(registry.get(cloned)).toBe("https://remote.test/api/assets/token-b/favicon.svg");
+      expect(requests).toBe(3);
+      unmountCloned();
+    } finally {
+      unmountCreated();
+      registry.dispose();
+    }
+  });
+
   it("retains icons across outages and remounts, then accepts refreshed and missing icons", () => {
     const registry = AtomRegistry.make();
     const result = Atom.make<AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>>(

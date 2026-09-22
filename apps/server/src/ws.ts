@@ -1127,6 +1127,7 @@ const makeWsRpcLayer = (
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
       const repositoryIdentityResolver =
         yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
       const projectService = yield* ProjectService.ProjectService;
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const agentSessionImporter = yield* AgentSessionImporter;
@@ -2772,7 +2773,10 @@ const makeWsRpcLayer = (
                     ),
                   ),
               onCloned: (project) =>
+                // Metadata cached while the directory was empty must not answer
+                // the project update below, which clients use to re-request it.
                 repositoryIdentityResolver.resolve(project.workspaceRoot, { refresh: true }).pipe(
+                  Effect.andThen(projectEnrichment.invalidate([project.workspaceRoot])),
                   Effect.andThen(
                     projectService.update({
                       commandId: CommandId.make(`project-clone-done:${project.projectId}`),

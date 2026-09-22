@@ -110,6 +110,21 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
       }).pipe(Effect.provide(TestClock.layer())),
     );
 
+    it.effect("re-probes at once after the workspace is invalidated", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+
+        expect(yield* resolver.resolvePath(cwd)).toBeNull();
+
+        yield* writeTextFile(cwd, "public/favicon.svg", "<svg>favicon</svg>");
+        yield* resolver.invalidate(cwd);
+
+        expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, "public", "favicon.svg"));
+      }).pipe(Effect.provide(TestClock.layer())),
+    );
+
     it.effect("prefers well-known favicon files", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;

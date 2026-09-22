@@ -28,7 +28,7 @@ function DynamicProjectIconFallback() {
 // changes the automatic icon, which is how the command palette drifted once.
 export type ProjectFaviconProject = Pick<
   EnvironmentProject,
-  "environmentId" | "workspaceRoot" | "title" | "faviconPath" | "projectIcon"
+  "environmentId" | "workspaceRoot" | "title" | "faviconPath" | "projectIcon" | "updatedAt"
 >;
 export function ProjectFavicon(input: {
   project: ProjectFaviconProject;
@@ -41,6 +41,7 @@ export function ProjectFavicon(input: {
       environmentId: project.environmentId,
       cwd: project.workspaceRoot,
       faviconPath: project.faviconPath,
+      revision: project.updatedAt,
     }),
   );
   if (project.projectIcon?.kind === "monogram") {

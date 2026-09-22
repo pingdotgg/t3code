@@ -171,6 +171,8 @@ export function createAssetEnvironmentAtoms<R, E>(
 /**
  * Keeps project icons visible while their environment reconnects. Each resource
  * owns its last resolved URL, including a confirmed missing-icon response.
+ * Pass the project's `updatedAt` as `revision` so an updated project record,
+ * such as a finished clone, asks the server again instead of keeping a miss.
  */
 export function createProjectFaviconUrlAtomFamily(input: {
   readonly imageCache?: ProjectFaviconCache;
@@ -183,13 +185,23 @@ export function createProjectFaviconUrlAtomFamily(input: {
   ) => Atom.Atom<Option.Option<{ readonly httpBaseUrl: string }>>;
 }) {
   const decodeKey = Schema.decodeUnknownSync(
-    Schema.Tuple([EnvironmentId, Schema.String, Schema.NullOr(Schema.String)]),
+    Schema.Tuple([
+      EnvironmentId,
+      Schema.String,
+      Schema.NullOr(Schema.String),
+      Schema.NullOr(Schema.String),
+    ]),
   );
   const family = Atom.family((key: string) => {
-    const [environmentId, cwd, path] = decodeKey(JSON.parse(key));
+    const [environmentId, cwd, path, revision] = decodeKey(JSON.parse(key));
     const resource = { _tag: "project-favicon" as const, cwd, ...(path ? { path } : {}) };
     const request = input.createUrl({ environmentId, input: { resource } });
+    let revalidate = revision !== null;
     const resolvedUrl = Atom.make((get): string | null => {
+      if (revalidate) {
+        revalidate = false;
+        if (!AsyncResult.isInitial(get.once(request))) get.refresh(request);
+      }
       const result = get(request);
       const connection = get(input.preparedConnection(environmentId));
       const state = assetUrlStateFromResult(
@@ -214,6 +226,13 @@ export function createProjectFaviconUrlAtomFamily(input: {
       return Option.getOrElse(AsyncResult.value(result), () => cache.peek(target));
     }).pipe(Atom.setIdleTTL(ASSET_URL_IDLE_TTL_MS));
   });
-  return (target: ProjectFaviconTarget) =>
-    family(getProjectFaviconResourceKey(target.environmentId, target.cwd, target.faviconPath));
+  return (target: ProjectFaviconTarget & { readonly revision?: string | undefined }) =>
+    family(
+      JSON.stringify([
+        target.environmentId,
+        target.cwd,
+        target.faviconPath || null,
+        target.revision ?? null,
+      ]),
+    );
 }

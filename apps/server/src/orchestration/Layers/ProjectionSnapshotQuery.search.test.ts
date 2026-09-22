@@ -19,6 +19,7 @@ const metadataLayer = Layer.merge(
     resolve: () => Effect.succeed(null),
   }),
   Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+    invalidate: () => Effect.void,
     resolvePath: () => Effect.succeed(null),
   }),
 );

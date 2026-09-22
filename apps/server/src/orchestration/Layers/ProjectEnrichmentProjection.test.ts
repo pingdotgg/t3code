@@ -39,6 +39,7 @@ it.effect("keeps shell snapshots and later deltas moving while project enrichmen
           ),
       }),
       Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
         resolvePath: () => Effect.succeed(null),
       }),
     );

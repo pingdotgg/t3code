@@ -278,6 +278,7 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
           [
             Cache.invalidate(repositoryIdentityCache, workspaceRoot),
             Cache.invalidate(faviconCache, workspaceRoot),
+            faviconResolver.invalidate(workspaceRoot),
           ],
           { concurrency: "unbounded", discard: true },
         ),

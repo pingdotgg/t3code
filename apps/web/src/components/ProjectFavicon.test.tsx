@@ -72,7 +72,11 @@ function makeProject(
   overrides: Partial<ProjectFaviconProject> &
     Pick<ProjectFaviconProject, "workspaceRoot" | "title">,
 ): ProjectFaviconProject {
-  return { environmentId: "environment-test" as EnvironmentId, ...overrides };
+  return {
+    environmentId: "environment-test" as EnvironmentId,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
 }
 
 type ProjectFaviconImageProps = {
