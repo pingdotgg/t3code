@@ -7,6 +7,7 @@ import { CheckIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  DEFAULT_UNIFIED_SETTINGS,
   type AcpRegistrySearchAgent,
   ProviderInstanceId,
   ProviderDriverKind,
@@ -18,6 +19,8 @@ import {
   useEnvironmentSettings,
   usePersistEnvironmentProviderInstanceMutation,
 } from "../../hooks/useSettings";
+import * as Equal from "effect/Equal";
+
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Button } from "../ui/button";
@@ -34,7 +37,6 @@ import {
   ADD_PROVIDER_WIZARD_STEPS,
   ACP_REGISTRY_WIZARD_STEPS,
   deriveAvailableInstanceId,
-  getProviderIdentityDraft,
   resolveAcpRegistryWizardNavigation,
   resolveWizardNavigation,
   updateProviderIdentityDraft,
@@ -118,18 +120,36 @@ export function AddProviderInstanceDialog({
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  const existingIds = useMemo(
-    () => new Set(Object.keys(settings.providerInstances ?? {})),
-    [settings.providerInstances],
-  );
+  const existingIds = useMemo(() => {
+    const ids = new Set(["codex", "claudeAgent", ...Object.keys(settings.providerInstances ?? {})]);
+    const defaults = DEFAULT_UNIFIED_SETTINGS.providers as Record<string, unknown>;
+    // Reserve configured legacy slots too, so adding an account cannot replace them.
+    for (const [kind, config] of Object.entries(settings.providers ?? {})) {
+      if (!Equal.equals(config, defaults[kind])) ids.add(kind);
+    }
+    return ids;
+  }, [settings.providerInstances, settings.providers]);
 
   const driverOption = DRIVER_OPTION_BY_VALUE[driver] ?? DEFAULT_DRIVER_OPTION;
   const isAcpRegistry = driver === ACP_REGISTRY_DRIVER_KIND;
-  const { label, accentColor, instanceIdOverride } = getProviderIdentityDraft(
-    identityByDriver,
-    driver,
-  );
-  const instanceId = instanceIdOverride ?? deriveInstanceId(driver, label);
+  const defaultIdentity: ProviderIdentityDraft = {
+    label: driverOption.label,
+    accentColor: "",
+    instanceIdOverride: null,
+  };
+  const { label, accentColor, instanceIdOverride } = identityByDriver[driver] ?? defaultIdentity;
+  const instanceId =
+    instanceIdOverride ??
+    deriveAvailableInstanceId(
+      (candidateLabel) => {
+        if (!candidateLabel.trim() || candidateLabel === driverOption.label) {
+          return isAcpRegistry ? `${driver}_custom` : driver;
+        }
+        return deriveInstanceId(driver, candidateLabel);
+      },
+      label,
+      existingIds,
+    );
   const driverSettingsFields = useMemo(
     () => deriveProviderSettingsFields(driverOption),
     [driverOption],
@@ -160,7 +180,10 @@ export function AddProviderInstanceDialog({
     });
   };
   const setIdentityDraft = (update: Partial<ProviderIdentityDraft>) => {
-    setIdentityByDriver((existing) => updateProviderIdentityDraft(existing, driver, update));
+    setIdentityByDriver((existing) => ({
+      ...existing,
+      [driver]: { ...(existing[driver] ?? defaultIdentity), ...update },
+    }));
   };
 
   const applyWizardNavigation = (navigation: WizardNavigation) => {

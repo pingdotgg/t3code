@@ -94,9 +94,50 @@ async function selectPreparedAcp() {
 describe("AddProviderInstanceDialog environment routing", () => {
   beforeEach(() => {
     hooks.reset();
-    settingsHooks.read.mockClear();
+    settingsHooks.read.mockReset().mockReturnValue({ providerInstances: {} });
     settingsHooks.mutate.mockReset().mockResolvedValue({ _tag: "Success", value: {} });
     settingsHooks.useMutation.mockReset().mockReturnValue(settingsHooks.mutate);
+  });
+
+  it("creates a provider with its default identity without typing", async () => {
+    let tree = render();
+    const group = visitElements(
+      tree,
+      (element) => element.props["aria-labelledby"] === "add-instance-driver-label",
+    );
+    (group!.props.onValueChange as (value: string) => void)("grok");
+    tree = render();
+    (findByChildren(tree, "Next").props.onClick as () => void)();
+    tree = render();
+    (findByChildren(tree, "Next").props.onClick as () => void)();
+    tree = render();
+    (findByChildren(tree, "Add instance").props.onClick as () => void)();
+    await Promise.resolve();
+    expect(settingsHooks.mutate).toHaveBeenCalledWith({
+      operation: "create",
+      instanceId: "grok",
+      instance: { driver: "grok", enabled: true, displayName: "Grok" },
+    });
+  });
+
+  it("chooses an unused identity for another account without replacing configured instances", async () => {
+    settingsHooks.read.mockReturnValue({
+      providerInstances: {
+        codex_2: { driver: "codex", enabled: false },
+      },
+    });
+    let tree = render();
+    (findByChildren(tree, "Next").props.onClick as () => void)();
+    tree = render();
+    (findByChildren(tree, "Next").props.onClick as () => void)();
+    tree = render();
+    (findByChildren(tree, "Add instance").props.onClick as () => void)();
+    await Promise.resolve();
+    expect(settingsHooks.mutate).toHaveBeenCalledWith({
+      operation: "create",
+      instanceId: "codex_3",
+      instance: { driver: "codex", enabled: true, displayName: "Codex" },
+    });
   });
 
   it("reads and writes settings through the supplied environment", () => {
