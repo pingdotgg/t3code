@@ -3040,7 +3040,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                     variant="ghost-muted"
                     aria-label="Add project"
                     data-testid="sidebar-add-project-trigger"
-                    className="size-6 [--control-icon-color:currentColor] text-icon-muted"
+                    className="[--control-icon-color:currentColor] text-icon-muted"
                     onClick={openAddProject}
                   />
                 }

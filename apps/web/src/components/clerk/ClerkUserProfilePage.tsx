@@ -52,7 +52,7 @@ export function ClerkUserProfileRefreshButton({
     <Button
       size="sm"
       variant="outline"
-      className={cn("text-[0.8125rem]", className)}
+      className={className}
       disabled={disabled || isPending}
       onClick={onClick}
     >

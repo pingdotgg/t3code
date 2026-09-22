@@ -1260,7 +1260,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   render={
                     <Button
                       aria-label="Add panel surface"
-                      className="size-6 shrink-0"
+                      className="shrink-0"
                       size="icon-xs"
                       variant="ghost-muted"
                     />

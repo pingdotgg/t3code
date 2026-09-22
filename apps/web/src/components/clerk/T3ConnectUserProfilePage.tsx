@@ -60,12 +60,7 @@ export function T3ConnectEnvironmentRow(props: {
           </div>
           <CollapsibleTrigger
             render={
-              <Button
-                size="sm"
-                variant="destructive-outline"
-                className="text-[0.8125rem]"
-                disabled={props.mutationPending}
-              >
+              <Button size="sm" variant="destructive-outline" disabled={props.mutationPending}>
                 Deregister
               </Button>
             }
@@ -93,7 +88,6 @@ export function T3ConnectEnvironmentRow(props: {
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="text-[0.8125rem]"
                   disabled={props.mutationPending}
                   onClick={() => props.onConfirmationChange(false)}
                 >
@@ -102,7 +96,6 @@ export function T3ConnectEnvironmentRow(props: {
                 <Button
                   size="sm"
                   variant="destructive"
-                  className="text-[0.8125rem]"
                   disabled={props.mutationPending}
                   onClick={() => props.onDeregister(environment)}
                 >
