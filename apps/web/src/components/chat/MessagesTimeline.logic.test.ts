@@ -742,6 +742,20 @@ describe("work entry labels", () => {
     );
   });
 
+  it("uses a lifecycle tool title instead of raw output for the collapsed label", () => {
+    expect(
+      workEntryDisplayLabel(
+        {
+          ...entry,
+          itemType: "web_search",
+          toolTitle: "Search workflow runs",
+          detail: '{"total_count":95,"workflow_runs":[]}',
+        },
+        undefined,
+      ),
+    ).toBe("Search workflow runs");
+  });
+
   it("keeps command summaries compact without replacing the full command in expanded rows", () => {
     const commandEntry = { ...entry, command: "vp test run", detail: "All tests passed" };
     expect(liveWorkEntryLabel(commandEntry, undefined, true)).toBe("Running vp");

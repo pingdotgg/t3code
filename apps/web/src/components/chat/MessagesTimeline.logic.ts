@@ -58,6 +58,10 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
   const toolPresentation = resolveWorkEntryToolPresentation(entry);
   if (toolPresentation) return toolPresentation.displayName;
   if (entry.command) return entry.command;
+  if (entry.itemType && entry.toolTitle) {
+    const heading = normalizeCompactToolLabel(entry.toolTitle);
+    return `${heading.charAt(0).toUpperCase()}${heading.slice(1)}`;
+  }
   if (entry.detail) return entry.detail;
   const [firstPath] = entry.changedFiles ?? [];
   if (firstPath) {
