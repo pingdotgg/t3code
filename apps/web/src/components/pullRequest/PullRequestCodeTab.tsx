@@ -27,6 +27,7 @@ import {
 import { useAtomRefresh } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
@@ -149,6 +150,47 @@ interface DraftAnchor {
   readonly range: SelectedLineRange;
 }
 
+/**
+ * The draft card subscribes to the stored text itself so a keystroke re-renders this one editor
+ * instead of the code tab, whose renderAnnotation feeds the viewer's portal memoization.
+ */
+function LineDraftAnnotation({
+  lineDraftKey,
+  anchor,
+  fileMissing,
+  secondaryAction,
+  onCancel,
+  onComment,
+}: {
+  readonly lineDraftKey: string;
+  readonly anchor: DraftAnchor;
+  readonly fileMissing: boolean;
+  readonly secondaryAction:
+    | { readonly label: string; readonly onAction: (text: string) => void }
+    | undefined;
+  readonly onCancel: () => void;
+  readonly onComment: (text: string) => void;
+}) {
+  const text = usePullRequestReviewStore((store) => store.lineDrafts[lineDraftKey]?.text ?? "");
+  return (
+    <DiffCommentAnnotation
+      kind="draft"
+      rangeLabel={`${anchor.path}:${getReviewPositionAnchor(anchor.position).line}`}
+      text={text}
+      onTextChange={(next) => {
+        const store = usePullRequestReviewStore.getState();
+        const current = store.lineDrafts[lineDraftKey];
+        if (current) store.setLineDraft(lineDraftKey, { ...current, text: next });
+      }}
+      submitLabel="Add to review"
+      submitDisabled={fileMissing}
+      {...(secondaryAction ? { secondaryAction } : {})}
+      onCancel={onCancel}
+      onComment={onComment}
+    />
+  );
+}
+
 /** A range of the diff and the reader's request for the agent. */
 export interface PullRequestAgentSelectionInput {
   /** The marked lines, already in the shape the composer draws and the agent reads. */
@@ -259,7 +301,17 @@ function PullRequestCodeTab({
   // everything below is keyed by both.
   const scopeKey = commit === null ? referenceKey : `${referenceKey}@${commit}`;
   const lineDraftKey = JSON.stringify([environmentId, scopeKey]);
-  const draft = usePullRequestReviewStore((store) => store.lineDrafts[lineDraftKey] ?? null);
+  // Anchor fields only: the stored draft gets a new identity on every keystroke, and the
+  // callbacks below feed the viewer's portal memoization, so subscribing to `text` here would
+  // remount every visible file header on each character typed.
+  const draft = usePullRequestReviewStore(
+    useShallow((store) => {
+      const current = store.lineDrafts[lineDraftKey];
+      if (!current) return null;
+      const { text: _text, ...anchor } = current;
+      return anchor;
+    }),
+  );
   const setLineDraft = usePullRequestReviewStore((store) => store.setLineDraft);
   const setDraft = useCallback(
     (next: DraftAnchor | null) => {
@@ -267,13 +319,7 @@ function PullRequestCodeTab({
     },
     [lineDraftKey, setLineDraft],
   );
-  const setDraftText = useCallback(
-    (text: string) => {
-      const current = usePullRequestReviewStore.getState().lineDrafts[lineDraftKey];
-      if (current) setLineDraft(lineDraftKey, { ...current, text });
-    },
-    [lineDraftKey, setLineDraft],
-  );
+
   // The editor is keyed separately; resetting the viewer must not discard its draft.
   useEffect(() => {
     setSelectedLines(null);
@@ -1015,24 +1061,21 @@ function PullRequestCodeTab({
           />
         ))}
         {annotation.metadata.draft && draft ? (
-          <DiffCommentAnnotation
-            kind="draft"
-            rangeLabel={`${draft.path}:${getReviewPositionAnchor(draft.position).line}`}
-            text={draft.text}
-            onTextChange={setDraftText}
-            submitLabel="Add to review"
-            submitDisabled={!files.some((file) => buildFileDiffRenderKey(file) === draft.fileKey)}
-            {...(onAddToAgentSelection
-              ? {
-                  secondaryAction: {
+          <LineDraftAnnotation
+            lineDraftKey={lineDraftKey}
+            anchor={draft}
+            fileMissing={!files.some((file) => buildFileDiffRenderKey(file) === draft.fileKey)}
+            secondaryAction={
+              onAddToAgentSelection
+                ? {
                     label: "Add to agent",
                     onAction: (text: string) =>
                       finishSelection(draft, text, (comment) =>
                         onAddToAgentSelection({ comment, request: text }),
                       ),
-                  },
-                }
-              : {})}
+                  }
+                : undefined
+            }
             onCancel={() => {
               setDraft(null);
               setSelectedLines(null);
@@ -1063,7 +1106,6 @@ function PullRequestCodeTab({
       renderThreadCard,
       reviewKey,
       setDraft,
-      setDraftText,
     ],
   );
 

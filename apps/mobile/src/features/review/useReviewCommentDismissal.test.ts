@@ -38,7 +38,7 @@ function render(overrides: Partial<Parameters<typeof useReviewCommentDismissal>[
   useReviewCommentDismissal({
     commentText: "",
     attachmentCount: 0,
-    pendingImages: 0,
+    pendingImages: { current: 0 },
     submitted: false,
     accepted: { current: false },
     ...overrides,
@@ -63,7 +63,7 @@ describe("review comment removal boundary", () => {
   it("allows an empty editor to leave without confirmation", () => {
     render();
     remove();
-    expect(harness.prevented).toBe(false);
+    expect(harness.dispatch).toHaveBeenCalledExactlyOnceWith(action);
     expect(harness.alert).not.toHaveBeenCalled();
   });
   it.each([{ commentText: "Unsent" }, { attachmentCount: 1 }])(
@@ -90,9 +90,16 @@ describe("review comment removal boundary", () => {
     expect(harness.goBack).not.toHaveBeenCalled();
   });
   it("blocks removal while selected images are still being prepared", () => {
-    render({ pendingImages: 1 });
+    render({ pendingImages: { current: 1 } });
     remove();
-    expect(harness.prevented).toBe(true);
+    expect(harness.alert).not.toHaveBeenCalled();
+    expect(harness.dispatch).not.toHaveBeenCalled();
+  });
+  it("counts a paste that has not rendered yet when dismissal races it", () => {
+    const pendingImages = { current: 0 };
+    render({ pendingImages });
+    pendingImages.current = 1;
+    remove();
     expect(harness.alert).not.toHaveBeenCalled();
     expect(harness.dispatch).not.toHaveBeenCalled();
   });

@@ -47,8 +47,13 @@ export function PullRequestMarkdownEditor({
   readonly onCancel: () => void;
 }) {
   const draft = usePullRequestReviewStore((store) => store.editorDrafts[draftKey] ?? value);
-  const setDraft = (text: string) =>
-    usePullRequestReviewStore.getState().setEditorDraft(draftKey, text);
+  // Returning to the remote value means nothing is left to preserve — keeping that entry would
+  // mask a later remote change behind text the reader already discarded.
+  const setDraft = (text: string) => {
+    const store = usePullRequestReviewStore.getState();
+    if (text === value) store.clearEditorDraft(draftKey, draft);
+    else store.setEditorDraft(draftKey, text);
+  };
   const [preview, setPreview] = useState(false);
   const empty = draft.trim().length === 0;
   const saveDisabled = saving || (empty && !allowEmpty);
