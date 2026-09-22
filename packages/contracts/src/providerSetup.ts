@@ -71,7 +71,9 @@ export const ProviderAuthResponse = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("credentials"),
-    values: Schema.Record(Schema.String, Schema.String.check(Schema.isMaxLength(16_384))),
+    values: Schema.Record(SetupOperationId, Schema.String.check(Schema.isMaxLength(16_384))).check(
+      Schema.isMaxProperties(16),
+    ),
   }),
 ]);
 export type ProviderAuthResponse = typeof ProviderAuthResponse.Type;

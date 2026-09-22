@@ -22,6 +22,8 @@ import {
   ProviderAdapterV2,
   ProviderAdapterOpenSessionError,
   type ProviderAdapterV2Shape,
+  type ProviderAdapterV2SessionRuntime,
+  type ProviderAdapterV2Error,
 } from "./ProviderAdapter.ts";
 
 const isProviderSetupError = Schema.is(ProviderSetupError);
@@ -115,9 +117,18 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
                         detail: "This provider's sign-in is changing. Try again after it finishes.",
                       });
                   }
-                  return yield* adapter.openSession(input);
+                  let admitted: Effect.Effect<
+                    ProviderAdapterV2SessionRuntime,
+                    ProviderAdapterV2Error | ProviderSetupError,
+                    Scope.Scope
+                  > = adapter.openSession(input);
+                  // Shared credential changes must interrupt a peer's startup too.
+                  for (const peer of related) {
+                    if (peer.auth?.withAccess) admitted = peer.auth.withAccess(admitted);
+                  }
+                  return yield* admitted;
                 });
-                return (auth.withAccess ? auth.withAccess(open) : open).pipe(
+                return open.pipe(
                   Effect.mapError((cause) =>
                     isProviderSetupError(cause)
                       ? new ProviderAdapterOpenSessionError({

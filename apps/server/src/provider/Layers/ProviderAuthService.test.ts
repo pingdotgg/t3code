@@ -133,6 +133,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
     logoutError?: ProviderSetupError;
     sharedCredentials?: boolean;
     sharedBusy?: boolean;
+    onListThreads?: (instances: ProviderInstance[]) => void;
   } = {},
 ) {
   const actions: string[] = [];
@@ -238,6 +239,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
             Effect.suspend(() => {
               assert.isTrue(gateClosed);
               actions.push("list-threads");
+              input.onListThreads?.(instances);
               return input.shellError
                 ? Effect.fail(
                     new ProjectionStoreReadError({
@@ -723,3 +725,30 @@ describe("ProviderAuthService", () => {
     }),
   );
 });
+
+it.effect("preserves a peer session after its credential binding changes during sign-out", () =>
+  Effect.gen(function* () {
+    const peerSession = makeSession("peer-session", "ready", otherInstanceId);
+    const { service, released, actions } = yield* makeHarness({
+      sharedCredentials: true,
+      threads: [makeThread("peer", { providerInstanceId: otherInstanceId })],
+      sessions: new Map([[ThreadId.make("peer"), [peerSession]]]),
+      onListThreads: (instances) => {
+        const peer = instances.findIndex((instance) => instance.instanceId === otherInstanceId);
+        const previous = instances[peer]!;
+        instances[peer] = makeInstance({
+          instanceId: previous.instanceId,
+          enabled: previous.enabled,
+          auth: {
+            ...previous.auth!,
+            credentialBinding: { owner: "provider", key: "replacement-account" },
+          },
+        });
+      },
+    });
+    yield* service.logout({ instanceId });
+    assert.deepStrictEqual(released, []);
+    assert.notInclude(actions, "invalidate-shared");
+    assert.include(actions, "native-logout");
+  }),
+);

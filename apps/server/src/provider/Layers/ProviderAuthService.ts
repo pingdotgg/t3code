@@ -10,7 +10,10 @@ import * as Semaphore from "effect/Semaphore";
 
 import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSessionManager.ts";
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
-import { ProviderAuthService } from "../Services/ProviderAuthService.ts";
+import {
+  ProviderAuthService,
+  type ProviderAuthController,
+} from "../Services/ProviderAuthService.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 
 export const makeProviderAuthService = Effect.gen(function* () {
@@ -41,22 +44,22 @@ export const makeProviderAuthService = Effect.gen(function* () {
   // when invalidating credentials for sign-in or sign-out.
   const stopSessions = Effect.fn("ProviderAuthService.stopSessions")(function* (
     instanceId: ProviderInstanceId,
+    binding: ProviderAuthController["credentialBinding"],
   ) {
     const failure = (detail: string) =>
       new ProviderSetupError({ instanceId, operation: "stopSessions", detail });
-    const target = yield* registry.getInstance(instanceId);
-    const binding = target?.auth?.credentialBinding;
-    const affectedIds = new Set(
-      binding === undefined
-        ? [instanceId]
+    const affectedIds = new Set([
+      instanceId,
+      ...(binding === undefined
+        ? []
         : (yield* registry.listInstances)
             .filter(
               (instance) =>
                 instance.auth?.credentialBinding?.key === binding.key &&
                 instance.auth.credentialBinding.owner === binding.owner,
             )
-            .map((instance) => instance.instanceId),
-    );
+            .map((instance) => instance.instanceId)),
+    ]);
     const threadIds = yield* projections
       .getRecoveryThreadIds("runtime")
       .pipe(
@@ -77,13 +80,24 @@ export const makeProviderAuthService = Effect.gen(function* () {
                   !released.has(session.id),
               ),
               (session) =>
-                providerSessions
-                  .release({
-                    providerSessionId: session.id,
-                    reason: "manual_shutdown",
-                    detail: "Provider sign-in changed.",
-                  })
-                  .pipe(Effect.tap(() => Effect.sync(() => released.add(session.id)))),
+                Effect.gen(function* () {
+                  if (session.providerInstanceId !== instanceId) {
+                    const current = yield* registry.getInstance(session.providerInstanceId);
+                    if (
+                      !binding ||
+                      current?.auth?.credentialBinding?.key !== binding.key ||
+                      current.auth.credentialBinding.owner !== binding.owner
+                    )
+                      return;
+                  }
+                  yield* providerSessions
+                    .release({
+                      providerSessionId: session.id,
+                      reason: "manual_shutdown",
+                      detail: "Provider sign-in changed.",
+                    })
+                    .pipe(Effect.tap(() => Effect.sync(() => released.add(session.id))));
+                }),
               { discard: true },
             ),
           ),
@@ -96,7 +110,11 @@ export const makeProviderAuthService = Effect.gen(function* () {
     if (binding) {
       yield* Effect.forEach(
         (yield* registry.listInstances).filter(
-          (instance) => instance.instanceId !== instanceId && affectedIds.has(instance.instanceId),
+          (instance) =>
+            instance.instanceId !== instanceId &&
+            affectedIds.has(instance.instanceId) &&
+            instance.auth?.credentialBinding?.key === binding.key &&
+            instance.auth.credentialBinding.owner === binding.owner,
         ),
         (instance) => instance.auth?.invalidate ?? Effect.void,
         { discard: true },
@@ -104,8 +122,11 @@ export const makeProviderAuthService = Effect.gen(function* () {
     }
   });
 
-  const checkSharedBinding = Effect.fnUntraced(function* (instanceId: ProviderInstanceId) {
-    const auth = yield* getController(instanceId, "start");
+  const checkSharedBinding = Effect.fnUntraced(function* (
+    instanceId: ProviderInstanceId,
+    operation: "start" | "logout",
+    auth: ProviderAuthController,
+  ) {
     const binding = auth.credentialBinding;
     if (!binding) return;
     const instances = yield* registry.listInstances;
@@ -119,7 +140,7 @@ export const makeProviderAuthService = Effect.gen(function* () {
       ) {
         return yield* new ProviderSetupError({
           instanceId,
-          operation: "start",
+          operation,
           detail:
             "Another provider instance is changing this shared sign-in. Finish or cancel it first.",
         });
@@ -131,9 +152,13 @@ export const makeProviderAuthService = Effect.gen(function* () {
     start: Effect.fn("ProviderAuthService.start")(function* (input, ownerSessionId) {
       return yield* credentialChanges.withPermit(
         Effect.gen(function* () {
-          yield* checkSharedBinding(input.instanceId);
           const auth = yield* getController(input.instanceId, "start");
-          return yield* auth.start(ownerSessionId, stopSessions(input.instanceId), input.methodId);
+          yield* checkSharedBinding(input.instanceId, "start", auth);
+          return yield* auth.start(
+            ownerSessionId,
+            stopSessions(input.instanceId, auth.credentialBinding),
+            input.methodId,
+          );
         }),
       );
     }),
@@ -159,9 +184,9 @@ export const makeProviderAuthService = Effect.gen(function* () {
     logout: Effect.fn("ProviderAuthService.logout")(function* (input) {
       return yield* credentialChanges.withPermit(
         Effect.gen(function* () {
-          yield* checkSharedBinding(input.instanceId);
           const auth = yield* getController(input.instanceId, "logout");
-          return yield* auth.logout(stopSessions(input.instanceId));
+          yield* checkSharedBinding(input.instanceId, "logout", auth);
+          return yield* auth.logout(stopSessions(input.instanceId, auth.credentialBinding));
         }),
       );
     }),
@@ -185,13 +210,15 @@ export const makeProviderAuthService = Effect.gen(function* () {
         if (!instance?.auth?.isLogoutPrompt?.(input.text, input.hasAttachments)) {
           return false;
         }
-        yield* credentialChanges.withPermit(
+        return yield* credentialChanges.withPermit(
           Effect.gen(function* () {
-            yield* checkSharedBinding(input.instanceId);
-            yield* instance.auth!.logout(stopSessions(input.instanceId));
+            const auth = yield* getController(input.instanceId, "logout");
+            if (!auth.isLogoutPrompt?.(input.text, input.hasAttachments)) return false;
+            yield* checkSharedBinding(input.instanceId, "logout", auth);
+            yield* auth.logout(stopSessions(input.instanceId, auth.credentialBinding));
+            return true;
           }),
         );
-        return true;
       },
     ),
   });

@@ -2273,6 +2273,7 @@ const makeWsRpcLayer = (
             WS_METHODS.providerAuthRespond,
             providerAuth.respond(input, currentSessionId),
             {
+              "rpc.aggregate": "provider",
               instanceId: input.instanceId,
             },
           ),
