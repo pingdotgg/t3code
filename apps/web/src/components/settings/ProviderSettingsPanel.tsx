@@ -783,13 +783,25 @@ export function EnvironmentProviderSettings({
     }
   }
 
+  const authenticatedInstanceIds = new Set(
+    serverProviders
+      .filter((provider) => provider.auth.status === "authenticated")
+      .map((provider) => provider.instanceId),
+  );
+  const isAuthenticatedRow = (row: InstanceRow) =>
+    resolveProviderInstanceEnabled(row.instance) && authenticatedInstanceIds.has(row.instanceId);
+  const orderedRows = [
+    ...rows.filter(isAuthenticatedRow),
+    ...rows.filter((row) => !isAuthenticatedRow(row)),
+  ];
+
   const targetInstanceMissing =
     targetInstanceId !== undefined &&
     selectedInstanceId === targetInstanceId &&
-    !rows.some((row) => row.instanceId === targetInstanceId);
+    !orderedRows.some((row) => row.instanceId === targetInstanceId);
   const selectedRow =
-    rows.find((row) => row.instanceId === selectedInstanceId) ??
-    (targetInstanceMissing ? null : (rows[0] ?? null));
+    orderedRows.find((row) => row.instanceId === selectedInstanceId) ??
+    (targetInstanceMissing ? null : (orderedRows[0] ?? null));
 
   const updateProviderInstance = (
     row: InstanceRow,
@@ -1062,7 +1074,7 @@ export function EnvironmentProviderSettings({
               className="@min-[48rem]/providers:min-h-0 @min-[48rem]/providers:flex-1"
             >
               <div className="divide-y divide-border/50">
-                {rows.map((row) => renderProviderInstance(row, "list"))}
+                {orderedRows.map((row) => renderProviderInstance(row, "list"))}
               </div>
             </ScrollArea>
           </div>

@@ -102,17 +102,25 @@ import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
 
 const environmentId = EnvironmentId.make("remote-device");
 const codexId = ProviderInstanceId.make("codex");
+const claudeId = ProviderInstanceId.make("claudeAgent");
+const grokId = ProviderInstanceId.make("grok");
+const opencodeId = ProviderInstanceId.make("opencode");
+const antigravityId = ProviderInstanceId.make("antigravity");
 const customId = ProviderInstanceId.make("codex_work");
 
-function provider(): ServerProvider {
+function provider(
+  instanceId = codexId,
+  driver = ProviderDriverKind.make("codex"),
+  authStatus: ServerProvider["auth"]["status"] = "authenticated",
+): ServerProvider {
   return {
-    instanceId: codexId,
-    driver: ProviderDriverKind.make("codex"),
+    instanceId,
+    driver,
     enabled: true,
     installed: true,
     version: "1.0.0",
     status: "ready",
-    auth: { status: "authenticated" },
+    auth: { status: authStatus },
     checkedAt: "2026-07-24T12:00:00.000Z",
     models: [],
     slashCommands: [],
@@ -163,6 +171,18 @@ function isAddProviderButton(element: ReactElement<Record<string, unknown>>): bo
   return element.props["aria-label"] === "Add provider";
 }
 
+function providerListOrder(panel: ReactElement<Record<string, unknown>>): ProviderInstanceId[] {
+  const list = visitElements(
+    panel,
+    (element) => element.props.className === "divide-y divide-border/50",
+  );
+  const children = list?.props.children;
+  if (!Array.isArray(children)) return [];
+  return children.map(
+    (child) => (child as ReactElement<{ instanceId: ProviderInstanceId }>).props.instanceId,
+  );
+}
+
 async function flushPromises(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
@@ -186,6 +206,39 @@ describe("EnvironmentProviderSettings routing", () => {
   it("coalesces a nullable provider snapshot before rendering array-backed UI", () => {
     expect(() => renderPanel()).not.toThrow();
     expect(settingsState.readEnvironmentIds).toEqual([environmentId]);
+  });
+
+  it("puts authenticated providers first while preserving the default order in each group", () => {
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+        [opencodeId]: { driver: ProviderDriverKind.make("opencode"), enabled: true },
+      },
+    };
+    atoms.providers = [
+      provider(codexId, ProviderDriverKind.make("codex"), "unauthenticated"),
+      provider(opencodeId, ProviderDriverKind.make("opencode")),
+    ];
+    expect(providerListOrder(renderPanel())).toEqual([
+      opencodeId,
+      codexId,
+      claudeId,
+      grokId,
+      antigravityId,
+    ]);
+
+    atoms.providers = [
+      provider(codexId, ProviderDriverKind.make("codex")),
+      provider(opencodeId, ProviderDriverKind.make("opencode")),
+    ];
+    expect(providerListOrder(renderPanel())).toEqual([
+      codexId,
+      opencodeId,
+      claudeId,
+      grokId,
+      antigravityId,
+    ]);
   });
 
   it("routes refresh and provider update commands to the selected environment", async () => {
