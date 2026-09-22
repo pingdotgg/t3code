@@ -35,7 +35,9 @@ const EMPTY_CONNECTION_STATE_ATOM = Atom.make(AsyncResult.initial<never, never>(
   Atom.withLabel("mobile-asset-connection-state:empty"),
 );
 
-function useConnectionPhase(environmentId: EnvironmentId | null): EnvironmentConnectionPhase {
+export function useAssetConnectionPhase(
+  environmentId: EnvironmentId | null,
+): EnvironmentConnectionPhase {
   const state = useAtomValue(
     environmentId === null
       ? EMPTY_CONNECTION_STATE_ATOM
@@ -50,7 +52,7 @@ export function useAssetUrlState(
   resource: AssetResource | null,
 ): AssetUrlState {
   const preparedConnection = usePreparedConnection(environmentId);
-  const connectionPhase = useConnectionPhase(environmentId);
+  const connectionPhase = useAssetConnectionPhase(environmentId);
   const result = useAtomValue(
     environmentId === null || resource === null
       ? EMPTY_ASSET_URL_ATOM

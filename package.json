@@ -61,5 +61,8 @@
   "engines": {
     "node": "^24.13.1"
   },
-  "packageManager": "pnpm@11.10.0"
+  "packageManager": "pnpm@11.10.0",
+  "enriched-markdown": {
+    "enableMath": false
+  }
 }

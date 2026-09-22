@@ -40,7 +40,7 @@
     "config:preview": "APP_VARIANT=preview expo config",
     "config:prod": "APP_VARIANT=production expo config",
     "profile:android:hermes": "mkdir -p profiles/review && react-native profile-hermes profiles/review",
-    "sync:pierre-icons": "node modules/t3-markdown-text/scripts/sync-pierre-file-icons.mjs",
+    "sync:pierre-icons": "node scripts/sync-pierre-file-icons.mjs",
     "generate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generate-uniwind-themes.mts",
     "test": "vp test run",
     "typecheck": "tsc --noEmit"
@@ -66,8 +66,8 @@
     "@shikijs/themes": "4.2.0",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
-    "@t3tools/mobile-markdown-text": "file:./modules/t3-markdown-text",
     "@t3tools/mobile-review-diff-native": "file:./modules/t3-review-diff",
+    "@t3tools/mobile-source-text": "file:./modules/t3-source-text",
     "@t3tools/mobile-terminal-native": "file:./modules/t3-terminal",
     "@t3tools/shared": "workspace:*",
     "@tabler/icons-react-native": "^3.44.0",
@@ -112,11 +112,10 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
+    "react-native-enriched-markdown": "file:./deps/react-native-enriched-markdown-1.1.0-nightly-20260918-bb2b0942a-link-context-menu-v3.tgz",
     "react-native-gesture-handler": "~2.32.0",
     "react-native-image-viewing": "^0.2.2",
     "react-native-keyboard-controller": "1.21.13",
-    "react-native-nitro-markdown": "^0.5.0",
-    "react-native-nitro-modules": "0.35.9",
     "react-native-reanimated": "4.5.5",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
@@ -137,8 +136,9 @@
     "tailwindcss": "^4.0.0",
     "typescript": "catalog:"
   },
-  "overrides": {
-    "react-native-nitro-markdown": "file:deps/react-native-nitro-markdown-0.5.0.tgz"
+  "enriched-markdown": {
+    "enableMath": false,
+    "enableVideo": false
   },
   "expo": {
     "install": {

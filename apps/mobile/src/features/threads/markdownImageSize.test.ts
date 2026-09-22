@@ -4,6 +4,7 @@ import {
   MARKDOWN_IMAGE_MAX_HEIGHT,
   MARKDOWN_IMAGE_MAX_WIDTH,
   resolveMarkdownImageDisplaySize,
+  resolveSvgImageSize,
 } from "./markdownImageSize";
 
 describe("resolveMarkdownImageDisplaySize", () => {
@@ -58,5 +59,22 @@ describe("resolveMarkdownImageDisplaySize", () => {
         availableWidth: 332,
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolveSvgImageSize", () => {
+  it("uses pixel dimensions before the viewBox", () => {
+    expect(resolveSvgImageSize({ width: "32px", height: "48", viewBox: "0 0 100 100" })).toEqual({
+      width: 32,
+      height: 48,
+    });
+  });
+
+  it("uses the viewBox for responsive SVGs", () => {
+    expect(
+      resolveSvgImageSize({ width: "100%", height: "100%", viewBox: "-10, -20, 120, 240" }),
+    ).toEqual({ width: 120, height: 240 });
+    expect(resolveSvgImageSize({ viewBox: "0 0 100 NaN" })).toBeNull();
+    expect(resolveSvgImageSize({ viewBox: "0 0 0 100" })).toBeNull();
   });
 });

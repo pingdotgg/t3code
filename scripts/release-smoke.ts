@@ -17,8 +17,7 @@ const workspaceFiles = [
   "apps/desktop/package.json",
   "apps/web/package.json",
   "apps/mobile/package.json",
-  "apps/mobile/deps/react-native-nitro-markdown-0.5.0.tgz",
-  "apps/mobile/modules/t3-markdown-text/package.json",
+  "apps/mobile/modules/t3-source-text/package.json",
   "apps/mobile/modules/t3-review-diff/package.json",
   "apps/mobile/modules/t3-terminal/package.json",
   "apps/marketing/package.json",
@@ -45,6 +44,13 @@ function copyWorkspaceManifestFixture(targetRoot: string): void {
   const patchesDirectory = NodePath.resolve(repoRoot, "patches");
   if (NodeFS.existsSync(patchesDirectory)) {
     NodeFS.cpSync(patchesDirectory, NodePath.resolve(targetRoot, "patches"), { recursive: true });
+  }
+
+  const mobileDepsDirectory = NodePath.resolve(repoRoot, "apps/mobile/deps");
+  if (NodeFS.existsSync(mobileDepsDirectory)) {
+    NodeFS.cpSync(mobileDepsDirectory, NodePath.resolve(targetRoot, "apps/mobile/deps"), {
+      recursive: true,
+    });
   }
 }
 

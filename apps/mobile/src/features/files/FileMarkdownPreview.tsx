@@ -1,29 +1,25 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
+import { resolveMobileMarkdownMediaSource } from "../../lib/markdownMediaSource";
 import { getBrowseDirectoryPath } from "@t3tools/client-runtime/state/projects";
 import { useCallback, useMemo, useState } from "react";
-import {
-  Markdown,
-  type CustomRenderers,
-  type NodeStyleOverrides,
-  type PartialMarkdownTheme,
-} from "react-native-nitro-markdown";
-import { RefreshControl, ScrollView, Text as NativeText, View } from "react-native";
+import { RefreshControl, ScrollView, View } from "react-native";
 
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useFontFamily } from "../../lib/useFontFamily";
-import {
-  resolveMarkdownFontSizes,
-  resolveNativeMarkdownTypography,
-} from "../../lib/appearancePreferences";
+import { resolveNativeMarkdownTypography } from "../../lib/appearancePreferences";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import {
   ThreadMarkdownImage,
+  ThreadMarkdownImageView,
   ThreadMarkdownImageUnavailable,
 } from "../threads/ThreadMarkdownImage";
+import { ThreadMarkdownVideo } from "../threads/ThreadMarkdownVideo";
+import { resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
+import { normalizeNativeMarkdownUrl } from "../../lib/markdownLinks";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
-  hasNativeSelectableMarkdownText,
   SelectableMarkdownText,
   type MarkdownImageRenderer,
   type NativeMarkdownTextStyle,
@@ -31,18 +27,11 @@ import {
 import { resolveWorkspaceFilePath } from "./filePath";
 
 interface MarkdownPreviewStyles {
-  readonly theme: PartialMarkdownTheme;
-  readonly styles: NodeStyleOverrides;
-  readonly renderers: CustomRenderers;
   readonly nativeTextStyle: NativeMarkdownTextStyle;
 }
 
-function useMarkdownPreviewStyles(renderImage?: MarkdownImageRenderer): MarkdownPreviewStyles {
+function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
   const { appearance } = useAppearancePreferences();
-  const markdownFontSizes = useMemo(
-    () => resolveMarkdownFontSizes(appearance.baseFontSize),
-    [appearance.baseFontSize],
-  );
   const nativeMarkdownTypography = useMemo(
     () => resolveNativeMarkdownTypography(appearance.baseFontSize),
     [appearance.baseFontSize],
@@ -52,104 +41,14 @@ function useMarkdownPreviewStyles(renderImage?: MarkdownImageRenderer): Markdown
   const strong = theme["--color-md-strong"];
   const link = theme["--color-md-link"];
   const blockquoteBorder = theme["--color-md-blockquote-border"];
-  const blockquoteBackground = theme["--color-md-blockquote-bg"];
   const codeBackground = theme["--color-md-code-bg"];
   const codeText = theme["--color-md-code-text"];
   const horizontalRule = theme["--color-md-hr"];
   const regularFontFamily = useFontFamily("regular");
-  const mediumFontFamily = useFontFamily("medium");
   const boldFontFamily = useFontFamily("bold");
 
   return useMemo(() => {
-    const renderers: CustomRenderers = {
-      link: ({ href, children }) => (
-        <NativeText
-          className="font-t3-medium"
-          onPress={() => {
-            if (href) {
-              void tryOpenExternalUrl(href, "markdown-link");
-            }
-          }}
-          style={{
-            color: link,
-            textDecorationLine: "none",
-          }}
-        >
-          {children}
-        </NativeText>
-      ),
-      image: ({ node }) =>
-        node.href && renderImage
-          ? (renderImage({
-              href: node.href,
-              alt: node.alt ?? null,
-              title: node.title ?? null,
-            }) ?? undefined)
-          : undefined,
-    };
-
     return {
-      theme: {
-        colors: {
-          text: body,
-          heading: strong,
-          link,
-          blockquote: blockquoteBorder,
-          border: horizontalRule,
-          surface: "transparent",
-          surfaceLight: blockquoteBackground,
-          accent: link,
-          tableBorder: horizontalRule,
-          tableHeader: blockquoteBackground,
-          tableHeaderText: strong,
-          tableRowOdd: blockquoteBackground,
-          tableRowEven: "transparent",
-          code: codeText,
-          codeBackground,
-        },
-      },
-      styles: {
-        text: {
-          color: body,
-          fontFamily: regularFontFamily,
-          fontSize: markdownFontSizes.m,
-          lineHeight: markdownFontSizes.bodyLineHeight,
-        },
-        heading: {
-          color: strong,
-          fontFamily: boldFontFamily,
-        },
-        strong: {
-          color: strong,
-          fontFamily: boldFontFamily,
-        },
-        link: {
-          color: link,
-          fontFamily: mediumFontFamily,
-        },
-        blockquote: {
-          backgroundColor: blockquoteBackground,
-          borderLeftColor: blockquoteBorder,
-          borderLeftWidth: 3,
-          paddingLeft: 12,
-        },
-        code: {
-          backgroundColor: codeBackground,
-          color: codeText,
-          fontFamily: "ui-monospace",
-        },
-        codeBlock: {
-          backgroundColor: codeBackground,
-          borderRadius: 12,
-          color: codeText,
-          fontFamily: "ui-monospace",
-          padding: 12,
-        },
-        hr: {
-          backgroundColor: horizontalRule,
-        },
-      },
-      renderers,
       nativeTextStyle: {
         color: body,
         strongColor: strong,
@@ -172,18 +71,14 @@ function useMarkdownPreviewStyles(renderImage?: MarkdownImageRenderer): Markdown
       },
     };
   }, [
-    blockquoteBackground,
     blockquoteBorder,
     body,
     codeBackground,
     codeText,
     horizontalRule,
     link,
-    markdownFontSizes,
-    mediumFontFamily,
     nativeMarkdownTypography,
     regularFontFamily,
-    renderImage,
     strong,
     boldFontFamily,
   ]);
@@ -200,6 +95,7 @@ export function FileMarkdownPreview(props: {
   readonly onRefresh?: () => Promise<void> | void;
 }) {
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
+  const [expandedFile, setExpandedFile] = useState<FilePreviewSource | null>(null);
   const handlePullToRefresh = useCallback(async () => {
     if (!props.onRefresh) {
       return;
@@ -217,21 +113,65 @@ export function FileMarkdownPreview(props: {
   );
   const renderImage = useCallback<MarkdownImageRenderer>(
     (image) => {
-      const media = resolveMediaSource(image.href, {
+      const media = resolveMobileMarkdownMediaSource(image.href, {
         threadId: props.threadId ?? undefined,
         workspaceRoot: markdownDirectory,
         imageEmbed: true,
       });
       if (media?.access === "direct") {
-        return null;
+        if (media.kind === "video") {
+          return (
+            <ThreadMarkdownVideo
+              source={{
+                type: "media",
+                name: media.name,
+                mimeType: media.mimeType,
+                uri: normalizeNativeMarkdownUrl(media.uri),
+              }}
+              thumbnailVisible
+            />
+          );
+        }
+        return (
+          <ThreadMarkdownImageView
+            uri={normalizeNativeMarkdownUrl(media.uri)}
+            sourceKey={media.uri}
+            unavailable={false}
+            alt={image.alt}
+            format={media.mimeType === "image/svg+xml" ? "svg" : undefined}
+            onPressPreview={setExpandedFile}
+          />
+        );
       }
-      if (
-        props.captured ||
-        media === null ||
-        media.kind !== "image" ||
-        media.access === "unavailable"
-      ) {
+      if (props.captured || media === null || media.access === "unavailable") {
         return <ThreadMarkdownImageUnavailable alt={image.alt} />;
+      }
+      if (media.kind === "video") {
+        if (!props.threadId) {
+          return (
+            <ThreadMarkdownVideo
+              source={{
+                type: "media",
+                name: media.name,
+                mimeType: media.mimeType,
+                environmentId: props.environmentId,
+                resource: media.resource,
+                srcFragment: media.srcFragment,
+              }}
+              thumbnailVisible
+            />
+          );
+        }
+        const preview = resolveMarkdownMediaPreview(image.href, {
+          environmentId: props.environmentId,
+          threadId: props.threadId,
+          workspaceRoot: markdownDirectory,
+        });
+        return preview?.kind === "video" ? (
+          <ThreadMarkdownVideo source={preview.source} thumbnailVisible />
+        ) : (
+          <ThreadMarkdownImageUnavailable alt={image.alt} />
+        );
       }
       return (
         <ThreadMarkdownImage
@@ -239,13 +179,56 @@ export function FileMarkdownPreview(props: {
           resource={media.resource}
           alt={image.alt}
           srcFragment={media.srcFragment}
-          onPressPreview={() => undefined}
+          onPressPreview={setExpandedFile}
         />
       );
     },
     [markdownDirectory, props.environmentId, props.threadId, props.captured],
   );
-  const styles = useMarkdownPreviewStyles(renderImage);
+  const styles = useMarkdownPreviewStyles();
+  const resolveImageSource = useMarkdownImageSource({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    workspaceRoot: markdownDirectory,
+    captured: props.captured,
+  });
+  const onImagePress = useCallback(
+    (href: string) => {
+      const direct = resolveMobileMarkdownMediaSource(href, {
+        threadId: props.threadId ?? undefined,
+        workspaceRoot: markdownDirectory,
+        imageEmbed: true,
+      });
+      if (direct?.access === "direct" && direct.kind === "image") {
+        setExpandedFile({
+          kind: "image",
+          uri: normalizeNativeMarkdownUrl(direct.uri),
+          name: direct.name,
+        });
+        return;
+      }
+      if (props.captured) return;
+      if (!props.threadId) {
+        if (direct?.access === "environment" && direct.kind === "image") {
+          setExpandedFile({
+            kind: "image",
+            name: direct.name,
+            environmentId: props.environmentId,
+            resource: direct.resource,
+            srcFragment: direct.srcFragment,
+          });
+        }
+        return;
+      }
+      const media = resolveMarkdownMediaPreview(href, {
+        environmentId: props.environmentId,
+        threadId: props.threadId,
+        workspaceRoot: markdownDirectory,
+      });
+      if (media?.kind === "image") setExpandedFile(media.source);
+    },
+    [markdownDirectory, props.environmentId, props.threadId, props.captured],
+  );
   const onLinkPress = useCallback((href: string) => {
     void tryOpenExternalUrl(href, "markdown-link");
   }, []);
@@ -264,23 +247,15 @@ export function FileMarkdownPreview(props: {
       }
     >
       <View className="mx-auto w-full max-w-[760px]">
-        {hasNativeSelectableMarkdownText() ? (
-          <SelectableMarkdownText
-            markdown={props.markdown}
-            onLinkPress={onLinkPress}
-            renderImage={renderImage}
-            textStyle={styles.nativeTextStyle}
-          />
-        ) : (
-          <Markdown
-            options={{ gfm: true }}
-            renderers={styles.renderers}
-            styles={styles.styles}
-            theme={styles.theme}
-          >
-            {props.markdown}
-          </Markdown>
-        )}
+        <SelectableMarkdownText
+          markdown={props.markdown}
+          onLinkPress={onLinkPress}
+          renderImage={renderImage}
+          resolveImageSource={resolveImageSource}
+          onImagePress={onImagePress}
+          textStyle={styles.nativeTextStyle}
+        />
+        <FilePreviewModal source={expandedFile} onRequestClose={() => setExpandedFile(null)} />
       </View>
     </ScrollView>
   );

@@ -139,7 +139,7 @@
       "bundles": ["mobile"],
       "license": "MIT",
       "name": "react-native-uitextview",
-      "noticeFile": "apps/mobile/modules/t3-markdown-text/LICENSE",
+      "noticeFile": "apps/mobile/modules/t3-source-text/LICENSE",
       "sourceUrl": "https://github.com/bluesky-social/react-native-uitextview",
       "version": "2.2.0"
     },
@@ -443,13 +443,6 @@
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) Julian Hundeloh and Tinycon contributors"],
         "preamble": ["badgin is a refactored fork of Tinycon."]
-      }
-    },
-    {
-      "name": "react-native-nitro-modules",
-      "generatedNotice": {
-        "licenseId": "MIT",
-        "copyrights": ["Copyright (c) 2024 Marc Rousavy"]
       }
     },
     {

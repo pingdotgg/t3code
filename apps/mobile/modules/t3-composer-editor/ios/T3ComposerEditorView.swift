@@ -928,8 +928,6 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     iconImage: UIImage?,
     style: ComposerChipStyle
   ) -> UIImage {
-    // Kept in step with `T3ContextChipVectorIcon` in the markdown module: a chip drawn here and
-    // the same chip drawn in a sent message have to be the same picture.
     let chipFontSize = fontSize * 0.86
     let font = UIFont(name: "DMSans-Medium", size: chipFontSize)
       ?? UIFont.systemFont(ofSize: chipFontSize, weight: .medium)

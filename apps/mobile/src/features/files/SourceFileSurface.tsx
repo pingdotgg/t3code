@@ -31,7 +31,7 @@ import {
   NATIVE_SOURCE_CONTENT_WIDTH,
   nativeSourceRowId,
 } from "./nativeSourceFileAdapter";
-import { MarkdownTextPrimitive } from "@t3tools/mobile-markdown-text/primitive";
+import { SourceText } from "@t3tools/mobile-source-text";
 
 import { boundedSelectableSourceTokens, prepareSourceFileDocument } from "./source-file-document";
 import { sourceHighlightAtom } from "./sourceHighlightingState";
@@ -270,14 +270,13 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     [codeSurface, codeWordBreak, targetIndex, tokens],
   );
 
-  // One selectable text for the whole file. On iOS `uiTextView` renders a real `UITextView`,
+  // One selectable text for the whole file. On iOS the primitive renders a real `UITextView`,
   // which selects across every line, wraps, and lays out long documents through TextKit; on
   // Android the primitive is an RN `Text`, which selects across its nested children. Either
   // way "select all" takes the file rather than a line, which a `FlatList` row can never do
   // because each row is its own selection scope.
   const selectableBlock = props.selectable ? (
-    <MarkdownTextPrimitive
-      uiTextView
+    <SourceText
       selectable
       selectionColorClassName={Platform.OS === "android" ? "accent-focus/32" : undefined}
       style={{
@@ -293,7 +292,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
             const body =
               lineTokens && lineTokens.length > 0
                 ? lineTokens.map((token, tokenIndex) => (
-                    <MarkdownTextPrimitive
+                    <SourceText
                       key={`${index}:${tokenIndex}`}
                       style={{
                         color: token.color ?? foreground,
@@ -306,18 +305,18 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
                       }}
                     >
                       {token.content}
-                    </MarkdownTextPrimitive>
+                    </SourceText>
                   ))
                 : line;
             return (
-              <MarkdownTextPrimitive key={index}>
+              <SourceText key={index}>
                 {body}
                 {index < lines.length - 1 ? "\n" : ""}
-              </MarkdownTextPrimitive>
+              </SourceText>
             );
           })
         : normalizedContents}
-    </MarkdownTextPrimitive>
+    </SourceText>
   ) : null;
 
   const list = (
