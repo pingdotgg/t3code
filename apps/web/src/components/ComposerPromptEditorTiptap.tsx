@@ -222,9 +222,9 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
       onClick={() => actions.openMention(path)}
       onContextMenu={(event) => {
         if (!actions.showMentionMenu) return;
+        if (!actions.showMentionMenu(path, { x: event.clientX, y: event.clientY })) return;
         event.preventDefault();
         event.stopPropagation();
-        actions.showMentionMenu(path, { x: event.clientX, y: event.clientY });
       }}
       onKeyDown={(event) => {
         if (
@@ -232,10 +232,10 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
           !(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))
         )
           return;
+        const rect = event.currentTarget.getBoundingClientRect();
+        if (!actions.showMentionMenu(path, { x: rect.left, y: rect.bottom })) return;
         event.preventDefault();
         event.stopPropagation();
-        const rect = event.currentTarget.getBoundingClientRect();
-        actions.showMentionMenu(path, { x: rect.left, y: rect.bottom });
       }}
       aria-label={`Preview ${path}`}
       className={`${FILE_TAG_CHIP_CLASS_NAME} cursor-pointer focus-visible:outline-2`}
@@ -245,7 +245,7 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
     >
       <FileTagChipContent
         path={path}
-        label={basenameOfPath(path)}
+        label={basenameOfPath(path.replace(/[\\/]+$/, ""))}
         theme={resolvedThemeFromDocument()}
       />
     </Button>

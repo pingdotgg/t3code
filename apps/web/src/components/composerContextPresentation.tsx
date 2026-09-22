@@ -70,7 +70,8 @@ export interface ComposerContextActions {
   expandVideo: (fileId: string) => void;
   openFile: (fileId: string) => void;
   openMention: (path: string) => void;
-  showMentionMenu?: (path: string, position?: { x: number; y: number }) => void;
+  /** Returns false when no menu can appear, so the caller can leave the native menu alone. */
+  showMentionMenu?: (path: string, position?: { x: number; y: number }) => boolean;
   openPullRequest: (event: MouseEvent<HTMLElement>, url: string) => void;
 }
 

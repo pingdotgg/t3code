@@ -1,6 +1,7 @@
 import { useFileContextMenu } from "../../fileContextMenu";
 import { composerMentionMenuTarget } from "./composerMentionMenuTarget";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
+import { readLocalApi } from "../../localApi";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { runtimeModeConfig, runtimeModeOptions } from "./runtimeModeConfig";
@@ -1637,7 +1638,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       openMention: (path: string) => useRightPanelStore.getState().openFile(routeThreadRef, path),
       showMentionMenu: (path: string, position?: { x: number; y: number }) => {
         const target = composerMentionMenuTarget(environmentId, gitCwd, path);
-        if (target) void mentionMenu.show(target, position);
+        // Without the local bridge there is no menu to show; tell the chip so the native
+        // context menu keeps working on plain web.
+        if (target === null || readLocalApi() === undefined) return false;
+        void mentionMenu.show(target, position);
+        return true;
       },
       expandVideo: (fileId: string) => {
         const file = composerFiles.find((candidate) => candidate.id === fileId);
@@ -3571,7 +3576,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const { snapshot, trigger } = resolveActiveComposerTrigger();
       if (!trigger) return;
       if (item.type === "path") {
-        const replacement = `${serializeComposerFileLink(item.path)} `;
+        // A trailing slash keeps the mention's directory identity through serialization: the
+        // mention menu only offers live-file actions, so it refuses those paths.
+        const replacement = `${serializeComposerFileLink(item.pathKind === "directory" ? `${item.path}/` : item.path)} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
           trigger.rangeEnd,
