@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { ProviderAuthResponse } from "./providerSetup.ts";
+import { ProviderAuthResponse, ProviderAuthState } from "./providerSetup.ts";
 
 const decodeResponse = Schema.decodeUnknownSync(ProviderAuthResponse);
+const decodeState = Schema.decodeUnknownSync(ProviderAuthState);
 
 describe("provider credential responses", () => {
   it("accepts the advertised field limit and rejects oversized or invalid fields", () => {
@@ -21,5 +22,32 @@ describe("provider credential responses", () => {
     expect(() =>
       decodeResponse({ type: "credentials", values: { token: "x".repeat(16_385) } }),
     ).toThrow();
+  });
+});
+
+describe("provider auth state", () => {
+  it("drops auth variants from newer servers instead of rejecting the state", () => {
+    const method = { id: "browser", name: "Browser", description: null, type: "agent" };
+    expect(
+      decodeState({
+        instanceId: "cursor",
+        phase: "waiting",
+        flowId: null,
+        authorizationUrl: null,
+        expiresAt: null,
+        message: null,
+        methods: [method, { ...method, id: "passkey", type: "passkey" }],
+        interaction: { type: "passkey", id: "passkey" },
+        credentialOwner: "keychain",
+      }),
+    ).toEqual({
+      instanceId: "cursor",
+      phase: "waiting",
+      flowId: null,
+      authorizationUrl: null,
+      expiresAt: null,
+      message: null,
+      methods: [method],
+    });
   });
 });

@@ -809,7 +809,8 @@ export function EnvironmentProviderSettings({
         driver === "codex" ||
         driver === "claudeAgent" ||
         isDirty ||
-        resolveProviderInstanceEnabled(effectiveInstance)
+        resolveProviderInstanceEnabled(effectiveInstance) ||
+        defaultInstanceId === targetInstanceId
       ) {
         rows.push({
           instanceId: defaultInstanceId,

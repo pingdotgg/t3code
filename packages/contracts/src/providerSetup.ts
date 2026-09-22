@@ -1,6 +1,11 @@
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  ForwardCompatibleArray,
+  ForwardCompatibleOptional,
+  IsoDateTime,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 export const ProviderSetupInput = Schema.Struct({
@@ -107,9 +112,13 @@ export const ProviderAuthState = Schema.Struct({
   authorizationUrl: Schema.NullOr(Schema.String),
   expiresAt: Schema.NullOr(IsoDateTime),
   message: Schema.NullOr(Schema.String),
-  methods: Schema.optionalKey(Schema.Array(ProviderAuthMethod).check(Schema.isMaxLength(32))),
-  interaction: Schema.optionalKey(Schema.NullOr(ProviderAuthInteraction)),
-  credentialOwner: Schema.optionalKey(Schema.Literals(["provider", "t3"])),
+  // Newer servers may add method types, interactions, or owners; older
+  // clients drop what they cannot decode instead of rejecting the state.
+  methods: Schema.optionalKey(
+    ForwardCompatibleArray(ProviderAuthMethod).check(Schema.isMaxLength(32)),
+  ),
+  interaction: ForwardCompatibleOptional(Schema.NullOr(ProviderAuthInteraction)),
+  credentialOwner: ForwardCompatibleOptional(Schema.Literals(["provider", "t3"])),
 });
 export type ProviderAuthState = typeof ProviderAuthState.Type;
 

@@ -125,10 +125,11 @@ export const makeProviderAuthFlow = Effect.fn("makeProviderAuthFlow")(function* 
         state: { ...current.state, methods },
       })),
     ),
+    // Keep the last known methods when a refresh fails or is interrupted.
     Effect.catch((error) =>
       SubscriptionRef.update(snapshot, (current) => ({
         ...current,
-        state: { ...current.state, methods: [], message: error.detail },
+        state: { ...current.state, methods: current.state.methods ?? [], message: error.detail },
       })),
     ),
   );
@@ -452,7 +453,8 @@ export const makeProviderAuthFlow = Effect.fn("makeProviderAuthFlow")(function* 
       active = undefined;
       if (flow?.responseFiber) yield* Fiber.interrupt(flow.responseFiber);
       if (flow?.fiber) yield* Fiber.interrupt(flow.fiber);
-      yield* stopOwnedSessions;
+      // Settings edits rebuild instances; admitted sessions (including those of
+      // peers sharing this binding) end with their own scopes, not this one.
     }),
   );
   return controller;

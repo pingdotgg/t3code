@@ -474,3 +474,47 @@ it.effect("closing the controller scope interrupts and drains its adapter respon
     assert.isTrue(Exit.isFailure(yield* Fiber.join(harness.response)));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("a failed method refresh keeps the last discovered methods", () =>
+  Effect.gen(function* () {
+    let fail = false;
+    const controller = yield* ProviderAuthFlow.makeProviderAuthFlow({
+      instanceId,
+      credentialBinding: { owner: "provider", key: "shared-agent" },
+      methods: Effect.suspend(() =>
+        fail
+          ? Effect.fail(
+              new ProviderSetupError({ instanceId, operation: "status", detail: "interrupted" }),
+            )
+          : Effect.succeed([method]),
+      ),
+      authenticate: () => Effect.void,
+      logout: Effect.void,
+    });
+    yield* controller.refreshMethods!;
+    fail = true;
+    yield* controller.refreshMethods!;
+    const state = yield* controller
+      .subscribe("owner")
+      .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+    assert.deepEqual(state.methods, [method]);
+    assert.strictEqual(state.message, "interrupted");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("rebuilding a controller leaves sessions it admitted to their owners", () =>
+  Effect.gen(function* () {
+    const scope = yield* Scope.make();
+    const { controller } = yield* makeHarness.pipe(Effect.provideService(Scope.Scope, scope));
+    let closed = false;
+    yield* controller.withAccess!(
+      Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          closed = true;
+        }),
+      ),
+    );
+    yield* Scope.close(scope, Exit.void);
+    assert.isFalse(closed);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

@@ -135,17 +135,22 @@ export function ProviderAuthenticationSection({
 
   async function openBrowser() {
     if (!url || readOnly) return;
+    const requiresConsent = interaction?.type === "browser" && interaction.requiresConsent;
+    // Browsers block tabs opened after an await, so the web build reserves one
+    // while the environment records consent.
+    const pending = requiresConsent && !window.desktopBridge ? window.open("", "_blank") : null;
+    if (pending) pending.opener = null;
     try {
       // Consent is checked on the environment before opening a provider URL locally.
-      if (
-        interaction?.type === "browser" &&
-        interaction.requiresConsent &&
-        !(await send({ type: "browser", action: "accept" }))
-      )
+      if (requiresConsent && !(await send({ type: "browser", action: "accept" }))) {
+        pending?.close();
         return;
-      await ensureLocalApi().shell.openExternal(url);
+      }
+      if (pending) pending.location.href = url;
+      else await ensureLocalApi().shell.openExternal(url);
       setError(null);
     } catch {
+      pending?.close();
       setError("Could not open the sign-in page. Copy the link and open it in your browser.");
     }
   }
