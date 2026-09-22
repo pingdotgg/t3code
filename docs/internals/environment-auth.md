@@ -56,6 +56,16 @@ back to the reusable credential. OAuth exchanges create ordinary local bearer
 or DPoP children with normal expiry and revocation. The reusable cookie expires
 after 30 days.
 
+### Unsafe no-auth mode
+
+`T3CODE_UNSAFE_NO_AUTH` / `--unsafe-no-auth` activates the `unsafe-no-auth`
+policy for servers that sit behind an authenticating edge (Cloudflare Access,
+an SSO reverse proxy, a workspace proxy). Every HTTP and WebSocket request
+resolves to a synthetic owner session with administrative scopes; pairing is
+not required. The bind itself stays unauthenticated, so it belongs behind a
+trusted proxy — never on a publicly reachable port. Starting on a
+network-reachable bind or with Tailscale Serve logs an additional warning.
+
 ## The environment is the filesystem boundary
 
 Projects are organizational boundaries, not filesystem sandboxes.
