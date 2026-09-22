@@ -956,7 +956,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
             {/* Model list */}
             <div className="relative min-h-0 flex-1 overflow-hidden pr-px">
-              <ComboboxListVirtualized>
+              <ComboboxListVirtualized className="not-empty:p-0">
                 <LegendList<string>
                   ref={modelListRef}
                   data={filteredItemKeys}
