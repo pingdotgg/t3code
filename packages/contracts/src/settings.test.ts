@@ -569,6 +569,20 @@ describe("ClientSettings theme background", () => {
   });
 });
 
+describe("ClientSettings theme background transparency", () => {
+  it("defaults to 20 and accepts the full range", () => {
+    expect(decodeClientSettings({}).themeBackgroundTransparency).toBe(20);
+    expect(
+      decodeClientSettingsPatch({ themeBackgroundTransparency: 65 }).themeBackgroundTransparency,
+    ).toBe(65);
+  });
+
+  it.each([-1, 101, 1.5])("rejects invalid transparency %s", (value) => {
+    expect(() => decodeClientSettings({ themeBackgroundTransparency: value })).toThrow();
+    expect(() => decodeClientSettingsPatch({ themeBackgroundTransparency: value })).toThrow();
+  });
+});
+
 describe("ClientSettings sidebar", () => {
   it("defaults to the current sidebar", () => {
     expect(decodeClientSettings({}).legacySidebarEnabled).toBe(false);

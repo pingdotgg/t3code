@@ -210,6 +210,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["wallpaper backdrop scenery image dimmed tinted theme"],
   },
   {
+    id: "setting-theme-background-transparency",
+    title: "Background transparency",
+    to: "/settings/appearance",
+    searchTerms: ["scene opacity see-through wallpaper backdrop"],
+  },
+  {
     id: "diff-color-scheme",
     title: "Diff colors",
     to: "/settings/appearance",

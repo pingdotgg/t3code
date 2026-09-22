@@ -26,7 +26,9 @@ of the selected theme.
 On web and desktop, choose a **Background scene** under **Settings → Appearance** to show a dimmed
 scenic backdrop behind the interface. **Theme scene** follows the active theme, so each built-in
 theme ships with its own matching scene; picking a specific scene keeps it across theme changes.
-Choose **None** to turn the backdrop off. The backdrop is a device-local appearance preference.
+Choose **None** to turn the backdrop off. **Background transparency** controls how much of the
+scene shows through the interface, from solid up to fully transparent glass. The backdrop is a
+device-local appearance preference.
 
 ## Motion
 

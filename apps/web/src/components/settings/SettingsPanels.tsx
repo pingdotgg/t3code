@@ -33,6 +33,7 @@ import {
   MAX_PROMPT_FONT_SIZE,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MAX_TERMINAL_FONT_SIZE,
+  MAX_THEME_BACKGROUND_TRANSPARENCY,
   MIN_CODE_FONT_SIZE,
   MIN_APPEARANCE_CONTRAST,
   MIN_GLASS_OPACITY,
@@ -1329,6 +1330,63 @@ export function AppearanceSettingsPanel() {
                 ))}
               </SelectPopup>
             </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("setting-theme-background-transparency")}
+          description="How much of the background scene shows through the interface. Higher values are more transparent."
+          resetAction={
+            settings.themeBackgroundTransparency !==
+            DEFAULT_UNIFIED_SETTINGS.themeBackgroundTransparency ? (
+              <SettingResetButton
+                label="background transparency"
+                onClick={() =>
+                  updateSettings({
+                    themeBackgroundTransparency:
+                      DEFAULT_UNIFIED_SETTINGS.themeBackgroundTransparency,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="flex w-full items-center gap-3 sm:w-52">
+              <output
+                className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
+                htmlFor="theme-background-transparency"
+              >
+                {settings.themeBackgroundTransparency}%
+              </output>
+              <input
+                aria-label="Background transparency"
+                className="settings-slider min-w-0 flex-1"
+                id="theme-background-transparency"
+                max={MAX_THEME_BACKGROUND_TRANSPARENCY}
+                min={0}
+                onChange={(event) => {
+                  const transparency = Number(event.currentTarget.value);
+                  if (
+                    Number.isInteger(transparency) &&
+                    transparency >= 0 &&
+                    transparency <= MAX_THEME_BACKGROUND_TRANSPARENCY
+                  ) {
+                    updateSettings({ themeBackgroundTransparency: transparency });
+                  }
+                }}
+                step={5}
+                style={
+                  {
+                    "--settings-slider-progress": `${settings.themeBackgroundTransparency}%`,
+                    "--settings-slider-fill-offset": `${
+                      0.5 - settings.themeBackgroundTransparency / 100
+                    }rem`,
+                  } as CSSProperties
+                }
+                type="range"
+                value={settings.themeBackgroundTransparency}
+              />
+            </div>
           }
         />
 

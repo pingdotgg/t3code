@@ -295,6 +295,9 @@ function GlassAppearanceSync() {
  */
 function ThemeBackgroundSync() {
   const themeBackground = useClientSettings((settings) => settings.themeBackground);
+  const themeBackgroundTransparency = useClientSettings(
+    (settings) => settings.themeBackgroundTransparency,
+  );
   const { theme, resolvedTheme, themeHalves } = useTheme();
 
   useEffect(() => {
@@ -305,6 +308,13 @@ function ThemeBackgroundSync() {
       resolvedTheme,
     );
   }, [themeBackground, theme, resolvedTheme, themeHalves]);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--backdrop-transparency",
+      `${themeBackgroundTransparency}%`,
+    );
+  }, [themeBackgroundTransparency]);
 
   return null;
 }
