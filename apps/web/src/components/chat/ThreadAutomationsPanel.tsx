@@ -36,6 +36,7 @@ const STATUS_DOT_CLASS: Record<ScheduledTask["lastRunStatus"], string> = {
 export function ThreadAutomationsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly alwaysVisible?: boolean;
 }) {
   const tasksQuery = useEnvironmentQuery(
     serverEnvironment.scheduledTasksLive({ environmentId: props.environmentId, input: {} }),
@@ -54,8 +55,9 @@ export function ThreadAutomationsPanel(props: {
   );
   // A load error must not look like "no automations" — this thread may have
   // tasks whose controls would silently vanish. Only hide the section when we
-  // positively know there is nothing bound to it.
-  if (tasksQuery.error === null && boundTasks.length === 0) return null;
+  // positively know there is nothing bound to it. A customization set to
+  // "always" keeps the heading instead, with a terse empty state.
+  if (tasksQuery.error === null && boundTasks.length === 0 && !props.alwaysVisible) return null;
 
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
@@ -128,6 +130,8 @@ export function ThreadAutomationsPanel(props: {
         <p className="px-2.5 py-1.5 text-[11px] text-destructive">
           Could not load automations: {tasksQuery.error}
         </p>
+      ) : boundTasks.length === 0 ? (
+        <p className="px-2.5 py-1.5 text-[11px] text-muted-foreground">No automations.</p>
       ) : null}
 
       <ul className="m-0 list-none p-0">
