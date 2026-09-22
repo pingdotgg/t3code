@@ -60,6 +60,7 @@ import {
 import { AcpRegistryCatalog, type AcpRegistryInspection } from "../acp/AcpRegistrySupport.ts";
 import { AcpRegistryRuntimeCoordinator } from "../acp/AcpRegistryRuntimeCoordinator.ts";
 import { makeAcpRegistryAuth } from "../acp/AcpRegistryAuth.ts";
+import { makeAcpRegistryAuthenticationState } from "../acp/AcpRegistryAuthenticationState.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -510,13 +511,21 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         settings: effectiveConfig,
         environment: processEnvironment,
       };
-      const confirmedAuthentication = yield* Ref.make(false);
+      const confirmedAuthentication = yield* makeAcpRegistryAuthenticationState({
+        cacheDir: serverConfig.providerStatusCacheDir,
+        instanceId,
+        settings: effectiveConfig,
+        environment,
+        processEnvironment,
+      });
       const withLiveRuntimeState = (input: ServerProvider) =>
         Effect.gen(function* () {
-          if (input.auth.status === "unauthenticated")
-            yield* Ref.set(confirmedAuthentication, false);
+          if (input.auth.status === "unauthenticated") yield* confirmedAuthentication.set(false);
           const provider =
-            input.auth.status === "unknown" && (yield* Ref.get(confirmedAuthentication))
+            input.enabled &&
+            input.installed &&
+            input.auth.status === "unknown" &&
+            (yield* confirmedAuthentication.get)
               ? { ...input, auth: { ...input.auth, status: "authenticated" as const } }
               : input;
           return yield* Option.isNone(runtimeCoordinator)
@@ -739,12 +748,14 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         cwd: serverConfig.cwd,
         environment: processEnvironment,
         onChanged: (authenticated) =>
-          Ref.set(confirmedAuthentication, authenticated).pipe(
-            Effect.andThen(authenticated ? Effect.void : clearLiveState),
-            Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
-            Effect.andThen(snapshot.refresh),
-            Effect.asVoid,
-          ),
+          confirmedAuthentication
+            .set(authenticated)
+            .pipe(
+              Effect.andThen(authenticated ? Effect.void : clearLiveState),
+              Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
+              Effect.andThen(snapshot.refresh),
+              Effect.asVoid,
+            ),
       }).pipe(
         Effect.provideService(AcpRegistryCatalog, catalog),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -753,7 +764,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       const auth = {
         ...controller,
         invalidate: (controller.invalidate ?? Effect.void).pipe(
-          Effect.andThen(Ref.set(confirmedAuthentication, false)),
+          Effect.andThen(confirmedAuthentication.set(false)),
           Effect.andThen(clearLiveState),
           Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
           Effect.andThen(snapshot.refresh),
@@ -840,6 +851,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               Effect.provideService(AcpRegistryCatalog, catalog),
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Crypto.Crypto, crypto),
+              Effect.tap(() => confirmedAuthentication.set(false)),
               Effect.tap(() =>
                 liveSnapshotSemaphore.withPermit(
                   invalidateEnrichmentCache.pipe(
