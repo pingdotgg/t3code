@@ -106,6 +106,9 @@ const inlineButtonVariants = cva(
         default: "text-foreground",
         muted: "text-muted-foreground hover:text-foreground",
         destructive: "text-destructive/80 hover:text-destructive",
+        /** Opens a menu from inside a sentence; the dotted underline marks it as a choice. */
+        picker:
+          "gap-1.5 text-foreground underline decoration-foreground/30 decoration-dotted decoration-from-font underline-offset-4 hover:decoration-foreground hover:decoration-solid data-popup-open:decoration-foreground data-popup-open:decoration-solid",
       },
     },
   },

@@ -1,8 +1,8 @@
 # Settings and project overrides
 
-On web and desktop, the Settings breadcrumb ends with the environment and project a change applies to. They start
-at **All environments** and **All projects** and stay selected as you move between categories or
-search for a setting.
+On web and desktop, the "Applying settings for …" sentence at the top of each Settings page picks
+the project and environment a change applies to. They start at **All projects** and **All environments**
+and stay selected as you move between categories or search for a setting.
 
 Preferences saved on this device, such as appearance, confirmations and browser profiles, always
 show and ignore the selection. Everything else is stored on a server. Choose one environment to
