@@ -5,39 +5,50 @@ import { describe, expect, it } from "vite-plus/test";
 /**
  * Dependency-graph guards for the mobile source tree (audit #13).
  *
- * 1. No circular imports. Cycles were the source of module-init hazards and
- *    made the state/lib/features boundaries unmaintainable; shared shapes now
- *    live in `.types.ts` modules (e.g. `ConfirmDialog.types.ts`) and the
- *    composer preview-retention lease lives in `lib/`.
- *    Dynamic `import("...")` calls are excluded on purpose: they are the
- *    deliberate async escape hatch (e.g. composer-draft cleanup reaching
- *    `lib/attachmentUpload`), and Metro resolves them after both modules have
- *    initialized, so they cannot create an initialization cycle.
+ * 1. No circular imports, checked once per platform the way Metro resolves
+ *    modules (`<name>.<platform>.*` before `<name>.native.*` before the
+ *    generic file). A cycle can hide behind platform resolution: a `.tsx`
+ *    base importing a component whose `.android.tsx` variant type-imports
+ *    back into the base is acyclic on iOS but circular on Android.
+ *    Dynamic `import("...")` calls are excluded from this rule on purpose:
+ *    they are the deliberate async escape hatch (e.g. composer-draft cleanup
+ *    reaching `lib/attachmentUpload`), and Metro resolves them after both
+ *    modules have initialized, so they cannot create an initialization cycle.
  *
  * 2. Cross-layer edges are ceilinged, not yet banned. `state`, `lib`,
  *    `native`, and `components` still reach upward into `features` at known
  *    sites (the app composition root `lib/runtime.ts` legitimately wires
- *    feature layers). The ceiling may only shrink: when you remove one of
- *    these imports, lower the constant in the same PR.
+ *    feature layers). Ceilings count unique `from -> to` module pairs across
+ *    all platforms, including dynamic imports, and may only shrink: when you
+ *    remove one of these imports, lower the constant in the same PR.
  */
 
 const SOURCE_ROOT = __dirname;
 
-/** Metro-style resolution order for relative specifiers. */
-const RESOLVE_CANDIDATES = [
-  ".ts",
-  ".tsx",
-  ".ios.ts",
-  ".ios.tsx",
-  ".android.ts",
-  ".android.tsx",
-] as const;
+/** Metro candidate order per platform (platform, then native, then generic). */
+const PLATFORM_EXTENSION_ORDER = {
+  android: [".android.ts", ".android.tsx", ".native.ts", ".native.tsx", ".ts", ".tsx"],
+  ios: [".ios.ts", ".ios.tsx", ".native.ts", ".native.tsx", ".ts", ".tsx"],
+} as const;
+
+type Platform = keyof typeof PLATFORM_EXTENSION_ORDER;
+
+const PLATFORMS = Object.keys(PLATFORM_EXTENSION_ORDER) as ReadonlyArray<Platform>;
 
 const isGraphFile = (filePath: string): boolean =>
   /\.tsx?$/.test(filePath) &&
   !filePath.includes(".test.") &&
   !filePath.includes("test-support") &&
   !filePath.endsWith(".d.ts");
+
+/** Files Metro would not even bundle for the other platform. */
+function isRelevantForPlatform(filePath: string, platform: Platform): boolean {
+  const name = NodePath.basename(filePath);
+  if (platform === "android") {
+    return !name.includes(".ios.");
+  }
+  return !name.includes(".android.");
+}
 
 function collectSourceFiles(dir: string, out: string[] = []): string[] {
   for (const entry of NodeFS.readdirSync(dir)) {
@@ -51,22 +62,25 @@ function collectSourceFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-function resolveRelative(fromFile: string, specifier: string): string | null {
+function resolveRelative(
+  fromFile: string,
+  specifier: string,
+  extensionOrder: ReadonlyArray<string>,
+): string | null {
   if (!specifier.startsWith(".")) {
     return null;
   }
   const base = NodePath.resolve(NodePath.dirname(fromFile), specifier);
-  for (const candidate of [
-    ...RESOLVE_CANDIDATES.map((ext) => base + ext),
-    ...RESOLVE_CANDIDATES.map((ext) => NodePath.join(base, `index${ext}`)),
-  ]) {
-    try {
-      if (NodeFS.statSync(candidate).isFile()) {
-        const resolved = NodePath.resolve(candidate);
-        return resolved.startsWith(SOURCE_ROOT + NodePath.sep) ? resolved : null;
+  for (const ext of extensionOrder) {
+    for (const candidate of [base + ext, NodePath.join(base, `index${ext}`)]) {
+      try {
+        if (NodeFS.statSync(candidate).isFile()) {
+          const resolved = NodePath.resolve(candidate);
+          return resolved.startsWith(SOURCE_ROOT + NodePath.sep) ? resolved : null;
+        }
+      } catch {
+        // Candidate does not exist; try the next one.
       }
-    } catch {
-      // Candidate does not exist; try the next one.
     }
   }
   return null;
@@ -104,39 +118,53 @@ function layerOf(relativePath: string): Layer {
     : "other";
 }
 
-interface Graph {
+interface PlatformGraph {
+  readonly platform: Platform;
   readonly files: ReadonlyArray<string>;
   /** Static (type or value) import edges keyed by source file. */
   readonly staticEdges: ReadonlyMap<string, ReadonlyArray<string>>;
-  /** Every cross-layer edge, static and dynamic, as "fromRel -> toRel". */
-  readonly crossLayerEdges: ReadonlyArray<string>;
+  /** Unique cross-layer edges, static and dynamic, as "fromRel -> toRel". */
+  readonly crossLayerEdges: ReadonlySet<string>;
 }
 
-function buildGraph(): Graph {
-  const files = collectSourceFiles(SOURCE_ROOT).sort();
+function buildPlatformGraph(platform: Platform): PlatformGraph {
+  const extensionOrder = PLATFORM_EXTENSION_ORDER[platform];
+  const files = collectSourceFiles(SOURCE_ROOT)
+    .filter((file) => isRelevantForPlatform(file, platform))
+    .sort();
   const staticEdges = new Map<string, string[]>();
-  const crossLayerEdges: string[] = [];
+  const crossLayerEdges = new Set<string>();
   for (const file of files) {
     const targets = new Set<string>();
     for (const { specifier, isDynamic } of parseImports(NodeFS.readFileSync(file, "utf8"))) {
-      const resolved = resolveRelative(file, specifier);
+      const resolved = resolveRelative(file, specifier, extensionOrder);
       if (resolved === null || resolved === file) {
         continue;
       }
-      crossLayerEdges.push(
-        `${NodePath.relative(SOURCE_ROOT, file)} -> ${NodePath.relative(SOURCE_ROOT, resolved)}`,
-      );
+      const from = NodePath.relative(SOURCE_ROOT, file);
+      const to = NodePath.relative(SOURCE_ROOT, resolved);
+      const fromLayer = layerOf(from);
+      const toLayer = layerOf(to);
+      const upward =
+        (fromLayer === "state" ||
+          fromLayer === "lib" ||
+          fromLayer === "components" ||
+          fromLayer === "native") &&
+        (toLayer === "features" || (fromLayer === "lib" && toLayer === "state"));
+      if (upward) {
+        crossLayerEdges.add(`${from} -> ${to}`);
+      }
       if (!isDynamic) {
         targets.add(resolved);
       }
     }
     staticEdges.set(file, [...targets]);
   }
-  return { files, staticEdges, crossLayerEdges };
+  return { platform, files, staticEdges, crossLayerEdges };
 }
 
 /** Tarjan strongly-connected components, iterative to bound stack depth. */
-function findCycles(graph: Graph): ReadonlyArray<ReadonlyArray<string>> {
+function findCycles(graph: PlatformGraph): ReadonlyArray<ReadonlyArray<string>> {
   const index = new Map<string, number>();
   const low = new Map<string, number>();
   const onStack = new Set<string>();
@@ -144,48 +172,49 @@ function findCycles(graph: Graph): ReadonlyArray<ReadonlyArray<string>> {
   const cycles: string[][] = [];
   let nextIndex = 0;
 
+  const enter = (node: string): void => {
+    index.set(node, nextIndex);
+    low.set(node, nextIndex);
+    nextIndex += 1;
+    stack.push(node);
+    onStack.add(node);
+  };
+
   for (const root of graph.files) {
     if (index.has(root)) continue;
-    const work: Array<readonly [string, number]> = [[root, 0]];
-    const enter = (node: string): void => {
-      index.set(node, nextIndex);
-      low.set(node, nextIndex);
-      nextIndex += 1;
-      stack.push(node);
-      onStack.add(node);
-    };
+    const work: Array<[string, number]> = [[root, 0]];
     enter(root);
     while (work.length > 0) {
-      const [node, edge] = work[work.length - 1]!;
-      const neighbors = graph.staticEdges.get(node) ?? [];
+      const frame = work[work.length - 1]!;
+      const neighbors = graph.staticEdges.get(frame[0]) ?? [];
       let advanced = false;
-      for (let i = edge; i < neighbors.length; i += 1) {
+      for (let i = frame[1]; i < neighbors.length; i += 1) {
         const child = neighbors[i]!;
         if (!graph.staticEdges.has(child)) continue;
         if (!index.has(child)) {
-          work[work.length - 1] = [node, i + 1];
+          work[work.length - 1] = [frame[0], i + 1];
           work.push([child, 0]);
           enter(child);
           advanced = true;
           break;
         } else if (onStack.has(child)) {
-          low.set(node, Math.min(low.get(node)!, index.get(child)!));
+          low.set(frame[0], Math.min(low.get(frame[0])!, index.get(child)!));
         }
       }
       if (advanced) continue;
       work.pop();
       const parent = work[work.length - 1];
       if (parent) {
-        low.set(parent[0], Math.min(low.get(parent[0])!, low.get(node)!));
+        low.set(parent[0], Math.min(low.get(parent[0])!, low.get(frame[0])!));
       }
-      if (low.get(node) === index.get(node)) {
+      if (low.get(frame[0]) === index.get(frame[0])) {
         const component: string[] = [];
         let member: string;
         do {
           member = stack.pop()!;
           onStack.delete(member);
           component.push(member);
-        } while (member !== node);
+        } while (member !== frame[0]);
         if (component.length > 1) {
           cycles.push(component.sort().map((file) => NodePath.relative(SOURCE_ROOT, file)));
         }
@@ -195,24 +224,35 @@ function findCycles(graph: Graph): ReadonlyArray<ReadonlyArray<string>> {
   return cycles;
 }
 
-const graph = buildGraph();
-const edgesBetween = (from: Layer, to: Layer): string[] =>
-  graph.crossLayerEdges
-    .filter((edge) => {
-      const [source, target] = edge.split(" -> ");
-      return layerOf(source!) === from && layerOf(target!) === to;
-    })
-    .sort();
+const graphs = PLATFORMS.map(buildPlatformGraph);
+
+/** Unique upward edge pairs across every platform, sorted for stable diffs. */
+function upwardEdges(): string[] {
+  const union = new Set<string>();
+  for (const graph of graphs) {
+    for (const edge of graph.crossLayerEdges) {
+      union.add(edge);
+    }
+  }
+  return [...union].sort();
+}
 
 describe("mobile dependency graph", () => {
-  it("has no circular imports among source modules", () => {
+  it.each(PLATFORMS)("has no circular imports under %s resolution", (platform) => {
+    const graph = graphs.find((candidate) => candidate.platform === platform)!;
+    // The graph must see real files; a resolution regression here would make
+    // both rules vacuously pass.
+    expect(graph.files.length).toBeGreaterThan(500);
     expect(findCycles(graph)).toEqual([]);
   });
 
   it("keeps upward imports from state/lib/components/native into features at the ceiling", () => {
-    // The graph must see real files; a resolution regression here would make
-    // every ceiling vacuously pass.
-    expect(graph.files.length).toBeGreaterThan(400);
+    const edges = upwardEdges();
+    const edgesFor = (from: Layer, to: Layer): string[] =>
+      edges.filter((edge) => {
+        const [source, target] = edge.split(" -> ");
+        return layerOf(source!) === from && layerOf(target!) === to;
+      });
 
     const ceilings: ReadonlyArray<readonly [Layer, Layer, number, string]> = [
       // state -> features: thread ordering reaching the thread-list model,
@@ -235,10 +275,10 @@ describe("mobile dependency graph", () => {
     ];
 
     for (const [from, to, ceiling, message] of ceilings) {
-      const edges = edgesBetween(from, to);
+      const layerEdges = edgesFor(from, to);
       expect(
-        edges.length,
-        `${message}. ${edges.length} edges remain:\n${edges.join("\n")}`,
+        layerEdges.length,
+        `${message}. ${layerEdges.length} edges remain:\n${layerEdges.join("\n")}`,
       ).toBeLessThanOrEqual(ceiling);
     }
   });
