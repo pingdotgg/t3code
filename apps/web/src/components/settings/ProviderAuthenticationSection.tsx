@@ -229,14 +229,13 @@ export function ProviderAuthenticationSection({
                       variant="ghost-muted"
                       disabled={disabled}
                       onClick={() => {
+                        // Copy inside the click so the clipboard keeps the user
+                        // activation; the link only works once consent is recorded.
+                        const copied = writeTextToClipboard(url, "Provider sign-in link");
                         void (async () => {
-                          if (
-                            interaction?.type === "browser" &&
-                            interaction.requiresConsent &&
-                            !(await send({ type: "browser", action: "accept" }))
-                          )
-                            return;
-                          await writeTextToClipboard(url, "Provider sign-in link");
+                          await copied;
+                          if (interaction?.type === "browser" && interaction.requiresConsent)
+                            await send({ type: "browser", action: "accept" });
                         })().catch(() => setError("Could not copy the sign-in link."));
                       }}
                     >
