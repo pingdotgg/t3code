@@ -376,9 +376,11 @@ interface ProviderInstanceCardProps {
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
-  readonly onHiddenModelsChange: (next: ReadonlyArray<string>) => void;
+  readonly onModelPreferencesChange: (next: {
+    readonly hiddenModels: ReadonlyArray<string>;
+    readonly modelOrder: ReadonlyArray<string>;
+  }) => void;
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
-  readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
   readonly onRunUpdate?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
 }
@@ -418,9 +420,8 @@ export function ProviderInstanceCard({
   hiddenModels,
   favoriteModels,
   modelOrder,
-  onHiddenModelsChange,
+  onModelPreferencesChange,
   onFavoriteModelsChange,
-  onModelOrderChange,
   onRunUpdate,
   isUpdating = false,
 }: ProviderInstanceCardProps) {
@@ -905,9 +906,8 @@ export function ProviderInstanceCard({
               favoriteModels={favoriteModels}
               modelOrder={modelOrder}
               onChange={updateCustomModels}
-              onHiddenModelsChange={onHiddenModelsChange}
+              onModelPreferencesChange={onModelPreferencesChange}
               onFavoriteModelsChange={onFavoriteModelsChange}
-              onModelOrderChange={onModelOrderChange}
             />
           </div>
         </SettingsSection>

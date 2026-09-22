@@ -230,16 +230,17 @@ describe("EnvironmentProviderSettings routing", () => {
   });
 
   it.each([
-    ["onFavoriteModelsChange", { favorites: [{ provider: codexId, model: "chosen" }] }],
+    ["onFavoriteModelsChange", ["chosen"], { favorites: [{ provider: codexId, model: "chosen" }] }],
     [
-      "onHiddenModelsChange",
-      { providerModelPreferences: { [codexId]: { hiddenModels: ["chosen"], modelOrder: [] } } },
+      "onModelPreferencesChange",
+      { hiddenModels: ["chosen"], modelOrder: ["chosen", "other"] },
+      {
+        providerModelPreferences: {
+          [codexId]: { hiddenModels: ["chosen"], modelOrder: ["chosen", "other"] },
+        },
+      },
     ],
-    [
-      "onModelOrderChange",
-      { providerModelPreferences: { [codexId]: { hiddenModels: [], modelOrder: ["chosen"] } } },
-    ],
-  ])("saves %s on this device without changing the selected server", (action, expected) => {
+  ])("saves %s on this device without changing the selected server", (action, input, expected) => {
     atoms.providers = [provider()];
     const panel = renderPanel();
     const editor = visitElements(
@@ -248,7 +249,7 @@ describe("EnvironmentProviderSettings routing", () => {
     );
     expect(editor).not.toBeNull();
     if (!editor) throw new Error("Provider editor was not rendered");
-    (editor.props[action] as (models: string[]) => void)(["chosen"]);
+    (editor.props[action] as (value: unknown) => void)(input);
     expect(settingsState.updateClientSettings).toHaveBeenCalledExactlyOnceWith(expected);
     expect(settingsState.updateSettings).not.toHaveBeenCalled();
   });
