@@ -1,10 +1,10 @@
 /**
- * Request bookkeeping behind `ProjectFavicon`: tracks which favicon URLs are
- * currently loading per cache key, keeps only the most recent URL per project
- * current, and remembers which keys have already loaded so superseded or
- * already-shown loads settle without churn. This is not request coalescing —
- * each mount still issues its own load — and it is not the cache; persistence
- * lives in `projectFaviconDatabaseCache`.
+ * Request bookkeeping behind `ProjectFavicon`: tracks the favicon URLs with
+ * mounted views per cache key, keeps one of them current, and remembers which
+ * keys have already loaded so superseded or already-shown loads settle without
+ * churn. This is not request coalescing — each mount still issues its own
+ * load — and it is not the cache; persistence lives in
+ * `projectFaviconDatabaseCache`.
  */
 export interface ProjectFaviconRequest {
   readonly cacheKey: string;
