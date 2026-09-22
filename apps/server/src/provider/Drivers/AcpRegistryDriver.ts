@@ -331,7 +331,8 @@ export function buildCheckedAcpRegistrySnapshot(
     status: probeFailed ? "warning" : readiness.status,
     auth: input.probe
       ? {
-          status: input.probe.probe.authMethods.length === 0 ? "authenticated" : "unknown",
+          // Discovery sessions and an empty auth-method list do not prove sign-in.
+          status: "unknown",
           canLogout: input.probe.probe.sessionManagement.canLogout,
         }
       : input.probeError?.reason === "authentication_failed"

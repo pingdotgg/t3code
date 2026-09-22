@@ -168,7 +168,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         [],
       ),
     ).toMatchObject({
-      auth: { status: "authenticated", canLogout: true },
+      auth: { status: "unknown", canLogout: true },
       nativeSessions: { canList: true, canLoad: true, canResume: true },
       models: [{ slug: "live-model", isDefault: true }],
     });
@@ -213,7 +213,7 @@ describe("acpRegistrySnapshotReadiness", () => {
     });
   });
 
-  it("projects authenticated probes, discovered models, custom models, and commands", () => {
+  it("projects discovery without claiming authentication when no login methods are advertised", () => {
     const snapshot = buildCheckedAcpRegistrySnapshot({
       ...identity,
       settings: decodeSettings({
@@ -243,7 +243,7 @@ describe("acpRegistrySnapshotReadiness", () => {
       },
     });
 
-    expect(snapshot.auth).toEqual({ status: "authenticated", canLogout: false });
+    expect(snapshot.auth).toEqual({ status: "unknown", canLogout: false });
     expect(snapshot.supportsTextGeneration).toBe(false);
     expect(
       snapshot.models.map(({ slug, name, isCustom, isDefault }) => ({
@@ -393,7 +393,7 @@ describe("acpRegistrySnapshotReadiness", () => {
 
       expect(receivedEnvironment).toBe(environment);
       expect(snapshot).toMatchObject({
-        auth: { status: "authenticated" },
+        auth: { status: "unknown" },
         models: [{ slug: "agent-model" }],
         slashCommands: [{ name: "review" }],
         skills: [],
