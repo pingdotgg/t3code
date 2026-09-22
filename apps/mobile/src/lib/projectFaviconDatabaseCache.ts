@@ -78,11 +78,11 @@ export async function downscaleProjectFavicon(
   throw new Error("Project icon thumbnail exceeds the cache limit.");
 }
 
-/** Rows live in `client_cache` so Settings → Client storage counts and clears them. */
 /**
  * The database-backed project favicon cache. Named apart from the shared
  * `createProjectFaviconCache` factory it calls and from the in-flight request
- * registry in `projectFaviconRequests`.
+ * registry in `projectFaviconRequests`. Rows live in `client_cache` so
+ * Settings → Client storage counts and clears them.
  */
 export const projectFaviconDatabaseCache = createSharedProjectFaviconCache({
   storage: {
