@@ -183,6 +183,21 @@ function windowBoundsEqual(
   );
 }
 
+function normalBoundsOnMaximizedDisplay(
+  normal: DesktopAppSettings.DesktopWindowBounds,
+  maximized: Electron.Rectangle,
+): DesktopAppSettings.DesktopWindowBounds {
+  if (windowFitsWithinDisplay(normal, maximized)) return normal;
+  const width = Math.min(normal.width, maximized.width);
+  const height = Math.min(normal.height, maximized.height);
+  return {
+    x: maximized.x + Math.round((maximized.width - width) / 2),
+    y: maximized.y + Math.round((maximized.height - height) / 2),
+    width,
+    height,
+  };
+}
+
 export function resolveInitialMainWindowBounds(
   persistedBounds: DesktopAppSettings.DesktopWindowBounds | null,
   displays: readonly DisplayBounds[],
@@ -429,10 +444,14 @@ export const make = Effect.gen(function* () {
       if (window.isDestroyed()) {
         return null;
       }
-      const bounds =
-        window.isFullScreen() || window.isMaximized() || window.isMinimized()
-          ? window.getNormalBounds()
-          : window.getBounds();
+      const fullscreen = window.isFullScreen();
+      const maximized = window.isMaximized();
+      const minimized = window.isMinimized();
+      let bounds =
+        fullscreen || maximized || minimized ? window.getNormalBounds() : window.getBounds();
+      if (maximized && !fullscreen && !minimized) {
+        bounds = normalBoundsOnMaximizedDisplay(bounds, window.getBounds());
+      }
       return DesktopAppSettings.normalizeMainWindowBounds({
         x: Math.round(bounds.x),
         y: Math.round(bounds.y),
