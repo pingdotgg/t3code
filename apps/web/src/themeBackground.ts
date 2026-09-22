@@ -67,6 +67,9 @@ export function applyThemeBackground(
   root.style.removeProperty("--app-backdrop-tint");
   root.style.removeProperty("--app-backdrop-tint-sidebar");
   root.style.removeProperty("--app-backdrop-tint-toolbar");
+  // Restore the stylesheet's body fill (syncBrowserChromeTheme's transparent
+  // override below only applies while a scene is active).
+  document.body.style.backgroundColor = "";
 
   if (!url) return;
 

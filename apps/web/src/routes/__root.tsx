@@ -55,7 +55,7 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { useUiStateStore } from "../uiStateStore";
-import { syncBrowserChromeTheme, readThemeHalves, useTheme } from "../hooks/useTheme";
+import { syncBrowserChromeTheme, useTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
@@ -295,18 +295,16 @@ function GlassAppearanceSync() {
  */
 function ThemeBackgroundSync() {
   const themeBackground = useClientSettings((settings) => settings.themeBackground);
-  const { theme, resolvedTheme } = useTheme();
+  const { theme, resolvedTheme, themeHalves } = useTheme();
 
   useEffect(() => {
-    const definition = getThemeDefinition(
-      resolveThemeHalf(theme, readThemeHalves(), resolvedTheme),
-    );
+    const definition = getThemeDefinition(resolveThemeHalf(theme, themeHalves, resolvedTheme));
     applyThemeBackground(
       resolveThemeBackgroundUrl(themeBackground, definition?.id ?? null),
       definition,
       resolvedTheme,
     );
-  }, [themeBackground, theme, resolvedTheme]);
+  }, [themeBackground, theme, resolvedTheme, themeHalves]);
 
   return null;
 }
