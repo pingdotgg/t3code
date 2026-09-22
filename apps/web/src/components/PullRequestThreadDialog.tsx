@@ -252,7 +252,7 @@ export function PullRequestThreadDialog({
 
           {isResolving ? (
             <div className="flex items-center gap-2 text-muted-foreground text-xs">
-              <Spinner className="size-3.5" />
+              <Spinner size="sm" />
               Resolving {terminology.singular}...
             </div>
           ) : null}

@@ -1162,7 +1162,7 @@ function ImportStep({
       <div className="flex h-full min-h-40 flex-col">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">Your projects</h1>
         <div className="flex flex-1 flex-col items-center justify-center gap-3 py-6">
-          <Spinner className="size-5 text-muted-foreground" />
+          <Spinner size="lg" tone="muted" />
           <p className="text-center text-sm text-muted-foreground">
             Looking for projects from Claude Code and Codex…
           </p>
@@ -1229,7 +1229,7 @@ function ImportStep({
                 ) : null}
                 {scan.isPending && scan.data === null ? (
                   <div className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
-                    <Spinner className="size-4" />
+                    <Spinner size="md" />
                     Looking for projects…
                   </div>
                 ) : scan.error !== null ? (

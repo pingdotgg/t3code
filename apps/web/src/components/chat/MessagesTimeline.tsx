@@ -2567,7 +2567,7 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
           />
         }
       >
-        <Spinner className="size-3 shrink-0" />
+        <Spinner size="xs" className="shrink-0" />
         <span className="truncate">{scriptName}</span>
       </PopoverTrigger>
       <PopoverPopup

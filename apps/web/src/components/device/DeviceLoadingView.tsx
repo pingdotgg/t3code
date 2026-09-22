@@ -27,7 +27,7 @@ export function DeviceLoadingView(props: {
           ) : null}
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          {!props.error ? <Spinner className="size-3" /> : null}
+          {!props.error ? <Spinner size="xs" /> : null}
           <span>{props.message}</span>
         </div>
         {props.children}

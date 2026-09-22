@@ -173,7 +173,7 @@ export function DeviceToolsPanel(props: {
     >
       <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
         <span className="font-medium">Tools</span>
-        {pending ? <Spinner className="size-3.5" /> : null}
+        {pending ? <Spinner size="sm" /> : null}
         <Button
           size="icon-xs"
           variant="ghost-muted"
@@ -190,7 +190,7 @@ export function DeviceToolsPanel(props: {
         ) : null}
         {detail === null && !error ? (
           <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground">
-            <Spinner className="size-3.5" /> Reading device settings…
+            <Spinner size="sm" /> Reading device settings…
           </div>
         ) : null}
 
