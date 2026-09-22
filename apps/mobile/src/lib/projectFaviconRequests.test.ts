@@ -6,9 +6,9 @@ import {
   hasLoadedProjectFavicon,
   markProjectFaviconFailed,
   markProjectFaviconLoaded,
-} from "./projectFaviconCache";
+} from "./projectFaviconRequests";
 
-describe("project favicon cache", () => {
+describe("project favicon requests", () => {
   it("ignores callbacks from a superseded URL", () => {
     const cacheKey = "environment-1:/workspace:v1-favicon.svg";
     const expiredUrl = "https://environment.example/api/assets/expired/v1-favicon.svg";

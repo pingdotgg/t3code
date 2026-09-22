@@ -1,5 +1,5 @@
 import {
-  createProjectFaviconCache,
+  createProjectFaviconCache as createSharedProjectFaviconCache,
   createProjectFaviconImageLoader,
   PROJECT_FAVICON_MAX_DATA_URL_LENGTH,
   PROJECT_FAVICON_THUMBNAIL_SIZE,
@@ -79,7 +79,12 @@ export async function downscaleProjectFavicon(
 }
 
 /** Rows live in `client_cache` so Settings → Client storage counts and clears them. */
-export const projectFaviconCache = createProjectFaviconCache({
+/**
+ * The database-backed project favicon cache. Named apart from the shared
+ * `createProjectFaviconCache` factory it calls and from the in-flight request
+ * registry in `projectFaviconRequests`.
+ */
+export const projectFaviconDatabaseCache = createSharedProjectFaviconCache({
   storage: {
     list: () =>
       runDatabase((database) =>

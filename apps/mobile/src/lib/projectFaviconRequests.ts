@@ -1,3 +1,9 @@
+/**
+ * Tracks in-flight favicon image loads so several `ProjectFavicon` views for the
+ * same project share one network request, and remembers which keys have already
+ * loaded to suppress refetch churn. Request bookkeeping only — persistence lives
+ * in `projectFaviconDatabaseCache`.
+ */
 export interface ProjectFaviconRequest {
   readonly cacheKey: string;
   readonly faviconUrl: string;
