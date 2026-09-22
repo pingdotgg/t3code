@@ -362,7 +362,10 @@ export const acpRegistryManagedBinaryDirectories = (input: {
         Effect.orElseSucceed((): ReadonlyArray<AcpRegistryAgent> => []),
       );
     const cachedAgentByInstall = new Map(
-      cachedAgents.map((agent) => [`${agent.id}\0${agent.version}`, agent] as const),
+      // Install directories are named by the URI-encoded version.
+      cachedAgents.map(
+        (agent) => [`${agent.id}\0${encodeURIComponent(agent.version)}`, agent] as const,
+      ),
     );
     for (const agent of (yield* listDirectories(installsDirectory)).toSorted()) {
       const versions = (yield* listDirectories(input.path.join(installsDirectory, agent))).toSorted(

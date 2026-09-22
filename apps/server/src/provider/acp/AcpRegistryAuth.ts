@@ -43,11 +43,15 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
   const crypto = yield* Crypto.Crypto;
   const pty = yield* Effect.serviceOption(PtyAdapter);
   const coordinator = yield* Effect.serviceOption(AcpRegistryRuntimeCoordinator);
-  const failure = (operation: string, detail: string) =>
-    new ProviderSetupError({ instanceId: options.instanceId, operation, detail });
+  const failure = (operation: string, detail: string, cause?: unknown) =>
+    new ProviderSetupError({ instanceId: options.instanceId, operation, detail, cause });
   const resolve = catalog
     .resolve(options.settings, options.cwd, options.environment)
-    .pipe(Effect.mapError(() => failure("start", "Could not prepare the selected ACP agent.")));
+    .pipe(
+      Effect.mapError((cause) =>
+        failure("start", "Could not prepare the selected ACP agent.", cause),
+      ),
+    );
   const makeRuntime =
     options.makeRuntime ??
     ((spawn) =>
@@ -76,7 +80,11 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
           Effect.provide(context),
         );
-      }).pipe(Effect.mapError(() => failure("start", "Could not start the selected ACP agent."))));
+      }).pipe(
+        Effect.mapError((cause) =>
+          failure("start", "Could not start the selected ACP agent.", cause),
+        ),
+      ));
 
   let knownMethods:
     | { readonly version: string | null; readonly methods: ReadonlyArray<ProviderAuthMethod> }
@@ -86,7 +94,9 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
       const inspected = yield* catalog
         .inspect(options.settings, options.environment)
         .pipe(
-          Effect.mapError(() => failure("methods", "Could not inspect the selected ACP agent.")),
+          Effect.mapError((cause) =>
+            failure("methods", "Could not inspect the selected ACP agent.", cause),
+          ),
         );
       if (inspected.status !== "ready")
         return yield* failure("methods", "Prepare this ACP agent before signing in.");
@@ -99,8 +109,8 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
       const initialized = yield* runtime
         .initialize()
         .pipe(
-          Effect.mapError(() =>
-            failure("methods", "Could not discover this agent's sign-in methods."),
+          Effect.mapError((cause) =>
+            failure("methods", "Could not discover this agent's sign-in methods.", cause),
           ),
         );
       const advertised = normalizeAcpRegistryAuthMethods(initialized.authMethods)
@@ -164,7 +174,9 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         env: { ...options.environment, ...resolved.spawn.env, ...method.env },
       })
       .pipe(
-        Effect.mapError(() => failure("start", "Could not open the provider sign-in terminal.")),
+        Effect.mapError((cause) =>
+          failure("start", "Could not open the provider sign-in terminal.", cause),
+        ),
       );
     const detachData = process.onData((data) => {
       Queue.offerUnsafe(output, data.slice(-16_384));
@@ -255,8 +267,8 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
           const initialized = yield* runtime
             .initialize()
             .pipe(
-              Effect.mapError(() =>
-                failure("start", "Could not initialize the selected ACP agent."),
+              Effect.mapError((cause) =>
+                failure("start", "Could not initialize the selected ACP agent.", cause),
               ),
             );
           const method = initialized.authMethods?.find((method) => method.id === methodId);
@@ -272,10 +284,11 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
             yield* verifiedRuntime
               .start()
               .pipe(
-                Effect.mapError(() =>
+                Effect.mapError((cause) =>
                   failure(
                     "verify",
                     "The provider could not create a session after terminal sign-in.",
+                    cause,
                   ),
                 ),
               );
@@ -289,8 +302,8 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
               yield* runtime
                 .authenticate(methodId)
                 .pipe(
-                  Effect.mapError(() =>
-                    failure("start", "The ACP agent could not complete sign-in."),
+                  Effect.mapError((cause) =>
+                    failure("start", "The ACP agent could not complete sign-in.", cause),
                   ),
                 );
             }
@@ -300,8 +313,12 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
             yield* runtime
               .start()
               .pipe(
-                Effect.mapError(() =>
-                  failure("verify", "The provider could not create a session after sign-in."),
+                Effect.mapError((cause) =>
+                  failure(
+                    "verify",
+                    "The provider could not create a session after sign-in.",
+                    cause,
+                  ),
                 ),
               );
           }
@@ -317,10 +334,11 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
       const resolved = yield* resolve;
       const runtime = yield* makeRuntime(resolved.spawn);
       yield* runtime.logout.pipe(
-        Effect.mapError(() =>
+        Effect.mapError((cause) =>
           failure(
             "logout",
             "This ACP agent could not sign out. It may not advertise logout support.",
+            cause,
           ),
         ),
       );
