@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
   visible: "visible",
   live: true,
   completedAt: null as string | null,
+  backgroundLiveness: null as "working" | "monitoring" | null,
   archivedAt: null as string | null,
   input: false,
   approval: false,
@@ -38,6 +39,7 @@ vi.mock("@effect/atom-react", () => ({
           id: "thread-1",
           title: "Fix the login form",
           archivedAt: state.archivedAt,
+          backgroundLiveness: state.backgroundLiveness,
           hasPendingUserInput: state.input,
           hasPendingApprovals: state.approval,
           session: state.sessionError ? { status: "error" } : null,
@@ -104,6 +106,7 @@ beforeEach(() => {
     visible: "visible",
     live: true,
     completedAt: null,
+    backgroundLiveness: null,
     archivedAt: null,
     input: false,
     approval: false,
@@ -237,6 +240,22 @@ describe("thread notifications", () => {
     expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
     expect(state.add).toHaveBeenCalledTimes(1);
     expect(state.notification).not.toHaveBeenCalled();
+  });
+
+  it("waits for background subagents to settle before reporting completion", async () => {
+    await render();
+    state.backgroundLiveness = "working";
+    await complete();
+    expect(state.add).not.toHaveBeenCalled();
+    expect(state.sound).not.toHaveBeenCalled();
+    expect(state.notification).not.toHaveBeenCalled();
+
+    state.backgroundLiveness = null;
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(1);
+    expect(state.add).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: "Thread completed" }),
+    );
   });
 
   it("keeps system alerts when the app is in the background", async () => {

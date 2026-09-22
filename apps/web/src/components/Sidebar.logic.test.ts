@@ -334,6 +334,7 @@ describe("hasUnseenCompletion", () => {
         interactionMode: "default",
         latestTurn: makeLatestTurn(),
         lastVisitedAt: "2026-03-09T10:04:00.000Z",
+        backgroundLiveness: null,
         session: null,
       }),
     ).toBe(true);
@@ -348,7 +349,49 @@ describe("hasUnseenCompletion", () => {
         interactionMode: "default",
         latestTurn: makeLatestTurn(),
         lastVisitedAt: undefined,
+        backgroundLiveness: null,
         session: null,
+      }),
+    ).toBe(false);
+  });
+
+  it.each(["working", "monitoring"] as const)(
+    "does not mark a thread unread while background work is %s",
+    (backgroundLiveness) => {
+      expect(
+        hasUnseenCompletion({
+          hasActionableProposedPlan: false,
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          interactionMode: "default",
+          latestTurn: makeLatestTurn(),
+          lastVisitedAt: "2026-03-09T10:04:00.000Z",
+          backgroundLiveness,
+          session: null,
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it("does not mark an active provider session unread", () => {
+    expect(
+      hasUnseenCompletion({
+        hasActionableProposedPlan: false,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        interactionMode: "default",
+        latestTurn: makeLatestTurn(),
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+        backgroundLiveness: null,
+        session: {
+          threadId: "thread-1" as never,
+          status: "running",
+          providerName: "Codex",
+          runtimeMode: "full-access",
+          activeTurnId: "turn-1" as never,
+          lastError: null,
+          updatedAt: "2026-03-09T10:05:00.000Z",
+        },
       }),
     ).toBe(false);
   });

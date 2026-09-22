@@ -98,5 +98,15 @@ export function resolveThreadStatus(
     };
   }
 
+  if (thread.backgroundLiveness === "working") {
+    return {
+      kind: "working",
+      label: "Working",
+      pillClassName: "bg-adaptive-sky-500-a12-a16",
+      textClassName: "text-adaptive-sky-600-400",
+      pulse: true,
+    };
+  }
+
   return null;
 }

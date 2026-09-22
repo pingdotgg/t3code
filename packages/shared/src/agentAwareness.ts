@@ -37,6 +37,7 @@ export interface ProjectThreadAwarenessInput {
     | "modelSelection"
     | "session"
     | "latestTurn"
+    | "backgroundLiveness"
     | "updatedAt"
     | "hasPendingApprovals"
     | "hasPendingUserInput"
@@ -90,6 +91,9 @@ function resolveThreadAwarenessPhase(
     return "starting";
   }
   if (thread.session?.status === "running" || thread.latestTurn?.state === "running") {
+    return "running";
+  }
+  if (thread.backgroundLiveness != null) {
     return "running";
   }
   if (thread.latestTurn?.state === "completed") {

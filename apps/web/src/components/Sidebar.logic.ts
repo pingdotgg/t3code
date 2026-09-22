@@ -633,6 +633,13 @@ export function useThreadJumpHintVisibility(): {
 }
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
+  if (
+    thread.session?.status === "running" ||
+    thread.session?.status === "starting" ||
+    thread.backgroundLiveness != null
+  ) {
+    return false;
+  }
   if (!thread.latestTurn?.completedAt) return false;
   const completedAt = Date.parse(thread.latestTurn.completedAt);
   if (Number.isNaN(completedAt)) return false;

@@ -26,6 +26,7 @@ function thread(
   | "modelSelection"
   | "session"
   | "latestTurn"
+  | "backgroundLiveness"
   | "updatedAt"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
@@ -36,6 +37,7 @@ function thread(
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     session: null,
     latestTurn: null,
+    backgroundLiveness: null,
     updatedAt: NOW,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
@@ -100,6 +102,27 @@ describe("projectThreadAwareness", () => {
       modelTitle: "gpt-5.4",
       deepLink: "/threads/env-1/thread-1",
     });
+  });
+
+  it("keeps completed parent turns running while subagents are active", () => {
+    const state = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: thread({
+        backgroundLiveness: "working",
+        latestTurn: {
+          turnId: "turn-1" as TurnId,
+          state: "completed",
+          requestedAt: NOW,
+          startedAt: NOW,
+          completedAt: NOW,
+          assistantMessageId: null,
+        },
+      }),
+    });
+
+    expect(state?.phase).toBe("running");
+    expect(state?.headline).toBe("Agent is working");
   });
 
   it("projects completed turns as completed even when teardown settled them as interrupted", () => {
