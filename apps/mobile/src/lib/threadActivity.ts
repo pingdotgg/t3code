@@ -45,9 +45,15 @@ import type {
   ScheduledTaskId,
 } from "@t3tools/contracts";
 import { RunId, ThreadId } from "@t3tools/contracts";
+import {
+  classifyToolActivity,
+  collectToolFilePaths,
+  computerUseToolTitle,
+  formatReadToolLabel,
+  formatSearchToolLabel,
+} from "@t3tools/shared/toolActivity";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
-import { computerUseToolTitle } from "@t3tools/shared/toolActivity";
 import * as DateTime from "effect/DateTime";
 
 export type PendingApproval = ThreadPendingApproval;
@@ -79,7 +85,9 @@ export interface ThreadFeedActivity {
     | "command"
     | "edit"
     | "eye"
+    | "file-text"
     | "globe"
+    | "search"
     | "hammer"
     | "lock"
     | "message"
@@ -206,9 +214,28 @@ export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = fa
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation) return presentation.displayName;
   if (entry.command?.trim()) return compactWorkEntryText(commandDisplayText(entry.command));
+  const action = toolGroupAction(entry);
+  if (action === "code-search" || action === "search") {
+    const toolData =
+      entry.toolData !== null && typeof entry.toolData === "object" && !Array.isArray(entry.toolData)
+        ? (entry.toolData as Record<string, unknown>)
+        : undefined;
+    const searchLabel = formatSearchToolLabel(toolData);
+    if (searchLabel) return searchLabel;
+  }
+  if (action === "read") {
+    const [firstPath] = entry.changedFiles ?? collectToolFilePaths(entry.toolData);
+    if (firstPath) {
+      return formatReadToolLabel(
+        firstPath,
+        Math.max(0, (entry.changedFiles?.length ?? 1) - 1),
+      );
+    }
+    if (!expanded) return "Read file";
+  }
   const preview =
     entry.command ??
-    entry.detail ??
+    (action === "read" ? null : entry.detail) ??
     (entry.changedFiles?.length
       ? entry.changedFiles.length === 1
         ? entry.changedFiles[0]!
@@ -414,6 +441,16 @@ function itemWorkLogTone(item: OrchestrationV2TurnItem): WorkLogPresentationEntr
 
 function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
   if (item.type === "notification") return "zap";
+  if (item.type === "dynamic_tool") {
+    const classified = classifyToolActivity({
+      itemType: "dynamic_tool_call",
+      data: { toolName: item.toolName ?? undefined, input: item.input },
+    });
+    if (classified === "read") {
+      return item.viewedImagePath !== undefined ? "eye" : "file-text";
+    }
+    if (classified === "search") return "search";
+  }
   switch (item.type) {
     case "reasoning":
       return "agent";
@@ -422,7 +459,7 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
     case "file_change":
       return "edit";
     case "file_search":
-      return "eye";
+      return "search";
     case "web_search":
       return "globe";
     case "approval_request":
@@ -486,7 +523,7 @@ function itemSummary(
         ? `Changed ${item.changes.length} files`
         : `Changed ${item.fileName}`;
     case "file_search":
-      return "Searched files";
+      return formatSearchToolLabel(item) ?? "Searched files";
     case "web_search":
       return "Searched the web";
     case "approval_request":
@@ -507,8 +544,20 @@ function itemSummary(
       return "Thread forked";
     case "thread_created":
       return "Thread created";
-    case "dynamic_tool":
+    case "dynamic_tool": {
+      const classified = classifyToolActivity({
+        itemType: "dynamic_tool_call",
+        data: { toolName: item.toolName ?? undefined, input: item.input },
+      });
+      if (classified === "read") {
+        const [path] = collectToolFilePaths({ input: item.input });
+        return formatReadToolLabel(path ?? "");
+      }
+      if (classified === "search") {
+        return formatSearchToolLabel({ input: item.input }) ?? item.toolName ?? "Tool call";
+      }
       return toolPresentation?.displayName ?? item.toolName ?? "Tool call";
+    }
     case "proposed_plan":
       return "Proposed plan";
     case "todo_list":

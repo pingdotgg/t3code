@@ -50,6 +50,11 @@ import {
 import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { computerUseToolTitle } from "@t3tools/shared/toolActivity";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import {
+  collectToolFilePaths,
+  formatReadToolLabel,
+  formatSearchToolLabel,
+} from "@t3tools/shared/toolActivity";
 
 function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "message") {
@@ -74,29 +79,71 @@ function singleToolCallLabel(entry: WorkLogEntry): string {
   if (entry.itemType === "reasoning") return entry.detail?.trim().replace(/\s+/g, " ") || "Thought";
   const toolPresentation = resolveWorkEntryToolPresentation(entry, "completed");
   if (toolPresentation) return toolPresentation.displayName;
-  const command = entry.command?.trim();
-  if (command) return commandDisplayText(command);
   const item = entry.structuredPayload;
   const title =
     item?.type === "dynamic_tool" ? computerUseToolTitle(item.toolName, item.input) : null;
-  const heading = normalizeCompactToolLabel(title || entry.toolTitle || entry.label);
-  return `${heading.charAt(0).toUpperCase()}${heading.slice(1)}`;
+  if (title) return title;
+  return workEntryDisplayLabel(entry, undefined);
+}
+
+function workEntryToolDataRecord(entry: WorkLogEntry): Record<string, unknown> | undefined {
+  return entry.toolData !== null && typeof entry.toolData === "object" && !Array.isArray(entry.toolData)
+    ? (entry.toolData as Record<string, unknown>)
+    : undefined;
+}
+
+function workEntryReadPaths(entry: WorkLogEntry, workspaceRoot: string | undefined): string[] {
+  const fromChanged = (entry.changedFiles ?? []).map((filePath) =>
+    formatWorkspaceRelativePath(filePath, workspaceRoot),
+  );
+  if (fromChanged.length > 0) return fromChanged;
+  const structured = entry.structuredPayload;
+  if (structured?.type === "dynamic_tool") {
+    return collectToolFilePaths({ input: structured.input }).map((filePath) =>
+      formatWorkspaceRelativePath(filePath, workspaceRoot),
+    );
+  }
+  return collectToolFilePaths(workEntryToolDataRecord(entry)).map((filePath) =>
+    formatWorkspaceRelativePath(filePath, workspaceRoot),
+  );
 }
 
 export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string | undefined) {
   if (entry.itemType === "system_notice") return entry.label;
+  if (entry.itemType === "reasoning" || entry.tone === "thinking") {
+    const thought = entry.detail?.trim().replace(/\s+/g, " ");
+    return thought || entry.label;
+  }
   const toolPresentation = resolveWorkEntryToolPresentation(entry);
   if (toolPresentation) return toolPresentation.displayName;
   if (entry.command) return commandDisplayText(entry.command);
+  const action = toolGroupAction(entry);
+  if (action === "code-search" || action === "search") {
+    const searchLabel = formatSearchToolLabel(workEntryToolDataRecord(entry));
+    if (searchLabel) return searchLabel;
+  }
+  const readPaths = action === "read" ? workEntryReadPaths(entry, workspaceRoot) : [];
+  if (action === "read" && readPaths[0]) {
+    return formatReadToolLabel(readPaths[0], readPaths.length - 1);
+  }
   // Retrying providers keep their progress label; other diagnostics expose
-  // the retained message instead of a generic error heading.
+  // the retained message instead of a generic error heading. File bodies
+  // are never a compact read label.
   const providerRetry =
     entry.projectedItem?.item.type === "error" && entry.projectedItem.item.retry !== undefined;
   const item = entry.structuredPayload;
   const title =
     item?.type === "dynamic_tool" ? computerUseToolTitle(item.toolName, item.input) : null;
   if (title) return title;
-  if (entry.detail && !providerRetry) return entry.detail;
+  const compactDetail = entry.detail?.trim();
+  if (
+    compactDetail &&
+    !providerRetry &&
+    action !== "read" &&
+    !/[\r\n]/.test(compactDetail)
+  ) {
+    return compactDetail;
+  }
   const [firstPath] = entry.changedFiles ?? [];
   if (firstPath) {
     const path = formatWorkspaceRelativePath(firstPath, workspaceRoot);
@@ -104,8 +151,33 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
       ? path
       : `${path} +${entry.changedFiles!.length - 1} more`;
   }
+  if (action === "read" && entry.itemType !== "reasoning" && !entry.viewedImagePath) {
+    return "Read file";
+  }
   const heading = normalizeCompactToolLabel(entry.toolTitle || entry.label);
   return `${heading.charAt(0).toUpperCase()}${heading.slice(1)}`;
+}
+
+/** Inspectable read-file output is the path when we have one, otherwise nothing. */
+export function workEntryReadOutput(
+  entry: Pick<WorkLogEntry, "changedFiles" | "detail" | "viewedImagePath" | "structuredPayload" | "toolData">,
+  workspaceRoot: string | undefined,
+): string | null {
+  const paths = [
+    ...new Set(
+      workEntryReadPaths(entry as WorkLogEntry, workspaceRoot)
+        .map((path) => path.trim())
+        .filter((path) => path.length > 0),
+    ),
+  ];
+  if (paths.length > 0) {
+    return paths.join("\n");
+  }
+  if (entry.viewedImagePath) {
+    return null;
+  }
+  const detail = entry.detail?.trim();
+  return detail && detail.length > 0 && !/[\r\n]/.test(detail) ? detail : null;
 }
 
 export function liveWorkEntryLabel(

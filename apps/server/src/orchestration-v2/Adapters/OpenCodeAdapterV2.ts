@@ -9,6 +9,7 @@ import type {
   Todo as OpenCodeTodo,
   ToolPart,
 } from "@opencode-ai/sdk/v2";
+import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -648,8 +649,10 @@ export function openCodeToolProjectionKind(
   if (normalized.includes("web") || normalized === "codesearch" || normalized === "code_search") {
     return "web_search";
   }
+  if (normalized === "read") {
+    return "dynamic_tool";
+  }
   if (
-    normalized === "read" ||
     normalized.includes("glob") ||
     normalized.includes("grep") ||
     normalized.includes("search") ||
@@ -1707,12 +1710,12 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                   }),
             };
           } else if (projectionKind === "file_search") {
+            const pattern = recordString(input, "pattern", "query", "path", "filePath");
             turnItem = {
               ...base,
+              title: formatSearchToolLabel({ input, ...(pattern === undefined ? {} : { pattern }) }) ?? base.title,
               type: "file_search",
-              ...(recordString(input, "pattern", "query", "path", "filePath") === undefined
-                ? {}
-                : { pattern: recordString(input, "pattern", "query", "path", "filePath")! }),
+              ...(pattern === undefined ? {} : { pattern }),
             };
           } else if (projectionKind === "web_search") {
             const pattern = recordString(input, "query", "url", "pattern");
@@ -1722,8 +1725,13 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               ...(pattern === undefined ? {} : { patterns: [pattern] }),
             };
           } else {
+            const readPath = recordString(input, "filePath", "path", "file");
             turnItem = {
               ...base,
+              title:
+                part.tool.toLowerCase() === "read" && readPath !== undefined
+                  ? formatReadToolLabel(readPath)
+                  : base.title,
               type: "dynamic_tool",
               toolName: part.tool,
               input,

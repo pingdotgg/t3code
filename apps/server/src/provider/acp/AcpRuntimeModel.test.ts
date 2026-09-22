@@ -874,6 +874,26 @@ describe("AcpRuntimeModel", () => {
       ).toEqual({ emit: true, skippedSinceEmit: 0 });
     });
 
+    it("coalesces streaming updates whose rawInput is equal by content", () => {
+      const previous: AcpToolCallState = {
+        toolCallId: "tool-1",
+        title: "Read File",
+        status: "inProgress",
+        data: { rawInput: { path: "src/a.ts", args: ["--foo"] } },
+      };
+      expect(
+        decideToolCallUpdateEmission({
+          previous,
+          next: {
+            ...previous,
+            data: { rawInput: { path: "src/a.ts", args: ["--foo"] } },
+          },
+          lastEmittedDetailLength: 0,
+          skippedSinceEmit: 0,
+        }),
+      ).toEqual({ emit: false, skippedSinceEmit: 0 });
+    });
+
     it("emits immediately when the title changes, even with no growth", () => {
       const decision = decideToolCallUpdateEmission({
         previous: { toolCallId: "tool-1", title: "Reading file", detail: "x", data: {} },

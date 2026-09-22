@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import type * as EffectAcpSchema from "effect-acp/compat";
-import { deriveToolActivityPresentation } from "@t3tools/shared/toolActivity";
+import { deriveToolActivityPresentation, mergeToolActivityData } from "@t3tools/shared/toolActivity";
 import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 import type {
   OrchestrationV2ProviderThreadNativeMetadata,
@@ -555,7 +555,11 @@ function extractCommandFromTitle(title: string | undefined): string | undefined 
   return match?.[1]?.trim() || undefined;
 }
 
-function extractToolCallCommand(rawInput: unknown, title: string | undefined): string | undefined {
+function extractToolCallCommand(
+  rawInput: unknown,
+  title: string | undefined,
+  kind: string | undefined,
+): string | undefined {
   if (isRecord(rawInput)) {
     const directCommand = normalizeCommandValue(rawInput.command);
     if (directCommand) {
@@ -570,7 +574,71 @@ function extractToolCallCommand(rawInput: unknown, title: string | undefined): s
       return executable;
     }
   }
+  // Titles like `Read \`src/a.ts\`` are not commands. Only execute tools
+  // fall back to a backtick or bare title.
+  if (kind !== "execute") {
+    return undefined;
+  }
   return extractCommandFromTitle(title);
+}
+
+function filePathFromToolValue(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function locationsFromToolCallInput(input: {
+  readonly locations?: ReadonlyArray<EffectAcpSchema.ToolCallLocation> | null | undefined;
+  readonly content?: ReadonlyArray<EffectAcpSchema.ToolCallContent> | null | undefined;
+  readonly rawInput?: unknown;
+  readonly rawOutput?: unknown;
+}): ReadonlyArray<EffectAcpSchema.ToolCallLocation> | undefined {
+  const locations: EffectAcpSchema.ToolCallLocation[] = [];
+  const seen = new Set<string>();
+  const pushLocation = (location: EffectAcpSchema.ToolCallLocation) => {
+    const path = filePathFromToolValue(location.path);
+    if (!path || seen.has(path)) {
+      return;
+    }
+    seen.add(path);
+    locations.push({ ...location, path });
+  };
+  const pushPath = (value: unknown) => {
+    const path = filePathFromToolValue(value);
+    if (!path || seen.has(path)) {
+      return;
+    }
+    seen.add(path);
+    locations.push({ path });
+  };
+
+  if (input.locations) {
+    for (const location of input.locations) {
+      pushLocation(location);
+    }
+  }
+  if (input.content) {
+    for (const entry of input.content) {
+      if (entry.type === "diff") {
+        pushPath(entry.path);
+      }
+    }
+  }
+  if (isRecord(input.rawInput)) {
+    pushPath(input.rawInput.path);
+    pushPath(input.rawInput.filePath);
+    pushPath(input.rawInput.file_path);
+  }
+  if (isRecord(input.rawOutput)) {
+    pushPath(input.rawOutput.path);
+    pushPath(input.rawOutput.filePath);
+    pushPath(input.rawOutput.file_path);
+  }
+
+  return locations.length > 0 ? locations : undefined;
 }
 
 // Some ACP agents (observed with Grok's CLI) resend the ENTIRE accumulated tool-call
@@ -745,6 +813,8 @@ function normalizeToolKind(kind: unknown): string | undefined {
  */
 export function canonicalItemTypeFromAcpToolKind(kind: string | undefined): ToolLifecycleItemType {
   switch (kind) {
+    case "read":
+      return "dynamic_tool_call";
     case "execute":
       return "command_execution";
     case "edit":
@@ -780,7 +850,8 @@ function makeToolCallState(
     return undefined;
   }
   const title = input.title?.trim() || undefined;
-  const command = extractToolCallCommand(input.rawInput, title);
+  const kind = normalizeToolKind(input.kind);
+  const command = extractToolCallCommand(input.rawInput, title, kind);
   const extractedContent = extractTextContentFromToolCallContent(input.content);
   const textContent = extractedContent.text;
   const normalizedTitle =
@@ -788,7 +859,6 @@ function makeToolCallState(
       ? title
       : undefined;
   const data: Record<string, unknown> = { toolCallId };
-  const kind = normalizeToolKind(input.kind);
   if (kind) {
     data.kind = kind;
   }
@@ -815,8 +885,9 @@ function makeToolCallState(
   if (input.content != null) {
     data.content = sanitizeAcpToolCallContent(extractedContent.content ?? input.content);
   }
-  if (input.locations !== undefined) {
-    data.locations = input.locations;
+  const locations = locationsFromToolCallInput(input);
+  if (locations !== undefined) {
+    data.locations = locations;
   }
   if (isRecord(input._meta)) {
     data.meta = input._meta;
@@ -881,6 +952,7 @@ export function mergeToolCallState(
   const status = next.status ?? previous?.status;
   const command = next.command ?? previous?.command;
   const detail = next.detail ?? previous?.detail;
+  const data = mergeToolActivityData(previous?.data, next.data) ?? next.data;
   return {
     toolCallId: next.toolCallId,
     ...(kind ? { kind } : {}),
@@ -888,10 +960,7 @@ export function mergeToolCallState(
     ...(status ? { status } : {}),
     ...(command ? { command } : {}),
     ...(detail ? { detail } : {}),
-    data: {
-      ...previous?.data,
-      ...next.data,
-    },
+    data,
   };
 }
 
@@ -919,6 +988,63 @@ export interface AcpToolCallEmitDecision {
 function toolCallOutputUnchanged(previous: AcpToolCallState, next: AcpToolCallState): boolean {
   return (
     previous.data.content === next.data.content && previous.data.rawOutput === next.data.rawOutput
+  );
+}
+
+function toolCallLocationsEqual(previous: unknown, next: unknown): boolean {
+  if (previous === next) {
+    return true;
+  }
+  if (!Array.isArray(previous) || !Array.isArray(next) || previous.length !== next.length) {
+    return false;
+  }
+  for (let index = 0; index < previous.length; index += 1) {
+    const left = previous[index];
+    const right = next[index];
+    if (left === right) {
+      continue;
+    }
+    if (!isRecord(left) || !isRecord(right)) {
+      return false;
+    }
+    if (left.path !== right.path || left.line !== right.line) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function toolCallRawInputEqual(previous: unknown, next: unknown): boolean {
+  if (previous === next) {
+    return true;
+  }
+  if (Array.isArray(previous) || Array.isArray(next)) {
+    return (
+      Array.isArray(previous) &&
+      Array.isArray(next) &&
+      previous.length === next.length &&
+      previous.every((value, index) => toolCallRawInputEqual(value, next[index]))
+    );
+  }
+  if (!isRecord(previous) || !isRecord(next)) {
+    return Object.is(previous, next);
+  }
+  const previousKeys = Object.keys(previous);
+  const nextKeys = Object.keys(next);
+  return (
+    previousKeys.length === nextKeys.length &&
+    previousKeys.every(
+      (key) =>
+        Object.prototype.hasOwnProperty.call(next, key) &&
+        toolCallRawInputEqual(previous[key], next[key]),
+    )
+  );
+}
+
+function toolCallIdentityUnchanged(previous: AcpToolCallState, next: AcpToolCallState): boolean {
+  return (
+    toolCallRawInputEqual(previous.data.rawInput, next.data.rawInput) &&
+    toolCallLocationsEqual(previous.data.locations, next.data.locations)
   );
 }
 
@@ -960,6 +1086,9 @@ export function decideToolCallUpdateEmission(
     return { emit: true, skippedSinceEmit: 0 };
   }
   if (previous === undefined || previous.title !== next.title || previous.status !== next.status) {
+    return { emit: true, skippedSinceEmit: 0 };
+  }
+  if (!toolCallIdentityUnchanged(previous, next)) {
     return { emit: true, skippedSinceEmit: 0 };
   }
   if (previous.detail === next.detail && toolCallOutputUnchanged(previous, next)) {

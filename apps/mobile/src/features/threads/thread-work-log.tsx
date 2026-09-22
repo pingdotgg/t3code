@@ -368,8 +368,12 @@ function workRowSymbolName(icon: ThreadFeedActivity["icon"]): AppSymbolName {
       return { ios: "square.and.pencil", android: "edit" };
     case "eye":
       return { ios: "eye", android: "visibility" };
+    case "file-text":
+      return "doc.text";
     case "globe":
       return { ios: "globe", android: "public" };
+    case "search":
+      return "magnifyingglass";
     case "hammer":
       return { ios: "hammer", android: "construction" };
     case "lock":
@@ -1350,7 +1354,7 @@ function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): AppSymbolName {
     case "list-prs":
       return "arrow.triangle.pull";
     case "read":
-      return { ios: "eye", android: "visibility" };
+      return "doc.text";
     case "edit":
       return { ios: "square.and.pencil", android: "edit" };
     case "thread-create":

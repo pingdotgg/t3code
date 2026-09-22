@@ -750,6 +750,41 @@ describe("toolGroupAction", () => {
       }),
     ).toBe("read");
   });
+
+  it("groups Claude Read and Grep from toolName, not file contents", () => {
+    expect(
+      toolGroupAction({
+        id: "read",
+        createdAt: "2026-09-01T00:00:00Z",
+        label: "Read",
+        tone: "tool",
+        itemType: "dynamic_tool",
+        toolTitle: "Read",
+        toolData: { input: { file_path: "src/env.ts" } },
+        structuredPayload: {
+          type: "dynamic_tool",
+          toolName: "Read",
+          input: { file_path: "src/env.ts" },
+        } as WorkLogPresentationEntry["structuredPayload"],
+      }),
+    ).toBe("read");
+    expect(
+      toolGroupAction({
+        id: "grep",
+        createdAt: "2026-09-01T00:00:00Z",
+        label: "Grep",
+        tone: "tool",
+        itemType: "dynamic_tool",
+        toolTitle: "Grep",
+        toolData: { input: { pattern: "TODO", path: "apps/web" } },
+        structuredPayload: {
+          type: "dynamic_tool",
+          toolName: "Grep",
+          input: { pattern: "TODO", path: "apps/web" },
+        } as WorkLogPresentationEntry["structuredPayload"],
+      }),
+    ).toBe("code-search");
+  });
 });
 
 describe("resolveViewedImageAsset", () => {

@@ -2066,7 +2066,7 @@ describe("OpenCodeAdapterV2", () => {
   it("maps OpenCode tools to semantic turn-item families", () => {
     assert.equal(openCodeToolProjectionKind("bash"), "command_execution");
     assert.equal(openCodeToolProjectionKind("edit"), "file_change");
-    assert.equal(openCodeToolProjectionKind("read"), "file_search");
+    assert.equal(openCodeToolProjectionKind("read"), "dynamic_tool");
     assert.equal(openCodeToolProjectionKind("lsp"), "file_search");
     assert.equal(openCodeToolProjectionKind("websearch"), "web_search");
     assert.equal(openCodeToolProjectionKind("codesearch"), "web_search");

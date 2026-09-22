@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { deriveToolActivityPresentation } from "./toolActivity.ts";
+import {
+  classifyToolActivity,
+  deriveToolActivityPresentation,
+  formatReadToolLabel,
+  formatSearchToolLabel,
+  mergeToolActivityData,
+} from "./toolActivity.ts";
 
 describe("toolActivity", () => {
   it("normalizes command tools to a stable ran-command label", () => {
@@ -33,8 +39,7 @@ describe("toolActivity", () => {
         fallbackSummary: "Read File",
       }),
     ).toEqual({
-      summary: "Read file",
-      detail: "/tmp/app.ts",
+      summary: "Read /tmp/app.ts",
     });
   });
 
@@ -52,6 +57,38 @@ describe("toolActivity", () => {
       }),
     ).toEqual({
       summary: "Read file",
+    });
+  });
+
+  it("classifies from kind and toolName without sniffing titles", () => {
+    expect(classifyToolActivity({ data: { kind: "read" } })).toBe("read");
+    expect(classifyToolActivity({ data: { toolName: "Grep" } })).toBe("search");
+    expect(classifyToolActivity({ data: { toolName: "Read" } })).toBe("read");
+    expect(classifyToolActivity({ title: "Find", data: {} })).toBe("other");
+  });
+
+  it("formats read and search labels from structured input", () => {
+    expect(formatReadToolLabel("src/env.ts")).toBe("Read src/env.ts");
+    expect(formatReadToolLabel("src/env.ts", 2)).toBe("Read src/env.ts +2 more");
+    expect(formatReadToolLabel("")).toBe("Read file");
+    expect(
+      formatSearchToolLabel({
+        input: { pattern: "TODO", path: "apps/web" },
+      }),
+    ).toBe("Searched TODO in web");
+    expect(
+      formatSearchToolLabel({
+        input: { glob: "*.ts", path: "/tmp/t3chat-new" },
+      }),
+    ).toBe("Searched files *.ts in t3chat-new");
+  });
+
+  it("keeps the first non-empty rawInput when a later update is empty", () => {
+    expect(
+      mergeToolActivityData({ rawInput: { path: "src/a.ts" } }, { rawInput: {}, kind: "read" }),
+    ).toEqual({
+      rawInput: { path: "src/a.ts" },
+      kind: "read",
     });
   });
 });

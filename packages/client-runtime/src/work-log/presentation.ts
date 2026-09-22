@@ -18,6 +18,7 @@ import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { formatTokens } from "@t3tools/shared/usageFormat";
+import { classifyToolActivity } from "@t3tools/shared/toolActivity";
 import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
 
 import {
@@ -423,17 +424,43 @@ export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
   if (presentation?.action !== undefined) return presentation.action;
   if (presentation?.icon === "browser") return "browser";
   if (presentation?.icon === "device") return "device";
-  if (entry.requestKind === "file-read" || entry.viewedImagePath !== undefined) return "read";
+  const data = asRecord(entry.toolData) ?? {};
+  const toolName = workEntryToolName(entry);
+  const classified = classifyToolActivity({
+    itemType:
+      entry.itemType === "command_execution" ||
+      entry.itemType === "file_change" ||
+      entry.itemType === "web_search"
+        ? entry.itemType
+        : entry.itemType === "dynamic_tool"
+          ? "dynamic_tool_call"
+          : undefined,
+    requestKind: entry.requestKind,
+    title: entry.toolTitle ?? entry.label,
+    data: {
+      ...data,
+      ...(toolName ? { toolName } : {}),
+    },
+  });
   if (
-    entry.itemType === "dynamic_tool" &&
-    /^read(?:\s+file)?$/i.test(normalizeCompactToolLabel(entry.toolTitle ?? entry.label))
+    classified === "read" ||
+    entry.requestKind === "file-read" ||
+    entry.viewedImagePath !== undefined
   ) {
     return "read";
   }
-  if (entry.itemType === "file_change" || (entry.changedFiles?.length ?? 0) > 0) return "edit";
-  if (entry.itemType === "command_execution" || entry.command) return "command";
+  if (classified === "file_change" || entry.itemType === "file_change") return "edit";
+  if (classified === "command" || entry.itemType === "command_execution" || entry.command) {
+    return "command";
+  }
+  if (classified === "search") {
+    return entry.itemType === "web_search" && !workLogEntryIsLocalCodeSearch(entry)
+      ? "search"
+      : "code-search";
+  }
   if (workLogEntryIsLocalCodeSearch(entry)) return "code-search";
   if (entry.itemType === "web_search") return "search";
+  if ((entry.changedFiles?.length ?? 0) > 0) return "edit";
   return workLogEntryIsToolLike(entry) ? "other" : "update";
 }
 
