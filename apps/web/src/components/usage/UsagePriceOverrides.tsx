@@ -252,7 +252,7 @@ export function UsagePriceOverrides({
             Prices apply to all past and future usage on the environments you select.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="grid gap-4">
+        <DialogPanel>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
               <Label id="usage-prices-apply-label" className="shrink-0">

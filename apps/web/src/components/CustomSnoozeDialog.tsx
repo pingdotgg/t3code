@@ -94,7 +94,7 @@ function CustomSnoozeDialog() {
             <DialogTitle>Custom snooze</DialogTitle>
             <DialogDescription>Choose when snoozed threads return to your inbox.</DialogDescription>
           </DialogHeader>
-          <DialogPanel className="flex flex-col gap-4 text-base sm:text-sm">
+          <DialogPanel className="text-base sm:text-sm">
             <Tabs.Root
               value={mode}
               onValueChange={(value) => {

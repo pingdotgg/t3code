@@ -490,9 +490,11 @@ function ImportingStep() {
         <DialogTitle>Importing cookies</DialogTitle>
         <DialogDescription>This may take a moment.</DialogDescription>
       </DialogHeader>
-      <DialogPanel className="flex items-center gap-3 py-6">
-        <Spinner size="md" tone="muted" />
-        <span className="text-sm text-muted-foreground">Importing…</span>
+      <DialogPanel>
+        <div className="flex items-center gap-3 py-2">
+          <Spinner size="md" tone="muted" />
+          <span className="text-sm text-muted-foreground">Importing…</span>
+        </div>
       </DialogPanel>
     </>
   );
@@ -515,11 +517,13 @@ function CheckingStep({
             : "Checking whether the browser has closed."}
         </DialogDescription>
       </DialogHeader>
-      <DialogPanel className="flex items-center gap-3 py-6">
-        <Spinner size="md" tone="muted" />
-        <span className="text-sm text-muted-foreground">
-          {check === "fullDiskAccess" ? "Checking access…" : "Checking…"}
-        </span>
+      <DialogPanel>
+        <div className="flex items-center gap-3 py-2">
+          <Spinner size="md" tone="muted" />
+          <span className="text-sm text-muted-foreground">
+            {check === "fullDiskAccess" ? "Checking access…" : "Checking…"}
+          </span>
+        </div>
       </DialogPanel>
     </>
   );
