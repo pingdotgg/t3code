@@ -570,8 +570,8 @@ describe("ClientSettings theme background", () => {
 });
 
 describe("ClientSettings theme background transparency", () => {
-  it("defaults to 20 and accepts the full range", () => {
-    expect(decodeClientSettings({}).themeBackgroundTransparency).toBe(20);
+  it("defaults to 30 and accepts the full range", () => {
+    expect(decodeClientSettings({}).themeBackgroundTransparency).toBe(30);
     expect(
       decodeClientSettingsPatch({ themeBackgroundTransparency: 65 }).themeBackgroundTransparency,
     ).toBe(65);

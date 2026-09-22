@@ -2233,7 +2233,7 @@ code {
    their own fills. These rules sit unlayered so they outrank the theme
    blocks in the components layer while active. */
 html[data-app-backdrop="on"][data-app-backdrop="on"] {
-  --backdrop-surface-opacity: calc(100% - var(--backdrop-transparency, 20%));
+  --backdrop-surface-opacity: calc(100% - var(--backdrop-transparency, 30%));
   --backdrop-dim: 20%;
   --background: color-mix(
     in srgb,
