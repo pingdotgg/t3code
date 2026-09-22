@@ -224,6 +224,14 @@ describe("VS Code theme import", () => {
     expect(asHex(github.colors.canvas)).toBe("#fdfdfd");
     // The unpaired dimmed variant stays a single dark theme.
     expect(getThemeColorsForMode(themes[2]!, "light")).toBeNull();
+
+    const css = "body { font-size: 15px; }";
+    const light = { ...make("github-light", "light"), css };
+    const dark = make("github-dark", "dark");
+    expect(pairVsCodeThemes([light, dark])[0]?.css).toBe(css);
+    expect(pairVsCodeThemes([light, { ...dark, css }])[0]?.css).toBe(css);
+    const conflictingDark = { ...dark, css: "body { font-size: 16px; }" };
+    expect(pairVsCodeThemes([light, conflictingDark])).toEqual([light, conflictingDark]);
   });
 
   it("does not guess when a family is ambiguous", () => {
@@ -270,16 +278,21 @@ describe("VS Code theme import", () => {
       });
     const themes = resolveThemeLabelCollisions([
       { theme: dracula("#282a36"), sourceName: "dracula.json" },
-      { theme: dracula("#22232e"), sourceName: "dracula-soft.json" },
+      {
+        theme: { ...dracula("#22232e"), css: "body { font-size: 15px; }" },
+        sourceName: "dracula-soft.json",
+      },
     ]);
     expect(themes.map((theme) => theme.label)).toEqual(["Dracula", "Dracula Soft"]);
     expect(themes.map((theme) => theme.id)).toEqual(["dracula", "dracula-soft"]);
+    expect(themes[1]?.css).toBe("body { font-size: 15px; }");
     // Without file names the second falls back to numbering.
     const numbered = resolveThemeLabelCollisions([
       { theme: dracula("#282a36") },
-      { theme: dracula("#22232e") },
+      { theme: { ...dracula("#22232e"), css: "body { font-size: 15px; }" } },
     ]);
     expect(numbered.map((theme) => theme.label)).toEqual(["Dracula", "Dracula 2"]);
+    expect(numbered[1]?.css).toBe("body { font-size: 15px; }");
   });
 
   it("falls back to the name when the displayName humanizes to nothing", () => {

@@ -369,17 +369,27 @@ export function pairVsCodeThemes(
     // whose stripped name collides with a built-in id ("Grove Light" +
     // "Grove Dark" -> the reserved "grove") stays two single themes rather
     // than failing the whole batch.
-    if (group.light.length === 1 && group.dark.length === 1) {
+    const light = group.light[0];
+    const dark = group.dark[0];
+    if (
+      group.light.length === 1 &&
+      group.dark.length === 1 &&
+      light &&
+      dark &&
+      (!light.css || !dark.css || light.css === dark.css)
+    ) {
       try {
+        const css = light.css || dark.css;
         paired.push({
           order: group.order,
           theme: parseThemeFile({
             version: THEME_FILE_VERSION,
-            ...(options?.pairedId ? { id: options.pairedId(group.light[0]!, group.dark[0]!) } : {}),
+            ...(options?.pairedId ? { id: options.pairedId(light, dark) } : {}),
             name: key,
             appearance: "light",
-            colors: group.light[0]!.colors,
-            variants: { dark: group.dark[0]!.colors },
+            colors: light.colors,
+            variants: { dark: dark.colors },
+            ...(css !== undefined ? { css } : {}),
           }),
         });
         continue;
@@ -413,6 +423,7 @@ export function resolveThemeLabelCollisions(
         name: name.slice(0, 48),
         appearance: theme.appearance,
         colors: theme.colors,
+        ...(theme.css !== undefined ? { css: theme.css } : {}),
         ...(theme.variants ? { variants: theme.variants } : {}),
         ...(theme.managed ? { managed: true } : {}),
       });

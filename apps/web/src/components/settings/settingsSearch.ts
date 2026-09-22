@@ -184,10 +184,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "theme",
     title: "Themes",
     to: "/settings/appearance",
-    searchTerms: ["appearance colors palette custom import"],
+    searchTerms: ["appearance colors palette custom css stylesheet import"],
     // Theme cards live directly under the scheme tiles; the section is the
     // stable scroll destination for both.
     targetId: "appearance",
+  },
+  {
+    id: "timeline-background",
+    title: "Wallpaper",
+    to: "/settings/appearance",
+    searchTerms: [
+      "chat background timeline image url file clipboard paste opacity blur text shadow",
+    ],
   },
   {
     // Prefixed because the slider control already owns the `appearance-contrast` id.

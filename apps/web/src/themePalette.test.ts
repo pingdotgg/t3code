@@ -312,6 +312,7 @@ describe("theme files", () => {
   });
 
   it("serializes a theme back into the importable file shape", () => {
+    const css = ":root { --radius: 12px; }\n.dark [data-sidebar] { opacity: 0.9; }";
     const theme = {
       ...parseThemeFile({
         version: THEME_FILE_VERSION,
@@ -319,6 +320,7 @@ describe("theme files", () => {
         name: "Community Demo",
         appearance: "dark",
         colors: { canvas: "#111111" },
+        css,
       }),
       collection: { id: "open-vsx:demo.theme", label: "Demo Theme" },
     };
@@ -329,8 +331,22 @@ describe("theme files", () => {
       name: theme.label,
       appearance: "dark",
       collection: theme.collection,
+      css,
     });
     expect(parseThemeFile(JSON.parse(serialized)).collection).toEqual(theme.collection);
+    expect(parseThemeFile(JSON.parse(serialized)).css).toBe(css);
+  });
+
+  it.each([null, 42, {}, ["body {}"]])("rejects non-string theme CSS: %j", (css) => {
+    expect(() =>
+      parseThemeFile({
+        version: THEME_FILE_VERSION,
+        name: "Custom CSS",
+        appearance: "dark",
+        colors: {},
+        css,
+      }),
+    ).toThrow("Theme CSS must be a string.");
   });
 
   it("keeps sidebar artwork disabled for custom theme files", () => {
@@ -350,6 +366,7 @@ describe("theme files", () => {
     const listener = vi.fn();
     const unsubscribe = subscribeToThemePreview(listener);
     vi.stubGlobal("document", {
+      querySelector: () => null,
       documentElement: {
         classList: { toggle: vi.fn() },
         dataset: {},
@@ -558,6 +575,7 @@ describe("theme files", () => {
                   label: "GitHub Dark",
                   appearance: "dark",
                   colors: { canvas: "#0d1117" },
+                  css: "body { font-size: 15px; }",
                   collection: { id: "open-vsx:github.github-vscode-theme", label: "GitHub Theme" },
                 },
                 {
@@ -574,7 +592,10 @@ describe("theme files", () => {
 
     invalidateCustomThemes();
     expect(getCustomThemes()).toMatchObject([
-      { collection: { id: "open-vsx:github.github-vscode-theme", label: "GitHub Theme" } },
+      {
+        collection: { id: "open-vsx:github.github-vscode-theme", label: "GitHub Theme" },
+        css: "body { font-size: 15px; }",
+      },
       { id: "github-light" },
     ]);
     expect(getCustomThemes()[1]).not.toHaveProperty("collection");

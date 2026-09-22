@@ -520,6 +520,36 @@ describe("ClientSettings appearance contrast", () => {
   });
 });
 
+describe("ClientSettings timeline text shadow", () => {
+  it("defaults existing settings to the original shadow", () => {
+    expect(decodeClientSettings({})).toMatchObject({
+      timelineTextShadowOpacity: 65,
+      timelineTextShadowBlur: 2,
+    });
+  });
+
+  it.each([
+    { timelineTextShadowOpacity: 0, timelineTextShadowBlur: 0 },
+    { timelineTextShadowOpacity: 72, timelineTextShadowBlur: 4 },
+    { timelineTextShadowOpacity: 100, timelineTextShadowBlur: 8 },
+  ])("round-trips supported shadow settings: %j", (input) => {
+    expect(encodeClientSettings(decodeClientSettings(input))).toMatchObject(input);
+    expect(decodeClientSettingsPatch(input)).toEqual(input);
+  });
+
+  it.each([
+    { timelineTextShadowOpacity: -1 },
+    { timelineTextShadowOpacity: 101 },
+    { timelineTextShadowOpacity: 65.5 },
+    { timelineTextShadowBlur: -1 },
+    { timelineTextShadowBlur: 9 },
+    { timelineTextShadowBlur: 2.5 },
+  ])("rejects invalid shadow settings: %j", (input) => {
+    expect(() => decodeClientSettings(input)).toThrow();
+    expect(() => decodeClientSettingsPatch(input)).toThrow();
+  });
+});
+
 describe("ClientSettings panel animations", () => {
   it("defaults to instant changes", () => {
     expect(decodeClientSettings({}).panelAnimationDurationMs).toBe(0);

@@ -515,6 +515,8 @@ const environmentThemeFields = {
   canvas: Schema.optional(EnvironmentThemeColor),
   accent: Schema.optional(EnvironmentThemeColor),
   colors: Schema.optional(EnvironmentThemeColors),
+  /** Custom styles for web and desktop clients. */
+  css: Schema.optional(Schema.String),
   /** The other appearance's palette, as exported theme files carry it. */
   variants: Schema.optional(
     Schema.Struct({

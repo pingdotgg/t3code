@@ -113,6 +113,8 @@ export type ThemeDefinition = Readonly<{
   appearance: ThemeAppearance;
   colors: ThemeColors;
   variants?: ThemeVariants;
+  /** Custom browser styles shared by the theme's light and dark appearances. */
+  css?: string;
   /** Groups related imported variants into one library card. */
   collection?: Readonly<{ id: string; label: string }>;
   /** Allows reviewed built-ins to render product artwork over their sidebar. */

@@ -51,6 +51,7 @@ export type ThemeFile = Readonly<{
   appearance: ThemeAppearance;
   colors: ThemeColorOverrides;
   variants?: ThemeVariantOverrides;
+  css?: string;
   collection?: ThemeCollection;
   managed?: boolean;
 }>;
@@ -172,6 +173,7 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
   if (!isRecord(value)) return null;
   if (!isThemeId(value.id) || RESERVED_THEME_IDS.has(value.id)) return null;
   if (!isThemeLabel(value.label) || !isThemeAppearance(value.appearance)) return null;
+  if (value.css !== undefined && typeof value.css !== "string") return null;
   const colors = parseStoredThemeColors(value.colors, value.appearance);
   if (!colors) return null;
   const variants = parseStoredThemeVariants(value.variants, value.appearance);
@@ -183,6 +185,7 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
     label: value.label.trim(),
     appearance: value.appearance,
     colors,
+    ...(value.css !== undefined ? { css: value.css } : {}),
     ...(variants ? { variants } : {}),
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
@@ -1365,6 +1368,9 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
     throw new Error('Theme files need an appearance of "light" or "dark".');
   }
   if (!isRecord(rawColors)) throw new Error("Theme files need a colors object.");
+  if (value.css !== undefined && typeof value.css !== "string") {
+    throw new Error("Theme CSS must be a string.");
+  }
 
   const id = value.id === undefined ? themeIdFromName(name) : value.id;
   if (!isThemeId(id)) {
@@ -1404,6 +1410,7 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
     label: name.trim(),
     appearance,
     colors: { ...fallback, ...overrides },
+    ...(value.css !== undefined ? { css: value.css } : {}),
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
@@ -1418,6 +1425,7 @@ export function serializeThemeFile(theme: ThemeDefinition): string {
     name: canonicalTheme.label,
     appearance: canonicalTheme.appearance,
     colors: canonicalTheme.colors,
+    ...(canonicalTheme.css !== undefined ? { css: canonicalTheme.css } : {}),
     ...(canonicalTheme.variants ? { variants: canonicalTheme.variants } : {}),
     ...(canonicalTheme.collection ? { collection: canonicalTheme.collection } : {}),
     ...(canonicalTheme.managed ? { managed: true } : {}),
@@ -1492,15 +1500,36 @@ export function getThemeColorVariable(role: ThemeColorRole): string {
 /** Marks the document as wearing an unsaved draft rather than a stored theme. */
 export const THEME_PREVIEW_ID = "__preview";
 
+function applyThemeCss(css: string | undefined): void {
+  let customThemeStyle = document.querySelector<HTMLStyleElement>("style[data-theme-css]");
+  if (!css) {
+    customThemeStyle?.remove();
+    return;
+  }
+  if (!customThemeStyle) {
+    customThemeStyle = document.createElement("style");
+    customThemeStyle.dataset.themeCss = "";
+  }
+  if (customThemeStyle.textContent !== css) customThemeStyle.textContent = css;
+  // Boot styles precede the bundled stylesheets; keep custom rules last once mounted.
+  if (document.head.lastChild !== customThemeStyle) document.head.append(customThemeStyle);
+}
+
 /**
  * Paint a draft palette onto the live app without installing it, so the editor
  * can be judged against the real interface instead of a miniature. Callers
  * restore the stored theme (refreshTheme) when the draft goes away.
  */
-export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeAppearance): void {
+export function applyThemeColorPreview(
+  colors: ThemeColors,
+  appearance: ThemeAppearance,
+  css?: string,
+): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   if (!root?.style) return;
+
+  applyThemeCss(css);
 
   // Drafts become user-controlled themes when saved, so their preview keeps
   // the fixed stage artwork hidden even when it was seeded from a built-in.
@@ -1521,6 +1550,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
 
   setThemePreviewSidebarArtwork(null);
   const palette = getThemeDefinition(theme);
+  applyThemeCss(palette?.css);
 
   if (palette) {
     root.dataset.themeId = palette.id;

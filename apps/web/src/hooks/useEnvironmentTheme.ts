@@ -57,6 +57,7 @@ export function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefini
     label: theme.name,
     appearance: theme.appearance,
     colors: publishedThemeColors(theme, theme.appearance, theme.colors),
+    ...(theme.css !== undefined ? { css: theme.css } : {}),
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
     // Only the pure seeded form is guided-generator output. An exported file,
     // or seeds carrying explicit role overrides, must open Duplicate in the

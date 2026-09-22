@@ -34,6 +34,11 @@ On web and desktop, choose **Create theme** to adjust a palette, or import a T3 
 theme. The theme editor's color picker lets you select an area of the app to find the color to
 change. Export your theme as JSON to share it.
 
+Open **Custom CSS** in the theme editor to style the whole web or desktop app. Changes preview
+as you type; cancel restores your saved theme. CSS is saved with the theme and included in
+JSON exports as `css`. Use `.dark` selectors for dark mode overrides. Native mobile does not
+apply custom CSS. Wallpaper remains a separate setting under **Settings → Appearance**.
+
 ## Environment themes
 
 Environment themes and defaults come from the server serving your web app or the desktop app's

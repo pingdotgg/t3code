@@ -38,6 +38,7 @@ import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { getThemeRoleLabel, ThemeColorField } from "./ThemeColorPicker";
@@ -301,6 +302,7 @@ export function ThemeEditorPanel({
 }) {
   const isEditing = editingTheme !== null;
   const [name, setName] = useState("");
+  const [css, setCss] = useState("");
   const [activeAppearance, setActiveAppearance] = useState<ThemeAppearance>(initialAppearance);
   const [isAdvanced, setIsAdvanced] = useState(false);
   const [colorsByAppearance, setColorsByAppearance] = useState<ThemeEditorColorsByAppearance>(() =>
@@ -395,6 +397,7 @@ export function ThemeEditorPanel({
       }
 
       setName(editingTheme?.label ?? seedName ?? "");
+      setCss(sourceTheme?.css ?? "");
       setActiveAppearance(nextAppearance);
       // Themes saved by the guided editor carry the managed flag; anything
       // else (imports, hand-edited files, older saves) opens in advanced mode
@@ -466,13 +469,15 @@ export function ThemeEditorPanel({
     });
   }, [isEditing, mergeTargetId, takenAppearancesKey]);
 
+  const previewCss = css || mergeTarget?.css || "";
+
   // The whole app wears the draft while the editor is open, so a role change
   // is judged on the real interface rather than a miniature. The stored theme
   // comes back when the editor closes, including on cancel.
   useEffect(() => {
     if (!open || !isDraftSeeded) return;
-    applyThemeColorPreview(colorsByAppearance[activeAppearance], activeAppearance);
-  }, [activeAppearance, colorsByAppearance, isDraftSeeded, open]);
+    applyThemeColorPreview(colorsByAppearance[activeAppearance], activeAppearance, previewCss);
+  }, [activeAppearance, colorsByAppearance, isDraftSeeded, open, previewCss]);
 
   useEffect(() => {
     if (!open) return;
@@ -772,6 +777,10 @@ export function ThemeEditorPanel({
       setError("Name your theme first.");
       return;
     }
+    if (mergeTarget?.css && css && mergeTarget.css !== css) {
+      setError("These themes have different custom CSS. Use the same CSS or pick another name.");
+      return;
+    }
 
     try {
       // Only regenerate palettes the user actually touched in guided mode, so
@@ -806,6 +815,7 @@ export function ThemeEditorPanel({
           ...parseThemeFile({
             version: THEME_FILE_VERSION,
             id: mergeTarget.id,
+            css: previewCss,
             name: mergeTarget.label,
             appearance: mergeTarget.appearance,
             colors: mergeTarget.colors,
@@ -838,6 +848,7 @@ export function ThemeEditorPanel({
           ...parseThemeFile({
             version: THEME_FILE_VERSION,
             id: editingTheme.id,
+            css,
             name,
             appearance: baseAppearance,
             colors: colorsForSave[baseAppearance],
@@ -864,6 +875,7 @@ export function ThemeEditorPanel({
           ...parseThemeFile({
             version: THEME_FILE_VERSION,
             id: mergeTarget.id,
+            css: previewCss,
             name: mergeTarget.label,
             appearance: mergeTarget.appearance,
             colors: mergeTarget.colors,
@@ -881,6 +893,7 @@ export function ThemeEditorPanel({
             version: THEME_FILE_VERSION,
             name,
             appearance: activeAppearance,
+            css,
             colors: colorsForSave[activeAppearance],
             ...(isAdvanced ? {} : { managed: true }),
           }),
@@ -1253,6 +1266,19 @@ export function ThemeEditorPanel({
               {renderColorsHeader()}
               {renderColorFields()}
             </div>
+            <details className="space-y-2">
+              <summary className="cursor-pointer text-sm font-medium">Custom CSS</summary>
+              <p className="text-xs text-muted-foreground">
+                Applies to the whole app on web and desktop. Use .dark for dark mode overrides.
+              </p>
+              <Textarea
+                aria-label="Custom CSS"
+                className="font-mono text-xs"
+                spellCheck={false}
+                value={css}
+                onChange={(event) => setCss(event.target.value)}
+              />
+            </details>
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-border/70 px-3 py-2">
             <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>

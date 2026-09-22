@@ -36,6 +36,7 @@ type BootResult = {
   backgroundColor: string;
   bootVariables: Record<string, string>;
   metaContent: string | null;
+  customCss: string[];
 };
 
 function runBootScript(options: {
@@ -45,6 +46,7 @@ function runBootScript(options: {
 }): BootResult {
   const classes = new Set<string>();
   const bootVariables: Record<string, string> = {};
+  const customCss: string[] = [];
   const meta = {
     content: null as string | null,
     setAttribute(_name: string, value: string) {
@@ -71,6 +73,8 @@ function runBootScript(options: {
     },
   };
   const fakeDocument = {
+    createElement: () => ({ dataset: {}, textContent: "" }),
+    head: { append: (style: { textContent: string }) => customCss.push(style.textContent) },
     documentElement,
     querySelectorAll: (selector: string) => (selector === 'meta[name="theme-color"]' ? [meta] : []),
   };
@@ -98,6 +102,7 @@ function runBootScript(options: {
     backgroundColor: documentElement.style.backgroundColor,
     bootVariables,
     metaContent: meta.content,
+    customCss,
   };
 }
 
@@ -279,6 +284,33 @@ describe("index.html boot script", () => {
     expect(aurora.backgroundColor).toBe(DEFAULT_DARK_CHROME);
     expect(aurora.bootVariables["--boot-background"]).toBe(AURORA_DUAL.variants.dark.canvas);
     expect(aurora.metaContent).toBe(DEFAULT_DARK_CHROME);
+  });
+
+  it("restores selected custom CSS as text before the runtime mounts", () => {
+    const css = 'body::before { content: "</style><script>alert(1)</script>"; }';
+    const storage = {
+      [THEME_STORAGE_KEY]: "aurora",
+      [CUSTOM_THEMES_STORAGE_KEY]: JSON.stringify([{ ...AURORA_DUAL, css }]),
+    };
+    expect(runBootScript({ storage, prefersDark: true }).customCss).toEqual([css]);
+    expect(
+      runBootScript({
+        storage: { ...storage, [THEME_STORAGE_KEY]: "dark" },
+        prefersDark: true,
+      }).customCss,
+    ).toEqual([]);
+  });
+
+  it("rejects stored themes with non-string CSS before the runtime mounts", () => {
+    const boot = runBootScript({
+      storage: {
+        [THEME_STORAGE_KEY]: "aurora",
+        [CUSTOM_THEMES_STORAGE_KEY]: JSON.stringify([{ ...AURORA_DUAL, css: {} }]),
+      },
+      prefersDark: true,
+    });
+    expect(boot.customCss).toEqual([]);
+    expect(boot.themeId).toBeUndefined();
   });
 
   it("accepts exponent-form OKLCH before the runtime mounts", () => {

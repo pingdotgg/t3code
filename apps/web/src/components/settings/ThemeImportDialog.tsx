@@ -323,6 +323,7 @@ export function ThemeImportDialog({
         name: preferredName.slice(0, 48),
         appearance: theme.appearance,
         colors: theme.colors,
+        ...(theme.css !== undefined ? { css: theme.css } : {}),
         ...(theme.variants ? { variants: theme.variants } : {}),
         ...(theme.managed ? { managed: true } : {}),
       });
@@ -334,6 +335,7 @@ export function ThemeImportDialog({
         name: `${theme.label.slice(0, 48 - ` (${copy})`.length)} (${copy})`,
         appearance: theme.appearance,
         colors: theme.colors,
+        ...(theme.css !== undefined ? { css: theme.css } : {}),
         ...(theme.variants ? { variants: theme.variants } : {}),
         ...(theme.managed ? { managed: true } : {}),
       });

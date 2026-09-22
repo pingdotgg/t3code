@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   createComposerImageThumbnail,
   compressImageForStash,
+  compressImageForWallpaper,
   compressImageToByteLimit,
   dataUrlToFile,
   isHeicImageFile,
@@ -193,6 +194,85 @@ describe("dataUrlToFile", () => {
   });
 });
 
+describe("compressImageForWallpaper", () => {
+  it.each(["image/png", "image/jpeg", "image/gif", "image/webp"])(
+    "rejects excessive %s dimensions before reading the payload or decoding",
+    async (type) => {
+      const bytes = new Uint8Array(30);
+      const view = new DataView(bytes.buffer);
+      if (type === "image/png") {
+        bytes.set([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10]);
+        bytes.set(new TextEncoder().encode("IHDR"), 12);
+        view.setUint32(16, 8001);
+        view.setUint32(20, 8000);
+      } else if (type === "image/jpeg") {
+        bytes.set([0xff, 0xd8, 0xff, 0xc0, 0, 17, 8]);
+        view.setUint16(7, 8000);
+        view.setUint16(9, 8001);
+      } else if (type === "image/gif") {
+        bytes.set(new TextEncoder().encode("GIF89a"));
+        view.setUint16(6, 8001, true);
+        view.setUint16(8, 8000, true);
+      } else {
+        bytes.set(new TextEncoder().encode("RIFF"));
+        bytes.set(new TextEncoder().encode("WEBPVP8X"), 8);
+        view.setUint32(24, 8000, true);
+        bytes[27] = 7999 & 0xff;
+        bytes[28] = 7999 >> 8;
+      }
+      const file = new File([bytes], "large-image", { type });
+      const read = vi.spyOn(file, "arrayBuffer");
+      const bitmap = vi.fn();
+      vi.stubGlobal("createImageBitmap", bitmap);
+
+      expect(await compressImageForWallpaper(file)).toEqual({ ok: false, reason: "too-large" });
+      expect(read).not.toHaveBeenCalled();
+      expect(bitmap).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts the pixel boundary without decoding a small payload", async () => {
+    const bytes = new Uint8Array(24);
+    bytes.set([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10]);
+    bytes.set(new TextEncoder().encode("IHDR"), 12);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(16, 8000);
+    view.setUint32(20, 8000);
+    const bitmap = vi.fn();
+    vi.stubGlobal("createImageBitmap", bitmap);
+
+    const result = await compressImageForWallpaper(
+      new File([bytes], "photo.png", { type: "image/png" }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.image.recompressed).toBe(false);
+    expect(bitmap).not.toHaveBeenCalled();
+  });
+
+  it("refuses unknown dimensions after a bounded header read", async () => {
+    const file = makeFile(500_000);
+    const slice = vi.spyOn(file, "slice");
+    const read = vi.spyOn(file, "arrayBuffer");
+    const bitmap = vi.fn();
+    vi.stubGlobal("createImageBitmap", bitmap);
+
+    expect(await compressImageForWallpaper(file)).toEqual({ ok: false, reason: "unreadable" });
+    expect(slice).toHaveBeenCalledWith(0, 256 * 1024);
+    expect(read).not.toHaveBeenCalled();
+    expect(bitmap).not.toHaveBeenCalled();
+  });
+
+  it("rejects excessive source bytes before reading", async () => {
+    const file = makeFile(24);
+    Object.defineProperty(file, "size", { value: MAX_COMPRESSIBLE_SOURCE_BYTES + 1 });
+    const slice = vi.spyOn(file, "slice");
+
+    expect(await compressImageForWallpaper(file)).toEqual({ ok: false, reason: "too-large" });
+    expect(slice).not.toHaveBeenCalled();
+  });
+});
+
 describe("compressImageForStash", () => {
   it("stores a small image verbatim without re-encoding", async () => {
     const bitmapSpy = vi.fn();
@@ -212,7 +292,9 @@ describe("compressImageForStash", () => {
     // Comfortably under budget at the very first quality step.
     const { close, fillRect } = stubCanvasPipeline(() => 120_000);
 
-    const result = await compressImageForStash(makeFile(4_000_000));
+    const file = makeFile(4_000_000);
+    const read = vi.spyOn(file, "arrayBuffer");
+    const result = await compressImageForStash(file);
 
     expect(result.ok).toBe(true);
     expect(result.ok && result.image.recompressed).toBe(true);
@@ -223,6 +305,7 @@ describe("compressImageForStash", () => {
     // WebP keeps alpha, so no white matte should be painted.
     expect(fillRect).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
   });
 
   it("falls back to JPEG with a white matte when WebP encoding is unavailable", async () => {
