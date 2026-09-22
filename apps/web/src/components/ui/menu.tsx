@@ -35,13 +35,6 @@ function MenuPopup({
   anchor?: MenuPrimitive.Positioner.Props["anchor"];
   keepMounted?: boolean;
 }) {
-  const hasExplicitWidthClass =
-    typeof className === "string" &&
-    className.split(/\s+/).some((classToken) => {
-      const utility = classToken.split(":").at(-1) ?? classToken;
-      return /^(?:min-|max-)?w-/.test(utility);
-    });
-
   return (
     <MenuPrimitive.Portal keepMounted={keepMounted}>
       <MenuPrimitive.Positioner
@@ -60,7 +53,8 @@ function MenuPopup({
             // the Review panel header). Drag hit-testing ignores z-index, so
             // the topmost row would stay unhoverable without this opt-out.
             "[-webkit-app-region:no-drag]",
-            !hasExplicitWidthClass && "min-w-32",
+            // Menus size to their content from one minimum, never past the viewport.
+            "min-w-[min(10rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)]",
             className,
           )}
           data-slot="menu-popup"

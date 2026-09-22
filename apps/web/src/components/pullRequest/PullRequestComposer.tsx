@@ -110,7 +110,7 @@ export function PullRequestComposer({
         side="top"
         align="end"
         sideOffset={8}
-        className="w-96 max-w-[calc(100vw-2rem)]"
+        width="lg"
         initialFocus={mode === "review" ? reviewRef : commentRef}
         aria-label="Pull request composer"
       >

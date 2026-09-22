@@ -258,9 +258,7 @@ export default function ProjectScriptsControl({
                 <ScriptIcon icon="play" className="size-4" />
                 <MenuItemLabel>Project actions</MenuItemLabel>
               </MenuSubTrigger>
-              <MenuSubPopup className="min-w-32 max-w-[calc(100vw-2rem)]">
-                {scriptItems}
-              </MenuSubPopup>
+              <MenuSubPopup>{scriptItems}</MenuSubPopup>
             </MenuSub>
           ) : (
             <MenuItem

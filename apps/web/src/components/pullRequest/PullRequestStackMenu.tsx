@@ -145,7 +145,7 @@ export function PullRequestStackMenu({
             {notice ? ` · ${notice}` : null}
           </TooltipPopup>
         </Tooltip>
-        <MenuPopup align="start" className="w-96 max-w-[calc(100vw-2rem)]">
+        <MenuPopup align="start">
           <MenuGroup>
             <PullRequestStackHeader number={stack.number} notice={notice} stale={!!onRetry} />
             {onRetry ? <MenuItem onClick={onRetry}>Retry stack refresh</MenuItem> : null}

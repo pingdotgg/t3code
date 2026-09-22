@@ -393,7 +393,7 @@ function SidebarUpdateControl() {
           <PopoverPopup
             align="center"
             aria-label="Nightly update release notes"
-            className="max-w-none text-balance shadow-xl shadow-black/25"
+            className="text-balance shadow-xl shadow-black/25"
             initialFocus={false}
             onKeyDownCapture={(event) => {
               if (

@@ -225,7 +225,7 @@ export function SettingInheritance({
       </Tooltip>
       <PopoverPopup
         align="start"
-        className="w-72 max-w-[calc(100vw-2rem)]"
+        width="md"
         viewportClassName="p-0 [--viewport-inline-padding:0px]"
       >
         <div className="divide-y divide-border/60">

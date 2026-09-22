@@ -102,7 +102,8 @@ export function ContextChipPopover(props: {
       </PopoverTrigger>
       <PopoverPopup
         side="top"
-        className={cn("w-[min(36rem,calc(100vw-2rem))]", props.popupClassName)}
+        width="lg"
+        className={props.popupClassName}
         viewportClassName={cn("overflow-x-auto p-2", props.viewportClassName)}
       >
         <PopoverTitle className="sr-only">{props.accessibleLabel}</PopoverTitle>

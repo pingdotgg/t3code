@@ -85,7 +85,6 @@ export function PullRequestStackPopover({
       </Tooltip>
       <MenuPopup
         align="start"
-        className="w-96 max-w-[calc(100vw-2rem)]"
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => event.stopPropagation()}
       >

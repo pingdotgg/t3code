@@ -16,10 +16,20 @@ function PopoverTrigger({ className, children, ...props }: PopoverPrimitive.Trig
   );
 }
 
+// Popovers hold prose and forms, so a width is fixed rather than a minimum,
+// and every width is capped to the viewport.
+const popoverPopupWidthClassName = {
+  auto: "",
+  sm: "w-64",
+  md: "w-80",
+  lg: "w-96",
+} as const;
+
 function PopoverPopup({
   children,
   className,
   viewportClassName,
+  width = "auto",
   side = "bottom",
   align = "center",
   sideOffset = 4,
@@ -37,6 +47,7 @@ function PopoverPopup({
   tooltipStyle?: boolean;
   keepMounted?: PopoverPrimitive.Portal.Props["keepMounted"];
   anchor?: PopoverPrimitive.Positioner.Props["anchor"];
+  width?: keyof typeof popoverPopupWidthClassName;
 }) {
   // Viewport rekeys its children when the active trigger clears on close. Persistent
   // single-trigger forms need a stable container to retain drafts and submit guards.
@@ -59,6 +70,7 @@ function PopoverPopup({
               "w-fit text-balance rounded-md text-xs shadow-md/5 before:rounded-[calc(var(--radius-md)-1px)]",
             !tooltipStyle &&
               "shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]",
+            width !== "auto" && ["max-w-[calc(100vw-2rem)]", popoverPopupWidthClassName[width]],
             className,
           )}
           data-slot="popover-popup"

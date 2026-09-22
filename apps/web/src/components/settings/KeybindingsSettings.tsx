@@ -324,12 +324,7 @@ function WhenVariableSelect({
           <UnknownWhenVariableWarning identifiers={unknownIdentifiers} focusable={false} />
         ) : null}
       </SelectTrigger>
-      <SelectContent
-        alignItemWithTrigger={false}
-        matchTriggerWidth={false}
-        popupClassName="w-fit"
-        className="max-h-72 w-fit min-w-44"
-      >
+      <SelectContent alignItemWithTrigger={false} matchTriggerWidth={false} className="max-h-72">
         {options.map((option) => (
           <SelectItem key={option} value={option} className="min-h-7 w-full py-1 text-[12px]">
             <span className="truncate">{option}</span>
@@ -534,12 +529,7 @@ function WhenExpressionNodeEditor({
           <SelectTrigger size="compact" className="w-24">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent
-            alignItemWithTrigger={false}
-            matchTriggerWidth={false}
-            popupClassName="w-fit"
-            className="w-fit min-w-24"
-          >
+          <SelectContent alignItemWithTrigger={false} matchTriggerWidth={false}>
             <SelectItem value="and" className="min-h-7 py-1 text-[12px]">
               and
             </SelectItem>
@@ -956,7 +946,7 @@ function KeybindingRowMenu({
       >
         <EllipsisIcon className="size-3.5" />
       </MenuTrigger>
-      <MenuPopup align="end" className="min-w-36">
+      <MenuPopup align="end">
         {canReset ? (
           <MenuItem disabled={isSaving} onClick={() => onReset(row)}>
             Reset to default
@@ -1153,11 +1143,7 @@ function NewKeybindingCommandSelect({
       <SelectTrigger size="sm" className={className}>
         <SelectValue placeholder="Command" />
       </SelectTrigger>
-      <SelectContent
-        alignItemWithTrigger={false}
-        matchTriggerWidth={false}
-        className="max-h-72 w-fit min-w-56"
-      >
+      <SelectContent alignItemWithTrigger={false} matchTriggerWidth={false} className="max-h-72">
         {commandOptions.map((command) => (
           <SelectItem key={command} value={command} className="min-h-7 w-full py-1 text-[12px]">
             <span className="truncate">{commandLabel(command)}</span>

@@ -269,7 +269,7 @@ export function UsagePriceOverrides({
                   </span>
                   <ChevronDownIcon className="size-3.5 shrink-0" aria-hidden />
                 </MenuTrigger>
-                <MenuPopup align="start" className="w-80 max-w-[calc(100vw-2rem)]">
+                <MenuPopup align="start">
                   <MenuCheckboxItem
                     checked={selectedIds === null}
                     closeOnClick={false}

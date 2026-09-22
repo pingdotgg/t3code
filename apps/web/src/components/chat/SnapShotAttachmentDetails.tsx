@@ -166,7 +166,7 @@ export function SnapShotContentsButton({
       <PopoverPopup
         side={side}
         align="center"
-        className="w-[min(24rem,calc(100vw-2rem))]"
+        width="md"
         viewportClassName="max-h-[min(28rem,70vh)]"
       >
         <div className="space-y-2">

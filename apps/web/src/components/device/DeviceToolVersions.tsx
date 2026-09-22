@@ -44,7 +44,7 @@ export function DeviceToolVersions({
             ? "Versions unavailable"
             : "Versions"}
       </PopoverTrigger>
-      <PopoverPopup align="end" className="w-80">
+      <PopoverPopup align="end" width="md">
         <PopoverTitle>{kind ? label : "Device tools"}</PopoverTitle>
         {tools ? (
           <div className="mt-4 divide-y divide-border/50">

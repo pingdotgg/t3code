@@ -100,7 +100,7 @@ export function useAutoBalanceUpdateBanner(
         >
           {title}
         </PopoverTrigger>
-        <PopoverPopup side="top" align="start" className="w-80 max-w-[calc(100vw-2rem)]">
+        <PopoverPopup side="top" align="start" width="md">
           <div className="space-y-3 text-xs">
             {machines.map((machine) => (
               <div key={machine.environmentId} className="space-y-1">
