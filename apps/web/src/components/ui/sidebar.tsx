@@ -5,6 +5,7 @@ import { PanelLeftCloseIcon, PanelLeftIcon } from "lucide-react";
 import * as React from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
+import { Input, type InputProps } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import {
   Sheet,
@@ -530,6 +531,20 @@ function SidebarRail({
   );
 }
 
+/** A bare search or rename field that sits in a row of sidebar chrome. */
+function SidebarInput({ className, ...props }: Omit<InputProps, "unstyled" | "variant">) {
+  return (
+    <Input
+      className={cn(
+        "[&_[data-slot=input]]:h-auto [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:font-medium [&_[data-slot=input]]:text-sidebar-foreground [&_[data-slot=input]]:text-sm [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:placeholder:text-sidebar-muted-foreground",
+        className,
+      )}
+      unstyled
+      {...props}
+    />
+  );
+}
+
 function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
   return (
     <main
@@ -770,6 +785,7 @@ function SidebarMenuSubButton({
 }
 
 export {
+  SidebarInput,
   Sidebar,
   SidebarContent,
   SidebarFooter,
