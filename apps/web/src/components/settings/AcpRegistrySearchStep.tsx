@@ -133,8 +133,8 @@ export function AcpRegistrySearchStep({
         Choose an agent
       </h3>
 
-      <form className="flex gap-2" onSubmit={handleSearch}>
-        <InputGroup>
+      <form className="flex flex-wrap items-center gap-2" onSubmit={handleSearch}>
+        <InputGroup className="min-w-40 flex-1">
           <InputGroupAddon>
             <SearchIcon />
           </InputGroupAddon>
@@ -154,6 +154,15 @@ export function AcpRegistrySearchStep({
           variant="outline"
         >
           {isRefreshing ? "Refreshing" : "Search"}
+        </Button>
+        <Button
+          disabled={preparingId !== null}
+          onClick={onManualConfiguration}
+          size="sm"
+          type="button"
+          variant="ghost-muted"
+        >
+          Enter manually
         </Button>
       </form>
 
@@ -260,17 +269,6 @@ export function AcpRegistrySearchStep({
           </ScrollArea>
         )
       ) : null}
-
-      <div className="flex justify-end">
-        <Button
-          disabled={preparingId !== null}
-          onClick={onManualConfiguration}
-          size="xs"
-          variant="ghost"
-        >
-          Enter manually
-        </Button>
-      </div>
     </section>
   );
 }
