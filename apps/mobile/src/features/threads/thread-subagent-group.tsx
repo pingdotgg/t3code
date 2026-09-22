@@ -101,60 +101,60 @@ export function ThreadSubagentGroup(props: {
       progress: live?.progress ?? item.progress,
     };
   });
-  const label = `${agents.length} ${agents.length === 1 ? "subagent" : "subagents"}`;
+  const grouped = agents.length > 1;
+  const label = `${agents.length} subagents`;
   const summary = summarizeSubagentStatuses(agents.map((agent) => agent.status));
   const expanded = props.expandedRows[props.anchorKey] ?? false;
   const iconUrl = (item: SubagentItem) =>
     config?.providers.find((provider) => provider.instanceId === item.providerInstanceId)?.iconUrl;
   return (
     <WorkLogBlock>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`${label}, ${summary}`}
-        accessibilityState={{ expanded }}
-        onPress={() => props.onToggleRow(props.anchorKey, props.anchorKey)}
-        className="min-h-14 flex-row items-center gap-3 rounded-lg py-2 active:bg-subtle"
-      >
-        <View className="flex-row items-center">
-          {agents.slice(0, 3).map((agent, index) => (
-            <View key={agent.item.id} style={{ marginLeft: index === 0 ? 0 : -7 }}>
-              <SubagentAvatar
-                item={agent.item}
-                iconUrl={iconUrl(agent.item)}
-                {...(agents.length === 1 ? { status: agent.status } : {})}
-              />
-            </View>
-          ))}
-          {agents.length > 3 ? (
-            <View className="-ml-2 h-7 w-7 items-center justify-center rounded-full border border-border bg-card">
-              <Text className="text-2xs text-foreground-muted">+{agents.length - 3}</Text>
-            </View>
-          ) : null}
-        </View>
-        <View className="min-w-0 flex-1 gap-0.5">
-          <Text numberOfLines={1} className="font-t3-medium text-sm text-foreground">
-            {label}
-          </Text>
-          <Text
-            numberOfLines={1}
-            className={cn(
-              "text-2xs text-foreground-muted",
-              agents.some((agent) => isActiveSubagentStatus(agent.status))
-                ? "text-adaptive-sky-600-400"
-                : agents.some((agent) => agent.status === "failed") && "text-adaptive-rose-600-400",
-            )}
-          >
-            {summary}
-          </Text>
-        </View>
-        <SubagentElapsed agents={agents} />
-        <SymbolView
-          name={expanded ? "chevron.up" : "chevron.down"}
-          size={11}
-          tintColor={props.iconSubtleColor}
-        />
-      </Pressable>
-      {expanded ? (
+      {grouped ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${label}, ${summary}`}
+          accessibilityState={{ expanded }}
+          onPress={() => props.onToggleRow(props.anchorKey, props.anchorKey)}
+          className="min-h-14 flex-row items-center gap-3 rounded-lg py-2 active:bg-subtle"
+        >
+          <View className="flex-row items-center">
+            {agents.slice(0, 3).map((agent, index) => (
+              <View key={agent.item.id} style={{ marginLeft: index === 0 ? 0 : -7 }}>
+                <SubagentAvatar item={agent.item} iconUrl={iconUrl(agent.item)} />
+              </View>
+            ))}
+            {agents.length > 3 ? (
+              <View className="-ml-2 h-7 w-7 items-center justify-center rounded-full border border-border bg-card">
+                <Text className="text-2xs text-foreground-muted">+{agents.length - 3}</Text>
+              </View>
+            ) : null}
+          </View>
+          <View className="min-w-0 flex-1 gap-0.5">
+            <Text numberOfLines={1} className="font-t3-medium text-sm text-foreground">
+              {label}
+            </Text>
+            <Text
+              numberOfLines={1}
+              className={cn(
+                "text-2xs text-foreground-muted",
+                agents.some((agent) => isActiveSubagentStatus(agent.status))
+                  ? "text-adaptive-sky-600-400"
+                  : agents.some((agent) => agent.status === "failed") &&
+                      "text-adaptive-rose-600-400",
+              )}
+            >
+              {summary}
+            </Text>
+          </View>
+          <SubagentElapsed agents={agents} />
+          <SymbolView
+            name={expanded ? "chevron.up" : "chevron.down"}
+            size={11}
+            tintColor={props.iconSubtleColor}
+          />
+        </Pressable>
+      ) : null}
+      {!grouped || expanded ? (
         <View className="mb-1 gap-px rounded-xl border border-border bg-card/30 p-1">
           {agents.map((agent) => {
             const presentation = resolveSubagentRowPresentation(agent);
