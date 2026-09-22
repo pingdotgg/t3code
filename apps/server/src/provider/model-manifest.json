@@ -664,6 +664,7 @@
           "name": "Claude Opus 5.5",
           "aliases": ["opus", "opus-5.5", "claude-opus-5.5"],
           "status": "current",
+          "badge": "new",
           "profile": "opus-5-5",
           "adapter": {
             "claudeCode": {
