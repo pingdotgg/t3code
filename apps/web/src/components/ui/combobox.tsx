@@ -247,7 +247,7 @@ function ComboboxList({ className, ...props }: ComboboxPrimitive.List.Props) {
 function ComboboxListVirtualized({ className, ...props }: ComboboxPrimitive.List.Props) {
   return (
     <ComboboxPrimitive.List
-      className={cn("not-empty:px-1 not-empty:py-1", className)}
+      className={cn("size-full min-w-0 not-empty:px-1 not-empty:py-1", className)}
       data-slot="combobox-list"
       {...props}
     />
