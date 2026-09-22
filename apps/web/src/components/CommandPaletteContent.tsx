@@ -46,7 +46,15 @@ export function CommandPaletteContent({
     <div className="contents" data-testid={testId}>
       <Command {...commandProps}>
         <div className="relative">
-          <CommandInput {...inputProps} ref={inputRef} />
+          <CommandInput
+            {...inputProps}
+            ref={(node) => {
+              inputRef.current = node;
+              if (typeof inputProps.ref === "function") {
+                inputProps.ref(node);
+              }
+            }}
+          />
           {inputAccessory}
         </div>
         <CommandPanel className={panelClassName}>{children}</CommandPanel>

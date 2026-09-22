@@ -95,28 +95,62 @@ function CommandInput({
   className,
   wrapperClassName,
   placeholder,
+  leading,
+  startAddon,
   ...props
 }: React.ComponentProps<typeof AutocompleteInput> & {
   wrapperClassName?: string | undefined;
+  /** Inline content rendered between the icon zone and the input (e.g.
+      operator chips). The icon moves out of the input's start padding into a
+      fixed-width zone so it does not shift when chips appear. */
+  leading?: React.ReactNode;
 }) {
-  return (
-    <div
-      className={cn(
-        "px-[var(--command-shell-inset)] py-1.5 [&_[data-slot=autocomplete-start-addon]]:ps-[calc(var(--command-shell-inset)+0.0625rem)]",
-        wrapperClassName,
-      )}
-    >
-      <AutocompleteInput
-        autoFocus
+  const inputClassName = cn(
+    "border-transparent! bg-transparent! shadow-none before:hidden has-focus-visible:ring-0 placeholder:text-placeholder *:data-[slot=autocomplete-input]:ps-9! sm:*:data-[slot=autocomplete-input]:ps-[calc(var(--command-shell-inset)+1.5rem)]!",
+    className,
+  );
+  if (leading === undefined) {
+    return (
+      <div
         className={cn(
-          "border-transparent! bg-transparent! shadow-none before:hidden has-focus-visible:ring-0 placeholder:text-placeholder *:data-[slot=autocomplete-input]:ps-9! sm:*:data-[slot=autocomplete-input]:ps-[calc(var(--command-shell-inset)+1.5rem)]!",
-          className,
+          "px-[var(--command-shell-inset)] py-1.5 [&_[data-slot=autocomplete-start-addon]]:ps-[calc(var(--command-shell-inset)+0.0625rem)]",
+          wrapperClassName,
         )}
-        placeholder={placeholder}
-        size="lg"
-        startAddon={<SearchIcon className="translate-x-0.5 text-icon-muted" />}
-        {...props}
-      />
+      >
+        <AutocompleteInput
+          autoFocus
+          className={inputClassName}
+          placeholder={placeholder}
+          size="lg"
+          startAddon={startAddon ?? <SearchIcon className="translate-x-0.5 text-icon-muted" />}
+          {...props}
+        />
+      </div>
+    );
+  }
+  return (
+    <div className={cn("px-[var(--command-shell-inset)] py-1.5", wrapperClassName)}>
+      <div className="flex min-w-0 items-center overflow-hidden">
+        {/* Same left edge as the addon's icon in the no-chips layout
+            (shell inset + 2px) so the icon does not move. */}
+        <div
+          aria-hidden="true"
+          className="flex w-9 shrink-0 items-center self-stretch ps-[calc(var(--command-shell-inset)+0.125rem)] text-icon-muted opacity-80 [&_svg:not([class*='size-'])]:size-4.5 sm:w-[calc(var(--command-shell-inset)+1.5rem)] sm:[&_svg:not([class*='size-'])]:size-4"
+        >
+          {startAddon ?? <SearchIcon />}
+        </div>
+        {leading}
+        <AutocompleteInput
+          autoFocus
+          className={cn(
+            inputClassName,
+            "*:data-[slot=autocomplete-input]:ps-0! sm:*:data-[slot=autocomplete-input]:ps-0!",
+          )}
+          placeholder={placeholder}
+          size="lg"
+          {...props}
+        />
+      </div>
     </div>
   );
 }

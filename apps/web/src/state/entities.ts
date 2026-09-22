@@ -183,6 +183,35 @@ export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | 
   return appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
 }
 
+/** Resolves when the thread's unarchived shell reaches the live client store.
+    An archived thread can already have a stale shell (archivedAt set), so a
+    non-null shell alone is not enough. */
+export function waitForThreadShell(
+  ref: ScopedThreadRef,
+  timeoutMs = 10_000,
+): Promise<EnvironmentThreadShell> {
+  const isRestored = (shell: EnvironmentThreadShell | null): shell is EnvironmentThreadShell =>
+    shell !== null && shell.archivedAt === null;
+  const current = readThreadShell(ref);
+  if (isRestored(current)) return Promise.resolve(current);
+
+  return new Promise((resolve, reject) => {
+    let unsubscribe: (() => void) | null = null;
+    const timeout = setTimeout(() => {
+      unsubscribe?.();
+      reject(new Error("The thread did not appear after being restored."));
+    }, timeoutMs);
+    const finish = (shell: EnvironmentThreadShell | null) => {
+      if (!isRestored(shell)) return;
+      clearTimeout(timeout);
+      unsubscribe?.();
+      resolve(shell);
+    };
+    unsubscribe = appAtomRegistry.subscribe(environmentThreadShells.threadShellAtom(ref), finish);
+    finish(readThreadShell(ref));
+  });
+}
+
 /** Whether the environment's server understands thread.settle/unsettle.
     False for pre-settlement servers (capability defaults false on decode),
     so clients under version skew fall back instead of erroring. */
