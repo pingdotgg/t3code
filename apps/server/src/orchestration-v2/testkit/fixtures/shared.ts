@@ -12,6 +12,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   type OrchestrationV2UserMessageInputIntent,
+  EnvironmentId,
   ProviderInstanceId,
   type ProviderInteractionMode,
   type ProviderDriverKind,
@@ -838,6 +839,16 @@ export function assertBaseProjection(input: {
     assert.deepEqual(
       projection.runs.map((run) => run.status),
       input.runStatuses,
+    );
+  }
+
+  const expectedEnvironmentId = EnvironmentId.make("environment-test");
+  for (const run of projection.runs) {
+    if (run.startedAt === null) continue;
+    assert.equal(
+      run.environmentId,
+      expectedEnvironmentId,
+      `run ${run.ordinal} must be stamped with the environment that started it`,
     );
   }
 }

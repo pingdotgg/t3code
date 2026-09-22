@@ -9,6 +9,7 @@ import {
   CheckpointRef,
   CommandId,
   ContextTransferId,
+  EnvironmentId,
   EventId,
   MessageId,
   NodeId,
@@ -47,6 +48,7 @@ import { ProjectionProjectRepository } from "../persistence/Services/ProjectionP
 import { ProjectEnrichmentService } from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { identityLayerTest } from "../environment/ServerEnvironment.ts";
 import { layer as mcpSessionRegistryTestLayer } from "../mcp/McpSessionRegistry.testkit.ts";
 import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
@@ -174,6 +176,7 @@ const TestLayer = Layer.mergeAll(
   Layer.provide(GitWorkflowTestLayer),
   Layer.provide(ProjectServiceTestLayer),
   Layer.provide(PlatformTestLayer),
+  Layer.provide(identityLayerTest()),
 );
 
 const LegacyImportTestLayer = OrchestrationV2LayerLive.pipe(
@@ -186,6 +189,7 @@ const LegacyImportTestLayer = OrchestrationV2LayerLive.pipe(
   Layer.provide(GitWorkflowTestLayer),
   Layer.provide(ProjectServiceTestLayer),
   Layer.provide(PlatformTestLayer),
+  Layer.provide(identityLayerTest()),
 );
 
 const ProjectDeletionTestLayer = Layer.mergeAll(
@@ -224,6 +228,7 @@ const ProjectDeletionTestLayer = Layer.mergeAll(
   Layer.provide(TestProviderInstanceRegistry),
   Layer.provide(GitWorkflowTestLayer),
   Layer.provide(PlatformTestLayer),
+  Layer.provide(identityLayerTest()),
 );
 
 it.layer(ProjectDeletionTestLayer)("project deletion during thread commands", (it) => {
@@ -359,6 +364,7 @@ const SharedApplicationDataPlaneTestLayer = Layer.merge(
   Layer.provide(GitWorkflowTestLayer),
   Layer.provide(ProjectServiceTestLayer),
   Layer.provide(PlatformTestLayer),
+  Layer.provide(identityLayerTest()),
 );
 
 it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
@@ -2018,7 +2024,12 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
               threadId,
               runId: original.id,
               occurredAt: now,
-              payload: { ...original, status: "cancelled", completedAt: now },
+              payload: {
+                ...original,
+                status: "cancelled",
+                completedAt: now,
+                environmentId: EnvironmentId.make("environment-original"),
+              },
             },
           ],
           effects: [],
@@ -2041,6 +2052,8 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         const admitted = yield* orchestrator.getThreadProjection(threadId);
         assert.lengthOf(admitted.runs, 2);
         assert.equal(admitted.runs[1]?.restartContinuationOfRunId, original.id);
+        // The continuation inherits its source's environment so recovery can check ownership.
+        assert.equal(admitted.runs[1]?.environmentId, "environment-original");
         // A differently identified stale delivery still must not create another run.
         yield* orchestrator.dispatch({
           ...command,

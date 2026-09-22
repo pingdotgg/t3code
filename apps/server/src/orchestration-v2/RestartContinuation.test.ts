@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  EnvironmentId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -13,8 +14,13 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { identityLayerTest } from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { restartContinuationRun, continueRestartedRun } from "./RestartContinuation.ts";
+import {
+  restartContinuationRun,
+  continueRestartedRun,
+  runOwnedByEnvironment,
+} from "./RestartContinuation.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -83,6 +89,8 @@ function makeProjection() {
   } as unknown as OrchestrationV2ThreadProjection;
 }
 
+const environmentId = EnvironmentId.make("environment-test");
+
 it("requires matching saved native state for an unfinished root run", () => {
   const projection = makeProjection();
   assert.equal(restartContinuationRun(projection)?.id, runId);
@@ -121,6 +129,18 @@ it("requires matching saved native state for an unfinished root run", () => {
     assert.isUndefined(restartContinuationRun(invalid as OrchestrationV2ThreadProjection));
 });
 
+it("owns unstamped runs and runs stamped with this environment", () => {
+  const run = makeProjection().runs[0]!;
+  assert.isTrue(runOwnedByEnvironment(run, environmentId));
+  assert.isTrue(runOwnedByEnvironment({ ...run, environmentId }, environmentId));
+  assert.isFalse(
+    runOwnedByEnvironment(
+      { ...run, environmentId: EnvironmentId.make("environment-other") },
+      environmentId,
+    ),
+  );
+});
+
 it("recovers an admitted continuation after another crash before provider start", () => {
   const projection = makeProjection();
   const starting = {
@@ -153,6 +173,7 @@ for (const [enabled, projectOverride] of [
         const recovery = yield* ProviderRuntimeRecovery.make.pipe(
           Effect.provide(
             Layer.mergeAll(
+              identityLayerTest(environmentId),
               ServerSettings.layerTest({
                 continueThreadsAfterServerUpdate: enabled,
                 projectSettingsOverrides:
@@ -215,9 +236,10 @@ it.effect("does not duplicate delivery and yields to newer user work or opt-out"
         return Effect.succeed({} as never);
       },
     });
-    const enabled = Layer.merge(
+    const enabled = Layer.mergeAll(
       threads,
       ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+      identityLayerTest(environmentId),
     );
     yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(Effect.provide(enabled));
     yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(Effect.provide(enabled));
@@ -243,10 +265,57 @@ it.effect("does not duplicate delivery and yields to newer user work or opt-out"
     projection = { ...projection, runs: [projection.runs[0]!] };
     yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
       Effect.provide(
-        Layer.merge(threads, ServerSettings.layerTest({ continueThreadsAfterServerUpdate: false })),
+        Layer.mergeAll(
+          threads,
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: false }),
+          identityLayerTest(environmentId),
+        ),
       ),
     );
     assert.lengthOf(commands, 1);
+  }),
+);
+
+it.effect("does not deliver a persisted continuation from another environment", () =>
+  Effect.gen(function* () {
+    let projection = makeProjection();
+    const commands: Parameters<ThreadManagementService["Service"]["dispatch"]>[0][] = [];
+    const threads = Layer.mock(ThreadManagementService)({
+      getThreadRecords: () => Effect.succeed(projection),
+      dispatch: (command) => {
+        commands.push(command);
+        return Effect.succeed({} as never);
+      },
+    });
+    const enabled = Layer.mergeAll(
+      threads,
+      ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+      identityLayerTest(environmentId),
+    );
+    const source = projection.runs[0]!;
+    projection = {
+      ...projection,
+      runs: [
+        { ...source, status: "cancelled", environmentId: EnvironmentId.make("environment-other") },
+      ],
+    };
+    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(Effect.provide(enabled));
+    assert.lengthOf(commands, 0);
+
+    for (const environmentStamp of [environmentId, undefined]) {
+      projection = {
+        ...projection,
+        runs: [
+          {
+            ...source,
+            status: "cancelled",
+            ...(environmentStamp === undefined ? {} : { environmentId: environmentStamp }),
+          },
+        ],
+      };
+      yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(Effect.provide(enabled));
+    }
+    assert.lengthOf(commands, 2);
   }),
 );
 
@@ -257,6 +326,7 @@ it.effect("does not cancel or resume a run that completes while shutdown intent 
     const recovery = yield* ProviderRuntimeRecovery.make.pipe(
       Effect.provide(
         Layer.mergeAll(
+          identityLayerTest(environmentId),
           ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getRecoveryThreadIds: () => Effect.succeed([threadId]),
@@ -299,6 +369,7 @@ it.effect("does not cancel or resume a run that completes while shutdown intent 
       Effect.provide(
         Layer.mergeAll(
           ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+          identityLayerTest(environmentId),
           Layer.mock(ThreadManagementService)({
             getThreadRecords: () => Effect.succeed(projection),
             dispatch: () =>

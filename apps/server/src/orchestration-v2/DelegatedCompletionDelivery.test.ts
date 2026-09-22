@@ -29,6 +29,7 @@ import { ProjectEnrichmentService } from "../project/ProjectEnrichmentService.ts
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { identityLayerTest } from "../environment/ServerEnvironment.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -125,6 +126,7 @@ const TestLayer = Layer.mergeAll(
   Layer.provide(ServerSettingsService.layerTest()),
   Layer.provide(TestProviderInstanceRegistry),
   Layer.provide(PlatformTestLayer),
+  Layer.provide(identityLayerTest()),
 );
 
 const seedParentWithTerminalTask = (input: {

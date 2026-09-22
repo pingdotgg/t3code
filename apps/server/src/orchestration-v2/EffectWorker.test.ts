@@ -20,6 +20,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
+import { identityLayerTest } from "../environment/ServerEnvironment.ts";
 import { CheckpointRollbackServiceV2 } from "./CheckpointRollbackService.ts";
 import { EffectOutboxError, EffectOutboxV2, type OrchestrationEffectV2 } from "./EffectOutbox.ts";
 import {
@@ -160,6 +161,7 @@ function makeExecutorLayer(input: {
         dependencies,
         Layer.mock(ThreadManagementService)({}),
         ServerSettings.layerTest(),
+        identityLayerTest(),
       ),
     ),
   );

@@ -16,6 +16,7 @@ import {
   orchestrationEffectClaimsTotal,
   orchestrationEffectQueueWait,
 } from "../observability/Metrics.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { RunFinalizationService } from "./RunFinalizationService.ts";
 import { ResourceCleanupService } from "./ResourceCleanupService.ts";
 import {
@@ -94,6 +95,7 @@ export const executorLayer: Layer.Layer<
   | ThreadTitleRegenerationService
   | ThreadManagementService
   | ServerSettingsService
+  | ServerEnvironment.ServerEnvironmentIdentity
 > = Layer.effect(
   OrchestrationEffectExecutorV2,
   Effect.gen(function* () {
@@ -107,6 +109,7 @@ export const executorLayer: Layer.Layer<
     const threadTitleRegeneration = yield* ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService;
     const settings = yield* ServerSettingsService;
+    const environmentIdentity = yield* ServerEnvironment.ServerEnvironmentIdentity;
     return OrchestrationEffectExecutorV2.of({
       execute: (effect, options) => {
         const willRetry = options?.willRetry ?? false;
@@ -118,6 +121,10 @@ export const executorLayer: Layer.Layer<
             }).pipe(
               Effect.provideService(ThreadManagementService, threads),
               Effect.provideService(ServerSettingsService, settings),
+              Effect.provideService(
+                ServerEnvironment.ServerEnvironmentIdentity,
+                environmentIdentity,
+              ),
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({

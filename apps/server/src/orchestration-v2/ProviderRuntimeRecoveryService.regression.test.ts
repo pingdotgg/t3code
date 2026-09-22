@@ -15,6 +15,7 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
+import { identityLayerTest } from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 it("uses the thread provider for stale background work without provider threads", async () => {
@@ -48,6 +49,7 @@ it("uses the thread provider for stale background work without provider threads"
   } as unknown as OrchestrationV2ThreadProjection;
   const layer = ProviderRuntimeRecovery.layer.pipe(
     Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(identityLayerTest()),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({

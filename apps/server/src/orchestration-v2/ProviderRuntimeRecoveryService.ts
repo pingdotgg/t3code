@@ -11,13 +11,14 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { restartContinuationRun } from "./RestartContinuation.ts";
+import { restartContinuationRun, runOwnedByEnvironment } from "./RestartContinuation.ts";
 
 export class ProviderRuntimeRecoveryError extends Schema.TaggedError<ProviderRuntimeRecoveryError>()(
   "ProviderRuntimeRecoveryError",
@@ -129,6 +130,8 @@ export const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
+  const environmentId = yield* (yield* ServerEnvironment.ServerEnvironmentIdentity)
+    .getEnvironmentId;
   const reconcileProjection = Effect.fn("ProviderRuntimeRecoveryService.reconcileProjection")(
     function* (
       projection: ProjectionRuntimeRecoveryState,
@@ -172,7 +175,6 @@ export const make = Effect.gen(function* () {
       const requests = projection.runtimeRequests.filter(
         (request) => request.status === "pending" && request.responseCapability.type !== "message",
       );
-      const detail = `Cancelled because the server ${trigger === "startup" ? "restarted" : "shut down"} before the provider work completed.`;
       const commandId = CommandId.make(
         `command:runtime-reconcile:${trigger}:${projection.thread.id}:${DateTime.formatIso(now)}`,
       );
@@ -187,10 +189,22 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
-      const continuationRun =
+      const candidate =
         continueAfterRestart && trigger === "startup"
           ? restartContinuationRun(projection)
           : undefined;
+      const foreignRun =
+        candidate !== undefined && !runOwnedByEnvironment(candidate, environmentId);
+      const continuationRun = foreignRun ? undefined : candidate;
+      const detail = foreignRun
+        ? `Cancelled because this run was started by another T3 Code environment.`
+        : `Cancelled because the server ${trigger === "startup" ? "restarted" : "shut down"} before the provider work completed.`;
+      if (foreignRun) {
+        yield* Effect.logInfo("run belongs to another environment; not resuming", {
+          threadId: projection.thread.id,
+          runId: candidate.id,
+        });
+      }
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
             {
@@ -600,7 +614,7 @@ export const make = Effect.gen(function* () {
       )
         continue;
       const run = restartContinuationRun(projection);
-      if (!run) continue;
+      if (!run || !runOwnedByEnvironment(run, environmentId)) continue;
       const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
       yield* eventSink.writeWithEffects({
         commandId,

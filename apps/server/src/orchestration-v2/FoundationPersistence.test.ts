@@ -1,4 +1,5 @@
 import * as ServerSettings from "../serverSettings.ts";
+import { identityLayerTest } from "../environment/ServerEnvironment.ts";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
@@ -2574,6 +2575,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
           Effect.provide(
             Layer.mergeAll(
               ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+              identityLayerTest(),
               Layer.mock(ProjectionStoreV2)({
                 getRecoveryThreadIds: () => Effect.succeed([threadId]),
                 getRuntimeRecoveryProjection: () => Effect.succeed(projection),
@@ -2775,7 +2777,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       );
 
       const recovery = yield* ProviderRuntimeRecovery.make.pipe(
-        Effect.provide(ServerSettings.layerTest()),
+        Effect.provide(Layer.mergeAll(ServerSettings.layerTest(), identityLayerTest())),
         Effect.provideService(
           OrchestrationEffectWorkerV2,
           OrchestrationEffectWorkerV2.of({

@@ -1,6 +1,7 @@
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
+  type EnvironmentId,
   MessageId,
   type OrchestrationV2Run,
   type RunId,
@@ -9,9 +10,24 @@ import {
 import * as Effect from "effect/Effect";
 import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
 
+/**
+ * Whether this environment may resume a run. Runs written before environment
+ * stamping have no owner and stay resumable so existing installs keep working
+ * through the upgrade. A prepared continuation is stamped with its source run's
+ * environment when it is admitted, so ownership is a direct read.
+ */
+export function runOwnedByEnvironment(
+  run: Pick<OrchestrationV2Run, "environmentId">,
+  environmentId: EnvironmentId,
+): boolean {
+  return run.environmentId === undefined || run.environmentId === environmentId;
+}
+
+/** The run to continue after a restart, before the ownership check in `runOwnedByEnvironment`. */
 export function restartContinuationRun(
   projection: Pick<
     ProjectionRuntimeRecoveryState,
@@ -70,6 +86,8 @@ export function restartContinuationRun(
 export const continueRestartedRun = Effect.fn("RestartContinuation.continueRestartedRun")(
   function* (input: { readonly threadId: ThreadId; readonly sourceRunId: RunId }) {
     const settings = yield* ServerSettingsService;
+    const environmentId = yield* (yield* ServerEnvironment.ServerEnvironmentIdentity)
+      .getEnvironmentId;
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
     if (!enabled) return;
     const threads = yield* ThreadManagementService;
@@ -87,6 +105,8 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     if (projection.messages.some((message) => message.id === messageId)) return;
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
     if (!source || source.status !== "cancelled") return;
+    // A foreign run's persisted continuation must stay a no-op.
+    if (!runOwnedByEnvironment(source, environmentId)) return;
     // A user submission after reconciliation takes precedence over an automatic prompt.
     if (projection.runs.some((run) => run.ordinal > source.ordinal)) return;
     if (projection.thread.providerInstanceId !== source.providerInstanceId) return;

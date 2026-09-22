@@ -34,6 +34,7 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
+import { identityLayerTest } from "../environment/ServerEnvironment.ts";
 import { worktreeRepairDependenciesTestLayer } from "./ProviderTurnStartService.testkit.ts";
 import { OrchestrationV2LayerLive } from "./runtimeLayer.ts";
 import { layer as mcpSessionRegistryTestLayer } from "../mcp/McpSessionRegistry.testkit.ts";
@@ -119,6 +120,7 @@ const liveLayer = OrchestrationV2LayerLive.pipe(
   Layer.provide(backgroundPolicyLayer),
   Layer.provide(worktreeRepairDependenciesTestLayer),
   Layer.provide(PlatformTestLayer),
+  Layer.provide(identityLayerTest()),
 );
 
 const waitForIdle = Effect.fn("AcpRegistryOrchestratorV2Live.waitForIdle")(function* (

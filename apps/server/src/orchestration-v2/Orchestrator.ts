@@ -9,6 +9,7 @@ import {
 import {
   type ChatAttachment,
   CommandId,
+  type EnvironmentId,
   MessageId,
   type ModelSelection,
   OrchestrationV2Command,
@@ -3999,6 +4000,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
 
+      // A restart continuation inherits its source run's environment so recovery
+      // can check ownership on the continuation itself before it ever starts.
+      let continuationEnvironmentId: EnvironmentId | undefined;
       if (command.restartContinuationOfRunId !== undefined) {
         const source = projection.runs.find((run) => run.id === command.restartContinuationOfRunId);
         if (
@@ -4022,6 +4026,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
           return;
         }
+        continuationEnvironmentId = source.environmentId;
       }
 
       if (projection.thread.settledOverride !== null) {
@@ -4441,6 +4446,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.restartContinuationOfRunId === undefined
             ? {}
             : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+          ...(continuationEnvironmentId === undefined
+            ? {}
+            : { environmentId: continuationEnvironmentId }),
         };
         const attempt: OrchestrationV2RunAttempt = {
           id: attemptId,
@@ -4780,6 +4788,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.restartContinuationOfRunId === undefined
             ? {}
             : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+          ...(continuationEnvironmentId === undefined
+            ? {}
+            : { environmentId: continuationEnvironmentId }),
         };
         const attempt: OrchestrationV2RunAttempt = {
           id: attemptId,
@@ -5472,6 +5483,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.restartContinuationOfRunId === undefined
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+        ...(continuationEnvironmentId === undefined
+          ? {}
+          : { environmentId: continuationEnvironmentId }),
       };
       const attempt: OrchestrationV2RunAttempt = {
         id: attemptId,

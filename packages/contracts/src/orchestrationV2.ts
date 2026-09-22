@@ -9,6 +9,7 @@ import {
   CommandId,
   ContextHandoffId,
   ContextTransferId,
+  EnvironmentId,
   EventId,
   IsoDateTime,
   MessageId,
@@ -488,6 +489,8 @@ export const OrchestrationV2Run = Schema.Struct({
   contextHandoffId: Schema.NullOr(ContextHandoffId),
   /** Links server-generated restart continuations to the interrupted run. */
   restartContinuationOfRunId: Schema.optional(RunId),
+  /** The environment that started the run, used to refuse restart continuation on a copied database. */
+  environmentId: Schema.optional(EnvironmentId),
   sourcePlanRef: Schema.optional(
     Schema.Struct({
       threadId: ThreadId,

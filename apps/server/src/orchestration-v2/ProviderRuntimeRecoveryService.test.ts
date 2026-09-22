@@ -1,7 +1,9 @@
 import { assert, it, vi } from "@effect/vitest";
 import {
+  EnvironmentId,
   MessageId,
   NodeId,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
@@ -24,6 +26,7 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
+import { identityLayerTest } from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 it.effect("leaves durable effects for the worker after runtime reconciliation", () =>
@@ -31,6 +34,7 @@ it.effect("leaves durable effects for the worker after runtime reconciliation", 
     const runs = yield* Ref.make(0);
     const layer = ProviderRuntimeRecovery.layer.pipe(
       Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(identityLayerTest()),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -72,6 +76,7 @@ it.effect("reads recovery projections only for threads that need runtime recover
   const projectionReads = vi.fn<(threadId: ThreadId) => void>();
   const layer = ProviderRuntimeRecovery.layer.pipe(
     Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(identityLayerTest()),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -150,6 +155,7 @@ it.effect("expires orphaned runtime requests before command readiness", () => {
   } as unknown as OrchestrationV2ThreadProjection;
   const layer = ProviderRuntimeRecovery.layer.pipe(
     Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(identityLayerTest()),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -202,6 +208,7 @@ it.effect("preserves async questions across startup and shutdown", () => {
   const commitCommand = vi.fn(() => Effect.die("an async question needs no process-loss write"));
   const layer = ProviderRuntimeRecovery.layer.pipe(
     Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(identityLayerTest()),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -250,6 +257,7 @@ it.effect("uses the same reconciliation path to cancel runtime requests during s
   } as unknown as OrchestrationV2ThreadProjection;
   const layer = ProviderRuntimeRecovery.layer.pipe(
     Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(identityLayerTest()),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -333,6 +341,7 @@ it.effect(
     } as unknown as OrchestrationV2ThreadProjection;
     const layer = ProviderRuntimeRecovery.layer.pipe(
       Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(identityLayerTest()),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -422,6 +431,7 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
   } as unknown as OrchestrationV2ThreadProjection;
   const layer = ProviderRuntimeRecovery.layer.pipe(
     Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(identityLayerTest()),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -497,6 +507,7 @@ it.effect("holds accepted queued work without cancelling its execution state aft
   } as unknown as OrchestrationV2ThreadProjection;
   const layer = ProviderRuntimeRecovery.layer.pipe(
     Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(identityLayerTest()),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -607,6 +618,7 @@ it.effect(
     } as unknown as OrchestrationV2ThreadProjection;
     const layer = ProviderRuntimeRecovery.layer.pipe(
       Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(identityLayerTest()),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -792,6 +804,7 @@ it.effect(
     } as unknown as OrchestrationV2ThreadProjection;
     const layer = ProviderRuntimeRecovery.layer.pipe(
       Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(identityLayerTest()),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -949,6 +962,7 @@ it.effect(
     } as unknown as OrchestrationV2ThreadProjection;
     const layer = ProviderRuntimeRecovery.layer.pipe(
       Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(identityLayerTest()),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -1079,6 +1093,7 @@ it.effect(
     } as unknown as OrchestrationV2ThreadProjection;
     const layer = ProviderRuntimeRecovery.layer.pipe(
       Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(identityLayerTest()),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -1149,3 +1164,143 @@ it.effect(
     }).pipe(Effect.provide(layer));
   },
 );
+
+for (const prepared of [false, true]) {
+  it.effect(
+    `cancels a foreign-environment ${prepared ? "prepared continuation" : "run"} without resuming it after restart`,
+    () => {
+      const threadId = ThreadId.make("thread_recovery_foreign_environment");
+      const runId = RunId.make("run_recovery_foreign_environment");
+      const sourceRunId = RunId.make("run_recovery_foreign_environment_source");
+      const attemptId = RunAttemptId.make("attempt_recovery_foreign_environment");
+      const providerThreadId = ProviderThreadId.make(
+        "provider_thread_recovery_foreign_environment",
+      );
+      const providerSessionId = ProviderSessionId.make(
+        "provider_session_recovery_foreign_environment",
+      );
+      const providerTurnId = ProviderTurnId.make("provider_turn_recovery_foreign_environment");
+      const instanceId = ProviderInstanceId.make("codex");
+      const driver = ProviderDriverKind.make("codex");
+      let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
+        null;
+      const projection = {
+        thread: {
+          id: threadId,
+          projectId: ProjectId.make("project_recovery_foreign_environment"),
+          providerInstanceId: instanceId,
+          archivedAt: null,
+          deletedAt: null,
+        },
+        runtimeRequests: [],
+        providerSessions: [
+          {
+            id: providerSessionId,
+            driver,
+            providerInstanceId: instanceId,
+            status: prepared ? "stopped" : "running",
+          },
+        ],
+        providerThreads: [
+          {
+            id: providerThreadId,
+            appThreadId: threadId,
+            ownerNodeId: null,
+            driver,
+            providerInstanceId: instanceId,
+            providerSessionId,
+            nativeThreadRef: { driver, nativeId: "native-thread", strength: "strong" },
+            status: prepared ? "idle" : "active",
+          },
+        ],
+        providerTurns: prepared
+          ? []
+          : [{ id: providerTurnId, providerThreadId, runAttemptId: attemptId, status: "running" }],
+        // A prepared continuation is stamped with its source run's environment when admitted.
+        runs: prepared
+          ? [
+              {
+                id: sourceRunId,
+                ordinal: 1,
+                providerInstanceId: instanceId,
+                providerThreadId,
+                status: "cancelled",
+                environmentId: EnvironmentId.make("environment-other"),
+              },
+              {
+                id: runId,
+                ordinal: 2,
+                providerInstanceId: instanceId,
+                providerThreadId,
+                activeAttemptId: attemptId,
+                status: "starting",
+                restartContinuationOfRunId: sourceRunId,
+                environmentId: EnvironmentId.make("environment-other"),
+              },
+            ]
+          : [
+              {
+                id: runId,
+                ordinal: 1,
+                providerInstanceId: instanceId,
+                providerThreadId,
+                activeAttemptId: attemptId,
+                status: "running",
+                environmentId: EnvironmentId.make("environment-other"),
+              },
+            ],
+        attempts: [{ id: attemptId, runId, status: "running" }],
+        nodes: [],
+        subagents: [],
+        messages: [],
+        turnItems: [],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const layer = ProviderRuntimeRecovery.layer.pipe(
+        Layer.provide(ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true })),
+        Layer.provide(identityLayerTest()),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getRecoveryThreadIds: () => Effect.succeed([threadId]),
+              getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+            }),
+            Layer.mock(EventSink.EventSinkV2)({
+              commitCommand: (input) => {
+                committedInput = input;
+                return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
+              },
+            }),
+            IdAllocator.layer,
+            Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+              runRecoveryOnce: Effect.succeed(false),
+            }),
+            Layer.mock(EffectOutbox.EffectOutboxV2)({
+              reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+            }),
+          ),
+        ),
+      );
+
+      return Effect.gen(function* () {
+        const summary =
+          yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile(
+            "startup",
+          );
+        assert.equal(summary.terminalizedRuns, 1);
+        const command = committedInput;
+        assert.isNotNull(command);
+        if (command === null) return;
+        assert.deepEqual(command.effects, []);
+        assert.equal(
+          command.cancelUnsettledEffects?.reason,
+          "Cancelled because this run was started by another T3 Code environment.",
+        );
+        const runEvent = command.events.find((event) => event.type === "run.updated");
+        assert.equal(
+          runEvent?.type === "run.updated" ? runEvent.payload.status : null,
+          "cancelled",
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+}

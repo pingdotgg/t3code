@@ -271,6 +271,10 @@ export const make = Effect.gen(function* () {
 
 export const identityLayer = Layer.effect(ServerEnvironmentIdentity, makeIdentity);
 
+/** A fixed identity for tests whose services only need the environment id. */
+export const identityLayerTest = (environmentId = EnvironmentId.make("environment-test")) =>
+  Layer.succeed(ServerEnvironmentIdentity, { getEnvironmentId: Effect.succeed(environmentId) });
+
 /**
  * ServerEnvironment is acquired from persisted filesystem and host-process
  * state. It intentionally has no fallback Layer.succeed value: callers must
