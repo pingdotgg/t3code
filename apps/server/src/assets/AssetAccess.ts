@@ -1,5 +1,5 @@
-import type { AssetResource } from "@t3tools/contracts";
 import {
+  type AssetResource,
   AssetAttachmentNotFoundError,
   AssetGitHubMediaUrlValidationError,
   AssetPreviewTypeValidationError,

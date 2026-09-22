@@ -1421,6 +1421,7 @@ function ChatMarkdownImage(props: {
   /** Null while the URL is being resolved; the last decoded image stays up. */
   readonly src: string | null;
   readonly sourceFailed?: boolean | undefined;
+  readonly onSourceError?: ((src: string) => void) | undefined;
   readonly alt: string;
   readonly copyMarkdown: string | undefined;
   readonly standalone: boolean;
@@ -1460,6 +1461,7 @@ function ChatMarkdownImage(props: {
       setFailedSrc(null);
     },
     onError: () => {
+      props.onSourceError?.(loadingSrc);
       setFailedSrc(loadingSrc);
       setLoadedSrc(null);
     },
@@ -1575,7 +1577,7 @@ function ChatMarkdownVideo(props: {
   );
 }
 
-/** Environment-hosted media loads through an exact-file signed asset URL. */
+/** Media served by an environment loads through a signed asset URL. */
 export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props: {
   readonly environmentId: EnvironmentId;
   readonly resource: Extract<
@@ -1608,6 +1610,8 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
 }) {
   const assetUrl = useAssetUrlState(props.environmentId, props.resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
+  const [failedAssetSrc, setFailedAssetSrc] = useState<string | null>(null);
+  const [failedFallbackSrc, setFailedFallbackSrc] = useState<string | null>(null);
   const resource = props.resource;
   const path =
     resource._tag === "media-file"
@@ -1621,13 +1625,14 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       ? mediaUrlReference(props.originalUrl)
       : undefined;
   const relativePath = reference?.kind === "file" ? reference.relativePath : undefined;
-  const fallbackSrc = assetUrl._tag === "Failure" ? props.fallbackSrc : undefined;
-  const src =
-    assetUrl._tag === "Success"
-      ? assetUrl.url + (props.srcFragment ?? "")
-      : fallbackSrc === undefined
-        ? null
-        : fallbackSrc + (props.srcFragment ?? "");
+  const assetSrc = assetUrl._tag === "Success" ? assetUrl.url + (props.srcFragment ?? "") : null;
+  const fallbackSrc =
+    props.fallbackSrc === undefined ? null : props.fallbackSrc + (props.srcFragment ?? "");
+  const assetSourceFailed =
+    assetUrl._tag === "Failure" || (assetSrc !== null && failedAssetSrc === assetSrc);
+  const usesFallback = assetSourceFailed && fallbackSrc !== null;
+  const src = usesFallback ? fallbackSrc : assetSrc;
+  const fallbackSourceFailed = usesFallback && failedFallbackSrc === fallbackSrc;
   // The server reads the pixel size from the file header, so the slot can be
   // the image's final box instead of a 16:9 guess. An authored size wins; a
   // caller's height cap shrinks the box while keeping the ratio.
@@ -1644,9 +1649,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     kind: props.kind ?? "image",
     name: props.alt || (props.kind ?? "image"),
     src,
-    ...(fallbackSrc === undefined
-      ? { asset: { environmentId: props.environmentId, resource } }
-      : {}),
+    ...(usesFallback ? {} : { asset: { environmentId: props.environmentId, resource } }),
     ...(reference ? { reference } : {}),
     ...(relativePath && (resource._tag === "media-file" || resource._tag === "workspace-file")
       ? {
@@ -1665,7 +1668,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     return (
       <ChatMarkdownVideo
         src={src}
-        sourceFailed={assetUrl._tag === "Failure" && fallbackSrc === undefined}
+        sourceFailed={(assetSourceFailed && !usesFallback) || fallbackSourceFailed}
         alt={props.alt}
         copyMarkdown={props.copyMarkdown}
         originalUrl={props.originalUrl}
@@ -1681,7 +1684,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     <ChatMarkdownImage
       key={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
       src={src}
-      sourceFailed={assetUrl._tag === "Failure" && fallbackSrc === undefined}
+      sourceFailed={(assetSourceFailed && !usesFallback) || fallbackSourceFailed}
       alt={props.alt}
       copyMarkdown={props.copyMarkdown}
       standalone={props.standalone ?? true}
@@ -1692,7 +1695,11 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       style={style}
       imageProps={props.imageProps}
       actionsSource={actionsSource}
-      originalUrl={props.originalUrl}
+      originalUrl={props.originalUrl ?? fallbackSrc ?? undefined}
+      onSourceError={(failedSrc) => {
+        if (usesFallback) setFailedFallbackSrc(failedSrc);
+        else setFailedAssetSrc(failedSrc);
+      }}
       onImageExpand={props.onImageExpand}
     />
   );

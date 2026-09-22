@@ -54,6 +54,27 @@ export function githubMediaFetchUrl(source: string): string | null {
 }
 
 /**
+ * Whether `fetchUrl` addresses a user attachment on GitHub itself: the canonical
+ * `user-attachments` form or the legacy per-repository form both redirect to the same signed
+ * object store. Only the host and path decide where the bytes come from, so a query string
+ * does not disqualify the URL.
+ */
+export function isGitHubUserAttachmentFetchUrl(fetchUrl: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(fetchUrl);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:") return false;
+  const host = url.hostname.toLowerCase();
+  if (host !== "github.com" && host !== "www.github.com") return false;
+  return (
+    ATTACHMENT_PATH_PATTERN.test(url.pathname) || LEGACY_ATTACHMENT_PATH_PATTERN.test(url.pathname)
+  );
+}
+
+/**
  * Last path segment, for the signed URL's display name. A percent sequence GitHub accepts but
  * `decodeURIComponent` rejects is left encoded rather than failing the whole asset.
  */
