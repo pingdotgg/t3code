@@ -284,6 +284,15 @@ const SettingsContentStack = createNativeStackNavigator({
         title: "Diagnostics",
       },
     }),
+    // Deliberately the one settings screen with no `linking:` path. Its params
+    // are a tap-time snapshot, not a stable resource address: `now` is the
+    // wall-clock of the tap, `environmentIds` is the usage screen's local
+    // filter selection, and the window id/kind identify freshly aggregated
+    // pools. React Navigation round-trips non-path params through the URL as
+    // query strings, so a path here would bake in a permanently stale
+    // timestamp and filter. The deep linkable surface is the list at
+    // `settings/usage`, which rebuilds this state and pushes the detail from a
+    // tapped account segment.
     SettingsUsageAccount: createNativeStackScreen({
       screen: UsageLimitAccountScreen,
       options: { title: "Account" },
@@ -649,6 +658,14 @@ const RootStackConfig = createNativeStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/attachments/:attachmentId`,
       options: SOLID_HEADER_OPTIONS,
     }),
+    // Deliberately the one root route with no `linking:` path. The route
+    // carries zero params: its content is a session object (staged model,
+    // provider groups, and live update callbacks) that the active
+    // ThreadComposer presents into ExistingThreadSettingsRouteProvider before
+    // pushing this screen — state no URL can reconstruct. Reached without a
+    // presented session the screen navigates straight back, so a path would
+    // only produce a flash-and-dismiss link. Deep links to a thread land on
+    // `threads/:environmentId/:threadId`, where this sheet is one tap away.
     ThreadSettingsSheet: createNativeStackScreen({
       screen: ExistingThreadSettingsRouteScreen,
       options: {
