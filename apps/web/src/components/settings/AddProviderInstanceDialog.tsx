@@ -31,6 +31,8 @@ import { RadioGroup } from "../ui/radio-group";
 import { toastManager } from "../ui/toast";
 import { DRIVER_OPTION_BY_VALUE, DRIVER_OPTIONS } from "./providerDriverMeta";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
+import { SettingsGroup } from "./SettingsGroup";
+import { SettingsRow } from "./settingsLayout";
 import { ProviderSettingsForm, deriveProviderSettingsFields } from "./ProviderSettingsForm";
 import { WizardPanel, WizardPopup, WizardHeader, WizardFooter } from "../ui/wizard";
 import {
@@ -401,13 +403,15 @@ export function AddProviderInstanceDialog({
                     Search registry
                   </Button>
                 </div>
-                <ProviderSettingsForm
-                  definition={driverOption}
-                  value={configDraft}
-                  idPrefix="add-provider-acpRegistry-manual"
-                  variant="dialog"
-                  onChange={setConfigDraft}
-                />
+                <SettingsGroup variant="plain">
+                  <ProviderSettingsForm
+                    definition={driverOption}
+                    value={configDraft}
+                    idPrefix="add-provider-acpRegistry-manual"
+                    variant="settings"
+                    onChange={setConfigDraft}
+                  />
+                </SettingsGroup>
                 {hasAttemptedSubmit && acpSelectionError ? (
                   <p className="text-[11px] text-destructive">{acpSelectionError}</p>
                 ) : null}
@@ -433,8 +437,7 @@ export function AddProviderInstanceDialog({
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-foreground">{selectedAcp.name}</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  v{selectedAcp.version} · {selectedAcp.distribution} · authentication remains
-                  user-managed
+                  v{selectedAcp.version} · {selectedAcp.distribution}
                 </p>
               </div>
               <div className="flex shrink-0 gap-2 text-[11px]">
@@ -464,62 +467,83 @@ export function AddProviderInstanceDialog({
             </div>
           ) : null}
 
-          <label className={cn("grid gap-2", wizardStep !== identityStep && "hidden")}>
-            <span className="text-xs font-medium text-foreground">Label</span>
-            <Input
-              className="bg-background"
-              placeholder="e.g. Work"
-              value={label}
-              onChange={(event) => setIdentityDraft({ label: event.target.value })}
+          <SettingsGroup variant="plain" className={cn(wizardStep !== identityStep && "hidden")}>
+            <SettingsRow
+              title={<label htmlFor="add-provider-label">Label</label>}
+              description={
+                <span id="add-provider-label-description">Shown in the provider list.</span>
+              }
+              control={
+                <Input
+                  id="add-provider-label"
+                  aria-describedby="add-provider-label-description"
+                  size="sm"
+                  className="w-full @min-[32rem]/settings-row:w-56"
+                  placeholder="e.g. Work"
+                  value={label}
+                  onChange={(event) => setIdentityDraft({ label: event.target.value })}
+                />
+              }
             />
-            <span className="text-[11px] text-muted-foreground">
-              Shown in the provider list. Optional.
-            </span>
-          </label>
-
-          <label className={cn("grid gap-2", wizardStep !== identityStep && "hidden")}>
-            <span className="text-xs font-medium text-foreground">Instance ID</span>
-            <Input
-              className="bg-background"
-              placeholder={`${driver}_work`}
-              value={instanceId}
-              onChange={(event) => {
-                setIdentityDraft({ instanceIdOverride: event.target.value });
-              }}
-              aria-invalid={showInstanceIdError}
+            <SettingsRow
+              title={<label htmlFor="add-provider-instance-id">Instance ID</label>}
+              description={
+                <span id="add-provider-instance-id-description">Letters, digits, '-', or '_'.</span>
+              }
+              status={
+                showInstanceIdError ? (
+                  <span
+                    id="add-provider-instance-id-error"
+                    role="alert"
+                    className="text-destructive"
+                  >
+                    {instanceIdError}
+                  </span>
+                ) : undefined
+              }
+              control={
+                <Input
+                  id="add-provider-instance-id"
+                  aria-describedby={
+                    showInstanceIdError
+                      ? "add-provider-instance-id-description add-provider-instance-id-error"
+                      : "add-provider-instance-id-description"
+                  }
+                  size="sm"
+                  className="w-full @min-[32rem]/settings-row:w-56"
+                  placeholder={`${driver}_work`}
+                  value={instanceId}
+                  onChange={(event) => {
+                    setIdentityDraft({ instanceIdOverride: event.target.value });
+                  }}
+                  aria-invalid={showInstanceIdError}
+                />
+              }
             />
-            {showInstanceIdError ? (
-              <span className="text-[11px] text-destructive">{instanceIdError}</span>
-            ) : (
-              <span className="text-[11px] text-muted-foreground">
-                Routing key used by threads and sessions. Letters, digits, '-', or '_'.
-              </span>
-            )}
-          </label>
-
-          <div className={cn("grid gap-2", wizardStep !== identityStep && "hidden")}>
-            <span className="text-xs font-medium text-foreground">Accent color</span>
-            <ProviderAccentColorPicker
-              displayName={label || driverOption.label}
-              value={accentColor || undefined}
-              onCommit={(value) => setIdentityDraft({ accentColor: value })}
-              layout="inline"
+            <SettingsRow
+              title="Accent color"
+              description="Optional marker shown in the picker."
+              control={
+                <ProviderAccentColorPicker
+                  displayName={label || driverOption.label}
+                  value={accentColor || undefined}
+                  onCommit={(value) => setIdentityDraft({ accentColor: value })}
+                  layout="inline"
+                />
+              }
             />
-            <span className="text-[11px] text-muted-foreground">
-              Optional marker shown in the picker.
-            </span>
-          </div>
+          </SettingsGroup>
 
           {!isAcpRegistry && driverSettingsFields.length > 0 ? (
-            <div className={cn("grid gap-4", wizardStep !== 2 && "hidden")}>
+            <SettingsGroup variant="plain" className={cn(wizardStep !== 2 && "hidden")}>
               <ProviderSettingsForm
                 definition={driverOption}
                 value={configDraft}
                 idPrefix={`add-provider-${driver}`}
-                variant="dialog"
+                variant="settings"
                 onChange={setConfigDraft}
               />
-            </div>
+            </SettingsGroup>
           ) : !isAcpRegistry && wizardStep === 2 ? (
             <div className="grid gap-2">
               <p className="text-sm text-muted-foreground">
