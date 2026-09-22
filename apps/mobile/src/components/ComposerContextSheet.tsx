@@ -345,6 +345,23 @@ export function ComposerContextSheet(props: {
                     value={`${record.mimeType} · ${formatAttachmentSize(record.sizeBytes)}`}
                   />
                 ) : null}
+                {record.kind === "device" ? (
+                  <Text selectable>
+                    {[
+                      "Machine",
+                      record.label,
+                      record.os,
+                      record.connectionStatus,
+                      ...record.ssh.map(
+                        (target) =>
+                          `${target.username ? `${target.username}@` : ""}${target.host}${target.port ? `:${target.port}` : ""}`,
+                      ),
+                      record.ssh.length === 0 ? "SSH hostname not available" : null,
+                    ]
+                      .filter(Boolean)
+                      .join("\n")}
+                  </Text>
+                ) : null}
                 {record.kind === "mention" ? (
                   <ContextField label="Path" value={record.path} code />
                 ) : null}

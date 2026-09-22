@@ -12,6 +12,7 @@ const CONTEXT_CHIP_PRESENTATIONS = {
   video: { accent: "#d06217", symbol: "play.rectangle" },
   file: { accent: "#0090cd", symbol: "doc" },
   mention: { accent: "#0096af", symbol: "doc" },
+  device: { accent: "#0096af", symbol: "desktopcomputer" },
   terminal: { accent: "#009f6e", symbol: "terminal" },
   element: { accent: "#b87501", symbol: "cursorarrow.click" },
   "preview-annotation": { accent: "#b87501", symbol: "cursorarrow.click" },

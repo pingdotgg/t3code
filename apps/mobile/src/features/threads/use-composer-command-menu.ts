@@ -1,3 +1,6 @@
+import { ComposerContextId } from "@t3tools/contracts";
+import { searchDeviceMentions } from "@t3tools/client-runtime/connection/deviceMentions";
+import { useEnvironments } from "../../state/environments";
 import type {
   EnvironmentId,
   ProjectId,
@@ -308,6 +311,7 @@ export function useComposerCommandMenu({
     query: trigger?.kind === "pull-request" ? trigger.query : null,
   });
 
+  const { environments: mentionEnvironments } = useEnvironments();
   const items = useMemo<ComposerCommandItem[]>(() => {
     if (!trigger) return [];
 
@@ -447,17 +451,26 @@ export function useComposerCommandMenu({
     }
 
     if (trigger.kind === "path") {
-      return pathSearch.entries.map((entry) => {
-        const parts = entry.path.split("/");
-        return {
-          id: `path:${entry.path}`,
-          type: "path" as const,
-          path: entry.path,
-          kind: entry.kind,
-          label: parts[parts.length - 1] ?? entry.path,
-          description: parts.length > 1 ? parts.slice(0, -1).join("/") : "",
-        };
-      });
+      return [
+        ...searchDeviceMentions(mentionEnvironments, trigger.query).map((device) => ({
+          id: `device:${device.environmentId}`,
+          type: "device" as const,
+          device,
+          label: device.label,
+          description: `Machine: ${device.ssh[0]?.host ?? device.connectionStatus}`,
+        })),
+        ...pathSearch.entries.map((entry) => {
+          const parts = entry.path.split("/");
+          return {
+            id: `path:${entry.path}`,
+            type: "path" as const,
+            path: entry.path,
+            kind: entry.kind,
+            label: parts[parts.length - 1] ?? entry.path,
+            description: parts.length > 1 ? parts.slice(0, -1).join("/") : "",
+          };
+        }),
+      ];
     }
 
     return [];
@@ -466,6 +479,7 @@ export function useComposerCommandMenu({
     hasCompactableConversation,
     onUpdateInteractionMode,
     pathSearch.entries,
+    mentionEnvironments,
     pullRequestSearch.entries,
     projectCwd,
     selectedProviderStatus,
@@ -477,14 +491,17 @@ export function useComposerCommandMenu({
   const onSelect = useCallback(
     (item: ComposerCommandItem) => {
       if (!trigger) return;
-      if (item.type === "pull-request") {
+      if (item.type === "pull-request" || item.type === "device") {
         if (
           !ownerKey ||
-          trigger.kind !== "pull-request" ||
+          trigger.kind !== (item.type === "device" ? "path" : "pull-request") ||
           !items.some((candidate) => candidate.id === item.id)
         )
           return;
-        const record = pullRequestComposerContext(item.pullRequest, uuidv4());
+        const record =
+          item.type === "device"
+            ? { ...item.device, contextId: ComposerContextId.make(`device_${uuidv4()}`) }
+            : pullRequestComposerContext(item.pullRequest, uuidv4());
         if (
           (getComposerDraftSnapshot(ownerKey).context?.records.length ?? 0) >=
           COMPOSER_CONTEXT_MAX_RECORDS

@@ -1,6 +1,7 @@
 import {
   type ComposerContextId,
   ComposerContextRecord,
+  DeviceContextRecord,
   type ElementContextRecord,
   type PreviewAnnotationContextRecord,
   ReviewCommentContextRecord,
@@ -13,7 +14,7 @@ import { formatComposerContextReference } from "./composerContextReferences.ts";
 /**
  * Upgrades a message written before inline context references: trailing
  * `<terminal_context>`, `<element_context>` and `<preview_annotation>` blocks, inline or
- * trailing `<review_comment>` blocks, and U+FFFC terminal placeholders. Produces canonical
+ * trailing `<review_comment>` blocks, inline `<device_context>` snapshots, and U+FFFC terminal placeholders. Produces canonical
  * reference links plus records so old messages render and copy through the new path.
  * Event history is never rewritten; this runs in memory on read.
  */
@@ -34,7 +35,8 @@ const REVIEW_ATTRIBUTE = /([a-zA-Z][a-zA-Z0-9_-]*)="([^"]*)"/g;
 const REVIEW_FENCE = /(`{3,})([^\s`]*)[^\n]*\n([\s\S]*?)\n\1/g;
 const REVIEW_TOKEN = "\uE000";
 const LEGACY_MARKERS =
-  /<(?:terminal_context|element_context|preview_annotation|review_comment)\b|￼/;
+  /<(?:terminal_context|element_context|preview_annotation|review_comment|device_context)\b|￼/;
+const isDeviceContextRecord = Schema.is(DeviceContextRecord);
 const isReviewCommentContextRecord = Schema.is(ReviewCommentContextRecord);
 const isLegacyContextRecords = Schema.is(
   Schema.Array(ComposerContextRecord).check(Schema.isMaxLength(200)),
@@ -165,7 +167,7 @@ function previewRecord(body: string, index: number): PreviewAnnotationContextRec
   // chip that replaces this block cannot show.
   const FIELD_PREFIXES = ["Preview annotation:", "Id: ", "Page: ", "Comment: ", "Targets: "];
   const BLOCK_DELIMITER =
-    /^<\/?(?:terminal_context|element_context|preview_annotation|review_comment)\b/;
+    /^<\/?(?:terminal_context|element_context|preview_annotation|review_comment|device_context)\b/;
   const isFieldStart = (line: string) =>
     FIELD_PREFIXES.some((candidate) => line.startsWith(candidate)) ||
     line === "Requested visual changes:" ||
@@ -442,11 +444,27 @@ export function upgradeLegacyContextMessage(text: string): UpgradedLegacyContext
         ? `${body}\n\n${appended.join(" ")}`
         : appended.join(" ");
 
-  const records = [...terminals, ...elements, ...previews, ...reviews];
+  const devices: DeviceContextRecord[] = [];
+  const textWithDevices = upgradedText.replace(
+    /<device_context record="([^"]*)">\n[^<]*\n<\/device_context>/g,
+    (whole, encoded: string) => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(unescapeAttribute(encoded));
+      } catch {
+        return whole;
+      }
+      if (!isDeviceContextRecord(parsed)) return whole;
+      const record = { ...parsed, contextId: legacyId("device", devices.length + 1) };
+      devices.push(record);
+      return formatComposerContextReference(record);
+    },
+  );
+  const records = [...terminals, ...elements, ...previews, ...reviews, ...devices];
   // Conversion is atomic: keep the source if any record would be dropped on the wire.
   if (!isLegacyContextRecords(records)) return { text, records: [] };
   return {
-    text: upgradedText,
+    text: textWithDevices,
     records,
   };
 }

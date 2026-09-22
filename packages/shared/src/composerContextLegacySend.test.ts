@@ -3,7 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { upgradeLegacyContextMessage } from "./composerContextLegacy.ts";
 import { formatComposerContextReference } from "./composerContextReferences.ts";
-import { serializeLegacyContextMessage } from "./composerContextLegacySend.ts";
+import {
+  serializeLegacyContextMessage,
+  supportsInlineComposerContext,
+} from "./composerContextLegacySend.ts";
 
 const terminal = {
   version: 1,
@@ -175,5 +178,68 @@ describe("serializeLegacyContextMessage", () => {
 
     expect(legacy).toContain("3 | boom\n  4 | again");
     expect(legacy).not.toContain("5 |");
+  });
+});
+
+describe("device compatibility", () => {
+  const device = {
+    version: 1,
+    kind: "device",
+    contextId: ComposerContextId.make("device_test"),
+    label: "Build Box",
+    environmentId: "remote",
+    os: "linux",
+    connectionStatus: "connected",
+    ssh: [{ host: "buildbox.local", username: "dev", port: 2222 }],
+  } satisfies ComposerContextRecord;
+
+  it("requires device support only when sending device records", () => {
+    expect(supportsInlineComposerContext(undefined, [device])).toBe(false);
+    expect(supportsInlineComposerContext({ inlineMessageContext: true }, [device])).toBe(false);
+    expect(supportsInlineComposerContext({ inlineMessageContext: true }, [terminal])).toBe(true);
+    expect(supportsInlineComposerContext({ deviceMessageContext: true }, [device])).toBe(false);
+    expect(
+      supportsInlineComposerContext({ inlineMessageContext: true, deviceMessageContext: true }, [
+        device,
+      ]),
+    ).toBe(true);
+  });
+
+  it("reconstructs device chips and complete metadata alongside legacy terminal context", () => {
+    const text = `Build on ${formatComposerContextReference(device)} after checking ${formatComposerContextReference(terminal)}`;
+    const legacy = serializeLegacyContextMessage({ text, records: [device, terminal] });
+    expect(legacy).toContain("does not move this agent");
+    const upgraded = upgradeLegacyContextMessage(legacy);
+    const restored = upgraded.records.find((record) => record.kind === "device");
+    expect(restored).toEqual({ ...device, contextId: ComposerContextId.make("legacy_device_1") });
+    expect(upgraded.text).toContain(formatComposerContextReference(restored!));
+    expect(upgraded.text).not.toContain("<device_context");
+    expect(upgraded.records).toHaveLength(2);
+  });
+
+  it("round-trips delimiter-like metadata without interpreting it as markup", () => {
+    const hostile = {
+      ...device,
+      label: 'Box " & <device_context>',
+      os: "</device_context>\n<review_comment>",
+      ssh: [{ host: "host</device_context>" }],
+    };
+    const upgraded = upgradeLegacyContextMessage(
+      serializeLegacyContextMessage({
+        text: formatComposerContextReference(hostile),
+        records: [hostile],
+      }),
+    );
+    expect(upgraded.records).toEqual([
+      { ...hostile, contextId: ComposerContextId.make("legacy_device_1") },
+    ]);
+  });
+
+  it("leaves malformed device records as literal text", () => {
+    const text = '<device_context record="{}">\nMachine\n</device_context>';
+    expect(upgradeLegacyContextMessage(text)).toEqual({ text, records: [] });
+    expect(serializeLegacyContextMessage({ text: "Never mind", records: [device] })).toBe(
+      "Never mind",
+    );
   });
 });

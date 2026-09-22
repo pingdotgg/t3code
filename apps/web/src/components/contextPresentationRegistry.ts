@@ -41,6 +41,10 @@ const DEFINITIONS = [
     capabilities: { details: "none", expanded: "none", defaultDraftView: "compact" },
   },
   {
+    kind: "device",
+    capabilities: { details: "tooltip", expanded: "none", defaultDraftView: "compact" },
+  },
+  {
     kind: "skill",
     capabilities: { details: "tooltip", expanded: "none", defaultDraftView: "compact" },
   },

@@ -1,6 +1,8 @@
+import { ComposerContextId, type DeviceContextRecord } from "@t3tools/contracts";
+import { searchDeviceMentions } from "@t3tools/client-runtime/connection/deviceMentions";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
-import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { runtimeModeConfig, runtimeModeOptions } from "./runtimeModeConfig";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
@@ -1301,6 +1303,7 @@ export interface ChatComposerHandle {
     terminalContexts: TerminalContextDraft[];
     previewAnnotations: PreviewAnnotationPayload[];
     reviewComments: ReviewCommentContext[];
+    deviceMentions?: ReadonlyArray<DeviceContextRecord> | undefined;
     selectedPromptEffort: string | null;
     selectedModelOptionsForDispatch: unknown;
     selectedModelSelection: ModelSelection;
@@ -1635,6 +1638,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerTerminalContexts = composerDraft.terminalContexts;
   const composerPreviewAnnotations = composerDraft.previewAnnotations;
   const composerReviewComments = composerDraft.reviewComments;
+  const { environments: mentionEnvironments } = useEnvironments();
+  const setDeviceMentions = useComposerDraftStore((store) => store.setDeviceMentions);
   const pendingSnapShotAnimations = useSyncExternalStore(
     subscribeToPendingSnapShotAnimations,
     getPendingSnapShotAnimations,
@@ -1699,6 +1704,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerContextRecordsFromDraft({
         terminalContexts: composerTerminalContexts,
         reviewComments: composerReviewComments,
+        deviceMentions: composerDraft.deviceMentions,
         previewAnnotations: composerPreviewAnnotations,
         images: composerImages,
         files: composerFiles,
@@ -1709,6 +1715,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerImages,
       composerPreviewAnnotations,
       composerReviewComments,
+      composerDraft.deviceMentions,
       composerTerminalContexts,
       uploadsByImageId,
     ],
@@ -2235,9 +2242,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         prompt,
         imageCount: composerImages.length + composerFiles.length,
         terminalContexts: composerTerminalContexts,
-        elementContextCount: composerPreviewAnnotations.length + composerReviewComments.length,
+        elementContextCount:
+          composerPreviewAnnotations.length +
+          composerReviewComments.length +
+          (composerDraft.deviceMentions?.length ?? 0),
       }),
     [
+      composerDraft.deviceMentions?.length,
       composerFiles.length,
       composerImages.length,
       composerPreviewAnnotations.length,
@@ -2344,14 +2355,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
-      return workspaceEntries.entries.map((entry) => ({
-        id: `path:${entry.kind}:${entry.path}`,
-        type: "path",
-        path: entry.path,
-        pathKind: entry.kind,
-        label: basenameOfPath(entry.path),
-        description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
-      }));
+      return [
+        ...searchDeviceMentions(mentionEnvironments, composerTrigger.query).map((device) => ({
+          id: `device:${device.environmentId}`,
+          type: "device" as const,
+          device,
+          label: device.label,
+          description: `Machine: ${device.ssh[0]?.host ?? device.connectionStatus}`,
+        })),
+        ...workspaceEntries.entries.map((entry) => ({
+          id: `path:${entry.kind}:${entry.path}`,
+          type: "path" as const,
+          path: entry.path,
+          pathKind: entry.kind,
+          label: basenameOfPath(entry.path),
+          description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
+        })),
+      ];
     }
     if (composerTrigger.kind === "slash-command") {
       const builtInSlashCommandItems = [
@@ -2497,6 +2517,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderStatus,
     settings.showSkillsInSlashMenu,
     workspaceEntries.entries,
+    mentionEnvironments,
   ]);
 
   const composerMenuOpen = Boolean(composerTrigger);
@@ -2785,6 +2806,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
       }
       const records: ComposerContextRecord[] = [
+        ...(composerDraft.deviceMentions ?? []).filter((record) => wanted.has(record.contextId)),
         ...composerTerminalContexts
           .filter((c) => wanted.has(terminalContextReference(c).contextId))
           .map(terminalContextRecord),
@@ -2825,6 +2847,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerImages,
       composerPreviewAnnotations,
       composerReviewComments,
+      composerDraft.deviceMentions,
       composerTerminalContexts,
       environmentId,
       uploadsByImageId,
@@ -2961,15 +2984,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           return found ? [found] : [];
         })[0];
         const existingRecord =
-          existing?.kind === "terminal"
-            ? terminalContextRecord(existing.record)
-            : existing?.kind === "review-comment"
-              ? reviewCommentContextRecord(existing.record)
-              : existing?.kind === "preview-annotation"
-                ? previewAnnotationContextRecord(existing.record)
-                : existing
-                  ? (uploadedContextRecordFromDraft(existing) ?? undefined)
-                  : undefined;
+          existing?.kind === "device"
+            ? existing.record
+            : existing?.kind === "terminal"
+              ? terminalContextRecord(existing.record)
+              : existing?.kind === "review-comment"
+                ? reviewCommentContextRecord(existing.record)
+                : existing?.kind === "preview-annotation"
+                  ? previewAnnotationContextRecord(existing.record)
+                  : existing
+                    ? (uploadedContextRecordFromDraft(existing) ?? undefined)
+                    : undefined;
         if (existingRecord && isSameComposerContextPayload(existingRecord, record)) {
           if (record.kind === "preview-annotation" && record.screenshotContextId) {
             skippedDependentAttachmentIds.add(record.screenshotContextId);
@@ -2978,6 +3003,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         const conflicts = existing !== undefined;
         switch (record.kind) {
+          case "device": {
+            const current = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+            const imported = conflicts
+              ? { ...record, contextId: ComposerContextId.make(`device_${randomUUID()}`) }
+              : record;
+            setDeviceMentions(composerDraftTarget, [...(current?.deviceMentions ?? []), imported]);
+            rewritten.set(record.contextId, imported.contextId);
+            break;
+          }
           case "terminal": {
             const threadId = activeThread?.id ?? activeThreadId;
             if (!threadId) break;
@@ -3042,6 +3076,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerContextRecords,
       composerDraftTarget,
       importAttachmentRecord,
+      setDeviceMentions,
     ],
   );
   const importContextFragment = useCallback(
@@ -3322,9 +3357,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * payload here and an undo puts it back rather than leaving a dangling chip.
    */
   const removedContextPayloadsRef = useRef<{
+    devices: Map<string, DeviceContextRecord>;
     terminals: Map<string, TerminalContextDraft>;
     reviewComments: Map<string, ReviewCommentContext>;
-  }>({ terminals: new Map(), reviewComments: new Map() });
+  }>({ devices: new Map(), terminals: new Map(), reviewComments: new Map() });
   const removedAttachmentContextPayloadsRef = useRef<RetainedAttachmentContextPayloads>({
     files: new Map(),
     previewAnnotations: new Map(),
@@ -3364,6 +3400,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       const referenced = new Set(contextIds);
       const retained = removedContextPayloadsRef.current;
+
+      const devices = composerDraft.deviceMentions ?? [];
+      const liveDeviceIds = new Set<string>(devices.map((record) => record.contextId));
+      const restoredDevices = [...referenced].flatMap((contextId) => {
+        if (liveDeviceIds.has(contextId)) return [];
+        const record = retained.devices.get(contextId);
+        return record ? [record] : [];
+      });
+      const nextDevices = devices.filter((record) => referenced.has(record.contextId));
+      for (const record of devices) {
+        if (!referenced.has(record.contextId)) retained.devices.set(record.contextId, record);
+      }
+      if (nextDevices.length !== devices.length || restoredDevices.length > 0) {
+        setDeviceMentions(composerDraftTarget, [...nextDevices, ...restoredDevices]);
+      }
 
       // An undone delete brings the reference back; restore the payload it points at.
       const liveTerminalIds = new Set<string>(
@@ -3447,6 +3498,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setPrompt,
       setComposerTrigger,
       composerDraftTarget,
+      composerDraft.deviceMentions,
+      setDeviceMentions,
       composerTerminalContexts,
       setComposerDraftTerminalContexts,
       composerReviewComments,
@@ -3586,6 +3639,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       const { snapshot, trigger } = resolveActiveComposerTrigger();
       if (!trigger) return;
+      if (item.type === "device") {
+        if (trigger.kind !== "path") return;
+        const record = {
+          ...item.device,
+          contextId: ComposerContextId.make(`device_${randomUUID()}`),
+        };
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          trigger.rangeEnd,
+          `${formatInlineContextReference(record)} `,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
+        );
+        if (applied) {
+          const current = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+          setDeviceMentions(composerDraftTarget, [...(current?.deviceMentions ?? []), record]);
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
       if (item.type === "path") {
         const replacement = `${serializeComposerFileLink(item.path)} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
@@ -3712,6 +3784,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       planModeUiEnabled,
       onUsageLimitsCommand,
       resolveActiveComposerTrigger,
+      setDeviceMentions,
     ],
   );
 
@@ -4443,6 +4516,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     // Context chips keep their links in the prompt; the payloads behind them travel as
     // records so the restore can resolve every chip.
     const stashedRecords: ComposerContextRecord[] = [
+      ...(composerDraft.deviceMentions ?? []).filter((record) =>
+        collectInlineContextIds(prompt).includes(record.contextId),
+      ),
       ...composerTerminalContextsRef.current.map(terminalContextRecord),
       ...composerReviewComments.map(reviewCommentContextRecord),
       ...composerPreviewAnnotations.map((annotation) =>
@@ -4553,6 +4629,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // Everything the entry carries leaves the draft with it.
       promptRef.current = "";
       clearComposerDraftPromptAndImages(stashTarget);
+      setDeviceMentions(stashTarget, []);
       clearComposerDraftTerminalContexts(stashTarget);
       for (const comment of composerReviewComments) {
         removeComposerDraftReviewComment(stashTarget, comment.id);
@@ -4671,6 +4748,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pulseStashBadge,
     restoreStashEntry,
     stashEntryToQueue,
+    composerDraft.deviceMentions,
+    setDeviceMentions,
   ]);
 
   const toggleStashMenu = useCallback(() => {
@@ -6011,6 +6090,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         terminalContexts: composerTerminalContextsRef.current,
         previewAnnotations: composerPreviewAnnotations,
         reviewComments: composerReviewComments,
+        deviceMentions: composerDraft.deviceMentions?.filter((record) =>
+          collectInlineContextIds(promptRef.current).includes(record.contextId),
+        ),
         selectedPromptEffort,
         selectedModelOptionsForDispatch,
         selectedModelSelection,
@@ -6060,6 +6142,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerTerminalContextsRef,
       composerPreviewAnnotations,
       composerReviewComments,
+      composerDraft.deviceMentions,
       focusComposer,
       environmentId,
       primaryEnvironmentId,

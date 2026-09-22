@@ -315,7 +315,10 @@ import {
   removeInlineContextReference,
   stripInlineContextReferences,
 } from "../lib/composerContextReferences";
-import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
+import {
+  serializeLegacyContextMessage,
+  supportsInlineComposerContext,
+} from "@t3tools/shared/composerContextLegacySend";
 import {
   buildMessageContext,
   previewAnnotationContextLabel,
@@ -7265,6 +7268,12 @@ export default function ChatView(props: ChatViewProps) {
       ...(draft?.previewAnnotations ?? []),
       ...messages.flatMap((message) => message.previewAnnotations),
     ]);
+    useComposerDraftStore
+      .getState()
+      .setDeviceMentions(composerDraftTarget, [
+        ...(draft?.deviceMentions ?? []),
+        ...messages.flatMap((message) => message.deviceMentions ?? []),
+      ]);
     setComposerDraftReviewComments(composerDraftTarget, [
       ...(draft?.reviewComments ?? []),
       ...messages.flatMap((message) => message.reviewComments),
@@ -7400,6 +7409,7 @@ export default function ChatView(props: ChatViewProps) {
       terminalContexts: composerTerminalContexts,
       previewAnnotations: sendContextPreviewAnnotations,
       reviewComments: composerReviewComments,
+      deviceMentions,
     } = queuedMessage ?? sendCtx;
     const {
       selectedProvider: ctxSelectedProvider,
@@ -7460,7 +7470,10 @@ export default function ChatView(props: ChatViewProps) {
       prompt: promptForSend,
       imageCount: composerImages.length + composerFiles.length,
       terminalContexts: composerTerminalContexts,
-      elementContextCount: composerPreviewAnnotations.length + composerReviewComments.length,
+      elementContextCount:
+        composerPreviewAnnotations.length +
+        composerReviewComments.length +
+        (deviceMentions?.length ?? 0),
     });
     const feedbackCommand =
       ctxSelectedProvider === "codex" &&
@@ -7468,7 +7481,8 @@ export default function ChatView(props: ChatViewProps) {
       composerFiles.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
-      composerReviewComments.length === 0
+      composerReviewComments.length === 0 &&
+      (deviceMentions?.length ?? 0) === 0
         ? parseCodexFeedbackCommand(trimmed)
         : null;
     if (feedbackCommand && !queuedMessage && multipleModelSelections === null) {
@@ -7558,11 +7572,15 @@ export default function ChatView(props: ChatViewProps) {
         context: buildMessageContext({
           terminalContexts: sendableComposerTerminalContexts,
           reviewComments: composerReviewComments,
+          deviceMentions,
           previewAnnotations: composerPreviewAnnotations,
         }),
         interactionMode: followUp.interactionMode,
       });
       if (!followUpSent) {
+        useComposerDraftStore
+          .getState()
+          .setDeviceMentions(composerDraftTarget, deviceMentions ?? []);
         promptRef.current = followUpPromptSnapshot;
         composerTerminalContextsRef.current = [...followUpTerminalContexts];
         restorePlanFollowUpComposer({
@@ -7591,7 +7609,8 @@ export default function ChatView(props: ChatViewProps) {
       composerFiles.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
-      composerReviewComments.length === 0
+      composerReviewComments.length === 0 &&
+      (deviceMentions?.length ?? 0) === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand && !queuedMessage && multipleModelSelections === null) {
@@ -7650,6 +7669,7 @@ export default function ChatView(props: ChatViewProps) {
         terminalContexts: [...composerTerminalContexts],
         previewAnnotations: [...composerPreviewAnnotations],
         reviewComments: [...composerReviewComments],
+        deviceMentions,
         submissionIntent,
         queuedAfterToolActivityId: latestCompletedToolActivityId(threadActivities),
         createdAt: new Date().toISOString(),
@@ -7703,6 +7723,7 @@ export default function ChatView(props: ChatViewProps) {
       buildMessageContext({
         terminalContexts: composerTerminalContextsSnapshot,
         reviewComments: composerReviewCommentsSnapshot,
+        deviceMentions,
         previewAnnotations: composerPreviewAnnotationsSnapshot,
         attachments: composerAttachmentsSnapshot.map((attachment, index) => ({
           attachment,
@@ -7991,9 +8012,13 @@ export default function ChatView(props: ChatViewProps) {
                   "The previous request may have started. Open its thread to check before sending again.",
                 );
               }
-              const supportsInlineMessageContext =
-                appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
-                  .capabilities.inlineMessageContext === true;
+              const capabilities = appAtomRegistry
+                .get(environmentServerConfigsAtom)
+                .get(environmentId)?.environment.capabilities;
+              const supportsInlineMessageContext = supportsInlineComposerContext(
+                capabilities,
+                context?.records,
+              );
               requestMayHaveStarted = true;
               const result = await startThreadTurn({
                 environmentId,
@@ -8142,6 +8167,9 @@ export default function ChatView(props: ChatViewProps) {
               composerPreviewAnnotationsSnapshot,
             );
             setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
+            useComposerDraftStore
+              .getState()
+              .setDeviceMentions(composerDraftTarget, deviceMentions ?? []);
             if (composerRef.current && currentRouteThreadKeyRef.current === routeThreadKey) {
               promptRef.current = messageTextForSend;
               composerRef.current.resetCursorState({
@@ -8408,9 +8436,13 @@ export default function ChatView(props: ChatViewProps) {
               // awaits above can span a server reconnect that changes it. Servers
               // from before inline context drop the records and forward the links
               // as literal text, so their turns carry the payload the legacy way.
-              const supportsInlineMessageContext =
-                appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
-                  .capabilities.inlineMessageContext === true;
+              const capabilities = appAtomRegistry
+                .get(environmentServerConfigsAtom)
+                .get(environmentId)?.environment.capabilities;
+              const supportsInlineMessageContext = supportsInlineComposerContext(
+                capabilities,
+                context?.records,
+              );
               if (!supportsInlineMessageContext) {
                 return {
                   text: serializeLegacyContextMessage({
@@ -8556,6 +8588,9 @@ export default function ChatView(props: ChatViewProps) {
         setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
         setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
         setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
+        useComposerDraftStore
+          .getState()
+          .setDeviceMentions(composerDraftTarget, deviceMentions ?? []);
         composerRef.current?.resetCursorState({
           cursor: collapseExpandedComposerCursor(messageTextForSend, messageTextForSend.length),
           prompt: messageTextForSend,
@@ -9037,8 +9072,11 @@ export default function ChatView(props: ChatViewProps) {
             message: {
               messageId: messageIdForSend,
               role: "user",
-              ...(appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
-                .capabilities.inlineMessageContext === true
+              ...(supportsInlineComposerContext(
+                appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
+                  .capabilities,
+                context?.records,
+              )
                 ? { text: outgoingMessageText, ...(context ? { context } : {}) }
                 : {
                     text: serializeLegacyContextMessage({

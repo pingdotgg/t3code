@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./connection/deviceMentions": {
+      "types": "./src/connection/deviceMentions.ts",
+      "default": "./src/connection/deviceMentions.ts"
+    },
     "./device/stream": {
       "types": "./src/device/stream.ts",
       "default": "./src/device/stream.ts"

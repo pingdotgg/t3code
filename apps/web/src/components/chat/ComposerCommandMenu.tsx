@@ -1,3 +1,4 @@
+import type { DeviceMention } from "@t3tools/client-runtime/connection/deviceMentions";
 import {
   formatProviderSkillDisplayName,
   resolveProviderSkillSourceKind,
@@ -12,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import {
   BlocksIcon,
+  MonitorIcon,
   FolderIcon,
   PackageIcon,
   SettingsIcon,
@@ -29,6 +31,7 @@ import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
 
 export type ComposerCommandItem =
+  | { id: string; type: "device"; device: DeviceMention; label: string; description: string }
   | {
       id: string;
       type: "path";
@@ -132,7 +135,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                   (props.triggerKind === "skill"
                     ? "No skills found. Try / to browse provider commands."
                     : props.triggerKind === "path"
-                      ? "No matching files or folders."
+                      ? "No matching files, folders, or devices."
                       : "No matching command."))}
             </p>
           </div>
@@ -175,6 +178,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         props.onSelect(props.item);
       }}
     >
+      {props.item.type === "device" ? <MonitorIcon className="size-4 shrink-0" /> : null}
       {props.item.type === "path" ? (
         <PierreEntryIcon
           pathValue={props.item.path}
