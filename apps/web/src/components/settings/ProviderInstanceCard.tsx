@@ -244,36 +244,37 @@ function ProviderEnvironmentFieldRow(props: {
     : props.field.placeholder;
 
   return (
-    <label htmlFor={inputId} className="block">
-      <span className="text-xs font-medium text-foreground">{props.field.label}</span>
-      <div className="mt-1.5 flex min-w-0 items-center gap-2">
-        <DraftInput
-          id={inputId}
-          className="min-w-0 flex-1"
-          type={props.field.sensitive === false ? undefined : "password"}
-          autoComplete="off"
-          value={value}
-          onCommit={(next) => props.onCommit(props.field, next)}
-          placeholder={placeholder}
-          spellCheck={false}
-        />
-        {props.variable ? (
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
-            onClick={() => props.onRemove(props.field)}
-            aria-label={`Clear ${props.field.label}`}
-          >
-            <XIcon className="size-3.5" />
-          </Button>
-        ) : null}
-      </div>
-      {props.field.description ? (
-        <span className="mt-1 block text-xs text-muted-foreground">{props.field.description}</span>
-      ) : null}
-    </label>
+    <SettingsRow
+      title={<label htmlFor={inputId}>{props.field.label}</label>}
+      description={props.field.description}
+      control={
+        <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
+          <DraftInput
+            id={inputId}
+            size="sm"
+            className="min-w-0 flex-1"
+            type={props.field.sensitive === false ? undefined : "password"}
+            autoComplete="off"
+            value={value}
+            onCommit={(next) => props.onCommit(props.field, next)}
+            placeholder={placeholder}
+            spellCheck={false}
+          />
+          {props.variable ? (
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost-muted"
+              className="hover:text-destructive"
+              onClick={() => props.onRemove(props.field)}
+              aria-label={`Clear ${props.field.label}`}
+            >
+              <XIcon className="size-3.5" />
+            </Button>
+          ) : null}
+        </div>
+      }
+    />
   );
 }
 
@@ -1012,7 +1013,7 @@ export function ProviderInstanceCard({
             className={readOnly ? "opacity-50 select-none" : undefined}
           >
             {environmentFields.length > 0 ? (
-              <div className="grid gap-3 px-3 py-3 sm:px-4">
+              <>
                 {environmentFields.map((field) => (
                   <ProviderEnvironmentFieldRow
                     key={field.name}
@@ -1023,7 +1024,7 @@ export function ProviderInstanceCard({
                     onRemove={removeEnvironmentField}
                   />
                 ))}
-              </div>
+              </>
             ) : null}
           </div>
         </SettingsSection>
