@@ -856,7 +856,7 @@ export default function DiffPanel({
                 />
               }
             >
-              <RefreshIcon className="size-3.5" refreshing={isRefreshingDiff} />
+              <RefreshIcon size="sm" refreshing={isRefreshingDiff} />
             </TooltipTrigger>
             <TooltipPopup side="top">
               {isRefreshingDiff ? "Refreshing diff…" : "Refresh diff"}

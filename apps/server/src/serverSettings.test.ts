@@ -972,6 +972,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         observability: {
           otlpTracesUrl: "  http://localhost:4318/v1/traces  ",
           otlpMetricsUrl: "  http://localhost:4318/v1/metrics  ",
+          otlpLogsUrl: "  http://localhost:4318/v1/logs  ",
         },
       });
 
@@ -979,6 +980,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.deepEqual(next.observability, {
         otlpTracesUrl: "http://localhost:4318/v1/traces",
         otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+        otlpLogsUrl: "http://localhost:4318/v1/logs",
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
@@ -1190,6 +1192,34 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     );
   }
 
+  for (const sensitiveLast of [true, false]) {
+    it.effect(`preserves duplicate secret operation order (sensitive last: ${sensitiveLast})`, () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const instanceId = ProviderInstanceId.make("codex_duplicate");
+        const secret = { name: "API_TOKEN", value: "secret-last", sensitive: true };
+        const plain = { name: "API_TOKEN", value: "plain-last", sensitive: false };
+        const next = yield* service.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: sensitiveLast ? [plain, secret] : [secret, plain],
+              config: {},
+            },
+          },
+        });
+        assert.equal(
+          next.providerInstances[instanceId]?.environment?.at(-1)?.value,
+          sensitiveLast ? "secret-last" : "plain-last",
+        );
+        assert.equal(
+          next.providerInstances[instanceId]?.environment?.find((v) => v.sensitive)?.value,
+          sensitiveLast ? "secret-last" : "",
+        );
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+    );
+  }
+
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
@@ -1288,6 +1318,181 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.include(persisted, '"valueRedacted": true');
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+
+  it.effect("rolls back provider secret changes when the settings file commit fails", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      let failRename = false;
+      let settingsPathToFail: string | undefined;
+      const writeFailure = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "rename",
+        description: "Forced settings write failure.",
+      });
+      const failingFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        rename: (fromPath, toPath) =>
+          failRename && toPath === settingsPathToFail
+            ? Effect.fail(writeFailure)
+            : fileSystem.rename(fromPath, toPath),
+      });
+      const instanceId = ProviderInstanceId.make("codex_write_failure");
+      const settingsLayer = makeServerSettingsLayer().pipe(
+        Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, failingFileSystem)),
+      );
+
+      yield* Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        settingsPathToFail = (yield* ServerConfig.ServerConfig).settingsPath;
+        yield* serverSettings.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [{ name: "OPENROUTER_API_KEY", value: "sk-kept", sensitive: true }],
+              config: {},
+            },
+          },
+        });
+
+        failRename = true;
+        const failedUpdate = yield* serverSettings
+          .updateSettings({
+            providerInstances: {
+              [instanceId]: {
+                driver: ProviderDriverKind.make("codex"),
+                environment: [{ name: "OPENROUTER_API_KEY", value: "sk-new", sensitive: true }],
+                config: {},
+              },
+            },
+          })
+          .pipe(Effect.result);
+        assert.equal(failedUpdate._tag, "Failure");
+        assert.equal(
+          (yield* serverSettings.getSettings).providerInstances[instanceId]?.environment?.[0]
+            ?.value,
+          "sk-kept",
+        );
+
+        const failed = yield* serverSettings
+          .updateSettings({ providerInstances: {} })
+          .pipe(Effect.result);
+        assert.equal(failed._tag, "Failure");
+        assert.equal(
+          (yield* serverSettings.getSettings).providerInstances[instanceId]?.environment?.[0]
+            ?.value,
+          "sk-kept",
+        );
+      }).pipe(Effect.provide(settingsLayer));
+    }),
+  );
+
+  for (const failure of ["response materialization", "partially committed write"] as const) {
+    it.effect(`rolls back provider secret changes after ${failure} fails`, () => {
+      const textDecoder = new TextDecoder();
+      const secrets = new Map<string, Uint8Array>();
+      let rejectNewSecret = false;
+      const secretStoreLayer = Layer.succeed(
+        ServerSecretStore.ServerSecretStore,
+        ServerSecretStore.ServerSecretStore.of({
+          get: (name) =>
+            Effect.suspend(() => {
+              const value = secrets.get(name);
+              if (
+                failure === "response materialization" &&
+                rejectNewSecret &&
+                value !== undefined &&
+                textDecoder.decode(value) === "sk-new"
+              ) {
+                return Effect.fail(
+                  new ServerSecretStore.SecretStoreReadError({
+                    resource: `secret ${name}`,
+                    cause: "Forced response materialization failure.",
+                  }),
+                );
+              }
+              return Effect.succeed(
+                value === undefined ? Option.none() : Option.some(Uint8Array.from(value)),
+              );
+            }),
+          set: (name, value) =>
+            Effect.suspend(() => {
+              secrets.set(name, Uint8Array.from(value));
+              return failure === "partially committed write" &&
+                rejectNewSecret &&
+                textDecoder.decode(value) === "sk-new"
+                ? Effect.fail(
+                    new ServerSecretStore.SecretStorePersistError({
+                      resource: `secret ${name}`,
+                      cause: "chmod failed after rename",
+                    }),
+                  )
+                : Effect.void;
+            }),
+          create: (name, value) =>
+            Effect.sync(() => {
+              secrets.set(name, Uint8Array.from(value));
+            }),
+          getOrCreateRandom: (name, bytes) =>
+            Effect.sync(() => {
+              const value = secrets.get(name) ?? new Uint8Array(bytes);
+              secrets.set(name, value);
+              return Uint8Array.from(value);
+            }),
+          remove: (name) =>
+            Effect.sync(() => {
+              secrets.delete(name);
+            }),
+        }),
+      );
+      const settingsLayer = ServerSettingsModule.layer.pipe(
+        Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
+        Layer.provide(secretStoreLayer),
+        Layer.provideMerge(
+          Layer.fresh(
+            ServerConfig.layerTest(process.cwd(), {
+              prefix: "t3code-server-settings-materialization-failure-test-",
+            }),
+          ),
+        ),
+      );
+      const instanceId = ProviderInstanceId.make("codex_materialization_failure");
+
+      return Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        yield* serverSettings.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [{ name: "OPENROUTER_API_KEY", value: "sk-kept", sensitive: true }],
+              config: {},
+            },
+          },
+        });
+
+        rejectNewSecret = true;
+        const failedUpdate = yield* serverSettings
+          .updateSettings({
+            providerInstances: {
+              [instanceId]: {
+                driver: ProviderDriverKind.make("codex"),
+                environment: [{ name: "OPENROUTER_API_KEY", value: "sk-new", sensitive: true }],
+                config: {},
+              },
+            },
+          })
+          .pipe(Effect.result);
+
+        assert.equal(failedUpdate._tag, "Failure");
+        rejectNewSecret = false;
+        assert.equal(
+          (yield* serverSettings.getSettings).providerInstances[instanceId]?.environment?.[0]
+            ?.value,
+          "sk-kept",
+        );
+      }).pipe(Effect.provide(settingsLayer));
+    });
+  }
 
   it.effect("folds legacy project overrides into projectSettingsOverrides once", () =>
     Effect.gen(function* () {

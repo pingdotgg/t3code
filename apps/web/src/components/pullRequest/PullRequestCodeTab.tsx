@@ -18,12 +18,11 @@ import {
   Columns2Icon,
   FolderTreeIcon,
   InfoIcon,
-  MessageSquareIcon,
   MessageSquareOffIcon,
+  PilcrowIcon,
   Rows3Icon,
   TextWrapIcon,
   TriangleAlertIcon,
-  XIcon,
 } from "lucide-react";
 import { useAtomRefresh } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
@@ -77,7 +76,6 @@ import { toastManager } from "../ui/toast";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PendingReviewCommentCard, ReviewThreadCard } from "./PullRequestReviewAnnotation";
-import { PullRequestReviewBar } from "./PullRequestReviewBar";
 import {
   isFileDiffCollapsed,
   isLineInFileDiff,
@@ -233,6 +231,7 @@ function PullRequestCodeTab({
   const diffLayout = settings.diffLayout;
   const updateClientSettings = useUpdateClientSettings();
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
+  const [ignoreWhitespace, setIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
   const [fileTreeOpen, setFileTreeOpen] = useLocalStorage(
     PULL_REQUEST_FILE_TREE_STORAGE_KEY,
     false,
@@ -245,9 +244,6 @@ function PullRequestCodeTab({
   const [draft, setDraft] = useState<DraftAnchor | null>(null);
   const [threadPending, setThreadPending] = useState(false);
   const [orphansOpen, setOrphansOpen] = useState(false);
-  // Closed by default so the review form does not permanently eat vertical space below the
-  // diff; opened on demand as a floating overlay instead.
-  const [reviewOpen, setReviewOpen] = useState(false);
   // Which pull request the slices belong to travels with them, so a render taken before the
   // reset below cannot read the previous one's slices — or send its cursor to the host.
   const [sliceState, setSliceState] = useState<{
@@ -376,7 +372,6 @@ function PullRequestCodeTab({
       inlineComment: hostReview.inlineComment && viewer.comment,
       reply: hostReview.reply && viewer.comment,
       resolve: hostReview.resolve && viewer.resolve,
-      verdicts: hostReview.verdicts.filter((verdict) => viewer.verdicts.includes(verdict)),
     };
   }, [detail.capabilities.review, detail.viewerPermissions]);
   // A comment is posted against the pull request's head diff, so a line number taken from one
@@ -390,16 +385,17 @@ function PullRequestCodeTab({
       loadedSlices.map((slice) => {
         // The patch's own hash is part of the key: a refreshed page reuses its cursor, and a
         // key of position alone would keep handing back the parse of the patch it replaced.
-        const cacheKey = `pull-request:${scopeKey}:${resolvedTheme}:${slice.cursor ?? "first"}:${fnv1a32(slice.patch)}`;
+        const cacheKey = `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}:${slice.cursor ?? "first"}:${fnv1a32(slice.patch)}`;
         const cached = parseCache.current.get(cacheKey);
         if (cached) return cached;
         const parsed = getRenderablePatch(slice.patch, cacheKey, {
           compactPartialHunkOffsets: true,
+          ignoreWhitespace,
         });
         if (parsed) parseCache.current.set(cacheKey, parsed);
         return parsed;
       }),
-    [loadedSlices, resolvedTheme, scopeKey],
+    [loadedSlices, resolvedTheme, scopeKey, ignoreWhitespace],
   );
   // Ordered within a slice rather than across them: ordering the accumulated set would let a late
   // slice push a file the reader is part way through further down the page.
@@ -702,7 +698,13 @@ function PullRequestCodeTab({
       // that silently lost its first line on the other hosts would be worse than one line.
       const path = resolveFileDiffPath(file);
       const previousPath = resolveFileDiffPreviousPath(file);
-      const position = resolveDiffReviewPosition(file, range.end, range.endSide ?? range.side);
+      const sourceFile = parsedSlices
+        .flatMap((slice) => (slice?.kind === "files" ? slice.sourceFiles : []))
+        .find((candidate) => resolveFileDiffPath(candidate) === path);
+      const side = range.endSide ?? range.side;
+      const position =
+        (sourceFile && resolveDiffReviewPosition(sourceFile, range.end, side)) ??
+        resolveDiffReviewPosition(file, range.end, side);
       if (position === null) return;
       setDraft({
         fileKey: item.id,
@@ -712,7 +714,7 @@ function PullRequestCodeTab({
         range,
       });
     },
-    [canCommentOnLines, files],
+    [canCommentOnLines, files, parsedSlices],
   );
 
   // Built here because the parsed diff only lives here, and built by the same function the
@@ -1045,70 +1047,6 @@ function PullRequestCodeTab({
     ],
   );
 
-  /**
-   * The review overlay belongs to the pull request, not to the patch: a change whose diff
-   * cannot be structured — or read at all — is still one a reviewer can approve or reject, so
-   * it survives every branch below. It floats over the scroll area rather than sitting in the
-   * layout flow, so the diff keeps the full height instead of permanently losing a strip to a
-   * footer most reviews never touch. Hidden entirely where the host offers no verdicts, same as
-   * the bar it wraps did.
-   */
-  const reviewOverlay =
-    review.verdicts.length === 0 ? null : (
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
-        {reviewOpen ? (
-          <div
-            className={cn(
-              "surface-glass pointer-events-auto absolute inset-x-3 rounded-xl border border-border/60 shadow-lg",
-              detail.capabilities.comment && detail.viewerPermissions.comment
-                ? "bottom-16"
-                : "bottom-3",
-            )}
-          >
-            <Button
-              type="button"
-              size="icon-sm"
-              variant="ghost"
-              aria-label="Close review"
-              className="absolute right-2 top-2"
-              onClick={() => setReviewOpen(false)}
-            >
-              <XIcon className="size-3.5" />
-            </Button>
-            <PullRequestReviewBar
-              environmentId={environmentId}
-              reference={reference}
-              verdicts={review.verdicts}
-              requestChangesSummaryRequired={detail.provider === "forgejo"}
-              onSubmitted={() => {
-                onRefresh();
-                setReviewOpen(false);
-              }}
-            />
-          </div>
-        ) : (
-          <Button
-            className={cn(
-              "pointer-events-auto absolute bottom-3 rounded-full shadow-lg",
-              detail.capabilities.comment && detail.viewerPermissions.comment
-                ? "right-16"
-                : "right-4",
-            )}
-            onClick={() => setReviewOpen(true)}
-            size="compact"
-            variant="glass"
-          >
-            <MessageSquareIcon className="size-3.5" />
-            Review
-            {pendingComments.length > 0 ? (
-              <span className="flex size-4 items-center justify-center rounded-full bg-accent text-[10px] tabular-nums text-accent-foreground">
-                {pendingComments.length}
-              </span>
-            ) : null}
-          </Button>
-        )}
-      </div>
-    );
   // A rebase or a force-push can take the scoped commit out of the change. Its diff may still
   // be reachable on the host, but it is no longer part of what is being reviewed, so the scope
   // goes back to the whole change rather than sitting under a name nothing matches.
@@ -1123,11 +1061,6 @@ function PullRequestCodeTab({
     }
   }, [commit, onSelectedCommitChange, selectedCommit]);
   const scopeLabel = selectedCommit ? selectedCommit.messageHeadline : "All commits";
-  /**
-   * The same controls the thread diff panel carries, in the same order, minus the
-   * ignore-whitespace toggle: that is `git diff -w` on the server, and no host's pull request
-   * diff API offers it.
-   */
   const toolbar = (
     <div className="flex h-10 min-h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-background px-4 text-xs text-muted-foreground">
       <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -1276,6 +1209,30 @@ function PullRequestCodeTab({
         </PullRequestMetaLine>
       </div>
       <div className="flex shrink-0 items-center gap-1">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                aria-label={
+                  ignoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"
+                }
+                variant="ghost"
+                size="sm"
+                pressed={ignoreWhitespace}
+                onPressedChange={(pressed) => {
+                  setIgnoreWhitespace(Boolean(pressed));
+                  setDraft(null);
+                  setSelectedLines(null);
+                }}
+              />
+            }
+          >
+            <PilcrowIcon className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            {ignoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"}
+          </TooltipPopup>
+        </Tooltip>
         {fileKeys.length > 0 ? (
           <Tooltip>
             <TooltipTrigger
@@ -1364,29 +1321,23 @@ function PullRequestCodeTab({
   );
   // The toolbar rides above every branch below, not just the one with a patch in it: a commit
   // whose diff is empty or unreadable still needs the scope dropdown that got the reader there.
-  const withReviewBar = (body: ReactNode) => (
+  const withToolbar = (body: ReactNode) => (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}
-      {/* The overlay is anchored to this wrapper, not the scroller: absolute positioning
-          inside an overflowing element tracks the content's bottom edge, which would carry
-          the trigger away with the first scroll. */}
-      <div className="relative min-h-0 flex-1">
-        <div className="h-full overflow-auto">{body}</div>
-        {reviewOverlay}
-      </div>
+      <div className="min-h-0 flex-1 overflow-auto">{body}</div>
     </div>
   );
 
   // Under the toolbar rather than in place of it, so choosing a commit does not take the
   // dropdown that was just used off the screen while its diff loads.
   if (diffQuery.isPending && loadedSlices.length === 0) {
-    return withReviewBar(<DiffPanelLoadingState label="Loading pull request diff..." />);
+    return withToolbar(<DiffPanelLoadingState label="Loading pull request diff..." />);
   }
 
   // A slice that fails once there are files on screen is reported at the end of them instead:
   // the diff already read is worth more than the error that stopped it growing.
   if (diffQuery.error && loadedSlices.length === 0) {
-    return withReviewBar(
+    return withToolbar(
       <p className="px-4 py-5 text-sm text-muted-foreground">{diffQuery.error}</p>,
     );
   }
@@ -1400,7 +1351,7 @@ function PullRequestCodeTab({
       ? parsedSlices.flatMap((parsed) => (parsed?.kind === "raw" ? [parsed] : []))
       : [];
   if (files.length === 0 && rawSlices.length > 0) {
-    return withReviewBar(
+    return withToolbar(
       <div className="space-y-4 px-4 py-5">
         {rawSlices.map((slice) => (
           <div key={`${slice.reason}:${slice.text.slice(0, 64)}`} className="space-y-2">
@@ -1413,7 +1364,7 @@ function PullRequestCodeTab({
   }
 
   if (items.length === 0 && nextCursor === null) {
-    return withReviewBar(
+    return withToolbar(
       <p className="px-4 py-5 text-sm text-muted-foreground">
         {commit === null
           ? "This pull request has no file changes."
@@ -1567,7 +1518,6 @@ function PullRequestCodeTab({
             renderAnnotation={renderAnnotation}
             unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
           />
-          {reviewOverlay}
         </div>
         {fileTreeOpen ? (
           <aside className="flex w-[min(20rem,40%)] min-w-48 shrink-0 border-l border-border/60">

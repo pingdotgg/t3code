@@ -17,7 +17,7 @@ import {
 } from "@t3tools/shared/model";
 import { memo, useCallback } from "react";
 import type { VariantProps } from "class-variance-authority";
-import { ZapIcon } from "lucide-react";
+import { GaugeIcon, ZapIcon } from "lucide-react";
 import { buttonVariants } from "../ui/button";
 import {
   Menu,
@@ -32,6 +32,7 @@ import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   ComposerControl,
   ComposerControlChevron,
@@ -589,6 +590,7 @@ export const TraitsPicker = memo(function TraitsPicker({
     primarySelectDescriptorId: primarySelectDescriptor?.id ?? null,
     ultrathinkPromptControlled,
   });
+  const accessibleLabel = showFastModeIcon ? `${triggerLabel}, Fast mode on` : triggerLabel;
   const fastModeIcon = showFastModeIcon ? (
     <>
       <ComposerControlIcon
@@ -616,39 +618,66 @@ export const TraitsPicker = memo(function TraitsPicker({
         setIsMenuOpen(open);
       }}
     >
-      <MenuTrigger
-        render={
-          <ComposerControl
-            data-composer-shortcut={isComposerOwned ? "composer.effort" : undefined}
-            variant={triggerVariant ?? "ghost"}
-            size={size}
-            className={cn(
-              isCodexStyle
-                ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap sm:max-w-48"
-                : "shrink-0 whitespace-nowrap",
-              triggerClassName,
-            )}
-          />
-        }
-      >
-        {isCodexStyle ? (
-          // The label truncates itself; clipping the wrapper too would cut off
-          // the chevron, whose negative end margin overhangs the wrapper edge.
-          <span
-            className={cn("flex min-w-0 w-full items-center", size === "xs" ? "gap-1" : "gap-1.5")}
-          >
-            {fastModeIcon}
-            <span className="min-w-0 truncate">{triggerLabel}</span>
-            <ComposerControlChevron size={size} />
-          </span>
-        ) : (
-          <>
-            {fastModeIcon}
-            <span>{triggerLabel}</span>
-            <ComposerControlChevron size={size} />
-          </>
-        )}
-      </MenuTrigger>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <MenuTrigger
+              render={
+                <ComposerControl
+                  aria-label={accessibleLabel}
+                  data-composer-shortcut={isComposerOwned ? "composer.effort" : undefined}
+                  variant={triggerVariant ?? "ghost"}
+                  size={size}
+                  className={cn(
+                    isCodexStyle
+                      ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap sm:max-w-48"
+                      : "shrink-0 whitespace-nowrap",
+                    triggerClassName,
+                  )}
+                />
+              }
+            />
+          }
+        >
+          {isCodexStyle ? (
+            // The label truncates itself; clipping the wrapper too would cut off
+            // the chevron, whose negative end margin overhangs the wrapper edge.
+            <span
+              className={cn(
+                "flex min-w-0 w-full items-center",
+                size === "xs" ? "gap-1" : "gap-1.5",
+              )}
+            >
+              {fastModeIcon ?? (
+                <span
+                  data-composer-control-compact-icon
+                  className="pointer-events-none invisible absolute"
+                >
+                  <ComposerControlIcon icon={GaugeIcon} size={size} />
+                </span>
+              )}
+              <span data-composer-control-label className="min-w-0 truncate">
+                {triggerLabel}
+              </span>
+              <ComposerControlChevron size={size} />
+            </span>
+          ) : (
+            <>
+              {fastModeIcon ?? (
+                <span
+                  data-composer-control-compact-icon
+                  className="pointer-events-none invisible absolute"
+                >
+                  <ComposerControlIcon icon={GaugeIcon} size={size} />
+                </span>
+              )}
+              <span data-composer-control-label>{triggerLabel}</span>
+              <ComposerControlChevron size={size} />
+            </>
+          )}
+        </TooltipTrigger>
+        <TooltipPopup side="top">{accessibleLabel}</TooltipPopup>
+      </Tooltip>
       <MenuPopup align="start" {...(isComposerOwned ? composerFloatingLayerProps : {})}>
         <TraitsMenuContent
           provider={provider}

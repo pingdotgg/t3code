@@ -414,7 +414,7 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const cacheKey = `${organizationId} ${input.sinceDay} ${input.untilDay}`;
+    const cacheKey = `${organizationId}\x00${input.sinceDay}\x00${input.untilDay}`;
     const now = yield* Clock.currentTimeMillis;
     const cached = devinAccountCache.get(cacheKey);
     if (cached !== undefined && now - cached.fetchedAtMs < DEVIN_ACCOUNT_CACHE_TTL_MS) {

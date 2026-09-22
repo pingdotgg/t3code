@@ -17,7 +17,6 @@ import {
   decodePullRequestSearchJson,
   decodePullRequestStacksJson,
   decodeLabelCandidatesJson,
-  decodeRepositoryAccessJson,
   decodeReviewerCandidatesJson,
   decodeReviewThreadCommentsJson,
   decodeReviewThreadsJson,
@@ -98,6 +97,40 @@ describe("pull request list decoding", () => {
     ]);
   });
 
+  it("takes the verdict from the latest reviews when GitHub summarizes none, as for a bot's approval", () => {
+    const batch = expectSuccess(
+      decodePullRequestListJson(
+        listJson([
+          {
+            reviewDecision: null,
+            latestReviews: [{ author: { login: "macroscopeapp" }, state: "APPROVED" }],
+          },
+          {
+            reviewDecision: "REVIEW_REQUIRED",
+            latestReviews: [
+              { author: { login: "octocat" }, state: "APPROVED" },
+              { author: { login: "hubot" }, state: "CHANGES_REQUESTED" },
+            ],
+          },
+          {
+            reviewDecision: "APPROVED",
+            latestReviews: [{ author: { login: "hubot" }, state: "CHANGES_REQUESTED" }],
+          },
+          {
+            reviewDecision: null,
+            latestReviews: [{ author: { login: "octocat" }, state: "COMMENTED" }],
+          },
+        ]),
+      ),
+    );
+    expect(batch.items.map((entry) => entry.reviewDecision)).toEqual([
+      "approved",
+      "changes-requested",
+      "approved",
+      null,
+    ]);
+  });
+
   it("rolls the head commit's checks up to the one word a row has space for", () => {
     const batch = expectSuccess(
       decodePullRequestListJson(
@@ -122,6 +155,13 @@ describe("pull request list decoding", () => {
           { statusCheckRollup: [{ context: "ci/legacy", state: "ERROR" }] },
           // Neither a pass, a failure nor a wait is no verdict rather than a green tick.
           { statusCheckRollup: [{ name: "lint", status: "COMPLETED", conclusion: "SKIPPED" }] },
+          // Cancelled reads as failing here and in the detail header, so the two never flap.
+          {
+            statusCheckRollup: [
+              { name: "lint", status: "COMPLETED", conclusion: "SUCCESS" },
+              { name: "test", status: "COMPLETED", conclusion: "CANCELLED" },
+            ],
+          },
           { statusCheckRollup: [] },
           {},
         ]),
@@ -133,6 +173,7 @@ describe("pull request list decoding", () => {
       "passing",
       "failing",
       null,
+      "failing",
       null,
       null,
     ]);
@@ -810,31 +851,38 @@ describe("reaction decoding", () => {
 describe("repository access decoding", () => {
   const repositoryJson = (viewerPermission?: string | null) =>
     JSON.stringify({
-      mergeCommitAllowed: true,
-      squashMergeAllowed: false,
-      rebaseMergeAllowed: true,
-      ...(viewerPermission === undefined ? {} : { viewerPermission }),
+      data: {
+        repository: {
+          pullRequest: null,
+          mergeCommitAllowed: true,
+          squashMergeAllowed: false,
+          rebaseMergeAllowed: true,
+          ...(viewerPermission === undefined ? {} : { viewerPermission }),
+        },
+      },
     });
 
-  it("reads the three settings gh reports", () => {
+  it("reads merge settings with viewer permissions", () => {
     expect(
-      expectSuccess(decodeRepositoryAccessJson(repositoryJson("ADMIN"))).mergeCapabilities,
+      expectSuccess(decodeViewerPermissionsJson(repositoryJson("ADMIN"))).mergeCapabilities,
     ).toEqual({ merge: true, squash: false, rebase: true });
   });
 
   it("fails rather than defaulting open when a setting is missing", () => {
-    const decoded = decodeRepositoryAccessJson(JSON.stringify({ mergeCommitAllowed: true }));
+    const decoded = decodeViewerPermissionsJson(
+      JSON.stringify({ data: { repository: { pullRequest: null, mergeCommitAllowed: true } } }),
+    );
     expect(Result.isSuccess(decoded)).toBe(false);
   });
 
   it("counts the roles that can push as write, and the ones that cannot as read", () => {
     for (const permission of ["ADMIN", "MAINTAIN", "WRITE"]) {
-      expect(expectSuccess(decodeRepositoryAccessJson(repositoryJson(permission))).canWrite).toBe(
+      expect(expectSuccess(decodeViewerPermissionsJson(repositoryJson(permission))).canWrite).toBe(
         true,
       );
     }
     for (const permission of ["TRIAGE", "READ", "NONE"]) {
-      expect(expectSuccess(decodeRepositoryAccessJson(repositoryJson(permission))).canWrite).toBe(
+      expect(expectSuccess(decodeViewerPermissionsJson(repositoryJson(permission))).canWrite).toBe(
         false,
       );
     }
@@ -843,14 +891,23 @@ describe("repository access decoding", () => {
   it("withholds write where gh names no permission, which is not a standing it gave", () => {
     // The one place an unknown answer is not granted: a Merge button a reader cannot use wastes
     // the press, where a missing one still leaves the pull request open on its host.
-    expect(expectSuccess(decodeRepositoryAccessJson(repositoryJson())).canWrite).toBe(false);
-    expect(expectSuccess(decodeRepositoryAccessJson(repositoryJson(null))).canWrite).toBe(false);
+    expect(expectSuccess(decodeViewerPermissionsJson(repositoryJson())).canWrite).toBe(false);
+    expect(expectSuccess(decodeViewerPermissionsJson(repositoryJson(null))).canWrite).toBe(false);
   });
 });
 
 describe("viewer permission decoding", () => {
   const viewerJson = (repository: Record<string, unknown>) =>
-    JSON.stringify({ data: { repository } });
+    JSON.stringify({
+      data: {
+        repository: {
+          mergeCommitAllowed: true,
+          squashMergeAllowed: false,
+          rebaseMergeAllowed: true,
+          ...repository,
+        },
+      },
+    });
 
   it("reads the repository's role and the pull request's own viewer fields together", () => {
     expect(
@@ -862,7 +919,13 @@ describe("viewer permission decoding", () => {
           }),
         ),
       ),
-    ).toEqual({ canWrite: false, canTriage: false, canUpdate: true, didAuthor: true });
+    ).toEqual({
+      mergeCapabilities: { merge: true, squash: false, rebase: true },
+      canWrite: false,
+      canTriage: false,
+      canUpdate: true,
+      didAuthor: true,
+    });
   });
 
   it("says no to a passer-by on a repository they can only read", () => {
@@ -875,7 +938,13 @@ describe("viewer permission decoding", () => {
           }),
         ),
       ),
-    ).toEqual({ canWrite: false, canTriage: false, canUpdate: false, didAuthor: false });
+    ).toEqual({
+      mergeCapabilities: { merge: true, squash: false, rebase: true },
+      canWrite: false,
+      canTriage: false,
+      canUpdate: false,
+      didAuthor: false,
+    });
   });
 
   it("reads silence as permission, but not as authorship", () => {
@@ -883,6 +952,7 @@ describe("viewer permission decoding", () => {
     // answer grants it and lets the host refuse; authorship is a fact about who wrote the change,
     // and claiming it for someone who did not is how an author's own rules get handed out.
     expect(expectSuccess(decodeViewerPermissionsJson(viewerJson({ pullRequest: null })))).toEqual({
+      mergeCapabilities: { merge: true, squash: false, rebase: true },
       canWrite: false,
       canTriage: false,
       canUpdate: true,

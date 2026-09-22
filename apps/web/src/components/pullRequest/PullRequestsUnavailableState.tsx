@@ -46,7 +46,7 @@ export function PullRequestsUnavailableState({
               disabled={refreshing}
               aria-busy={refreshing}
             >
-              <RefreshIcon className="size-3.5" refreshing={refreshing} />
+              <RefreshIcon size="sm" refreshing={refreshing} />
               Retry
             </Button>
           ) : null}

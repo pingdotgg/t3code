@@ -356,7 +356,7 @@ export function UsagePage() {
           size="icon-sm"
           variant="ghost"
         >
-          <RefreshIcon className="size-3.5" refreshing={isRefreshing} />
+          <RefreshIcon size="sm" refreshing={isRefreshing} />
         </Button>
         <Button
           onClick={() => downloadExport("csv")}
@@ -424,7 +424,7 @@ export function UsagePage() {
           size="icon-sm"
           variant="ghost"
         >
-          <RefreshIcon className="size-3.5" refreshing={isRefreshing} />
+          <RefreshIcon size="sm" refreshing={isRefreshing} />
         </Button>
         <Button
           onClick={() => downloadExport("csv")}
@@ -440,7 +440,7 @@ export function UsagePage() {
   );
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
         <WorkspacePageHeader electron={isElectron} className="h-auto">
           {topbarContent}

@@ -3,6 +3,7 @@ import { BackHandler, Keyboard, type TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { AndroidAnchoredMenu } from "../../components/AndroidAnchoredMenu";
 import { MaterialSearchField } from "../../components/MaterialSearchField";
 
 /** Keep Files search in the same header row on compact and expanded layouts. */
@@ -55,12 +56,24 @@ export function MaterialFilesHeader(props: {
               icon: "magnifyingglass",
               onPress: () => setSearchOpen(true),
             },
-            {
-              accessibilityLabel: "Refresh files",
-              icon: "arrow.clockwise",
-              onPress: props.onRefresh,
-            },
           ]}
+          trailing={
+            <AndroidAnchoredMenu
+              title="File options"
+              actions={[{ id: "refresh", title: "Refresh files" }]}
+              onPressAction={({ nativeEvent }) => {
+                if (nativeEvent.event === "refresh") props.onRefresh();
+              }}
+            >
+              {(open) => (
+                <AndroidHeaderIconButton
+                  accessibilityLabel="File options"
+                  icon="ellipsis"
+                  onPress={open}
+                />
+              )}
+            </AndroidAnchoredMenu>
+          }
         />
       </View>
       {searching ? (
