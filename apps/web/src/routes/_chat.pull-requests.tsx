@@ -1830,7 +1830,7 @@ function PullRequestsRouteView() {
         <div className="flex justify-center py-3 text-xs text-muted-foreground">
           {loadingMore ? (
             <span className="flex items-center gap-2">
-              <Spinner aria-hidden className="size-3.5" />
+              <Spinner aria-hidden size="sm" />
               {sentCursors === null ? "Updating pull requests" : "Loading more"}
             </span>
           ) : canContinue || pageSize < MAX_PAGE_SIZE ? (
@@ -2592,7 +2592,7 @@ function PullRequestRefreshControl({
       onClick={onRefresh}
       disabled={refreshing}
     >
-      <RefreshIcon className="size-4" refreshing={refreshing} />
+      <RefreshIcon size="md" refreshing={refreshing} />
     </Button>
   );
 }

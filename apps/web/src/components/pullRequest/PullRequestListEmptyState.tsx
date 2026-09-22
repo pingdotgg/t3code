@@ -150,7 +150,7 @@ export function PullRequestListEmptyState({
           {/* The hosts answered this query once; a pull request opened since then would answer
               differently, and nothing on screen says which of the two the reader is looking at. */}
           <Button size="sm" variant="outline" disabled={refreshing} onClick={onRefresh}>
-            <RefreshIcon className="size-3.5" refreshing={refreshing} />
+            <RefreshIcon size="sm" refreshing={refreshing} />
             {refreshing ? "Checking..." : "Check again"}
           </Button>
         </EmptyContent>
@@ -176,7 +176,7 @@ export function PullRequestListEmptyState({
           </Button>
         ) : null}
         <Button size="sm" variant="outline" disabled={refreshing} onClick={onRefresh}>
-          <RefreshIcon className="size-3.5" refreshing={refreshing} />
+          <RefreshIcon size="sm" refreshing={refreshing} />
           {refreshing ? "Checking..." : "Check again"}
         </Button>
       </EmptyContent>

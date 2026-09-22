@@ -156,7 +156,7 @@ export function DeviceHostEditor({
                   if (Option.isSome(input)) void testConnection(input.value);
                 }}
               >
-                {checking ? <Spinner className="size-3" /> : null} Test connection
+                {checking ? <Spinner size="xs" /> : null} Test connection
               </Button>
             </div>
             {results ? (
@@ -173,7 +173,7 @@ export function DeviceHostEditor({
                         >
                           {result.status === "pending" ? (
                             <>
-                              <Spinner className="size-3" /> Checking…
+                              <Spinner size="xs" /> Checking…
                             </>
                           ) : result.status === "local" ? (
                             <>
@@ -215,7 +215,7 @@ export function DeviceHostEditor({
             Cancel
           </Button>
           <Button type="submit" disabled={busy || checking || !valid || !draft.label.trim()}>
-            {busy ? <Spinner className="size-3" /> : null} Save host
+            {busy ? <Spinner size="xs" /> : null} Save host
           </Button>
         </DialogFooter>
       </DialogPopup>
