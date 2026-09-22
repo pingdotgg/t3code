@@ -105,6 +105,42 @@ describe("ClientSettings rich text composer", () => {
   });
 });
 
+describe("ClientSettings thread details sections", () => {
+  it("defaults to an untouched panel", () => {
+    expect(decodeClientSettings({}).threadDetailsSections).toEqual({ sections: {} });
+  });
+
+  it("accepts sparse section and item overrides through patches", () => {
+    const preference = {
+      threadDetailsSections: {
+        sections: {
+          workspace: { visibility: "always", items: { scripts: false } },
+          relationships: { visibility: "hidden" },
+        },
+      },
+    } as const;
+    expect(decodeClientSettingsPatch(preference)).toEqual(preference);
+    expect(encodeClientSettings(decodeClientSettings(preference))).toMatchObject(preference);
+  });
+
+  it("keeps unknown section ids so a stale preference survives reconnects", () => {
+    const decoded = decodeClientSettings({
+      threadDetailsSections: { sections: { "section-from-the-future": { visibility: "hidden" } } },
+    });
+    expect(decoded.threadDetailsSections.sections).toMatchObject({
+      "section-from-the-future": { visibility: "hidden" },
+    });
+  });
+
+  it("rejects unknown visibility values", () => {
+    expect(() =>
+      decodeClientSettings({
+        threadDetailsSections: { sections: { workspace: { visibility: "sometimes" } } },
+      }),
+    ).toThrow();
+  });
+});
+
 describe("ServerSettings default permissions", () => {
   it("keeps full access for settings saved before a default was configured", () => {
     expect(decodeServerSettings({}).defaultRuntimeMode).toBe("full-access");

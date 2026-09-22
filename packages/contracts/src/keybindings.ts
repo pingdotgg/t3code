@@ -63,6 +63,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "terminal.close",
   "rightPanel.toggle",
   "threadPanel.toggle",
+  "threadPanel.customize",
   "rightPanel.toggleMaximized",
   "rightPanel.close",
   "pullRequest.copyNumber",

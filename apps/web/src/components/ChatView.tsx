@@ -5500,6 +5500,7 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().setThreadPanelOpen(activeThreadRef, "popover", false);
   }, [activeThreadRef]);
+  const [threadPanelCustomizeRequest, setThreadPanelCustomizeRequest] = useState(0);
   const toggleRightPanelMaximized = useCallback(() => {
     if (!canMaximizeRightPanel) return;
     setMaximizedRightPanelThreadKey((threadKey) =>
@@ -7300,6 +7301,14 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "threadPanel.customize") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!threadPanelOpen) toggleThreadPanel();
+        setThreadPanelCustomizeRequest((request) => request + 1);
+        return;
+      }
+
       if (command === "rightPanel.close") {
         // Nothing open: leave the event alone so the shortcut keeps its
         // native meaning (close window on desktop, close tab in a browser).
@@ -7467,6 +7476,7 @@ export default function ChatView(props: ChatViewProps) {
     toggleRightPanel,
     toggleThreadPanel,
     toggleTerminalVisibility,
+    threadPanelOpen,
     composerRef,
   ]);
 
@@ -10207,6 +10217,7 @@ export default function ChatView(props: ChatViewProps) {
     onAddProjectScript: saveProjectScript,
     onUpdateProjectScript: updateProjectScript,
     onDeleteProjectScript: deleteProjectScript,
+    customizeRequest: threadPanelCustomizeRequest,
   };
   const panelToggleControlProps = {
     terminalAvailable: activeProject !== null,
