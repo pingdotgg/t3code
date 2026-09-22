@@ -8,10 +8,11 @@ import { DialogPopup, DialogHeader, DialogTitle, DialogDescription, DialogFooter
 /** Compose a wizard from its header, panel, and footer; flow logic stays with the caller. */
 export function WizardPopup({
   children,
+  className,
   ...props
-}: Omit<ComponentProps<typeof DialogPopup>, "className" | "style">) {
+}: Omit<ComponentProps<typeof DialogPopup>, "style">) {
   return (
-    <DialogPopup {...props} className="max-w-xl overflow-x-hidden overflow-y-auto">
+    <DialogPopup {...props} className={cn("max-w-xl overflow-x-hidden overflow-y-auto", className)}>
       <div className="flex min-h-0 flex-col">{children}</div>
     </DialogPopup>
   );
@@ -131,14 +132,19 @@ export function WizardSteps({
 export function WizardPanel({
   children,
   holdHeight = false,
+  className,
 }: {
   readonly children: ReactNode;
   readonly holdHeight?: boolean;
+  readonly className?: string;
 }) {
   return (
     <div
       data-slot="dialog-panel"
-      className="min-w-0 space-y-4 bg-zinc-25/80 px-6 py-5 ring-1 ring-black/5 dark:bg-white/2 dark:ring-white/5"
+      className={cn(
+        "min-w-0 space-y-4 bg-zinc-25/80 px-6 py-5 ring-1 ring-black/5 dark:bg-white/2 dark:ring-white/5",
+        className,
+      )}
     >
       <AnimatedHeight holdHeight={holdHeight}>{children}</AnimatedHeight>
     </div>

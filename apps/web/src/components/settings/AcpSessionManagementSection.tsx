@@ -20,6 +20,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
+import { SettingsRow } from "./settingsLayout";
 
 interface AcpSessionProject {
   readonly id: ProjectId;
@@ -282,71 +283,71 @@ export function AcpSessionManagementSection(props: {
   };
 
   return (
-    <div className="grid gap-3 border-t border-border/60 pt-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <p className="text-xs font-medium text-foreground">Native sessions</p>
-          <p className="text-xs text-muted-foreground">
-            Resume agent-owned conversations as T3 threads.
-          </p>
-        </div>
-        {canLogout ? (
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            disabled={props.readOnly || loggingOut}
-            onClick={() => void logoutProvider()}
-          >
-            {loggingOut ? "Logging out" : "Log out"}
-          </Button>
-        ) : null}
-      </div>
-
-      {canList ? (
-        props.projects.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
-            Add a project on this device before importing native sessions.
-          </p>
-        ) : (
-          <>
-            <div className="flex flex-wrap items-center gap-2">
-              <Select
-                value={projectId ?? ""}
-                disabled={props.readOnly || projectOperationPending}
-                onValueChange={(value) => {
-                  if (value === null) return;
-                  setProjectId(value as ProjectId);
-                  setSessions([]);
-                  setNextCursor(null);
-                  setProviders([]);
-                  setProviderDrafts({});
-                }}
-              >
-                <SelectTrigger aria-label="Project for ACP sessions" className="min-w-48" size="xs">
-                  <SelectValue>
-                    {props.projects.find((project) => project.id === projectId)?.title}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup>
-                  {props.projects.map((project) => (
-                    <SelectItem key={project.id} value={project.id}>
-                      {project.title}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
+    <div className="grid gap-3">
+      <SettingsRow
+        title="Native sessions"
+        description="Resume agent-owned conversations as T3 threads."
+        status={
+          canList && props.projects.length === 0
+            ? "Add a project before importing sessions."
+            : undefined
+        }
+        control={
+          <div className="flex flex-wrap items-center gap-2">
+            {canLogout ? (
               <Button
                 type="button"
-                size="xs"
+                size="sm"
                 variant="outline"
-                disabled={props.readOnly || loading || projectId === null}
-                onClick={() => void loadSessions()}
+                disabled={props.readOnly || loggingOut}
+                onClick={() => void logoutProvider()}
               >
-                {loading ? "Loading" : sessions.length === 0 ? "List sessions" : "Refresh"}
+                {loggingOut ? "Logging out" : "Log out"}
               </Button>
-            </div>
-
+            ) : null}
+            {canList && props.projects.length > 0 ? (
+              <>
+                <Select
+                  value={projectId ?? ""}
+                  disabled={props.readOnly || projectOperationPending}
+                  onValueChange={(value) => {
+                    if (value === null) return;
+                    setProjectId(value as ProjectId);
+                    setSessions([]);
+                    setNextCursor(null);
+                    setProviders([]);
+                    setProviderDrafts({});
+                  }}
+                >
+                  <SelectTrigger aria-label="Project for ACP sessions" className="w-40" size="sm">
+                    <SelectValue>
+                      {props.projects.find((project) => project.id === projectId)?.title}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {props.projects.map((project) => (
+                      <SelectItem key={project.id} value={project.id}>
+                        {project.title}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={props.readOnly || loading || projectId === null}
+                  onClick={() => void loadSessions()}
+                >
+                  {loading ? "Loading" : sessions.length === 0 ? "List sessions" : "Refresh"}
+                </Button>
+              </>
+            ) : null}
+          </div>
+        }
+      >
+        {canList && (sessions.length > 0 || nextCursor !== null) ? (
+          <>
             {sessions.length > 0 ? (
               <div className="divide-y divide-border/60 border-y border-border/60">
                 {sessions.map((session) => (
@@ -415,11 +416,11 @@ export function AcpSessionManagementSection(props: {
               </Button>
             ) : null}
           </>
-        )
-      ) : null}
+        ) : null}
+      </SettingsRow>
 
       {canConfigureProviders ? (
-        <div className="grid gap-3 border-t border-border/60 pt-4">
+        <div className="grid gap-3 border-t border-border/60 px-3 py-3 sm:px-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <p className="text-xs font-medium text-foreground">Agent providers</p>

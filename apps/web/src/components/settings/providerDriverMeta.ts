@@ -77,19 +77,6 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
     settingsSchema: GrokSettings,
   },
   {
-    value: ProviderDriverKind.make("acpRegistry"),
-    label: "ACP Registry",
-    badgeLabel: "V2 Preview",
-    settingsSchema: AcpRegistrySettings,
-    hasDefaultInstance: false,
-  },
-  {
-    value: ProviderDriverKind.make("pi"),
-    label: "Pi",
-    badgeLabel: "Early Access",
-    settingsSchema: PiSettings,
-  },
-  {
     value: ProviderDriverKind.make("opencode"),
     label: "OpenCode",
     settingsSchema: OpenCodeSettings,
@@ -98,6 +85,19 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
     value: ProviderDriverKind.make("antigravity"),
     label: "Antigravity",
     settingsSchema: AntigravitySettings,
+  },
+  {
+    value: ProviderDriverKind.make("pi"),
+    label: "Pi",
+    badgeLabel: "Early Access",
+    settingsSchema: PiSettings,
+  },
+  {
+    value: ProviderDriverKind.make("acpRegistry"),
+    label: "ACP Registry",
+    badgeLabel: "Early Access",
+    settingsSchema: AcpRegistrySettings,
+    hasDefaultInstance: false,
   },
 ];
 

@@ -216,6 +216,64 @@ describe("EnvironmentProviderSettings routing", () => {
       .mockResolvedValue({ _tag: "Success", value: { accepted: true } });
   });
 
+  it("shows Codex and Claude while hiding untouched disabled provider slots", () => {
+    const panel = renderPanel();
+    for (const driver of ["codex", "claudeAgent"] as const) {
+      expect(
+        visitElements(
+          panel,
+          (element) => element.props.instanceId === driver && element.props.mode === "list",
+        ),
+      ).not.toBeNull();
+    }
+    for (const driver of ["cursor", "grok", "pi", "opencode", "antigravity"] as const) {
+      expect(
+        visitElements(
+          panel,
+          (element) => element.props.instanceId === driver && element.props.mode === "list",
+        ),
+      ).toBeNull();
+    }
+  });
+
+  it("keeps explicitly configured providers visible when disabled", () => {
+    const grokId = ProviderInstanceId.make("grok");
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [grokId]: { driver: ProviderDriverKind.make("grok"), enabled: false },
+      },
+    };
+    const panel = renderPanel();
+    expect(
+      visitElements(
+        panel,
+        (element) => element.props.instanceId === grokId && element.props.mode === "list",
+      ),
+    ).not.toBeNull();
+  });
+
+  it("keeps legacy provider configuration visible when disabled", () => {
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providers: {
+        ...DEFAULT_UNIFIED_SETTINGS.providers,
+        grok: {
+          ...DEFAULT_UNIFIED_SETTINGS.providers.grok,
+          enabled: false,
+          binaryPath: "/custom/grok",
+        },
+      },
+    };
+    const panel = renderPanel();
+    expect(
+      visitElements(
+        panel,
+        (element) => element.props.instanceId === "grok" && element.props.mode === "list",
+      ),
+    ).not.toBeNull();
+  });
+
   it("coalesces a nullable provider snapshot before rendering array-backed UI", () => {
     expect(() => renderPanel()).not.toThrow();
     expect(settingsState.readEnvironmentIds).toEqual([environmentId]);

@@ -53,22 +53,22 @@ describe("resolveWizardNavigation", () => {
 describe("ACP Registry wizard", () => {
   it("requires a prepared result or valid manual configuration before Identity", () => {
     expect(
-      resolveAcpRegistryWizardNavigation(1, 2, {
+      resolveAcpRegistryWizardNavigation(0, 1, {
         instanceIdError: null,
         selectionError: "Select an ACP or configure one manually.",
       }),
     ).toEqual({
       kind: "blocked",
-      step: 1,
+      step: 0,
       error: "Select an ACP or configure one manually.",
     });
 
     expect(
-      resolveAcpRegistryWizardNavigation(1, 2, {
+      resolveAcpRegistryWizardNavigation(0, 1, {
         instanceIdError: null,
         selectionError: null,
       }),
-    ).toEqual({ kind: "navigate", step: 2 });
+    ).toEqual({ kind: "navigate", step: 1 });
   });
 
   it("derives a collision-free instance id without exceeding the slug limit", () => {

@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import { EnvironmentId, ProviderDriverKind, type AcpRegistrySearchAgent } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { visitElements } from "../../test/reactElementTree";
 import { reactHookHarness as hooks } from "../../test/reactHookHarness";
@@ -119,6 +119,7 @@ function findByAriaLabel(
 
 describe("AcpRegistrySearchStep", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
     hooks.reset();
     state.result = null;
     state.error = null;
@@ -135,8 +136,12 @@ describe("AcpRegistrySearchStep", () => {
       vi.fn(() => new Promise<Response>(() => {})),
     );
   });
+  afterEach(() => {
+    for (const cleanup of lifecycle.cleanups) cleanup();
+    vi.useRealTimers();
+  });
 
-  it("loads the full compatible catalog on open and narrows it with a search", () => {
+  it("loads the catalog immediately and searches only after typing settles", () => {
     const initial = render();
     expect(state.search).toHaveBeenLastCalledWith({
       environmentId,
@@ -148,17 +153,31 @@ describe("AcpRegistrySearchStep", () => {
     (input.props.onChange as ((event: { currentTarget: { value: string } }) => void) | undefined)?.(
       { currentTarget: { value: "  Gemini  " } },
     );
-    const narrowedDraft = render();
-    const form = visitElements(narrowedDraft, (element) => element.type === "form");
-    (form?.props.onSubmit as ((event: { preventDefault: () => void }) => void) | undefined)?.({
-      preventDefault: vi.fn(),
-    });
-
+    vi.advanceTimersByTime(200);
+    render();
+    expect(state.search).toHaveBeenLastCalledWith({ environmentId, input: { query: "" } });
+    (input.props.onChange as ((event: { currentTarget: { value: string } }) => void) | undefined)?.(
+      {
+        currentTarget: { value: "  Gemini CLI  " },
+      },
+    );
+    vi.advanceTimersByTime(299);
+    render();
+    expect(state.search).toHaveBeenLastCalledWith({ environmentId, input: { query: "" } });
+    vi.advanceTimersByTime(1);
     render();
     expect(state.search).toHaveBeenLastCalledWith({
       environmentId,
-      input: { query: "Gemini" },
+      input: { query: "Gemini CLI" },
     });
+    (input.props.onChange as ((event: { currentTarget: { value: string } }) => void) | undefined)?.(
+      {
+        currentTarget: { value: "" },
+      },
+    );
+    vi.advanceTimersByTime(300);
+    render();
+    expect(state.search).toHaveBeenLastCalledWith({ environmentId, input: { query: "" } });
   });
 
   it("renders deterministic loading, error, and empty states", () => {
@@ -182,8 +201,19 @@ describe("AcpRegistrySearchStep", () => {
 
   it("keeps same-query refreshes visible and announced while retaining results", () => {
     const first = render();
-    const suggestion = visitElements(first, (element) => element.props.children === "Codex");
-    (suggestion?.props.onClick as (() => void) | undefined)?.();
+    const input = findByAriaLabel(first, "Search ACP Registry");
+    (input.props.onChange as ((event: { currentTarget: { value: string } }) => void) | undefined)?.(
+      {
+        currentTarget: { value: "Codex" },
+      },
+    );
+    const draft = render();
+    const searchForm = visitElements(draft, (element) => element.type === "form");
+    (searchForm?.props.onSubmit as ((event: { preventDefault: () => void }) => void) | undefined)?.(
+      {
+        preventDefault: vi.fn(),
+      },
+    );
 
     state.result = { agents: [gemini] };
     const resultTree = render();
@@ -199,12 +229,6 @@ describe("AcpRegistrySearchStep", () => {
 
     state.isPending = true;
     const refreshingTree = render();
-    expect(
-      visitElements(
-        refreshingTree,
-        (element) => element.props.children === "Refreshing registry results...",
-      ),
-    ).not.toBeNull();
     expect(
       visitElements(
         refreshingTree,
@@ -300,32 +324,5 @@ describe("AcpRegistrySearchStep", () => {
     const added = findByAriaLabel(tree, "Already added Gemini CLI");
 
     expect(added.props.disabled).toBe(true);
-  });
-
-  it("shows catalog metadata, uniquely named reference links, and a local icon fallback", () => {
-    state.result = { agents: [gemini] };
-    const tree = render();
-
-    // Author emails are stripped, registry-integrity gets no marker, and the
-    // version renders beside the name instead of inside the meta line.
-    for (const item of ["Google +1", "v1.2.3", "npx", "Apache-2.0"]) {
-      expect(visitElements(tree, (element) => element.props.children === item)).not.toBeNull();
-    }
-    for (const absent of ["Registry", "✓ checksum"]) {
-      expect(visitElements(tree, (element) => element.props.children === absent)).toBeNull();
-    }
-    expect(
-      visitElements(
-        tree,
-        (element) => element.props["aria-label"] === "Open documentation for Gemini CLI (gemini)",
-      ),
-    ).not.toBeNull();
-    expect(
-      visitElements(
-        tree,
-        (element) => element.props["aria-label"] === "Open source for Gemini CLI (gemini)",
-      ),
-    ).not.toBeNull();
-    expect(visitElements(tree, (element) => element.type === "img")).toBeNull();
   });
 });

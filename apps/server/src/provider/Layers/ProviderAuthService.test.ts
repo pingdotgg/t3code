@@ -131,6 +131,9 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
     shellError?: boolean;
     stopError?: boolean;
     logoutError?: ProviderSetupError;
+    sharedCredentials?: boolean;
+    sharedBusy?: boolean;
+    onListThreads?: (instances: ProviderInstance[]) => void;
   } = {},
 ) {
   const actions: string[] = [];
@@ -160,6 +163,9 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
   });
 
   const auth: ProviderAuthController = {
+    ...(input.sharedCredentials
+      ? { credentialBinding: { owner: "provider" as const, key: "shared" } }
+      : {}),
     start: Effect.fn(function* (ownerSessionId, stopSessions) {
       gateClosed = true;
       actions.push("close-gate");
@@ -203,6 +209,21 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
   const instances = [
     makeInstance({ instanceId, enabled: input.enabled ?? true, auth }),
     makeInstance({ instanceId: unsupportedInstanceId, enabled: true }),
+    ...(input.sharedCredentials
+      ? [
+          makeInstance({
+            instanceId: otherInstanceId,
+            enabled: true,
+            auth: {
+              ...auth,
+              isChangingCredentials: Effect.succeed(input.sharedBusy ?? false),
+              invalidate: Effect.sync(() => {
+                actions.push("invalidate-shared");
+              }),
+            },
+          }),
+        ]
+      : []),
   ];
   const service = yield* makeProviderAuthService.pipe(
     Effect.provide(
@@ -210,6 +231,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
         Layer.mock(ProviderInstanceRegistry)({
           getInstance: (id) =>
             Effect.succeed(instances.find((instance) => instance.instanceId === id)),
+          listInstances: Effect.succeed(instances),
           subscribeChanges: PubSub.subscribe(registryChanges),
         }),
         Layer.mock(ProjectionStoreV2)({
@@ -217,6 +239,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
             Effect.suspend(() => {
               assert.isTrue(gateClosed);
               actions.push("list-threads");
+              input.onListThreads?.(instances);
               return input.shellError
                 ? Effect.fail(
                     new ProjectionStoreReadError({
@@ -339,6 +362,42 @@ const observeAuth = Effect.fn("ProviderAuthService.test.observeAuth")(function* 
 });
 
 describe("ProviderAuthService", () => {
+  it.effect("stops sessions of every instance sharing the credential binding", () =>
+    Effect.gen(function* () {
+      const { service, released, actions } = yield* makeHarness({
+        sharedCredentials: true,
+        threads: [makeThread("active")],
+        sessions: new Map([
+          [
+            ThreadId.make("active"),
+            [
+              makeSession("one"),
+              makeSession("two", "ready", otherInstanceId),
+              makeSession("unrelated", "ready", unsupportedInstanceId),
+            ],
+          ],
+        ]),
+      });
+      yield* service.logout({ instanceId });
+      assert.deepStrictEqual(released, ["one", "two"]);
+      assert.isAbove(actions.indexOf("invalidate-shared"), actions.indexOf("stop:two"));
+      assert.isBelow(actions.indexOf("invalidate-shared"), actions.indexOf("native-logout"));
+    }),
+  );
+  it.effect("rejects overlapping credential changes from another shared instance", () =>
+    Effect.gen(function* () {
+      const { service, actions } = yield* makeHarness({
+        sharedCredentials: true,
+        sharedBusy: true,
+      });
+      const startError = yield* service.start({ instanceId }, owner).pipe(Effect.flip);
+      const logoutError = yield* service.logout({ instanceId }).pipe(Effect.flip);
+      assert.include(startError.detail, "shared sign-in");
+      assert.include(logoutError.detail, "shared sign-in");
+      assert.deepStrictEqual(actions, []);
+    }),
+  );
+
   it.effect("stops routed sessions before sign-in, including for a disabled instance", () =>
     Effect.gen(function* () {
       const { service, actions, released } = yield* makeHarness({
@@ -666,3 +725,30 @@ describe("ProviderAuthService", () => {
     }),
   );
 });
+
+it.effect("preserves a peer session after its credential binding changes during sign-out", () =>
+  Effect.gen(function* () {
+    const peerSession = makeSession("peer-session", "ready", otherInstanceId);
+    const { service, released, actions } = yield* makeHarness({
+      sharedCredentials: true,
+      threads: [makeThread("peer", { providerInstanceId: otherInstanceId })],
+      sessions: new Map([[ThreadId.make("peer"), [peerSession]]]),
+      onListThreads: (instances) => {
+        const peer = instances.findIndex((instance) => instance.instanceId === otherInstanceId);
+        const previous = instances[peer]!;
+        instances[peer] = makeInstance({
+          instanceId: previous.instanceId,
+          enabled: previous.enabled,
+          auth: {
+            ...previous.auth!,
+            credentialBinding: { owner: "provider", key: "replacement-account" },
+          },
+        });
+      },
+    });
+    yield* service.logout({ instanceId });
+    assert.deepStrictEqual(released, []);
+    assert.notInclude(actions, "invalidate-shared");
+    assert.include(actions, "native-logout");
+  }),
+);

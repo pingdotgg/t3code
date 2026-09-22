@@ -174,6 +174,12 @@ function SettingsIndexSections() {
 
       <SettingsSection title="Server settings">
         <SettingsRow
+          icon="person.crop.circle"
+          label="Provider accounts"
+          target="SettingsProviderAccounts"
+          disabled={noServerTargets}
+        />
+        <SettingsRow
           icon="text.bubble"
           label="New threads"
           target="SettingsEnvironmentNewThreads"
