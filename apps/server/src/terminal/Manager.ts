@@ -1329,11 +1329,12 @@ interface TerminalManagerOptions {
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
   /**
-   * Caches directory holding ACP Registry managed binaries. When set, their
+   * Catalog cache and tool directories for managed ACP Registry installs. Their
    * install directories are appended to the terminal PATH so users can run
    * managed agents by name (e.g. `kimi login`).
    */
   managedBinaryCacheDir?: string;
+  managedBinaryToolsDir?: string;
   subprocessInspector?: TerminalSubprocessInspector;
   processTable?: Effect.Effect<
     ReadonlyArray<ResourceMonitorProcessTableEntry>,
@@ -1403,7 +1404,7 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("TerminalManager.make")(function* () {
-  const { terminalLogsDir, providerStatusCacheDir } = yield* ServerConfig.ServerConfig;
+  const { terminalLogsDir, providerStatusCacheDir, baseDir } = yield* ServerConfig.ServerConfig;
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
@@ -1428,6 +1429,7 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
       ),
     ),
     managedBinaryCacheDir: providerStatusCacheDir,
+    managedBinaryToolsDir: path.join(baseDir, "tools"),
     registerTerminalProcesses: portDiscovery.registerTerminalProcesses,
     unregisterTerminal: portDiscovery.unregisterTerminal,
     resolveProviderInstanceEnvironment,
@@ -2244,11 +2246,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             // Append (never prepend) managed ACP agent install directories so
             // `kimi login` and friends resolve by name without shadowing any
             // system or user tool of the same name.
-            if (options.managedBinaryCacheDir !== undefined) {
+            if (
+              options.managedBinaryCacheDir !== undefined &&
+              options.managedBinaryToolsDir !== undefined
+            ) {
               const managedDirectories = yield* acpRegistryManagedBinaryDirectories({
                 fileSystem,
                 path,
                 cacheDir: options.managedBinaryCacheDir,
+                toolsDir: options.managedBinaryToolsDir,
                 platform,
                 architecture,
               });

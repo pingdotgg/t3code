@@ -16,9 +16,9 @@ work through the same generic integration.
 ## Add an agent
 
 1. Open **Settings → Providers**.
-2. Select **Add provider instance**, then **ACP Registry**.
+2. Select **Add provider** and search the ACP Registry.
 3. Search for the agent and select **Add** on its result.
-4. Confirm the name and instance ID, then select **Add instance**.
+4. Confirm the name and instance ID, then complete the agent's sign-in step.
 
 Search only shows agents that can run on the connected server. Registry agents are third-party
 code; review an agent's source and license before adding it.
@@ -28,12 +28,12 @@ code; review an agent's source and license before adding it.
 Registry agents always run on the machine that hosts your T3 Code server. That stays true when you
 connect through `app.t3.codes`, T3 Connect, or a relay.
 
-Binary agents download into a managed cache. T3 Code verifies SHA-256 when the Registry entry
+Agents install under `tools/<agent-id>/<version>/` inside T3 home. T3 Code verifies SHA-256 when the Registry entry
 provides one; entries without a checksum retain the Registry's HTTPS distribution guarantee.
-Registry `npx` packages install globally through `npm`, and `uvx` packages install globally through
-`uv tool`, at the exact version published by the Registry. Their normal CLI command is therefore
-available in a new server terminal for sign-in and direct use. Removing an agent's last provider
-instance removes T3-managed binary files but leaves globally installed package commands intact.
+Registry `npx` and `uvx` packages use T3-owned npm prefixes and Python tool directories at the exact
+version published by the Registry. Their commands are available in a new server terminal for
+sign-in and direct use. Removing an agent's last provider instance removes T3-managed binary files
+but keeps package installs. To use an existing local binary, set **Executable override** explicitly.
 
 ## Signing in
 

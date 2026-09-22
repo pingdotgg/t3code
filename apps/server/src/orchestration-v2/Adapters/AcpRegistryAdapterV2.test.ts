@@ -135,6 +135,7 @@ describe("AcpRegistryAdapterV2", () => {
       );
       const resolver = yield* makeAcpRegistryCatalog({
         cacheDir: serverConfig.providerStatusCacheDir,
+        toolsDir: serverConfig.baseDir + "/tools",
         registryUrl,
       });
       const settings = yield* decodeAcpRegistryAdapterSettings({

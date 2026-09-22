@@ -79,7 +79,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
       }).pipe(Effect.mapError(() => failure("start", "Could not start the selected ACP agent."))));
 
   let knownMethods:
-    | { readonly version: string; readonly methods: ReadonlyArray<ProviderAuthMethod> }
+    | { readonly version: string | null; readonly methods: ReadonlyArray<ProviderAuthMethod> }
     | undefined;
   const discoverMethods = Effect.scoped(
     Effect.gen(function* () {
@@ -90,7 +90,8 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         );
       if (inspected.status !== "ready")
         return yield* failure("methods", "Prepare this ACP agent before signing in.");
-      if (knownMethods?.version === inspected.version) return knownMethods.methods;
+      if (knownMethods !== undefined && knownMethods.version === inspected.version)
+        return knownMethods.methods;
       const resolved = yield* resolve;
       const runtime = yield* makeRuntime(resolved.spawn);
       const initialized = yield* runtime

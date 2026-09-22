@@ -237,6 +237,7 @@ interface CreateManagerOptions {
     typeof TerminalManager.makeWithOptions
   >[0]["resolveProviderInstanceEnvironment"];
   managedBinaryCacheDir?: string;
+  managedBinaryToolsDir?: string;
 }
 
 interface ManagerFixture {
@@ -287,7 +288,10 @@ const createManager = (
           : {}),
         ...(options.managedBinaryCacheDir === undefined
           ? {}
-          : { managedBinaryCacheDir: options.managedBinaryCacheDir }),
+          : {
+              managedBinaryCacheDir: options.managedBinaryCacheDir,
+              managedBinaryToolsDir: options.managedBinaryToolsDir,
+            }),
       });
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
       const unsubscribe = yield* manager.subscribe((event) =>
@@ -1786,14 +1790,14 @@ it.layer(
       });
       const installBin = path.join(
         cacheDir,
-        "acp-registry",
-        "agents",
+        "tools",
         "example-agent",
         "1.2.3",
         "windows-x86_64",
         "bin",
       );
       yield* fileSystem.makeDirectory(installBin, { recursive: true });
+      yield* fileSystem.makeDirectory(path.join(cacheDir, "acp-registry"), { recursive: true });
       yield* fileSystem.writeFileString(
         path.join(cacheDir, "acp-registry", "registry.json"),
         encodeUnknownJson({
@@ -1818,6 +1822,7 @@ it.layer(
       );
       const { manager, ptyAdapter } = yield* createManager(5, {
         managedBinaryCacheDir: cacheDir,
+        managedBinaryToolsDir: path.join(cacheDir, "tools"),
         env: {
           ComSpec: "C:\\Windows\\System32\\cmd.exe",
           Path: "C:\\Windows\\System32",
