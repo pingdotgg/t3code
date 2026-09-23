@@ -778,6 +778,22 @@ final class TransportReliabilityTests: XCTestCase {
         XCTAssertEqual(echoed, payload)
     }
 
+    func testPairingTokensDecodeFragmentExactlyOnce() throws {
+        for token in ["part&second=value", "literal%", "literal%26value", "plus+equals=", "unicode-雪"] {
+            let link = try PairingURL.build(host: "https://studio.example", pairingCode: token)
+            XCTAssertEqual(try PairingURL.resolve(link).credential, token)
+            XCTAssertEqual(try PairingURL.parseFields(link).pairingCode, token)
+
+            var wrapper = URLComponents(string: "t3code://pair")!
+            wrapper.queryItems = [URLQueryItem(name: "pairingUrl", value: link)]
+            XCTAssertEqual(try PairingURL.resolve(wrapper.url!.absoluteString).credential, token)
+        }
+        XCTAssertEqual(
+            try PairingURL.resolve("https://studio.example/pair?token=query#token=first%26second").credential,
+            "first&second"
+        )
+    }
+
     func testPairingInputParsesClipboardQRHostedAndLooseFormats() throws {
         let direct = try PairingURL.parseFields(
             " https://studio.example:3773/pair#token=N735%4BQXJ "

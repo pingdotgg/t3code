@@ -113,10 +113,11 @@ enum ConnectionDetailsParser {
             throw ConnectionDetailsError.invalidAddress
         }
 
-        let fragmentItems = URLComponents(string: "?\(components.fragment ?? "")")?.queryItems ?? []
+        let fragmentItems = URLComponents(string: "?\(components.percentEncodedFragment ?? "")")?.queryItems ?? []
         let queryItems = components.queryItems ?? []
         let allItems = queryItems + fragmentItems
-        let token = firstValue(named: tokenNames, in: allItems)
+        let token = firstNonemptyToken(in: fragmentItems)
+            ?? firstNonemptyToken(in: queryItems)
 
         if ["t3", "t3code", "t3code-swiftui", "t3code-swiftui-dev"].contains(scheme) {
             if let wrappedPairingURL = firstValue(named: wrappedPairingURLNames, in: allItems) {
@@ -150,6 +151,12 @@ enum ConnectionDetailsParser {
         items.first { item in
             names.contains { $0.caseInsensitiveCompare(item.name) == .orderedSame }
         }?.value
+    }
+
+    private static func firstNonemptyToken(in items: [URLQueryItem]) -> String? {
+        items.lazy.filter { item in
+            tokenNames.contains { $0.caseInsensitiveCompare(item.name) == .orderedSame }
+        }.compactMap { normalizedCode($0.value) }.first
     }
 
     private static func normalizedCode(_ input: String?) -> String? {
