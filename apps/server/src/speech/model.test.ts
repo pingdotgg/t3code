@@ -10,6 +10,18 @@ describe("speech model catalog", () => {
     expect(new Set(SPEECH_MODELS.map((model) => model.id)).size).toBe(SPEECH_MODELS.length);
     expect(new Set(SPEECH_MODELS.map((model) => model.filename)).size).toBe(SPEECH_MODELS.length);
   });
+
+  it("offers Handy's complete pinned catalog with five recommended models", () => {
+    expect(SPEECH_MODELS).toHaveLength(69);
+    expect(SPEECH_MODELS.filter((model) => model.recommended)).toHaveLength(5);
+    for (const model of SPEECH_MODELS) {
+      expect(model.revision).toMatch(/^[0-9a-f]{40}$/);
+      expect(model.sha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(model.filename).toMatch(/\.gguf$/);
+      expect(model.size).toBeGreaterThan(0);
+      expect(model.languages.length).toBeGreaterThan(0);
+    }
+  });
 });
 
 it("checks readiness without reading the model contents", async () => {

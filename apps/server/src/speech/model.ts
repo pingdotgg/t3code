@@ -5,6 +5,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeStream from "node:stream";
 import * as NodeStreamPromises from "node:stream/promises";
+import catalog from "./catalog.json" with { type: "json" };
 
 const WHISPER_LANGUAGES = [
   "en",
@@ -222,7 +223,9 @@ export const SPEECH_MODELS = [
     recommended: false,
     supportsStreaming: false,
   },
-] as const satisfies readonly SpeechModel[];
+  // Additional models from Handy's transcribe.cpp catalog (2026-08-17), one pinned GGUF each.
+  ...catalog,
+] satisfies readonly SpeechModel[];
 
 export const DEFAULT_SPEECH_MODEL_ID = "handy-computer/parakeet-unified-en-0.6b-gguf";
 export const getSpeechModel = (modelId: string): SpeechModel | undefined =>

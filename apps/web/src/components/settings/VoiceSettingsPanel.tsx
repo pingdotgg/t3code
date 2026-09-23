@@ -379,7 +379,10 @@ export function VoiceSettingsPanel() {
       : (activeModel?.languages[0] ?? languages[0]);
   const visibleModels = currentModels
     .filter((model) => model.languages.includes(language ?? ""))
-    .sort((a, b) => modelSortOrder(a) - modelSortOrder(b));
+    .sort(
+      (a, b) =>
+        modelSortOrder(a) - modelSortOrder(b) || Number(b.recommended) - Number(a.recommended),
+    );
 
   return (
     <SettingsPageContainer>
