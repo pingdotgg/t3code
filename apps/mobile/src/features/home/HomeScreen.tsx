@@ -30,8 +30,12 @@ import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 import { nativeHeaderScrollEdgeEffects } from "../../native/scrollEdgeEffects";
-import { useNativeColumnLayoutMetrics } from "../layout/native-layout-metrics";
+import {
+  useNativeColumnLayoutMetrics,
+  useNativeLayoutMetrics,
+} from "../layout/native-layout-metrics";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
+import { NATIVE_WORKSPACE_COLUMNS_SUPPORTED } from "../../native/NativeWorkspaceColumns";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { usePendingThreadOrder } from "../../state/thread-order";
@@ -252,6 +256,10 @@ export function HomeScreen(props: HomeScreenProps) {
   const queuedThreadKeys = useQueuedThreadKeys();
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const insets = useSafeAreaInsets();
+  const screenMetrics = useNativeLayoutMetrics();
+  const contentSideInsets = NATIVE_WORKSPACE_COLUMNS_SUPPORTED
+    ? (columnMetrics ?? screenMetrics)?.safeArea
+    : undefined;
   const iosBottomToolbarClearance =
     Platform.OS === "ios" && !NATIVE_LIQUID_GLASS_SUPPORTED
       ? PRE_LIQUID_GLASS_BOTTOM_TOOLBAR_HEIGHT
@@ -887,6 +895,8 @@ export function HomeScreen(props: HomeScreenProps) {
           style={{
             paddingBottom: Math.max(insets.bottom, 24) + iosBottomToolbarClearance,
             paddingTop: NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + 72 : 0,
+            paddingLeft: 32 + (contentSideInsets?.left ?? 0),
+            paddingRight: 32 + (contentSideInsets?.right ?? 0),
           }}
         >
           <View className="w-full max-w-[430px]">
@@ -1010,6 +1020,8 @@ export function HomeScreen(props: HomeScreenProps) {
             {...scrollGateHandlers}
             scrollEventThrottle={16}
             contentContainerStyle={{
+              paddingLeft: contentSideInsets?.left ?? 0,
+              paddingRight: contentSideInsets?.right ?? 0,
               paddingBottom:
                 Platform.OS === "ios"
                   ? Math.max(insets.bottom, 24) + 96 + iosBottomToolbarClearance

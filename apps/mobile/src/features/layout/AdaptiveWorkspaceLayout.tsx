@@ -66,6 +66,8 @@ import {
   NativeWorkspaceInspectorContext,
 } from "../../native/v5-workspace-context";
 
+import { useNativeLayoutMetrics } from "./native-layout-metrics";
+
 interface AdaptiveWorkspaceContextValue {
   readonly layout: Layout;
   readonly panes: WorkspacePaneLayout;
@@ -239,7 +241,9 @@ function AdaptiveWorkspaceLayoutContent(
 ) {
   const projectGroupingMode = props.projectGroupingMode;
   const nativeWorkspace = use(NativeWorkspaceModeContext);
-  const { width, height } = useWindowDimensions();
+  const windowDimensions = useWindowDimensions();
+  const nativeMetrics = useNativeLayoutMetrics();
+  const { width, height } = nativeMetrics ?? windowDimensions;
   const pathname = props.pathname;
   const navigation = useNavigation();
   const activeRoleOwner = useRef<symbol | null>(null);
@@ -256,7 +260,10 @@ function AdaptiveWorkspaceLayoutContent(
   const [primarySidebarSearchQuery, setPrimarySidebarSearchQuery] = useState("");
   const [focusedAuxiliaryPaneRole, setFocusedAuxiliaryPaneRole] =
     useState<WorkspaceAuxiliaryPaneRole | null>(null);
-  const baseLayout = useMemo(() => deriveLayout({ width, height }), [height, width]);
+  const baseLayout = useMemo(
+    () => deriveLayout({ width, height, nativeMetrics }),
+    [height, width, nativeMetrics],
+  );
   const layout = baseLayout;
   // In split layouts the sidebar IS the thread list — it renders on every
   // route, including Home (which shows an empty-detail pane instead of the
@@ -269,7 +276,7 @@ function AdaptiveWorkspaceLayoutContent(
         viewportWidth: width,
         preferredWidth: fileInspectorPreferredWidth ?? undefined,
         reservedLeadingWidth:
-          shouldRenderPrimarySidebar && showPrimarySidebar ? (layout.listPaneWidth ?? 0) : 0,
+          shouldRenderPrimarySidebar && showPrimarySidebar ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0) : 0,
       }),
     [fileInspectorPreferredWidth, layout, showPrimarySidebar, shouldRenderPrimarySidebar, width],
   );
@@ -470,13 +477,13 @@ function AdaptiveWorkspaceLayoutContent(
   );
 
   const renderedSidebarWidth = useSharedValue(
-    panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) : 0,
+    panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0) : 0,
   );
   useEffect(() => {
     if (nativeWorkspace) return;
-    const targetWidth = panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) : 0;
+    const targetWidth = panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0) : 0;
     renderedSidebarWidth.value = withTiming(targetWidth, WORKSPACE_PANE_TIMING);
-  }, [nativeWorkspace, layout.listPaneWidth, panes.primarySidebarVisible, renderedSidebarWidth]);
+  }, [nativeWorkspace, layout.listPaneWidth, layout.listPaneGap, panes.primarySidebarVisible, renderedSidebarWidth]);
   const sidebarAnimatedStyle = useAnimatedStyle(() => ({
     opacity: Math.min(1, renderedSidebarWidth.value / 80),
     width: renderedSidebarWidth.value,

@@ -298,31 +298,57 @@ diff --git a/ios/header/RNSHeaderCoordinator.mm b/ios/header/RNSHeaderCoordinato
 diff --git a/ios/header/RNSHeaderItemComponentView.mm b/ios/header/RNSHeaderItemComponentView.mm
 --- a/ios/header/RNSHeaderItemComponentView.mm
 +++ b/ios/header/RNSHeaderItemComponentView.mm
-@@ -92,6 +92,11 @@
+@@ -73,6 +73,16 @@
+   _menu = menuProp;
+ }
+ 
++- (NSInteger)axisBehavior
++{
++  const auto &props = *std::static_pointer_cast<const react::RNSHeaderItemIOSProps>(_props);
++  switch (props.axisBehavior) {
++    case react::RNSHeaderItemIOSAxisBehavior::HorizontalOnly: return 1;
++    case react::RNSHeaderItemIOSAxisBehavior::VerticalPreferred: return 2;
++    default: return 0;
++  }
++}
++
+ - (void)emitOnPress
+ {
+   [_headerItemEventEmitter emitOnPress];
+@@ -91,6 +101,11 @@
+ }
  
  #pragma mark - RNSHeaderItemDataProviding
- 
++
 +- (BOOL)searchBarPlacement
 +{
 +  return std::static_pointer_cast<const react::RNSHeaderItemIOSProps>(_props)->searchBarPlacement;
 +}
-+
+ 
  - (nullable UIView *)customView
  {
-   return self.subviews.count > 0 ? self : nil;
-@@ -178,7 +183,7 @@
+@@ -178,7 +193,8 @@
    const auto &newItemProps = *std::static_pointer_cast<const react::RNSHeaderItemIOSProps>(props);
    const auto &oldItemProps = *std::static_pointer_cast<const react::RNSHeaderItemIOSProps>(_props);
  
 -  BOOL needsUpdate = NO;
-+  BOOL needsUpdate = oldItemProps.searchBarPlacement != newItemProps.searchBarPlacement;
++  BOOL needsUpdate = oldItemProps.searchBarPlacement != newItemProps.searchBarPlacement ||
++      oldItemProps.axisBehavior != newItemProps.axisBehavior;
    BOOL menuDidChange = NO;
  
    if (oldItemProps.itemId != newItemProps.itemId) {
 diff --git a/ios/header/RNSHeaderItemDataProviding.h b/ios/header/RNSHeaderItemDataProviding.h
 --- a/ios/header/RNSHeaderItemDataProviding.h
 +++ b/ios/header/RNSHeaderItemDataProviding.h
-@@ -17,6 +17,7 @@
+@@ -10,6 +10,7 @@
+ 
+ @protocol RNSHeaderItemDataProviding <NSObject>
+ 
++@property (nonatomic, readonly) NSInteger axisBehavior;
+ @property (nonatomic, readonly) RNSHeaderItemPlacement placement;
+ @property (nonatomic, readonly, nullable) NSString *itemId;
+ @property (nonatomic, readonly, nullable) NSString *identifier;
+@@ -17,6 +18,7 @@
  @property (nonatomic, readonly, nullable) RNSHeaderIconData *icon;
  @property (nonatomic, readonly, nullable) RNSHeaderMenuData *menu;
  @property (nonatomic, readonly, nullable) UIView *customView;
@@ -645,10 +671,17 @@ index e4d94a4085e..b90439374ec 100644
          `[Stack] Invalid placement for spacer: "${placement}", defaulting to "trailing"`,
        );
 diff --git a/src/components/stack/header/StackHeaderConfig.ios.types.ts b/src/components/stack/header/StackHeaderConfig.ios.types.ts
-index cdcba4e8d6b..21380057c7f 100644
 --- a/src/components/stack/header/StackHeaderConfig.ios.types.ts
 +++ b/src/components/stack/header/StackHeaderConfig.ios.types.ts
-@@ -148,6 +148,8 @@ export interface StackHeaderInlineItemIOS
+@@ -61,6 +61,7 @@
+ }
+ 
+ export interface StackHeaderBaseItemIOS {
++  axisBehavior?: 'automatic' | 'horizontalOnly' | 'verticalPreferred' | undefined;
+   /**
+    * @summary A unique identifier within the screen header.
+    *
+@@ -148,6 +149,8 @@
     * @platform iOS
     */
    type: 'item';
@@ -657,7 +690,7 @@ index cdcba4e8d6b..21380057c7f 100644
    /**
     * @summary Callback invoked when the header item is pressed.
     *
-@@ -312,6 +314,9 @@ export type StackHeaderBackButtonDisplayModeIOS =
+@@ -312,6 +315,9 @@
    | 'minimal';
  
  export interface StackHeaderAppearanceIOS {
@@ -667,7 +700,7 @@ index cdcba4e8d6b..21380057c7f 100644
    /**
     * @summary Specifies the font family used for the title of the header.
     *
-@@ -425,6 +430,7 @@ export interface StackHeaderAppearanceIOS {
+@@ -425,6 +431,7 @@
  }
  
  export interface StackHeaderConfigPropsIOS {
@@ -702,9 +735,11 @@ diff --git a/src/components/stack/header/ios/StackHeaderItem.ios.types.ts b/src/
    | 'leading'
    | 'trailing'
    | 'title'
-@@ -11,6 +12,7 @@
+@@ -10,7 +11,9 @@
+   | 'largeSubtitle';
  
  export type StackHeaderItemProps = {
++  axisBehavior?: 'automatic' | 'horizontalOnly' | 'verticalPreferred' | undefined;
    placement: StackHeaderItemPlacement;
 +  searchBarPlacement?: boolean | undefined;
    itemId?: string | undefined;
@@ -768,9 +803,11 @@ diff --git a/src/fabric/header/HeaderItemIOSNativeComponent.ts b/src/fabric/head
    | 'leading'
    | 'trailing'
    | 'title'
-@@ -69,6 +70,7 @@
+@@ -68,7 +69,9 @@
+   | PlatformIconShared;
  
  export interface NativeProps extends ViewProps {
++  axisBehavior?: CT.WithDefault<'automatic' | 'horizontalOnly' | 'verticalPreferred', 'automatic'>;
    placement?: CT.WithDefault<Placement, 'trailing'>;
 +  searchBarPlacement?: CT.WithDefault<boolean, false>;
    itemId?: string | undefined;
@@ -1264,10 +1301,24 @@ index 7bac022f033..91fb7e517d5 100644
 diff --git a/ios/header/RNSHeaderContentFactory.mm b/ios/header/RNSHeaderContentFactory.mm
 --- a/ios/header/RNSHeaderContentFactory.mm
 +++ b/ios/header/RNSHeaderContentFactory.mm
-@@ -82,6 +82,23 @@
+@@ -65,6 +65,12 @@
+     barButtonItem.image = syncImage ? syncImage : [RNSHeaderIconResolver placeholderImageForIcon:item.icon];
+   }
+ 
++#if !TARGET_OS_TV && !TARGET_OS_VISION && RNS_IPHONE_OS_VERSION_AVAILABLE(27_1)
++  if (@available(iOS 27.1, *)) {
++    if (item.axisBehavior == 1) barButtonItem.axisBehavior = UIBarButtonItemAxisBehaviorHorizontalOnly;
++    if (item.axisBehavior == 2) barButtonItem.axisBehavior = UIBarButtonItemAxisBehaviorVerticalPreferred;
++  }
++#endif
+   return barButtonItem;
+ }
+ 
+@@ -81,6 +87,23 @@
+   RNSHeaderItemWrapperView *wrapperView = [[RNSHeaderItemWrapperView alloc] initWithDelegate:delegate];
    wrapperView.translatesAutoresizingMaskIntoConstraints = NO;
    [wrapperView addSubview:contentView];
- 
++
 +#if RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
 +  if (@available(iOS 26.0, *)) {
 +    if (item.placement == RNSHeaderItemPlacementTitle || item.placement == RNSHeaderItemPlacementSubtitle ||
@@ -1284,7 +1335,6 @@ diff --git a/ios/header/RNSHeaderContentFactory.mm b/ios/header/RNSHeaderContent
 +    }
 +  }
 +#endif
-+
+ 
    [NSLayoutConstraint activateConstraints:@[
      [contentView.leadingAnchor constraintEqualToAnchor:wrapperView.leadingAnchor],
-     [contentView.trailingAnchor constraintEqualToAnchor:wrapperView.trailingAnchor],

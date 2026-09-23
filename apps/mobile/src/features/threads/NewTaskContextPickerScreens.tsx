@@ -34,8 +34,8 @@ import { vcsEnvironment } from "../../state/vcs";
 import {
   createNativeMailSearchToolbarItem,
   NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET,
-  NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../layout/native-mail-search-toolbar";
+import { useNativeMailSearchToolbar } from "../layout/use-native-mail-search-toolbar";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { checkoutNewTaskBranch } from "./checkout-new-task-branch";
 
@@ -269,7 +269,7 @@ export function NewTaskBranchPickerRouteScreen() {
   const allowSelectionNavigationRef = useRef(false);
   const mountedRef = useRef(true);
   const screenTitle = flow.workspaceMode === "worktree" ? "Base branch" : "Branch";
-  const usesNativeMailSearchToolbar = Platform.OS === "ios" && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED;
+  const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
   const selectedBranchName =
     flow.selectedBranchName ??
     flow.availableBranches.find((branch) => branch.current)?.name ??

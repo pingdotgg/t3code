@@ -171,7 +171,8 @@ export interface ThreadComposerProps {
 export const COMPOSER_TRANSITION_DURATION_MS = 220;
 // Side panes already animate the dock's width. Nested horizontal layout
 // transitions would leave the surface trailing its toolbar's new position.
-// Keep the vertical pill/card morph while horizontal layout follows the dock.
+// Apply Yoga's horizontal destination immediately. Omitting these fields lets
+// Reanimated retain the previous frame while the native column changes width.
 const composerHeightTransition: LayoutAnimationFunction = (values) => {
   "worklet";
   const timing = {
@@ -181,14 +182,14 @@ const composerHeightTransition: LayoutAnimationFunction = (values) => {
   return {
     initialValues: {
       originX: values.targetOriginX,
-      originY: values.currentOriginY,
       width: values.targetWidth,
+      originY: values.currentOriginY,
       height: values.currentHeight,
     },
     animations: {
       originX: values.targetOriginX,
-      originY: withTiming(values.targetOriginY, timing),
       width: values.targetWidth,
+      originY: withTiming(values.targetOriginY, timing),
       height: withTiming(values.targetHeight, timing),
     },
   };

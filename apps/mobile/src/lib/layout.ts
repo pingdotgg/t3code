@@ -1,5 +1,6 @@
 import { scaledTypographyLineHeight } from "./appearancePreferences";
 import { MOBILE_TYPOGRAPHY } from "./typography";
+import type { NativeLayoutMetrics } from "./reserved-regions";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
@@ -56,6 +57,7 @@ export interface Layout {
   readonly variant: LayoutVariant;
   readonly usesSplitView: boolean;
   readonly listPaneWidth: number | null;
+  readonly listPaneGap?: number;
   readonly shellPadding: number;
 }
 
@@ -87,9 +89,21 @@ export function deriveThreadFeedInitialContentInset(input: {
 
 export type WorkspaceAuxiliaryPaneRole = "supplementary" | "inspector";
 
-export function deriveLayout(input: { readonly width: number; readonly height: number }): Layout {
+export function deriveLayout(input: {
+  readonly width: number;
+  readonly height: number;
+  readonly nativeMetrics?: NativeLayoutMetrics | null;
+}): Layout {
   const { width, height } = input;
-  const wideEnoughForSplit = width >= SPLIT_LAYOUT_MIN_WIDTH && height >= SPLIT_LAYOUT_MIN_HEIGHT;
+  const metrics = input.nativeMetrics;
+  const usableWidth = width - (metrics?.safeArea.left ?? 0) - (metrics?.safeArea.right ?? 0);
+  // UIKit's size class supports the shorter Duo inner display. Geometry remains
+  // a floor so a narrow multitasking window cannot squeeze both columns.
+  const wideEnoughForSplit = metrics
+    ? metrics.horizontalSizeClass === "regular" &&
+      usableWidth >= SPLIT_SIDEBAR_MIN_WIDTH + 320 &&
+      height >= 400
+    : width >= SPLIT_LAYOUT_MIN_WIDTH && height >= SPLIT_LAYOUT_MIN_HEIGHT;
 
   if (!wideEnoughForSplit) {
     return {
@@ -100,14 +114,20 @@ export function deriveLayout(input: { readonly width: number; readonly height: n
     };
   }
 
+  const division = metrics?.reservedRegions.find(
+    (region) =>
+      region.kind === "division" &&
+      region.height >= height / 2 &&
+      region.x - metrics.safeArea.left >= SPLIT_SIDEBAR_MIN_WIDTH &&
+      width - region.x - region.width - metrics.safeArea.right >= 320,
+  );
   return {
     variant: "split",
     usesSplitView: true,
-    listPaneWidth: clamp(
-      Math.round(width * 0.32),
-      SPLIT_SIDEBAR_MIN_WIDTH,
-      SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH,
-    ),
+    listPaneWidth:
+      division?.x ??
+      clamp(Math.round(width * 0.32), SPLIT_SIDEBAR_MIN_WIDTH, SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH),
+    ...(division ? { listPaneGap: division.width } : {}),
     shellPadding: 0,
   };
 }
@@ -125,7 +145,7 @@ export function deriveWorkspacePaneLayout(input: {
   const preferredPrimarySidebarVisible =
     input.layout.usesSplitView && input.primarySidebarPreferredVisible;
   const preferredPrimarySidebarWidth = preferredPrimarySidebarVisible
-    ? (input.layout.listPaneWidth ?? 0)
+    ? (input.layout.listPaneWidth ?? 0) + (input.layout.listPaneGap ?? 0)
     : 0;
 
   if (auxiliaryPaneRole === "inspector") {
@@ -141,11 +161,14 @@ export function deriveWorkspacePaneLayout(input: {
       auxiliaryPaneVisible &&
       fileInspector.width !== null &&
       input.layout.listPaneWidth !== null &&
-      viewportWidth - input.layout.listPaneWidth - fileInspector.width <
+      viewportWidth -
+        input.layout.listPaneWidth -
+        (input.layout.listPaneGap ?? 0) -
+        fileInspector.width <
         FILE_INSPECTOR_MIN_MAIN_WIDTH;
     const primarySidebarVisible =
       preferredPrimarySidebarVisible && !primarySidebarSuppressedByAuxiliary;
-    const primarySidebarWidth = primarySidebarVisible ? (input.layout.listPaneWidth ?? 0) : 0;
+    const primarySidebarWidth = primarySidebarVisible ? preferredPrimarySidebarWidth : 0;
 
     return {
       primarySidebarVisible,

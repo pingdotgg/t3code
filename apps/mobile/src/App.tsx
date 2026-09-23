@@ -23,6 +23,7 @@ import { OverlayPortalHost } from "./components/OverlayPortal";
 import { shouldHandleAppLink } from "./lib/appLinking";
 import { useMobileNavigationTheme } from "./lib/useMobileNavigationTheme";
 import { SubscriptionUsageCoordinator } from "./widgets/SubscriptionUsageCoordinator";
+import { NativeLayoutMetricsProvider } from "./features/layout/native-layout-metrics";
 
 import "../global.css";
 
@@ -83,11 +84,13 @@ function AppContent() {
                 header (glass buttons, title, materials) is forced light even when
                 the system is in dark mode. */}
             <View style={{ flex: 1 }}>
-              <IncomingShareProvider>
-                <Navigation linking={appLinking} theme={navigationTheme} />
-              </IncomingShareProvider>
-              <ConfirmDialogHost />
-              <ThreadArrangementHost />
+              <NativeLayoutMetricsProvider>
+                <IncomingShareProvider>
+                  <Navigation linking={appLinking} theme={navigationTheme} />
+                </IncomingShareProvider>
+                <ConfirmDialogHost />
+                <ThreadArrangementHost />
+              </NativeLayoutMetricsProvider>
             </View>
             {/* Anchored-menu overlays render here — in-window, so the
                 keyboard stays up while a dropdown is open. */}

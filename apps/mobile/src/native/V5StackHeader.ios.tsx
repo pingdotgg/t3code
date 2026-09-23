@@ -6,6 +6,7 @@ import type {
 import { isValidElement, useRef } from "react";
 import { Platform, StyleSheet } from "react-native";
 import { useMobileNavigationTheme } from "../lib/useMobileNavigationTheme";
+import { useNativeLayoutMetrics } from "../features/layout/native-layout-metrics";
 import {
   SearchBar,
   Stack,
@@ -108,6 +109,7 @@ function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderIte
           id,
           identifier: item.identifier,
           title: item.label || undefined,
+          axisBehavior: item.axisBehavior,
           icon: convertIcon(item.icon),
           menu: convertMenu(item.menu, `${id}:menu`),
           hidesSharedBackground: item.hidesSharedBackground,
@@ -118,6 +120,7 @@ function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderIte
           id,
           identifier: item.identifier,
           title: item.label || undefined,
+          axisBehavior: item.axisBehavior,
           icon: convertIcon(item.icon),
           onPress: item.disabled ? undefined : item.onPress,
           hidesSharedBackground: item.hidesSharedBackground,
@@ -134,6 +137,7 @@ export function V5StackHeader(props: {
 }) {
   const { options } = props;
   const theme = useMobileNavigationTheme();
+  const nativeMetrics = useNativeLayoutMetrics();
   const searchRef = useRef<SearchBarCommands>(null);
   const itemProps = { tintColor: options.headerTintColor, canGoBack: props.canGoBack };
   const leading = convertItems(options.unstable_headerLeftItems?.(itemProps) ?? [], "leading");
@@ -180,6 +184,13 @@ export function V5StackHeader(props: {
         icon: { type: "sfSymbol", name: mailSearch.composeSystemImageName ?? "square.and.pencil" },
         onPress: mailSearch.onComposePress,
       });
+  }
+  // The Duo's vertical navigation bar owns these actions. UIKit keeps the
+  // primary column's navigation items beside its title and the detail's in
+  // the rail; a conventional UIToolbar can otherwise leave them inaccessible.
+  if (nativeMetrics && nativeMetrics.verticalBarEdge !== "none") {
+    trailing.push(...bottom);
+    bottom.length = 0;
   }
   const left = options.headerLeft?.(itemProps);
   const right = options.headerRight?.(itemProps);

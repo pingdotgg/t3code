@@ -6,10 +6,9 @@ import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
-import {
-  createNativeMailSearchToolbarItem,
-  NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
-} from "../layout/native-mail-search-toolbar";
+import { createNativeMailSearchToolbarItem } from "../layout/native-mail-search-toolbar";
+import { useNativeMailSearchToolbar } from "../layout/use-native-mail-search-toolbar";
+import { NATIVE_WORKSPACE_COLUMNS_SUPPORTED } from "../../native/NativeWorkspaceColumns";
 import { buildHomeListFilterMenu } from "./home-list-filter-menu";
 import { createSidebarHeaderItems } from "../threads/sidebar-native-header-items";
 import type { HomeHeaderProps } from "./HomeHeader.types";
@@ -17,6 +16,7 @@ import type { HomeHeaderProps } from "./HomeHeader.types";
 export type { HomeHeaderEnvironment } from "./HomeHeader.types";
 
 export function HomeHeader(props: HomeHeaderProps) {
+  const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
   const primaryColumn = use(NativePrimaryColumnContext);
   const iPadSidebar = Platform.OS === "ios" && Platform.isPad && primaryColumn !== null;
   const searchBarRef = useRef<SearchBarCommands>(null);
@@ -78,7 +78,7 @@ export function HomeHeader(props: HomeHeaderProps) {
                 },
                 unstable_headerToolbarItems: () => [],
               }
-            : NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED
+            : usesNativeMailSearchToolbar
               ? {
                   headerSearchBarOptions: {
                     ref: searchBarRef,
@@ -110,6 +110,13 @@ export function HomeHeader(props: HomeHeaderProps) {
                     autoCapitalize: "none" as const,
                     hideNavigationBar: false,
                     placeholder: "Search",
+                    ...(NATIVE_WORKSPACE_COLUMNS_SUPPORTED
+                      ? {
+                          hideWhenScrolling: false,
+                          placement: "integrated" as const,
+                          allowToolbarIntegration: true,
+                        }
+                      : {}),
                     onCancelButtonPress: () => {
                       props.onSearchQueryChange("");
                     },
@@ -121,7 +128,7 @@ export function HomeHeader(props: HomeHeaderProps) {
         }}
       />
 
-      {iPadSidebar || NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED ? null : (
+      {iPadSidebar || usesNativeMailSearchToolbar ? null : (
         <NativeHeaderToolbar placement="bottom">
           <NativeHeaderToolbar.Menu
             accessibilityLabel="Filter threads"
@@ -175,6 +182,7 @@ export function HomeHeader(props: HomeHeaderProps) {
               </NativeHeaderToolbar.Menu>
             ) : null}
           </NativeHeaderToolbar.Menu>
+          {NATIVE_WORKSPACE_COLUMNS_SUPPORTED ? <NativeHeaderToolbar.SearchBarSlot /> : null}
           <NativeHeaderToolbar.Spacer flexible />
           <NativeHeaderToolbar.Button
             accessibilityLabel="New task"
