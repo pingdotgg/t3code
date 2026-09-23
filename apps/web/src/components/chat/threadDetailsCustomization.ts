@@ -112,3 +112,38 @@ export function resolveThreadDetailsSectionRender(input: {
 export function isEmptyThreadDetailsSections(overrides: ThreadDetailsSectionsSetting): boolean {
   return Object.keys(overrides.sections).length === 0;
 }
+
+export function setThreadDetailsSectionMode(
+  sections: ThreadDetailsSectionsSetting,
+  sectionId: ThreadDetailsSectionId,
+  mode: ThreadDetailsVisibilityMode,
+): ThreadDetailsSectionsSetting {
+  return {
+    sections: {
+      ...sections.sections,
+      [sectionId]: { ...sections.sections[sectionId], visibility: mode },
+    },
+  };
+}
+
+/**
+ * Applies a drop in the customize editor. Dropping on the tray hides the
+ * section; dropping a hidden section on the panel restores the mode it had
+ * before it was hidden, or Auto. Returns null when the drop changes nothing.
+ */
+export function dropThreadDetailsSection(input: {
+  readonly sections: ThreadDetailsSectionsSetting;
+  readonly sectionId: ThreadDetailsSectionId;
+  readonly zone: "panel" | "tray";
+  readonly previousMode: "always" | "relevant" | undefined;
+}): ThreadDetailsSectionsSetting | null {
+  const current = threadDetailsSectionMode(input.sections, input.sectionId);
+  if (input.zone === "tray") {
+    return current === "hidden"
+      ? null
+      : setThreadDetailsSectionMode(input.sections, input.sectionId, "hidden");
+  }
+  return current === "hidden"
+    ? setThreadDetailsSectionMode(input.sections, input.sectionId, input.previousMode ?? "relevant")
+    : null;
+}

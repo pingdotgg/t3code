@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   THREAD_DETAILS_SECTIONS,
+  dropThreadDetailsSection,
   isEmptyThreadDetailsSections,
   resolveThreadDetailsSectionRender,
   threadDetailsItemVisible,
@@ -84,5 +85,62 @@ describe("isEmptyThreadDetailsSections", () => {
     expect(
       isEmptyThreadDetailsSections({ sections: { workspace: { visibility: "hidden" } } }),
     ).toBe(false);
+  });
+});
+
+describe("dropThreadDetailsSection", () => {
+  const always = { sections: { automations: { visibility: "always" as const } } };
+  const hidden = { sections: { automations: { visibility: "hidden" as const } } };
+
+  it("hides a section dropped on the tray", () => {
+    expect(
+      dropThreadDetailsSection({
+        sections: always,
+        sectionId: "automations",
+        zone: "tray",
+        previousMode: undefined,
+      }),
+    ).toEqual(hidden);
+  });
+
+  it("restores the remembered mode when a hidden section returns to the panel", () => {
+    expect(
+      dropThreadDetailsSection({
+        sections: hidden,
+        sectionId: "automations",
+        zone: "panel",
+        previousMode: "always",
+      }),
+    ).toEqual(always);
+    expect(
+      threadDetailsSectionMode(
+        dropThreadDetailsSection({
+          sections: hidden,
+          sectionId: "automations",
+          zone: "panel",
+          previousMode: undefined,
+        }) ?? hidden,
+        "automations",
+      ),
+    ).toBe("relevant");
+  });
+
+  it("ignores drops back into the same place", () => {
+    expect(
+      dropThreadDetailsSection({
+        sections: always,
+        sectionId: "automations",
+        zone: "panel",
+        previousMode: undefined,
+      }),
+    ).toBeNull();
+    expect(
+      dropThreadDetailsSection({
+        sections: hidden,
+        sectionId: "automations",
+        zone: "tray",
+        previousMode: "always",
+      }),
+    ).toBeNull();
   });
 });

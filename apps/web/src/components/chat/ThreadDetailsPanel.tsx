@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { DEFAULT_THREAD_DETAILS_SECTIONS } from "@t3tools/contracts";
 import { AlertTriangleIcon, XIcon } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
@@ -28,7 +28,7 @@ import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
-import { ThreadDetailsCustomize } from "./ThreadDetailsCustomize";
+import { ThreadDetailsCustomizeButton, ThreadDetailsEditor } from "./ThreadDetailsCustomize";
 import {
   THREAD_DETAILS_SECTION_BY_ID,
   THREAD_DETAILS_SECTION_IDS,
@@ -100,8 +100,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const [draftSections, setDraftSections] = useState<ThreadDetailsSectionsSetting | null>(null);
 
-  const effectiveSections = customizeOpen && draftSections !== null ? draftSections : savedSections;
-
   const openCustomize = useCallback(() => {
     setDraftSections(savedSections);
     setCustomizeOpen(true);
@@ -144,14 +142,14 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   };
 
   const workspaceItems = {
-    environment: threadDetailsItemVisible(effectiveSections, "workspace", "environment"),
-    branch: threadDetailsItemVisible(effectiveSections, "workspace", "branch"),
-    openIn: threadDetailsItemVisible(effectiveSections, "workspace", "openIn"),
-    scripts: threadDetailsItemVisible(effectiveSections, "workspace", "scripts"),
+    environment: threadDetailsItemVisible(savedSections, "workspace", "environment"),
+    branch: threadDetailsItemVisible(savedSections, "workspace", "branch"),
+    openIn: threadDetailsItemVisible(savedSections, "workspace", "openIn"),
+    scripts: threadDetailsItemVisible(savedSections, "workspace", "scripts"),
   };
   const versionControlItems = {
-    branch: threadDetailsItemVisible(effectiveSections, "version-control", "branch"),
-    gitActions: threadDetailsItemVisible(effectiveSections, "version-control", "gitActions"),
+    branch: threadDetailsItemVisible(savedSections, "version-control", "branch"),
+    gitActions: threadDetailsItemVisible(savedSections, "version-control", "gitActions"),
   };
 
   const workspaceHasContent =
@@ -160,7 +158,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     (props.showOpenInPicker && workspaceItems.openIn) ||
     (props.activeProjectScripts !== undefined && workspaceItems.scripts);
   const workspaceRender = resolveThreadDetailsSectionRender({
-    mode: threadDetailsSectionMode(effectiveSections, "workspace"),
+    mode: threadDetailsSectionMode(savedSections, "workspace"),
     available: true,
     hasContent: workspaceHasContent,
   });
@@ -170,14 +168,14 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     (props.isGitRepo && versionControlItems.branch) ||
     (props.activeProjectName !== undefined && versionControlItems.gitActions);
   const versionControlRender = resolveThreadDetailsSectionRender({
-    mode: threadDetailsSectionMode(effectiveSections, "version-control"),
+    mode: threadDetailsSectionMode(savedSections, "version-control"),
     available: versionControlAvailable,
     hasContent: versionControlHasContent,
   });
 
-  const automationsMode = threadDetailsSectionMode(effectiveSections, "automations");
+  const automationsMode = threadDetailsSectionMode(savedSections, "automations");
   const automationsAvailable = !props.draftId;
-  const relationshipsMode = threadDetailsSectionMode(effectiveSections, "relationships");
+  const relationshipsMode = threadDetailsSectionMode(savedSections, "relationships");
   const relationshipsAvailable = !props.draftId;
 
   const versionMismatchBanner = props.versionMismatch ? (
@@ -309,7 +307,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
       />
     );
 
-  const card = (
+  const renderCard = (content: ReactNode, action?: ReactNode) => (
     <div
       className={cn(
         // A single-track grid, because a grid area is a definite containing block: the card's own
@@ -327,42 +325,49 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
       )}
       data-thread-details-card
     >
-      <ThreadDetailsCustomize
-        availableForDraft={
-          props.draftId ? (["workspace", "version-control"] as const) : THREAD_DETAILS_SECTION_IDS
-        }
-        open={customizeOpen}
-        sections={draftSections ?? savedSections}
-        onCancel={closeCustomize}
-        onChange={setDraftSections}
-        onDone={() => {
-          // The settings store applies the patch optimistically, so closing
-          // now cannot flash the old arrangement or race a reopened editor.
-          void updateClientSettings({
-            threadDetailsSections: draftSections ?? DEFAULT_THREAD_DETAILS_SECTIONS,
-          });
-          closeCustomize();
-        }}
-        onOpenChange={(open) => {
-          if (open) {
-            openCustomize();
-          } else {
-            // Escape and outside clicks discard, matching Cancel, so an
-            // accidental dismissal never persists a half-finished arrangement.
-            closeCustomize();
-          }
-        }}
-        onReset={() => setDraftSections(DEFAULT_THREAD_DETAILS_SECTIONS)}
-      />
+      {action}
       <ScrollArea scrollFade className="min-h-0">
+        {content}
+      </ScrollArea>
+    </div>
+  );
+
+  const card = customizeOpen ? (
+    <ThreadDetailsEditor
+      availableForDraft={
+        props.draftId ? (["workspace", "version-control"] as const) : THREAD_DETAILS_SECTION_IDS
+      }
+      sections={draftSections ?? savedSections}
+      // The tray sits beside the card rather than over it, so the panel stays
+      // visible as the thing being arranged.
+      trayClassName={cn(
+        "absolute right-full z-10",
+        props.mode === "popover" ? "top-0 mr-2" : "top-3",
+      )}
+      onCancel={closeCustomize}
+      onChange={setDraftSections}
+      onDone={() => {
+        // The settings store applies the patch optimistically, so closing
+        // now cannot flash the old arrangement or race a reopened editor.
+        void updateClientSettings({
+          threadDetailsSections: draftSections ?? DEFAULT_THREAD_DETAILS_SECTIONS,
+        });
+        closeCustomize();
+      }}
+      onReset={() => setDraftSections(DEFAULT_THREAD_DETAILS_SECTIONS)}
+      renderCard={renderCard}
+    />
+  ) : (
+    renderCard(
+      <>
         {versionMismatchBanner}
         {workspaceSection}
         {versionControlSection}
         {automationsSection}
         {relationshipsSection}
         {/* Automations and Lineage decide their own emptiness from live data,
-            so the fallback hides itself in CSS once any section renders. */}
-        {!workspaceRender.render && !versionControlRender.render && !customizeOpen ? (
+              so the fallback hides itself in CSS once any section renders. */}
+        {!workspaceRender.render && !versionControlRender.render ? (
           <div className="flex flex-col items-start gap-2 px-3 py-3 group-has-[section]/thread-details:hidden">
             <p className="text-[13px] text-muted-foreground">No details to show.</p>
             <Button size="xs" variant="outline" onClick={openCustomize}>
@@ -370,12 +375,17 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             </Button>
           </div>
         ) : null}
-      </ScrollArea>
-    </div>
+      </>,
+      <ThreadDetailsCustomizeButton onClick={openCustomize} />,
+    )
   );
 
   if (props.mode === "popover") {
-    return <div data-thread-details-panel="popover">{card}</div>;
+    return (
+      <div className="relative" data-thread-details-panel="popover">
+        {card}
+      </div>
+    );
   }
 
   return (
