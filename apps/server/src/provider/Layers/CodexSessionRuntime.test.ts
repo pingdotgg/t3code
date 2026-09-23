@@ -17,12 +17,26 @@ import {
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
   makeMemoryConsolidationNotificationFilter,
+  makeCodexServerNotification,
   openCodexThread,
   readCodexThread,
   rollbackCodexThread,
   toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+
+describe("Codex notification queue payloads", () => {
+  it("discards large diff snapshots before buffering notifications", () => {
+    const params = { threadId: "thread-1", turnId: "turn-1", diff: "x".repeat(4_000_000) };
+    const notification = makeCodexServerNotification("turn/diff/updated", params);
+    NodeAssert.ok(JSON.stringify(notification).length < 200);
+    NodeAssert.deepEqual(notification, {
+      method: "turn/diff/updated",
+      params: { threadId: "thread-1", turnId: "turn-1", diff: "" },
+    });
+    NodeAssert.equal(params.diff.length, 4_000_000);
+  });
+});
 
 describe("Codex thread history", () => {
   for (const numTurns of [1, 2, 3, 5]) {

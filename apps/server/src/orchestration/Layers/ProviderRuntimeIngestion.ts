@@ -31,6 +31,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
@@ -127,7 +128,23 @@ type TurnStartRequestedDomainEvent = Extract<
   { type: "thread.turn-start-requested" }
 >;
 
-type ProviderDiffEvent = Extract<ProviderRuntimeEvent, { type: "turn.diff.updated" }>;
+type ProviderDiffEvent = Pick<
+  Extract<ProviderRuntimeEvent, { type: "turn.diff.updated" }>,
+  "type" | "eventId" | "threadId" | "turnId" | "itemId" | "createdAt"
+>;
+
+export function providerDiffSignal(
+  event: Extract<ProviderRuntimeEvent, { type: "turn.diff.updated" }>,
+): ProviderDiffEvent {
+  return {
+    type: event.type,
+    eventId: event.eventId,
+    threadId: event.threadId,
+    createdAt: event.createdAt,
+    ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+    ...(event.itemId !== undefined ? { itemId: event.itemId } : {}),
+  };
+}
 
 type RuntimeIngestionInput =
   | {
@@ -1029,7 +1046,7 @@ const make = Effect.gen(function* () {
   const projectionThreadActivityRepository = yield* ProjectionThreadActivityRepository;
   const serverSettingsService = yield* ServerSettingsService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
-  const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
+  const providerCommandId = (event: Pick<ProviderRuntimeEvent, "eventId">, tag: string) =>
     crypto.randomUUIDv4.pipe(
       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
     );
@@ -2678,17 +2695,27 @@ const make = Effect.gen(function* () {
     const workspaceCwd = checkpointContext?.worktreePath ?? checkpointContext?.workspaceRoot;
     if (!workspaceCwd || !(yield* checkpointStore.isGitRepository(workspaceCwd))) return;
     yield* worker.enqueue({ source: "diff", event });
+    // Keep this key active until its lifecycle work has finished, so a slow
+    // lifecycle worker cannot accumulate one queued signal per snapshot either.
+    yield* worker.drain;
   });
-  const diffWorker = yield* makeDrainableWorker((event: ProviderDiffEvent) =>
-    detectProviderDiffRepository(event).pipe(logIngestionFailure("diff", event)),
-  );
+  const diffWorker = yield* makeKeyedCoalescingWorker({
+    merge: (_current: ProviderDiffEvent, next: ProviderDiffEvent) => next,
+    process: (_key: string, event: ProviderDiffEvent) =>
+      detectProviderDiffRepository(event).pipe(logIngestionFailure("diff", event)),
+  });
 
   const start: ProviderRuntimeIngestionShape["start"] = () =>
     Effect.gen(function* () {
       yield* forkParked(
         Stream.runForEach(providerService.streamEvents, (event) =>
           event.type === "turn.diff.updated"
-            ? diffWorker.enqueue(event)
+            ? event.turnId === undefined
+              ? Effect.void
+              : diffWorker.enqueue(
+                  JSON.stringify([event.threadId, event.turnId]),
+                  providerDiffSignal(event),
+                )
             : worker.enqueue({ source: "runtime", event }),
         ),
       );

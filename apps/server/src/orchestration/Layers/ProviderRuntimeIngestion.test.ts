@@ -21,6 +21,7 @@ import {
   ProjectId,
   ProviderItemId,
   RuntimeRequestId,
+  RuntimeItemId,
   type ServerSettings,
   ThreadId,
   TurnId,
@@ -60,6 +61,7 @@ import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import {
   ProviderRuntimeIngestionLive,
+  providerDiffSignal,
   splitBufferedAssistantText,
 } from "./ProviderRuntimeIngestion.ts";
 import { DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
@@ -239,6 +241,29 @@ async function waitForThread(
 }
 
 describe("ProviderRuntimeIngestion", () => {
+  it("retains only checkpoint identity when queuing a provider diff", () => {
+    const identity = {
+      type: "turn.diff.updated" as const,
+      eventId: asEventId("large-diff"),
+      threadId: ThreadId.make("thread-1"),
+      turnId: TurnId.make("turn-1"),
+      itemId: RuntimeItemId.make("item-1"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    const diff = "x".repeat(4_000_000);
+    const signal = providerDiffSignal({
+      ...identity,
+      provider: ProviderDriverKind.make("codex"),
+      payload: { unifiedDiff: diff },
+      raw: {
+        source: "codex.app-server.notification",
+        method: "turn/diff/updated",
+        payload: { diff },
+      },
+    });
+    expect(signal).toEqual(identity);
+  });
+
   let runtime: ManagedRuntime.ManagedRuntime<
     OrchestrationEngineService | ProviderRuntimeIngestionService | ProjectionSnapshotQuery,
     unknown
@@ -4095,14 +4120,17 @@ describe("ProviderRuntimeIngestion", () => {
 
   effectIt.effect("settles the turn while repository detection for a diff is blocked", () =>
     Effect.gen(function* () {
+      let detectionCount = 0;
       const detectionStarted = yield* Deferred.make<void>();
       const releaseDetection = yield* Deferred.make<boolean>();
       const harness = yield* Effect.promise(() =>
         createHarness({
-          isGitRepository: () =>
-            Deferred.succeed(detectionStarted, undefined).pipe(
+          isGitRepository: () => {
+            detectionCount++;
+            return Deferred.succeed(detectionStarted, undefined).pipe(
               Effect.andThen(Deferred.await(releaseDetection)),
-            ),
+            );
+          },
         }),
       );
       yield* Effect.addFinalizer(() => Deferred.succeed(releaseDetection, true));
@@ -4124,6 +4152,15 @@ describe("ProviderRuntimeIngestion", () => {
         payload: { unifiedDiff: "diff --git a/file.ts b/file.ts\n+new\n" },
       });
       yield* Deferred.await(detectionStarted);
+
+      for (let index = 0; index < 200; index++) {
+        harness.emit({
+          ...base,
+          type: "turn.diff.updated",
+          eventId: asEventId(`evt-repeated-diff-${index}`),
+          payload: { unifiedDiff: "x".repeat(10_000) },
+        });
+      }
 
       const settled = yield* harness.engine.streamDomainEvents.pipe(
         Stream.filter(
@@ -4179,6 +4216,7 @@ describe("ProviderRuntimeIngestion", () => {
       yield* Fiber.join(nextTurnStarted);
       yield* Deferred.succeed(releaseDetection, true);
       yield* Effect.promise(harness.drain);
+      expect(detectionCount).toBeLessThanOrEqual(2);
       const released = yield* Effect.promise(harness.readModel);
       expect(released.threads[0]?.checkpoints).toEqual([]);
       expect(released.threads[0]?.latestTurn).toMatchObject({

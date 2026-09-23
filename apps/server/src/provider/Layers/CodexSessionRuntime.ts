@@ -479,11 +479,25 @@ type CodexServerNotification = {
   };
 }[CodexRpc.ServerNotificationMethod];
 
-function makeCodexServerNotification<M extends CodexRpc.ServerNotificationMethod>(
+export function makeCodexServerNotification<M extends CodexRpc.ServerNotificationMethod>(
   method: M,
   params: CodexRpc.ServerNotificationParamsByMethod[M],
 ): CodexServerNotification {
-  return { method, params } as CodexServerNotification;
+  const notification = { method, params } as CodexServerNotification;
+  if (notification.method === "turn/diff/updated") {
+    // Ingestion only needs this signal to record a placeholder checkpoint.
+    // Drop snapshot text before the first queue, retaining the native shape
+    // for routing and schema validation downstream.
+    return {
+      method: notification.method,
+      params: {
+        threadId: notification.params.threadId,
+        turnId: notification.params.turnId,
+        diff: "",
+      },
+    };
+  }
+  return notification;
 }
 
 function normalizeCodexModelSlug(

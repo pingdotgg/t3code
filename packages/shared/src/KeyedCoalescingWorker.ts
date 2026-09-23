@@ -15,6 +15,8 @@ import * as TxRef from "effect/TxRef";
 export interface KeyedCoalescingWorker<K, V> {
   readonly enqueue: (key: K, value: V) => Effect.Effect<void>;
   readonly drainKey: (key: K) => Effect.Effect<void>;
+  /** Wait until every key has finished, including work merged while active. */
+  readonly drain: Effect.Effect<void>;
 }
 
 interface KeyedCoalescingWorkerState<K, V> {
@@ -138,5 +140,15 @@ export const makeKeyedCoalescingWorker = <K, V, E, R>(options: {
         Effect.tx,
       );
 
-    return { enqueue, drainKey } satisfies KeyedCoalescingWorker<K, V>;
+    const drain = TxRef.get(stateRef).pipe(
+      Effect.tap((state) =>
+        state.latestByKey.size > 0 || state.queuedKeys.size > 0 || state.activeKeys.size > 0
+          ? Effect.txRetry
+          : Effect.void,
+      ),
+      Effect.asVoid,
+      Effect.tx,
+    );
+
+    return { enqueue, drainKey, drain } satisfies KeyedCoalescingWorker<K, V>;
   });
