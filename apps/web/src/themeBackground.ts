@@ -80,10 +80,11 @@ export function resolveThemeBackgroundUrl(
   themeId: string | null,
 ): string | null {
   if (choice === "none") return null;
-  const sceneId = choice === "auto" ? themeId : choice;
-  if (sceneId === null) return null;
-  const url = THEME_BACKGROUNDS[sceneId as ThemeBackgroundChoice];
-  return url || null;
+  if (choice !== "auto") return THEME_BACKGROUNDS[choice] || null;
+  // Only built-in themes carry a scene: a custom theme id that happens to
+  // match a standalone scene must not pick it up.
+  const builtIn = BUILT_IN_THEME_IDS.find((id) => id === themeId);
+  return builtIn ? THEME_BACKGROUNDS[builtIn] : null;
 }
 
 /**

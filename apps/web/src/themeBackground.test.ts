@@ -20,6 +20,11 @@ describe("resolveThemeBackgroundUrl", () => {
     expect(resolveThemeBackgroundUrl("auto", null)).toBeNull();
   });
 
+  it("never gives a custom theme a standalone scene on auto", () => {
+    expect(resolveThemeBackgroundUrl("auto", "alpine")).toBeNull();
+    expect(resolveThemeBackgroundUrl("auto", "auto")).toBeNull();
+  });
+
   it("keeps a picked scene regardless of the active theme", () => {
     expect(resolveThemeBackgroundUrl("ocean", "grove")).toBe("/backgrounds/ocean.webp");
     expect(resolveThemeBackgroundUrl("fjord", null)).toBe("/backgrounds/fjord.webp");
