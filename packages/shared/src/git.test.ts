@@ -3,9 +3,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyGitStatusStreamEvent,
+  buildGeneratedWorktreeBranchName,
   buildTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
+  normalizeWorktreeBranchPrefix,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
   parseOriginUrlFromGitConfig,
   WORKTREE_BRANCH_PREFIX,
@@ -209,6 +211,66 @@ describe("isTemporaryWorktreeBranch", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/feature/demo`)).toBe(false);
     expect(isTemporaryWorktreeBranch("main")).toBe(false);
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef-extra`)).toBe(false);
+  });
+});
+
+describe("normalizeWorktreeBranchPrefix", () => {
+  it("keeps a valid namespace as typed, including case and nesting", () => {
+    expect(normalizeWorktreeBranchPrefix("t3code")).toBe("t3code");
+    expect(normalizeWorktreeBranchPrefix("Yekta")).toBe("Yekta");
+    expect(normalizeWorktreeBranchPrefix("team/yekta")).toBe("team/yekta");
+  });
+
+  it("drops characters git refuses and stray separators", () => {
+    expect(normalizeWorktreeBranchPrefix(" /my prefix/ ")).toBe("my-prefix");
+    expect(normalizeWorktreeBranchPrefix("a//b")).toBe("a/b");
+    expect(normalizeWorktreeBranchPrefix("feat..ure~^:?*[\\@{}")).toBe("feat.ure");
+    expect(normalizeWorktreeBranchPrefix(".hidden/-x-/y.lock")).toBe("hidden/x/y");
+    expect(normalizeWorktreeBranchPrefix('"quoted"')).toBe("quoted");
+  });
+
+  it("returns an empty prefix for empty or unusable input", () => {
+    expect(normalizeWorktreeBranchPrefix("")).toBe("");
+    expect(normalizeWorktreeBranchPrefix("   ")).toBe("");
+    expect(normalizeWorktreeBranchPrefix("/./")).toBe("");
+  });
+
+  it("limits the prefix to 64 characters without a dangling separator", () => {
+    const long = `${"a".repeat(63)}/bcd`;
+    expect(normalizeWorktreeBranchPrefix(long)).toBe("a".repeat(63));
+  });
+});
+
+describe("buildGeneratedWorktreeBranchName", () => {
+  it("prefixes the sanitized fragment with the configured namespace", () => {
+    expect(buildGeneratedWorktreeBranchName("Add safer backoff", "t3code")).toBe(
+      "t3code/add-safer-backoff",
+    );
+    expect(buildGeneratedWorktreeBranchName("Add safer backoff", "Yekta")).toBe(
+      "Yekta/add-safer-backoff",
+    );
+    expect(buildGeneratedWorktreeBranchName("refs/heads/fix/login", "team/yekta")).toBe(
+      "team/yekta/fix/login",
+    );
+  });
+
+  it("omits the namespace when the prefix is empty", () => {
+    expect(buildGeneratedWorktreeBranchName("Add safer backoff", "")).toBe("add-safer-backoff");
+    expect(buildGeneratedWorktreeBranchName("Add safer backoff", " / ")).toBe("add-safer-backoff");
+  });
+
+  it("does not repeat a prefix the generator already included", () => {
+    expect(buildGeneratedWorktreeBranchName("t3code/add-safer-backoff", "t3code")).toBe(
+      "t3code/add-safer-backoff",
+    );
+    expect(buildGeneratedWorktreeBranchName("Yekta/add-safer-backoff", "Yekta")).toBe(
+      "Yekta/add-safer-backoff",
+    );
+  });
+
+  it("falls back to a placeholder fragment for an empty name", () => {
+    expect(buildGeneratedWorktreeBranchName("", "t3code")).toBe("t3code/update");
+    expect(buildGeneratedWorktreeBranchName("   ", "")).toBe("update");
   });
 });
 

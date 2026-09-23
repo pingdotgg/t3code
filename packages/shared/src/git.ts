@@ -10,6 +10,12 @@ import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
 
+/**
+ * Prefix of the placeholder branch a worktree starts on. Clients generate it
+ * before the server can read settings, and older mobile builds keep sending
+ * it, so it stays fixed; the configurable prefix (`worktreeBranchPrefix`)
+ * applies when the first turn renames the branch.
+ */
 export const WORKTREE_BRANCH_PREFIX = "t3code";
 // Canonical form is `t3code/<8 hex>`. Older mobile builds generated `t3code/<uuid>`
 // via Crypto.randomUUID() (always RFC 4122 v4), so the matcher also accepts exactly
@@ -106,6 +112,55 @@ export function buildTemporaryWorktreeBranchName(
 
 export function isTemporaryWorktreeBranch(refName: string): boolean {
   return TEMP_WORKTREE_BRANCH_PATTERN.test(refName.trim().toLowerCase());
+}
+
+/**
+ * Sanitize a user-entered branch prefix into a valid git ref namespace.
+ * Keeps case and slashes, drops characters git refuses in ref names, and
+ * returns "" for no prefix.
+ */
+export function normalizeWorktreeBranchPrefix(raw: string): string {
+  return raw
+    .replace(/['"`]/g, "")
+    .replace(/[^A-Za-z0-9._/-]+/g, "-")
+    .replace(/\.{2,}/g, ".")
+    .replace(/-+/g, "-")
+    .split("/")
+    .map((segment) => segment.replace(/\.lock$/, "").replace(/^[._-]+|[._-]+$/g, ""))
+    .filter((segment) => segment.length > 0)
+    .join("/")
+    .slice(0, 64)
+    .replace(/[./_-]+$/g, "");
+}
+
+/**
+ * Build the branch a worktree is renamed to from a generated name: the
+ * configured prefix plus a sanitized fragment. An empty prefix yields the
+ * fragment alone.
+ */
+export function buildGeneratedWorktreeBranchName(raw: string, prefix: string): string {
+  const branchPrefix = normalizeWorktreeBranchPrefix(prefix);
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/^refs\/heads\//, "")
+    .replace(/['"`]/g, "");
+  const prefixWithSlash = `${branchPrefix.toLowerCase()}/`;
+  const withoutPrefix =
+    branchPrefix.length > 0 && normalized.startsWith(prefixWithSlash)
+      ? normalized.slice(prefixWithSlash.length)
+      : normalized;
+
+  const branchFragment = withoutPrefix
+    .replace(/[^a-z0-9/_-]+/g, "-")
+    .replace(/\/+/g, "/")
+    .replace(/-+/g, "-")
+    .replace(/^[./_-]+|[./_-]+$/g, "")
+    .slice(0, 64)
+    .replace(/[./_-]+$/g, "");
+
+  const safeFragment = branchFragment.length > 0 ? branchFragment : "update";
+  return branchPrefix.length > 0 ? `${branchPrefix}/${safeFragment}` : safeFragment;
 }
 
 /**
