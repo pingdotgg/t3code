@@ -6,7 +6,6 @@ import {
 } from "@t3tools/contracts";
 import { memo, useEffect, useMemo, useState } from "react";
 import { Badge } from "../ui/badge";
-import type { ButtonVariant } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -48,7 +47,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   disabled?: boolean;
   terminalOpen?: boolean;
   open?: boolean;
-  triggerVariant?: ButtonVariant;
   triggerClassName?: string;
   /** Aggregate settings can show a neutral value without claiming one provider is selected. */
   triggerLabel?: string;
@@ -206,7 +204,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         render={
           <ComposerControl
             aria-label={props.triggerAriaLabel ?? allModelNames}
-            variant={props.triggerVariant ?? "ghost"}
             size={size}
             data-chat-provider-model-picker="true"
             className={cn(

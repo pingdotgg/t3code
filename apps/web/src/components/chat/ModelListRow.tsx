@@ -53,10 +53,9 @@ export const ModelListRow = memo(function ModelListRow(props: {
       value={modelPickerModelKey(props.instanceId, props.model.slug)}
       disabled={Boolean(props.disabledReason)}
       className={cn(
-        "group relative w-full !min-w-0 max-w-full cursor-pointer rounded-md px-2 py-2 transition-[background-color,box-shadow,color]",
-        "hover:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))] data-highlighted:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))] data-selected:bg-foreground/[0.08] data-selected:text-foreground data-selected:ring-0 [&[data-highlighted][data-selected]]:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))]",
+        "group relative w-full !min-w-0 max-w-full cursor-pointer",
         props.disabledReason &&
-          "data-disabled:pointer-events-auto data-disabled:cursor-not-allowed data-disabled:hover:bg-transparent",
+          "data-disabled:pointer-events-auto data-disabled:cursor-not-allowed",
       )}
     >
       <div className="min-w-0 flex-1 text-left">
@@ -103,11 +102,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
             render={
               <Button
                 size="icon-xs"
-                variant="ghost"
-                className={cn(
-                  "-mr-1 shrink-0 text-muted-foreground/70 opacity-64 transition-[color,opacity] hover:text-foreground hover:opacity-100 group-hover:opacity-100",
-                  props.isFavorite && "text-foreground opacity-100",
-                )}
+                variant="ghost-muted"
+                className="-mr-1 shrink-0"
                 onClick={(event) => {
                   event.stopPropagation();
                   props.onToggleFavorite();

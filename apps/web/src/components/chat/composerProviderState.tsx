@@ -15,7 +15,6 @@ import {
 } from "@t3tools/shared/model";
 import type { ReactNode } from "react";
 
-import type { ButtonVariant } from "../ui/button";
 import type { DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import type { ComposerControlSize } from "./ComposerControl";
@@ -54,7 +53,6 @@ type TraitsRenderInput = {
   planModeEnabled: boolean;
   size?: ComposerControlSize;
   hidden?: boolean;
-  triggerVariant?: ButtonVariant;
   triggerClassName?: string;
   isComposerOwned?: boolean;
 };
@@ -177,7 +175,6 @@ function renderTraitsControl(
     planModeEnabled,
     size,
     hidden,
-    triggerVariant,
     triggerClassName,
     isComposerOwned,
   } = input;
@@ -216,7 +213,6 @@ function renderTraitsControl(
       planModeEnabled={planModeEnabled}
       {...(size !== undefined ? { size } : {})}
       {...(hidden !== undefined ? { hidden } : {})}
-      {...(triggerVariant !== undefined ? { triggerVariant } : {})}
       {...(triggerClassName !== undefined ? { triggerClassName } : {})}
       {...(isComposerOwned ? { isComposerOwned } : {})}
     />
