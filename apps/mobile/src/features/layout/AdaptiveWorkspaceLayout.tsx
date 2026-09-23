@@ -77,7 +77,7 @@ interface AdaptiveWorkspaceContextValue {
    * registration already took over — stale deactivates never clobber it.
    * Prefer useRegisterWorkspaceInspector over calling this directly.
    */
-  readonly registerWorkspaceInspector: (render: () => ReactNode) => () => void;
+  readonly registerWorkspaceInspector: (render: () => ReactNode, identity?: string) => () => void;
   readonly setPrimarySidebarSearchQuery: (query: string) => void;
   readonly showAuxiliaryPane: (role: WorkspaceAuxiliaryPaneRole) => void;
   readonly toggleAuxiliaryPane: () => void;
@@ -139,7 +139,10 @@ export function useAdaptiveWorkspacePaneRole(role: WorkspaceAuxiliaryPaneRole) {
  * animates closed, or is replaced seamlessly when the next route registers in
  * the same commit); focus re-registers it.
  */
-export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefined) {
+export function useRegisterWorkspaceInspector(
+  render: (() => ReactNode) | undefined,
+  identity?: string,
+) {
   const { registerWorkspaceInspector } = useAdaptiveWorkspaceLayout();
   // Raw context values (not the useNavigation/useRoute wrappers) so the
   // portal re-provides exactly what this screen sees.
@@ -167,8 +170,8 @@ export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefi
       deactivateRef.current?.();
       return;
     }
-    deactivateRef.current = registerWorkspaceInspector(wrappedRenderRef.current);
-  }, [registerWorkspaceInspector]);
+    deactivateRef.current = registerWorkspaceInspector(wrappedRenderRef.current, identity);
+  }, [identity, registerWorkspaceInspector]);
 
   // Focus lifecycle. Blur/focus events fire even when the blurred subtree is
   // frozen (events are navigation-driven, renders are not).
@@ -316,13 +319,14 @@ function AdaptiveWorkspaceLayoutContent(
   // seamlessly by the next route's registration in the same commit).
   const [workspaceInspector, setWorkspaceInspector] = useState<{
     readonly render: () => ReactNode;
+    readonly identity?: string;
     readonly active: boolean;
   } | null>(null);
   const workspaceInspectorOwner = useRef<symbol | null>(null);
-  const registerWorkspaceInspector = useCallback((render: () => ReactNode) => {
+  const registerWorkspaceInspector = useCallback((render: () => ReactNode, identity?: string) => {
     const owner = Symbol("workspace-inspector");
     workspaceInspectorOwner.current = owner;
-    setWorkspaceInspector({ render, active: true });
+    setWorkspaceInspector({ render, identity, active: true });
 
     return () => {
       // During a push/replace the outgoing screen deactivates AFTER the
@@ -637,6 +641,7 @@ function AdaptiveWorkspaceLayoutContent(
           </View>
           <WorkspaceInspectorPane
             pathname={props.pathname}
+            contentIdentity={workspaceInspector?.identity}
             renderedInspectorWidth={renderedInspectorWidth}
             active={workspaceInspector?.active ?? false}
             panes={panes}

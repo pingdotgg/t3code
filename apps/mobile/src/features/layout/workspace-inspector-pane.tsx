@@ -25,6 +25,7 @@ import { WorkspacePaneDivider } from "./workspace-pane-divider";
  */
 export function WorkspaceInspectorPane(props: {
   readonly pathname: string;
+  readonly contentIdentity?: string;
   readonly renderedInspectorWidth: SharedValue<number>;
   /**
    * When false the pane animates closed but keeps its content mounted for the
@@ -142,7 +143,7 @@ export function WorkspaceInspectorPane(props: {
         >
           <Animated.View className="flex-1" style={inspectorContentStyle}>
             <RenderErrorBoundary
-              resetKeys={[props.pathname, props.renderInspector]}
+              resetKeys={[props.pathname, props.contentIdentity]}
               renderFallback={(fallback) => (
                 <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
               )}
