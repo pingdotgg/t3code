@@ -3,12 +3,16 @@ import type {
   EnvironmentId,
   ProjectScript,
   ResolvedKeybindingsConfig,
+  ThreadDetailsSectionsSetting,
   ThreadId,
 } from "@t3tools/contracts";
+import { DEFAULT_THREAD_DETAILS_SECTIONS } from "@t3tools/contracts";
 import { AlertTriangleIcon, XIcon } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
+import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import type { EnvMode, EnvironmentOption } from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
 import { BranchToolbarEnvironmentSelector } from "../BranchToolbarEnvironmentSelector";
@@ -24,6 +28,14 @@ import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
+import { ThreadDetailsCustomizeButton, ThreadDetailsEditor } from "./ThreadDetailsCustomize";
+import {
+  THREAD_DETAILS_SECTION_BY_ID,
+  THREAD_DETAILS_SECTION_IDS,
+  resolveThreadDetailsSectionRender,
+  threadDetailsItemVisible,
+  threadDetailsSectionMode,
+} from "./threadDetailsCustomization";
 
 interface VersionMismatchIssue {
   readonly clientVersion: string;
@@ -69,6 +81,13 @@ export interface ThreadDetailsPanelProps {
     input: NewProjectScriptInput,
   ) => Promise<ProjectScriptActionResult>;
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
+  /** Set by a command to open the customize editor; the panel consumes it on mount or change. */
+  customizeRequested?: boolean;
+  onCustomizeRequestHandled?: () => void;
+}
+
+function SectionEmptyState(props: { readonly label: string }) {
+  return <p className="px-3.5 py-1 text-[11px] text-muted-foreground">{props.label}</p>;
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
@@ -76,6 +95,28 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     props.environmentId,
     props.activeProjectScripts ? props.gitCwd : null,
   );
+  const savedSections = useClientSettings((settings) => settings.threadDetailsSections);
+  const updateClientSettings = useUpdateClientSettings();
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [draftSections, setDraftSections] = useState<ThreadDetailsSectionsSetting | null>(null);
+
+  const openCustomize = useCallback(() => {
+    setDraftSections(savedSections);
+    setCustomizeOpen(true);
+  }, [savedSections]);
+  const closeCustomize = useCallback(() => {
+    setCustomizeOpen(false);
+    setDraftSections(null);
+  }, []);
+
+  const { customizeRequested, onCustomizeRequestHandled } = props;
+  useEffect(() => {
+    if (!customizeRequested) return;
+    // Reopening would reset the draft and drop unsaved edits.
+    if (!customizeOpen) openCustomize();
+    onCustomizeRequestHandled?.();
+  }, [customizeOpen, customizeRequested, onCustomizeRequestHandled, openCustomize]);
+
   const branchToolbarProps = {
     showGitControls: props.isGitRepo,
     environmentId: props.environmentId,
@@ -101,53 +142,80 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
       : {}),
   };
 
-  const card = (
-    <div
-      className={cn(
-        // A single-track grid, because a grid area is a definite containing block: the card's own
-        // height is "content, clamped by max-height", which percentages treat as indefinite — as
-        // a plain block (or even a flex column) every `h-full`/`max-h-full` down the chain
-        // resolved to nothing, the scroll area's viewport stayed at its content height, and the
-        // card's overflow-hidden clipped the content instead of scrolling it. `minmax(0,1fr)`
-        // still shrink-wraps short content while letting the clamp bite on tall content.
-        "dropdown-glass isolate contain-paint grid max-h-full grid-rows-[minmax(0,1fr)] overflow-hidden rounded-[20px]",
-        // The popup's real ceiling is what base-ui measured for it — the anchor's clipping
-        // ancestors, which is how an open terminal drawer shrinks it — less the popover
-        // viewport's own p-2. The dvh term is the fallback's fallback, from before.
-        props.mode === "popover" &&
-          "max-h-[min(calc(100dvh-6.5rem),calc(var(--available-height,100dvh)-1rem))]",
-      )}
-      data-thread-details-card
-    >
-      <ScrollArea scrollFade className="min-h-0">
-        <ThreadDetailsSection
-          headingId="thread-details-workspace-heading"
-          title="Workspace"
-          separated={false}
-        >
-          {props.versionMismatch ? (
-            <div className="mx-1 mb-2 flex gap-2 rounded-xl border border-warning/30 bg-warning/6 p-3">
-              <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium">Client and server versions differ</p>
-                <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                  Client {props.versionMismatch.clientVersion} · {props.versionMismatch.serverLabel}{" "}
-                  {props.versionMismatch.serverVersion}
-                </p>
-              </div>
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                aria-label="Dismiss version mismatch warning"
-                onClick={props.onDismissVersionMismatch}
-              >
-                <XIcon className="size-3.5" />
-              </Button>
-            </div>
-          ) : null}
+  const workspaceItems = {
+    environment: threadDetailsItemVisible(savedSections, "workspace", "environment"),
+    branch: threadDetailsItemVisible(savedSections, "workspace", "branch"),
+    openIn: threadDetailsItemVisible(savedSections, "workspace", "openIn"),
+    scripts: threadDetailsItemVisible(savedSections, "workspace", "scripts"),
+  };
+  const versionControlItems = {
+    branch: threadDetailsItemVisible(savedSections, "version-control", "branch"),
+    gitActions: threadDetailsItemVisible(savedSections, "version-control", "gitActions"),
+  };
 
+  const workspaceHasContent =
+    (props.availableEnvironments.length > 1 && workspaceItems.environment) ||
+    workspaceItems.branch ||
+    (props.showOpenInPicker && workspaceItems.openIn) ||
+    (props.activeProjectScripts !== undefined && workspaceItems.scripts);
+  const workspaceRender = resolveThreadDetailsSectionRender({
+    mode: threadDetailsSectionMode(savedSections, "workspace"),
+    available: true,
+    hasContent: workspaceHasContent,
+  });
+
+  const versionControlAvailable = props.gitCwd !== null;
+  const versionControlHasContent =
+    (props.isGitRepo && versionControlItems.branch) ||
+    (props.activeProjectName !== undefined && versionControlItems.gitActions);
+  const versionControlRender = resolveThreadDetailsSectionRender({
+    mode: threadDetailsSectionMode(savedSections, "version-control"),
+    available: versionControlAvailable,
+    hasContent: versionControlHasContent,
+  });
+
+  const automationsMode = threadDetailsSectionMode(savedSections, "automations");
+  const automationsAvailable = !props.draftId;
+  const relationshipsMode = threadDetailsSectionMode(savedSections, "relationships");
+  const relationshipsAvailable = !props.draftId;
+
+  const versionMismatchBanner = props.versionMismatch ? (
+    <div className="px-3 pt-3">
+      <div className="flex gap-2 rounded-xl border border-warning/30 bg-warning/6 p-3">
+        <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium">Client and server versions differ</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+            Client {props.versionMismatch.clientVersion} · {props.versionMismatch.serverLabel}{" "}
+            {props.versionMismatch.serverVersion}
+          </p>
+        </div>
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          aria-label="Dismiss version mismatch warning"
+          onClick={props.onDismissVersionMismatch}
+        >
+          <XIcon className="size-3.5" />
+        </Button>
+      </div>
+    </div>
+  ) : null;
+
+  const workspaceSection = (() => {
+    if (!workspaceRender.render) return null;
+    const definition = THREAD_DETAILS_SECTION_BY_ID.workspace;
+    return (
+      <ThreadDetailsSection
+        headingId="thread-details-workspace-heading"
+        title="Workspace"
+        separated={false}
+      >
+        {workspaceRender.showEmptyState ? (
+          <SectionEmptyState label={definition.emptyLabel} />
+        ) : (
           <div className="flex flex-col">
-            {props.availableEnvironments.length > 1 ? (
+            {props.availableEnvironments.length > 1 && workspaceItems.environment ? (
               <BranchToolbarEnvironmentSelector
                 displayMode="panel"
                 autoEnvironmentLabel={props.autoEnvironmentLabel}
@@ -159,9 +227,11 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               />
             ) : null}
 
-            <BranchToolbar layout="panel" panelSection="workspace" {...branchToolbarProps} />
+            {workspaceItems.branch ? (
+              <BranchToolbar layout="panel" panelSection="workspace" {...branchToolbarProps} />
+            ) : null}
 
-            {props.showOpenInPicker ? (
+            {props.showOpenInPicker && workspaceItems.openIn ? (
               <OpenInPicker
                 environmentId={props.environmentId}
                 keybindings={props.keybindings}
@@ -171,7 +241,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               />
             ) : null}
 
-            {props.activeProjectScripts ? (
+            {props.activeProjectScripts && workspaceItems.scripts ? (
               <ProjectScriptsControl
                 displayMode="panel"
                 scripts={props.activeProjectScripts}
@@ -185,43 +255,138 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               />
             ) : null}
           </div>
-        </ThreadDetailsSection>
+        )}
+      </ThreadDetailsSection>
+    );
+  })();
 
-        {props.gitCwd ? (
-          <ThreadDetailsSection
-            headingId="thread-details-version-control-heading"
-            title="Version Control"
-          >
-            <div className="flex flex-col">
-              {props.isGitRepo ? (
-                <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
-              ) : null}
-              {props.activeProjectName ? (
-                <GitActionsControl
-                  displayMode="panel"
-                  gitCwd={props.gitCwd}
-                  activeThreadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
-                  {...(props.draftId ? { draftId: props.draftId } : {})}
-                  {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
-                />
-              ) : null}
-            </div>
-          </ThreadDetailsSection>
-        ) : null}
+  const versionControlSection = (() => {
+    if (!versionControlRender.render) return null;
+    const definition = THREAD_DETAILS_SECTION_BY_ID["version-control"];
+    return (
+      <ThreadDetailsSection
+        headingId="thread-details-version-control-heading"
+        title="Version Control"
+      >
+        {versionControlRender.showEmptyState ? (
+          <SectionEmptyState label={definition.emptyLabel} />
+        ) : (
+          <div className="flex flex-col">
+            {props.isGitRepo && versionControlItems.branch ? (
+              <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
+            ) : null}
+            {props.activeProjectName && versionControlItems.gitActions ? (
+              <GitActionsControl
+                displayMode="panel"
+                gitCwd={props.gitCwd}
+                activeThreadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
+                {...(props.draftId ? { draftId: props.draftId } : {})}
+                {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
+              />
+            ) : null}
+          </div>
+        )}
+      </ThreadDetailsSection>
+    );
+  })();
 
-        {!props.draftId ? (
-          <ThreadAutomationsPanel environmentId={props.environmentId} threadId={props.threadId} />
-        ) : null}
+  const automationsSection =
+    automationsMode === "hidden" || !automationsAvailable ? null : (
+      <ThreadAutomationsPanel
+        environmentId={props.environmentId}
+        threadId={props.threadId}
+        alwaysVisible={automationsMode === "always"}
+      />
+    );
 
-        {!props.draftId ? (
-          <ThreadRelationshipsPanel environmentId={props.environmentId} threadId={props.threadId} />
-        ) : null}
+  const relationshipsSection =
+    relationshipsMode === "hidden" || !relationshipsAvailable ? null : (
+      <ThreadRelationshipsPanel
+        environmentId={props.environmentId}
+        threadId={props.threadId}
+        alwaysVisible={relationshipsMode === "always"}
+      />
+    );
+
+  const renderCard = (content: ReactNode, action?: ReactNode) => (
+    <div
+      className={cn(
+        // A single-track grid, because a grid area is a definite containing block: the card's own
+        // height is "content, clamped by max-height", which percentages treat as indefinite — as
+        // a plain block (or even a flex column) every `h-full`/`max-h-full` down the chain
+        // resolved to nothing, the scroll area's viewport stayed at its content height, and the
+        // card's overflow-hidden clipped the content instead of scrolling it. `minmax(0,1fr)`
+        // still shrink-wraps short content while letting the clamp bite on tall content.
+        "dropdown-glass isolate contain-paint group/thread-details relative grid max-h-full grid-rows-[minmax(0,1fr)] overflow-hidden rounded-[20px]",
+        // The popup's real ceiling is what base-ui measured for it — the anchor's clipping
+        // ancestors, which is how an open terminal drawer shrinks it — less the popover
+        // viewport's own p-2. The dvh term is the fallback's fallback, from before.
+        props.mode === "popover" &&
+          "max-h-[min(calc(100dvh-6.5rem),calc(var(--available-height,100dvh)-1rem))]",
+      )}
+      data-thread-details-card
+    >
+      {action}
+      <ScrollArea scrollFade className="min-h-0">
+        {content}
       </ScrollArea>
     </div>
   );
 
+  const card = customizeOpen ? (
+    <ThreadDetailsEditor
+      availableForDraft={
+        props.draftId ? (["workspace", "version-control"] as const) : THREAD_DETAILS_SECTION_IDS
+      }
+      sections={draftSections ?? savedSections}
+      // The tray sits beside the card rather than over it, so the panel stays
+      // visible as the thing being arranged.
+      trayClassName={cn(
+        "absolute right-full z-10",
+        props.mode === "popover" ? "top-0 mr-2" : "top-3",
+      )}
+      onCancel={closeCustomize}
+      onChange={setDraftSections}
+      onDone={() => {
+        // The settings store applies the patch optimistically, so closing
+        // now cannot flash the old arrangement or race a reopened editor.
+        void updateClientSettings({
+          threadDetailsSections: draftSections ?? DEFAULT_THREAD_DETAILS_SECTIONS,
+        });
+        closeCustomize();
+      }}
+      onReset={() => setDraftSections(DEFAULT_THREAD_DETAILS_SECTIONS)}
+      renderCard={renderCard}
+    />
+  ) : (
+    renderCard(
+      <>
+        {versionMismatchBanner}
+        {workspaceSection}
+        {versionControlSection}
+        {automationsSection}
+        {relationshipsSection}
+        {/* Automations and Lineage decide their own emptiness from live data,
+              so the fallback hides itself in CSS once any section renders. */}
+        {!workspaceRender.render && !versionControlRender.render ? (
+          <div className="flex flex-col items-start gap-2 px-3 py-3 group-has-[section]/thread-details:hidden">
+            <p className="text-[13px] text-muted-foreground">No details to show.</p>
+            <Button size="xs" variant="outline" onClick={openCustomize}>
+              Customize
+            </Button>
+          </div>
+        ) : null}
+      </>,
+      <ThreadDetailsCustomizeButton onClick={openCustomize} />,
+    )
+  );
+
   if (props.mode === "popover") {
-    return <div data-thread-details-panel="popover">{card}</div>;
+    return (
+      <div className="relative" data-thread-details-panel="popover">
+        {card}
+      </div>
+    );
   }
 
   return (

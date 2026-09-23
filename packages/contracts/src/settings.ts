@@ -288,7 +288,37 @@ export const LoadBalancingWeights = Schema.Record(
 
 export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 
+/**
+ * Per-section visibility of the thread details panel. "relevant" is the
+ * default: the section appears only when the app knows it has something to
+ * show. Overrides are sparse — an absent section or item keeps the app's
+ * default, so new built-ins flow through untouched panels, and unknown ids
+ * decode unchanged so a stale preference never blocks a reconnect or reinstall.
+ */
+export const ThreadDetailsSectionVisibility = Schema.Literals(["always", "relevant", "hidden"]);
+export type ThreadDetailsSectionVisibility = typeof ThreadDetailsSectionVisibility.Type;
+
+export const ThreadDetailsSectionOverride = Schema.Struct({
+  visibility: Schema.optionalKey(ThreadDetailsSectionVisibility),
+  // itemId -> false hides that item; true/absent keeps the default.
+  items: Schema.optionalKey(Schema.Record(TrimmedNonEmptyString, Schema.Boolean)),
+});
+export type ThreadDetailsSectionOverride = typeof ThreadDetailsSectionOverride.Type;
+
+export const ThreadDetailsSectionsSetting = Schema.Struct({
+  sections: Schema.Record(TrimmedNonEmptyString, ThreadDetailsSectionOverride).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+});
+export type ThreadDetailsSectionsSetting = typeof ThreadDetailsSectionsSetting.Type;
+export const DEFAULT_THREAD_DETAILS_SECTIONS: ThreadDetailsSectionsSetting = Schema.decodeSync(
+  ThreadDetailsSectionsSetting,
+)({});
+
 export const ClientSettingsSchema = Schema.Struct({
+  threadDetailsSections: ThreadDetailsSectionsSetting.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_DETAILS_SECTIONS)),
+  ),
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
   ),
@@ -1642,6 +1672,7 @@ export const ServerSettingsPatch = Schema.Struct({
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
+  threadDetailsSections: Schema.optionalKey(ThreadDetailsSectionsSetting),
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),

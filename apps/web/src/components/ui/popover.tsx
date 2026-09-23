@@ -103,7 +103,9 @@ function PopoverPopup({
               tooltipStyle && padding === "default"
                 ? "py-1 [--viewport-inline-padding:--spacing(2)]"
                 : popoverViewportPaddingClassName[padding],
-              !tooltipStyle && "not-data-transitioning:overflow-y-auto",
+              // The panel variant's content scrolls itself and may overflow sideways
+              // (the thread details edit tray), which overflow-y-auto would clip.
+              !tooltipStyle && variant !== "panel" && "not-data-transitioning:overflow-y-auto",
               variant === "panel" &&
                 "overflow-visible py-2 [--viewport-inline-padding:--spacing(2)]",
             )}
