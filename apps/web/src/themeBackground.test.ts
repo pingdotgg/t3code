@@ -5,6 +5,7 @@ import { BUILT_IN_THEME_IDS } from "@t3tools/shared/themePalettes";
 import {
   applyThemeBackground,
   resolveThemeBackgroundUrl,
+  STANDALONE_SCENE_IDS,
   THEME_BACKGROUNDS,
 } from "./themeBackground";
 import { GROVE_THEME } from "@t3tools/shared/themePalettes";
@@ -21,7 +22,7 @@ describe("resolveThemeBackgroundUrl", () => {
 
   it("keeps a picked scene regardless of the active theme", () => {
     expect(resolveThemeBackgroundUrl("ocean", "grove")).toBe("/backgrounds/ocean.webp");
-    expect(resolveThemeBackgroundUrl("ocean", null)).toBe("/backgrounds/ocean.webp");
+    expect(resolveThemeBackgroundUrl("fjord", null)).toBe("/backgrounds/fjord.webp");
   });
 
   it("clears the scene on none and ignores unknown picks", () => {
@@ -31,11 +32,13 @@ describe("resolveThemeBackgroundUrl", () => {
 });
 
 describe("theme background assets", () => {
-  it("ships a scene for every built-in theme", () => {
-    expect(Object.keys(THEME_BACKGROUNDS).sort()).toEqual([...BUILT_IN_THEME_IDS].sort());
-    for (const url of Object.values(THEME_BACKGROUNDS)) {
-      expect(url).toMatch(/^\/backgrounds\/[a-z0-9-]+\.webp$/);
+  it("ships a scene for every built-in theme plus the standalone library", () => {
+    for (const themeId of BUILT_IN_THEME_IDS) {
+      expect(THEME_BACKGROUNDS[themeId]).toMatch(/^\/backgrounds\/[a-z0-9-]+\.webp$/);
     }
+    expect(Object.keys(THEME_BACKGROUNDS).sort()).toEqual(
+      ["auto", "none", ...BUILT_IN_THEME_IDS, ...STANDALONE_SCENE_IDS].sort(),
+    );
   });
 });
 

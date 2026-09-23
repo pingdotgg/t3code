@@ -162,11 +162,23 @@ export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationM
 export const ThemeBackgroundChoice = Schema.Literals([
   "auto",
   "none",
+  // Built-in theme ids: each theme's own scene.
   "t3-chat",
   "grove",
   "ocean",
   "ember",
   "iris",
+  // Standalone scenes in the picker library.
+  "alpine",
+  "aurora",
+  "coastline",
+  "dune",
+  "fjord",
+  "forest-lake",
+  "highlands",
+  "meadow",
+  "nightfall",
+  "terraces",
 ]);
 export type ThemeBackgroundChoice = typeof ThemeBackgroundChoice.Type;
 const DEFAULT_THEME_BACKGROUND: ThemeBackgroundChoice = "auto";

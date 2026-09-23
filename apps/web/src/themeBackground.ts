@@ -1,20 +1,47 @@
 import type { ThemeBackgroundChoice } from "@t3tools/contracts/settings";
 import {
   BUILT_IN_THEME_IDS,
-  type BuiltInThemeId,
   type ThemeAppearance,
   type ThemeDefinition,
 } from "@t3tools/shared/themePalettes";
 import { getStandardThemeColors, getThemeColorsForMode } from "./themePalette";
 
-/** Scene art per built-in theme, served from the app's public assets. */
-export const THEME_BACKGROUNDS: Readonly<Record<BuiltInThemeId, string>> = {
+/** Scene art per choice, served from the app's public assets. */
+export const THEME_BACKGROUNDS: Readonly<Record<ThemeBackgroundChoice, string>> = {
+  auto: "",
+  none: "",
   "t3-chat": "/backgrounds/t3-chat.webp",
   grove: "/backgrounds/grove.webp",
   ocean: "/backgrounds/ocean.webp",
   ember: "/backgrounds/ember.webp",
   iris: "/backgrounds/iris.webp",
+  alpine: "/backgrounds/alpine.webp",
+  aurora: "/backgrounds/aurora.webp",
+  coastline: "/backgrounds/coastline.webp",
+  dune: "/backgrounds/dune.webp",
+  fjord: "/backgrounds/fjord.webp",
+  "forest-lake": "/backgrounds/forest-lake.webp",
+  highlands: "/backgrounds/highlands.webp",
+  meadow: "/backgrounds/meadow.webp",
+  nightfall: "/backgrounds/nightfall.webp",
+  terraces: "/backgrounds/terraces.webp",
 };
+
+/** Standalone scenes that are not tied to a built-in theme. */
+export const STANDALONE_SCENE_IDS = [
+  "alpine",
+  "aurora",
+  "coastline",
+  "dune",
+  "fjord",
+  "forest-lake",
+  "highlands",
+  "meadow",
+  "nightfall",
+  "terraces",
+] as const;
+
+export type StandaloneSceneId = (typeof STANDALONE_SCENE_IDS)[number];
 
 export const THEME_BACKGROUND_LABELS: Readonly<Record<ThemeBackgroundChoice, string>> = {
   auto: "Theme scene",
@@ -24,6 +51,16 @@ export const THEME_BACKGROUND_LABELS: Readonly<Record<ThemeBackgroundChoice, str
   ocean: "Ocean",
   ember: "Ember",
   iris: "Iris",
+  alpine: "Alpine",
+  aurora: "Aurora",
+  coastline: "Coastline",
+  dune: "Dune",
+  fjord: "Fjord",
+  "forest-lake": "Forest Lake",
+  highlands: "Highlands",
+  meadow: "Meadow",
+  nightfall: "Nightfall",
+  terraces: "Terraces",
 };
 
 /** Options for the settings picker, in display order. */
@@ -31,6 +68,7 @@ export const THEME_BACKGROUND_CHOICES: ReadonlyArray<ThemeBackgroundChoice> = [
   "auto",
   "none",
   ...BUILT_IN_THEME_IDS,
+  ...STANDALONE_SCENE_IDS,
 ];
 
 /**
@@ -44,7 +82,8 @@ export function resolveThemeBackgroundUrl(
   if (choice === "none") return null;
   const sceneId = choice === "auto" ? themeId : choice;
   if (sceneId === null) return null;
-  return sceneId in THEME_BACKGROUNDS ? THEME_BACKGROUNDS[sceneId as BuiltInThemeId] : null;
+  const url = THEME_BACKGROUNDS[sceneId as ThemeBackgroundChoice];
+  return url || null;
 }
 
 /**
