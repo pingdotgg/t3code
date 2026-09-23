@@ -195,10 +195,43 @@ it.effect("rejects invalid streaming audio and frees the model", () =>
       const stream = yield* speech.startStream;
       yield* stream.feed(new Uint8Array([1, 2, 3]));
     }).pipe(Effect.scoped, Effect.result);
-    expect(Result.isFailure(result)).toBe(true);
+    expect(Result.isFailure(result) && result.failure).toMatchObject({
+      _tag: "SpeechInvalidAudioError",
+      byteLength: 3,
+    });
     expect(native.feed).not.toHaveBeenCalled();
     expect(native.dispose).toHaveBeenCalledOnce();
   }).pipe(Effect.provide(layer)),
+);
+it.effect("preserves a cancelled download during stream preparation", () =>
+  Effect.gen(function* () {
+    downloadModel.mockRejectedValueOnce(
+      new SpeechService.SpeechDownloadCancelledError({ modelId: "test-model" }),
+    );
+    const result = yield* Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      return yield* Effect.result(speech.startStream.pipe(Effect.scoped));
+    }).pipe(Effect.provide(layer));
+    expect(Result.isFailure(result) && result.failure).toMatchObject({
+      _tag: "SpeechDownloadCancelledError",
+      modelId: "test-model",
+    });
+  }),
+);
+it.effect("preserves a busy error during stream preparation", () =>
+  Effect.gen(function* () {
+    loadNative.mockRejectedValueOnce(
+      new SpeechService.SpeechBusyError({ operation: "model preparation" }),
+    );
+    const result = yield* Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      return yield* Effect.result(speech.startStream.pipe(Effect.scoped));
+    }).pipe(Effect.provide(layer));
+    expect(Result.isFailure(result) && result.failure).toMatchObject({
+      _tag: "SpeechBusyError",
+      operation: "model preparation",
+    });
+  }),
 );
 it.effect("releases the loaded native model when its service scope closes", () =>
   Effect.gen(function* () {

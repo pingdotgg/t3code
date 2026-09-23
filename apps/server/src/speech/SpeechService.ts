@@ -268,6 +268,15 @@ export const make = Effect.gen(function* () {
       catch: (cause) => new SpeechOperationError({ operation, cause }),
     });
 
+  const speechError = (operation: string, cause: unknown): SpeechError =>
+    isSpeechError(cause) ? cause : new SpeechOperationError({ operation, cause });
+
+  const attemptSpeech = <A>(operation: string, run: () => Promise<A>) =>
+    Effect.tryPromise({
+      try: run,
+      catch: (cause) => speechError(operation, cause),
+    });
+
   const readSettings = (operation: string) =>
     serverSettings.getSettings.pipe(
       Effect.mapError((cause) => new SpeechOperationError({ operation, cause })),
@@ -293,8 +302,7 @@ export const make = Effect.gen(function* () {
           activeOperation = undefined;
         }
       },
-      catch: (cause): SpeechError =>
-        isSpeechError(cause) ? cause : new SpeechOperationError({ operation, cause }),
+      catch: (cause) => speechError(operation, cause),
     });
 
   const currentStatus = async (settings: SettingsSnapshot): Promise<EnvironmentSpeechStatus> => {
@@ -394,7 +402,7 @@ export const make = Effect.gen(function* () {
           released.resolve();
         }),
       );
-      const preparation = yield* attempt(operation, async () => {
+      const preparation = yield* attemptSpeech(operation, async () => {
         const startedAt = performance.now();
         const prepared = await loadModel(definition, signal);
         if (!prepared.supportsStreaming)
@@ -413,7 +421,7 @@ export const make = Effect.gen(function* () {
       let usedCpuFallback = false;
       let busy = false;
       const run = <A>(work: () => Promise<A>) =>
-        attempt(operation, async () => {
+        attemptSpeech(operation, async () => {
           if (busy || finished || signal.aborted) throw new Error("Speech stream is not ready.");
           busy = true;
           try {
