@@ -41,9 +41,11 @@ UI, such as `/theme`, are not offered.
 
 ## Known limits
 
-- Kimi's `/goal` command is a terminal-only feature as of Kimi Code CLI 0.43.x and is not
-  reachable from T3 Code. Run goals in the Kimi terminal, or start a thread here and prompt
-  directly.
+- Kimi's `/goal` and `/plan` commands are terminal-only (confirmed through Kimi Code CLI 2.0.x)
+  and are not reachable from T3 Code. Typing them anyway makes Kimi answer with an
+  "Unknown ACP command" error. For plan mode use the thread's Plan/Build toggle, which maps to
+  Kimi's Plan mode. For goals, ask for one in plain language ("create a goal for ...") — the
+  CreateGoal tool works over ACP.
 - Kimi has no separate "accept edits" permission level. The approval modes map to Kimi's
   Default, Auto, and YOLO modes.
 - Updates are manual: run `kimi upgrade` on the server machine.
