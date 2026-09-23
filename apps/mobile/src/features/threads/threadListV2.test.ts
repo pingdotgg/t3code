@@ -5,7 +5,6 @@ import {
   threadOrderAfterMove,
   threadDropLifecycle,
   reconcilePendingThreadOrder,
-  computeThreadMoveAvailability,
   type PendingThreadOrder,
   type ThreadMoveAvailability,
 } from "./threadOrder";
