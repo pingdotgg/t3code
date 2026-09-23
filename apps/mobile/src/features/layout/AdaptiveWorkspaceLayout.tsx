@@ -585,6 +585,7 @@ function AdaptiveWorkspaceLayoutContent(
                   renderFallback={(fallback) => (
                     <RenderFailureView
                       {...fallback}
+                      announce={panes.primarySidebarVisible}
                       title="The sidebar couldn't be displayed"
                       exit={{ label: "Open settings", onPress: handleOpenSettings }}
                     />
