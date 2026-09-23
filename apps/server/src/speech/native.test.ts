@@ -79,10 +79,10 @@ const streamingFixture = (feed: string) =>
     supports: () => false,
     createSession: () => ({
       dispose() {},
-      stream: async () => ({
+      stream: async (opts) => ({
         feed: ${feed},
         finalize: async () => {},
-        text: { full: "hello world", committed: "hello ", tentative: "world" },
+        text: { full: opts.language ?? "hello world", committed: "hello ", tentative: "world" },
         reset() {},
       }),
     }),
@@ -105,8 +105,8 @@ it("returns streaming previews and final text from an isolated process", async (
       text: { committed: "hello ", tentative: "world" },
     });
     expect(await model.finish()).toBe("hello world");
-    await model.begin();
-    expect(await model.finish()).toBe("hello world");
+    await model.begin("fr");
+    expect(await model.finish()).toBe("fr");
   } finally {
     await model.dispose();
   }

@@ -40,7 +40,8 @@
     "accuracy": 82,
     "speed": 84,
     "recommended": true,
-    "supportsStreaming": true
+    "supportsStreaming": true,
+    "supportsLanguageDetection": true
   },
   {
     "id": "handy-computer/cohere-transcribe-03-2026-gguf",
@@ -69,7 +70,8 @@
     "accuracy": 92,
     "speed": 63,
     "recommended": true,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/whisper-medium-gguf",
@@ -183,7 +185,8 @@
     "accuracy": 84,
     "speed": 42,
     "recommended": true,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": true
   },
   {
     "id": "handy-computer/Voxtral-Mini-4B-Realtime-2602-gguf",
@@ -197,7 +200,8 @@
     "accuracy": 87,
     "speed": 11,
     "recommended": false,
-    "supportsStreaming": true
+    "supportsStreaming": true,
+    "supportsLanguageDetection": true
   },
   {
     "id": "handy-computer/parakeet-tdt-0.6b-v3-gguf",
@@ -237,7 +241,8 @@
     "accuracy": 88,
     "speed": 79,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": true
   },
   {
     "id": "handy-computer/parakeet-tdt-0.6b-v2-gguf",
@@ -251,7 +256,8 @@
     "accuracy": 89,
     "speed": 85,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/Qwen3-ASR-0.6B-gguf",
@@ -296,7 +302,8 @@
     "accuracy": 87,
     "speed": 63,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": true
   },
   {
     "id": "handy-computer/Fun-ASR-MLT-Nano-2512-gguf",
@@ -342,7 +349,8 @@
     "accuracy": 89,
     "speed": 68,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/canary-1b-flash-gguf",
@@ -356,7 +364,8 @@
     "accuracy": 90,
     "speed": 83,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/canary-1b-v2-gguf",
@@ -396,7 +405,8 @@
     "accuracy": 88,
     "speed": 81,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/canary-1b-gguf",
@@ -410,7 +420,8 @@
     "accuracy": 90,
     "speed": 67,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/canary-qwen-2.5b-gguf",
@@ -424,7 +435,8 @@
     "accuracy": 90,
     "speed": 40,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/cohere-transcribe-arabic-07-2026-gguf",
@@ -438,7 +450,8 @@
     "accuracy": 48,
     "speed": 63,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/Fun-ASR-Nano-2512-gguf",
@@ -452,7 +465,8 @@
     "accuracy": 89,
     "speed": 73,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/gigaam-v3-ctc-gguf",
@@ -466,7 +480,8 @@
     "accuracy": 57,
     "speed": 98,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/gigaam-v3-e2e-ctc-gguf",
@@ -480,7 +495,8 @@
     "accuracy": 69,
     "speed": 98,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/gigaam-v3-rnnt-gguf",
@@ -494,7 +510,8 @@
     "accuracy": 58,
     "speed": 96,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/gigaam-v3-e2e-rnnt-gguf",
@@ -508,7 +525,8 @@
     "accuracy": 70,
     "speed": 94,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/granite-speech-4.1-2b-nar-gguf",
@@ -522,7 +540,8 @@
     "accuracy": 92,
     "speed": 37,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/granite-4.0-1b-speech-gguf",
@@ -536,7 +555,8 @@
     "accuracy": 91,
     "speed": 31,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/granite-speech-4.1-2b-gguf",
@@ -550,7 +570,8 @@
     "accuracy": 92,
     "speed": 30,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/granite-speech-4.1-2b-plus-gguf",
@@ -564,7 +585,8 @@
     "accuracy": 90,
     "speed": 29,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/medasr-gguf",
@@ -578,7 +600,8 @@
     "accuracy": 30,
     "speed": 100,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/moonshine-tiny-ar-gguf",
@@ -592,7 +615,8 @@
     "accuracy": 17,
     "speed": 100,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/moonshine-tiny-ja-gguf",
@@ -606,7 +630,8 @@
     "accuracy": 41,
     "speed": 100,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/moonshine-tiny-ko-gguf",
@@ -620,7 +645,8 @@
     "accuracy": 55,
     "speed": 100,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/moonshine-tiny-uk-gguf",
@@ -634,7 +660,8 @@
     "accuracy": 28,
     "speed": 100,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/moonshine-tiny-vi-gguf",
@@ -648,7 +675,8 @@
     "accuracy": 42,
     "speed": 100,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/moonshine-tiny-zh-gguf",
@@ -662,7 +690,8 @@
     "accuracy": 40,
     "speed": 100,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/moonshine-base-gguf",
@@ -676,7 +705,8 @@
     "accuracy": 80,
     "speed": 99,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/moonshine-base-ar-gguf",
@@ -690,7 +720,8 @@
     "accuracy": 20,
     "speed": 99,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/moonshine-base-ja-gguf",
@@ -704,7 +735,8 @@
     "accuracy": 50,
     "speed": 99,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/moonshine-base-ko-gguf",
@@ -718,7 +750,8 @@
     "accuracy": 58,
     "speed": 99,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/moonshine-base-uk-gguf",
@@ -732,7 +765,8 @@
     "accuracy": 38,
     "speed": 99,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/moonshine-base-vi-gguf",
@@ -746,7 +780,8 @@
     "accuracy": 52,
     "speed": 99,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/moonshine-base-zh-gguf",
@@ -760,7 +795,8 @@
     "accuracy": 32,
     "speed": 99,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/moonshine-streaming-medium-gguf",
@@ -774,7 +810,8 @@
     "accuracy": 87,
     "speed": 83,
     "recommended": false,
-    "supportsStreaming": true
+    "supportsStreaming": true,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/moss-transcribe-diarize-gguf",
@@ -788,7 +825,8 @@
     "accuracy": 88,
     "speed": 31,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/nemotron-speech-streaming-en-0.6b-gguf",
@@ -802,7 +840,8 @@
     "accuracy": 86,
     "speed": 80,
     "recommended": false,
-    "supportsStreaming": true
+    "supportsStreaming": true,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/parakeet-tdt_ctc-110m-gguf",
@@ -816,7 +855,8 @@
     "accuracy": 85,
     "speed": 98,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf",
@@ -830,7 +870,8 @@
     "accuracy": 86,
     "speed": 96,
     "recommended": false,
-    "supportsStreaming": true
+    "supportsStreaming": true,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/parakeet-ctc-0.6b-gguf",
@@ -844,7 +885,8 @@
     "accuracy": 88,
     "speed": 94,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/parakeet-rnnt-0.6b-gguf",
@@ -858,7 +900,8 @@
     "accuracy": 90,
     "speed": 84,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/parakeet-ctc-1.1b-gguf",
@@ -872,7 +915,8 @@
     "accuracy": 88,
     "speed": 83,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/parakeet-primeline-gguf",
@@ -912,7 +956,8 @@
     "accuracy": 67,
     "speed": 79,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": true
   },
   {
     "id": "handy-computer/parakeet-tdt-1.1b-gguf",
@@ -926,7 +971,8 @@
     "accuracy": 91,
     "speed": 76,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/parakeet-rnnt-1.1b-gguf",
@@ -940,7 +986,8 @@
     "accuracy": 91,
     "speed": 75,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/parakeet-tdt_ctc-1.1b-gguf",
@@ -954,7 +1001,8 @@
     "accuracy": 88,
     "speed": 75,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/Qwen3-ASR-1.7B-gguf",
@@ -999,7 +1047,8 @@
     "accuracy": 90,
     "speed": 38,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": true
   },
   {
     "id": "handy-computer/SenseVoiceSmall-gguf",
@@ -1013,7 +1062,8 @@
     "accuracy": 81,
     "speed": 98,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": true
   },
   {
     "id": "handy-computer/Voxtral-Mini-3B-2507-gguf",
@@ -1027,7 +1077,8 @@
     "accuracy": 88,
     "speed": 14,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": true
   },
   {
     "id": "handy-computer/Voxtral-Small-24B-2507-gguf",
@@ -1041,7 +1092,8 @@
     "accuracy": 90,
     "speed": 10,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": true
   },
   {
     "id": "handy-computer/whisper-tiny.en-gguf",
@@ -1055,7 +1107,8 @@
     "accuracy": 68,
     "speed": 100,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/whisper-base.en-gguf",
@@ -1069,7 +1122,8 @@
     "accuracy": 76,
     "speed": 99,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/whisper-small.en-gguf",
@@ -1083,7 +1137,8 @@
     "accuracy": 81,
     "speed": 80,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/whisper-small-gguf",
@@ -1197,7 +1252,8 @@
     "accuracy": 80,
     "speed": 78,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": true
   },
   {
     "id": "handy-computer/whisper-medium.en-gguf",
@@ -1211,7 +1267,8 @@
     "accuracy": 83,
     "speed": 44,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": false
   },
   {
     "id": "handy-computer/whisper-large-v3-turbo-gguf",
@@ -1326,7 +1383,8 @@
     "accuracy": 88,
     "speed": 35,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": true
   },
   {
     "id": "handy-computer/Breeze-ASR-25-gguf",
@@ -1340,7 +1398,8 @@
     "accuracy": 86,
     "speed": 23,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": true
   },
   {
     "id": "handy-computer/whisper-large-gguf",
@@ -1454,7 +1513,8 @@
     "accuracy": 83,
     "speed": 23,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": true
   },
   {
     "id": "handy-computer/whisper-large-v2-gguf",
@@ -1568,7 +1628,8 @@
     "accuracy": 84,
     "speed": 23,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": true
   },
   {
     "id": "handy-computer/whisper-large-v3-gguf",
@@ -1683,6 +1744,7 @@
     "accuracy": 89,
     "speed": 23,
     "recommended": false,
-    "supportsStreaming": false
+    "supportsStreaming": false,
+    "supportsLanguageDetection": true
   }
 ]

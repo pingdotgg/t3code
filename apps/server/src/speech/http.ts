@@ -163,6 +163,16 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "updateLanguage",
+        Effect.fn("environment.voice.updateLanguage")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          return yield* speech
+            .updateLanguage(args.payload.language)
+            .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
+        }),
+      )
+      .handle(
         "postProcess",
         Effect.fn("environment.voice.postProcess")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);

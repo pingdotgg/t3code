@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import { SPEECH_STREAM_PATH } from "@t3tools/contracts";
-import type { SpeechAcceleration } from "@t3tools/contracts";
+import type { SpeechAcceleration, SpeechLanguage } from "@t3tools/contracts";
 import { RemoteEnvironmentAuthFetchError } from "../rpc/http.ts";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
@@ -188,6 +188,18 @@ export const updateEnvironmentSpeechAcceleration = (
     method: "POST",
     path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.updateAcceleration(),
     run: ({ client, headers }) => client.updateAcceleration({ headers, payload: { acceleration } }),
+  });
+
+export const updateEnvironmentSpeechLanguage = (
+  prepared: PreparedConnection,
+  language: SpeechLanguage,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.updateLanguage(),
+    run: ({ client, headers }) => client.updateLanguage({ headers, payload: { language } }),
   });
 
 export const removeEnvironmentSpeechModel = (prepared: PreparedConnection, modelId: string) =>

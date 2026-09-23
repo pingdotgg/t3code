@@ -122,6 +122,7 @@ export type SpeechModel = {
   readonly speed: number;
   readonly recommended: boolean;
   readonly supportsStreaming: boolean;
+  readonly supportsLanguageDetection: boolean;
 };
 
 export const SPEECH_MODELS = [
@@ -138,6 +139,7 @@ export const SPEECH_MODELS = [
     speed: 100,
     recommended: false,
     supportsStreaming: true,
+    supportsLanguageDetection: false,
   },
   {
     id: "handy-computer/moonshine-streaming-small-gguf",
@@ -152,6 +154,7 @@ export const SPEECH_MODELS = [
     speed: 95,
     recommended: false,
     supportsStreaming: true,
+    supportsLanguageDetection: false,
   },
   {
     id: "handy-computer/canary-180m-flash-gguf",
@@ -166,6 +169,7 @@ export const SPEECH_MODELS = [
     speed: 98,
     recommended: true,
     supportsStreaming: false,
+    supportsLanguageDetection: false,
   },
   {
     id: "handy-computer/parakeet-unified-en-0.6b-gguf",
@@ -180,6 +184,7 @@ export const SPEECH_MODELS = [
     speed: 79,
     recommended: true,
     supportsStreaming: true,
+    supportsLanguageDetection: false,
   },
   {
     id: "handy-computer/moonshine-tiny-gguf",
@@ -194,6 +199,7 @@ export const SPEECH_MODELS = [
     speed: 100,
     recommended: false,
     supportsStreaming: false,
+    supportsLanguageDetection: false,
   },
   {
     id: "handy-computer/whisper-tiny-gguf",
@@ -208,6 +214,7 @@ export const SPEECH_MODELS = [
     speed: 100,
     recommended: false,
     supportsStreaming: false,
+    supportsLanguageDetection: true,
   },
   {
     id: "handy-computer/whisper-base-gguf",
@@ -222,6 +229,7 @@ export const SPEECH_MODELS = [
     speed: 99,
     recommended: false,
     supportsStreaming: false,
+    supportsLanguageDetection: true,
   },
   // Additional models from Handy's transcribe.cpp catalog (2026-08-17), one pinned GGUF each.
   ...catalog,
@@ -230,6 +238,13 @@ export const SPEECH_MODELS = [
 export const DEFAULT_SPEECH_MODEL_ID = "handy-computer/parakeet-unified-en-0.6b-gguf";
 export const getSpeechModel = (modelId: string): SpeechModel | undefined =>
   SPEECH_MODELS.find((model) => model.id === modelId);
+
+export const effectiveSpeechLanguage = (model: SpeechModel, intent: string): string => {
+  if (model.languages.length === 1) return model.languages[0]!;
+  if (intent !== "auto" && model.languages.includes(intent)) return intent;
+  if (model.supportsLanguageDetection) return "auto";
+  return model.languages.find((language) => language === "en") ?? model.languages[0]!;
+};
 const speechModelPath = (directory: string, model: SpeechModel): string =>
   NodePath.join(directory, model.filename);
 

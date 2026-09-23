@@ -27,6 +27,8 @@ describe("environment speech contracts", () => {
       size: 35_466_912,
       supportsStreaming: false,
       acceleration: "auto",
+      language: "auto",
+      effectiveLanguage: "auto",
       gpuDevices: [],
       customWords: ["T3 Code"],
       removeFillerWords: false,

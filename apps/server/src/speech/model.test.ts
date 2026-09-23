@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { isSpeechModelReady, SPEECH_MODELS } from "./model.ts";
+import { effectiveSpeechLanguage, isSpeechModelReady, SPEECH_MODELS } from "./model.ts";
 
 describe("speech model catalog", () => {
   it("contains unique ids and filenames", () => {
@@ -22,6 +22,15 @@ describe("speech model catalog", () => {
       expect(model.languages.length).toBeGreaterThan(0);
     }
   });
+});
+
+it("resolves Auto only for models that can detect language", () => {
+  const canary = SPEECH_MODELS.find((model) => model.name === "Canary 180M Flash")!;
+  const whisper = SPEECH_MODELS.find((model) => model.name === "Whisper Medium")!;
+  expect(effectiveSpeechLanguage(canary, "auto")).toBe("en");
+  expect(effectiveSpeechLanguage(canary, "es")).toBe("es");
+  expect(effectiveSpeechLanguage(whisper, "auto")).toBe("auto");
+  expect(effectiveSpeechLanguage(whisper, "fr")).toBe("fr");
 });
 
 it("checks readiness without reading the model contents", async () => {

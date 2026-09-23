@@ -17,6 +17,8 @@ vi.mock("@t3tools/client-runtime/voice-input", () => ({
     Promise.resolve({
       supported: true,
       acceleration: "auto",
+      language: "auto",
+      effectiveLanguage: "en",
       gpuDevices: [{ id: '["vulkan","gpu-1"]', name: "Test GPU" }],
     }),
   updateEnvironmentSpeechFillerWordRemoval: () => Promise.resolve({ supported: true }),
@@ -28,6 +30,7 @@ vi.mock("@t3tools/client-runtime/voice-input", () => ({
           id: "model",
           name: "Model",
           languages: ["en"],
+          supportsLanguageDetection: false,
           state: "downloading",
           size: 100,
         },
@@ -68,7 +71,8 @@ vi.mock("./VoicePostProcessingSettings", () => ({ VoicePostProcessingSettings: (
 vi.mock("./settingsLayout", () => ({
   SettingsPageContainer: "div",
   SettingsSection: "section",
-  SettingsRow: ({ control }: { control: ReactNode }) => control,
+  SettingsRow: ({ control, description }: { control: ReactNode; description?: string }) =>
+    createElement("div", null, createElement("p", null, description), control),
 }));
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 
@@ -134,6 +138,7 @@ it("shows models for the selected language while keeping the active model summar
         name: "English Model",
         description: "English speech",
         languages: ["en"],
+        supportsLanguageDetection: false,
         state: "installed",
         active: true,
         recommended: true,
@@ -164,6 +169,12 @@ it("shows models for the selected language while keeping the active model summar
   const modelNames = () => root.root.findAllByType("span").map((span) => span.children.join(""));
   expect(modelNames()).toContain("English Model");
   expect(modelNames()).not.toContain("French Model");
+  expect(
+    root.root.findByProps({ "aria-label": "Transcription language" }).parent?.props.disabled,
+  ).toBe(true);
+  expect(root.root.findAllByType("p").map((p) => p.children.join(""))).toContain(
+    "This model only supports English.",
+  );
   const french = root.root.findByProps({ children: "French" });
   await act(async () => french.props.onClick());
   expect(modelNames()).toContain("French Model");
@@ -180,6 +191,7 @@ it("orders supported languages by speaker ranking, then alphabetically", async (
         name: "Multilingual Model",
         description: "Multilingual speech",
         languages: ["ca", "es", "ar", "hi", "en", "de", "af"],
+        supportsLanguageDetection: true,
         state: "installed",
         active: true,
         recommended: false,
@@ -193,6 +205,13 @@ it("orders supported languages by speaker ranking, then alphabetically", async (
   await act(async () => {
     root = create(createElement(VoiceSettingsPanel));
   });
+
+  expect(
+    root.root.findByProps({ "aria-label": "Transcription language" }).parent?.props.disabled,
+  ).toBe(false);
+  expect(root.root.findAllByType("option").map((option) => option.children.join(""))).toContain(
+    "Auto",
+  );
 
   const languageList = root.root.findByProps({
     "aria-label": "Browse transcription models by language",

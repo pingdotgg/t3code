@@ -13,6 +13,8 @@ export const SpeechAcceleration = Schema.Union([
   Schema.String.check(Schema.isPattern(/^gpu:.+/), Schema.isMaxLength(500)),
 ]);
 export type SpeechAcceleration = typeof SpeechAcceleration.Type;
+export const SpeechLanguage = Schema.String.check(Schema.isMinLength(2), Schema.isMaxLength(16));
+export type SpeechLanguage = typeof SpeechLanguage.Type;
 export const SpeechGpuDevice = Schema.Struct({ id: Schema.String, name: Schema.String });
 
 export const EnvironmentSpeechModelState = Schema.Literals([
@@ -33,6 +35,7 @@ export const EnvironmentSpeechModel = Schema.Struct({
   speed: Schema.Finite,
   recommended: Schema.Boolean,
   supportsStreaming: Schema.Boolean,
+  supportsLanguageDetection: Schema.Boolean,
   active: Schema.Boolean,
   state: EnvironmentSpeechModelState,
   downloaded: Schema.optionalKey(Schema.Finite),
@@ -62,6 +65,8 @@ export const EnvironmentSpeechStatus = Schema.Union([
     model: Schema.String,
     size: Schema.Finite,
     supportsStreaming: Schema.Boolean,
+    language: SpeechLanguage.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
+    effectiveLanguage: SpeechLanguage.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
     acceleration: SpeechAcceleration.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
     gpuDevices: Schema.Array(SpeechGpuDevice).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
     customWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
@@ -79,6 +84,7 @@ export const EnvironmentSpeechFillerWordsRequest = Schema.Struct({ enabled: Sche
 export const EnvironmentSpeechAccelerationRequest = Schema.Struct({
   acceleration: SpeechAcceleration,
 });
+export const EnvironmentSpeechLanguageRequest = Schema.Struct({ language: SpeechLanguage });
 export const SpeechPostProcessingPrompt = Schema.Struct({
   id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
   name: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),

@@ -14,7 +14,7 @@ const native = vi.hoisted(() => ({
   backend: "Vulkan0",
   supportsStreaming: true,
   supportsInitialPrompt: false,
-  begin: vi.fn(async () => {}),
+  begin: vi.fn(async (_language?: string) => {}),
   feed: vi.fn(async (_pcm: Float32Array) => ({
     revision: 1,
     text: { committed: "", tentative: "hello" },
@@ -46,11 +46,12 @@ const modelDefinitions = vi.hoisted(() => [
     name: "test",
     description: "test",
     size: 4,
-    languages: ["en"],
+    languages: ["en", "fr"],
     accuracy: 1,
     speed: 1,
     recommended: true,
     supportsStreaming: true,
+    supportsLanguageDetection: false,
   },
   {
     id: "fallback-model",
@@ -62,6 +63,7 @@ const modelDefinitions = vi.hoisted(() => [
     speed: 2,
     recommended: false,
     supportsStreaming: false,
+    supportsLanguageDetection: false,
   },
 ]);
 vi.mock("./native.ts", () => ({
@@ -72,6 +74,8 @@ vi.mock("./model.ts", () => ({
   DEFAULT_SPEECH_MODEL_ID: "test-model",
   SPEECH_MODELS: modelDefinitions,
   getSpeechModel: (modelId: string) => modelDefinitions.find((model) => model.id === modelId),
+  effectiveSpeechLanguage: (model: { languages: string[] }, intent: string) =>
+    intent !== "auto" && model.languages.includes(intent) ? intent : "en",
   downloadSpeechModel: downloadModel,
   isSpeechModelReady: async (_directory: string, model: { id: string }) =>
     readyModels.has(model.id),
@@ -133,6 +137,23 @@ it.effect("includes the correction word in the model's initial prompt", () =>
       family: { kind: "whisper", initialPrompt: "err, T3 Code" },
     });
   }).pipe(Effect.provide(correctionWordLayer)),
+);
+
+it.effect("applies the selected language to transcription and streaming", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    expect(yield* speech.updateLanguage("fr")).toMatchObject({
+      language: "fr",
+      effectiveLanguage: "fr",
+    });
+    yield* speech.transcribe(pcm());
+    expect(native.transcribe.mock.calls[0]?.[1]).toMatchObject({ language: "fr" });
+    yield* Effect.gen(function* () {
+      const stream = yield* speech.startStream;
+      yield* stream.finish;
+    }).pipe(Effect.scoped);
+    expect(native.begin).toHaveBeenCalledWith("fr");
+  }).pipe(Effect.provide(layer)),
 );
 
 it.effect("recognizes the correction word in stream previews and final text", () =>

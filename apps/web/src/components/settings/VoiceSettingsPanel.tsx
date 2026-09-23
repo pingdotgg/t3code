@@ -8,6 +8,7 @@ import {
   updateEnvironmentSpeechCustomWords,
   updateEnvironmentSpeechFillerWordRemoval,
   updateEnvironmentSpeechAcceleration,
+  updateEnvironmentSpeechLanguage,
 } from "@t3tools/client-runtime/voice-input";
 import type {
   EnvironmentId,
@@ -506,6 +507,70 @@ export function VoiceSettingsPanel() {
                 ? (activeModel?.name ?? "No model selected")
                 : "Unavailable"}
             </span>
+          }
+        />
+        <SettingsRow
+          title="Transcription language"
+          description={
+            !activeModel
+              ? "Select a model to choose a transcription language."
+              : activeModel.languages.length === 1
+                ? `This model only supports ${languageLabel(activeModel.languages[0]!)}.`
+                : activeModel.supportsLanguageDetection
+                  ? "Choose a language or let the model detect it from your speech."
+                  : "This model cannot detect language automatically. Choose the language you speak."
+          }
+          control={
+            <Select
+              disabled={
+                !prepared ||
+                !activeModel ||
+                activeModel.languages.length === 1 ||
+                operation !== null
+              }
+              value={
+                currentStatus?.supported
+                  ? currentStatus.effectiveLanguage
+                  : (activeModel?.languages[0] ?? "auto")
+              }
+              onValueChange={(value) => {
+                if (!value || !prepared) return;
+                setOperation("language");
+                void runtime
+                  .runPromise(updateEnvironmentSpeechLanguage(prepared, value))
+                  .then((nextStatus) => setStatus({ prepared, value: nextStatus }))
+                  .catch((error) => {
+                    toastManager.add({
+                      type: "error",
+                      title: "Could not update transcription language",
+                      description: error instanceof Error ? error.message : String(error),
+                    });
+                  })
+                  .finally(() => setOperation(null));
+              }}
+            >
+              <SelectTrigger size="sm" aria-label="Transcription language" className="max-w-80">
+                <SelectValue>
+                  {currentStatus?.supported && currentStatus.effectiveLanguage === "auto"
+                    ? "Auto"
+                    : languageLabel(
+                        currentStatus?.supported
+                          ? currentStatus.effectiveLanguage
+                          : (activeModel?.languages[0] ?? "en"),
+                      )}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {activeModel?.supportsLanguageDetection ? (
+                  <SelectItem value="auto">Auto</SelectItem>
+                ) : null}
+                {[...(activeModel?.languages ?? [])].sort(compareLanguages).map((code) => (
+                  <SelectItem key={code} value={code}>
+                    {languageLabel(code)}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           }
         />
         {currentStatus?.supported && prepared ? (

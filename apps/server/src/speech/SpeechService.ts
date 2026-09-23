@@ -2,6 +2,7 @@ import type {
   EnvironmentSpeechModel,
   EnvironmentSpeechStatus,
   SpeechAcceleration,
+  SpeechLanguage,
 } from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
@@ -18,6 +19,7 @@ import { listNativeSpeechGpuDevices, loadNativeSpeechModel } from "./native.ts";
 import {
   DEFAULT_SPEECH_MODEL_ID,
   downloadSpeechModel,
+  effectiveSpeechLanguage,
   getSpeechModel,
   isSpeechModelReady,
   removeSpeechModel,
@@ -153,6 +155,9 @@ export class SpeechService extends Context.Service<
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly updateAcceleration: (
       acceleration: SpeechAcceleration,
+    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
+    readonly updateLanguage: (
+      language: SpeechLanguage,
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly startStream: Effect.Effect<SpeechStream, SpeechError, Scope.Scope>;
     readonly removeModel: (modelId: string) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
@@ -332,6 +337,8 @@ export const make = Effect.gen(function* () {
       model: definition.name,
       size: definition.size,
       supportsStreaming: definition.supportsStreaming,
+      language: settings.speechLanguage,
+      effectiveLanguage: effectiveSpeechLanguage(definition, settings.speechLanguage),
       acceleration: settings.speechAcceleration,
       gpuDevices: await (gpuDevices ??= listNativeSpeechGpuDevices().catch(() => [])),
       customWords: normalizeSpeechCustomWords(settings.speechCustomWords),
@@ -356,6 +363,7 @@ export const make = Effect.gen(function* () {
             speed: definition.speed,
             recommended: definition.recommended,
             supportsStreaming: definition.supportsStreaming,
+            supportsLanguageDetection: definition.supportsLanguageDetection,
             active: selected.id === definition.id,
             state: operation
               ? operation.verifying
@@ -399,8 +407,8 @@ export const make = Effect.gen(function* () {
       const removeFillerWords = settings.speechRemoveFillerWords;
       const definition =
         getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
-      const fillerWordLanguage =
-        definition.languages.length === 1 ? definition.languages[0] : undefined;
+      const language = effectiveSpeechLanguage(definition, settings.speechLanguage);
+      const fillerWordLanguage = language === "auto" ? undefined : language;
       yield* Effect.addFinalizer(() =>
         Effect.promise(async () => {
           // Cancellation can arrive inside native compute. Kill the owned process before releasing the lease.
@@ -422,7 +430,7 @@ export const make = Effect.gen(function* () {
         const prepared = await loadModel(definition, signal, settings.speechAcceleration);
         if (!prepared.supportsStreaming)
           throw new Error("The selected model does not support streaming.");
-        await prepared.begin();
+        await prepared.begin(language === "auto" ? undefined : language);
         return { prepared, durationMs: performance.now() - startedAt };
       });
       let streamModel = preparation.prepared;
@@ -487,7 +495,7 @@ export const make = Effect.gen(function* () {
               }
               streamModel = await loadModel(definition, signal, "cpu");
               loaded = streamModel;
-              await streamModel.begin();
+              await streamModel.begin(language === "auto" ? undefined : language);
               let update: Awaited<ReturnType<LoadedModel["feed"]>> | undefined;
               for (const chunk of received) update = await streamModel.feed(chunk);
               if (!update) throw cause;
@@ -566,6 +574,10 @@ export const make = Effect.gen(function* () {
       writeSettings("acceleration update", { speechAcceleration: acceleration }).pipe(
         Effect.andThen(freshStatus("acceleration update")),
       ),
+    updateLanguage: (language) =>
+      writeSettings("language update", { speechLanguage: language }).pipe(
+        Effect.andThen(freshStatus("language update")),
+      ),
     transcribe: (pcmBytes) =>
       readSettings("transcription").pipe(
         Effect.flatMap((settings) =>
@@ -578,6 +590,7 @@ export const make = Effect.gen(function* () {
             activeTranscriptions += 1;
             try {
               const definition = selectedModel(settings);
+              const language = effectiveSpeechLanguage(definition, settings.speechLanguage);
               const prepareStartedAt = performance.now();
               const loaded = await loadModel(
                 definition,
@@ -591,10 +604,10 @@ export const make = Effect.gen(function* () {
               let inferenceModel = loaded;
               const customWords = transcriptionCustomWords(settings);
               const removeFillerWords = settings.speechRemoveFillerWords;
-              const fillerWordLanguage =
-                definition.languages.length === 1 ? definition.languages[0] : undefined;
+              const fillerWordLanguage = language === "auto" ? undefined : language;
               const options = {
                 timestamps: "none" as const,
+                ...(language === "auto" ? {} : { language }),
                 ...(customWords.length > 0 && loaded.supportsInitialPrompt
                   ? {
                       family: {

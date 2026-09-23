@@ -26,7 +26,7 @@ process.on("message", async (message) => {
         supportsInitialPrompt: model.supports("initial_prompt") });
     } else if (message.kind === "begin") {
       session = model.createSession();
-      stream = await session.stream({ timestamps: "none" });
+      stream = await session.stream({ timestamps: "none", language: message.language });
       process.send({ type: "t3-speech-reply", ok: true });
     } else if (message.kind === "feed") {
       const update = await stream.feed(message.pcm);
@@ -188,8 +188,8 @@ export async function loadNativeSpeechModel(
     backend,
     supportsStreaming,
     supportsInitialPrompt,
-    begin: async () => {
-      await send({ kind: "begin" });
+    begin: async (language?: string) => {
+      await send({ kind: "begin", language });
     },
     feed: async (pcm: Float32Array) => {
       const reply = await send({ kind: "feed", pcm });
