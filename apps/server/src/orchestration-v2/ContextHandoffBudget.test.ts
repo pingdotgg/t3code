@@ -365,6 +365,40 @@ describe("handoff delivery", () => {
         }),
     );
   }
+  it.effect("loads the history budget only when a handoff needs delivery", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const input = {
+        providerThread,
+        budget: Effect.sync(() => {
+          reads++;
+          return 16_000;
+        }),
+        alreadyDeliveredItemIds: new Set<string>(),
+        persist: () => Effect.void,
+      };
+      yield* deliverContextHandoffs({ ...input, handoffs: [] });
+      yield* deliverContextHandoffs({ ...input, handoffs: [handoff], deferInline: true });
+      yield* deliverContextHandoffs({
+        ...input,
+        handoffs: [
+          {
+            ...handoff,
+            delivery: {
+              nativeThreadId: providerThread.nativeThreadRef!.nativeId!,
+              status: "injected",
+              itemIds: [],
+            },
+          },
+        ],
+      });
+      assert.equal(reads, 0);
+      const result = yield* deliverContextHandoffs({ ...input, handoffs: [handoff] });
+      assert.equal(reads, 1);
+      assert.include(result.context, messages[0]!.text);
+    }),
+  );
+
   it.effect("persists successful injection before turn start and skips it on retry", () =>
     Effect.gen(function* () {
       let durable = handoff;

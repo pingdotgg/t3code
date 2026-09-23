@@ -9,10 +9,10 @@ import { historyCost, renderHistory, selectHistory } from "./ContextHandoffBudge
 
 /** Persist before/after injection: an ambiguous pending delivery requires a fresh native thread. */
 export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextHandoffs")(
-  function* <InjectError, PersistError>(input: {
+  function* <InjectError, PersistError, BudgetError = never>(input: {
     readonly handoffs: ReadonlyArray<OrchestrationV2ContextHandoff>;
     readonly providerThread: OrchestrationV2ProviderThread;
-    readonly budget: number;
+    readonly budget: number | Effect.Effect<number, BudgetError>;
     readonly deferInline?: boolean;
     readonly alreadyDeliveredItemIds: ReadonlySet<string>;
     readonly inject?: (
@@ -29,6 +29,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     );
     if (pending.length === 0 || (input.deferInline && input.inject === undefined))
       return { context: "", delivered: Effect.void };
+    const budget = typeof input.budget === "number" ? input.budget : yield* input.budget;
     let coverage = pending
       .map(
         (handoff) =>
@@ -41,7 +42,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     // Repeated failures can accumulate many recovery markers. Keep a single
     // thread-level entry point when detailed coverage would crowd out history;
     // its activity includes the original handoff/fork source references.
-    if (historyCost([], coverage) > Math.min(4_000, input.budget / 2)) {
+    if (historyCost([], coverage) > Math.min(4_000, budget / 2)) {
       const strategies = Array.from(new Set(pending.map((handoff) => handoff.strategy)));
       coverage = `Context handoff (${strategies.join(", ")}). ${pending.length} handoff records; detailed coverage references omitted. Recover history with t3_thread_read({threadId:"${input.providerThread.appThreadId ?? pending[0]!.threadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. Follow fork/handoff source references in activity. For long items use itemId and textOffset=nextTextOffset until null.`;
     }
@@ -60,16 +61,16 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       .map((handoff) => handoff.summaryText)
       .join("\n\n");
     const fullCoverage =
-      oldContext && historyCost([], `${coverage}\n${oldContext}`) + 512 <= input.budget
+      oldContext && historyCost([], `${coverage}\n${oldContext}`) + 512 <= budget
         ? `${coverage}\n${oldContext}`
         : coverage;
     const selected = selectHistory({
       messages,
       coverage: fullCoverage,
       omittedItems: pending.reduce((sum, handoff) => sum + (handoff.history?.omittedItems ?? 0), 0),
-      budget: input.budget,
+      budget,
     });
-    if (historyCost(selected.messages, selected.context) > input.budget) {
+    if (historyCost(selected.messages, selected.context) > budget) {
       if (input.deferInline) return { context: "", delivered: Effect.void };
       return yield* new ContextHandoffBudgetError();
     }

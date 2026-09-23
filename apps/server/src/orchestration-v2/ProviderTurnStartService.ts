@@ -1042,16 +1042,18 @@ export const layer: Layer.Layer<
             handoffs: [...effectiveHandoffs, ...retryHandoff],
             deferInline: compact,
             providerThread: runningProviderThread,
-            budget: handoffBudget({
-              tokenCap,
-              modelContextWindow,
-              userText,
-              attachments: message.attachments,
-              providerThread: budgetProviderThread,
-              nativeContextEstimate:
-                budgetProviderThread.contextUsage?.usedTokens === undefined
-                  ? yield* nativeContextEstimate
-                  : 0,
+            budget: Effect.gen(function* () {
+              return handoffBudget({
+                tokenCap,
+                modelContextWindow,
+                userText,
+                attachments: message.attachments,
+                providerThread: budgetProviderThread,
+                nativeContextEstimate:
+                  budgetProviderThread.contextUsage?.usedTokens === undefined
+                    ? yield* nativeContextEstimate
+                    : 0,
+              });
             }),
             alreadyDeliveredItemIds: deliveredItemIds,
             ...(session.injectHistory === undefined
