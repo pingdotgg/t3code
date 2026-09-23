@@ -1532,9 +1532,17 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(prListCalls()).toHaveLength(4);
       expect(prListCalls().at(-1)).toContain("--head feature/open-pr");
 
-      yield* TestClock.adjust("5 minutes");
+      // Just inside the 5-minute window only the open PR is asked again.
+      yield* TestClock.adjust("238 seconds");
+      yield* lookupAll;
+      expect(prListCalls()).toHaveLength(5);
+      expect(prListCalls().at(-1)).toContain("--head feature/open-pr");
+
+      // Just past it the settled answers expire too.
+      yield* TestClock.adjust("2 seconds");
       yield* lookupAll;
       expect(prListCalls()).toHaveLength(7);
+      expect(prListCalls().slice(-2).join("\n")).not.toContain("--head feature/open-pr");
     }),
   );
 
