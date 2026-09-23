@@ -129,9 +129,8 @@ function isOrdinaryThreadOutboxTransportFailure(error: unknown): boolean {
  * resolve to a retry even when the server rejected the command, so the
  * error, not the resolved action, must decide the log level there; routing
  * every retry to debug could hide a permanently rejected update forever.
- * Exported for tests.
  */
-export function logThreadOutboxDeliveryFailure(input: {
+function logThreadOutboxDeliveryFailure(input: {
   readonly stage: ThreadOutboxCommandStage;
   readonly error: unknown;
   readonly interrupted: boolean;
@@ -157,11 +156,8 @@ export function logThreadOutboxDeliveryFailure(input: {
   return action;
 }
 
-/** Attachment uploads retry like delivery: transport failures are ordinary offline noise. Exported for tests. */
-export function logThreadOutboxUploadFailure(
-  queuedMessage: QueuedThreadMessage,
-  error: unknown,
-): void {
+/** Attachment uploads retry like delivery: transport failures are ordinary offline noise. */
+function logThreadOutboxUploadFailure(queuedMessage: QueuedThreadMessage, error: unknown): void {
   const context = {
     environmentId: queuedMessage.environmentId,
     threadId: queuedMessage.threadId,

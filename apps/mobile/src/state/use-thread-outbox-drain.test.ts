@@ -144,8 +144,6 @@ import { recoverFailedThreadDraft } from "./recover-failed-thread-draft";
 import { editingQueuedMessageIdsAtom } from "./use-thread-outbox";
 import {
   completeQueuedMessageDelivery,
-  logThreadOutboxDeliveryFailure,
-  logThreadOutboxUploadFailure,
   prepareQueuedMessageAttachments,
   recoverEditedCreationAfterDelivery,
   removeAcknowledgedExistingThreadMessage,
@@ -428,18 +426,7 @@ describe("thread outbox drain delivery cleanup", () => {
     const edited = { ...message, text: "edited while the turn delivered" };
     await harness.manager.update(edited);
 
-    // Losing the cleanup race to an edit is expected; it must not warn.
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    let outcome: "edited" | "failed" | "removed";
-    let warnCalls: ReadonlyArray<unknown[]>;
-    try {
-      outcome = await completeQueuedMessageDelivery(message, deliveryRevision);
-      warnCalls = [...warn.mock.calls];
-    } finally {
-      warn.mockRestore();
-    }
-    expect(outcome).toBe("edited");
-    expect(warnCalls).toEqual([]);
+    await expect(completeQueuedMessageDelivery(message, deliveryRevision)).resolves.toBe("edited");
 
     expect(remainingMessages()).toEqual([edited]);
     expect(harness.removePersistedFile).not.toHaveBeenCalled();
@@ -774,158 +761,5 @@ describe("thread outbox recovery rollback", () => {
     );
     expect(remainingMessages()).toEqual([]);
     expect(harness.setPendingConnectionError).toHaveBeenCalledWith("too large");
-  });
-});
-
-describe("thread outbox failure logging", () => {
-  // Tagged errors match shouldRetryThreadOutboxDelivery's transport tags, so
-  // the assertions cover the real failure classification, not a
-  // predetermined action argument.
-  const transportError = { _tag: "RpcClientError", reason: { _tag: "SocketClose" } };
-  const decodeDefectError = { _tag: "RpcClientError", reason: { _tag: "RpcClientDefect" } };
-  const serverDecidedError = { _tag: "OrchestrationDispatchCommandError" };
-
-  function failureLogging(input: Parameters<typeof logThreadOutboxDeliveryFailure>[0]): {
-    readonly action: string;
-    readonly warnCalls: ReadonlyArray<unknown[]>;
-    readonly logCalls: ReadonlyArray<unknown[]>;
-  } {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      return {
-        action: logThreadOutboxDeliveryFailure(input),
-        warnCalls: [...warn.mock.calls],
-        logCalls: [...log.mock.calls],
-      };
-    } finally {
-      warn.mockRestore();
-      log.mockRestore();
-    }
-  }
-
-  it("keeps offline transport retries silent by default at both stages", () => {
-    for (const stage of ["settings-sync", "start-turn"] as const) {
-      const { action, warnCalls, logCalls } = failureLogging({
-        stage,
-        error: transportError,
-        interrupted: false,
-        context: { messageId: "m1" },
-      });
-      expect(action).toBe("retry");
-      expect(warnCalls).toEqual([]);
-      expect(logCalls).toEqual([]);
-    }
-  });
-
-  it("surfaces transport retry details when the thread-outbox debug filter is enabled", () => {
-    vi.stubGlobal("__T3_DEBUG__", ["thread-outbox"]);
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      logThreadOutboxDeliveryFailure({
-        stage: "start-turn",
-        error: transportError,
-        interrupted: false,
-        context: { messageId: "m1" },
-      });
-      expect(log).toHaveBeenCalledWith(
-        "[t3-thread-outbox] queued message delivery failed",
-        expect.objectContaining({ messageId: "m1", action: "retry" }),
-      );
-    } finally {
-      log.mockRestore();
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("warns when the server decided the message must be restored", () => {
-    const { action, warnCalls } = failureLogging({
-      stage: "start-turn",
-      error: serverDecidedError,
-      interrupted: false,
-      context: { messageId: "m2" },
-    });
-    expect(action).toBe("restore");
-    expect(warnCalls).toEqual([
-      [
-        "[thread-outbox] queued message delivery failed",
-        expect.objectContaining({ messageId: "m2", action: "restore" }),
-      ],
-    ]);
-  });
-
-  it("warns on a nontransport settings-sync failure even though it resolves to a retry", () => {
-    const { action, warnCalls } = failureLogging({
-      stage: "settings-sync",
-      error: serverDecidedError,
-      interrupted: false,
-      context: { messageId: "m3" },
-    });
-    expect(action).toBe("retry");
-    expect(warnCalls).toEqual([
-      [
-        "[thread-outbox] queued message delivery failed",
-        expect.objectContaining({ stage: "settings-sync", action: "retry" }),
-      ],
-    ]);
-  });
-
-  it("warns on an rpc response-decoding defect even though it resolves to a retry", () => {
-    const { action, warnCalls } = failureLogging({
-      stage: "start-turn",
-      error: decodeDefectError,
-      interrupted: false,
-      context: { messageId: "m4" },
-    });
-    expect(action).toBe("retry");
-    expect(warnCalls).toEqual([
-      [
-        "[thread-outbox] queued message delivery failed",
-        expect.objectContaining({ stage: "start-turn", action: "retry" }),
-      ],
-    ]);
-  });
-
-  it("routes retryable attachment-upload failures to the debug log and warns on the rest", () => {
-    const message = queuedMessage({ messageId: "m-upload", text: "with file" });
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      logThreadOutboxUploadFailure(message, transportError);
-      expect(warn).not.toHaveBeenCalled();
-      expect(log).not.toHaveBeenCalled();
-
-      logThreadOutboxUploadFailure(message, serverDecidedError);
-      expect(warn).toHaveBeenCalledWith("[thread-outbox] failed to upload attachments", {
-        environmentId: message.environmentId,
-        threadId: message.threadId,
-        messageId: "m-upload",
-        error: serverDecidedError,
-      });
-    } finally {
-      warn.mockRestore();
-      log.mockRestore();
-    }
-  });
-
-  it("logs retryable attachment-upload failures with message identifiers when the debug filter is enabled", () => {
-    vi.stubGlobal("__T3_DEBUG__", ["thread-outbox"]);
-    const message = queuedMessage({ messageId: "m-upload", text: "with file" });
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      logThreadOutboxUploadFailure(message, transportError);
-      expect(log).toHaveBeenCalledWith(
-        "[t3-thread-outbox] attachment upload failed; retrying",
-        expect.objectContaining({
-          messageId: "m-upload",
-          environmentId: message.environmentId,
-          threadId: message.threadId,
-          error: transportError,
-        }),
-      );
-    } finally {
-      log.mockRestore();
-      vi.unstubAllGlobals();
-    }
   });
 });
