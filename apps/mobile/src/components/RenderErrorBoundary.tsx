@@ -83,6 +83,7 @@ export class RenderErrorBoundary extends Component<
 
 export function RenderFailureView(
   props: RenderFailureProps & {
+    readonly announce?: boolean;
     readonly title?: string;
     readonly bottomInset?: number;
     readonly exit?: { readonly label: string; readonly onPress: () => void };
@@ -90,8 +91,8 @@ export function RenderFailureView(
 ) {
   const title = props.title ?? "This screen couldn't be displayed";
   useEffect(() => {
-    AccessibilityInfo.announceForAccessibility(title);
-  }, [title]);
+    if (props.announce !== false) AccessibilityInfo.announceForAccessibility(title);
+  }, [props.announce, title]);
 
   return (
     <ScrollView

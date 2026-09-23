@@ -142,7 +142,7 @@ export function WorkspaceInspectorPane(props: {
         >
           <Animated.View className="flex-1" style={inspectorContentStyle}>
             <RenderErrorBoundary
-              key={props.pathname}
+              resetKeys={[props.pathname]}
               renderFallback={(fallback) => (
                 <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
               )}
