@@ -205,7 +205,7 @@ export function StorageCleanupPreviewPanel({
         </div>
         <div className="relative">
           {initialLoading ? (
-            <Skeleton className="h-6 w-full rounded-md" />
+            <Skeleton className="h-6 w-full" />
           ) : (
             <div
               className="flex h-6 overflow-hidden rounded-md bg-muted ring-1 ring-inset ring-border/60"

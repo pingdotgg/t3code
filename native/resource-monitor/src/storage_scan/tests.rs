@@ -302,3 +302,48 @@ fn missing_path_handling_preserves_other_errors() {
         );
     }
 }
+
+#[test]
+fn rejects_a_full_directory_queue_without_growing_it() {
+    let fixture = Fixture::new();
+    fs::create_dir(fixture.0.join("child")).unwrap();
+    let pending = Mutex::new(vec![fixture.0.clone(); MAX_PENDING_DIRECTORIES - 1]);
+    enqueue_directory(&pending, fixture.0.clone()).unwrap();
+    let mut worker = Worker {
+        current: Some(fs::read_dir(&fixture.0).unwrap()),
+        ..Worker::default()
+    };
+    let error = worker
+        .step(
+            &pending,
+            &Mutex::new(Directories::default()),
+            1,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap_err();
+    assert_eq!(error.to_string(), "too many pending directories");
+    assert_eq!(pending.lock().unwrap().len(), MAX_PENDING_DIRECTORIES);
+}
+
+#[test]
+fn rejects_inexact_byte_totals_including_cross_worker_sums_and_hardlinks() {
+    assert_eq!(add_bytes(MAX_SAFE_BYTES - 1, 1).unwrap(), MAX_SAFE_BYTES);
+    assert!(add_bytes(MAX_SAFE_BYTES, 1).is_err());
+    assert!(add_bytes(1, u64::MAX).is_err());
+    let fixture = Fixture::new();
+    for hardlink in [false, true] {
+        let mut scan = Scan::new(fixture.0.clone());
+        scan.pending.get_mut().unwrap().clear();
+        scan.workers[0].bytes = MAX_SAFE_BYTES;
+        if hardlink {
+            scan.workers[1].linked.insert((1, 1), (1, 1, 1));
+        } else {
+            scan.workers[1].bytes = 1;
+        }
+        let error = scan.step(1, Duration::from_secs(1)).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "storage usage exceeds the safe integer limit"
+        );
+    }
+}
