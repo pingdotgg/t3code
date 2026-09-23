@@ -141,17 +141,18 @@ interface HomeScreenProps {
 const ESTIMATED_THREAD_ROW_HEIGHT = 72;
 // v2 rows are mixed-height: settled slim rows run ~60dp, single-line cards
 // measured ~74dp on device (252px on the Pixel 10 Pro screenshot), two-line
-// cards ~94dp. The estimate seeds the recycler's container count:
-// `ceil(contentSpan / estimate)`, which LegendList clamps to the content span
-// while the list is shorter than viewport + 2x drawDistance. An estimate at
-// or below the average row height keeps that count above the item count, so
-// a shelf-expand re-layout (which transiently demands slightly more
-// containers than there are items) finds one pooled instead of logging the
-// dev-mode "no unused container available" warning and creating one on
-// demand. An estimate tuned to the tallest card (~92) fires that warning on
-// every short/expanded list, so the average wins; oversized cards self-correct
-// through LegendList's measured spans, and long lists pool 3x the estimated
-// container count regardless.
+// cards ~94dp. The estimate seeds the recycler's initial container count,
+// `ceil((scrollLength + 2 * INITIAL_DRAW_DISTANCE) / estimate)` with the
+// initial draw distance capped at 50, so an estimate at or below the average
+// row height starts the pool at or above the item count for the short lists
+// that LegendList otherwise keeps pooling to exactly its item count — that is
+// what stopped the dev-mode "no unused container available" warning on the
+// seeded short-list device passes. It is a mitigation, not an elimination:
+// after first layout the full drawDistance applies, and a sudden expansion
+// past the pooled headroom (~25+ items appearing at once) still creates a
+// container on demand with the dev-only warning one pass ahead of the
+// measured-height pool expansion. The old tallest-card estimate (~92) fired
+// that warning on every ordinary shelf expand, so the average wins.
 const ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT = 72;
 const PRE_LIQUID_GLASS_BOTTOM_TOOLBAR_HEIGHT = 44;
 /**

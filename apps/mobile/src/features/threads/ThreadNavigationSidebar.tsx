@@ -910,6 +910,14 @@ function ThreadNavigationSidebarPane(
         case "v2-thread": {
           const thread = item.item.thread;
           const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
+          // Intentional difference from Home: the sidebar never passed
+          // `showTrailingDivider` even before this list was recycled, so its
+          // hairline draws under every row. Home consumes the per-item divider
+          // stamp to suppress dividers at section boundaries; changing the
+          // sidebar's long-standing look is out of scope here. The stamp still
+          // rides on the shared items (Home needs it), which costs this pane
+          // the occasional divider-only invalidation that re-renders
+          // identically.
           return (
             <ThreadListV2Row
               onNewThreadOnBranch={props.onNewThreadOnBranch}
