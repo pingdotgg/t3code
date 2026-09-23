@@ -43,7 +43,10 @@ afterEach(async () => {
 });
 
 async function setup() {
-  vi.useFakeTimers();
+  // React act uses setImmediate to settle work; only application clocks are fake.
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+  });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("fetch", () => {
     primes++;
