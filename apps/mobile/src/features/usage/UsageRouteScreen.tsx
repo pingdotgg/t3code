@@ -267,20 +267,20 @@ export function UsageRouteScreen() {
             <>
               {/* Period and metric together: neither applies to Limits, and
                 both change every number below, so they share one bar. */}
-              <View className={cn("gap-3", Platform.OS !== "android" && "flex-row items-center")}>
+              <View className="gap-3 ios:flex-row ios:items-center">
                 <SegmentedControl
                   options={WINDOW_OPTIONS}
                   selected={windowDays}
                   onSelect={selectWindow}
                   size="compact"
-                  className={Platform.OS === "android" ? "w-full" : "flex-1"}
+                  className="w-full ios:flex-1"
                 />
                 <SegmentedControl
                   options={METRIC_OPTIONS}
                   selected={metric}
                   onSelect={setMetric}
                   size="compact"
-                  className={Platform.OS === "android" ? "w-full" : "w-36"}
+                  className="w-full ios:w-36"
                 />
               </View>
               {merged.duplicateSources.length > 0 ? (

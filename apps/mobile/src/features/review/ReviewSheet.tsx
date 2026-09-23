@@ -735,7 +735,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
       />
 
       <MaterialScreenContent>
-        <View className={Platform.OS === "android" ? "flex-1 bg-sheet-solid" : "flex-1 bg-sheet"}>
+        <View className="flex-1 bg-sheet android:bg-sheet-solid">
           {showConnectionNotice ? (
             <View className="flex-1" style={{ paddingTop: topContentInset }}>
               <EnvironmentConnectionNotice
