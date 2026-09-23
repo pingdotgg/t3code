@@ -156,6 +156,7 @@ const allowedHosts = [".ts.net", ...configuredAllowedHosts];
 export default defineConfig(() => {
   return {
     assetsInclude: ["**/*.wasm"],
+    worker: { format: "es" as const },
     plugins: [
       devCompressionPlugin(),
       thirdPartyLicensesPlugin({

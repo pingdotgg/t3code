@@ -1,5 +1,5 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { ExternalLinkIcon, PackagePlusIcon, PaletteIcon, SearchIcon } from "lucide-react";
+import { PackagePlusIcon, PaletteIcon, SearchIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   importOpenVsxThemeExtension,
@@ -14,7 +14,6 @@ import {
   replaceCustomThemeCollection,
   type ThemeDefinition,
 } from "../../themePalette";
-import { GitHubIcon, GitLabIcon } from "../Icons";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -28,11 +27,8 @@ import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
+import { DOWNLOAD_FORMAT, OpenVsxResultCard } from "./OpenVsxResultCard";
 
-const DOWNLOAD_FORMAT = new Intl.NumberFormat(undefined, {
-  notation: "compact",
-  maximumFractionDigits: 1,
-});
 const SUGGESTED_SEARCHES = ["Dracula", "Catppuccin", "Nord", "Tokyo Night"];
 const SORT_OPTIONS: ReadonlyArray<{ value: OpenVsxThemeSort; label: string }> = [
   { value: "downloadCount", label: "Most downloaded" },
@@ -41,40 +37,6 @@ const SORT_OPTIONS: ReadonlyArray<{ value: OpenVsxThemeSort; label: string }> = 
   { value: "relevance", label: "Most relevant" },
 ];
 const SEARCH_DEBOUNCE_MS = 350;
-
-function SourceLinkIcon({ url }: { url: string }) {
-  try {
-    const host = new URL(url).hostname.toLowerCase();
-    if (host === "github.com" || host.endsWith(".github.com"))
-      return <GitHubIcon className="size-3.5" />;
-    if (host === "gitlab.com" || host.endsWith(".gitlab.com"))
-      return <GitLabIcon className="size-3.5" monochrome />;
-  } catch {
-    // Fall through to the generic external-link icon.
-  }
-  return <ExternalLinkIcon className="size-3.5" />;
-}
-
-function ThemeExtensionIcon({ extension }: { extension: OpenVsxThemeExtension }) {
-  const [failed, setFailed] = useState(false);
-
-  return (
-    <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-muted-foreground">
-      {extension.iconUrl && !failed ? (
-        <img
-          alt=""
-          className="size-full object-cover"
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          src={extension.iconUrl}
-          onError={() => setFailed(true)}
-        />
-      ) : (
-        <PaletteIcon className="size-4" />
-      )}
-    </div>
-  );
-}
 
 export function ThemeSearchSection({
   open,
@@ -372,36 +334,15 @@ export function ThemeSearchSection({
               const action = isInstalled ? "Update" : "Install";
               const progressAction = isInstalled ? "Updating" : "Installing";
               return (
-                <article
-                  className="group flex min-w-0 flex-col gap-3 rounded-xl border border-border/70 bg-card/60 p-3 transition-colors hover:bg-accent/20"
+                <OpenVsxResultCard
                   key={extension.id}
-                >
-                  <div className="flex min-w-0 gap-3">
-                    <ThemeExtensionIcon key={extension.iconUrl} extension={extension} />
-                    <div className="min-w-0 flex-1">
-                      <h4 className="truncate text-sm font-medium">{extension.name}</h4>
-                      <p className="truncate text-muted-foreground text-xs">
-                        {extension.publisher} · {DOWNLOAD_FORMAT.format(extension.downloadCount)}{" "}
-                        downloads
-                      </p>
-                    </div>
-                  </div>
-                  <p className="line-clamp-2 min-h-8 text-muted-foreground text-xs leading-4">
-                    {extension.description || "A community color theme for your editor."}
-                  </p>
-                  <div className="mt-auto flex items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                      {extension.sourceUrl ? (
-                        <Button
-                          aria-label={`View source for ${extension.name}`}
-                          render={<a href={extension.sourceUrl} rel="noreferrer" target="_blank" />}
-                          size="icon-micro"
-                          variant="ghost-muted"
-                        >
-                          <SourceLinkIcon url={extension.sourceUrl} />
-                        </Button>
-                      ) : null}
-                    </div>
+                  name={extension.name}
+                  subtitle={`${extension.publisher} · ${DOWNLOAD_FORMAT.format(extension.downloadCount)} downloads`}
+                  description={extension.description || "A community color theme for your editor."}
+                  iconUrl={extension.iconUrl}
+                  fallbackIcon={PaletteIcon}
+                  sourceUrl={extension.sourceUrl}
+                  action={
                     <Button
                       aria-label={`${isInstalling ? progressAction : action} ${extension.name}`}
                       disabled={installingId !== null}
@@ -418,8 +359,8 @@ export function ThemeSearchSection({
                       )}
                       {isInstalling ? `${progressAction}...` : action}
                     </Button>
-                  </div>
-                </article>
+                  }
+                />
               );
             })}
           </div>

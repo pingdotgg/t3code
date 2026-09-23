@@ -78,6 +78,7 @@ import {
   SettingsEnvironmentNewThreadsRouteScreen,
   SettingsEnvironmentSourceControlRouteScreen,
 } from "./features/settings/SettingsServerControlsRouteScreen";
+import { SettingsExtensionsRouteScreen } from "./features/settings/SettingsExtensionsRouteScreen";
 import { SettingsKeyboardRouteScreen } from "./features/settings/SettingsKeyboardRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import {
@@ -267,6 +268,11 @@ const SettingsContentStack = createNativeStackNavigator({
       screen: SettingsProjectOverviewRouteScreen,
       linking: "project",
       options: { title: "Project overview" },
+    }),
+    SettingsExtensions: createNativeStackScreen({
+      screen: SettingsExtensionsRouteScreen,
+      linking: "extensions",
+      options: { title: "Extensions" },
     }),
     SettingsKeyboard: createNativeStackScreen({
       screen: SettingsKeyboardRouteScreen,

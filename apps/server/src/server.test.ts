@@ -110,6 +110,7 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
+import { ExtensionHost } from "./extensions/ExtensionHost.ts";
 import {
   isThreadDetailEvent,
   resolveAvailableEditorsForConfig,
@@ -536,6 +537,7 @@ const buildAppUnderTest = (options?: {
       SourceControlRepositoryService.SourceControlRepositoryService["Service"]
     >;
     reviewService?: Partial<ReviewService.ReviewService["Service"]>;
+    extensionHost?: Partial<ExtensionHost["Service"]>;
     vcsStatusBroadcaster?: Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>;
     projectSetupScriptRunner?: Partial<
       ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]
@@ -772,6 +774,9 @@ const buildAppUnderTest = (options?: {
     ).pipe(
       Layer.provide(
         Layer.mergeAll(
+          options?.layers?.extensionHost
+            ? Layer.mock(ExtensionHost)(options.layers.extensionHost)
+            : ExtensionHost.layer,
           Layer.mock(Keybindings.Keybindings)({
             loadConfigState: Effect.succeed({
               keybindings: [],
@@ -5892,6 +5897,36 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.strictEqual(error.message, `Failed to upload feedback for thread ${threadId}.`);
         assert.isDefined(error.cause);
       }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("returns a websocket ticket with the extension host connection", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          extensionHost: {
+            connect: Effect.succeed({
+              basePath: "/api/vscode",
+              connectionToken: "host-token",
+              commit: "commit",
+              quality: "stable",
+            }),
+          },
+        },
+      });
+
+      const connection = yield* Effect.scoped(
+        withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
+          client[WS_METHODS.extensionsConnect]({}),
+        ),
+      );
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(connection.wsTicket)}`;
+      const config = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverGetConfig]({})),
+      );
+
+      assert.equal(connection.connectionToken, "host-token");
+      assert.isDefined(config);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

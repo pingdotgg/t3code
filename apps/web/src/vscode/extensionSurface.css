@@ -1,0 +1,65 @@
+.t3-vscode-root {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+}
+
+.t3-vscode-root .quick-input-widget,
+.t3-vscode-root .monaco-dialog-box,
+.t3-vscode-root .notifications-toasts,
+.t3-vscode-root .notifications-center {
+  pointer-events: auto;
+}
+
+.t3-vscode-root .part:not(.editor),
+.t3-vscode-root .notifications-toasts {
+  display: none;
+}
+
+.t3-vscode-root > .part.editor {
+  position: absolute;
+  inset: 0;
+  clip-path: inset(100%);
+}
+
+.t3-vscode-root > [style*="clip-path: content-box"] {
+  clip-path: none !important;
+}
+
+.t3-vscode-root[data-base-ui-inert] .webview-overlay-content {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+.t3-vscode-part .monaco-workbench-part {
+  width: 100%;
+  height: 100%;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.t3-vscode-part .part > .content > .composite {
+  height: 100%;
+}
+
+.t3-vscode-part .part > .title,
+.t3-vscode-part .titlebar,
+.t3-vscode-part .tabs,
+.t3-vscode-part .composite.title,
+.t3-vscode-part .empty-pane-message-area {
+  display: none;
+}
+
+.t3-vscode-root .quick-input-widget,
+.t3-vscode-root .monaco-dialog-box {
+  color: var(--foreground);
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+}
+
+.t3-vscode-root iframe.webview {
+  color-scheme: normal;
+}

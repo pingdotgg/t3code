@@ -16,6 +16,15 @@ import {
 
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
+  ExtensionError,
+  ExtensionHostConnection,
+  ExtensionInstallInput,
+  ExtensionSetEnabledInput,
+  ExtensionTargetInput,
+  ExtensionsState,
+  InstalledExtension,
+} from "./extensions.ts";
+import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
   EnvironmentAuthorizationError,
@@ -310,6 +319,12 @@ export const WS_METHODS = {
   providerInstallSubscribe: "provider.install.subscribe",
   providerInstallRemove: "provider.install.remove",
 
+  extensionsSubscribe: "extensions.subscribe",
+  extensionsInstall: "extensions.install",
+  extensionsUninstall: "extensions.uninstall",
+  extensionsSetEnabled: "extensions.setEnabled",
+  extensionsConnect: "extensions.connect",
+
   // VCS methods
   vcsPull: "vcs.pull",
   vcsRefreshStatus: "vcs.refreshStatus",
@@ -494,6 +509,39 @@ const WsServerUpdateProviderRpc = Rpc.make(WS_METHODS.serverUpdateProvider, {
 });
 
 const ProviderSetupRpcError = Schema.Union([ProviderSetupError, EnvironmentAuthorizationError]);
+
+const ExtensionRpcError = Schema.Union([ExtensionError, EnvironmentAuthorizationError]);
+
+const WsExtensionsSubscribeRpc = Rpc.make(WS_METHODS.extensionsSubscribe, {
+  payload: Schema.Struct({}),
+  success: ExtensionsState,
+  error: ExtensionRpcError,
+  stream: true,
+});
+
+const WsExtensionsInstallRpc = Rpc.make(WS_METHODS.extensionsInstall, {
+  payload: ExtensionInstallInput,
+  success: InstalledExtension,
+  error: ExtensionRpcError,
+});
+
+const WsExtensionsUninstallRpc = Rpc.make(WS_METHODS.extensionsUninstall, {
+  payload: ExtensionTargetInput,
+  success: Schema.Void,
+  error: ExtensionRpcError,
+});
+
+const WsExtensionsSetEnabledRpc = Rpc.make(WS_METHODS.extensionsSetEnabled, {
+  payload: ExtensionSetEnabledInput,
+  success: Schema.Void,
+  error: ExtensionRpcError,
+});
+
+const WsExtensionsConnectRpc = Rpc.make(WS_METHODS.extensionsConnect, {
+  payload: Schema.Struct({}),
+  success: ExtensionHostConnection,
+  error: ExtensionRpcError,
+});
 
 const WsProviderConsumeResetCreditRpc = Rpc.make(WS_METHODS.providerConsumeResetCredit, {
   payload: ProviderConsumeResetCreditInput,
@@ -1475,6 +1523,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsAgentSessionsImportRpc,
   WsAssetsCreateUrlRpc,
   WsAttachmentsCreateUploadUrlRpc,
+  WsExtensionsSubscribeRpc,
+  WsExtensionsInstallRpc,
+  WsExtensionsUninstallRpc,
+  WsExtensionsSetEnabledRpc,
+  WsExtensionsConnectRpc,
   WsAttachmentsDeleteRpc,
   WsProviderUploadFeedbackRpc,
   WsSubscribeVcsStatusRpc,

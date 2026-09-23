@@ -31,6 +31,7 @@ import {
   CommandId,
   type DiscoveredLocalServerList,
   EventId,
+  ExtensionError,
   type EditorId,
   type FileManagerRevealKind,
   type OrchestrationClientOrigin,
@@ -117,6 +118,7 @@ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner
 import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts";
 import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
+import * as ExtensionHost from "./extensions/ExtensionHost.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -499,6 +501,7 @@ const makeWsRpcLayer = (
   clientOrigin: OrchestrationClientOrigin,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  extensionHost: ExtensionHost.ExtensionHost["Service"],
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -2546,6 +2549,43 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.providerInstallRemove, providerInstallation.remove(input), {
             "rpc.aggregate": "provider",
           }),
+        [WS_METHODS.extensionsSubscribe]: () =>
+          observeRpcStream(WS_METHODS.extensionsSubscribe, extensionHost.subscribe, {
+            "rpc.aggregate": "extensions",
+          }),
+        [WS_METHODS.extensionsInstall]: (input) =>
+          observeRpcEffect(WS_METHODS.extensionsInstall, extensionHost.install(input), {
+            "rpc.aggregate": "extensions",
+          }),
+        [WS_METHODS.extensionsUninstall]: (input) =>
+          observeRpcEffect(WS_METHODS.extensionsUninstall, extensionHost.uninstall(input.id), {
+            "rpc.aggregate": "extensions",
+          }),
+        [WS_METHODS.extensionsSetEnabled]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.extensionsSetEnabled,
+            extensionHost.setEnabled(input.id, input.enabled),
+            { "rpc.aggregate": "extensions" },
+          ),
+        [WS_METHODS.extensionsConnect]: () =>
+          observeRpcEffect(
+            WS_METHODS.extensionsConnect,
+            Effect.all([
+              extensionHost.connect,
+              serverAuth.issueWebSocketTicket(currentSession),
+            ]).pipe(
+              Effect.map(([connection, { ticket }]) => ({ ...connection, wsTicket: ticket })),
+              Effect.mapError((cause) =>
+                cause._tag === "ExtensionError"
+                  ? cause
+                  : new ExtensionError({
+                      operation: "connect",
+                      detail: "Could not authorize extensions.",
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "extensions" },
+          ),
         [WS_METHODS.serverUpdateServer]: (input) =>
           observeRpcEffect(WS_METHODS.serverUpdateServer, serverUpdate.update(input), {
             "rpc.aggregate": "server",
@@ -3788,6 +3828,7 @@ const makeWsRpcLayer = (
 
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
+    const extensionHost = yield* ExtensionHost.ExtensionHost;
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const baseServerSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const config = yield* ServerConfig.ServerConfig;
@@ -3855,6 +3896,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               clientOrigin,
               clientAnalyticsProps,
               previewAutomationBroker,
+              extensionHost,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),

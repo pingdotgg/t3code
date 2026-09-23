@@ -192,6 +192,12 @@ function SettingsIndexSections() {
           target="SettingsEnvironmentMaintenance"
           disabled={noServerTargets}
         />
+        <SettingsRow
+          icon="puzzlepiece.extension"
+          label="Extensions"
+          target="SettingsExtensions"
+          disabled={noServerTargets}
+        />
       </SettingsSection>
 
       <SettingsSection title="App">

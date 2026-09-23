@@ -29,6 +29,8 @@ const RIGHT_PANEL_KINDS = [
   "pull-request",
   "pull-requests",
   "agents",
+  "extension",
+  "extension-webview",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -85,14 +87,39 @@ export type RightPanelSurface =
     }
   /** The thread's linked pull requests, one singleton tab beside any number of `pull-request` tabs. */
   | { id: "pull-requests"; kind: "pull-requests" }
-  | { id: "agents"; kind: "agents" };
+  | { id: "agents"; kind: "agents" }
+  | {
+      id: `extension:${string}`;
+      kind: "extension";
+      extensionId: string;
+      viewContainerId?: string;
+    }
+  | {
+      id: `extension-webview:${string}`;
+      kind: "extension-webview";
+      extensionId: string;
+      viewType: string;
+      title: string;
+      resource?: string;
+    };
+
+export type ExtensionSurfaceTarget =
+  | { kind: "extension"; extensionId: string; viewContainerId?: string }
+  | {
+      kind: "extension-webview";
+      extensionId: string;
+      viewType: string;
+      title: string;
+      resource?: string;
+    };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
 // v12 adds the device surface.
-const RIGHT_PANEL_STORAGE_VERSION = 13;
+// v14 adds extension surfaces and drops malformed ones.
+const RIGHT_PANEL_STORAGE_VERSION = 14;
 
 /** A fixed workspace-level ref: each PR surface carries its own real environment. */
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
@@ -129,8 +156,9 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | ExtensionKind>,
   ) => void;
+  openExtension: (ref: ScopedThreadRef, target: ExtensionSurfaceTarget) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
@@ -168,10 +196,12 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | ExtensionKind>,
   ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
+
+type ExtensionKind = "extension" | "extension-webview";
 
 const EMPTY_THREAD_STATE: ThreadRightPanelState = {
   isOpen: false,
@@ -180,7 +210,7 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | ExtensionKind>,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -229,6 +259,29 @@ const terminalSurface = (terminalId: string): RightPanelSurface => ({
   terminalIds: [terminalId],
   activeTerminalId: terminalId,
 });
+
+function extensionSurface(target: ExtensionSurfaceTarget): RightPanelSurface {
+  const extensionId = encodeURIComponent(target.extensionId);
+  if (target.kind === "extension-webview") {
+    return {
+      id: `extension-webview:${extensionId}:${encodeURIComponent(target.viewType)}${target.resource === undefined ? "" : `:${encodeURIComponent(target.resource)}`}`,
+      kind: "extension-webview",
+      extensionId: target.extensionId,
+      viewType: target.viewType,
+      title: target.title,
+      ...(target.resource === undefined ? {} : { resource: target.resource }),
+    };
+  }
+  return {
+    id:
+      target.viewContainerId === undefined
+        ? `extension:${extensionId}`
+        : `extension:${extensionId}:${encodeURIComponent(target.viewContainerId)}`,
+    kind: "extension",
+    extensionId: target.extensionId,
+    ...(target.viewContainerId === undefined ? {} : { viewContainerId: target.viewContainerId }),
+  };
+}
 
 export type PullRequestSurface = Extract<RightPanelSurface, { kind: "pull-request" }>;
 
@@ -400,6 +453,33 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         }),
                       ];
                     }
+                    if (surface.kind === "extension" || surface.kind === "extension-webview") {
+                      if (typeof surface.extensionId !== "string") return [];
+                      if (surface.kind === "extension") {
+                        return [
+                          extensionSurface({
+                            kind: "extension",
+                            extensionId: surface.extensionId,
+                            ...(typeof surface.viewContainerId === "string"
+                              ? { viewContainerId: surface.viewContainerId }
+                              : {}),
+                          }),
+                        ];
+                      }
+                      if (typeof surface.viewType !== "string") return [];
+                      return [
+                        extensionSurface({
+                          kind: "extension-webview",
+                          extensionId: surface.extensionId,
+                          viewType: surface.viewType,
+                          title:
+                            typeof surface.title === "string" ? surface.title : surface.viewType,
+                          ...(typeof surface.resource === "string"
+                            ? { resource: surface.resource }
+                            : {}),
+                        }),
+                      ];
+                    }
                     if (surface.kind !== "terminal") return [surface];
                     if (
                       !("resourceId" in surface) ||
@@ -515,6 +595,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             }
             return upsertSurface(current, singletonSurface(kind));
           }),
+        ),
+      openExtension: (ref, target) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) =>
+            upsertSurface(current, extensionSurface(target)),
+          ),
         ),
       openDevice: (ref, target, automatic = false) =>
         set((state) =>

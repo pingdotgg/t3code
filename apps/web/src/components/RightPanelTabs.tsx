@@ -8,6 +8,7 @@ import {
 import type {
   ContextMenuItem,
   EnvironmentId,
+  InstalledExtension,
   PreviewSessionSnapshot,
   ProjectId,
   PullRequestState,
@@ -23,6 +24,7 @@ import {
   Files,
   Globe2,
   Plus,
+  PuzzleIcon,
   TerminalSquare,
   Volume2,
   VolumeOff,
@@ -41,7 +43,7 @@ import {
 
 import { isElectron } from "~/env";
 import type { DesktopPreviewOverlay } from "~/previewStateStore";
-import type { RightPanelSurface } from "~/rightPanelStore";
+import type { ExtensionSurfaceTarget, RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { Button } from "~/components/ui/button";
@@ -52,6 +54,7 @@ import {
   Menu,
   MenuItem,
   MenuPopup,
+  MenuSeparator,
   MenuShortcut,
   MenuSub,
   MenuSubPopup,
@@ -77,6 +80,7 @@ import { previewBridge } from "./preview/previewBridge";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { extensionLaunchTargets, useExtensions } from "./extensions/useExtensions";
 
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -122,6 +126,8 @@ interface RightPanelTabsProps {
   onAddPullRequests: () => void;
   onAddAgents: () => void;
   onAddDevice: () => void;
+  onAddExtension?: ((target: ExtensionSurfaceTarget) => void) | undefined;
+  onManageExtensions?: (() => void) | undefined;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -334,7 +340,10 @@ function RightPanelEmptyState(props: {
   agentsAvailable: boolean;
   deviceAvailable: boolean;
   liveAgentCount: number;
+  extensionTargets: ReadonlyArray<{ label: string; target: ExtensionSurfaceTarget }>;
+  onAddExtension: ((target: ExtensionSurfaceTarget) => void) | undefined;
 }) {
+  const onAddExtension = props.onAddExtension;
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1);
 
@@ -412,6 +421,18 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddDevice,
       badgeCount: 0,
     },
+    ...(onAddExtension
+      ? props.extensionTargets.map(({ label, target }) => ({
+          key: JSON.stringify(target),
+          label,
+          icon: PuzzleIcon,
+          shortcut: "",
+          available: true,
+          disabledReason: "",
+          onClick: () => onAddExtension(target),
+          badgeCount: 0,
+        }))
+      : []),
   ] as const;
 
   type SurfaceAction = (typeof actions)[number];
@@ -520,7 +541,7 @@ function RightPanelEmptyState(props: {
               // wrapper: the chooser overlays the row, and a pointer moving
               // onto it must not read as leaving the row.
               <div
-                key={action.label}
+                key={"key" in action ? action.key : action.label}
                 className="group relative"
                 onMouseEnter={() => setHighlight(availableActions.indexOf(action))}
                 onMouseLeave={() =>
@@ -546,7 +567,7 @@ function RightPanelEmptyState(props: {
                   >
                     {action.label}
                   </span>
-                  <Kbd>{action.shortcut}</Kbd>
+                  {action.shortcut ? <Kbd>{action.shortcut}</Kbd> : null}
                 </button>
                 {/*
                   Same choice the tab bar's "+" menu offers: the row opens the
@@ -608,8 +629,18 @@ function surfaceTitle(
   surface: RightPanelSurface,
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
   terminalLabelsById: ReadonlyMap<string, string>,
+  extensions: readonly InstalledExtension[],
 ): string {
   switch (surface.kind) {
+    case "extension-webview":
+      return surface.title;
+    case "extension": {
+      const extension = extensions.find((entry) => entry.id === surface.extensionId);
+      const container = extension?.viewContainers.find(
+        (entry) => entry.id === surface.viewContainerId,
+      );
+      return container?.title || extension?.displayName || "Extension";
+    }
     case "diff":
       return "Diff";
     case "files":
@@ -714,6 +745,9 @@ function SurfaceIcon({
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
     case "agents":
       return <Bot className="size-3 shrink-0" />;
+    case "extension":
+    case "extension-webview":
+      return <PuzzleIcon className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -826,6 +860,8 @@ function PullRequestSurfaceIcon({
 export function RightPanelTabs(props: RightPanelTabsProps) {
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;
+  const extensions = useExtensions(props.environmentId).state?.extensions ?? [];
+  const extensionTargets = extensions.flatMap(extensionLaunchTargets);
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
@@ -1133,7 +1169,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             {props.surfaces.map((surface) => {
               const active = surface.id === props.activeSurfaceId;
               const pending = props.pendingSurfaceIds.has(surface.id);
-              const title = surfaceTitle(surface, props.previewSessions, props.terminalLabelsById);
+              const title = surfaceTitle(
+                surface,
+                props.previewSessions,
+                props.terminalLabelsById,
+                extensions,
+              );
               const previewTabId = previewTabIdOf(surface, props.previewSessions);
               // Desktop state is keyed by the session id, but desktop actions
               // must be addressed with the runtime id.
@@ -1334,6 +1375,36 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       </SurfaceMenuItem>
                     );
                   })}
+                  {props.onAddExtension ? (
+                    <MenuSub>
+                      <MenuSubTrigger>
+                        <PuzzleIcon />
+                        Extension
+                      </MenuSubTrigger>
+                      <MenuSubPopup className="max-w-56">
+                        {extensionTargets.length === 0 ? (
+                          <MenuItem disabled>No extensions with a panel</MenuItem>
+                        ) : (
+                          extensionTargets.map(({ label, target }) => (
+                            <MenuItem
+                              key={JSON.stringify(target)}
+                              onClick={() => props.onAddExtension?.(target)}
+                            >
+                              <span className="min-w-0 truncate">{label}</span>
+                            </MenuItem>
+                          ))
+                        )}
+                        {props.onManageExtensions ? (
+                          <>
+                            <MenuSeparator />
+                            <MenuItem onClick={props.onManageExtensions}>
+                              Manage extensions…
+                            </MenuItem>
+                          </>
+                        ) : null}
+                      </MenuSubPopup>
+                    </MenuSub>
+                  ) : null}
                 </MenuPopup>
               </Menu>
             ) : null}
@@ -1413,6 +1484,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             agentsAvailable={props.agentsAvailable}
             deviceAvailable={props.deviceAvailable}
             liveAgentCount={props.liveAgentCount}
+            extensionTargets={extensionTargets}
+            onAddExtension={props.onAddExtension}
           />
         ) : (
           props.children

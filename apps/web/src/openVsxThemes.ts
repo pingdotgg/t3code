@@ -9,13 +9,20 @@ import {
   parseVsCodeThemeFile,
   resolveThemeLabelCollisions,
 } from "./vscodeThemeImport";
+import {
+  isRecord,
+  publicSourceUrl,
+  readCappedResponse,
+  searchOpenVsx,
+  trustedOpenVsxUrl,
+  withSearchTimeout,
+  type OpenVsxSearchOptions,
+  type OpenVsxSort,
+} from "./openVsx";
 
-const OPEN_VSX_SEARCH_URL = "https://open-vsx.org/api/-/search";
 const MAX_VSIX_BYTES = 20 * 1024 * 1024;
-const MAX_SEARCH_BYTES = 512 * 1024;
 const MAX_DETAIL_BYTES = 256 * 1024;
 const MAX_MANIFEST_BYTES = 256 * 1024;
-const SEARCH_REQUEST_TIMEOUT_MS = 10_000;
 const MAX_THEME_BYTES = 256 * 1024;
 const MAX_ZIP_ENTRIES = 5_000;
 const MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024;
@@ -81,7 +88,7 @@ const USED_WORKBENCH_COLORS = new Set([
   "textLink.foreground",
 ]);
 
-export type OpenVsxThemeSort = "downloadCount" | "rating" | "timestamp" | "relevance";
+export type OpenVsxThemeSort = OpenVsxSort;
 
 export type OpenVsxThemeExtension = {
   id: string;
@@ -99,16 +106,9 @@ export type OpenVsxThemeExtension = {
   license: string;
 };
 
-export type OpenVsxThemeSearchOptions = {
-  signal?: AbortSignal;
-  sortBy?: OpenVsxThemeSort;
-};
+export type OpenVsxThemeSearchOptions = OpenVsxSearchOptions;
 
 type ThemeContribution = { label?: unknown; uiTheme?: unknown; path?: unknown };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function shortHash(value: string): string {
   return [...sha256(new TextEncoder().encode(value))]
@@ -126,34 +126,6 @@ function openVsxCollectionId(extensionId: string): string {
   return /^[a-z0-9][a-z0-9.:-]{0,127}$/.test(normalized)
     ? normalized
     : `open-vsx:${shortHash(extensionId)}`;
-}
-
-function trustedOpenVsxUrl(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" && url.hostname.toLowerCase() === "open-vsx.org"
-      ? url.toString()
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function publicSourceUrl(value: unknown): string | null {
-  const rawValue =
-    typeof value === "string"
-      ? value
-      : isRecord(value) && typeof value.url === "string"
-        ? value.url
-        : null;
-  if (!rawValue) return null;
-  try {
-    const url = new URL(rawValue);
-    return url.protocol === "https:" && !url.username && !url.password ? url.toString() : null;
-  } catch {
-    return null;
-  }
 }
 
 function themeContributions(manifest: Record<string, unknown>): ThemeContribution[] {
@@ -211,61 +183,21 @@ function extensionFromDetail(value: unknown): OpenVsxThemeExtension | null {
   };
 }
 
-async function withSearchTimeout<T>(
-  operation: (signal: AbortSignal) => Promise<T>,
-  parentSignal?: AbortSignal,
-): Promise<T> {
-  const controller = new AbortController();
-  const abort = () => controller.abort();
-  if (parentSignal?.aborted) abort();
-  else parentSignal?.addEventListener("abort", abort, { once: true });
-  const timeout = setTimeout(abort, SEARCH_REQUEST_TIMEOUT_MS);
-  try {
-    return await operation(controller.signal);
-  } catch (cause) {
-    if (controller.signal.aborted && !parentSignal?.aborted) {
-      throw new Error("Open VSX took too long to respond.", { cause });
-    }
-    throw cause;
-  } finally {
-    clearTimeout(timeout);
-    parentSignal?.removeEventListener("abort", abort);
-  }
-}
-
 export async function searchOpenVsxThemes(
   query: string,
   { signal, sortBy = "downloadCount" }: OpenVsxThemeSearchOptions = {},
 ): Promise<OpenVsxThemeExtension[]> {
   const searchText = query.trim();
   if (!searchText) return [];
-  const url = new URL(OPEN_VSX_SEARCH_URL);
-  url.searchParams.set("query", searchText);
-  url.searchParams.set("category", "Themes");
-  url.searchParams.set("sortBy", sortBy);
-  url.searchParams.set("sortOrder", "desc");
   // Ask for a few extras because results without a supported SPDX license
   // are intentionally omitted.
-  url.searchParams.set("size", "16");
-  const value = await withSearchTimeout(async (requestSignal) => {
-    const response = await fetch(url, { signal: requestSignal });
-    if (!response.ok) throw new Error("Open VSX search is unavailable right now.");
-    const searchBytes = await readCappedResponse(
-      response,
-      MAX_SEARCH_BYTES,
-      "Open VSX returned an unexpectedly large response.",
-    );
-    try {
-      return JSON.parse(new TextDecoder().decode(searchBytes)) as unknown;
-    } catch {
-      throw new Error("Open VSX returned an unreadable response.");
-    }
-  }, signal);
-  if (!isRecord(value) || !Array.isArray(value.extensions)) {
-    throw new Error("Open VSX returned an unreadable search response.");
-  }
-  const identities = value.extensions.flatMap((candidate): Array<[string, string]> => {
-    if (!isRecord(candidate)) return [];
+  const extensions = await searchOpenVsx(searchText, {
+    signal,
+    sortBy,
+    category: "Themes",
+    size: 16,
+  });
+  const identities = extensions.flatMap((candidate): Array<[string, string]> => {
     const namespace = typeof candidate.namespace === "string" ? candidate.namespace : "";
     const name = typeof candidate.name === "string" ? candidate.name : "";
     return namespace && name ? [[namespace, name]] : [];
@@ -569,46 +501,6 @@ async function loadThemeObject(
   };
   cache.set(path, resolved);
   return resolved;
-}
-
-async function readCappedResponse(
-  response: Response,
-  limit: number,
-  tooLargeMessage: string,
-): Promise<Uint8Array> {
-  const contentLength = response.headers.get("content-length");
-  if (contentLength && Number(contentLength) > limit) throw new Error(tooLargeMessage);
-  if (!response.body) {
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > limit) throw new Error(tooLargeMessage);
-    return bytes;
-  }
-
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let byteLength = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      byteLength += value.byteLength;
-      if (byteLength > limit) {
-        await reader.cancel();
-        throw new Error(tooLargeMessage);
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-
-  const result = new Uint8Array(byteLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return result;
 }
 
 async function fetchPackage(url: string, signal?: AbortSignal): Promise<Uint8Array> {

@@ -84,6 +84,7 @@ import IconPinnedOff from "@tabler/icons-react-native/IconPinnedOff";
 import IconPlayerPlay from "@tabler/icons-react-native/IconPlayerPlay";
 import IconPlayerStopFilled from "@tabler/icons-react-native/IconPlayerStopFilled";
 import IconPlus from "@tabler/icons-react-native/IconPlus";
+import IconPuzzle from "@tabler/icons-react-native/IconPuzzle";
 import IconQrcode from "@tabler/icons-react-native/IconQrcode";
 import IconRefresh from "@tabler/icons-react-native/IconRefresh";
 import IconSearch from "@tabler/icons-react-native/IconSearch";
@@ -186,6 +187,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "pin.slash": IconPinnedOff,
   play: IconPlayerPlay,
   plus: IconPlus,
+  "puzzlepiece.extension": IconPuzzle,
   minus: IconMinus,
   "qrcode.viewfinder": IconQrcode,
   "point.3.connected.trianglepath.dotted": IconNetwork,

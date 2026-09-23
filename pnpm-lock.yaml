@@ -586,6 +586,42 @@ importers:
       '@clerk/react':
         specifier: 6.16.1
         version: 6.16.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@codingame/monaco-vscode-api':
+        specifier: 37.1.0
+        version: 37.1.0
+      '@codingame/monaco-vscode-configuration-service-override':
+        specifier: 37.1.0
+        version: 37.1.0
+      '@codingame/monaco-vscode-dialogs-service-override':
+        specifier: 37.1.0
+        version: 37.1.0
+      '@codingame/monaco-vscode-notifications-service-override':
+        specifier: 37.1.0
+        version: 37.1.0
+      '@codingame/monaco-vscode-quickaccess-service-override':
+        specifier: 37.1.0
+        version: 37.1.0
+      '@codingame/monaco-vscode-remote-agent-service-override':
+        specifier: 37.1.0
+        version: 37.1.0
+      '@codingame/monaco-vscode-search-service-override':
+        specifier: 37.1.0
+        version: 37.1.0
+      '@codingame/monaco-vscode-storage-service-override':
+        specifier: 37.1.0
+        version: 37.1.0
+      '@codingame/monaco-vscode-theme-defaults-default-extension':
+        specifier: 37.1.0
+        version: 37.1.0
+      '@codingame/monaco-vscode-theme-service-override':
+        specifier: 37.1.0
+        version: 37.1.0
+      '@codingame/monaco-vscode-view-common-service-override':
+        specifier: 37.1.0
+        version: 37.1.0
+      '@codingame/monaco-vscode-views-service-override':
+        specifier: 37.1.0
+        version: 37.1.0
       '@daypicker/react':
         specifier: ^10.0.1
         version: 10.0.1(@types/react@19.2.16)(react@19.2.6)
@@ -685,6 +721,9 @@ importers:
       lucide-react:
         specifier: ^0.564.0
         version: 0.564.0(react@19.2.6)
+      monaco-editor:
+        specifier: npm:@codingame/monaco-vscode-editor-api@37.1.0
+        version: '@codingame/monaco-vscode-editor-api@37.1.0'
       react:
         specifier: 19.2.6
         version: 19.2.6
@@ -1974,6 +2013,69 @@ packages:
 
   '@cloudflare/workers-types@5.20260907.1':
     resolution: {integrity: sha512-HYI7eFb/MOcNzvbUW7ZwHVZL5YFXb4r6yHN3vx8gJCqde7yhn3bhuPKiQPw90UtGWWp7uOI+Que3kf8Svjn5cw==}
+
+  '@codingame/monaco-vscode-api@37.1.0':
+    resolution: {integrity: sha512-Re54r8XC0tJNbYkfS9S1dHVTQ2S9K4cAnimgaDX4lPRLsW4fdC5gQoR7t3ta6jZOgwzOql1S86nEAu9fGy5KDw==}
+
+  '@codingame/monaco-vscode-base-service-override@37.1.0':
+    resolution: {integrity: sha512-dbaBCUhfTuFeOmoXOSmFg24XLOwcQst4bhukMoGATgXLJZU/3Xjs76/TaWmV84x6uEJzesmsOEf34KJqFO5sLw==}
+
+  '@codingame/monaco-vscode-bulk-edit-service-override@37.1.0':
+    resolution: {integrity: sha512-tcBfhAYEhIpHZAo6HTEw9pgl54yf0sXDHBUzzo01UH7OTwG+zHcBFfluRytYSxAGJIQq1V6rvsZQpfl6WYCd7w==}
+
+  '@codingame/monaco-vscode-configuration-service-override@37.1.0':
+    resolution: {integrity: sha512-bnzif8CADdeA49AUQRlmE8X5BE8dCo+WOmeAylCmA4Hwy+pg7zuIFfRZT2WCCkoQ7w2guJ8l4JFmByXnOxQFlw==}
+
+  '@codingame/monaco-vscode-dialogs-service-override@37.1.0':
+    resolution: {integrity: sha512-1TFsLgBAUw0orAVh5ZMqCYGhsKnyfQuDb/HtN+1OtqfC6DUthtOuwr58r6NUHWBkgvmoZSSWThNlpXQ6XPpgig==}
+
+  '@codingame/monaco-vscode-editor-api@37.1.0':
+    resolution: {integrity: sha512-G/aVAdoAJepKvu1O7LRA7HERftRPujbGsS7K35RANlGXpIX/np36xHe3LO2i3/hMzRHmqbpnUtfzBbgclq5h7Q==}
+
+  '@codingame/monaco-vscode-environment-service-override@37.1.0':
+    resolution: {integrity: sha512-FCQbhZsMiTuvnCL7DujASnWCFCu4bTlh4QjvBDPJ/m1f5y7W0PMa9t+Jjm4xHFj/OHr2Zg3BgghLblZcVOsuSA==}
+
+  '@codingame/monaco-vscode-extensions-service-override@37.1.0':
+    resolution: {integrity: sha512-D5WeGRYpe3zL9oxM/UaHpEwoa8dfZ38rwzllo7OeFAMLaWwD8qUoFnBKbyGIgjz+EaDAQHEhxELTZ+vf8eehlw==}
+
+  '@codingame/monaco-vscode-files-service-override@37.1.0':
+    resolution: {integrity: sha512-fXhZ4mn48Ni3/VyC8nWHsY/Pid/HG7YNsA1FwGQL17upg5EhlaONUxpE4YTY1VsXfgGz6I1uGjkdcqFfAgz40g==}
+
+  '@codingame/monaco-vscode-host-service-override@37.1.0':
+    resolution: {integrity: sha512-NDNcYMU7nJ9Iv442DXwSJs40KEpUivzZsHjB7vkVWKI73VFmKVdwiJcFYGl6B0mYyB0YQjOsAyEGxSMBbltZpA==}
+
+  '@codingame/monaco-vscode-keybindings-service-override@37.1.0':
+    resolution: {integrity: sha512-er8zHlWiiSG/i940jP0YeUaBd5Z4Kutb5LZ/To28Lx0E7bhimx6bOz642sookN8kJ6Fjemk3Zuq7zBXw7GzJYg==}
+
+  '@codingame/monaco-vscode-layout-service-override@37.1.0':
+    resolution: {integrity: sha512-ETyoOLwzqhdlW5A0d2ew0tzJ8tyOi2VpFBmU9xzLgoQImq/Ng36jJgyosotSViAModu1nZeEFuYq3D5pzzAuDQ==}
+
+  '@codingame/monaco-vscode-notifications-service-override@37.1.0':
+    resolution: {integrity: sha512-mO4twOWnz921zUNXY+ix1t6iGsYZnfWHIgiYjkNKgw5+6B47m517DiqMbq/PnqSFcWMmjzbs0f6NgnvtBnVhSA==}
+
+  '@codingame/monaco-vscode-quickaccess-service-override@37.1.0':
+    resolution: {integrity: sha512-jNXo2zXKIe97RumnhXgwkeTBgNnfKZa4tsJCtNBwSz73JZ2NhmB6yc3zStqVBuLLx2Cum26mA32g1cRVvnVM0w==}
+
+  '@codingame/monaco-vscode-remote-agent-service-override@37.1.0':
+    resolution: {integrity: sha512-kBXGj8WyC86T+KLLlyTWeu8vE/CL9Syaf7IX+fwjUougMk51HI5QJIzOm2VezJboi7lb4TAT0JQm/Qkjf8Hzgw==}
+
+  '@codingame/monaco-vscode-search-service-override@37.1.0':
+    resolution: {integrity: sha512-h4i+h2nl6vHG/kPWfPnfUSqpEPa5yxDRgBWrWfZ0AUhXY4wnIaUBeqN4p7ApTANwtfA2wUtfQUJ+1TRtNRTSeA==}
+
+  '@codingame/monaco-vscode-storage-service-override@37.1.0':
+    resolution: {integrity: sha512-6cC2YGcOYjVuc4LZmgqgFuZb2N1AqlR93OzJApiMWnA8TSe4htuG3kfY+F9tQm0Xrhf9NfKIcH3+OjC4UVBVDw==}
+
+  '@codingame/monaco-vscode-theme-defaults-default-extension@37.1.0':
+    resolution: {integrity: sha512-P16cjIB1zVnF0Nw8V+mffPKRM+tfUpMMBWrD3GPeJcaH8cYvhIogFRQvutZhn2b8YwF7xIbKUQDgrjfyWeEeqg==}
+
+  '@codingame/monaco-vscode-theme-service-override@37.1.0':
+    resolution: {integrity: sha512-GgewvhrWUoQ2hQg9fTej8Abfk9TiVDZRe/PTizxvTl7hY9bijxJDjD5DBKjl+pTenmNh+joiO+NyvrX+dIudTA==}
+
+  '@codingame/monaco-vscode-view-common-service-override@37.1.0':
+    resolution: {integrity: sha512-y8ayaAk4ttwgP4nGm/te8O2Fr2G96XBqU3cEn0gUee+KBW3fGKV/vaDJ1CYmKrBb3btgkziQv6iSGJfAdi42sA==}
+
+  '@codingame/monaco-vscode-views-service-override@37.1.0':
+    resolution: {integrity: sha512-PcWWIqTOkUHEEwtxZvomvDsWOlY1ERZsXMUPmlKGNAJc17PkQ+vGXXHrywd3zwv2RBWpLrXprpcfqRNS0sv/rA==}
 
   '@crowecawcaw/xa11y-darwin-arm64@0.13.0':
     resolution: {integrity: sha512-wT+f9lbE6IfSPs8unb7IHr6/V/EkB4SCMFisTtV3jsTseCKr4/vkgpI1LRdul2r+KrmgQ4JxRpUDVB25dmpqNw==}
@@ -5362,6 +5464,9 @@ packages:
   '@types/statuses@2.0.6':
     resolution: {integrity: sha512-xMAgYwceFhRA2zY+XbEA7mxYbA093wdiW8Vu6gZPGWy9cmOyU9XesH1tNcEWsKFd5Vzrqx5T3D38PWx1FIIXkA==}
 
+  '@types/trusted-types@2.0.7':
+    resolution: {integrity: sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw==}
+
   '@types/unist@2.0.11':
     resolution: {integrity: sha512-CmBKiL6NNo/OqgmMn95Fk9Whlp2mtvIv+KNpQKN2F4SjvrEesubTRWGYSg+BnWZOnlCaSTU1sMpsBOzgbYhnsA==}
 
@@ -5700,8 +5805,14 @@ packages:
   '@volar/typescript@2.4.28':
     resolution: {integrity: sha512-Ja6yvWrbis2QtN4ClAKreeUZPVYMARDYZl9LMEv1iQ1QdepB6wn0jTRxA9MftYmYa4DQ4k/DaSZpFPUfxl8giw==}
 
+  '@vscode/diff@0.0.2-7':
+    resolution: {integrity: sha512-zGPIPeUAmQs79u7g6FTLmhlXFIocUTtuHYmCV5lRZf6vlDk7SWEOpBlYY6SsShC3TB/lm2KxXMj9tP32YOPrhg==}
+
   '@vscode/emmet-helper@2.11.0':
     resolution: {integrity: sha512-QLxjQR3imPZPQltfbWRnHU6JecWTF1QSWhx3GAKQpslx7y3Dp6sIIXhKjiUJ/BR9FX8PVthjr9PD6pNwOJfAzw==}
+
+  '@vscode/iconv-lite-umd@0.7.1':
+    resolution: {integrity: sha512-tK6k0DXFHW7q5+GGuGZO+phpAqpxO4WXl+BLc/8/uOk3RsM2ssAL3CQUQDb1TGfwltjsauhN6S4ghYZzs4sPFw==}
 
   '@vscode/l10n@0.0.18':
     resolution: {integrity: sha512-KYSIHVmslkaCDyw013pphY+d7x1qV8IZupYfeIfzNA+nsaWHbn5uPuQRvdRFsa9zFzGeudPuoGoZ1Op4jrJXIQ==}
@@ -6834,6 +6945,9 @@ packages:
   domhandler@5.0.3:
     resolution: {integrity: sha512-cgwlv/1iFQiFnU96XXgROh8xTeetsnJiDsTc7TYCLFd9+/WNkIqPTxiM/8pSd8VIrhXGTf1Ny1q1hquVqDJB5w==}
     engines: {node: '>= 4'}
+
+  dompurify@3.4.15:
+    resolution: {integrity: sha512-EUBjM+B+lkDE41iE82DDSCfkoPGfXx8IxFxPMjNzm/Uk4xDet77rTN9wqlxlVg71kK7XGuUMv6wUxJUwwv+Xyw==}
 
   domutils@3.2.2:
     resolution: {integrity: sha512-6kZKyUajlDuqlHKVX1w7gyslj9MPIXzIFiz/rGu35uC1wMi+kMhQwGhl4lt9unC9Vb9INnY9Z3/ZA3+FhASLaw==}
@@ -8115,6 +8229,10 @@ packages:
   jsc-safe-url@0.2.4:
     resolution: {integrity: sha512-0wM3YBWtYePOjfyXQH5MWQ8H7sdk5EXSwZvmSLKk2RboVQ2Bu239jycHDz5J/8Blf3K0Qnoy2b6xD+z10MFB+Q==}
 
+  jschardet@3.1.4:
+    resolution: {integrity: sha512-/kmVISmrwVwtyYU40iQUOp3SUPk2dhNCMsZBQX0R1/jZ8maaXJ/oZIzUOiyOqcgtLnETFKYChbJ5iDC/eWmFHg==}
+    engines: {node: '>=0.1.90'}
+
   jsesc@3.1.0:
     resolution: {integrity: sha512-/sM3dO2FOzXjKQhJuo0Q173wf2KOo8t4I8vHy6lF9poUp7bKT0/NHE8fPX23PwfhnykfqnC2xRxOnVw5XuGIaA==}
     engines: {node: '>=6'}
@@ -8374,6 +8492,11 @@ packages:
 
   markdown-table@3.0.4:
     resolution: {integrity: sha512-wiYz4+JrLyb/DqW2hkFJxP7Vd7JuTDm77fvbM8VfEQdmSMqcImWeeRbHwZjBjIFki/VaMK2BhFi7oUUZeM5bqw==}
+
+  marked@14.0.0:
+    resolution: {integrity: sha512-uIj4+faQ+MgHgwUW1l2PsPglZLOLOT1uErt06dAPtx2kjteLAkbsd/0FiYg/MGS+i7ZKLb7w2WClxHkzOOuryQ==}
+    engines: {node: '>= 18'}
+    hasBin: true
 
   marky@1.3.0:
     resolution: {integrity: sha512-ocnPZQLNpvbedwTy9kNrQEsknEfgvcLMvOtz3sFeWApDq1MXH1TqkCIx58xlpESsfwQOnuBO9beyQuNGzVvuhQ==}
@@ -11543,7 +11666,7 @@ snapshots:
   '@babel/helper-module-imports@7.29.7':
     dependencies:
       '@babel/traverse': 7.29.7
-      '@babel/types': 7.29.7
+      '@babel/types': 7.29.8
     transitivePeerDependencies:
       - supports-color
 
@@ -12186,6 +12309,111 @@ snapshots:
   '@cloudflare/workers-types@4.20260604.1': {}
 
   '@cloudflare/workers-types@5.20260907.1': {}
+
+  '@codingame/monaco-vscode-api@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-base-service-override': 37.1.0
+      '@codingame/monaco-vscode-environment-service-override': 37.1.0
+      '@codingame/monaco-vscode-extensions-service-override': 37.1.0
+      '@codingame/monaco-vscode-files-service-override': 37.1.0
+      '@codingame/monaco-vscode-host-service-override': 37.1.0
+      '@codingame/monaco-vscode-layout-service-override': 37.1.0
+      '@codingame/monaco-vscode-quickaccess-service-override': 37.1.0
+      '@vscode/diff': 0.0.2-7
+      '@vscode/iconv-lite-umd': 0.7.1
+      dompurify: 3.4.15
+      jschardet: 3.1.4
+      marked: 14.0.0
+
+  '@codingame/monaco-vscode-base-service-override@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+
+  '@codingame/monaco-vscode-bulk-edit-service-override@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+
+  '@codingame/monaco-vscode-configuration-service-override@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+      '@codingame/monaco-vscode-files-service-override': 37.1.0
+
+  '@codingame/monaco-vscode-dialogs-service-override@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+
+  '@codingame/monaco-vscode-editor-api@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+
+  '@codingame/monaco-vscode-environment-service-override@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+
+  '@codingame/monaco-vscode-extensions-service-override@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+      '@codingame/monaco-vscode-files-service-override': 37.1.0
+
+  '@codingame/monaco-vscode-files-service-override@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+
+  '@codingame/monaco-vscode-host-service-override@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+
+  '@codingame/monaco-vscode-keybindings-service-override@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+      '@codingame/monaco-vscode-files-service-override': 37.1.0
+
+  '@codingame/monaco-vscode-layout-service-override@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+
+  '@codingame/monaco-vscode-notifications-service-override@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+
+  '@codingame/monaco-vscode-quickaccess-service-override@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+
+  '@codingame/monaco-vscode-remote-agent-service-override@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+      '@codingame/monaco-vscode-environment-service-override': 37.1.0
+
+  '@codingame/monaco-vscode-search-service-override@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+
+  '@codingame/monaco-vscode-storage-service-override@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+
+  '@codingame/monaco-vscode-theme-defaults-default-extension@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+
+  '@codingame/monaco-vscode-theme-service-override@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+      '@codingame/monaco-vscode-files-service-override': 37.1.0
+
+  '@codingame/monaco-vscode-view-common-service-override@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+      '@codingame/monaco-vscode-bulk-edit-service-override': 37.1.0
+
+  '@codingame/monaco-vscode-views-service-override@37.1.0':
+    dependencies:
+      '@codingame/monaco-vscode-api': 37.1.0
+      '@codingame/monaco-vscode-keybindings-service-override': 37.1.0
+      '@codingame/monaco-vscode-layout-service-override': 37.1.0
+      '@codingame/monaco-vscode-quickaccess-service-override': 37.1.0
+      '@codingame/monaco-vscode-view-common-service-override': 37.1.0
 
   '@crowecawcaw/xa11y-darwin-arm64@0.13.0':
     optional: true
@@ -14968,7 +15196,7 @@ snapshots:
   '@shikijs/types@4.3.0':
     dependencies:
       '@shikijs/vscode-textmate': 10.0.2
-      '@types/hast': 3.0.4
+      '@types/hast': 3.0.5
 
   '@shikijs/vscode-textmate@10.0.2': {}
 
@@ -15612,6 +15840,9 @@ snapshots:
   '@types/statuses@2.0.6':
     optional: true
 
+  '@types/trusted-types@2.0.7':
+    optional: true
+
   '@types/unist@2.0.11': {}
 
   '@types/unist@3.0.3': {}
@@ -15723,12 +15954,12 @@ snapshots:
       '@rolldown/plugin-babel': 0.2.3(@babel/core@7.29.7)(@babel/plugin-transform-runtime@7.29.7(@babel/core@7.29.7))(@babel/runtime@7.29.7)(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0))(rolldown@1.2.5)
       babel-plugin-react-compiler: 1.0.0
 
-  '@vitest/browser-preview@4.1.11(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(bufferutil@4.1.0)(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))(utf-8-validate@6.0.6)(vitest@4.1.11(@types/node@24.12.4)(@vitest/browser-preview@4.1.11)(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2)))':
+  '@vitest/browser-preview@4.1.11(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(bufferutil@4.1.0)(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))(utf-8-validate@6.0.6)(vitest@4.1.11)':
     dependencies:
       '@testing-library/dom': 10.4.1
       '@testing-library/user-event': 14.6.1(@testing-library/dom@10.4.1)
-      '@vitest/browser': 4.1.11(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(bufferutil@4.1.0)(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))(utf-8-validate@6.0.6)(vitest@4.1.11(@types/node@24.12.4)(@vitest/browser-preview@4.1.11)(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2)))
-      vitest: 4.1.11(@types/node@24.12.4)(@vitest/browser-preview@4.1.11)(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))
+      '@vitest/browser': 4.1.11(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(bufferutil@4.1.0)(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))(utf-8-validate@6.0.6)(vitest@4.1.11)
+      vitest: 4.1.11(@types/node@24.12.4)(@vitest/browser-preview@4.1.11)(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))
     transitivePeerDependencies:
       - bufferutil
       - msw
@@ -15747,7 +15978,7 @@ snapshots:
       - utf-8-validate
       - vite
 
-  '@vitest/browser@4.1.11(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(bufferutil@4.1.0)(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))(utf-8-validate@6.0.6)(vitest@4.1.11(@types/node@24.12.4)(@vitest/browser-preview@4.1.11)(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2)))':
+  '@vitest/browser@4.1.11(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(bufferutil@4.1.0)(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))(utf-8-validate@6.0.6)(vitest@4.1.11)':
     dependencies:
       '@blazediff/core': 1.9.1
       '@vitest/mocker': 4.1.11(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))
@@ -15756,7 +15987,7 @@ snapshots:
       pngjs: 7.0.0
       sirv: 3.0.2
       tinyrainbow: 3.1.0
-      vitest: 4.1.11(@types/node@24.12.4)(@vitest/browser-preview@4.1.11)(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))
+      vitest: 4.1.11(@types/node@24.12.4)(@vitest/browser-preview@4.1.11)(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))
       ws: 8.21.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)
     transitivePeerDependencies:
       - bufferutil
@@ -15948,6 +16179,8 @@ snapshots:
       path-browserify: 1.0.1
       vscode-uri: 3.1.0
 
+  '@vscode/diff@0.0.2-7': {}
+
   '@vscode/emmet-helper@2.11.0':
     dependencies:
       emmet: 2.4.11
@@ -15955,6 +16188,8 @@ snapshots:
       vscode-languageserver-textdocument: 1.0.12
       vscode-languageserver-types: 3.17.5
       vscode-uri: 3.1.0
+
+  '@vscode/iconv-lite-umd@0.7.1': {}
 
   '@vscode/l10n@0.0.18': {}
 
@@ -17118,6 +17353,10 @@ snapshots:
   domhandler@5.0.3:
     dependencies:
       domelementtype: 2.3.0
+
+  dompurify@3.4.15:
+    optionalDependencies:
+      '@types/trusted-types': 2.0.7
 
   domutils@3.2.2:
     dependencies:
@@ -18635,6 +18874,8 @@ snapshots:
 
   jsc-safe-url@0.2.4: {}
 
+  jschardet@3.1.4: {}
+
   jsesc@3.1.0: {}
 
   json-buffer@3.0.1: {}
@@ -18871,6 +19112,8 @@ snapshots:
   map-stream@0.1.0: {}
 
   markdown-table@3.0.4: {}
+
+  marked@14.0.0: {}
 
   marky@1.3.0: {}
 
@@ -21950,8 +22193,8 @@ snapshots:
     dependencies:
       '@oxc-project/types': 0.150.0
       '@oxlint/plugins': 1.79.0
-      '@vitest/browser': 4.1.11(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(bufferutil@4.1.0)(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))(utf-8-validate@6.0.6)(vitest@4.1.11(@types/node@24.12.4)(@vitest/browser-preview@4.1.11)(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2)))
-      '@vitest/browser-preview': 4.1.11(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(bufferutil@4.1.0)(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))(utf-8-validate@6.0.6)(vitest@4.1.11(@types/node@24.12.4)(@vitest/browser-preview@4.1.11)(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2)))
+      '@vitest/browser': 4.1.11(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(bufferutil@4.1.0)(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))(utf-8-validate@6.0.6)(vitest@4.1.11)
+      '@vitest/browser-preview': 4.1.11(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(bufferutil@4.1.0)(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))(utf-8-validate@6.0.6)(vitest@4.1.11)
       '@vitest/expect': 4.1.11
       '@vitest/mocker': 4.1.11(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))
       '@vitest/pretty-format': 4.1.11
@@ -21963,7 +22206,7 @@ snapshots:
       oxlint: 1.83.0(oxlint-tsgolint@7.0.2001)(vite-plus@0.3.3(@types/node@24.12.4)(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0))
       oxlint-tsgolint: 7.0.2001
       vite: '@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0)'
-      vitest: 4.1.11(@types/node@24.12.4)(@vitest/browser-preview@4.1.11(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0))(bufferutil@4.1.0)(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(utf-8-validate@6.0.6)(vitest@4.1.11))(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))
+      vitest: 4.1.11(@types/node@24.12.4)(@vitest/browser-preview@4.1.11)(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))
     optionalDependencies:
       '@voidzero-dev/vite-plus-darwin-arm64': 0.3.3
       '@voidzero-dev/vite-plus-darwin-x64': 0.3.3
@@ -22064,7 +22307,7 @@ snapshots:
     optionalDependencies:
       vite: '@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0)'
 
-  vitest@4.1.11(@types/node@24.12.4)(@vitest/browser-preview@4.1.11(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0))(bufferutil@4.1.0)(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(utf-8-validate@6.0.6)(vitest@4.1.11))(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3)):
+  vitest@4.1.11(@types/node@24.12.4)(@vitest/browser-preview@4.1.11)(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3)):
     dependencies:
       '@vitest/expect': 4.1.11
       '@vitest/mocker': 4.1.11(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))
@@ -22088,7 +22331,7 @@ snapshots:
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 24.12.4
-      '@vitest/browser-preview': 4.1.11(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0))(bufferutil@4.1.0)(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(utf-8-validate@6.0.6)(vitest@4.1.11)
+      '@vitest/browser-preview': 4.1.11(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.12.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(bufferutil@4.1.0)(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))(utf-8-validate@6.0.6)(vitest@4.1.11)
     transitivePeerDependencies:
       - msw
 

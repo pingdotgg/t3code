@@ -153,6 +153,13 @@
   ],
   "packageOverrides": [
     {
+      "repositoryUrl": "https://github.com/CodinGame/monaco-vscode-api",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2022 CodinGame"]
+      }
+    },
+    {
       "license": "MIT",
       "name": "@react-grab/cli",
       "sourceUrl": "https://github.com/aidenybai/react-grab/tree/main/packages/cli",

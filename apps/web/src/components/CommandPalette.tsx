@@ -52,6 +52,7 @@ import {
   MonitorIcon,
   MoonIcon,
   PaletteIcon,
+  PuzzleIcon,
   SettingsIcon,
   SquarePenIcon,
   SunIcon,
@@ -129,6 +130,7 @@ import {
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import { useAvailableSettingsSearchItems } from "./settings/useAvailableSettingsSearchItems";
+import { extensionLaunchTargets, useExtensions } from "./extensions/useExtensions";
 import {
   applyWslEnvironmentConfiguration,
   parseWslUncPath,
@@ -176,7 +178,12 @@ import {
   ThreadCommandSubtitle,
 } from "./ThreadCommandSubtitle";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
-import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
+import {
+  primaryServerKeybindingsAtom,
+  primaryServerProvidersAtom,
+  serverEnvironment,
+} from "../state/server";
+import { readPreparedConnection } from "../state/session";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
@@ -516,6 +523,12 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.defaultPrevented) return;
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest("[data-keybinding-capture]")
+      ) {
+        return;
+      }
       // Resolve with the complete shortcut context so customized bindings
       // using any documented `when` condition (e.g. previewFocus) work.
       const command = resolveShortcutCommand(event, keybindings, {
@@ -569,8 +582,8 @@ export function CommandPalette({ children }: { children: ReactNode }) {
       event.stopPropagation();
       toggleMode(mode);
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [
     appearanceMode,
     keybindings,
@@ -711,6 +724,10 @@ function OpenCommandPaletteDialog(props: {
   const startProjectClone = useAtomCommand(sourceControlEnvironment.startProjectClone, {
     reportFailure: false,
   });
+  const connectExtensionHost = useAtomCommand(serverEnvironment.connectExtensionHost, {
+    reportFailure: false,
+    reportDefect: false,
+  });
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -732,6 +749,8 @@ function OpenCommandPaletteDialog(props: {
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
+  const activeThreadExtensions =
+    useExtensions(activeThread?.environmentId ?? null).state?.extensions ?? [];
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
       ? null
@@ -1818,6 +1837,72 @@ function OpenCommandPaletteDialog(props: {
       });
     }
   }
+
+  if (activeThread !== null) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    for (const { label, target } of activeThreadExtensions.flatMap(extensionLaunchTargets)) {
+      actionItems.push({
+        kind: "action",
+        value: `action:open-extension:${target.extensionId}:${target.kind === "extension" ? (target.viewContainerId ?? "") : ""}`,
+        searchTerms: ["extension", "vs code", "open", label],
+        title: `Open extension: ${label}`,
+        icon: <PuzzleIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          useRightPanelStore.getState().openExtension(threadRef, target);
+        },
+      });
+    }
+    for (const extension of activeThreadExtensions.filter((entry) => entry.enabled)) {
+      for (const command of extension.commands) {
+        actionItems.push({
+          kind: "action",
+          value: `action:extension-command:${extension.id}:${command.command}`,
+          searchTerms: ["extension", extension.displayName, command.title, command.command],
+          title: `${command.category ? `${command.category}: ` : ""}${command.title}`,
+          icon: <PuzzleIcon className={ITEM_ICON_CLASS} />,
+          run: async () => {
+            try {
+              const prepared = readPreparedConnection(activeThread.environmentId);
+              if (!prepared) throw new Error("The environment is not connected.");
+              const runtime = await import("../vscode/runtime");
+              await runtime.getRuntime(
+                async () => {
+                  const result = await connectExtensionHost({
+                    environmentId: activeThread.environmentId,
+                    input: {},
+                  });
+                  if (result._tag !== "Success")
+                    throw new Error("Could not connect to the extension host.");
+                  return result.value;
+                },
+                prepared.httpBaseUrl,
+                activeThread.worktreePath ?? currentProjectCwd ?? undefined,
+              );
+              await runtime.runExtensionCommand(command.command);
+              const target = await runtime.activeWebview(extension.id);
+              if (target) useRightPanelStore.getState().openExtension(threadRef, target);
+            } catch (cause) {
+              toastManager.add({
+                type: "error",
+                title: cause instanceof Error ? cause.message : String(cause),
+              });
+            }
+          },
+        });
+      }
+    }
+  }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:manage-extensions",
+    searchTerms: ["extensions", "vs code", "open vsx", "vsix", "install", "marketplace"],
+    title: "Manage extensions",
+    icon: <PuzzleIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/settings/extensions" });
+    },
+  });
 
   actionItems.push({
     kind: "action",

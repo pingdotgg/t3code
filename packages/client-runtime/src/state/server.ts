@@ -1015,6 +1015,31 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:provider:install-remove",
       tag: WS_METHODS.providerInstallRemove,
     }),
+    extensionsState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:extensions:state",
+      tag: WS_METHODS.extensionsSubscribe,
+      idleTtlMs: 0,
+    }),
+    installExtension: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:extensions:install",
+      tag: WS_METHODS.extensionsInstall,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input]),
+      },
+    }),
+    uninstallExtension: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:extensions:uninstall",
+      tag: WS_METHODS.extensionsUninstall,
+    }),
+    setExtensionEnabled: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:extensions:set-enabled",
+      tag: WS_METHODS.extensionsSetEnabled,
+    }),
+    connectExtensionHost: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:extensions:connect",
+      tag: WS_METHODS.extensionsConnect,
+    }),
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,
