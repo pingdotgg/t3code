@@ -3161,6 +3161,9 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
   );
 }
 
+// Matches the grouped WorkLog row's min-h-6.
+const compactWorkEntryHeight = 24;
+
 function ExpandedWorkGroupEntries({
   anchorKey,
   disclosureAnchorKey,
@@ -3266,8 +3269,11 @@ function ExpandedWorkGroupEntries({
     let height = 0;
     for (const entryId of viewState.expandedEntries) {
       if (state?.indexByKey(entryId) === undefined) continue;
-      // Keep the compact rows bounded, but give disclosed content its own space.
-      height += Math.max(0, (state.sizes.get(entryId) ?? 24) - 24);
+      // Each open row adds room for its details, including while scrolled out of view.
+      height += Math.max(
+        0,
+        (state.sizes.get(entryId) ?? compactWorkEntryHeight) - compactWorkEntryHeight,
+      );
     }
     setExpandedContentHeight(height);
   }, [viewState]);
@@ -3283,7 +3289,7 @@ function ExpandedWorkGroupEntries({
           extraData={workspaceRoot}
           keyExtractor={workEntryKey}
           renderItem={renderEntry}
-          estimatedItemSize={24}
+          estimatedItemSize={compactWorkEntryHeight}
           drawDistance={240}
           recycleItems
           {...(initialScrollIndex ? { initialScrollIndex } : {})}
