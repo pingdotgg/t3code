@@ -264,6 +264,26 @@ describe("GitHubCli.layer", () => {
     assert.notProperty(commandFailure, "operation");
   });
 
+  it("names GitHub's own reason when a gh command was refused", () => {
+    const context = { command: "gh", cwd: "/repo" } as const;
+    const exit = (hostMessage?: string) =>
+      new VcsProcessExitError({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        cwd: context.cwd,
+        exitCode: 1,
+        detail: "Process exited with a non-zero status.",
+        failureKind: "command-failed",
+        ...(hostMessage === undefined ? {} : { hostMessage }),
+      });
+
+    assert.equal(
+      GitHubCli.fromVcsError(context, exit("Line could not be resolved")).detail,
+      "Line could not be resolved",
+    );
+    assert.equal(GitHubCli.fromVcsError(context, exit()).detail, "GitHub CLI command failed.");
+  });
+
   it.effect("parses pull request view output", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(

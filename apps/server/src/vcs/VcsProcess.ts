@@ -3,7 +3,9 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
+import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -108,6 +110,36 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
   return "command-failed";
 };
 
+/**
+ * The error body `gh api` prints for a refused REST call. gh itself reports only the top-level
+ * message ("Unprocessable Entity"), which says nothing; the reason is in `errors`.
+ */
+const decodeGitHubApiErrorBody = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      errors: Schema.Array(
+        Schema.Union([Schema.String, Schema.Struct({ message: Schema.optional(Schema.String) })]),
+      ),
+    }),
+  ),
+);
+
+const HOST_MESSAGE_MAX_LENGTH = 300;
+
+/** GitHub's validation reasons, bounded; only these leave the process, never the whole body. */
+const gitHubApiRefusal = (stdout: string): string | undefined => {
+  const body = decodeGitHubApiErrorBody(stdout.trim());
+  if (Option.isNone(body)) return undefined;
+  const reasons = body.value.errors
+    .map((error) => (typeof error === "string" ? error : (error.message ?? "")).trim())
+    .filter((reason) => reason.length > 0);
+  if (reasons.length === 0) return undefined;
+  const joined = reasons.join("; ");
+  return joined.length <= HOST_MESSAGE_MAX_LENGTH
+    ? joined
+    : `${joined.slice(0, HOST_MESSAGE_MAX_LENGTH - 1)}…`;
+};
+
 // Classify before discarding stderr; keep paths and process output out of errors.
 const isTransientGitExit = (stderr: string) =>
   /unable to create [^\n]*\.lock['"]?: file exists/i.test(stderr) ||
@@ -183,6 +215,10 @@ export const make = Effect.gen(function* () {
           exitCode: result.code,
           stderr: result.stderr,
           stderrTruncated: result.stderrTruncated,
+          hostMessage:
+            input.command === "gh" && input.args[0] === "api" && failureKind === "command-failed"
+              ? gitHubApiRefusal(result.stdout)
+              : undefined,
         },
         failureKind,
         input.command === "git" &&
