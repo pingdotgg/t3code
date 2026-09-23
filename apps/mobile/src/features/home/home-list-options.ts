@@ -31,22 +31,6 @@ export interface ResolvedHomeListOptions extends HomeListOptions {
   readonly projectGroupingMode: SidebarProjectGroupingMode;
 }
 
-export const PROJECT_SORT_OPTIONS: ReadonlyArray<{
-  readonly value: HomeProjectSortOrder;
-  readonly label: string;
-}> = [
-  { value: "updated_at", label: "Last user message" },
-  { value: "created_at", label: "Created at" },
-];
-
-export const THREAD_SORT_OPTIONS: ReadonlyArray<{
-  readonly value: SidebarThreadSortOrder;
-  readonly label: string;
-}> = [
-  { value: "updated_at", label: "Last user message" },
-  { value: "created_at", label: "Created at" },
-];
-
 function defaultHomeListOptions(): HomeListOptions {
   return {
     selectedEnvironmentId: null,
@@ -79,23 +63,6 @@ export function HomeListOptionsProvider({
     [options, projectGroupingMode],
   );
   return createElement(HomeListOptionsContext, { value }, children);
-}
-
-export function hasCustomHomeListOptions(
-  options: HomeListOptions & {
-    readonly selectedProjectKey?: string | null;
-  },
-): boolean {
-  const defaultProjectSortOrder =
-    DEFAULT_SIDEBAR_PROJECT_SORT_ORDER === "manual"
-      ? "updated_at"
-      : DEFAULT_SIDEBAR_PROJECT_SORT_ORDER;
-  return (
-    options.selectedEnvironmentId !== null ||
-    (options.selectedProjectKey !== null && options.selectedProjectKey !== undefined) ||
-    options.projectSortOrder !== defaultProjectSortOrder ||
-    options.threadSortOrder !== DEFAULT_SIDEBAR_THREAD_SORT_ORDER
-  );
 }
 
 export function useHomeListOptions(availableEnvironmentIds: ReadonlySet<EnvironmentId>) {
