@@ -60,4 +60,5 @@ function Badge({ className, variant, size, render, ...props }: BadgeProps) {
   });
 }
 
+// The *Variants function is for components/ui modules only.
 export { Badge, badgeVariants };

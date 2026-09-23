@@ -48,7 +48,7 @@ import {
 } from "~/components/Icons";
 import { RadioGroup } from "~/components/ui/radio-group";
 import { Spinner } from "~/components/ui/spinner";
-import { toggleVariants } from "~/components/ui/toggle";
+import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { cn } from "~/lib/utils";
 import {
   buildGitActionProgressStages,
@@ -815,10 +815,10 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     >
                       Protocol
                     </span>
-                    <RadioGroup
-                      className="w-fit flex-row gap-0.5 rounded-lg bg-input/40 p-0.5"
-                      value={publishProtocol}
-                      onValueChange={(protocol) => {
+                    <ToggleGroup
+                      value={[publishProtocol]}
+                      onValueChange={(next) => {
+                        const protocol = next[0];
                         if (protocol === "ssh" || protocol === "https") {
                           setPublishProtocol(protocol);
                         }
@@ -826,20 +826,9 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       aria-labelledby="publish-protocol-label"
                       disabled={publishRepositoryAction.isPending}
                     >
-                      {(["ssh", "https"] as const).map((protocol) => (
-                        <RadioPrimitive.Root
-                          key={protocol}
-                          value={protocol}
-                          data-pressed={publishProtocol === protocol ? "" : undefined}
-                          className={toggleVariants({
-                            variant: "segmented",
-                            size: "segmented",
-                          })}
-                        >
-                          {protocol.toUpperCase()}
-                        </RadioPrimitive.Root>
-                      ))}
-                    </RadioGroup>
+                      <Toggle value="ssh">SSH</Toggle>
+                      <Toggle value="https">HTTPS</Toggle>
+                    </ToggleGroup>
                   </div>
                 </div>
               ) : null}
