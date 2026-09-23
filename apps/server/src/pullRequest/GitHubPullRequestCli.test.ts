@@ -476,8 +476,8 @@ layer("GitHubPullRequestCli.layer", (it) => {
       });
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
           output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               data: { s0: { pullRequest: node(7) }, s1: { pullRequest: node(8) } },
             }),
