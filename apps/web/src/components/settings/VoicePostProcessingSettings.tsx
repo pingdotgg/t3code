@@ -100,7 +100,6 @@ export function VoicePostProcessingSettings() {
                 lockedProvider={null}
                 instanceEntries={instanceEntries}
                 modelOptionsByInstance={modelOptionsByInstance}
-                triggerVariant="outline"
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                 getModelDisabledReason={modelDisabledReason}
                 onInstanceModelChange={(instanceId, model) => {
@@ -128,7 +127,6 @@ export function VoicePostProcessingSettings() {
                   modelOptions={modelSelection.options}
                   allowPromptInjectedEffort={false}
                   planModeEnabled={settings.planModeEnabled}
-                  triggerVariant="outline"
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                   onModelOptionsChange={(options) =>
                     updateSettings({
