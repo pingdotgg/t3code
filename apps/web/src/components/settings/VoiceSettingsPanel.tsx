@@ -43,6 +43,8 @@ const PRIMARY_ENVIRONMENT = "primary-environment";
 const deviceValue = (id: string) => `device:${id}`;
 const environmentValue = (id: EnvironmentId) => `environment:${id}`;
 const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
+const languageNames = new Intl.DisplayNames(["en"], { type: "language" });
+const languageLabel = (code: string) => languageNames.of(code) ?? code;
 
 function ModelCard(props: {
   readonly model: EnvironmentSpeechModel;
@@ -57,7 +59,7 @@ function ModelCard(props: {
   const progress = model.downloaded === undefined ? 0 : (model.downloaded / model.size) * 100;
   return (
     <div
-      className={`rounded-lg border px-3.5 py-3 ${model.active ? "border-accent/50 bg-accent/5" : "border-border/70 bg-card/30"}`}
+      className={`rounded-lg border px-3 py-2.5 ${model.active ? "border-accent/50 bg-accent/5" : "border-border/70 bg-card/30"}`}
     >
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
@@ -76,7 +78,9 @@ function ModelCard(props: {
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
             <span className="inline-flex items-center gap-1">
               <GlobeIcon className="size-3" />
-              {model.languages.length === 1 ? "English" : `${model.languages.length} languages`}
+              {model.languages.length === 1
+                ? languageLabel(model.languages[0]!)
+                : `${model.languages.length} languages`}
             </span>
             <span>{formatSize(model.size)}</span>
             <span>Accuracy {model.accuracy}</span>
@@ -157,6 +161,10 @@ export function VoiceSettingsPanel() {
   const [loadingMicrophones, setLoadingMicrophones] = useState(false);
   const [operation, setOperation] = useState<string | null>(null);
   const [customWordDraft, setCustomWordDraft] = useState("");
+  const [selectedLanguage, setSelectedLanguage] = useState<{
+    readonly environmentId: EnvironmentId | null;
+    readonly code: string;
+  } | null>(null);
 
   const refreshMicrophones = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -302,12 +310,20 @@ export function VoiceSettingsPanel() {
     updateCustomWords([...customWords, normalizedCustomWord]);
     setCustomWordDraft("");
   };
-  const installed = models.filter((model) => model.state !== "downloadable");
-  const available = models.filter((model) => model.state === "downloadable");
+  const currentModels = currentStatus?.supported ? models : [];
+  const activeModel = currentModels.find((model) => model.active);
+  const languages = [...new Set(currentModels.flatMap((model) => model.languages))].sort((a, b) =>
+    languageLabel(a).localeCompare(languageLabel(b)),
+  );
+  const language =
+    selectedLanguage?.environmentId === environmentId && languages.includes(selectedLanguage.code)
+      ? selectedLanguage.code
+      : (activeModel?.languages[0] ?? languages[0]);
+  const visibleModels = currentModels.filter((model) => model.languages.includes(language ?? ""));
 
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Voice">
+      <SettingsSection title="Input">
         <SettingsRow
           {...searchableSetting("transcription-environment")}
           description="Run voice transcription on this environment for every thread."
@@ -416,6 +432,104 @@ export function VoiceSettingsPanel() {
             </div>
           }
         />
+      </SettingsSection>
+      <SettingsSection title="Transcription models" id={searchableSetting("local-voice-input").id}>
+        <SettingsRow
+          title="Active model"
+          description="Models run on the selected environment. Recordings are deleted after transcription."
+          control={
+            <span className="text-sm text-muted-foreground">
+              {currentStatus?.supported
+                ? (activeModel?.name ?? "No model selected")
+                : "Unavailable"}
+            </span>
+          }
+        />
+        {currentStatus?.supported && prepared ? (
+          <div className="flex h-80 min-h-0 flex-col border-t border-border/50 sm:flex-row">
+            <div
+              role="group"
+              aria-label="Browse transcription models by language"
+              className="flex shrink-0 gap-1 overflow-x-auto border-b border-border/50 bg-muted/20 p-2 sm:w-40 sm:flex-col sm:overflow-y-auto sm:border-r sm:border-b-0"
+            >
+              <span className="hidden px-2.5 pb-1 text-[11px] text-muted-foreground sm:block">
+                Language
+              </span>
+              {languages.map((code) => (
+                <button
+                  key={code}
+                  type="button"
+                  aria-pressed={language === code}
+                  className={`shrink-0 rounded-md px-2.5 py-2 text-left text-xs transition-colors hover:bg-muted/50 ${language === code ? "bg-muted text-foreground" : "text-muted-foreground"}`}
+                  onClick={() => setSelectedLanguage({ environmentId, code })}
+                >
+                  {languageLabel(code)}
+                </button>
+              ))}
+            </div>
+            <div className="min-h-0 min-w-0 flex-1 space-y-2 overflow-y-auto p-3">
+              <p className="pb-1 text-xs text-muted-foreground">
+                Models for {language ? languageLabel(language) : "this environment"}
+              </p>
+              {visibleModels.map((model) => (
+                <ModelCard
+                  key={model.id}
+                  model={model}
+                  busy={operation !== null}
+                  onDownload={() =>
+                    runModelOperation(model.id, async () => {
+                      const result = await runtime.runPromise(
+                        downloadEnvironmentSpeechModel(prepared, model.id),
+                      );
+                      if (
+                        result.models.some(
+                          (candidate) =>
+                            candidate.id === model.id && candidate.state === "installed",
+                        )
+                      ) {
+                        await runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id));
+                      }
+                    })
+                  }
+                  onSelect={() =>
+                    runModelOperation(model.id, () =>
+                      runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id)),
+                    )
+                  }
+                  onCancel={() =>
+                    void runtime
+                      .runPromise(cancelEnvironmentSpeechModelDownload(prepared, model.id))
+                      .then(refreshModels)
+                      .catch(reportModelError)
+                  }
+                  onDelete={() =>
+                    void ensureLocalApi()
+                      .dialogs.confirm(`Delete ${model.name} from this T3 environment?`)
+                      .then((confirmed) => {
+                        if (confirmed)
+                          runModelOperation(model.id, () =>
+                            runtime.runPromise(removeEnvironmentSpeechModel(prepared, model.id)),
+                          );
+                      })
+                  }
+                />
+              ))}
+              {currentModels.length === 0 ? (
+                <p className="py-8 text-center text-xs text-muted-foreground">
+                  No transcription models are available.
+                </p>
+              ) : null}
+            </div>
+          </div>
+        ) : (
+          <p className="border-t border-border/50 px-4 py-4 text-xs text-muted-foreground">
+            {currentStatus && !currentStatus.supported
+              ? currentStatus.reason
+              : "Connect to a current T3 environment to manage transcription models."}
+          </p>
+        )}
+      </SettingsSection>
+      <SettingsSection title="Transcription options">
         <SettingsRow
           {...searchableSetting("dictionary")}
           description="Help transcription recognize names, technical terms, and uncommon vocabulary."
@@ -471,6 +585,35 @@ export function VoiceSettingsPanel() {
           }
         />
         <SettingsRow
+          {...searchableSetting("remove-filler-words")}
+          description="Remove common hesitation words while preserving ambiguous words in multilingual transcription."
+          control={
+            <Switch
+              aria-label="Remove filler words"
+              checked={removeFillerWords}
+              disabled={!currentStatus?.supported || operation !== null}
+              onCheckedChange={(enabled) => {
+                if (!prepared) return;
+                setOperation("filler-words");
+                void runtime
+                  .runPromise(updateEnvironmentSpeechFillerWordRemoval(prepared, enabled))
+                  .then((value) => setStatus({ prepared, value }))
+                  .catch((error) => {
+                    toastManager.add({
+                      type: "error",
+                      title: "Could not update filler word removal",
+                      description: error instanceof Error ? error.message : String(error),
+                    });
+                  })
+                  .finally(() => setOperation(null));
+              }}
+            />
+          }
+        />
+      </SettingsSection>
+      <VoicePostProcessingSettings />
+      <SettingsSection title="Advanced">
+        <SettingsRow
           {...searchableSetting("speech-acceleration")}
           description="Choose where transcription runs on the selected environment. Auto uses a GPU when available."
           control={
@@ -521,140 +664,6 @@ export function VoiceSettingsPanel() {
             </Select>
           }
         />
-        <SettingsRow
-          {...searchableSetting("remove-filler-words")}
-          description="Remove common hesitation words while preserving ambiguous words in multilingual transcription."
-          control={
-            <Switch
-              aria-label="Remove filler words"
-              checked={removeFillerWords}
-              disabled={!currentStatus?.supported || operation !== null}
-              onCheckedChange={(enabled) => {
-                if (!prepared) return;
-                setOperation("filler-words");
-                void runtime
-                  .runPromise(updateEnvironmentSpeechFillerWordRemoval(prepared, enabled))
-                  .then((value) => setStatus({ prepared, value }))
-                  .catch((error) => {
-                    toastManager.add({
-                      type: "error",
-                      title: "Could not update filler word removal",
-                      description: error instanceof Error ? error.message : String(error),
-                    });
-                  })
-                  .finally(() => setOperation(null));
-              }}
-            />
-          }
-        />
-      </SettingsSection>
-      <VoicePostProcessingSettings />
-      <SettingsSection
-        title="Transcription Models"
-        id={searchableSetting("local-voice-input").id}
-        variant="plain"
-      >
-        <div className="space-y-4 px-3 sm:px-4">
-          <p className="max-w-xl text-[12px] leading-relaxed text-muted-foreground/80">
-            Models run on the selected T3 environment. Recordings are deleted after transcription.
-          </p>
-          {currentStatus?.supported && prepared ? (
-            <div className="space-y-4">
-              {installed.length > 0 ? (
-                <div className="space-y-2">
-                  <h3 className="text-xs font-medium text-muted-foreground">Your models</h3>
-                  {installed.map((model) => (
-                    <ModelCard
-                      key={model.id}
-                      model={model}
-                      busy={operation !== null}
-                      onDownload={() =>
-                        runModelOperation(model.id, () =>
-                          runtime.runPromise(downloadEnvironmentSpeechModel(prepared, model.id)),
-                        )
-                      }
-                      onSelect={() =>
-                        runModelOperation(model.id, () =>
-                          runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id)),
-                        )
-                      }
-                      onCancel={() =>
-                        void runtime
-                          .runPromise(cancelEnvironmentSpeechModelDownload(prepared, model.id))
-                          .then(refreshModels)
-                          .catch(reportModelError)
-                      }
-                      onDelete={() =>
-                        void ensureLocalApi()
-                          .dialogs.confirm(`Delete ${model.name} from this T3 environment?`)
-                          .then((confirmed) => {
-                            if (confirmed)
-                              runModelOperation(model.id, () =>
-                                runtime.runPromise(
-                                  removeEnvironmentSpeechModel(prepared, model.id),
-                                ),
-                              );
-                          })
-                      }
-                    />
-                  ))}
-                </div>
-              ) : null}
-              {available.length > 0 ? (
-                <div className="space-y-2">
-                  <h3 className="text-xs font-medium text-muted-foreground">Available models</h3>
-                  {available.map((model) => (
-                    <ModelCard
-                      key={model.id}
-                      model={model}
-                      busy={operation !== null}
-                      onDownload={() =>
-                        runModelOperation(model.id, async () => {
-                          const result = await runtime.runPromise(
-                            downloadEnvironmentSpeechModel(prepared, model.id),
-                          );
-                          if (
-                            !result.models.some(
-                              (candidate) =>
-                                candidate.id === model.id && candidate.state === "installed",
-                            )
-                          )
-                            return;
-                          await runtime.runPromise(
-                            selectEnvironmentSpeechModel(prepared, model.id),
-                          );
-                        })
-                      }
-                      onSelect={() =>
-                        runModelOperation(model.id, () =>
-                          runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id)),
-                        )
-                      }
-                      onCancel={() =>
-                        void runtime
-                          .runPromise(cancelEnvironmentSpeechModelDownload(prepared, model.id))
-                          .then(refreshModels)
-                          .catch(reportModelError)
-                      }
-                      onDelete={() => undefined}
-                    />
-                  ))}
-                </div>
-              ) : null}
-              {models.length === 0 ? (
-                <div className="py-8 text-center text-xs text-muted-foreground">
-                  No transcription models are available.
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <div className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground">
-              {currentStatus && !currentStatus.supported
-                ? currentStatus.reason
-                : "Connect to a current T3 environment to manage transcription models."}
-            </div>
-          )}
-        </div>
       </SettingsSection>
     </SettingsPageContainer>
   );

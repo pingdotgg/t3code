@@ -67,7 +67,7 @@ export function VoicePostProcessingSettings() {
   const hasServerTargets = connectedEnvironments.length > 0;
 
   return (
-    <SettingsSection title="Post-processing">
+    <SettingsSection title="Improve transcripts">
       <SettingsRow
         serverScoped
         settingKeys={["speechPostProcessingEnabled"]}
@@ -168,103 +168,97 @@ export function VoicePostProcessingSettings() {
         settingKeys={["speechPostProcessingPrompts", "speechPostProcessingSelectedPromptId"]}
         {...searchableSetting("speech-post-processing-prompt")}
         description="Instructions used to clean the transcript. The transcript is supplied separately as untrusted text."
-        control={
-          selectedSpeechPrompt ? (
-            <div className="w-full max-w-xl space-y-2">
-              <div className="flex items-center gap-2">
-                <Select
-                  value={selectedSpeechPrompt.id}
-                  onValueChange={(id) =>
-                    id && updateSettings({ speechPostProcessingSelectedPromptId: id })
-                  }
-                >
-                  <SelectTrigger size="sm" aria-label="Voice post-processing prompt preset">
-                    <SelectValue>{selectedSpeechPrompt.name}</SelectValue>
-                  </SelectTrigger>
-                  <SelectPopup align="end" alignItemWithTrigger={false}>
-                    {settings.speechPostProcessingPrompts.map((prompt) => (
-                      <SelectItem key={prompt.id} value={prompt.id}>
-                        {prompt.name}
-                      </SelectItem>
-                    ))}
-                  </SelectPopup>
-                </Select>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    const prompt = {
-                      id: randomUUID(),
-                      name: "New prompt",
-                      prompt: selectedSpeechPrompt.prompt,
-                    };
-                    updateSettings({
-                      speechPostProcessingPrompts: [
-                        ...settings.speechPostProcessingPrompts,
-                        prompt,
-                      ],
-                      speechPostProcessingSelectedPromptId: prompt.id,
-                    });
-                  }}
-                >
-                  New
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={settings.speechPostProcessingPrompts.length <= 1}
-                  onClick={() => {
-                    const prompts = settings.speechPostProcessingPrompts.filter(
-                      (prompt) => prompt.id !== selectedSpeechPrompt.id,
-                    );
-                    updateSettings({
-                      speechPostProcessingPrompts: prompts,
-                      speechPostProcessingSelectedPromptId: prompts[0]?.id ?? "",
-                    });
-                  }}
-                >
-                  Delete
-                </Button>
-              </div>
-              <Input
-                key={`${selectedSpeechPrompt.id}:name`}
-                defaultValue={selectedSpeechPrompt.name}
-                maxLength={100}
-                aria-label="Voice post-processing prompt name"
-                onBlur={(event) =>
-                  updateSettings({
-                    speechPostProcessingPrompts: settings.speechPostProcessingPrompts.map(
-                      (prompt) =>
-                        prompt.id === selectedSpeechPrompt.id
-                          ? { ...prompt, name: event.target.value.trim() || prompt.name }
-                          : prompt,
-                    ),
-                  })
+      >
+        {selectedSpeechPrompt ? (
+          <div className="w-full max-w-xl space-y-2 pt-3 pb-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Select
+                value={selectedSpeechPrompt.id}
+                onValueChange={(id) =>
+                  id && updateSettings({ speechPostProcessingSelectedPromptId: id })
                 }
-              />
-              <Textarea
-                key={selectedSpeechPrompt.id}
-                defaultValue={selectedSpeechPrompt.prompt}
-                maxLength={10_000}
-                aria-label="Voice post-processing prompt"
-                onBlur={(event) =>
+              >
+                <SelectTrigger size="sm" aria-label="Voice post-processing prompt preset">
+                  <SelectValue>{selectedSpeechPrompt.name}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {settings.speechPostProcessingPrompts.map((prompt) => (
+                    <SelectItem key={prompt.id} value={prompt.id}>
+                      {prompt.name}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  const prompt = {
+                    id: randomUUID(),
+                    name: "New prompt",
+                    prompt: selectedSpeechPrompt.prompt,
+                  };
                   updateSettings({
-                    speechPostProcessingPrompts: settings.speechPostProcessingPrompts.map(
-                      (prompt) =>
-                        prompt.id === selectedSpeechPrompt.id
-                          ? {
-                              ...prompt,
-                              prompt: event.target.value.trim() || prompt.prompt,
-                            }
-                          : prompt,
-                    ),
-                  })
-                }
-              />
+                    speechPostProcessingPrompts: [...settings.speechPostProcessingPrompts, prompt],
+                    speechPostProcessingSelectedPromptId: prompt.id,
+                  });
+                }}
+              >
+                New
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={settings.speechPostProcessingPrompts.length <= 1}
+                onClick={() => {
+                  const prompts = settings.speechPostProcessingPrompts.filter(
+                    (prompt) => prompt.id !== selectedSpeechPrompt.id,
+                  );
+                  updateSettings({
+                    speechPostProcessingPrompts: prompts,
+                    speechPostProcessingSelectedPromptId: prompts[0]?.id ?? "",
+                  });
+                }}
+              >
+                Delete
+              </Button>
             </div>
-          ) : null
-        }
-      />
+            <Input
+              key={`${selectedSpeechPrompt.id}:name`}
+              defaultValue={selectedSpeechPrompt.name}
+              maxLength={100}
+              aria-label="Voice post-processing prompt name"
+              onBlur={(event) =>
+                updateSettings({
+                  speechPostProcessingPrompts: settings.speechPostProcessingPrompts.map((prompt) =>
+                    prompt.id === selectedSpeechPrompt.id
+                      ? { ...prompt, name: event.target.value.trim() || prompt.name }
+                      : prompt,
+                  ),
+                })
+              }
+            />
+            <Textarea
+              key={selectedSpeechPrompt.id}
+              defaultValue={selectedSpeechPrompt.prompt}
+              maxLength={10_000}
+              aria-label="Voice post-processing prompt"
+              onBlur={(event) =>
+                updateSettings({
+                  speechPostProcessingPrompts: settings.speechPostProcessingPrompts.map((prompt) =>
+                    prompt.id === selectedSpeechPrompt.id
+                      ? {
+                          ...prompt,
+                          prompt: event.target.value.trim() || prompt.prompt,
+                        }
+                      : prompt,
+                  ),
+                })
+              }
+            />
+          </div>
+        ) : null}
+      </SettingsRow>
     </SettingsSection>
   );
 }

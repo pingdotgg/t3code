@@ -123,6 +123,52 @@ it("shows friendly labels for default voice options", async () => {
   expect(labels).not.toContain("primary-environment");
   expect(labels).not.toContain("system-default");
 });
+it("shows models for the selected language while keeping the active model summary", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("navigator", {});
+  vi.stubGlobal("window", { setInterval, clearInterval });
+  mocks.listModels.mockResolvedValue({
+    models: [
+      {
+        id: "english",
+        name: "English Model",
+        description: "English speech",
+        languages: ["en"],
+        state: "installed",
+        active: true,
+        recommended: true,
+        supportsStreaming: false,
+        size: 100,
+        accuracy: 90,
+        speed: 90,
+      },
+      {
+        id: "french",
+        name: "French Model",
+        description: "French speech",
+        languages: ["fr"],
+        state: "downloadable",
+        active: false,
+        recommended: false,
+        supportsStreaming: false,
+        size: 100,
+        accuracy: 90,
+        speed: 90,
+      },
+    ],
+  });
+  await act(async () => {
+    root = create(createElement(VoiceSettingsPanel));
+  });
+
+  const modelNames = () => root.root.findAllByType("span").map((span) => span.children.join(""));
+  expect(modelNames()).toContain("English Model");
+  expect(modelNames()).not.toContain("French Model");
+  const french = root.root.findByProps({ children: "French" });
+  await act(async () => french.props.onClick());
+  expect(modelNames()).toContain("French Model");
+  expect(modelNames()).toContain("English Model");
+});
 it("shows cancellation errors without clearing the download state", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("navigator", {});
