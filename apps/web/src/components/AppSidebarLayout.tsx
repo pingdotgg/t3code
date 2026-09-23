@@ -16,6 +16,7 @@ import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
 } from "../keybindings";
+import { isTerminalFocused } from "../lib/terminalFocus";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
@@ -147,6 +148,37 @@ function SidebarControl() {
   );
 }
 
+// Moves through the app's route history like a browser's back/forward buttons.
+function NavigationHistoryShortcuts() {
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest("[data-keybinding-capture]")
+      ) {
+        return;
+      }
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: { terminalFocus: isTerminalFocused() },
+      });
+      if (command !== "navigation.back" && command !== "navigation.forward") return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (command === "navigation.back") window.history.back();
+      else window.history.forward();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [keybindings]);
+
+  return null;
+}
+
 // Settings swaps the thread sidebar out of the tree. Keep the lightweight
 // project projection subscribed so returning to a draft never renders the
 // zero-project state while the environment snapshot reconnects.
@@ -269,6 +301,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         </Sidebar>
         {children}
         <SidebarControl />
+        <NavigationHistoryShortcuts />
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
   );
