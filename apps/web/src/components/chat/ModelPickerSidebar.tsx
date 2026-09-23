@@ -39,7 +39,6 @@ const NEW_BADGE_CLASS = `${BADGE_BASE_CLASS} text-update-foreground `;
 /** Opens toward the rail so the list stays readable (not over the model names). */
 const PICKER_TOOLTIP_SIDE = "left" as const;
 const PICKER_TOOLTIP_SIDE_OFFSET = 8;
-const PICKER_TOOLTIP_CLASS = "max-w-64 text-balance font-normal leading-snug";
 
 export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
   selectedInstanceId: ProviderInstanceId | "favorites";
@@ -139,7 +138,6 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                     side={PICKER_TOOLTIP_SIDE}
                     sideOffset={PICKER_TOOLTIP_SIDE_OFFSET}
                     align="center"
-                    className={PICKER_TOOLTIP_CLASS}
                   >
                     Favorites
                   </TooltipPopup>
@@ -242,7 +240,6 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                     side={PICKER_TOOLTIP_SIDE}
                     sideOffset={PICKER_TOOLTIP_SIDE_OFFSET}
                     align="center"
-                    className={PICKER_TOOLTIP_CLASS}
                   >
                     {tooltip}
                   </TooltipPopup>

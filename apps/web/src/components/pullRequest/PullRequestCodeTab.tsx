@@ -70,6 +70,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "../ui/menu";
 import { toastManager } from "../ui/toast";
@@ -783,7 +785,7 @@ function PullRequestCodeTab({
           variant="ghost-muted"
           aria-expanded={!collapsed}
           aria-label={collapsed ? "Expand diff" : "Collapse diff"}
-          className="mr-1 rounded hover:bg-transparent"
+          className="mr-1"
           onClick={(event) => {
             event.stopPropagation();
             toggleFile(item.id);
@@ -1069,38 +1071,39 @@ function PullRequestCodeTab({
         {orderedCommits.length > 0 ? (
           <DropdownMenu>
             <DropdownMenuTrigger
-              className="inline-flex h-6 min-w-0 max-w-64 items-center gap-1 rounded-md bg-accent px-2 text-xs font-medium text-accent-foreground outline-none transition-colors hover:bg-accent/80 focus-visible:ring-2 focus-visible:ring-ring"
+              render={<Button size="xs" variant="secondary" />}
+              className="min-w-0 max-w-64"
               aria-label={`Diff scope: ${scopeLabel}`}
             >
               <span className="truncate">{scopeLabel}</span>
               <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-80">
-              <DropdownMenuItem
-                className={commit === null ? "bg-foreground/[0.08]" : undefined}
-                onClick={() => onSelectedCommitChange(null)}
+            <DropdownMenuContent align="start">
+              <DropdownMenuRadioGroup
+                value={commit ?? "all"}
+                onValueChange={(value) => onSelectedCommitChange(value === "all" ? null : value)}
               >
-                <span>All commits</span>
-              </DropdownMenuItem>
-              {orderedCommits.slice(0, visibleCommitCount).map((entry) => (
-                <DropdownMenuItem
-                  key={entry.oid}
-                  className={entry.oid === commit ? "bg-foreground/[0.08]" : undefined}
-                  onClick={() => onSelectedCommitChange(entry.oid)}
-                >
-                  {/* Headlines run long, and the abbreviated oid after one is what a reader
-                      matches against the commit list on the host. */}
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={<span className="min-w-0 truncate">{entry.messageHeadline}</span>}
-                    />
-                    <TooltipPopup side="top">{entry.messageHeadline}</TooltipPopup>
-                  </Tooltip>
-                  <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
-                    {entry.oid.slice(0, 7)}
-                  </span>
-                </DropdownMenuItem>
-              ))}
+                <DropdownMenuRadioItem value="all" closeOnClick>
+                  <span>All commits</span>
+                </DropdownMenuRadioItem>
+                {orderedCommits.slice(0, visibleCommitCount).map((entry) => (
+                  <DropdownMenuRadioItem key={entry.oid} value={entry.oid} closeOnClick>
+                    {/* Headlines run long, and the abbreviated oid after one is what a reader
+                        matches against the commit list on the host. */}
+                    <span className="flex items-center gap-2">
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={<span className="min-w-0 truncate">{entry.messageHeadline}</span>}
+                        />
+                        <TooltipPopup side="top">{entry.messageHeadline}</TooltipPopup>
+                      </Tooltip>
+                      <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
+                        {entry.oid.slice(0, 7)}
+                      </span>
+                    </span>
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
               {orderedCommits.length > visibleCommitCount ? (
                 // Kept out of the radio group: it changes how much of the list is on screen
                 // rather than what the diff is scoped to.
@@ -1404,63 +1407,63 @@ function PullRequestCodeTab({
       {/* Above the code, closed, and counted: these belong to the change rather than to any
             line of it, and in the stream they read as cards dropped into the patch. */}
       {orphanFiles.size > 0 ? (
-        <Collapsible
-          className="shrink-0 border-b border-border/60"
-          open={orphansOpen}
-          onOpenChange={setOrphansOpen}
-        >
-          {/* Still a heading, so the section keeps its place in a screen reader's outline;
+        <div className="shrink-0 border-b border-border/60">
+          <Collapsible open={orphansOpen} onOpenChange={setOrphansOpen}>
+            {/* Still a heading, so the section keeps its place in a screen reader's outline;
                 the count is spelled out there rather than left as a bare number. */}
-          <h2>
-            <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground">
-              {/* While slices are still arriving a conversation may simply belong to a file
+            <h2>
+              <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground">
+                {/* While slices are still arriving a conversation may simply belong to a file
                     that has not landed yet, which is not the same as being off the diff. */}
-              <span>
-                {nextCursor === null
-                  ? "Conversations not on the current diff"
-                  : "Conversations not on the diff loaded so far"}
-              </span>
-              <ChevronRightIcon
-                aria-hidden
-                className={cn("size-3.5 transition-transform", orphansOpen && "rotate-90")}
-              />
-              <span aria-hidden className="tabular-nums">
-                {orphanThreads.length}
-              </span>
-              <span className="sr-only">
-                {orphanThreads.length === 1
-                  ? "1 conversation"
-                  : `${orphanThreads.length} conversations`}
-              </span>
-            </CollapsibleTrigger>
-          </h2>
-          <CollapsiblePanel>
-            {/* Capped: opened on a change with dozens of them, this would otherwise leave no
+                <span>
+                  {nextCursor === null
+                    ? "Conversations not on the current diff"
+                    : "Conversations not on the diff loaded so far"}
+                </span>
+                <ChevronRightIcon
+                  aria-hidden
+                  className={cn("size-3.5 transition-transform", orphansOpen && "rotate-90")}
+                />
+                <span aria-hidden className="tabular-nums">
+                  {orphanThreads.length}
+                </span>
+                <span className="sr-only">
+                  {orphanThreads.length === 1
+                    ? "1 conversation"
+                    : `${orphanThreads.length} conversations`}
+                </span>
+              </CollapsibleTrigger>
+            </h2>
+            <CollapsiblePanel>
+              {/* Capped: opened on a change with dozens of them, this would otherwise leave no
                   room for the diff it sits above. */}
-            <div className="max-h-64 space-y-3 overflow-auto px-4 pb-3">
-              {[...orphanFiles].map(([path, threads]) => (
-                <div key={path}>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={<p className="truncate px-3 text-xs text-muted-foreground">{path}</p>}
-                    />
-                    <TooltipPopup side="top">{path}</TooltipPopup>
-                  </Tooltip>
-                  <div className="mt-1 space-y-2">
-                    {threads.map((thread) => (
-                      <div key={thread.id}>
-                        {thread.line === null ? null : (
-                          <p className="px-3 text-xs text-muted-foreground">Line {thread.line}</p>
-                        )}
-                        {renderThreadCard(thread)}
-                      </div>
-                    ))}
+              <div className="max-h-64 space-y-3 overflow-auto px-4 pb-3">
+                {[...orphanFiles].map(([path, threads]) => (
+                  <div key={path}>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <p className="truncate px-3 text-xs text-muted-foreground">{path}</p>
+                        }
+                      />
+                      <TooltipPopup side="top">{path}</TooltipPopup>
+                    </Tooltip>
+                    <div className="mt-1 space-y-2">
+                      {threads.map((thread) => (
+                        <div key={thread.id}>
+                          {thread.line === null ? null : (
+                            <p className="px-3 text-xs text-muted-foreground">Line {thread.line}</p>
+                          )}
+                          {renderThreadCard(thread)}
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </CollapsiblePanel>
-        </Collapsible>
+                ))}
+              </div>
+            </CollapsiblePanel>
+          </Collapsible>
+        </div>
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Relative wrapper so the review overlay floats over the diff rather than pushing it

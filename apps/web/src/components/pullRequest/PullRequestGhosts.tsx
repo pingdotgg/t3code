@@ -169,10 +169,7 @@ export function PullRequestDetailGhost({
                 <span className="min-w-0 truncate font-medium">{seed.repository}</span>
                 <InlineButton
                   onClick={() => void readLocalApi()?.shell.openExternal(seed.url)}
-                  className={cn(
-                    "font-medium underline-offset-2 hover:underline",
-                    statePresentation?.toneClassName,
-                  )}
+                  className={statePresentation?.toneClassName}
                   aria-label={`Open pull request #${seed.number} on host`}
                 >
                   #{seed.number}
@@ -219,11 +216,7 @@ export function PullRequestDetailGhost({
               <div className="mt-2 flex min-h-5 min-w-0 items-center gap-2 text-xs text-muted-foreground">
                 {seed ? (
                   <PullRequestMetaLine className="min-w-0 whitespace-nowrap">
-                    <PullRequestActorLabel
-                      actor={seed.author ?? null}
-                      className="font-medium"
-                      tooltip={false}
-                    />
+                    <PullRequestActorLabel actor={seed.author ?? null} tooltip={false} />
                     <span>updated {formatRelativeTimeLabel(seed.updatedAt)}</span>
                   </PullRequestMetaLine>
                 ) : (

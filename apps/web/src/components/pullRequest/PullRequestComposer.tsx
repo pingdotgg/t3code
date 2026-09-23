@@ -78,13 +78,7 @@ export function PullRequestComposer({
       }}
     >
       <PopoverTrigger
-        render={
-          <Button
-            size="icon"
-            variant="glass"
-            className="rounded-full shadow-lg [--glass-opacity:50%]"
-          />
-        }
+        render={<Button size="icon" variant="glass" />}
         // The only label this control has, so the pending count belongs in it: the badge beside
         // the icon is decorative and a reader who cannot see it still needs the number.
         aria-label={
@@ -110,7 +104,7 @@ export function PullRequestComposer({
         side="top"
         align="end"
         sideOffset={8}
-        className="w-96 max-w-[calc(100vw-2rem)]"
+        width="lg"
         initialFocus={mode === "review" ? reviewRef : commentRef}
         aria-label="Pull request composer"
       >
@@ -131,7 +125,7 @@ export function PullRequestComposer({
               </Toggle>
             </ToggleGroup>
           ) : (
-            <PopoverTitle className="text-sm">
+            <PopoverTitle>
               {mode === "review" ? "Review pull request" : "Comment on pull request"}
             </PopoverTitle>
           )}

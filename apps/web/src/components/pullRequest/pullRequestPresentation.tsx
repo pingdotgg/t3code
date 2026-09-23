@@ -23,6 +23,7 @@ import { Children, type CSSProperties, isValidElement, type ReactNode, useState 
 import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
+import { InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { PullRequestReviewOutcome } from "./pullRequestDetail.logic";
 import { pullRequestLabelColor } from "./pullRequestList.logic";
@@ -57,14 +58,8 @@ export function PullRequestLabelChip({
   return (
     <Badge
       size={size}
-      variant="secondary"
-      className={cn(
-        "min-w-0 max-w-40 shrink justify-start gap-1 rounded-full px-2",
-        size === "sm" && "h-4 text-[.625rem]",
-        color &&
-          "bg-[color-mix(in_srgb,var(--label)_8%,transparent)] text-[color-mix(in_srgb,var(--label)_30%,var(--color-foreground))] dark:bg-[color-mix(in_srgb,var(--label)_12%,transparent)] dark:text-[color-mix(in_srgb,var(--label)_45%,var(--color-foreground))]",
-        className,
-      )}
+      variant={color ? "label" : "secondary"}
+      className={cn("min-w-0 max-w-40 shrink justify-start", className)}
       {...(color ? { style: { "--label": color } as CSSProperties } : {})}
     >
       <span className="truncate">{label.name}</span>
@@ -411,7 +406,7 @@ export function PullRequestReviewOutcomeBadge({
 }) {
   const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
   return (
-    <Badge size="sm" variant={presentation.badgeVariant} className={cn("gap-1", className)}>
+    <Badge size="sm" variant={presentation.badgeVariant} className={className}>
       <presentation.Icon aria-hidden className="size-3" />
       {presentation.label}
     </Badge>
@@ -451,51 +446,56 @@ export function PullRequestActorAvatar({
   );
 }
 
-/** GitHub attributes work from a deleted account to "ghost"; say the same word everywhere. */
+/**
+ * GitHub attributes work from a deleted account to "ghost"; say the same word everywhere.
+ *
+ * An actor as a login beside its avatar, or as the avatar alone. With a profile URL the actor
+ * is an inline link; `className` places it and never restyles it.
+ */
 export function PullRequestActorLabel({
   actor,
   className,
-  labelClassName,
+  variant = "label",
   tooltip = true,
   profileUrl,
 }: {
   actor: PullRequestActor | null;
   className?: string;
-  labelClassName?: string;
+  variant?: "label" | "avatar";
   tooltip?: boolean;
   profileUrl?: string | null;
 }) {
   const login = actor?.login ?? "ghost";
   const label = (
-    <>
+    <span className={cn("flex min-w-0 items-center", variant === "label" && "gap-1.5")}>
       <PullRequestActorAvatar actor={actor} />
-      <span className={cn("truncate", labelClassName)}>{login}</span>
-    </>
+      <span className={variant === "label" ? "truncate font-medium text-foreground" : "sr-only"}>
+        {login}
+      </span>
+    </span>
   );
-  if (!tooltip) {
-    return <span className={cn("flex min-w-0 items-center gap-1.5", className)}>{label}</span>;
-  }
+  const placement = cn("flex min-w-0 shrink", className);
+  if (!tooltip) return <span className={placement}>{label}</span>;
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           profileUrl ? (
-            <a
-              href={profileUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={`Open ${login}'s profile`}
+            <InlineButton
+              className={placement}
+              render={
+                <a
+                  href={profileUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Open ${login}'s profile`}
+                />
+              }
             />
           ) : (
-            <span />
+            <span className={placement} />
           )
         }
-        className={cn(
-          "flex min-w-0 items-center gap-1.5",
-          profileUrl &&
-            "cursor-pointer rounded-sm underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-          className,
-        )}
       >
         {label}
       </TooltipTrigger>

@@ -17,11 +17,7 @@ export function SidebarThreadUndoNotice() {
     <Alert role="status" variant="sidebar">
       <AlertDescription>
         {notice.action} {notice.count} thread{notice.count === 1 ? "" : "s"},{" "}
-        <InlineButton
-          underline
-          onClick={undoLatestThreadAction}
-          className="hover:text-sidebar-foreground"
-        >
+        <InlineButton onClick={undoLatestThreadAction}>
           {shortcut ? `${shortcut} to undo` : "Undo"}
         </InlineButton>
       </AlertDescription>
