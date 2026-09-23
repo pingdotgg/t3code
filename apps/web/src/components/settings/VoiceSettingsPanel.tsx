@@ -282,7 +282,7 @@ export function VoiceSettingsPanel() {
       .catch((error) => {
         toastManager.add({
           type: "error",
-          title: "Could not update custom words",
+          title: "Could not update dictionary",
           description: error instanceof Error ? error.message : String(error),
         });
       })
@@ -413,7 +413,7 @@ export function VoiceSettingsPanel() {
           }
         />
         <SettingsRow
-          {...searchableSetting("custom-words")}
+          {...searchableSetting("dictionary")}
           description="Help transcription recognize names, technical terms, and uncommon vocabulary."
           control={
             <div className="w-full max-w-80 space-y-2">

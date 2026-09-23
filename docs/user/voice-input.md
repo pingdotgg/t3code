@@ -20,7 +20,7 @@ after recording stops.
 In Voice settings, you can also choose the microphone used by this browser or
 app, switch between downloaded models, or remove models from the environment.
 
-Add names, technical terms, and other uncommon vocabulary under **Custom words**.
+Add names, technical terms, and other uncommon vocabulary to the **Dictionary**.
 The words are stored on the selected transcription environment and apply to every
 web or desktop client that uses it.
 

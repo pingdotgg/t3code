@@ -509,8 +509,8 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
-    id: "custom-words",
-    title: "Custom words",
+    id: "dictionary",
+    title: "Dictionary",
     to: "/settings/voice",
     desktopOnly: true,
     searchTerms: ["speech voice transcription vocabulary names glossary"],
