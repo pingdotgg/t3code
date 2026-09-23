@@ -200,13 +200,13 @@ export default defineConfig({
       {
         // components/ui exports own their look. App code picks a variant or size instead
         // of restyling with className; layout classes (width, flex, margin, position) stay
-        // allowed because placement belongs to the parent. Warn-only until the existing
-        // overrides are migrated to variants; the ceiling below stops the count growing.
+        // allowed because placement belongs to the parent. components/ui is for generic
+        // primitives: a look that belongs to one feature stays in that feature's component.
         files: ["apps/web/src/**"],
         excludeFiles: ["apps/web/src/components/ui/**"],
         rules: {
           "shadcn/no-restyle": [
-            "warn",
+            "error",
             {
               allow: ["layout"],
               contracts: [
