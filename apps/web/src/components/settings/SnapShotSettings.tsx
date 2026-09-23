@@ -7,10 +7,8 @@ import {
   type DesktopSnapShotSetupAction,
   type SnapShotShortcut,
 } from "@t3tools/contracts";
-import { ChevronDownIcon, PlayIcon } from "lucide-react";
+import { PlayIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-
-import { cn } from "~/lib/utils";
 
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { getDesktopSnapShotBridge } from "../../lib/desktopSnapShot";
@@ -44,7 +42,7 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
-import { selectTriggerVariants } from "../ui/select";
+import { SelectButton } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { SnapShotSetupDialog } from "./SnapShotSetupDialog";
@@ -497,21 +495,19 @@ export function SnapShotSettings() {
                   <Menu>
                     <MenuTrigger
                       aria-label={"Snapshot sound: " + soundLabel}
-                      className={cn(selectTriggerVariants({ size: "sm" }), "w-auto min-w-0")}
+                      render={<SelectButton size="sm" />}
+                      className="w-auto min-w-0"
                       disabled={!captureAvailable}
                     >
-                      <span className="min-w-0 flex-1 truncate text-left">
-                        {soundSelection === "off" ? (
-                          "Off"
-                        ) : soundSelection === "soft-pop" ? (
-                          <>
-                            Whoosh <span className="text-muted-foreground">(Default)</span>
-                          </>
-                        ) : (
-                          "Click"
-                        )}
-                      </span>
-                      <ChevronDownIcon className="-me-1 size-3 shrink-0 opacity-50" />
+                      {soundSelection === "off" ? (
+                        "Off"
+                      ) : soundSelection === "soft-pop" ? (
+                        <>
+                          Whoosh <span className="text-muted-foreground">(Default)</span>
+                        </>
+                      ) : (
+                        "Click"
+                      )}
                     </MenuTrigger>
                     <MenuPopup align="end">
                       <MenuRadioGroup
