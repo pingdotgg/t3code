@@ -525,7 +525,11 @@ function PoolBar({
             index={position + 1}
             showAccountName={pool.columns.length > 1}
           />
-        ) : null,
+        ) : (
+          // The account reports nothing in this window, but keeps its place:
+          // a row holds the same account across every card of this provider.
+          <div key={member.account.key} aria-hidden className="h-5 min-w-0 @2xl/pool:h-8" />
+        ),
       )}
     </div>
   );
