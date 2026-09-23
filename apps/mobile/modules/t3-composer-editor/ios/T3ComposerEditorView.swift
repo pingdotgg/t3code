@@ -970,7 +970,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     // `maximumWidth` does, so the chip always fits the line it sits on.
     let availableWidth = textView.textContainer.size.width > 0
       ? textView.textContainer.size.width - textView.textContainer.lineFragmentPadding * 2
-      : UIScreen.main.bounds.width
+      : (textView.window?.bounds.width ?? bounds.width)
     let maximumLabelWidth = max(chipFontSize * 3, availableWidth - padding * 2 - iconWidth - iconGap)
     paragraph.lineBreakMode = .byTruncatingMiddle
     attributedLabel.addAttribute(
