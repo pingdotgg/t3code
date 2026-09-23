@@ -28,7 +28,12 @@ export function BranchNamingSettings(props: {
   const prefixEdited = useRef(false);
   const instructionsEdited = useRef(false);
   return (
-    <SettingsSection title="Worktree branch naming">
+    <SettingsSection
+      title="Worktree branch naming"
+      trailing={
+        props.mode === null ? <Text className="text-xs text-foreground-muted">Mixed</Text> : null
+      }
+    >
       {BranchNamingMode.literals.map((mode, index) => (
         <SettingsChoiceRow
           key={mode}

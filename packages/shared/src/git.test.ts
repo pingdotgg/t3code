@@ -294,6 +294,16 @@ describe("formatGeneratedBranchName", () => {
       }),
     ).toBe("Team/Julius/add-search");
   });
+  it.each([
+    ["release..candidate", "release-candidate/add-search"],
+    [" Team / Jules.lock/", "Team/Jules-lock/add-search"],
+    ["-team//feature@{new}", "team/feature-new/add-search"],
+    [" /?. / ", "add-search"],
+  ])("normalizes invalid static prefix %s", (prefix, expected) => {
+    expect(
+      formatGeneratedBranchName("Add Search", { mode: "static", prefix, instructions: "" }),
+    ).toBe(expected);
+  });
   it("uses the model's semantic prefix without the stored static prefix", () => {
     expect(
       formatGeneratedBranchName("feat/Add Search", {
