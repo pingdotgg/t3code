@@ -174,7 +174,7 @@ import {
   parseStandaloneComposerSlashCommand,
 } from "../composer-logic";
 import { resolveThreadVoiceAvailability } from "../voice/voiceAvailability";
-import { toggleThreadVoice } from "../voice/voiceMode";
+import { toggleThreadVoice, voiceMode } from "../voice/voiceMode";
 import {
   derivePendingApprovals,
   derivePendingUserInputs,
@@ -8494,7 +8494,8 @@ export default function ChatView(props: ChatViewProps) {
     if (parsedSlashCommand === "voice") {
       // Providers without voice receive "/voice" as a normal message.
       const voiceAvailability = resolveThreadVoiceAvailability(activeThread, providerStatuses);
-      if (voiceAvailability.kind !== "unsupported") {
+      // An active conversation always stops, even if the provider stopped offering voice.
+      if (voiceAvailability.kind !== "unsupported" || voiceMode.isActiveFor(routeThreadRef)) {
         toggleThreadVoice(routeThreadRef, voiceAvailability);
         promptRef.current = "";
         clearComposerDraftContent(composerDraftTarget);
