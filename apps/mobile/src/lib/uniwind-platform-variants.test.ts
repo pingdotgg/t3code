@@ -19,6 +19,10 @@ interface CompiledStyle {
   native: boolean;
   minWidth: number;
   maxWidth: number;
+  active: boolean | null;
+  focus: boolean | null;
+  disabled: boolean | null;
+  dataAttributes: Record<string, string> | null;
 }
 
 interface FixtureOutput {
@@ -27,6 +31,11 @@ interface FixtureOutput {
     androidBlocks: number;
     iosUtilities: number;
     androidUtilities: number;
+  };
+  transformerCheck: {
+    reinitPayload: boolean;
+    fingerprintArg: boolean;
+    themesArg: boolean;
   };
   platforms: Record<
     string,
@@ -203,5 +212,42 @@ describe("uniwind keeps media rules nested inside class rules attached to the cl
     const androidEntries = nested.platforms.android?.styles["foo-x"];
     expect(androidEntries?.some((style) => !style.native)).toBe(true);
     expect(androidEntries?.some((style) => style.native)).toBe(false);
+  });
+});
+
+// The patch file carries three independent uniwind fixes (state/data selector
+// variants, the Metro native-styles fingerprint, and this media-query scoping
+// fix). Regenerating it for one fix must not silently drop the others — this
+// suite exercises the shipped transformer and compiler for the other two.
+describe("uniwind patch keeps pre-existing selector and transformer behavior", () => {
+  let output: FixtureOutput;
+
+  beforeAll(() => {
+    output = runFixture(
+      '@import "tailwindcss";\n@import "uniwind";\n',
+      'export const Probe = () => <div className="active:opacity-50 disabled:opacity-50 data-x:underline aria-disabled:text-red-500" />;\n',
+    );
+  }, 60_000);
+
+  it("keeps state and data variants conditioned, and rejects unsupported compounds", () => {
+    for (const platform of ["ios", "android"]) {
+      const styles = output.platforms[platform]?.styles;
+      expect(styles?.["active:opacity-50"]?.every((style) => style.active === true)).toBe(true);
+      expect(styles?.["disabled:opacity-50"]?.every((style) => style.disabled === true)).toBe(true);
+      expect(styles?.["data-x:underline"]?.every((style) => style.dataAttributes?.["data-x"])).toBe(
+        true,
+      );
+      // `[aria-disabled="true"]` is not expressible at runtime; emitting it
+      // unconditionally (the pre-#9355 behavior) styles the element always.
+      expect(styles).not.toHaveProperty("aria-disabled:text-red-500");
+    }
+  });
+
+  it("emits the global.css virtual module with a native styles fingerprint", () => {
+    expect(output.transformerCheck).toEqual({
+      reinitPayload: true,
+      fingerprintArg: true,
+      themesArg: true,
+    });
   });
 });

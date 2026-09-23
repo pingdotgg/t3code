@@ -60,15 +60,16 @@ function createUniwindCompilerLoader(uniwindPackageJson) {
   };
 
   const loadBundler = (request) => load(path.join(uniwindRoot, "dist/common", request));
-  return { loadBundler, uniwindRequire };
+  return { loadBundler, uniwindRequire, uniwindRoot };
 }
 
 async function main() {
-  const fixtureDir = path.resolve(process.argv[2]);
+  const fixtureDir = fs.realpathSync(path.resolve(process.argv[2]));
   const uniwindPackageJson = require.resolve("uniwind/package.json", {
     paths: [fixtureDir],
   });
-  const { loadBundler, uniwindRequire } = createUniwindCompilerLoader(uniwindPackageJson);
+  const { loadBundler, uniwindRequire, uniwindRoot } =
+    createUniwindCompilerLoader(uniwindPackageJson);
   const { ProcessorBuilder } = loadBundler("bundler/css-processor/processor.js");
   const { addMetaToStylesTemplate } = loadBundler(
     "bundler/css-processor/addMetaToStylesTemplate.js",
@@ -110,11 +111,17 @@ async function main() {
     const payload = compileNativeCSS(bundlerConfig, tailwindCSS);
     const styles = {};
     for (const [className, entries] of Object.entries(compiled)) {
-      styles[className] = entries.map(({ native, minWidth, maxWidth }) => ({
-        native,
-        minWidth,
-        maxWidth,
-      }));
+      styles[className] = entries.map(
+        ({ native, minWidth, maxWidth, active, focus, disabled, dataAttributes }) => ({
+          native,
+          minWidth,
+          maxWidth,
+          active: active ?? null,
+          focus: focus ?? null,
+          disabled: disabled ?? null,
+          dataAttributes: dataAttributes ?? null,
+        }),
+      );
     }
     platforms[platform] = {
       styles,
@@ -129,7 +136,45 @@ async function main() {
     };
   }
 
-  process.stdout.write(JSON.stringify({ tailwindChecks, platforms }));
+  // Exercise the real Metro transformer entry point (the shipped
+  // `dist/metro/transformer.cjs`, not a copy) with a stubbed downstream worker,
+  // to check what the global.css virtual module actually becomes — including
+  // the native styles fingerprint that lets dev reloads skip reinitializing.
+  const transformerPath = path.join(uniwindRoot, "dist/metro/transformer.cjs");
+  let reinitCode = "";
+  const Module = require("node:module");
+  const origLoad = Module._load;
+  Module._load = function (request, ...rest) {
+    if (request === "metro-transform-worker") {
+      return {
+        transform: async (_config, _root, _file, data) => {
+          reinitCode = data.toString();
+          return { output: [{ data: {} }] };
+        },
+      };
+    }
+    return origLoad.call(this, request, ...rest);
+  };
+  process.chdir(fixtureDir);
+  try {
+    const { transform } = require(transformerPath);
+    await transform(
+      { uniwind: { cssEntryFile: "./global.css", isExpoProject: false } },
+      fixtureDir,
+      "global.css",
+      Buffer.from(""),
+      { platform: "ios", type: "module" },
+    );
+  } finally {
+    Module._load = origLoad;
+  }
+  const transformerCheck = {
+    reinitPayload: reinitCode.includes("Uniwind.__reinit(rt =>"),
+    fingerprintArg: /, '[0-9a-f]{64}'\);\s*$/.test(reinitCode),
+    themesArg: reinitCode.includes("['light', 'dark']"),
+  };
+
+  process.stdout.write(JSON.stringify({ tailwindChecks, transformerCheck, platforms }));
 }
 
 main().catch((error) => {
