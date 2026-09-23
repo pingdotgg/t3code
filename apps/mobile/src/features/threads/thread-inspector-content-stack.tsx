@@ -9,7 +9,6 @@ const INSPECTOR_PREWARM_DELAY_MS = 350;
 
 function InspectorContentPane(props: {
   readonly children: ReactNode;
-  readonly inspectorVisible: boolean;
   readonly mounted: boolean;
   readonly resetKeys: readonly [string | null, string | null];
   readonly visible: boolean;
@@ -34,11 +33,7 @@ function InspectorContentPane(props: {
       <RenderErrorBoundary
         resetKeys={props.resetKeys}
         renderFallback={(fallback) => (
-          <RenderFailureView
-            {...fallback}
-            announce={props.inspectorVisible && props.visible}
-            title="The inspector couldn't be displayed"
-          />
+          <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
         )}
       >
         {props.children}
@@ -50,7 +45,6 @@ function InspectorContentPane(props: {
 export function ThreadInspectorContentStack(props: {
   readonly Files: ComponentType;
   readonly Git: ComponentType;
-  readonly inspectorVisible: boolean;
   readonly mode: ThreadInspectorMode;
   readonly resetKeys: readonly [string | null, string | null];
   readonly Route?: ComponentType;
@@ -94,7 +88,6 @@ export function ThreadInspectorContentStack(props: {
   return (
     <View className="flex-1">
       <InspectorContentPane
-        inspectorVisible={props.inspectorVisible}
         mounted={mountedModes.has("files") || props.mode === "files"}
         resetKeys={props.resetKeys}
         visible={props.mode === "files"}
@@ -102,7 +95,6 @@ export function ThreadInspectorContentStack(props: {
         <Files />
       </InspectorContentPane>
       <InspectorContentPane
-        inspectorVisible={props.inspectorVisible}
         mounted={mountedModes.has("git") || props.mode === "git"}
         resetKeys={props.resetKeys}
         visible={props.mode === "git"}
@@ -111,7 +103,6 @@ export function ThreadInspectorContentStack(props: {
       </InspectorContentPane>
       {Route ? (
         <InspectorContentPane
-          inspectorVisible={props.inspectorVisible}
           mounted={mountedModes.has("route") || props.mode === "route"}
           resetKeys={props.resetKeys}
           visible={props.mode === "route"}

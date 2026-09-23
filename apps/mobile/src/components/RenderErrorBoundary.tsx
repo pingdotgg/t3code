@@ -1,5 +1,5 @@
-import { Component, useEffect, type ReactNode } from "react";
-import { AccessibilityInfo, ScrollView, View } from "react-native";
+import { Component, type ReactNode } from "react";
+import { ScrollView, View } from "react-native";
 
 import { AppText as Text } from "./AppText";
 import { MaterialButton } from "./MaterialButton";
@@ -83,17 +83,12 @@ export class RenderErrorBoundary extends Component<
 
 export function RenderFailureView(
   props: RenderFailureProps & {
-    readonly announce?: boolean;
     readonly title?: string;
     readonly bottomInset?: number;
     readonly exit?: { readonly label: string; readonly onPress: () => void };
   },
 ) {
   const title = props.title ?? "This screen couldn't be displayed";
-  useEffect(() => {
-    if (props.announce !== false) AccessibilityInfo.announceForAccessibility(title);
-  }, [props.announce, title]);
-
   return (
     <ScrollView
       className="flex-1 bg-screen"

@@ -144,11 +144,7 @@ export function WorkspaceInspectorPane(props: {
             <RenderErrorBoundary
               resetKeys={[props.pathname]}
               renderFallback={(fallback) => (
-                <RenderFailureView
-                  {...fallback}
-                  announce={inspectorVisible}
-                  title="The inspector couldn't be displayed"
-                />
+                <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
               )}
             >
               <InspectorRenderer render={props.renderInspector} />
