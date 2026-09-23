@@ -60,6 +60,7 @@ class AgentNotificationsTest {
     "activity_body" to "Test thread · Working",
     "activity_path" to "/threads/environment/thread",
     "alert_id" to alertId,
+    "alert_group" to "environment/thread",
     "alert_title" to "Test thread",
     "alert_body" to "Done: Test project",
     "alert_path" to "/threads/environment/thread",
@@ -74,6 +75,12 @@ class AgentNotificationsTest {
     assertTrue(manager.activeNotifications.isEmpty())
     AgentNotifications.receive(context, update("alert-0", false))
     assertEquals("alert-0".hashCode(), manager.activeNotifications.single().id)
+  }
+
+  @Test
+  fun alertsStackByThreadGroup() {
+    AgentNotifications.receive(context, update("grouped", false))
+    assertEquals("environment/thread", manager.activeNotifications.single().notification.group)
   }
 
   @Test

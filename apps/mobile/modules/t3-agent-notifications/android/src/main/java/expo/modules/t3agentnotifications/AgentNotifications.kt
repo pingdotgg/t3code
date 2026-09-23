@@ -146,6 +146,9 @@ object AgentNotifications {
           .setContentTitle(title).setContentText(body)
           .setStyle(NotificationCompat.BigTextStyle().bigText(body))
           .setAutoCancel(true)
+          // Stack alerts by thread, matching the iOS thread-id, so a chatty
+          // thread does not push the others out of the shade.
+          .setGroup(data["alert_group"] ?: ALERT_TAG)
           .setContentIntent(contentIntent(context, scheme, data["alert_path"], id))
           .build()
         manager(context).notify(ALERT_TAG, id, notification)

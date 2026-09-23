@@ -454,6 +454,7 @@ describe("Android delivery routing", () => {
     ).toMatchObject({
       alert_title: `${"T".repeat(117)}...`,
       alert_body: `Done: ${"P".repeat(111)}...`,
+      alert_group: `${state.environmentId}/${state.threadId}`,
     });
   });
 
