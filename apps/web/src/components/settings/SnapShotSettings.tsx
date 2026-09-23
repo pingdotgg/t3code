@@ -54,10 +54,7 @@ import {
   type CaptureSetupStep,
 } from "./SnapShotSetupDialog.logic";
 
-const soundOptionRowClassName =
-  "grid grid-cols-[1fr_auto] rounded-sm has-data-checked:bg-foreground/[0.08]";
-const soundOptionItemClassName = "data-checked:bg-transparent";
-const soundPreviewClassName = "min-h-7 w-7 justify-center px-0";
+const soundOptionRowClassName = "grid grid-cols-[1fr_auto]";
 
 function captureSettingsError(title: string, error: unknown) {
   return { title, message: error instanceof Error ? error.message : "Try again." };
@@ -520,16 +517,11 @@ export function SnapShotSettings() {
                           Off
                         </MenuRadioItem>
                         <div className={soundOptionRowClassName}>
-                          <MenuRadioItem
-                            className={soundOptionItemClassName}
-                            closeOnClick
-                            value="soft-pop"
-                          >
+                          <MenuRadioItem closeOnClick value="soft-pop">
                             Whoosh <span className="text-muted-foreground">(Default)</span>
                           </MenuRadioItem>
                           <MenuItem
                             aria-label="Play Whoosh"
-                            className={soundPreviewClassName}
                             closeOnClick={false}
                             onClick={() => playSnapShotSound("soft-pop")}
                           >
@@ -537,16 +529,11 @@ export function SnapShotSettings() {
                           </MenuItem>
                         </div>
                         <div className={soundOptionRowClassName}>
-                          <MenuRadioItem
-                            className={soundOptionItemClassName}
-                            closeOnClick
-                            value="camera-shutter"
-                          >
+                          <MenuRadioItem closeOnClick value="camera-shutter">
                             Click
                           </MenuRadioItem>
                           <MenuItem
                             aria-label="Play Click"
-                            className={soundPreviewClassName}
                             closeOnClick={false}
                             onClick={() => playSnapShotSound("camera-shutter")}
                           >

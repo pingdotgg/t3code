@@ -738,7 +738,7 @@ function UsageEnvironmentFilter({
       <Menu>
         <MenuTrigger
           render={<InlineButton />}
-          className="group/usage-environment min-w-0 max-w-full gap-1"
+          className="group/usage-environment min-w-0 max-w-full"
         >
           <span className="min-w-0 truncate">{label}</span>
           <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">

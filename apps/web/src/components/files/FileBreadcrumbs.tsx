@@ -155,7 +155,16 @@ function BreadcrumbMenuContent(props: {
                 <>
                   <PierreEntryIcon pathValue={entry.path} kind={entry.kind} theme={resolvedTheme} />
                   <Tooltip>
-                    <TooltipTrigger render={<span className="min-w-0 flex-1 truncate" />}>
+                    <TooltipTrigger
+                      render={
+                        <span
+                          className={cn(
+                            "min-w-0 flex-1 truncate",
+                            entry.ignored && "text-muted-foreground",
+                          )}
+                        />
+                      }
+                    >
                       {entry.label}
                     </TooltipTrigger>
                     <TooltipPopup side="right">{entry.path}</TooltipPopup>
@@ -166,7 +175,6 @@ function BreadcrumbMenuContent(props: {
                 <MenuItem
                   key={entry.path}
                   closeOnClick={false}
-                  className={entry.ignored ? "text-muted-foreground" : undefined}
                   onClick={() => props.onDirectoryChange(entry.path)}
                 >
                   {row}
@@ -178,7 +186,6 @@ function BreadcrumbMenuContent(props: {
                   value={entry.path}
                   closeOnClick
                   aria-current={isCurrentFile ? "page" : undefined}
-                  className={entry.ignored ? "text-muted-foreground" : undefined}
                 >
                   <span className="flex min-w-0 items-center gap-2">{row}</span>
                 </MenuRadioItem>
