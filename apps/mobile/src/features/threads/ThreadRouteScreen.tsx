@@ -605,6 +605,7 @@ function ThreadRouteContent(
         <ThreadInspectorContentStack
           Files={FilesInspector}
           Git={GitInspector}
+          inspectorVisible={panes.auxiliaryPaneVisible}
           mode={inspectorMode}
           resetKeys={[routeThreadIdentity, selectedThreadCwd]}
           Route={props.renderInspector ? RouteInspector : undefined}
@@ -615,6 +616,7 @@ function ThreadRouteContent(
       GitInspector,
       RouteInspector,
       inspectorMode,
+      panes.auxiliaryPaneVisible,
       props.renderInspector,
       routeThreadIdentity,
       selectedThreadCwd,
