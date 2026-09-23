@@ -111,7 +111,7 @@ patchedDependencies:
   react-native-nitro-modules@0.35.9: 825622aae63a8fb5b904f3c77908a0e216261d727ea171709f2c0b6088422675
   react-native-reanimated@4.5.5: bae9878a5bdba94e11c890e5ee164542feb622624fc81c13890063094608216d
   react-native-screens@4.26.2: 595114f3f9ce8b9f0d99d1aafe5c12c997b7d75ca9add31d46cbedbfe347b8e0
-  uniwind@1.11.0: 17d92be2eec71bb6396b402e8d034968e54b28746876d7977cb3139655f42b90
+  uniwind@1.11.0: a91f3953483cfd434436de6358ff5b63c49974ef148fad91246c26ba95332625
 
 importers:
 
@@ -478,7 +478,7 @@ importers:
         version: 3.6.0
       uniwind:
         specifier: 1.11.0
-        version: 1.11.0(patch_hash=17d92be2eec71bb6396b402e8d034968e54b28746876d7977cb3139655f42b90)(@expo/metro-config@57.0.12(patch_hash=96f1a75347e6ea02dc4b7034ace815d8ee39e18b8166ebfb573d9e58328f0dc2)(bufferutil@4.1.0)(expo@57.0.18)(typescript@7.0.2)(utf-8-validate@6.0.6))(metro-cache@0.84.5)(metro-transform-worker@0.84.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(metro@0.84.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(tailwindcss@4.3.3)
+        version: 1.11.0(patch_hash=a91f3953483cfd434436de6358ff5b63c49974ef148fad91246c26ba95332625)(@expo/metro-config@57.0.12(patch_hash=96f1a75347e6ea02dc4b7034ace815d8ee39e18b8166ebfb573d9e58328f0dc2)(bufferutil@4.1.0)(expo@57.0.18)(typescript@7.0.2)(utf-8-validate@6.0.6))(metro-cache@0.84.5)(metro-transform-worker@0.84.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(metro@0.84.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(tailwindcss@4.3.3)
     devDependencies:
       '@effect/vitest':
         specifier: 4.0.0-rc.115
@@ -21808,7 +21808,7 @@ snapshots:
 
   universalify@2.0.1: {}
 
-  uniwind@1.11.0(patch_hash=17d92be2eec71bb6396b402e8d034968e54b28746876d7977cb3139655f42b90)(@expo/metro-config@57.0.12(patch_hash=96f1a75347e6ea02dc4b7034ace815d8ee39e18b8166ebfb573d9e58328f0dc2)(bufferutil@4.1.0)(expo@57.0.18)(typescript@7.0.2)(utf-8-validate@6.0.6))(metro-cache@0.84.5)(metro-transform-worker@0.84.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(metro@0.84.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(tailwindcss@4.3.3):
+  uniwind@1.11.0(patch_hash=a91f3953483cfd434436de6358ff5b63c49974ef148fad91246c26ba95332625)(@expo/metro-config@57.0.12(patch_hash=96f1a75347e6ea02dc4b7034ace815d8ee39e18b8166ebfb573d9e58328f0dc2)(bufferutil@4.1.0)(expo@57.0.18)(typescript@7.0.2)(utf-8-validate@6.0.6))(metro-cache@0.84.5)(metro-transform-worker@0.84.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(metro@0.84.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(tailwindcss@4.3.3):
     dependencies:
       '@tailwindcss/node': 4.3.3
       '@tailwindcss/oxide': 4.3.3
