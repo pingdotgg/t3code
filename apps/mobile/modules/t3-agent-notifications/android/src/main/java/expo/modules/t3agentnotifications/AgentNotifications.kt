@@ -88,6 +88,12 @@ object AgentNotifications {
       .forEach { manager.cancel(it.tag, it.id) }
   }
 
+  /** Records the thread route the app is showing, or null when none is open. */
+  fun setThreadOnScreen(context: Context, path: String?) {
+    context.getSharedPreferences(STORE, Context.MODE_PRIVATE).edit()
+      .putString("threadOnScreen", path).apply()
+  }
+
   @Synchronized
   fun dismiss(context: Context) {
     context.getSharedPreferences(
@@ -135,9 +141,13 @@ object AgentNotifications {
     val seen = prefs.getString("seenAlertsOrdered", null)?.split('\n')
       ?: prefs.getStringSet("seenAlerts", emptySet()).orEmpty().toList()
     if (alertId != null && alertId !in seen) {
-      // Match iOS foreground presentation. Consume suppressed alerts as well,
-      // so a delivery retry cannot surface them after the app backgrounds.
-      if (!ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+      // Match iOS foreground presentation: only the thread already on screen
+      // stays quiet, since its feed shows the same change. Consume suppressed
+      // alerts as well, so a delivery retry cannot surface them after the app
+      // backgrounds.
+      val resumed = ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+      val onScreen = resumed && data["alert_path"] == prefs.getString("threadOnScreen", null)
+      if (!onScreen) {
         val title = data["alert_title"].orEmpty().take(120)
         // Grouped alerts list up to five 120-character thread titles.
         val body = data["alert_body"].orEmpty().take(608)

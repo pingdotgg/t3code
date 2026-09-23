@@ -49,6 +49,8 @@ class AgentNotificationsTest {
     )
     AgentNotifications.clear(context)
     AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    // The fixtures alert for this thread; a resumed app is showing it.
+    AgentNotifications.setThreadOnScreen(context, "/threads/environment/thread")
   }
 
   private fun update(alertId: String, active: Boolean) = mapOf(
@@ -91,6 +93,14 @@ class AgentNotificationsTest {
       "Test thread",
       manager.activeNotifications.single().notification.extras.getString(Notification.EXTRA_TITLE)
     )
+  }
+
+  @Test
+  fun foregroundAlertsForThreadsThatAreNotOnScreen() {
+    lifecycle.currentState = Lifecycle.State.RESUMED
+    AgentNotifications.setThreadOnScreen(context, "/threads/environment/other")
+    AgentNotifications.receive(context, update("elsewhere", false))
+    assertEquals("t3-agent-alert", manager.activeNotifications.single().tag)
   }
 
   @Test
