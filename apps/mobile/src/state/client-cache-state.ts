@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import { Atom } from "effect/unstable/reactivity";
 
 import { type ClientCacheKind, MobileDatabase } from "../persistence/mobile-database";
-import { projectFaviconCache } from "../lib/projectFaviconCache";
+import { projectFaviconDatabaseCache } from "../lib/projectFaviconDatabaseCache";
 import * as Runtime from "../lib/runtime";
 
 export interface EnvironmentClientCacheSummary {
@@ -74,8 +74,8 @@ export const clearClientCacheAtom = clientCacheRuntime
   .fn((scope: ClientCacheClearScope, get) =>
     Effect.promise(() =>
       scope.type === "all"
-        ? projectFaviconCache.clearAll()
-        : projectFaviconCache.clearEnvironment(scope.environmentId),
+        ? projectFaviconDatabaseCache.clearAll()
+        : projectFaviconDatabaseCache.clearEnvironment(scope.environmentId),
     ).pipe(
       Effect.andThen(MobileDatabase),
       Effect.flatMap((database) =>

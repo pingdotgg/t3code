@@ -18,7 +18,7 @@ import {
   hasLoadedProjectFavicon,
   markProjectFaviconFailed,
   markProjectFaviconLoaded,
-} from "./projectFaviconCache";
+} from "../lib/projectFaviconRequests";
 
 const EMPTY_FAVICON_URL = Atom.make<string | null>(null);
 
