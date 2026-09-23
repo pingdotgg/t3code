@@ -138,23 +138,43 @@ object AgentNotifications {
       // Match iOS foreground presentation. Consume suppressed alerts as well,
       // so a delivery retry cannot surface them after the app backgrounds.
       if (!ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-        val title = data["alert_title"].orEmpty().take(120)
-        // Grouped alerts list up to five 120-character thread titles.
-        val body = data["alert_body"].orEmpty().take(608)
-        val id = alertId.hashCode()
-        val notification = base(context, ALERT_CHANNEL)
-          .setContentTitle(title).setContentText(body)
-          .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-          .setAutoCancel(true)
-          .setContentIntent(contentIntent(context, scheme, data["alert_path"], id))
-          .build()
-        manager(context).notify(ALERT_TAG, id, notification)
+        postAlert(context, scheme, data, alertId)
       }
       prefs.edit().remove("seenAlerts").putString(
         "seenAlertsOrdered",
         (seen.takeLast(63) + alertId).joinToString("\n")
       ).apply()
     }
+  }
+
+  private fun postAlert(
+    context: Context,
+    scheme: String,
+    data: Map<String, String>,
+    alertId: String
+  ) {
+    val title = data["alert_title"].orEmpty().take(120)
+    // Grouped alerts list up to five 120-character thread titles.
+    val body = data["alert_body"].orEmpty().take(608)
+    val id = alertId.hashCode()
+    val notification = base(context, ALERT_CHANNEL)
+      .setContentTitle(title).setContentText(body)
+      .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+      .setAutoCancel(true)
+      .setContentIntent(contentIntent(context, scheme, data["alert_path"], id))
+      .build()
+    manager(context).notify(ALERT_TAG, id, notification)
+  }
+
+  /**
+   * Renders a relay-shaped payload without the registration, freshness and
+   * foreground checks, for the showcase capture's staged notifications.
+   */
+  @Synchronized
+  fun showcase(context: Context, scheme: String, data: Map<String, String>) {
+    channels(context)
+    data["alert_id"]?.let { postAlert(context, scheme, data, it) }
+    showActivity(context, scheme, data, data["active"] == "true", RUNNING_LIFETIME_MS)
   }
 
   private fun updateActivity(
