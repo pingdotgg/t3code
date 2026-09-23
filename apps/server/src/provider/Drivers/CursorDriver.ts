@@ -13,6 +13,7 @@
  */
 import { CursorSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -238,23 +239,25 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         // The catalog owns Cursor's workspace snapshots and publishes them
         // itself, so the rebuild writes there and hands the registry nothing.
         snapshotsForCwds: (cwds) =>
-          !effectiveConfig.enabled
-            ? Effect.succeed(new Map<string, ServerProvider>())
-            : Effect.forEach(cwds, (cwd) =>
-                probeCursorSkills(cwd, processEnv).pipe(
-                  Effect.map((skills) => [[cwd, skills] as const]),
-                  Effect.catch((cause) =>
-                    Effect.logDebug("Cursor workspace skills rebuild failed", { cwd, cause }).pipe(
-                      Effect.as([]),
-                    ),
+          Effect.gen(function* () {
+            if (!effectiveConfig.enabled) return;
+            const scannedAt = DateTime.formatIso(yield* DateTime.now);
+            const entries = yield* Effect.forEach(cwds, (cwd) =>
+              probeCursorSkills(cwd, processEnv).pipe(
+                Effect.map((skills) => [[cwd, skills] as const]),
+                Effect.catch((cause) =>
+                  Effect.logDebug("Cursor workspace skills rebuild failed", { cwd, cause }).pipe(
+                    Effect.as([]),
                   ),
                 ),
-              ).pipe(
-                Effect.flatMap((entries) => updateWorkspaceSkills(new Map(entries.flat()))),
-                Effect.provideService(FileSystem.FileSystem, fileSystem),
-                Effect.provideService(Path.Path, path),
-                Effect.as(new Map<string, ServerProvider>()),
               ),
+            );
+            yield* updateWorkspaceSkills(new Map(entries.flat()), scannedAt);
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+            Effect.as(new Map<string, ServerProvider>()),
+          ),
         adapter,
         textGeneration,
       } satisfies ProviderInstance;
