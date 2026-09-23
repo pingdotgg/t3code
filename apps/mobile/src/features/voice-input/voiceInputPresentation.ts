@@ -61,14 +61,5 @@ export function resolveVoiceComposerPresentation(
         statusLabel: "Transcribing",
         confirmationEnabled: false,
       };
-    case "post-processing":
-      return {
-        leadingAction: "cancel",
-        trailingAction: "confirm",
-        showsSend: false,
-        statusKind: "active",
-        statusLabel: "Post-processing transcription",
-        confirmationEnabled: false,
-      };
   }
 }

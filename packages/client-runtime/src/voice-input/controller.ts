@@ -4,27 +4,31 @@ import type { PreparedVoiceTranscription, VoiceTranscriber } from "./transcripti
 
 export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
 
-export type VoiceInputPhase =
+export type VoiceInputPhase<WithPostProcessing extends boolean = false> =
   | "idle"
   | "preparing"
   | "recording"
   | "transcribing"
-  | "post-processing"
-  | "error";
+  | "error"
+  | (WithPostProcessing extends true ? "post-processing" : never);
 
-export type VoiceInputState = {
-  readonly phase: VoiceInputPhase;
+export type VoiceInputState<WithPostProcessing extends boolean = false> = {
+  readonly phase: VoiceInputPhase<WithPostProcessing>;
   readonly error: string | null;
   readonly errorAction: "retry" | "settings" | null;
 };
 
-export function voiceInputBlocksSubmission(state: VoiceInputState): boolean {
+export function voiceInputBlocksSubmission(state: VoiceInputState<true>): boolean {
   return (
     state.phase === "preparing" ||
     state.phase === "recording" ||
     state.phase === "transcribing" ||
     state.phase === "post-processing"
   );
+}
+
+export function voiceInputFreezesEditor(state: VoiceInputState<true>): boolean {
+  return voiceInputBlocksSubmission(state);
 }
 
 export type VoiceDraftSnapshot = {
@@ -48,7 +52,7 @@ export interface VoiceRecorder {
   stop(): Promise<void>;
 }
 
-export type VoiceInputControllerDependencies = {
+export type VoiceInputControllerDependencies<WithPostProcessing extends boolean = false> = {
   readonly recorder: VoiceRecorder;
   readonly getTranscriber: () => VoiceTranscriber | null;
   readonly requestPermission: () => Promise<{
@@ -58,17 +62,16 @@ export type VoiceInputControllerDependencies = {
   readonly configureRecording: () => Promise<void>;
   readonly releaseRecording: () => Promise<void>;
   readonly deleteRecording: (uri: string) => void;
-  readonly postProcess?: (
-    transcript: string,
-    options: { readonly signal: AbortSignal },
-  ) => Promise<string>;
+  readonly postProcess?: WithPostProcessing extends true
+    ? (transcript: string, options: { readonly signal: AbortSignal }) => Promise<string>
+    : never;
   readonly onPostProcessingError?: (error: unknown) => void;
   readonly readDraft: () => VoiceDraftSnapshot | null;
   readonly commitDraft: (
     text: string,
     selection: { readonly start: number; readonly end: number },
   ) => void;
-  readonly onStateChange: (state: VoiceInputState) => void;
+  readonly onStateChange: (state: VoiceInputState<WithPostProcessing>) => void;
 };
 
 type TranscriptCommitResult =
@@ -191,11 +194,11 @@ function transcriptionErrorMessage(error: unknown): string {
   return "Could not transcribe this recording.";
 }
 
-const IDLE_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
+const IDLE_STATE: VoiceInputState<true> = { phase: "idle", error: null, errorAction: null };
 
-export class VoiceInputController {
-  private readonly dependencies: VoiceInputControllerDependencies;
-  private state: VoiceInputState = IDLE_STATE;
+export class VoiceInputController<WithPostProcessing extends boolean = false> {
+  private readonly dependencies: VoiceInputControllerDependencies<WithPostProcessing>;
+  private state: VoiceInputState<true> = IDLE_STATE;
   private operationToken = 0;
   private sessionToken: VoiceInputSession | null = null;
   private transcription: PreparedVoiceTranscription | null = null;
@@ -208,12 +211,12 @@ export class VoiceInputController {
   private recordingConfigured = false;
   private finishing = false;
 
-  constructor(dependencies: VoiceInputControllerDependencies) {
+  constructor(dependencies: VoiceInputControllerDependencies<WithPostProcessing>) {
     this.dependencies = dependencies;
   }
 
-  get currentState(): VoiceInputState {
-    return this.state;
+  get currentState(): VoiceInputState<WithPostProcessing> {
+    return this.state as VoiceInputState<WithPostProcessing>;
   }
 
   async start(): Promise<void> {
@@ -565,9 +568,10 @@ export class VoiceInputController {
     this.setState({ phase: "error", error, errorAction });
   }
 
-  private setState(state: VoiceInputState): void {
+  private setState(state: VoiceInputState<true>): void {
     this.state = state;
-    this.dependencies.onStateChange(state);
+    // The post-processing phase is only entered when a postProcess dependency exists.
+    this.dependencies.onStateChange(state as VoiceInputState<WithPostProcessing>);
   }
 }
 

@@ -23,13 +23,13 @@ type SpeechPresentation = {
 export function shouldShowComposerFooter(
   collapsed: boolean,
   approval: boolean,
-  phase: VoiceInputState["phase"],
+  phase: VoiceInputState<true>["phase"],
 ): boolean {
   return phase !== "idle" || (!collapsed && !approval);
 }
 
 export function resolveSpeechPresentation(
-  state: VoiceInputState,
+  state: VoiceInputState<true>,
   progress: { downloaded: number; total: number } | null,
 ): SpeechPresentation {
   switch (state.phase) {
@@ -150,7 +150,7 @@ function RecordingStatus(props: { level: number }) {
 }
 
 export function ComposerSpeechStatus(props: {
-  state: VoiceInputState;
+  state: VoiceInputState<true>;
   progress: { downloaded: number; total: number } | null;
   level: number;
 }) {
@@ -183,7 +183,10 @@ export function ComposerSpeechStatus(props: {
   );
 }
 
-export function ComposerSpeechCancelButton(props: { state: VoiceInputState; onCancel(): void }) {
+export function ComposerSpeechCancelButton(props: {
+  state: VoiceInputState<true>;
+  onCancel(): void;
+}) {
   if (props.state.phase === "idle") return null;
   const label = props.state.phase === "error" ? "Dismiss voice input error" : "Cancel voice input";
 
@@ -210,7 +213,7 @@ export function ComposerSpeechCancelButton(props: { state: VoiceInputState; onCa
 }
 
 export function ComposerSpeechButton(props: {
-  state: VoiceInputState;
+  state: VoiceInputState<true>;
   progress: { downloaded: number; total: number } | null;
   disabled?: boolean;
   onStart(): void;
@@ -258,7 +261,7 @@ export function ComposerSpeechButton(props: {
 }
 
 export function ComposerSpeechRecordingPill(props: {
-  state: VoiceInputState;
+  state: VoiceInputState<true>;
   progress: { downloaded: number; total: number } | null;
   level: number;
   onStop(): void;

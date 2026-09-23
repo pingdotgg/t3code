@@ -23,7 +23,7 @@ import { usePrimaryEnvironmentId } from "../state/environments";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { toastManager } from "../components/ui/toast";
 
-const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
+const INITIAL_STATE: VoiceInputState<true> = { phase: "idle", error: null, errorAction: null };
 
 type DraftInput = {
   readonly text: string;
@@ -65,11 +65,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   if (controllerState.prepared !== prepared) {
     setControllerState({ prepared, value: INITIAL_STATE });
   }
-  const state: VoiceInputState =
+  const state: VoiceInputState<true> =
     controllerState.prepared === prepared ? controllerState.value : INITIAL_STATE;
   const [level, setLevel] = useState(0);
   const [preview, setPreview] = useState<SpeechStreamText | null>(null);
-  const controllerRef = useRef<VoiceInputController | null>(null);
+  const controllerRef = useRef<VoiceInputController<true> | null>(null);
   const latestInputRef = useRef(input);
   const microphoneIdRef = useRef(microphoneId);
   const draftRevisionRef = useRef({ ownerKey: input.ownerKey, text: input.draftText, revision: 0 });
@@ -113,7 +113,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     };
 
     let disposed = false;
-    let controller: VoiceInputController;
+    let controller: VoiceInputController<true>;
     const platform = createBrowserVoiceInputPlatform({
       prepared,
       getMicrophoneId: () => microphoneIdRef.current,
@@ -126,7 +126,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         if (!disposed) void controller.interruptRecording(message);
       },
     });
-    controller = new VoiceInputController({
+    controller = new VoiceInputController<true>({
       recorder: platform.recorder,
       getTranscriber: () => platform.transcriber,
       requestPermission: async () => ({ granted: true, canAskAgain: true }),
