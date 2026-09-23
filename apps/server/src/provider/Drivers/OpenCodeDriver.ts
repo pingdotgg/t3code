@@ -181,8 +181,8 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
           {
             skills: openCodeRuntime.loadOpenCodeSkills(client),
             commands: loadOpenCodeCommands(client).pipe(
-              Effect.timeout("10 seconds"),
               Effect.orElseSucceed(() => []),
+              Effect.timeout("10 seconds"),
             ),
           },
           { concurrency: "unbounded" },
