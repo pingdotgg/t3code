@@ -48,7 +48,12 @@ const TIPTAP_TO_MARK: Record<string, RichTextMark> = {
  * spans markdown like `**\`x\`**` parses into and drops the whole insert.
  * Code nests inside emphasis here, so it only excludes itself like the rest.
  */
-export const ComposerCodeExtension = Code.extend({ excludes: "code" });
+export const ComposerCodeExtension = Code.extend({
+  excludes: "code",
+  // ArrowRight leaves code through the caret stops at styled edges, so the
+  // stock exit (inserting a space at the end of a line) is not needed.
+  exitable: false,
+});
 
 /**
  * Task list items keep their exact source indent in an attribute so nesting

@@ -852,6 +852,15 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           ) {
             const { $from } = view.state.selection;
             const direction = event.key === "ArrowLeft" ? -1 : 1;
+            // Take the other stop of a styled edge before skipping a chip, so
+            // the plain stop between styled text and a chip stays reachable.
+            const step = stepCaretAcrossStyledEdge(view.state, direction);
+            if (step) {
+              event.preventDefault();
+              event.stopPropagation();
+              view.dispatch(step);
+              return true;
+            }
             const adjacent = direction === -1 ? $from.nodeBefore : $from.nodeAfter;
             if (adjacent?.type.name.startsWith("composer-")) {
               event.preventDefault();
@@ -863,13 +872,6 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
                   )
                   .scrollIntoView(),
               );
-              return true;
-            }
-            const step = stepCaretAcrossStyledEdge(view.state, direction);
-            if (step) {
-              event.preventDefault();
-              event.stopPropagation();
-              view.dispatch(step);
               return true;
             }
           }

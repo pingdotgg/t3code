@@ -415,6 +415,31 @@ describe("caret stops at styled edges", () => {
     expect(typed(bold, "x")).toBe("a **xb** c");
   });
 
+  it("offers the plain stop between bold text and a chip right after it", () => {
+    // Markdown needs a space before a mention, but deleting it leaves them adjacent.
+    const doc = schema.node("doc", null, [
+      schema.node("paragraph", null, [
+        schema.text("bold", [schema.marks.bold!.create()]),
+        schema.nodes["composer-mention"]!.create({ path: "README.md", source: "@README.md" }),
+      ]),
+    ]);
+    const inside = EditorState.create({ doc, selection: TextSelection.create(doc, 5) });
+    expect(caretTakesMarksBefore(inside)).toBe(true);
+    const outside = inside.apply(stepCaretAcrossStyledEdge(inside, 1)!);
+    expect(caretTakesMarksBefore(outside)).toBe(false);
+    const withText = outside.apply(outside.tr.insertText("x")).doc;
+    expect(withText.child(0).child(1).text).toBe("x");
+    expect(withText.child(0).child(1).marks).toEqual([]);
+  });
+
+  it("steps out of inline code at the end of a line without inserting a space", () => {
+    expect(ComposerCodeExtension.config.exitable).toBe(false);
+    const inside = stateAt("`code`", 5);
+    const outside = inside.apply(stepCaretAcrossStyledEdge(inside, 1)!);
+    expect(typed(outside, "x")).toBe("`code`x");
+    expect(stepCaretAcrossStyledEdge(outside, 1)).toBeNull();
+  });
+
   it("leaves arrow keys alone away from styled edges", () => {
     expect(stepCaretAcrossStyledEdge(stateAt("**bold** tail", 3), -1)).toBeNull();
     expect(stepCaretAcrossStyledEdge(stateAt("plain text", 1), -1)).toBeNull();
