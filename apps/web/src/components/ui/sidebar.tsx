@@ -5,6 +5,7 @@ import { PanelLeftCloseIcon, PanelLeftIcon } from "lucide-react";
 import * as React from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
+import { Input, type InputProps } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import {
   Sheet,
@@ -155,7 +156,10 @@ function SidebarProvider({
     <SidebarContext value={contextValue}>
       <div
         // Inset layouts opt into bg-sidebar through className.
-        className={cn("group/sidebar-wrapper flex min-h-svh w-full", className)}
+        className={cn(
+          "group/sidebar-wrapper flex min-h-svh w-full max-sm:[--workspace-titlebar-control-size:--spacing(8)]",
+          className,
+        )}
         data-sidebar-state={state}
         data-slot="sidebar-wrapper"
         style={
@@ -337,7 +341,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       variant="ghost"
       {...props}
     >
-      {isOpen ? <PanelLeftCloseIcon /> : <PanelLeftIcon />}
+      {isOpen ? <PanelLeftCloseIcon className="size-4" /> : <PanelLeftIcon className="size-4" />}
       <span className="sr-only">Toggle Sidebar</span>
     </Button>
   );
@@ -527,6 +531,20 @@ function SidebarRail({
   );
 }
 
+/** A bare search or rename field that sits in a row of sidebar chrome. */
+function SidebarInput({ className, ...props }: Omit<InputProps, "unstyled" | "variant">) {
+  return (
+    <Input
+      className={cn(
+        "[&_[data-slot=input]]:h-auto [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:font-medium [&_[data-slot=input]]:text-sidebar-foreground [&_[data-slot=input]]:text-sm [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:placeholder:text-sidebar-muted-foreground",
+        className,
+      )}
+      unstyled
+      {...props}
+    />
+  );
+}
+
 function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
   return (
     <main
@@ -555,7 +573,7 @@ function SidebarHeader({ className, ...props }: React.ComponentProps<"div">) {
 function SidebarFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
-      className={cn("flex flex-col gap-2 p-2", className)}
+      className={cn("flex flex-col gap-2 px-[var(--sidebar-content-inset)] py-1", className)}
       data-sidebar="footer"
       data-slot="sidebar-footer"
       {...props}
@@ -584,7 +602,10 @@ function SidebarContent({
         <div
           // Reordered rows must not pull the viewport to their new position.
           className={cn(
-            "flex w-full min-w-0 flex-col gap-2 [overflow-anchor:none] group-data-[collapsible=icon]:overflow-hidden",
+            // Stacked groups share one inset between them instead of doubling
+            // it, including across the fixed header's boundary.
+            "flex w-full min-w-0 flex-col [overflow-anchor:none] group-data-[collapsible=icon]:overflow-hidden [&>[data-sidebar=group]+[data-sidebar=group]]:pt-0",
+            fixedHeader && "[&>[data-sidebar=group]:first-child]:pt-0",
             className,
           )}
           data-sidebar="content"
@@ -767,6 +788,7 @@ function SidebarMenuSubButton({
 }
 
 export {
+  SidebarInput,
   Sidebar,
   SidebarContent,
   SidebarFooter,

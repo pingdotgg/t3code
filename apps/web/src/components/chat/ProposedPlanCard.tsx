@@ -223,7 +223,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               Enter a path relative to <code>{workspaceRoot ?? "the workspace"}</code>.
             </DialogDescription>
           </DialogHeader>
-          <DialogPanel className="space-y-3">
+          <DialogPanel>
             <label htmlFor={savePathInputId} className="grid gap-1.5">
               <span className="text-xs font-medium text-foreground">Workspace path</span>
               <Input

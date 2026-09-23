@@ -1,4 +1,5 @@
 import {
+  isNullableProjectSettingsOverride,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type EnvironmentId,
   type ProjectId,
@@ -69,7 +70,19 @@ export function planMobileScopedSettingsPatch(
       continue;
     const current =
       target.environment.serverConfig.settings.projectSettingsOverrides[target.projectId] ?? {};
-    const next = { ...current, ...patch };
+    const next: Record<string, unknown> = { ...current };
+    for (const [key, value] of Object.entries(patch)) {
+      // A picker's "Inherit" sends null; for keys whose override cannot
+      // store null that means remove the override.
+      if (
+        value === null &&
+        !isNullableProjectSettingsOverride(key as ProjectScopedServerSettingKey)
+      ) {
+        delete next[key];
+      } else {
+        next[key] = value;
+      }
+    }
     const overrides = writes.get(target.environment.environmentId) ?? {};
     overrides[target.projectId] = next;
     writes.set(target.environment.environmentId, overrides);

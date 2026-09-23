@@ -131,7 +131,7 @@ export function FileSurfaceLoading(props: { readonly className?: string }) {
         props.className,
       )}
     >
-      <Spinner className="size-5" />
+      <Spinner size="lg" />
     </div>
   );
 }

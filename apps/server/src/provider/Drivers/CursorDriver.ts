@@ -134,11 +134,11 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
 
       const textGeneration = yield* makeCursorTextGeneration(effectiveConfig, processEnv);
 
-      const discoverModels = yield* makeCursorModelDiscovery(effectiveConfig, processEnv);
+      const modelDiscovery = yield* makeCursorModelDiscovery(effectiveConfig, processEnv);
       const checkProvider = checkCursorProviderStatus(
         effectiveConfig,
         processEnv,
-        discoverModels,
+        modelDiscovery.discover,
       ).pipe(
         Effect.flatMap((snapshot) =>
           effectiveConfig.enabled && snapshot.installed && snapshot.auth.status === "authenticated"
@@ -217,6 +217,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         accentColor,
         enabled,
         snapshot,
+        invalidateCaches: modelDiscovery.invalidate,
         snapshotForCwd: (cwd) =>
           !effectiveConfig.enabled
             ? snapshot.getSnapshot

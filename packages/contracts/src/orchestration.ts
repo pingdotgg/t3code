@@ -163,8 +163,9 @@ export const ProviderUserInputAnswers = Schema.Record(Schema.String, Schema.Unkn
 export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
 
 export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
-export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 8;
+export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 100;
 export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const PROVIDER_SEND_TURN_MAX_TOTAL_IMAGE_BYTES = 80 * 1024 * 1024;
 export const PROVIDER_SEND_TURN_MAX_FILE_BYTES = 50 * 1024 * 1024;
 export const PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES = [
   "image/gif",
@@ -370,6 +371,25 @@ export const ChatAttachment = Schema.Union([
   ChatUnknownAttachment,
 ]);
 export type ChatAttachment = typeof ChatAttachment.Type;
+
+export function getProviderAttachmentLimitError(
+  attachments: ReadonlyArray<Pick<ChatAttachment, "type" | "mimeType" | "sizeBytes">>,
+): string | undefined {
+  if (attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+    return `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message or question response.`;
+  }
+  const imageBytes = attachments.reduce(
+    (total, attachment) =>
+      total +
+      (attachment.type === "image" || isProviderSendTurnSupportedImageMimeType(attachment.mimeType)
+        ? attachment.sizeBytes
+        : 0),
+    0,
+  );
+  if (imageBytes > PROVIDER_SEND_TURN_MAX_TOTAL_IMAGE_BYTES) {
+    return "Images can total up to 80 MiB per message or question response. Use smaller images or send fewer at once.";
+  }
+}
 
 export const UserInputAttachments = Schema.Record(
   Schema.String,
@@ -1873,7 +1893,8 @@ export const ThreadMessageSentPayload = Schema.Struct({
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   context: Schema.optional(OrchestrationMessageContext),
-  turnId: Schema.NullOr(TurnId),
+  // Events persisted before the field existed carry no key at all.
+  turnId: Schema.NullOr(TurnId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   streaming: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

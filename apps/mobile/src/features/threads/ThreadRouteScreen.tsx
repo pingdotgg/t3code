@@ -606,10 +606,19 @@ function ThreadRouteContent(
           Files={FilesInspector}
           Git={GitInspector}
           mode={inspectorMode}
+          resetKeys={[routeThreadIdentity, selectedThreadCwd]}
           Route={props.renderInspector ? RouteInspector : undefined}
         />
       ),
-    [FilesInspector, GitInspector, RouteInspector, inspectorMode, props.renderInspector],
+    [
+      FilesInspector,
+      GitInspector,
+      RouteInspector,
+      inspectorMode,
+      props.renderInspector,
+      routeThreadIdentity,
+      selectedThreadCwd,
+    ],
   );
   const activeInspectorRenderer = inspectorMode === null ? undefined : renderInspectorStack;
   // Hand the inspector to the workspace so it renders beside the navigator,
@@ -947,18 +956,7 @@ function ThreadRouteContent(
     <>
       <GitActionProgressOverlay progress={gitActionProgress} onDismiss={dismissGitActionResult} />
 
-      <View
-        className={Platform.OS === "android" ? "flex-1 bg-thread-canvas" : "flex-1 bg-screen"}
-        style={
-          Platform.OS === "android"
-            ? {
-                borderTopLeftRadius: 28,
-                borderTopRightRadius: 28,
-                overflow: "hidden",
-              }
-            : undefined
-        }
-      >
+      <View className="flex-1 bg-screen android:overflow-hidden android:rounded-t-[28px] android:bg-thread-canvas">
         <ThreadDetailScreen
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
           contentPresentation={contentPresentation}

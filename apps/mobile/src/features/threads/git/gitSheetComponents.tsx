@@ -71,13 +71,7 @@ export function SheetActionButton(props: {
 
 export function MetaCard(props: { readonly label: string; readonly value: string }) {
   return (
-    <View
-      className={
-        Platform.OS === "android"
-          ? "rounded-[20px] bg-card px-4 py-3"
-          : "rounded-[18px] border border-border bg-card px-4 py-3"
-      }
-    >
+    <View className="bg-card px-4 py-3 android:rounded-[20px] ios:rounded-[18px] ios:border ios:border-border">
       <Text className="text-foreground-muted text-2xs font-t3-bold tracking-[0.9px] uppercase">
         {props.label}
       </Text>
@@ -97,21 +91,11 @@ export function SheetListRow(props: {
 }) {
   return (
     <Pressable
-      className={
-        Platform.OS === "android"
-          ? "min-h-16 flex-row items-center gap-4 px-4 py-3 active:bg-subtle disabled:opacity-[0.45]"
-          : "flex-row items-center gap-3 px-1 py-3 disabled:opacity-[0.45]"
-      }
+      className="flex-row items-center py-3 disabled:opacity-[0.45] android:min-h-16 android:gap-4 android:px-4 android:active:bg-subtle ios:gap-3 ios:px-1"
       disabled={props.disabled}
       onPress={props.onPress}
     >
-      <View
-        className={
-          Platform.OS === "android"
-            ? "size-6 items-center justify-center"
-            : "bg-subtle h-9 w-9 items-center justify-center rounded-full"
-        }
-      >
+      <View className="items-center justify-center android:size-6 ios:bg-subtle ios:h-9 ios:w-9 ios:rounded-full">
         <SymbolView
           name={props.icon}
           size={Platform.OS === "android" ? 24 : 16}
@@ -120,13 +104,7 @@ export function SheetListRow(props: {
         />
       </View>
       <View className="flex-1 gap-0.5">
-        <Text
-          className={
-            Platform.OS === "android"
-              ? "text-foreground text-base font-t3-medium"
-              : "text-foreground text-base font-t3-bold"
-          }
-        >
+        <Text className="text-foreground text-base android:font-t3-medium ios:font-t3-bold">
           {props.title}
         </Text>
         {props.subtitle ? (
