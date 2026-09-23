@@ -195,7 +195,7 @@ struct DailyUXNewTaskTests {
     }
 
     @Test
-    func recentProjectRankingDeduplicatesARepositoryAcrossEnvironments() {
+    func recentProjectRankingPreservesEachEnvironmentWorkspace() {
         let local = rankedProject(
             "local",
             name: "Project",
@@ -239,8 +239,7 @@ struct DailyUXNewTaskTests {
         )
 
         let ranking = DailyUXCreationContext.recentProjects(in: value)
-        #expect(ranking.count == 1)
-        #expect(ranking.first?.project.id == remote.id)
+        #expect(ranking.map(\.project.id) == [remote.id, local.id])
     }
 
     @Test
@@ -1546,6 +1545,64 @@ struct DailyUXNewTaskTests {
         #expect(presentation.additionalUnavailableEnvironmentCount == 2)
         for environment in unavailable {
             #expect(presentation.unavailableAccessibilityLabel.contains(environment.name))
+        }
+    }
+
+    @Test
+    func creationPickerSeparatesCheckoutsRegardlessOfSidebarGrouping() throws {
+        let identity = FeatureRepositoryIdentity(
+            canonicalKey: "github.com/example/app",
+            displayName: "example/app"
+        )
+        let first = FeatureProject(
+            id: "first", environmentID: "mac", name: "App 1", path: "/code/app-1",
+            repositoryIdentity: identity, updatedAt: "2026-01-02T00:00:00Z"
+        )
+        let alias = FeatureProject(
+            id: "alias", environmentID: "mac", name: "Old title", path: "/code/app-1/",
+            repositoryIdentity: identity, updatedAt: "2026-01-01T00:00:00Z"
+        )
+        let second = FeatureProject(
+            id: "second", environmentID: "mac", name: "App 2", path: "/code/app-2",
+            repositoryIdentity: identity
+        )
+        let remote = FeatureProject(
+            id: "remote", environmentID: "other-mac", name: "Remote", path: first.path,
+            repositoryIdentity: identity
+        )
+        for mode: FeatureEnvironmentPreferences.ProjectGroupingMode in [
+            .repository, .repositoryPath, .separate,
+        ] {
+            var snapshot = rankedSnapshot(
+                projects: [alias, second, remote, first],
+                threads: [
+                    rankedThread("second-thread", projectID: second.id, activity: 20),
+                    rankedThread("alias-thread", projectID: alias.id, activity: 10),
+                ]
+            )
+            snapshot.preferencesByEnvironment = [
+                "mac": .init(projectGroupingMode: mode),
+                "other-mac": .init(projectGroupingMode: mode),
+            ]
+            let groups = DailyUXCreationContext.projectGroups(in: snapshot)
+            #expect(groups.map(\.name) == ["App 1", "App 2", "Remote"])
+            #expect(groups.allSatisfy { $0.projects.count == 1 })
+            #expect(DailyUXCreationContext.initialProject(
+                in: snapshot, requestedProjectID: alias.id
+            )?.id == first.id)
+            #expect(DailyUXCreationContext.recentProjects(in: snapshot).map(\.project.id)
+                == [second.id, first.id])
+            for project in [first, second, remote] {
+                let group = try #require(DailyUXProjectGrouping.group(
+                    containing: project.id, in: groups
+                ))
+                #expect(DailyUXProjectGrouping.selectionTarget(
+                    groupID: group.id, preferredEnvironmentID: "mac", in: groups
+                )?.id == project.id)
+            }
+            #expect(FeatureComposerDraftStore.newTaskKey(project: first)
+                == FeatureComposerDraftStore.newTaskKey(project: alias))
+            #expect(Set([first, second, remote].map(FeatureComposerDraftStore.newTaskKey)).count == 3)
         }
     }
 
