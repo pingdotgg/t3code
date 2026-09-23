@@ -273,6 +273,29 @@ describe("mergeUsage", () => {
     ]);
   });
 
+  it("orders models by cost descending", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({ provider: "claude", model: "lower-cost", costUsd: 4 }),
+              bucket({ provider: "codex", model: "higher-cost", costUsd: 9 }),
+            ],
+            [
+              { provider: "claude", hostId: "mac", homePath: "/a/.claude" },
+              { provider: "codex", hostId: "mac", homePath: "/a/.codex" },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.models.map((model) => model.model)).toEqual(["higher-cost", "lower-cost"]);
+  });
+
   it("keeps two machines apart when hostname and home path collide", () => {
     // Every Mac resolves /Users/theo/.claude, so a hostname clash used to make
     // one machine's usage vanish. Filesystem identity separates them.
