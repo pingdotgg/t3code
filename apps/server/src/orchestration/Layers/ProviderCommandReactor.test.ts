@@ -178,6 +178,7 @@ describe("ProviderCommandReactor", () => {
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly serverActivation?: Effect.Effect<void>;
     readonly serverSettings?: Parameters<typeof ServerSettingsService.layerTest>[0];
+    readonly remoteNames?: ReadonlyArray<string>;
     readonly beforeReadySessionDispatch?: () => Effect.Effect<void>;
     readonly beforeTurnStartDispatch?: () => Effect.Effect<void>;
     readonly afterTurnStartDispatch?: () => Effect.Effect<void>;
@@ -295,6 +296,9 @@ describe("ProviderCommandReactor", () => {
           }),
         ),
       ),
+    );
+    const remoteExists = vi.fn((request: { readonly cwd: string; readonly remoteName: string }) =>
+      Effect.succeed((input?.remoteNames ?? []).includes(request.remoteName)),
     );
     const renameBranch = vi.fn((input: unknown) =>
       Effect.succeed({
@@ -469,6 +473,7 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots as never)),
       Layer.provideMerge(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
+          remoteExists,
           renameBranch,
           pruneWorktrees,
           createWorktree,
@@ -2607,10 +2612,14 @@ describe("ProviderCommandReactor", () => {
   it.each([
     { worktreeBranchPrefix: "yekta", expected: "yekta/add-safer-backoff" },
     { worktreeBranchPrefix: "", expected: "add-safer-backoff" },
+    { worktreeBranchPrefix: "origin/yekta", expected: "t3code/add-safer-backoff" },
   ])(
     "renames the first-turn worktree branch under the configured prefix $worktreeBranchPrefix",
     async ({ worktreeBranchPrefix, expected }) => {
-      const harness = await createHarness({ serverSettings: { worktreeBranchPrefix } });
+      const harness = await createHarness({
+        serverSettings: { worktreeBranchPrefix },
+        remoteNames: ["origin"],
+      });
       const now = "2026-01-01T00:00:00.000Z";
       const statusRefreshed = await harness.runEffect(Deferred.make<void>());
       const refreshStatus = harness.refreshStatus.getMockImplementation()!;

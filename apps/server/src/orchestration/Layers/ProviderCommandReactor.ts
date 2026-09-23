@@ -2,6 +2,7 @@ import { withWorkspaceLease } from "../../workspace/workspaceLease.ts";
 import {
   type ChatAttachment,
   CommandId,
+  DEFAULT_SERVER_SETTINGS,
   EventId,
   type ModelSelection,
   type OrchestrationEvent,
@@ -15,7 +16,11 @@ import {
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
-import { buildGeneratedWorktreeBranchName, isTemporaryWorktreeBranch } from "@t3tools/shared/git";
+import {
+  buildGeneratedWorktreeBranchName,
+  isTemporaryWorktreeBranch,
+  normalizeWorktreeBranchPrefix,
+} from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -867,6 +872,28 @@ const make = Effect.gen(function* () {
     };
   });
 
+  /**
+   * A prefix whose first segment names a remote, like `origin/`, would be
+   * published as that remote's branch instead of under the prefix, so the
+   * default prefix is used in that repository.
+   */
+  const resolveWorktreeBranchPrefix = Effect.fnUntraced(function* (cwd: string, prefix: string) {
+    const normalized = normalizeWorktreeBranchPrefix(prefix);
+    const [firstSegment] = normalized.split("/");
+    if (!firstSegment || normalized === DEFAULT_SERVER_SETTINGS.worktreeBranchPrefix) {
+      return normalized;
+    }
+    const namesRemote = yield* gitWorkflow
+      .remoteExists({ cwd, remoteName: firstSegment })
+      .pipe(Effect.orElseSucceed(() => false));
+    if (!namesRemote) return normalized;
+    yield* Effect.logWarning("worktree branch prefix names a git remote; using the default", {
+      cwd,
+      prefix: normalized,
+    });
+    return DEFAULT_SERVER_SETTINGS.worktreeBranchPrefix;
+  });
+
   const maybeGenerateAndRenameWorktreeBranchForFirstTurn = Effect.fn(
     "maybeGenerateAndRenameWorktreeBranchForFirstTurn",
   )(function* (input: {
@@ -906,7 +933,7 @@ const make = Effect.gen(function* () {
 
       const targetBranch = buildGeneratedWorktreeBranchName(
         generated.branch,
-        settings.worktreeBranchPrefix,
+        yield* resolveWorktreeBranchPrefix(cwd, settings.worktreeBranchPrefix),
       );
       if (targetBranch === oldBranch) return;
 

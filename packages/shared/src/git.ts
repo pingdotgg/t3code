@@ -125,12 +125,11 @@ export function normalizeWorktreeBranchPrefix(raw: string): string {
     .replace(/[^A-Za-z0-9._/-]+/g, "-")
     .replace(/\.{2,}/g, ".")
     .replace(/-+/g, "-")
-    .split("/")
-    .map((segment) => segment.replace(/\.lock$/, "").replace(/^[._-]+|[._-]+$/g, ""))
-    .filter((segment) => segment.length > 0)
-    .join("/")
     .slice(0, 64)
-    .replace(/[./_-]+$/g, "");
+    .split("/")
+    .map((segment) => segment.replace(/(?:\.lock)+$/, "").replace(/^[._-]+|[._-]+$/g, ""))
+    .filter((segment) => segment.length > 0)
+    .join("/");
 }
 
 /**

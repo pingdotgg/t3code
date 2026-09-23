@@ -226,6 +226,7 @@ describe("normalizeWorktreeBranchPrefix", () => {
     expect(normalizeWorktreeBranchPrefix("a//b")).toBe("a/b");
     expect(normalizeWorktreeBranchPrefix("feat..ure~^:?*[\\@{}")).toBe("feat.ure");
     expect(normalizeWorktreeBranchPrefix(".hidden/-x-/y.lock")).toBe("hidden/x/y");
+    expect(normalizeWorktreeBranchPrefix("team.lock.lock/x")).toBe("team/x");
     expect(normalizeWorktreeBranchPrefix('"quoted"')).toBe("quoted");
   });
 
@@ -235,9 +236,9 @@ describe("normalizeWorktreeBranchPrefix", () => {
     expect(normalizeWorktreeBranchPrefix("/./")).toBe("");
   });
 
-  it("limits the prefix to 64 characters without a dangling separator", () => {
-    const long = `${"a".repeat(63)}/bcd`;
-    expect(normalizeWorktreeBranchPrefix(long)).toBe("a".repeat(63));
+  it("limits the prefix to 64 characters without a dangling separator or .lock", () => {
+    expect(normalizeWorktreeBranchPrefix(`${"a".repeat(63)}/bcd`)).toBe("a".repeat(63));
+    expect(normalizeWorktreeBranchPrefix(`${"a".repeat(59)}.lockx`)).toBe("a".repeat(59));
   });
 });
 
