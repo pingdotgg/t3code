@@ -1,5 +1,5 @@
 diff --git a/dist/common/bundler/css-processor/processor.js b/dist/common/bundler/css-processor/processor.js
-index 7dd369fa3197dbd622832c89ac3854c401e55c3e..ab3ea1a9520907321f9c21c2a3a859262fe5075b 100644
+index 7dd369f..358c9b8 100644
 --- a/dist/common/bundler/css-processor/processor.js
 +++ b/dist/common/bundler/css-processor/processor.js
 @@ -105,6 +105,64 @@ class ProcessorBuilder {
@@ -97,17 +97,17 @@ index 7dd369fa3197dbd622832c89ac3854c401e55c3e..ab3ea1a9520907321f9c21c2a3a85926
 -          }
 -          if (selector2.type === "pseudo-class" && selector2.kind === "active") {
 -            active = true;
-+          const trailing = selector.slice(1);
-+          const { variants, hasVariants } = this.readSelectorVariants(trailing);
-+          if (trailing.length > 0 && !hasVariants) {
-+            return;
-           }
+-          }
 -          if (selector2.type === "pseudo-class" && selector2.kind === "focus") {
 -            focus = true;
 -          }
 -          if (selector2.type === "pseudo-class" && selector2.kind === "disabled") {
 -            disabled = true;
--          }
++          const trailing = selector.slice(1);
++          const { variants, hasVariants } = this.readSelectorVariants(trailing);
++          if (trailing.length > 0 && !hasVariants) {
++            return;
+           }
 -          if (selector2.type === "attribute" && selector2.operation === null && selector2.name.startsWith("data-")) {
 -            dataAttributes ??= {};
 -            dataAttributes[selector2.name] = `"true"`;
@@ -154,8 +154,24 @@ index 7dd369fa3197dbd622832c89ac3854c401e55c3e..ab3ea1a9520907321f9c21c2a3a85926
            return;
          }
          selector.forEach(selectorToken => {
+@@ -199,11 +223,13 @@ class ProcessorBuilder {
+       const {
+         mediaQueries
+       } = rule.value.query;
+-      this.declarationConfig.mediaQueries.push(...mediaQueries);
++      const blockMediaQueries = [...this.declarationConfig.mediaQueries, ...mediaQueries];
+       rule.value.rules.forEach(rule2 => {
+-        this.parseRuleRec(rule2);
+         this.declarationConfig = this.getDeclarationConfig();
++        this.declarationConfig.mediaQueries = blockMediaQueries;
++        this.parseRuleRec(rule2);
+       });
++      this.declarationConfig = this.getDeclarationConfig();
+       return;
+     }
+     if (rule.type === "layer-block") {
 diff --git a/dist/metro/transformer.cjs b/dist/metro/transformer.cjs
-index d57ca8161f411f0dc7df827132586e428cafdf1b..3650a353b0db269ad4fc51b70a7158885c992e36 100644
+index d57ca81..274f142 100644
 --- a/dist/metro/transformer.cjs
 +++ b/dist/metro/transformer.cjs
 @@ -7,6 +7,7 @@ const culori = require('culori');
@@ -264,14 +280,14 @@ index d57ca8161f411f0dc7df827132586e428cafdf1b..3650a353b0db269ad4fc51b70a715888
 -          }
 -          if (selector2.type === "pseudo-class" && selector2.kind === "focus") {
 -            focus = true;
+-          }
+-          if (selector2.type === "pseudo-class" && selector2.kind === "disabled") {
+-            disabled = true;
 +          const trailing = selector.slice(1);
 +          const { variants, hasVariants } = this.readSelectorVariants(trailing);
 +          if (trailing.length > 0 && !hasVariants) {
 +            return;
            }
--          if (selector2.type === "pseudo-class" && selector2.kind === "disabled") {
--            disabled = true;
--          }
 -          if (selector2.type === "attribute" && selector2.operation === null && selector2.name.startsWith("data-")) {
 -            dataAttributes ??= {};
 -            dataAttributes[selector2.name] = `"true"`;
@@ -318,7 +334,23 @@ index d57ca8161f411f0dc7df827132586e428cafdf1b..3650a353b0db269ad4fc51b70a715888
            return;
          }
          selector.forEach((selectorToken) => {
-@@ -1753,10 +1778,11 @@ const transform = async (config$1, projectRoot, filePath, data, options) => {
+@@ -1629,11 +1654,13 @@ class ProcessorBuilder {
+     }
+     if (rule.type === "media") {
+       const { mediaQueries } = rule.value.query;
+-      this.declarationConfig.mediaQueries.push(...mediaQueries);
++      const blockMediaQueries = [...this.declarationConfig.mediaQueries, ...mediaQueries];
+       rule.value.rules.forEach((rule2) => {
+-        this.parseRuleRec(rule2);
+         this.declarationConfig = this.getDeclarationConfig();
++        this.declarationConfig.mediaQueries = blockMediaQueries;
++        this.parseRuleRec(rule2);
+       });
++      this.declarationConfig = this.getDeclarationConfig();
+       return;
+     }
+     if (rule.type === "layer-block") {
+@@ -1753,10 +1780,11 @@ const transform = async (config$1, projectRoot, filePath, data, options) => {
    await bundlerConfig.generateArtifacts(cssArtifactPath);
    const virtualCode = await compileCSS(bundlerConfig);
    const isWeb = bundlerConfig.platform === config.Platform.Web;
@@ -332,7 +364,7 @@ index d57ca8161f411f0dc7df827132586e428cafdf1b..3650a353b0db269ad4fc51b70a715888
      "utf-8"
    );
 diff --git a/dist/metro/transformer.mjs b/dist/metro/transformer.mjs
-index d3e7475f8f0aaba510b318657dc8374e6c6097cb..6ff8cffc4bb703521b6d86f0ac14be054ba5b9ce 100644
+index d3e7475..3543295 100644
 --- a/dist/metro/transformer.mjs
 +++ b/dist/metro/transformer.mjs
 @@ -5,6 +5,7 @@ import { converter, parse, formatHex, formatHex8 } from 'culori';
@@ -441,14 +473,14 @@ index d3e7475f8f0aaba510b318657dc8374e6c6097cb..6ff8cffc4bb703521b6d86f0ac14be05
 -          }
 -          if (selector2.type === "pseudo-class" && selector2.kind === "focus") {
 -            focus = true;
+-          }
+-          if (selector2.type === "pseudo-class" && selector2.kind === "disabled") {
+-            disabled = true;
 +          const trailing = selector.slice(1);
 +          const { variants, hasVariants } = this.readSelectorVariants(trailing);
 +          if (trailing.length > 0 && !hasVariants) {
 +            return;
            }
--          if (selector2.type === "pseudo-class" && selector2.kind === "disabled") {
--            disabled = true;
--          }
 -          if (selector2.type === "attribute" && selector2.operation === null && selector2.name.startsWith("data-")) {
 -            dataAttributes ??= {};
 -            dataAttributes[selector2.name] = `"true"`;
@@ -495,7 +527,23 @@ index d3e7475f8f0aaba510b318657dc8374e6c6097cb..6ff8cffc4bb703521b6d86f0ac14be05
            return;
          }
          selector.forEach((selectorToken) => {
-@@ -1746,10 +1771,11 @@ const transform = async (config, projectRoot, filePath, data, options) => {
+@@ -1622,11 +1647,13 @@ class ProcessorBuilder {
+     }
+     if (rule.type === "media") {
+       const { mediaQueries } = rule.value.query;
+-      this.declarationConfig.mediaQueries.push(...mediaQueries);
++      const blockMediaQueries = [...this.declarationConfig.mediaQueries, ...mediaQueries];
+       rule.value.rules.forEach((rule2) => {
+-        this.parseRuleRec(rule2);
+         this.declarationConfig = this.getDeclarationConfig();
++        this.declarationConfig.mediaQueries = blockMediaQueries;
++        this.parseRuleRec(rule2);
+       });
++      this.declarationConfig = this.getDeclarationConfig();
+       return;
+     }
+     if (rule.type === "layer-block") {
+@@ -1746,10 +1773,11 @@ const transform = async (config, projectRoot, filePath, data, options) => {
    await bundlerConfig.generateArtifacts(cssArtifactPath);
    const virtualCode = await compileCSS(bundlerConfig);
    const isWeb = bundlerConfig.platform === Platform.Web;
@@ -509,7 +557,7 @@ index d3e7475f8f0aaba510b318657dc8374e6c6097cb..6ff8cffc4bb703521b6d86f0ac14be05
      "utf-8"
    );
 diff --git a/dist/module/bundler/css-processor/processor.js b/dist/module/bundler/css-processor/processor.js
-index 58c96b6ab642c2b724d1868d0d48b77bad33be6f..70b759b04913a0e9028c936827b4578d628b4728 100644
+index 58c96b6..36a2773 100644
 --- a/dist/module/bundler/css-processor/processor.js
 +++ b/dist/module/bundler/css-processor/processor.js
 @@ -99,6 +99,64 @@ export class ProcessorBuilder {
@@ -607,17 +655,17 @@ index 58c96b6ab642c2b724d1868d0d48b77bad33be6f..70b759b04913a0e9028c936827b4578d
 -          }
 -          if (selector2.type === "pseudo-class" && selector2.kind === "active") {
 -            active = true;
-+          const trailing = selector.slice(1);
-+          const { variants, hasVariants } = this.readSelectorVariants(trailing);
-+          if (trailing.length > 0 && !hasVariants) {
-+            return;
-           }
+-          }
 -          if (selector2.type === "pseudo-class" && selector2.kind === "focus") {
 -            focus = true;
 -          }
 -          if (selector2.type === "pseudo-class" && selector2.kind === "disabled") {
 -            disabled = true;
--          }
++          const trailing = selector.slice(1);
++          const { variants, hasVariants } = this.readSelectorVariants(trailing);
++          if (trailing.length > 0 && !hasVariants) {
++            return;
+           }
 -          if (selector2.type === "attribute" && selector2.operation === null && selector2.name.startsWith("data-")) {
 -            dataAttributes ??= {};
 -            dataAttributes[selector2.name] = `"true"`;
@@ -664,8 +712,24 @@ index 58c96b6ab642c2b724d1868d0d48b77bad33be6f..70b759b04913a0e9028c936827b4578d
            return;
          }
          selector.forEach((selectorToken) => {
+@@ -191,11 +215,13 @@ export class ProcessorBuilder {
+     }
+     if (rule.type === "media") {
+       const { mediaQueries } = rule.value.query;
+-      this.declarationConfig.mediaQueries.push(...mediaQueries);
++      const blockMediaQueries = [...this.declarationConfig.mediaQueries, ...mediaQueries];
+       rule.value.rules.forEach((rule2) => {
+-        this.parseRuleRec(rule2);
+         this.declarationConfig = this.getDeclarationConfig();
++        this.declarationConfig.mediaQueries = blockMediaQueries;
++        this.parseRuleRec(rule2);
+       });
++      this.declarationConfig = this.getDeclarationConfig();
+       return;
+     }
+     if (rule.type === "layer-block") {
 diff --git a/src/bundler/adapters/metro/transformer.ts b/src/bundler/adapters/metro/transformer.ts
-index 08059b0fb2394effd2553086216d8933a53fad84..05c051595bfffd313f1d731fcedc1e991af720e1 100644
+index 08059b0..05c0515 100644
 --- a/src/bundler/adapters/metro/transformer.ts
 +++ b/src/bundler/adapters/metro/transformer.ts
 @@ -5,6 +5,7 @@ import { Platform } from '@/common/consts'
@@ -699,7 +763,7 @@ index 08059b0fb2394effd2553086216d8933a53fad84..05c051595bfffd313f1d731fcedc1e99
          'utf-8',
      )
 diff --git a/src/bundler/css-processor/processor.ts b/src/bundler/css-processor/processor.ts
-index c8b3bb86e2a50c16ebc3f0404f4d9ac050aba61d..b5e185469733aca4289b7b07bc76dbfcd8fd5788 100644
+index c8b3bb8..b980893 100644
 --- a/src/bundler/css-processor/processor.ts
 +++ b/src/bundler/css-processor/processor.ts
 @@ -123,6 +123,77 @@ export class ProcessorBuilder {
@@ -818,14 +882,14 @@ index c8b3bb86e2a50c16ebc3f0404f4d9ac050aba61d..b5e185469733aca4289b7b07bc76dbfc
 -                                }
 -                            })
 -                        })
+-                    }
+-
+-                    if (selector.type === 'pseudo-class' && selector.kind === 'active') {
+-                        active = true
 +                    if (trailing.length > 0 && !hasVariants) {
 +                        return
                      }
  
--                    if (selector.type === 'pseudo-class' && selector.kind === 'active') {
--                        active = true
--                    }
--
 -                    if (selector.type === 'pseudo-class' && selector.kind === 'focus') {
 -                        focus = true
 +                    const parseClassRule = () => {
@@ -885,8 +949,31 @@ index c8b3bb86e2a50c16ebc3f0404f4d9ac050aba61d..b5e185469733aca4289b7b07bc76dbfc
  
                      return
                  }
+@@ -241,13 +275,20 @@ export class ProcessorBuilder {
+ 
+         if (rule.type === 'media') {
+             const { mediaQueries } = rule.value.query
++            // declarationConfig resets between the block's sibling rules, so each
++            // sibling must be re-fed the queries the block opened with. Resetting
++            // only after parsing left every rule past the first without the block's
++            // media queries, shipping ios:/android: variants and later utilities of
++            // a width breakpoint unguarded to every platform.
++            const blockMediaQueries = [...this.declarationConfig.mediaQueries, ...mediaQueries]
+ 
+-            this.declarationConfig.mediaQueries.push(...mediaQueries)
+             rule.value.rules.forEach(rule => {
+-                this.parseRuleRec(rule)
+                 this.declarationConfig = this.getDeclarationConfig()
++                this.declarationConfig.mediaQueries = blockMediaQueries
++                this.parseRuleRec(rule)
+             })
+ 
++            this.declarationConfig = this.getDeclarationConfig()
+             return
+         }
+ 
 diff --git a/src/core/config/config.native.ts b/src/core/config/config.native.ts
-index 5e0832b5913df6f02604020d7ff5caf3b6a8d912..01aed1be25ca928f3a802996f41cb6b841aaed86 100644
+index 5e0832b..01aed1b 100644
 --- a/src/core/config/config.native.ts
 +++ b/src/core/config/config.native.ts
 @@ -8,6 +8,8 @@ import type { CSSVariables, GenerateStyleSheetsCallback, ThemeName } from '../ty
