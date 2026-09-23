@@ -1106,7 +1106,7 @@ export function HomeScreen(props: HomeScreenProps) {
 
   if (!hasAnyThreads) {
     return (
-      <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-screen"}>
+      <View className="flex-1 bg-screen android:bg-header">
         <View
           className={cn(
             "flex-1 items-center justify-center bg-screen px-8",
@@ -1217,7 +1217,7 @@ export function HomeScreen(props: HomeScreenProps) {
 
   if (threadListV2Enabled) {
     return (
-      <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-screen"}>
+      <View className="flex-1 bg-screen android:bg-header">
         <View
           className={
             Platform.OS === "android"
@@ -1263,7 +1263,7 @@ export function HomeScreen(props: HomeScreenProps) {
   }
 
   return (
-    <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-screen"}>
+    <View className="flex-1 bg-screen android:bg-header">
       <View
         className={
           Platform.OS === "android"

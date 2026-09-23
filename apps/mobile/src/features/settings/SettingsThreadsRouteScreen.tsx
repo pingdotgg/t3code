@@ -3,13 +3,12 @@ import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollVie
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useRef, useState } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { AppText as Text } from "../../components/AppText";
-import { cn } from "../../lib/cn";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -182,21 +181,9 @@ function AutoSettleSettingsRows() {
           }
         />
         {afterDays !== null ? (
-          <View
-            className={cn(
-              "flex-row items-center gap-4 px-4",
-              Platform.OS === "android" ? "min-h-14 py-3" : "py-4",
-            )}
-          >
-            <View style={{ width: Platform.OS === "android" ? 24 : 22 }} />
-            <Text
-              className={cn(
-                "flex-1 text-foreground",
-                Platform.OS === "android" ? "text-base" : "text-lg",
-              )}
-            >
-              Inactive days
-            </Text>
+          <View className="flex-row items-center gap-4 px-4 py-4 android:min-h-14 android:py-3">
+            <View className="w-[22px] android:w-6" />
+            <Text className="flex-1 text-foreground text-lg android:text-base">Inactive days</Text>
             <AutoSettleDaysField
               value={afterDays}
               disabled={disabled}
