@@ -112,9 +112,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const { customizeRequested, onCustomizeRequestHandled } = props;
   useEffect(() => {
     if (!customizeRequested) return;
-    openCustomize();
+    // Reopening would reset the draft and drop unsaved edits.
+    if (!customizeOpen) openCustomize();
     onCustomizeRequestHandled?.();
-  }, [customizeRequested, onCustomizeRequestHandled, openCustomize]);
+  }, [customizeOpen, customizeRequested, onCustomizeRequestHandled, openCustomize]);
 
   const branchToolbarProps = {
     showGitControls: props.isGitRepo,
