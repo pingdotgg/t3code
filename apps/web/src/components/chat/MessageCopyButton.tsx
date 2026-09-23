@@ -2,7 +2,6 @@ import { memo, useRef } from "react";
 import { CopyIcon, CheckIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
-import { cn } from "~/lib/utils";
 import {
   ANCHORED_COPY_TOAST_TIMEOUT_MS,
   showAnchoredCopyErrorToast,
@@ -43,8 +42,8 @@ export const MessageCopyButton = memo(function MessageCopyButton({
             ref={ref}
             type="button"
             size={size}
-            variant={variant}
-            className={cn("text-muted-foreground hover:text-foreground", className)}
+            variant={variant === "ghost" ? "ghost-muted" : variant}
+            className={className}
           />
         }
       >

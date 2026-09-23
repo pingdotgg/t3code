@@ -784,9 +784,8 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
             render={
               <Button
                 type="button"
-                variant="ghost"
+                variant={expanded ? "secondary" : "ghost-muted"}
                 size="icon-xs"
-                className="chat-markdown-chrome-action"
                 aria-pressed={expanded}
                 onClick={toggleExpanded}
                 aria-label={expandLabel}
@@ -805,9 +804,8 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
                   render={
                     <Button
                       type="button"
-                      variant="ghost"
+                      variant="ghost-muted"
                       size="icon-xs"
-                      className="chat-markdown-chrome-action"
                       aria-label={copyLabel}
                     />
                   }
@@ -993,9 +991,8 @@ function MarkdownCodeBlock({
               render={
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant={wrapped ? "secondary" : "ghost-muted"}
                   size="icon-xs"
-                  className="chat-markdown-chrome-action"
                   aria-pressed={wrapped}
                   onClick={() => setWrapped((value) => !value)}
                   aria-label={wrapLabel}
@@ -1011,9 +1008,8 @@ function MarkdownCodeBlock({
               render={
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant="ghost-muted"
                   size="icon-xs"
-                  className="chat-markdown-chrome-action"
                   onClick={handleCopy}
                   aria-label={copyLabel}
                 />

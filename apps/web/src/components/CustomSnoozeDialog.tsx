@@ -119,7 +119,7 @@ function CustomSnoozeDialog() {
                             <Button
                               id={`${id}-date`}
                               variant="outline"
-                              className="w-full justify-between font-normal"
+                              className="w-full justify-between"
                             />
                           }
                         >

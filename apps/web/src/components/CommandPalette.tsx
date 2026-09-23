@@ -1528,9 +1528,8 @@ function OpenCommandPaletteDialog(props: {
               <TooltipTrigger
                 render={
                   <Button
-                    variant="outline"
-                    size="xs"
-                    className="h-5 rounded-[.25rem] px-1.5 text-[10px] text-warning-foreground"
+                    variant="warning-outline"
+                    size="micro"
                     onClick={() => {
                       openSourceControlSettings();
                     }}
@@ -2861,7 +2860,7 @@ function OpenCommandPaletteDialog(props: {
               variant="outline"
               size="xs"
               tabIndex={-1}
-              className="absolute inset-e-2.5 top-1/2 gap-1.5 pe-1 ps-2 -translate-y-1/2"
+              className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
               aria-label={`${remoteProjectButtonLabel ?? "Continue"} (Enter)`}
               disabled={!canSubmitRemoteProjectFlow}
               onMouseDown={(event) => {
@@ -2888,10 +2887,7 @@ function OpenCommandPaletteDialog(props: {
               variant="outline"
               size="xs"
               tabIndex={-1}
-              className={cn(
-                "absolute inset-e-2.5 top-1/2 pe-1 ps-2 -translate-y-1/2",
-                hasHighlightedBrowseItem ? "gap-1" : "gap-1.5",
-              )}
+              className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
               aria-label={`${submitActionLabel} (${addShortcutLabel})`}
               disabled={
                 !canCreateProjectInEnvironment(browseEnvironment?.connection.phase) ||

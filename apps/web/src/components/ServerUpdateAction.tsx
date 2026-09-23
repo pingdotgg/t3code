@@ -270,8 +270,8 @@ export function ServerUpdateAction({
           render={
             <Button
               size="icon-xs"
-              variant="ghost"
-              className={className ?? "text-muted-foreground hover:text-foreground"}
+              variant="ghost-muted"
+              className={className}
               aria-label={`${actionLabel} for ${serverLabel}`}
               onClick={onClick}
             />

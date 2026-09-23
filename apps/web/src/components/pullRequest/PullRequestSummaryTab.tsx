@@ -922,8 +922,8 @@ export function PullRequestSummaryTab({
         actions={
           <Button
             size="xs"
-            variant="ghost"
-            className="h-7 shrink-0 px-2 text-[10px] text-muted-foreground"
+            variant="ghost-muted"
+            className="shrink-0"
             aria-label={
               commentOrder === "newest"
                 ? "Show oldest comments first"

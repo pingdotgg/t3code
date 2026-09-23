@@ -891,12 +891,12 @@ function WhenClauseControl({
           <Button
             variant={expression ? "ghost" : "ghost-muted"}
             size="micro"
-            className="min-w-0 shrink font-mono"
+            className="min-w-0 shrink"
           />
         }
         aria-label={`Edit when clause for ${label}`}
       >
-        <span className="truncate">{expression || "Always"}</span>
+        <span className="truncate font-mono">{expression || "Always"}</span>
         <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={6}>

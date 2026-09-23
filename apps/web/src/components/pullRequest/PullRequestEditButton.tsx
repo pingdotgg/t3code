@@ -12,16 +12,15 @@ export function PullRequestEditButton({
   "aria-label": string;
 }) {
   return (
-    <Button
-      {...props}
-      size="icon-xs"
-      variant="ghost"
+    <span
       className={cn(
-        "shrink-0 text-muted-foreground opacity-0 transition-opacity pointer-coarse:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 motion-reduce:transition-none",
+        "flex shrink-0 opacity-0 transition-opacity pointer-coarse:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none",
         className,
       )}
     >
-      <PencilIcon aria-hidden className="size-3" />
-    </Button>
+      <Button {...props} size="icon-xs" variant="ghost-muted">
+        <PencilIcon aria-hidden className="size-3" />
+      </Button>
+    </span>
   );
 }

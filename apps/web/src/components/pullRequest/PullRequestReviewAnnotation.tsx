@@ -312,7 +312,6 @@ export function ReviewThreadCard({
               <Button
                 size="xs"
                 variant="ghost"
-                className="px-1"
                 disabled={loadingMore}
                 onClick={() => void loadMore()}
               >
@@ -352,12 +351,7 @@ export function ReviewThreadCard({
                 </div>
               </div>
             ) : (
-              <Button
-                size="xs"
-                variant="ghost"
-                className="mt-2 px-1"
-                onClick={() => setReplying(true)}
-              >
+              <Button size="xs" variant="ghost" className="mt-2" onClick={() => setReplying(true)}>
                 Reply
               </Button>
             )
