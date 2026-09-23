@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - resolveAntigravityProfileDirectory is a pure sync helper, so it cannot use the Path service.
 import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
 
 import type { AntigravityAuthMethod, ProviderInstanceId } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -194,8 +195,23 @@ export function resolveAntigravityProfileDirectory(
   return NodePath.join(stateDir, "providers", "antigravity", directoryName);
 }
 
-/** Parent of the per-process runtime temp directories inside a profile. */
-export function resolveAntigravityRuntimeTempDirectory(profileDirectory: string): string {
+/** Parent of the per-process runtime temp directories. */
+export function resolveAntigravityRuntimeTempDirectory(
+  profileDirectory: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform === "win32") {
+    // The profile directory already nests ~114 chars deep on Windows, which
+    // pushes the PyInstaller bundle's extraction paths past MAX_PATH (260)
+    // and kills the server during startup. Keep the runtime temp directory
+    // under the system temp dir instead; it stays T3-owned so the driver
+    // reclaims it the same way.
+    const scope = NodeCrypto.createHash("sha256")
+      .update(profileDirectory)
+      .digest("hex")
+      .slice(0, 16);
+    return NodePath.join(NodeOS.tmpdir(), "t3-antigravity", scope);
+  }
   return NodePath.join(profileDirectory, "antigravity-acp", "tmp");
 }
 
