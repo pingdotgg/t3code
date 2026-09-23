@@ -1238,6 +1238,60 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("labels Codex image generation without changing ordinary image views", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const next = yield* adapter.streamEvents.pipe(
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      for (const item of [
+        { type: "imageGeneration", id: "generated", result: "", status: "in_progress" },
+        {
+          type: "imageGeneration",
+          id: "generated",
+          result: "image-bytes",
+          status: "completed",
+          savedPath: "/home/user/.codex/generated_images/orca.png",
+        },
+        { type: "imageView", id: "viewed", path: "/workspace/reference.png" },
+      ]) {
+        const lifecycle = item.status === "in_progress" ? "item/started" : "item/completed";
+        yield* runtime.emit({
+          id: asEventId(`evt-${item.id}-${lifecycle}`),
+          kind: "notification",
+          provider: ProviderDriverKind.make("codex"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+          method: lifecycle,
+          threadId: asThreadId("thread-1"),
+          turnId: asTurnId("turn-1"),
+          itemId: asItemId(item.id),
+          payload: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            startedAtMs: 1_778_000_000_000,
+            completedAtMs: 1_778_000_000_100,
+            item,
+          },
+        });
+      }
+      const events = yield* Fiber.join(next);
+      NodeAssert.deepEqual(
+        events.map((event) =>
+          event.type === "item.started" || event.type === "item.completed"
+            ? [event.type, event.payload.itemType, event.payload.title]
+            : event.type,
+        ),
+        [
+          ["item.started", "image_view", "Generated image"],
+          ["item.completed", "image_view", "Generated image"],
+          ["item.completed", "image_view", "Image view"],
+        ],
+      );
+    }),
+  );
+
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

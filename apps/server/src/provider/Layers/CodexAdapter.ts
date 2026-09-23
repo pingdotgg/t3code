@@ -760,7 +760,7 @@ function itemTitle(
     case "web_search":
       return "Web search";
     case "image_view":
-      return "Image view";
+      return item?.type === "imageGeneration" ? "Generated image" : "Image view";
     case "error":
       return "Error";
     default:

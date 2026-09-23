@@ -168,6 +168,40 @@ describe("projectActivityPayload", () => {
     expect(JSON.stringify(openCode.payload).length).toBeLessThan(200);
   });
 
+  it("keeps generated image paths while dropping image bytes, including stored activities", () => {
+    const imagePath = `/home/user/.codex/generated_images/${"nested folder/".repeat(16)}orca.png`;
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "image_view",
+        title: "Image view",
+        data: {
+          item: {
+            type: "imageGeneration",
+            savedPath: imagePath,
+            result: "base64-image-bytes".repeat(10_000),
+            status: "completed",
+          },
+        },
+      }),
+    );
+    expect(projected.payload).toMatchObject({ data: { imagePath } });
+    expect(projectActivityPayload(projected)).toEqual(projected);
+    expect(JSON.stringify(projected)).not.toContain("base64-image-bytes");
+  });
+
+  it.each([undefined, null, "", "   ", "/home/user/result.txt"])(
+    "does not expose a generated image preview for savedPath %s",
+    (savedPath) => {
+      const projected = projectActivityPayload(
+        activity({
+          itemType: "image_view",
+          data: { item: { type: "imageGeneration", savedPath, result: "" } },
+        }),
+      );
+      expect(projected.payload).not.toMatchObject({ data: { imagePath: expect.anything() } });
+    },
+  );
+
   it("keeps full Claude Read image paths through repeated projection", () => {
     const imagePath = `/workspace/${"nested folder/".repeat(16)}reference image.webp`;
     const projected = projectActivityPayload(
