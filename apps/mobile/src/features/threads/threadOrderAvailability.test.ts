@@ -96,7 +96,10 @@ function randomCase(rng: () => number) {
   for (let index = 0; index < rowCount; index += 1) {
     const environment = rng() < 0.75 ? "env-w" : "env-x";
     const key = KEY_POOL[Math.floor(rng() * KEY_POOL.length)] ?? null;
-    rows.push(makeRow(`t${index}`, environment, key, true));
+    // Ids with colons: a `${environmentId}:${id}` string is not splittable
+    // back into its parts, so batch and planner must agree even here.
+    const id = rng() < 0.4 ? `t:${index}` : `t${index}`;
+    rows.push(makeRow(id, environment, key, true));
   }
   // Hidden rows (in allThreads, not in the visible ordered section) may hold
   // keys that collide with fast-path midpoints.
@@ -104,7 +107,8 @@ function randomCase(rng: () => number) {
   const hiddenCount = Math.floor(rng() * 4);
   for (let index = 0; index < hiddenCount; index += 1) {
     const key = KEY_POOL[Math.floor(rng() * KEY_POOL.length)] ?? null;
-    hidden.push(makeRow(`h${index}`, rng() < 0.75 ? "env-w" : "env-x", key, true));
+    const id = rng() < 0.4 ? `h:${index}` : `h${index}`;
+    hidden.push(makeRow(id, rng() < 0.75 ? "env-w" : "env-x", key, true));
   }
   return { ordered: rows, allThreads: [...rows, ...hidden] };
 }
@@ -151,6 +155,26 @@ describe("computeThreadMoveAvailability matches the reference planner", () => {
       pendingOrder: pending,
     });
     expect(batch.size).toBe(0);
+  });
+
+  it("keeps moves available for ids containing colons (composite-id parsing)", () => {
+    // The reported case: environment `env`, ids `thread:1`/`thread:2`. Splitting
+    // the composite id at the last colon yields `env:thread` and falsely locks
+    // both rows; writability must come from the row's own environmentId.
+    const rows = [makeRow("thread:1", "env", "a", true), makeRow("thread:2", "env", "c", true)];
+    const batch = computeThreadMoveAvailability({
+      ordered: rows,
+      section: "pinned",
+      reorderableEnvironmentIds: new Set<EnvironmentId>(["env" as EnvironmentId]),
+    });
+    const reference = referenceAvailability(
+      rows,
+      rows,
+      new Set<EnvironmentId>(["env" as EnvironmentId]),
+    );
+    expect(Object.fromEntries(batch)).toEqual(Object.fromEntries(reference));
+    expect(batch.get("env:thread:1")).toEqual({ canMoveUp: false, canMoveDown: true });
+    expect(batch.get("env:thread:2")).toEqual({ canMoveUp: true, canMoveDown: false });
   });
 
   it("denies single-row sections on both directions", () => {

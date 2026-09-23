@@ -140,9 +140,14 @@ export function computeThreadMoveAvailability(input: {
   const keysById = new Map(
     sourceRows.map((row) => [rowId(row), rowOrder(row, input.section).key] as const),
   );
+  // Composite row ids are not parseable — ids may themselves contain `:` — so
+  // writability maps through the row's own environmentId like the planner's.
+  const environmentById = new Map(
+    sourceRows.map((row) => [rowId(row), row.environmentId] as const),
+  );
   const isWritable = (id: string): boolean => {
-    const environmentId = id.slice(0, id.lastIndexOf(":"));
-    return input.reorderableEnvironmentIds.has(environmentId as EnvironmentId);
+    const environmentId = environmentById.get(id);
+    return environmentId !== undefined && input.reorderableEnvironmentIds.has(environmentId);
   };
   const visibleIds = new Set(orderedIds);
   const reservedKeys = new Set(
