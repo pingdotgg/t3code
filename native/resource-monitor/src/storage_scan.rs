@@ -7,6 +7,26 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 const VERSION: u32 = 1;
+// Fail through the scan protocol instead of retaining an unbounded directory frontier.
+const MAX_PENDING_DIRECTORIES: usize = 65_536;
+const MAX_SAFE_BYTES: u64 = (1 << 53) - 1;
+
+fn enqueue_directory(pending: &Mutex<Vec<PathBuf>>, path: PathBuf) -> io::Result<()> {
+    let mut pending = pending.lock().unwrap();
+    if pending.len() >= MAX_PENDING_DIRECTORIES {
+        return Err(io::Error::other("too many pending directories"));
+    }
+    pending.push(path);
+    Ok(())
+}
+
+// Every reported total must remain exact when parsed as a JavaScript number.
+fn add_bytes(total: u64, bytes: u64) -> io::Result<u64> {
+    total
+        .checked_add(bytes)
+        .filter(|total| *total <= MAX_SAFE_BYTES)
+        .ok_or_else(|| io::Error::other("storage usage exceeds the safe integer limit"))
+}
 const BATCH_ENTRIES_PER_WORKER: usize = 8_192;
 const BATCH_TIME: Duration = Duration::from_millis(25);
 
@@ -183,15 +203,15 @@ impl Worker {
                         continue;
                     };
                     if is_directory {
-                        pending.lock().unwrap().push(path);
+                        enqueue_directory(pending, path)?;
                     } else {
                         let Some(info) = skip_missing(file_info(&path))? else {
                             continue;
                         };
                         if info.directory {
-                            pending.lock().unwrap().push(path);
+                            enqueue_directory(pending, path)?;
                         } else if info.links <= 1 {
-                            self.bytes += info.bytes;
+                            self.bytes = add_bytes(self.bytes, info.bytes)?;
                         } else {
                             self.linked
                                 .entry(info.identity)
@@ -219,7 +239,7 @@ impl Worker {
                 let Some(entries) = skip_missing(fs::read_dir(directory))? else {
                     continue;
                 };
-                self.bytes += info.bytes;
+                self.bytes = add_bytes(self.bytes, info.bytes)?;
                 self.current = Some(entries);
             }
         }
@@ -290,13 +310,16 @@ impl Scan {
             }
             for (seen, total, bytes) in linked.values() {
                 if seen == total {
-                    self.workers[0].bytes += bytes;
+                    self.workers[0].bytes = add_bytes(self.workers[0].bytes, *bytes)?;
                 }
             }
         }
         Ok(Progress {
             version: VERSION,
-            bytes: self.workers.iter().map(|worker| worker.bytes).sum(),
+            bytes: self
+                .workers
+                .iter()
+                .try_fold(0, |total, worker| add_bytes(total, worker.bytes))?,
             done,
         })
     }
