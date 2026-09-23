@@ -39,7 +39,7 @@ import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings"
 import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
-import { Button } from "../ui/button";
+import { InlineButton } from "../ui/button";
 import {
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
@@ -941,7 +941,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
             {/* Model list */}
             <div className="relative min-h-0 flex-1 overflow-hidden pr-px">
-              <ComboboxListVirtualized className="not-empty:p-0">
+              <ComboboxListVirtualized>
                 <LegendList<string>
                   ref={modelListRef}
                   data={filteredItemKeys}
@@ -955,7 +955,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                           index={index}
                           value={modelKey}
                           aria-expanded={legacySection.isExpanded}
-                          className="group w-full cursor-pointer rounded-md px-2 py-2"
+                          className="group w-full cursor-pointer"
                         >
                           <div className="min-w-0 flex-1 text-left">
                             <div className="text-xs font-medium leading-snug">Legacy models</div>
@@ -1031,26 +1031,22 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     <p className="line-clamp-3 text-muted-foreground">
                       {getProviderStatusMessage(entry.snapshot)}
                     </p>
-                    <Button
-                      className="mt-1 px-0 text-foreground"
+                    <InlineButton
+                      className="mt-1"
                       onClick={() => {
                         props.onRequestClose?.();
                         props.onOpenProviderSetup?.(entry.instanceId);
                       }}
-                      size="xs"
-                      variant="link"
                     >
                       {providerSetupEntries.length > 1
                         ? `Set up ${entry.displayName}`
                         : "Open provider setup"}
-                    </Button>
+                    </InlineButton>
                   </div>
                 ))}
               </div>
             ) : (
-              <ComboboxEmpty className="not-empty:py-6 empty:h-0 text-xs font-normal leading-snug">
-                No models found
-              </ComboboxEmpty>
+              <ComboboxEmpty className="empty:h-0">No models found</ComboboxEmpty>
             )}
           </div>
         </Combobox>
