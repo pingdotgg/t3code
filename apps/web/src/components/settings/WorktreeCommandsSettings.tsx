@@ -1,6 +1,8 @@
 import { DEFAULT_UNIFIED_SETTINGS, EnvironmentId } from "@t3tools/contracts";
 
 import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
+import { buildProjectScript, nextProjectScriptId } from "../../projectScripts";
+import { importableT3FileScripts, newScriptInputFromT3File } from "../projectScriptEditor";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
@@ -32,7 +34,8 @@ const COMMAND_KINDS = [
 /**
  * Custom worktree create/remove commands. A project's t3.json can suggest
  * them, but they only run once imported here, so opening a repository never
- * runs its commands on its own.
+ * runs its commands on its own. Importing also brings the file's setup action,
+ * which usually prepares the checkout those commands create.
  */
 export function WorktreeCommandsSettings() {
   const settings = useScopedSettings();
@@ -51,9 +54,41 @@ export function WorktreeCommandsSettings() {
   );
   const suggested = t3File.file?.worktreeCommands;
   const commands = settings.worktreeCommands;
+  const scripts = settings.defaultProjectScripts;
+  // Only one action runs on worktree creation, so only the file's first one is offered.
+  const setupScript = importableT3FileScripts(scripts, t3File.scripts).find(
+    (fileScript) => fileScript.runOnWorktreeCreate === true,
+  );
   const importable =
     suggested !== undefined &&
-    ((suggested.create ?? "") !== commands.create || (suggested.remove ?? "") !== commands.remove);
+    ((suggested.create ?? "") !== commands.create ||
+      (suggested.remove ?? "") !== commands.remove ||
+      setupScript !== undefined);
+
+  // One write for both keys: each override write replaces the project's whole entry.
+  const importFromFile = () => {
+    if (suggested === undefined) return;
+    const newScript = setupScript
+      ? buildProjectScript(
+          nextProjectScriptId(
+            setupScript.name,
+            scripts.map((script) => script.id),
+          ),
+          newScriptInputFromT3File(setupScript),
+        )
+      : null;
+    updateSettings({
+      worktreeCommands: { create: suggested.create ?? "", remove: suggested.remove ?? "" },
+      ...(newScript
+        ? {
+            defaultProjectScripts: [
+              ...scripts.map((script) => ({ ...script, runOnWorktreeCreate: false })),
+              newScript,
+            ],
+          }
+        : {}),
+    });
+  };
 
   return COMMAND_KINDS.map(({ kind, searchId, label, description }) => (
     <SettingsRow
@@ -86,20 +121,8 @@ export function WorktreeCommandsSettings() {
             aria-label={label}
           />
           {kind === "create" && importable ? (
-            <Button
-              size="xs"
-              variant="outline"
-              className="self-end"
-              onClick={() =>
-                updateSettings({
-                  worktreeCommands: {
-                    create: suggested.create ?? "",
-                    remove: suggested.remove ?? "",
-                  },
-                })
-              }
-            >
-              Use t3.json commands
+            <Button size="xs" variant="outline" className="self-end" onClick={importFromFile}>
+              Use t3.json setup
             </Button>
           ) : null}
         </div>

@@ -162,8 +162,8 @@ A repository can suggest commands in `t3.json`:
 }
 ```
 
-T3 Code never runs them from the file. With the project selected, choose **Use t3.json commands**
-to copy them into the project's settings.
+T3 Code never runs them from the file. With the project selected, choose **Use t3.json setup** to
+copy them into the project's settings, along with the file's first `runOnWorktreeCreate` action.
 
 ## Storage cleanup
 
