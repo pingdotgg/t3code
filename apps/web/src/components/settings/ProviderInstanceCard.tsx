@@ -3,6 +3,7 @@
 import { Spinner } from "~/components/ui/spinner";
 
 import {
+  AlertTriangleIcon,
   ArrowUpCircleIcon,
   CopyIcon,
   DownloadIcon,
@@ -444,8 +445,15 @@ export function ProviderInstanceCard({
   const versionAdvisory = getProviderVersionAdvisoryPresentation(
     liveProvider?.versionAdvisory,
     liveProvider?.compatibilityAdvisory,
+    enabled,
   );
   const updateCommand = versionAdvisory?.updateCommand ?? null;
+  const hasCompatibilityWarning =
+    compatibility !== undefined &&
+    compatibility.status !== "supported" &&
+    compatibility.status !== "unknown";
+  const VersionAdvisoryIcon = hasCompatibilityWarning ? AlertTriangleIcon : ArrowUpCircleIcon;
+  const onRunVersionAction = versionAdvisory?.targetVersion ? onInstallRecommended : onRunUpdate;
   const FallbackIconComponent = driverOption?.icon;
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
@@ -574,10 +582,15 @@ export function ProviderInstanceCard({
     statusKey === "warning" || statusKey === "error" ? (
       <span className={cn("size-1.5 shrink-0 rounded-full", statusStyle.dot)} aria-hidden />
     ) : null;
-  // Trouble states carry the server's explanation (a failed probe, a shadow
-  // home entry that is not a symlink, a missing binary). Show it wherever the
-  // headline shows so the user can act without opening the editor.
   const needsAttention = statusKey === "warning" || statusKey === "error";
+  // Keep compatibility copy compact; the version popover carries the explanation.
+  const inlineStatusDetail = hasCompatibilityWarning
+    ? compatibility?.status === "broken"
+      ? "Incompatible"
+      : compatibility?.status === "unsupported"
+        ? "Unsupported"
+        : "Limited support"
+    : summary.detail;
   const editorStatusNode =
     isAuthenticated && authEmail ? (
       <>
@@ -585,16 +598,16 @@ export function ProviderInstanceCard({
         <span>Authenticated as</span>
         <ProviderAuthEmail email={authEmail} />
         {authLabel ? <span>· {authLabel}</span> : null}
-        {summary.detail ? (
-          <span className="min-w-0 [overflow-wrap:anywhere]">· {summary.detail}</span>
+        {inlineStatusDetail ? (
+          <span className="min-w-0 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
         ) : null}
       </>
     ) : (
       <>
         {statusDotNode}
         <span>{summary.headline}</span>
-        {summary.detail ? (
-          <span className="min-w-0 [overflow-wrap:anywhere]">· {summary.detail}</span>
+        {inlineStatusDetail ? (
+          <span className="min-w-0 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
         ) : null}
       </>
     );
@@ -635,7 +648,23 @@ export function ProviderInstanceCard({
                 </code>
               ) : null}
               {versionAdvisory ? (
-                updateCommand ? (
+                hasCompatibilityWarning ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span
+                          tabIndex={0}
+                          role="img"
+                          aria-label={versionAdvisory.title}
+                          className="pointer-events-auto relative inline-flex shrink-0 text-warning"
+                        >
+                          <VersionAdvisoryIcon className="size-3.5" />
+                        </span>
+                      }
+                    />
+                    <TooltipPopup side="top">{versionAdvisory.detail}</TooltipPopup>
+                  </Tooltip>
+                ) : updateCommand ? (
                   <Tooltip>
                     <TooltipTrigger
                       render={
@@ -668,8 +697,7 @@ export function ProviderInstanceCard({
               ) : null}
               <span className="line-clamp-2 [overflow-wrap:anywhere]">
                 {summary.headline}
-                {needsAttention && summary.detail ? ` · ${summary.detail}` : null}
-                {compatibility?.message ? ` · ${compatibility.message}` : null}
+                {needsAttention && inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
               </span>
             </span>
           </span>
@@ -701,25 +729,32 @@ export function ProviderInstanceCard({
       >
         {versionAdvisory ? (
           <Popover>
-            <PopoverTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost-muted"
-                  aria-label="Update available — view details"
-                >
-                  <ArrowUpCircleIcon
-                    className={cn(versionAdvisory.emphasis === "strong" && "text-warning")}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <PopoverTrigger
+                    render={
+                      <Button
+                        type="button"
+                        size="icon-xs"
+                        variant="ghost-muted"
+                        aria-label={`${versionAdvisory.title} — view details`}
+                      >
+                        <VersionAdvisoryIcon
+                          className={cn(hasCompatibilityWarning && "text-warning")}
+                        />
+                      </Button>
+                    }
                   />
-                </Button>
-              }
-            />
+                }
+              />
+              <TooltipPopup side="top">{versionAdvisory.title}</TooltipPopup>
+            </Tooltip>
             <PopoverPopup side="bottom" align="end" width="md">
               <div className="grid min-w-0 gap-3">
                 <div className="grid gap-0.5">
                   <p className="text-[13px] font-semibold leading-tight text-foreground">
-                    Update available
+                    {versionAdvisory.title}
                   </p>
                   <p
                     className={cn(
@@ -732,20 +767,24 @@ export function ProviderInstanceCard({
                     {versionAdvisory.detail}
                   </p>
                 </div>
-                {onRunUpdate ? (
+                {onRunVersionAction ? (
                   <Button
                     type="button"
                     size="xs"
                     variant="outline"
                     className="w-full"
                     disabled={isUpdating}
-                    onClick={onRunUpdate}
+                    onClick={onRunVersionAction}
                   >
                     {isUpdating ? <Spinner /> : <DownloadIcon />}
-                    {isUpdating ? "Updating" : "Update now"}
+                    {isUpdating
+                      ? "Updating"
+                      : versionAdvisory.targetVersion
+                        ? `Install ${getProviderVersionLabel(versionAdvisory.targetVersion)}`
+                        : "Update now"}
                   </Button>
                 ) : null}
-                {onRunUpdate && updateCommand ? (
+                {onRunVersionAction && updateCommand ? (
                   <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                     <span aria-hidden className="h-px flex-1 bg-border" />
                     or, update manually using
@@ -802,21 +841,6 @@ export function ProviderInstanceCard({
   return (
     <>
       <SettingsSection title={displayName} icon={titleIconNode} headerAction={editorHeaderAction}>
-        {compatibility?.message ? (
-          <SettingsRow title="Provider compatibility" description={compatibility.message}>
-            {onInstallRecommended && compatibility.recommendedVersion ? (
-              <Button
-                size="xs"
-                variant="outline"
-                disabled={readOnly || isUpdating}
-                onClick={onInstallRecommended}
-              >
-                {isUpdating ? <Spinner /> : <DownloadIcon />}
-                {isUpdating ? "Updating" : `Install ${compatibility.recommendedVersion}`}
-              </Button>
-            ) : null}
-          </SettingsRow>
-        ) : null}
         <SettingsRow
           title="Display name"
           status={

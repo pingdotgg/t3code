@@ -19,8 +19,8 @@ const provider: ServerProvider = {
   skills: [],
   slashCommands: [],
   compatibilityAdvisory: {
-    status: "graceful",
-    message: "Limited compatibility. Use 2.0.0.",
+    status: "unsupported",
+    message: "Unsupported version. Use 2.0.0.",
     recommendedVersion: "2.0.0",
     recommendedRange: null,
   },
@@ -32,7 +32,12 @@ describe("compatibility banners", () => {
     expect(shouldShowProviderStatusBanner(provider, getProviderStatusBannerKey(provider))).toBe(
       false,
     );
-    expect(getProviderStatusMessage(provider)).toBe(provider.compatibilityAdvisory?.message);
+    expect(
+      shouldShowProviderStatusBanner(
+        { ...provider, version: "1.0.1" },
+        getProviderStatusBannerKey(provider),
+      ),
+    ).toBe(true);
     const relaxed: ServerProvider = {
       ...provider,
       compatibilityAdvisory: {
@@ -43,6 +48,12 @@ describe("compatibility banners", () => {
     };
     expect(getProviderStatusBannerKey(relaxed)).toBeNull();
     expect(getProviderStatusBannerKey({ ...provider, status: "disabled" })).toBeNull();
+    expect(
+      getProviderStatusBannerKey({
+        ...provider,
+        compatibilityAdvisory: { ...provider.compatibilityAdvisory!, status: "graceful" },
+      }),
+    ).toBeNull();
   });
 
   it("keeps authentication failures ahead of compatibility warnings even without a probe message", () => {

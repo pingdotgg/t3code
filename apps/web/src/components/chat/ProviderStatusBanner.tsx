@@ -6,31 +6,35 @@ import { Button, InlineButton } from "../ui/button";
 import { formatProviderDriverKindLabel } from "../../providerModels";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
+/** Unsupported and broken versions fail mid-turn, so they warn even when ready. */
+function getIncompatibleVersion(status: ServerProvider) {
+  const compatibility = status.compatibilityAdvisory;
+  return compatibility?.status === "unsupported" || compatibility?.status === "broken"
+    ? compatibility
+    : null;
+}
+
 export function getProviderStatusBannerKey(status: ServerProvider | null): string | null {
-  if (
-    !status ||
-    status.status === "disabled" ||
-    (status.status === "ready" && !status.compatibilityAdvisory?.message)
-  )
-    return null;
+  if (!status || status.status === "disabled") return null;
+  if (status.status === "ready") {
+    const incompatible = getIncompatibleVersion(status);
+    return incompatible
+      ? [status.instanceId, incompatible.status, status.version ?? ""].join("\u0000")
+      : null;
+  }
   // Antigravity checks saved credentials when a session starts. Its local
   // health check leaves auth unknown after a restart, which is not a failure.
   if (
     status.driver === "antigravity" &&
     status.installed &&
     status.status === "warning" &&
-    status.auth.status === "unknown" &&
-    !status.compatibilityAdvisory?.message
+    status.auth.status === "unknown"
   ) {
     return null;
   }
-  return [
-    status.instanceId,
-    status.status,
-    status.auth.status,
-    status.message ?? "",
-    status.compatibilityAdvisory?.message ?? "",
-  ].join("\u0000");
+  return [status.instanceId, status.status, status.auth.status, status.message ?? ""].join(
+    "\u0000",
+  );
 }
 
 export function shouldShowProviderStatusBanner(
@@ -52,7 +56,6 @@ export function hasProviderSetup(status: ServerProvider): boolean {
 /** Keep the environment's error intact in both the banner and model picker. */
 export function getProviderStatusMessage(status: ServerProvider): string {
   if (status.message) return status.message;
-
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
   if (!status.installed && hasProviderSetup(status)) {
     return `Open provider setup to install ${formatProviderDriverKindLabel(status.driver)} on this environment.`;
@@ -65,8 +68,6 @@ export function getProviderStatusMessage(status: ServerProvider): string {
     }
     return "Sign in via the CLI to authenticate again.";
   }
-  if (status.status === "ready" && status.compatibilityAdvisory?.message)
-    return status.compatibilityAdvisory.message;
   return status.status === "ready"
     ? "No models are available for this provider."
     : status.status === "error"
@@ -89,18 +90,20 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
 
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
   const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
+  const incompatible = status.status === "ready" ? getIncompatibleVersion(status) : null;
   const title = isUnauthenticated
     ? `${providerName} is unauthenticated`
-    : `${providerName} provider status`;
-  const message = getProviderStatusMessage(status);
-  const compatibilityMessage = status.compatibilityAdvisory?.message;
-  const isWarning = status.status !== "error" && status.compatibilityAdvisory?.status !== "broken";
+    : incompatible
+      ? `${providerName} ${status.version ?? ""} is ${incompatible.status === "broken" ? "known to be broken" : "unsupported"}`
+      : `${providerName} provider status`;
+  const message = incompatible?.message ?? getProviderStatusMessage(status);
+  const isWarning = status.status === "warning" || incompatible !== null;
 
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
       <Alert
         variant={isWarning ? "warning" : "error"}
-        role={isWarning && status.status === "ready" ? "status" : "alert"}
+        role={incompatible && incompatible.status !== "broken" ? "status" : "alert"}
         surface="glass"
         controlAlignment="first-line"
       >
@@ -113,9 +116,6 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
               {message}
             </TooltipPopup>
           </Tooltip>
-          {compatibilityMessage && compatibilityMessage !== message ? (
-            <div className="text-muted-foreground">{compatibilityMessage}</div>
-          ) : null}
           {onOpenProviderSetup && hasProviderSetup(status) ? (
             <InlineButton onClick={() => onOpenProviderSetup(status.instanceId)}>
               Open provider setup

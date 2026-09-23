@@ -651,7 +651,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           </View>
         ) : null}
 
-        {selectedProviderStatus?.compatibilityAdvisory?.message ? (
+        {selectedProviderStatus?.compatibilityAdvisory?.message &&
+        (selectedProviderStatus.compatibilityAdvisory.status === "unsupported" ||
+          selectedProviderStatus.compatibilityAdvisory.status === "broken") ? (
           <Text
             accessibilityRole={
               selectedProviderStatus.compatibilityAdvisory.status === "broken" ? "alert" : undefined
