@@ -5,7 +5,9 @@ import {
   threadOrderAfterMove,
   threadDropLifecycle,
   reconcilePendingThreadOrder,
+  computeThreadMoveAvailability,
   type PendingThreadOrder,
+  type ThreadMoveAvailability,
 } from "./threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
@@ -1540,9 +1542,7 @@ function buildTickList(
   options?: {
     readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
     readonly queuedThreadKeys?: ReadonlySet<string>;
-    readonly resolveMoveAvailability?: (
-      thread: EnvironmentThreadShell,
-    ) => { readonly canMoveUp: boolean; readonly canMoveDown: boolean } | undefined;
+    readonly moveAvailability?: ReadonlyMap<string, ThreadMoveAvailability>;
     readonly shelfPreferencesLoading?: boolean;
   },
 ): ThreadListV2ListItem[] {
@@ -1567,9 +1567,7 @@ function buildTickList(
       ? { snoozeEnvironmentIds: options.snoozeEnvironmentIds }
       : {}),
     ...(options?.queuedThreadKeys ? { queuedThreadKeys: options.queuedThreadKeys } : {}),
-    ...(options?.resolveMoveAvailability
-      ? { resolveMoveAvailability: options.resolveMoveAvailability }
-      : {}),
+    ...(options?.moveAvailability ? { moveAvailability: options.moveAvailability } : {}),
     ...(options?.shelfPreferencesLoading !== undefined
       ? { shelfPreferencesLoading: options.shelfPreferencesLoading }
       : {}),
@@ -1967,15 +1965,19 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
   });
 
   it("notices move-availability changes on card rows without a shell update", () => {
-    const permissive = () => ({ canMoveUp: true, canMoveDown: true });
-    const blocked = (thread: EnvironmentThreadShell) =>
-      thread.id === "stamp-ready" ? undefined : { canMoveUp: true, canMoveDown: true };
+    const permissive = new Map([
+      [`${environmentId}:stamp-ready`, { canMoveUp: true, canMoveDown: true }],
+      [`${environmentId}:stamp-settled`, { canMoveUp: true, canMoveDown: true }],
+    ]);
+    const blocked = new Map([
+      [`${environmentId}:stamp-settled`, { canMoveUp: true, canMoveDown: true }],
+    ]);
     const open = buildTickList([readyThread, settledThread], BASE_MS, [], {
-      resolveMoveAvailability: permissive,
+      moveAvailability: permissive,
       snoozeEnvironmentIds: allEnvironments,
     });
     const closed = buildTickList([readyThread, settledThread], BASE_MS, [], {
-      resolveMoveAvailability: blocked,
+      moveAvailability: blocked,
       snoozeEnvironmentIds: allEnvironments,
     });
     const readyOpen = itemsByThreadKey(open).get(`v2-thread:${environmentId}:stamp-ready`)!;

@@ -17,6 +17,8 @@ import {
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
+import type { ThreadMoveAvailability } from "./threadOrder";
+
 import { relativeTime } from "../../lib/time";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
@@ -414,11 +416,12 @@ export function buildThreadListV2ListItems(input: {
   /** Thread keys (`environmentId:threadId`) with a message waiting in the
       outbox; stamped onto the matching rows as `hasQueuedMessages`. */
   readonly queuedThreadKeys?: ReadonlySet<string>;
-  /** Menu availability for Move up/down, per thread (only consulted for card
-      rows — slim menus omit the moves). Absent = never available (tests). */
-  readonly resolveMoveAvailability?: (
-    thread: EnvironmentThreadShell,
-  ) => { readonly canMoveUp: boolean; readonly canMoveDown: boolean } | undefined;
+  /** Menu availability for Move up/down, keyed by `environmentId:threadId`
+      (only consulted for card rows — slim menus omit the moves). Produced by
+      `computeThreadMoveAvailability` in one pass per section; a recycled cell
+      ignores the render closure, so the stamps ride on the item. Absent =
+      never available (tests). */
+  readonly moveAvailability?: ReadonlyMap<string, ThreadMoveAvailability>;
   /** True while the shelf expansion preferences are still loading; stamped
       onto both shelf headers so the disabled state reaches recycled cells. */
   readonly shelfPreferencesLoading?: boolean;
@@ -440,7 +443,10 @@ export function buildThreadListV2ListItems(input: {
       canSnooze(item.thread, { now: input.snoozeLabelNow })
         ? input.snoozeLabelNow
         : undefined;
-    const move = item.variant === "card" ? input.resolveMoveAvailability?.(item.thread) : undefined;
+    const move =
+      item.variant === "card"
+        ? input.moveAvailability?.get(`${item.thread.environmentId}:${item.thread.id}`)
+        : undefined;
     return {
       type: "v2-thread",
       key: `v2-thread:${item.thread.environmentId}:${item.thread.id}`,

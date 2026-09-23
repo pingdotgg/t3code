@@ -1,5 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
+import { pinOrderKeyBetween, planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentId } from "@t3tools/contracts";
 
@@ -42,7 +42,7 @@ export function threadOrderAfterMove(
   return result;
 }
 
-type OrderRow = Pick<
+export type OrderRow = Pick<
   EnvironmentThreadShell,
   | "id"
   | "environmentId"
@@ -104,6 +104,111 @@ export function createThreadMovePlanner(input: {
       ? null
       : assignments;
   };
+}
+
+export interface ThreadMoveAvailability {
+  readonly canMoveUp: boolean;
+  readonly canMoveDown: boolean;
+}
+
+/**
+ * Batch form of "call `createThreadMovePlanner` once per card": one pass over
+ * the section answers up/down availability for every ordered row, so list
+ * construction stays O(N + T) instead of O(N * (N + T)) (the per-card planner
+ * copies and rescans the whole ordered list and the hidden-key map twice).
+ *
+ * Answers are exact for adjacent swaps except for rows whose fresh key collides
+ * with a hidden row's reserved key — a case the reference planner resolves by
+ * iterating — which are answered by the planner itself, keeping both menus
+ * identical by construction. Falls back wholesale while `fastPath` inputs look
+ * adversarial, which they never do in practice.
+ */
+export function computeThreadMoveAvailability(input: {
+  readonly ordered: readonly OrderRow[];
+  readonly allThreads?: readonly OrderRow[];
+  readonly section: PendingThreadOrder["section"];
+  readonly reorderableEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly pendingOrder?: PendingThreadOrder | null;
+}): Map<string, ThreadMoveAvailability> {
+  const result = new Map<string, ThreadMoveAvailability>();
+  // A reorder in flight locks the whole list until its receipt lands.
+  if (input.pendingOrder != null) return result;
+  const rows = input.ordered;
+  const orderedIds = rows.map(rowId);
+  const indexById = new Map(orderedIds.map((id, index) => [id, index] as const));
+  const sourceRows = input.allThreads ?? input.ordered;
+  const keysById = new Map(
+    sourceRows.map((row) => [rowId(row), rowOrder(row, input.section).key] as const),
+  );
+  const isWritable = (id: string): boolean => {
+    const environmentId = id.slice(0, id.lastIndexOf(":"));
+    return input.reorderableEnvironmentIds.has(environmentId as EnvironmentId);
+  };
+  const visibleIds = new Set(orderedIds);
+  const reservedKeys = new Set(
+    [...keysById].flatMap(([id, key]) => (!visibleIds.has(id) && key != null ? [key] : [])),
+  );
+  // `planPinnedReorder`'s section-rewrite fallback writes every row in the
+  // section, so it is a viable plan for all rows or for none.
+  const bulkViable = orderedIds.every(isWritable);
+  let plannerRef:
+    | ((movedId: string, direction: ThreadMoveDestination) => readonly unknown[] | null)
+    | null = null;
+  for (const row of rows) {
+    const movedId = rowId(row);
+    const denied = { canMoveUp: false, canMoveDown: false };
+    if (!isWritable(movedId)) {
+      result.set(movedId, denied);
+      continue;
+    }
+    const index = indexById.get(movedId);
+    if (index === undefined) {
+      result.set(movedId, denied);
+      continue;
+    }
+    let ambiguous = false;
+    const adjacentAvailable = (towardUp: boolean): boolean => {
+      const shifted = index + (towardUp ? -1 : 1);
+      if (shifted < 0 || shifted >= orderedIds.length) return false;
+      // The swap exchanges the row with its neighbor; afterwards the moved row
+      // sits at `shifted` between `beforeIndex` and `afterIndex` of the OLD
+      // order: moving up it lands between old(index-2) and old(index-1),
+      // moving down between old(index+1) and old(index+2).
+      const beforeIndex = towardUp ? index - 2 : index + 1;
+      const afterIndex = towardUp ? index - 1 : index + 2;
+      const beforeKey = keysById.get(orderedIds[beforeIndex] ?? "") ?? null;
+      const afterKey = keysById.get(orderedIds[afterIndex] ?? "") ?? null;
+      const beforeUsable = beforeIndex < 0 || beforeKey != null;
+      const afterUsable = afterIndex >= orderedIds.length || afterKey != null;
+      if (beforeUsable && afterUsable) {
+        const key = pinOrderKeyBetween(beforeKey, afterKey);
+        if (key === null) return bulkViable;
+        if (!reservedKeys.has(key)) return true;
+        ambiguous = true; // reserved-key walk: defer to the reference planner
+      }
+      return bulkViable;
+    };
+    const canMoveUp = adjacentAvailable(true);
+    const canMoveDown = adjacentAvailable(false);
+    if (!ambiguous) {
+      result.set(movedId, { canMoveUp, canMoveDown });
+    } else {
+      // The rare reserved-key collision keeps the exact reference answer.
+      const planner =
+        plannerRef ??
+        (plannerRef = createThreadMovePlanner({
+          ordered: rows,
+          allThreads: sourceRows,
+          section: input.section,
+          reorderableEnvironmentIds: input.reorderableEnvironmentIds,
+        }));
+      result.set(movedId, {
+        canMoveUp: planner(movedId, "up") !== null,
+        canMoveDown: planner(movedId, "down") !== null,
+      });
+    }
+  }
+  return result;
 }
 
 export function createPendingThreadOrder(input: {

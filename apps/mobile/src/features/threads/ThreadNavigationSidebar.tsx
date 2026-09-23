@@ -1,5 +1,5 @@
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import { createThreadMovePlanner } from "./threadOrder";
+import { computeThreadMoveAvailability } from "./threadOrder";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -489,11 +489,15 @@ function ThreadNavigationSidebarPane(
   // the memoized rows' props comparison on every parent render.
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(serverConfigs);
   const pendingOrder = usePendingThreadOrder(nowMinute, snoozeWakeTick);
-  const threadMovePlanners = useMemo(() => {
-    const sectionPlanner = (section: "pinned" | "active") =>
-      createThreadMovePlanner({
+  // Up/down menu availability for every card, computed once per section per
+  // rebuild (see computeThreadMoveAvailability): per-thread planner calls made
+  // list construction quadratic, and this list rebuilds on every minute tick.
+  const threadMoveAvailability = useMemo(() => {
+    const sectionAvailability = (section: "pinned" | "active") =>
+      computeThreadMoveAvailability({
         allThreads: threads,
         section,
+        pendingOrder,
         reorderableEnvironmentIds: new Set(
           [...serverConfigs].flatMap(([id, config]) =>
             (section === "pinned"
@@ -513,7 +517,7 @@ function ThreadNavigationSidebarPane(
           queuedThreadKeys,
         }),
       });
-    return { pinned: sectionPlanner("pinned"), active: sectionPlanner("active") };
+    return new Map([...sectionAvailability("pinned"), ...sectionAvailability("active")]);
   }, [
     serverConfigs,
     threads,
@@ -524,23 +528,6 @@ function ThreadNavigationSidebarPane(
     nowMinute,
     snoozeWakeTick,
   ]);
-  // Move up/down availability stamped onto the list items (see
-  // buildThreadListV2ListItems): a recycled cell ignores the render closure,
-  // so availability that changes without a shell update — a reorder in
-  // flight, its commit — has to ride on the item through list equality.
-  const resolveMoveAvailability = useCallback(
-    (thread: EnvironmentThreadShell) => {
-      if (pendingOrder !== null) return { canMoveUp: false, canMoveDown: false };
-      const planner =
-        thread.pinnedAt != null ? threadMovePlanners.pinned : threadMovePlanners.active;
-      const movedId = `${thread.environmentId}:${thread.id}`;
-      return {
-        canMoveUp: planner(movedId, "up") !== null,
-        canMoveDown: planner(movedId, "down") !== null,
-      };
-    },
-    [pendingOrder, threadMovePlanners],
-  );
   const threadListV2Layout = useMemo(() => {
     if (!threadListV2Enabled)
       return {
@@ -631,7 +618,7 @@ function ThreadNavigationSidebarPane(
       snoozeLabelNow: `${nowMinute}:00.000Z`,
       snoozeEnvironmentIds,
       queuedThreadKeys,
-      resolveMoveAvailability,
+      moveAvailability: threadMoveAvailability,
       shelfPreferencesLoading: !shelfPreferencesLoaded,
     });
     if (settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0) {
@@ -649,7 +636,7 @@ function ThreadNavigationSidebarPane(
     pendingTasks,
     props.searchQuery,
     queuedThreadKeys,
-    resolveMoveAvailability,
+    threadMoveAvailability,
     selectedProjectRefs,
     settledShelfExpanded,
     shelfPreferencesLoaded,

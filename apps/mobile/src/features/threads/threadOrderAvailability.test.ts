@@ -1,0 +1,199 @@
+import { describe, expect, it } from "vite-plus/test";
+import type { EnvironmentId } from "@t3tools/contracts";
+
+import {
+  computeThreadMoveAvailability,
+  createThreadMovePlanner,
+  type OrderRow,
+} from "./threadOrder";
+
+// The batch availability computation must answer exactly what the reference
+// per-move planner answers; these tests randomize sections that stress every
+// branch (keyless rows, hidden keys, non-writable rows, adversarial keys).
+
+function makeRow(id: string, environmentId: string, key: string | null, pinned: boolean): OrderRow {
+  return {
+    id: id as OrderRow["id"],
+    environmentId: environmentId as OrderRow["environmentId"],
+    pinOrderKey: pinned ? key : null,
+    activeOrderKey: pinned ? null : key,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    unsettledAt: "2026-01-01T00:00:00.000Z",
+    pinnedAt: pinned ? "2026-01-01T00:00:00.000Z" : null,
+  };
+}
+
+function makeRng(seed: number) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state * 1_664_525 + 1_013_904_223) >>> 0;
+    return state / 0x1_0000_0000;
+  };
+}
+
+const KEY_POOL = [
+  "a",
+  "b",
+  "ba",
+  "bb",
+  "c",
+  "d",
+  "ca",
+  "cb",
+  "da",
+  "db",
+  "e",
+  "f",
+  "g",
+  "h",
+  "i",
+  "j",
+  "k",
+  "l",
+  "m",
+  "n",
+  "o",
+  "p",
+  "q",
+  "r",
+  "s",
+  "t",
+  "u",
+  "v",
+  "w",
+  "x",
+  "y",
+  "z",
+  null,
+];
+
+function referenceAvailability(
+  ordered: readonly OrderRow[],
+  allThreads: readonly OrderRow[],
+  writable: ReadonlySet<EnvironmentId>,
+) {
+  const planner = createThreadMovePlanner({
+    ordered,
+    allThreads,
+    section: "pinned",
+    reorderableEnvironmentIds: writable,
+  });
+  const answers = new Map<string, { canMoveUp: boolean; canMoveDown: boolean }>();
+  for (const row of ordered) {
+    const movedId = `${row.environmentId}:${row.id}`;
+    answers.set(movedId, {
+      canMoveUp: planner(movedId, "up") !== null,
+      canMoveDown: planner(movedId, "down") !== null,
+    });
+  }
+  return answers;
+}
+
+function randomCase(rng: () => number) {
+  const rowCount = 1 + Math.floor(rng() * 9);
+  // Two environments; "writable" env vs. one lacking the reorder capability.
+  const rows: OrderRow[] = [];
+  for (let index = 0; index < rowCount; index += 1) {
+    const environment = rng() < 0.75 ? "env-w" : "env-x";
+    const key = KEY_POOL[Math.floor(rng() * KEY_POOL.length)] ?? null;
+    rows.push(makeRow(`t${index}`, environment, key, true));
+  }
+  // Hidden rows (in allThreads, not in the visible ordered section) may hold
+  // keys that collide with fast-path midpoints.
+  const hidden: OrderRow[] = [];
+  const hiddenCount = Math.floor(rng() * 4);
+  for (let index = 0; index < hiddenCount; index += 1) {
+    const key = KEY_POOL[Math.floor(rng() * KEY_POOL.length)] ?? null;
+    hidden.push(makeRow(`h${index}`, rng() < 0.75 ? "env-w" : "env-x", key, true));
+  }
+  return { ordered: rows, allThreads: [...rows, ...hidden] };
+}
+
+const WRITABLE = new Set<EnvironmentId>(["env-w" as EnvironmentId]);
+
+describe("computeThreadMoveAvailability matches the reference planner", () => {
+  it("agrees across randomized sections (keys, holes, non-writable rows, hidden keys)", () => {
+    for (let seed = 1; seed <= 4_000; seed += 1) {
+      const rng = makeRng(seed);
+      const { ordered, allThreads } = randomCase(rng);
+      const batch = computeThreadMoveAvailability({
+        ordered,
+        allThreads,
+        section: "pinned",
+        reorderableEnvironmentIds: WRITABLE,
+      });
+      const reference = referenceAvailability(ordered, allThreads, WRITABLE);
+      for (const [id, answer] of reference) {
+        expect(
+          batch.get(id) ?? { canMoveUp: false, canMoveDown: false },
+          `seed ${seed} row ${id} ordered=${ordered
+            .map((row) => `${row.id}:${row.pinOrderKey ?? "-"}:${row.environmentId}`)
+            .join(",")}`,
+        ).toEqual(answer);
+      }
+    }
+  });
+
+  it("locks every row while a pending reorder is in flight", () => {
+    const rows = [makeRow("t0", "env-w", "a", true), makeRow("t1", "env-w", "c", true)];
+    const pending = {
+      section: "pinned" as const,
+      orderedIds: ["env-w:t1", "env-w:t0"],
+      before: new Map(),
+      assignments: new Map(),
+      confirmed: new Set<string>(),
+      commandsComplete: false,
+    };
+    const batch = computeThreadMoveAvailability({
+      ordered: rows,
+      section: "pinned",
+      reorderableEnvironmentIds: WRITABLE,
+      pendingOrder: pending,
+    });
+    expect(batch.size).toBe(0);
+  });
+
+  it("denies single-row sections on both directions", () => {
+    const rows = [makeRow("t0", "env-w", "a", true)];
+    const batch = computeThreadMoveAvailability({
+      ordered: rows,
+      section: "pinned",
+      reorderableEnvironmentIds: WRITABLE,
+    });
+    expect(batch.get("env-w:t0")).toEqual({ canMoveUp: false, canMoveDown: false });
+  });
+
+  it("denies rows whose section has non-writable neighbours when the fast path fails", () => {
+    // Keyless neighbors force the section-rewrite fallback; a non-writable
+    // neighbor makes the rewrite illegal for every row in the section.
+    const rows = [
+      makeRow("t0", "env-w", null, true),
+      makeRow("t1", "env-x", "c", true),
+      makeRow("t2", "env-w", "d", true),
+    ];
+    const batch = computeThreadMoveAvailability({
+      ordered: rows,
+      allThreads: rows,
+      section: "pinned",
+      reorderableEnvironmentIds: WRITABLE,
+    });
+    const reference = referenceAvailability(rows, rows, WRITABLE);
+    expect(Object.fromEntries(batch)).toEqual(Object.fromEntries(reference));
+    // Sanity: the middle (non-writable) row is denied on both sides.
+    expect(batch.get("env-x:t1")).toEqual({ canMoveUp: false, canMoveDown: false });
+  });
+
+  it("agrees on an adversarial section of consecutive single-char keys", () => {
+    // Every midpoint between consecutive one-char keys is unrepresentable, so
+    // no row may claim a fast-path plan.
+    const rows = ["a", "b", "c", "d"].map((key, index) => makeRow(`t${index}`, "env-w", key, true));
+    const batch = computeThreadMoveAvailability({
+      ordered: rows,
+      allThreads: rows,
+      section: "pinned",
+      reorderableEnvironmentIds: WRITABLE,
+    });
+    const reference = referenceAvailability(rows, rows, WRITABLE);
+    expect(Object.fromEntries(batch)).toEqual(Object.fromEntries(reference));
+  });
+});
