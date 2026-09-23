@@ -16,6 +16,7 @@ import {
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetAudioMutedInputSchema,
   DesktopPreviewSetColorSchemeInputSchema,
+  DesktopPreviewSetTouchEmulationInputSchema,
   BrowserImportResult,
   BrowserImportSource,
   DesktopPreviewClearDataInputSchema,
@@ -164,6 +165,18 @@ export const setColorScheme = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.setColorScheme")(function* ({ tabId, colorScheme }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.setColorScheme(tabId, colorScheme);
+  }),
+});
+export const setTouchEmulation = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_TOUCH_EMULATION_CHANNEL,
+  payload: DesktopPreviewSetTouchEmulationInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setTouchEmulation")(function* ({
+    tabId,
+    touchEmulation,
+  }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setTouchEmulation(tabId, touchEmulation);
   }),
 });
 export const setAudioMuted = DesktopIpc.makeIpcMethod({
@@ -495,6 +508,7 @@ export const methods = [
   resetZoom,
   hardReload,
   setColorScheme,
+  setTouchEmulation,
   setAudioMuted,
   openDevTools,
   clearCookies,

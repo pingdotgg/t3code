@@ -1598,43 +1598,44 @@ describe("PreviewManager", () => {
     ),
   );
 
+  const makeDebuggerWebContents = (id: number) => {
+    const sendCommand = vi.fn(async () => undefined);
+    return {
+      sendCommand,
+      wc: {
+        id,
+        isDestroyed: () => false,
+        isDevToolsOpened: () => false,
+        getType: () => "webview",
+        getURL: () => "https://example.com",
+        getTitle: () => "Example",
+        isLoading: () => false,
+        getZoomFactor: () => 1,
+        setZoomFactor: vi.fn(),
+        setAudioMuted: vi.fn(),
+        isCurrentlyAudible: () => false,
+        on: vi.fn(),
+        off: vi.fn(),
+        ipc: { on: vi.fn(), off: vi.fn() },
+        send: webviewSend,
+        navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+        setIgnoreMenuShortcuts: vi.fn(),
+        setWindowOpenHandler: vi.fn(),
+        debugger: {
+          isAttached: () => false,
+          attach: vi.fn(),
+          sendCommand,
+          on: vi.fn(),
+          off: vi.fn(),
+        },
+      } as never,
+    };
+  };
+
   effectIt.effect("emulates prefers-color-scheme and re-applies it across webview swaps", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        const makeWebContents = (id: number) => {
-          const sendCommand = vi.fn(async () => undefined);
-          return {
-            sendCommand,
-            wc: {
-              id,
-              isDestroyed: () => false,
-              isDevToolsOpened: () => false,
-              getType: () => "webview",
-              getURL: () => "https://example.com",
-              getTitle: () => "Example",
-              isLoading: () => false,
-              getZoomFactor: () => 1,
-              setZoomFactor: vi.fn(),
-              setAudioMuted: vi.fn(),
-              isCurrentlyAudible: () => false,
-              on: vi.fn(),
-              off: vi.fn(),
-              ipc: { on: vi.fn(), off: vi.fn() },
-              send: webviewSend,
-              navigationHistory: { canGoBack: () => false, canGoForward: () => false },
-              setIgnoreMenuShortcuts: vi.fn(),
-              setWindowOpenHandler: vi.fn(),
-              debugger: {
-                isAttached: () => false,
-                attach: vi.fn(),
-                sendCommand,
-                on: vi.fn(),
-                off: vi.fn(),
-              },
-            } as never,
-          };
-        };
-        const first = makeWebContents(42);
+        const first = makeDebuggerWebContents(42);
         fromId.mockReturnValue(first.wc);
         const states: PreviewManager.PreviewTabState[] = [];
 
@@ -1654,7 +1655,7 @@ describe("PreviewManager", () => {
         });
         expect(states.at(-1)?.colorScheme).toBe("dark");
 
-        const replacement = makeWebContents(43);
+        const replacement = makeDebuggerWebContents(43);
         fromId.mockReturnValue(replacement.wc);
         yield* manager.registerWebview("tab_scheme", 43);
         yield* Effect.yieldNow;
@@ -1670,6 +1671,53 @@ describe("PreviewManager", () => {
           features: [{ name: "prefers-color-scheme", value: "" }],
         });
         expect(states.at(-1)?.colorScheme).toBe("system");
+      }),
+    ),
+  );
+
+  effectIt.effect("emulates a touch screen and re-applies it across webview swaps", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const first = makeDebuggerWebContents(42);
+        fromId.mockReturnValue(first.wc);
+        const states: PreviewManager.PreviewTabState[] = [];
+
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+        yield* manager.createTab("tab_touch");
+        yield* manager.registerWebview("tab_touch", 42);
+        yield* Effect.yieldNow;
+        expect(first.sendCommand).not.toHaveBeenCalledWith(
+          "Emulation.setTouchEmulationEnabled",
+          expect.anything(),
+        );
+
+        yield* manager.setTouchEmulation("tab_touch", true);
+
+        expect(first.sendCommand).toHaveBeenCalledWith("Emulation.setTouchEmulationEnabled", {
+          enabled: true,
+        });
+        expect(states.at(-1)?.touchEmulation).toBe(true);
+
+        const replacement = makeDebuggerWebContents(43);
+        fromId.mockReturnValue(replacement.wc);
+        yield* manager.registerWebview("tab_touch", 43);
+        yield* Effect.yieldNow;
+
+        expect(replacement.sendCommand).toHaveBeenCalledWith("Emulation.setTouchEmulationEnabled", {
+          enabled: true,
+        });
+        expect(states.at(-1)?.touchEmulation).toBe(true);
+
+        yield* manager.setTouchEmulation("tab_touch", false);
+
+        expect(replacement.sendCommand).toHaveBeenCalledWith("Emulation.setTouchEmulationEnabled", {
+          enabled: false,
+        });
+        expect(states.at(-1)?.touchEmulation).toBe(false);
       }),
     ),
   );

@@ -7,11 +7,12 @@ import {
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS, resolvePreviewViewport } from "@t3tools/shared/previewViewport";
-import { Link2, Unlink2, X } from "lucide-react";
+import { Link2, Pointer, Unlink2, X } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { Toggle } from "~/components/ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
   Select,
@@ -40,6 +41,8 @@ interface Props {
   readonly aspectRatio: number | null;
   readonly onAspectRatioChange: (aspectRatio: number | null) => void;
   readonly onChange: (setting: PreviewViewportSetting) => Promise<void>;
+  readonly touchEmulation: boolean;
+  readonly onTouchEmulationChange: (enabled: boolean) => void;
 }
 
 export function BrowserDeviceToolbar({
@@ -48,6 +51,8 @@ export function BrowserDeviceToolbar({
   aspectRatio,
   onAspectRatioChange,
   onChange,
+  touchEmulation,
+  onTouchEmulationChange,
 }: Props) {
   const [pending, setPending] = useState(false);
   const [customSize, setCustomSize] = useState<{
@@ -308,6 +313,24 @@ export function BrowserDeviceToolbar({
       >
         <ScreenRotationIcon />
       </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Toggle
+              variant="ghost"
+              size="xs"
+              aria-label="Emulate touch screen"
+              pressed={touchEmulation}
+              onPressedChange={onTouchEmulationChange}
+            />
+          }
+        >
+          <Pointer />
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          {touchEmulation ? "Stop emulating touch screen" : "Emulate touch screen"}
+        </TooltipPopup>
+      </Tooltip>
       {/* Sticky backing so scrolled controls do not show through the close action. */}
       <span className="sticky right-0 ml-auto flex bg-background/95">
         <Button

@@ -82,6 +82,7 @@ function overlay(
     zoomFactor: 1,
     pictureInPicture: false,
     colorScheme: "system" as const,
+    touchEmulation: false,
     audioMuted: audio?.audioMuted ?? false,
     audible: audio?.audible ?? false,
     controller: "none" as const,

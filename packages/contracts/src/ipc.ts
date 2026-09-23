@@ -622,6 +622,14 @@ export interface DesktopPreviewTabState {
   pictureInPicture: boolean;
   colorScheme: DesktopPreviewColorScheme;
   /**
+   * Whether the guest page is told it runs on a touch screen:
+   * `navigator.maxTouchPoints` and the `pointer: coarse` / `hover: none` media
+   * features, plus touch event APIs from the next page load. Mouse input stays
+   * mouse input. Survives navigation and webview swaps, but is dropped when the
+   * tab closes.
+   */
+  touchEmulation: boolean;
+  /**
    * Whether the user has silenced this tab. Per tab rather than per origin, so
    * two tabs on the same site mute independently. Survives navigation and
    * webview swaps, but is dropped when the tab closes.
@@ -1061,6 +1069,11 @@ export const DesktopPreviewSetColorSchemeInputSchema = Schema.Struct({
   colorScheme: DesktopPreviewColorSchemeSchema,
 });
 
+export const DesktopPreviewSetTouchEmulationInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  touchEmulation: Schema.Boolean,
+});
+
 export const DesktopPreviewSetAudioMutedInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   audioMuted: Schema.Boolean,
@@ -1271,6 +1284,11 @@ export interface DesktopPreviewBridge {
    * override). Persists per tab and is re-applied across webview swaps.
    */
   setColorScheme: (tabId: string, colorScheme: DesktopPreviewColorScheme) => Promise<void>;
+  /**
+   * Tell the guest page it runs on a touch screen. Persists per tab and is
+   * re-applied across webview swaps.
+   */
+  setTouchEmulation: (tabId: string, touchEmulation: boolean) => Promise<void>;
   /**
    * Silence the tab's audio output. Persists per tab and is re-applied across
    * webview swaps, but is dropped when the tab closes. Muting a silent tab is
