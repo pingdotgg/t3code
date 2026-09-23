@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { DEFAULT_THREAD_DETAILS_SECTIONS } from "@t3tools/contracts";
 import { AlertTriangleIcon, XIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
@@ -81,8 +81,9 @@ export interface ThreadDetailsPanelProps {
     input: NewProjectScriptInput,
   ) => Promise<ProjectScriptActionResult>;
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
-  /** Bumping this number opens the customize editor, e.g. from a command. */
-  customizeRequest?: number;
+  /** Set by a command to open the customize editor; the panel consumes it on mount or change. */
+  customizeRequested?: boolean;
+  onCustomizeRequestHandled?: () => void;
 }
 
 function SectionEmptyState(props: { readonly label: string }) {
@@ -98,7 +99,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const updateClientSettings = useUpdateClientSettings();
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const [draftSections, setDraftSections] = useState<ThreadDetailsSectionsSetting | null>(null);
-  const committingRef = useRef(false);
 
   const effectiveSections = customizeOpen && draftSections !== null ? draftSections : savedSections;
 
@@ -111,14 +111,12 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     setDraftSections(null);
   }, []);
 
-  const lastCustomizeRequestRef = useRef(props.customizeRequest);
+  const { customizeRequested, onCustomizeRequestHandled } = props;
   useEffect(() => {
-    const request = props.customizeRequest;
-    if (request !== undefined && request > 0 && lastCustomizeRequestRef.current !== request) {
-      lastCustomizeRequestRef.current = request;
-      openCustomize();
-    }
-  }, [props.customizeRequest, openCustomize]);
+    if (!customizeRequested) return;
+    openCustomize();
+    onCustomizeRequestHandled?.();
+  }, [customizeRequested, onCustomizeRequestHandled, openCustomize]);
 
   const branchToolbarProps = {
     showGitControls: props.isGitRepo,
@@ -181,12 +179,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const automationsAvailable = !props.draftId;
   const relationshipsMode = threadDetailsSectionMode(effectiveSections, "relationships");
   const relationshipsAvailable = !props.draftId;
-
-  const nothingVisible =
-    !workspaceRender.render &&
-    !versionControlRender.render &&
-    (automationsMode === "hidden" || !automationsAvailable) &&
-    (relationshipsMode === "hidden" || !relationshipsAvailable);
 
   const versionMismatchBanner = props.versionMismatch ? (
     <div className="px-3 pt-3">
@@ -344,12 +336,12 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
         onCancel={closeCustomize}
         onChange={setDraftSections}
         onDone={() => {
-          committingRef.current = true;
-          const next = draftSections ?? DEFAULT_THREAD_DETAILS_SECTIONS;
-          void updateClientSettings({ threadDetailsSections: next }).then(() => {
-            closeCustomize();
-            committingRef.current = false;
+          // The settings store applies the patch optimistically, so closing
+          // now cannot flash the old arrangement or race a reopened editor.
+          void updateClientSettings({
+            threadDetailsSections: draftSections ?? DEFAULT_THREAD_DETAILS_SECTIONS,
           });
+          closeCustomize();
         }}
         onOpenChange={(open) => {
           if (open) {
@@ -368,8 +360,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
         {versionControlSection}
         {automationsSection}
         {relationshipsSection}
-        {nothingVisible && !customizeOpen ? (
-          <div className="flex flex-col items-start gap-2 px-3 py-3">
+        {/* Automations and Lineage decide their own emptiness from live data,
+            so the fallback hides itself in CSS once any section renders. */}
+        {!workspaceRender.render && !versionControlRender.render && !customizeOpen ? (
+          <div className="flex flex-col items-start gap-2 px-3 py-3 group-has-[section]/thread-details:hidden">
             <p className="text-[13px] text-muted-foreground">No details to show.</p>
             <Button size="xs" variant="outline" onClick={openCustomize}>
               Customize

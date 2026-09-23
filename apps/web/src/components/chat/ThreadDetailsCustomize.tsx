@@ -1,10 +1,11 @@
 import type { ThreadDetailsSectionsSetting } from "@t3tools/contracts";
 import { PencilIcon, PlusIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { cn } from "../../lib/utils";
 import {
   THREAD_DETAILS_SECTIONS,
@@ -56,29 +57,22 @@ function SectionVisibilitySegmentedControl(props: {
   readonly onChange: (mode: Exclude<ThreadDetailsVisibilityMode, "hidden">) => void;
 }) {
   return (
-    <div
+    <ToggleGroup
       aria-label={`${props.section.title} visibility`}
-      className="flex shrink-0 rounded-lg border border-border/60 p-0.5 text-[11px]"
-      role="radiogroup"
+      className="shrink-0"
+      value={[props.value]}
+      variant="segmented"
+      onValueChange={(next) => {
+        const selected = VISIBILITY_OPTIONS.find((option) => option.value === next[0]);
+        if (selected) props.onChange(selected.value);
+      }}
     >
       {VISIBILITY_OPTIONS.map((option) => (
-        <button
-          aria-checked={props.value === option.value}
-          className={cn(
-            "cursor-pointer rounded-md px-2 py-0.5 font-medium",
-            props.value === option.value
-              ? "bg-foreground/10 text-foreground"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-          key={option.value}
-          onClick={() => props.onChange(option.value)}
-          role="radio"
-          type="button"
-        >
+        <Toggle key={option.value} value={option.value}>
           {option.label}
-        </button>
+        </Toggle>
       ))}
-    </div>
+    </ToggleGroup>
   );
 }
 
@@ -98,6 +92,11 @@ export function ThreadDetailsCustomize(props: {
   const [expandedItems, setExpandedItems] = useState<ReadonlySet<ThreadDetailsSectionId>>(
     () => new Set(["workspace", "version-control"]),
   );
+  // Remembered modes belong to one editing session; a cancelled session must
+  // not leak its modes into the next re-add.
+  useEffect(() => {
+    if (!props.open) previousModeRef.current = {};
+  }, [props.open]);
   const availableForDraft = new Set(props.availableForDraft);
   const onPanel = THREAD_DETAILS_SECTIONS.filter(
     (section) => threadDetailsSectionMode(props.sections, section.id) !== "hidden",
@@ -170,9 +169,9 @@ export function ThreadDetailsCustomize(props: {
                     ) : null}
                     {section.items.length > 0 && !draftLocked ? (
                       <div className="pl-6">
-                        <button
+                        <InlineButton
                           aria-expanded={itemsExpanded}
-                          className="cursor-pointer py-1 text-[11px] text-muted-foreground hover:text-foreground"
+                          className="py-1 text-[11px] text-muted-foreground hover:text-foreground"
                           onClick={() =>
                             setExpandedItems((current) => {
                               const next = new Set(current);
@@ -184,10 +183,9 @@ export function ThreadDetailsCustomize(props: {
                               return next;
                             })
                           }
-                          type="button"
                         >
                           {itemsExpanded ? "Hide items" : `${section.items.length} items`}
-                        </button>
+                        </InlineButton>
                         {itemsExpanded ? (
                           <ul className="m-0 list-none p-0">
                             {section.items.map((item) => {

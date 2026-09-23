@@ -5500,7 +5500,11 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().setThreadPanelOpen(activeThreadRef, "popover", false);
   }, [activeThreadRef]);
-  const [threadPanelCustomizeRequest, setThreadPanelCustomizeRequest] = useState(0);
+  const [threadPanelCustomizeRequested, setThreadPanelCustomizeRequested] = useState(false);
+  const handleThreadPanelCustomizeRequest = useCallback(
+    () => setThreadPanelCustomizeRequested(false),
+    [],
+  );
   const toggleRightPanelMaximized = useCallback(() => {
     if (!canMaximizeRightPanel) return;
     setMaximizedRightPanelThreadKey((threadKey) =>
@@ -7305,7 +7309,7 @@ export default function ChatView(props: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         if (!threadPanelOpen) toggleThreadPanel();
-        setThreadPanelCustomizeRequest((request) => request + 1);
+        setThreadPanelCustomizeRequested(true);
         return;
       }
 
@@ -10217,7 +10221,8 @@ export default function ChatView(props: ChatViewProps) {
     onAddProjectScript: saveProjectScript,
     onUpdateProjectScript: updateProjectScript,
     onDeleteProjectScript: deleteProjectScript,
-    customizeRequest: threadPanelCustomizeRequest,
+    customizeRequested: threadPanelCustomizeRequested,
+    onCustomizeRequestHandled: handleThreadPanelCustomizeRequest,
   };
   const panelToggleControlProps = {
     terminalAvailable: activeProject !== null,
