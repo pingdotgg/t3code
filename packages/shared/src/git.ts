@@ -1,4 +1,5 @@
 import type {
+  BranchNamingOptions,
   VcsRef,
   SourceControlProviderInfo,
   VcsStatusLocalResult,
@@ -39,6 +40,15 @@ export function sanitizeBranchFragment(raw: string): string {
     .replace(/[./_-]+$/g, "");
 
   return branchFragment.length > 0 ? branchFragment : "update";
+}
+
+/** Custom naming preserves the model's complete ref; Git validates it on rename. */
+export function formatGeneratedBranchName(raw: string, naming?: BranchNamingOptions): string {
+  if (naming?.mode === "custom") return raw.trim();
+  const branch = sanitizeBranchFragment(raw);
+  if (naming?.mode !== "static") return branch;
+  const prefix = naming.prefix.trim().replace(/\/+$/, "");
+  return prefix ? `${prefix}/${branch}` : branch;
 }
 
 /**

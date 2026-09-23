@@ -2156,6 +2156,32 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("preserves exact custom names and refuses collisions without a suffix", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createRef({ cwd, refName: "Julius/ABC-123" });
+        const failed = yield* driver
+          .renameBranch({
+            cwd,
+            oldBranch: initialBranch,
+            newBranch: "Julius/ABC-123",
+            exactName: true,
+          })
+          .pipe(Effect.exit);
+        assert.equal(failed._tag, "Failure");
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
+        const renamed = yield* driver.renameBranch({
+          cwd,
+          oldBranch: initialBranch,
+          newBranch: "Julius/ABC-124.v2",
+          exactName: true,
+        });
+        assert.equal(renamed.branch, "Julius/ABC-124.v2");
+      }),
+    );
+
     it.effect("returns the existing refName when rename source and target match", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

@@ -21,6 +21,7 @@ import {
   AndroidSettingsEnvironmentFilter,
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
+import { BranchNamingSettings } from "./components/BranchNamingSettings";
 import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -45,7 +46,13 @@ const PAGE_TITLES: Record<SettingsPage, string> = {
 
 const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettingKey[]> = {
   "new-threads": ["defaultThreadEnvMode", "worktreeSubmodules", "defaultRuntimeMode"],
-  "source-control": ["defaultAutoPull", "newWorktreesStartFromOrigin"],
+  "source-control": [
+    "defaultAutoPull",
+    "newWorktreesStartFromOrigin",
+    "branchNamingMode",
+    "branchNamePrefix",
+    "branchNameInstructions",
+  ],
   "agent-behavior": ["responseStreamingMode", "enableAgentBrowserAccess"],
   maintenance: ["continueThreadsAfterServerUpdate"],
 };
@@ -314,6 +321,16 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
 
               {props.page === "source-control" ? (
                 <>
+                  <BranchNamingSettings
+                    key={targets
+                      .map((target) => `${target.environment.environmentId}:${target.projectId}`)
+                      .join(",")}
+                    mode={uniform("branchNamingMode")}
+                    prefix={uniform("branchNamePrefix")}
+                    instructions={uniform("branchNameInstructions")}
+                    disabled={disabledFor("branchNamingMode")}
+                    onChange={write}
+                  />
                   <SettingsSection title="Default branch">
                     <SettingsSwitchRow
                       icon="arrow.down.circle"

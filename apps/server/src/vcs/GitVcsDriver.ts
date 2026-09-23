@@ -193,6 +193,8 @@ export interface GitRangeContext {
 }
 
 export interface GitRenameBranchInput {
+  /** Fail on a name collision instead of appending a numeric suffix. */
+  exactName?: boolean;
   cwd: string;
   oldBranch: string;
   newBranch: string;

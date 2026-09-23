@@ -38,6 +38,19 @@ Settings that are environment-wide stay read-only while a project is selected. W
 targets disagree, a control shows **Mixed** until you choose one value. Appearance, keyboard,
 and other phone-only settings ignore the filter.
 
+## Worktree branch names
+
+In **Settings → Source Control → Worktree branch naming**, choose a static prefix,
+a model-selected semantic prefix such as `feat/` or `fix/`, or custom instructions
+for the complete name. The static prefix defaults to `t3code/`; a trailing slash is
+optional, and an empty prefix adds nothing. Custom instructions are appended to
+the naming prompt and can specify issue IDs, namespaces, and casing.
+
+These settings apply to automatically named new worktree branches. Select a project
+to override its environment defaults. Worktree directories keep their original names.
+If generation fails, or a custom name is invalid or already taken, the temporary
+branch name remains.
+
 ## Scheduled tasks on mobile
 
 Open **Settings → Scheduled tasks** to create recurring tasks or manage existing

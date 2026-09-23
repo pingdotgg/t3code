@@ -13,7 +13,7 @@ import {
   type ServerProviderModel,
   TextGenerationError,
 } from "@t3tools/contracts";
-import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
@@ -391,6 +391,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const { prompt, outputSchema } = buildBranchNamePrompt({
         message: input.message,
         attachments: input.attachments,
+        naming: input.naming,
       });
 
       const generated = yield* runCodexJson({
@@ -403,7 +404,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       });
 
       return {
-        branch: sanitizeBranchFragment(generated.branch),
+        branch: formatGeneratedBranchName(generated.branch, input.naming),
       };
     });
 
