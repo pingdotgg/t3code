@@ -125,6 +125,27 @@ export function cursorAcpUnsupportedModelError(modelId: string): EffectAcpErrors
   });
 }
 
+/**
+ * Map a requested model id onto a live Cursor catalog select value.
+ * Catalog entries can be bare (`composer-2.5`) or parameterized
+ * (`gpt-5.6-sol[context=272k,...]`); match on the base slug and return the
+ * exact catalog value ACP expects for `setModel`.
+ */
+export function resolveCursorAcpCatalogModelId(
+  allowedValues: ReadonlyArray<string>,
+  model: string | null | undefined,
+): string | undefined {
+  const trimmed = model?.trim();
+  if (trimmed && allowedValues.includes(trimmed)) {
+    return trimmed;
+  }
+  const baseModelId = resolveCursorAcpBaseModelId(model);
+  if (allowedValues.includes(baseModelId)) {
+    return baseModelId;
+  }
+  return allowedValues.find((value) => resolveCursorAcpBaseModelId(value) === baseModelId);
+}
+
 export function applyCursorAcpModelSelection<E>(input: {
   readonly runtime: CursorAcpModelSelectionRuntime;
   readonly model: string | null | undefined;
@@ -135,19 +156,24 @@ export function applyCursorAcpModelSelection<E>(input: {
     const baseModelId = resolveCursorAcpBaseModelId(input.model);
     const configOptions = yield* input.runtime.getConfigOptions;
     const modelOption = findCursorModelSelectOption(configOptions);
+    let modelId = baseModelId;
     if (modelOption?.type === "select") {
       const allowedValues = collectSessionConfigOptionValues(modelOption);
-      if (allowedValues.length > 0 && !allowedValues.includes(baseModelId)) {
-        yield* Effect.fail(
-          input.mapError({
-            cause: cursorAcpUnsupportedModelError(baseModelId),
-            step: "set-model",
-          }),
-        );
+      if (allowedValues.length > 0) {
+        const matched = resolveCursorAcpCatalogModelId(allowedValues, input.model);
+        if (!matched) {
+          return yield* Effect.fail(
+            input.mapError({
+              cause: cursorAcpUnsupportedModelError(baseModelId),
+              step: "set-model",
+            }),
+          );
+        }
+        modelId = matched;
       }
     }
 
-    yield* input.runtime.setModel(baseModelId).pipe(
+    yield* input.runtime.setModel(modelId).pipe(
       Effect.mapError((cause) =>
         input.mapError({
           cause,

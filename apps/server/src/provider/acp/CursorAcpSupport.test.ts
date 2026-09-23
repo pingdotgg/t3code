@@ -231,6 +231,39 @@ describe("applyCursorAcpModelSelection", () => {
     expect(calls).toEqual(["gpt-5.4-medium-fast"]);
   });
 
+  it("matches parameterized catalog values and passes the full id to setModel", async () => {
+    const catalogValue = "gpt-5.6-sol[context=272k,reasoning=medium,fast=false]";
+    const calls: string[] = [];
+    const runtime = {
+      getConfigOptions: Effect.succeed([
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: catalogValue,
+          options: [{ value: catalogValue, name: "GPT-5.6 Sol" }],
+        },
+      ] satisfies ReadonlyArray<EffectAcpSchema.SessionConfigOption>),
+      setModel: (value: string) =>
+        Effect.sync(() => {
+          calls.push(value);
+        }),
+      setConfigOption: () => Effect.void,
+    };
+
+    await Effect.runPromise(
+      applyCursorAcpModelSelection({
+        runtime,
+        model: "gpt-5.6-sol[context=1m]",
+        selections: [],
+        mapError: ({ cause }) => cause.message,
+      }),
+    );
+
+    expect(calls).toEqual([catalogValue]);
+  });
+
   it("passes through when the session has no select model option", async () => {
     const calls: string[] = [];
     const runtime = {
