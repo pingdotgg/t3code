@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
+import {
+  generateSpreadPinOrderKeys,
+  pinOrderKeyBetween,
+} from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import {
@@ -157,6 +161,23 @@ describe("computeThreadMoveAvailability matches the reference planner", () => {
     expect(batch.size).toBe(0);
   });
 
+  it("allows the fast-path walk past reserved keys and rewrites that skip matching keys (auditor cases)", () => {
+    // Reported parity case: keys ["f","gn",null], middle row NOT writable.
+    // The rewrite assigns the middle row the key it already holds, so the
+    // diff never writes it and the first row's down-move stays available.
+    const rows = [makeRow("t0", "env-w", "f", true), makeRow("t1", "env-x", "gn", true)];
+    const withThird = [...rows, makeRow("t2", "env-w", null, true)];
+    const batch = computeThreadMoveAvailability({
+      ordered: withThird,
+      allThreads: withThird,
+      section: "pinned",
+      reorderableEnvironmentIds: WRITABLE,
+    });
+    const reference = referenceAvailability(withThird, withThird, WRITABLE);
+    expect(Object.fromEntries(batch)).toEqual(Object.fromEntries(reference));
+    expect(batch.get("env-w:t0")).toEqual({ canMoveUp: false, canMoveDown: true });
+  });
+
   it("keeps moves available for ids containing colons (composite-id parsing)", () => {
     // The reported case: environment `env`, ids `thread:1`/`thread:2`. Splitting
     // the composite id at the last colon yields `env:thread` and falsely locks
@@ -205,6 +226,27 @@ describe("computeThreadMoveAvailability matches the reference planner", () => {
     expect(Object.fromEntries(batch)).toEqual(Object.fromEntries(reference));
     // Sanity: the middle (non-writable) row is denied on both sides.
     expect(batch.get("env-x:t1")).toEqual({ canMoveUp: false, canMoveDown: false });
+  });
+
+  it("agrees on a section where every adjacency midpoint is a hidden reserved key", () => {
+    // The worst case for reserved-key collisions: one hidden row holds the
+    // exact midpoint key of every adjacent visible pair, so every probe walks.
+    const visibleKeys = generateSpreadPinOrderKeys(24);
+    const hiddenKeys = visibleKeys
+      .slice(0, -1)
+      .map((key, index) => pinOrderKeyBetween(key, visibleKeys[index + 1]!))
+      .filter((key): key is string => key != null);
+    const ordered = visibleKeys.map((key, index) => makeRow(`v${index}`, "env-w", key, true));
+    const hidden = hiddenKeys.map((key, index) => makeRow(`h${index}`, "env-w", key, true));
+    const allThreads = [...ordered, ...hidden];
+    const batch = computeThreadMoveAvailability({
+      ordered,
+      allThreads,
+      section: "pinned",
+      reorderableEnvironmentIds: WRITABLE,
+    });
+    const reference = referenceAvailability(ordered, allThreads, WRITABLE);
+    expect(Object.fromEntries(batch)).toEqual(Object.fromEntries(reference));
   });
 
   it("agrees on an adversarial section of consecutive single-char keys", () => {
