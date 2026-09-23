@@ -11,9 +11,8 @@ export interface DescribeAccountSettingsRequest
  * An account-level operation (no stream argument) that reports the account's
  * Kinesis settings, such as on-demand stream count quotas. Provide the
  * implementation with `Effect.provide(AWS.Kinesis.DescribeAccountSettingsHttp)`.
- * @binding
- * @section Account Settings
- * @example Read the Account's Kinesis Settings
+ * ### Account Settings
+ * **Example:** Read the Account's Kinesis Settings
  * ```typescript
  * // init — account-level binding takes no resource
  * const describeAccountSettings = yield* AWS.Kinesis.DescribeAccountSettings();
@@ -21,6 +20,8 @@ export interface DescribeAccountSettingsRequest
  * // runtime
  * const settings = yield* describeAccountSettings();
  * ```
+ *
+ * @binding
  */
 export interface DescribeAccountSettings extends Binding.Service<
   DescribeAccountSettings,

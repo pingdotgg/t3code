@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -8,6 +9,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+
+import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
@@ -52,7 +55,10 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
     traceMaxFiles: 10,
     otlpTracesUrl: undefined,
     otlpMetricsUrl: undefined,
-    otlpExportIntervalMs: 10_000,
+    otlpLogsUrl: undefined,
+    otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
+    otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
+    otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
     otlpServiceName: "t3-server",
     cwd: process.cwd(),
     baseDir,
@@ -161,14 +167,17 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       }).pipe(Effect.provide(makeServerEnvironmentLayer(baseDir)));
 
       expect(first.environmentId).toBe(second.environmentId);
+      expect(first.orchestrationProtocolVersion).toBe(ORCHESTRATION_PROTOCOL_VERSION);
       expect(second.capabilities.repositoryIdentity).toBe(true);
       expect(second.capabilities.connectionProbe).toBe(true);
       expect(second.capabilities.attachmentUploads).toBe(true);
       expect(second.capabilities.fileAttachments).toEqual({ maxUploadBytes: 50 * 1024 * 1024 });
       expect(second.capabilities.pullRequests).toBe(true);
+      expect(second.capabilities.requiredWorktreeBootstrap).toBe(true);
       expect(second.capabilities.usagePriceOverrides).toBe(true);
       expect(second.capabilities.threadActiveReorder).toBe(true);
       expect(second.capabilities.threadTitleRegeneration).toBe(true);
+      expect(second.capabilities.threadPullRequests).toBe(true);
       expect(second.capabilities.threadPullRequestLinking).toBe(true);
       expect(second.capabilities.agentActivityPublishing).toBe(false);
     }),

@@ -1,7 +1,7 @@
 import { assert, describe, expect, it } from "@effect/vitest"
-import { Context, Effect, Fiber, FileSystem, Layer, Option, Path, Stdio } from "effect"
+import { Context, Effect, Fiber, FileSystem, Layer, Option, Path, Redacted, Runtime, Stdio } from "effect"
 import { TestConsole } from "effect/testing"
-import { Argument, CliConfig, CliOutput, Command, Flag, GlobalFlag } from "effect/unstable/cli"
+import { Argument, CliConfig, CliError, CliOutput, Command, Flag, GlobalFlag } from "effect/unstable/cli"
 import { toImpl } from "effect/unstable/cli/internal/command"
 import { ChildProcessSpawner } from "effect/unstable/process"
 import * as Cli from "./fixtures/ComprehensiveCli.ts"
@@ -120,8 +120,8 @@ describe("Command", () => {
       Effect.gen(function*() {
         const captured: Array<ReadonlyArray<string>> = []
         const target = Command.make("greet", {
-          name: Flag.string("name"),
-          count: Argument.integer("count")
+          name: Flag.String("name"),
+          count: Argument.Int("count")
         })
         const command = Command.make("launcher", {}, () =>
           Effect.flatMap(Command.wizard(target), (args) =>
@@ -143,7 +143,7 @@ describe("Command", () => {
       Effect.gen(function*() {
         const captured: Array<string> = []
         const command = Command.make("greet", {
-          name: Flag.string("name")
+          name: Flag.String("name")
         }, ({ name }) => Effect.sync(() => captured.push(name)))
 
         const fiber = yield* Command.runWith(command, { version: "1.0.0" })(["--wizard"]).pipe(Effect.forkChild)
@@ -165,11 +165,111 @@ describe("Command", () => {
         assert.include(output, "Run this command?")
       }).pipe(Effect.provide(TestLayer)))
 
+    it.effect("should run negative integer flag values with --wizard", () =>
+      Effect.gen(function*() {
+        const captured: Array<number> = []
+        const command = Command.make("demo", {
+          offset: Flag.Int("offset")
+        }, ({ offset }) => Effect.sync(() => captured.push(offset)))
+
+        const fiber = yield* Command.runWith(command, { version: "1.0.0" })(["--wizard"]).pipe(Effect.forkChild)
+        yield* MockTerminal.inputText("-2")
+        yield* MockTerminal.inputKey("enter")
+        yield* MockTerminal.inputKey("enter")
+        yield* Fiber.join(fiber)
+
+        assert.deepStrictEqual(captured, [-2])
+        const output = [...yield* TestConsole.logLines, ...yield* MockTerminal.displayLines].join("\n")
+        assert.include(output, "$ demo --offset=-2")
+      }).pipe(Effect.provide(TestLayer)))
+
+    for (
+      const { args: expectedArgs, value } of [
+        { value: "-v", args: ["--value=-v"] },
+        { value: "--verbose", args: ["--value=--verbose"] },
+        { value: "--", args: ["--value=--"] },
+        { value: "--mode=x=y", args: ["--value=--mode=x=y"] },
+        { value: "plain", args: ["--value", "plain"] },
+        { value: "", args: ["--value", ""] },
+        { value: "-", args: ["--value", "-"] }
+      ]
+    ) {
+      it.effect(`should round trip wizard flag value ${JSON.stringify(value)}`, () =>
+        Effect.gen(function*() {
+          const captured: Array<string> = []
+          const command = Command.make("demo", {
+            value: Flag.String("value")
+          }, ({ value }) => Effect.sync(() => captured.push(value)))
+
+          const fiber = yield* Command.wizard(command).pipe(Effect.forkChild)
+          yield* MockTerminal.inputText(value)
+          yield* MockTerminal.inputKey("enter")
+          const args = yield* Fiber.join(fiber)
+
+          assert.deepStrictEqual(args, ["demo", ...expectedArgs])
+          yield* Command.runWith(command, { version: "1.0.0" })(args.slice(1))
+          assert.deepStrictEqual(captured, [value])
+        }).pipe(Effect.provide(TestLayer)))
+    }
+
+    it.effect("should round trip mixed repeated wizard flag values", () =>
+      Effect.gen(function*() {
+        const values = ["-v", "plain", "--name=x", ""]
+        const captured: Array<ReadonlyArray<string>> = []
+        const command = Command.make("demo", {
+          value: Flag.String("value").pipe(Flag.atLeast(1))
+        }, ({ value }) => Effect.sync(() => captured.push(value)))
+
+        const fiber = yield* Command.wizard(command).pipe(Effect.forkChild)
+        yield* MockTerminal.inputKey("backspace")
+        yield* MockTerminal.inputText("4")
+        yield* MockTerminal.inputKey("enter")
+        for (const value of values) {
+          yield* MockTerminal.inputText(value)
+          yield* MockTerminal.inputKey("enter")
+        }
+        const args = yield* Fiber.join(fiber)
+
+        assert.deepStrictEqual(args, ["demo", "--value=-v", "--value", "plain", "--value=--name=x", "--value", ""])
+        yield* Command.runWith(command, { version: "1.0.0" })(args.slice(1))
+        assert.deepStrictEqual(captured, [values])
+      }).pipe(Effect.provide(TestLayer)))
+
+    it.effect("should redact option-looking values in wizard command output", () =>
+      Effect.gen(function*() {
+        const secret = "-hunter2-secret"
+        const captured: Array<readonly [string, string]> = []
+        const command = Command.make("login", {
+          password: Flag.Redacted("password"),
+          account: Argument.String("account")
+        }, ({ account, password }) =>
+          Effect.sync(() => {
+            captured.push([Redacted.value(password), account])
+          }))
+
+        const fiber = yield* Command.runWith(command, { version: "1.0.0" })(["--wizard"]).pipe(Effect.forkChild)
+        yield* MockTerminal.inputText(secret)
+        yield* MockTerminal.inputKey("enter")
+        yield* MockTerminal.inputText("alice")
+        yield* MockTerminal.inputKey("enter")
+        yield* MockTerminal.inputKey("enter")
+        yield* Fiber.join(fiber)
+
+        const output = [...yield* TestConsole.logLines, ...yield* MockTerminal.displayLines].join("\n")
+        const currentCommand = output.slice(output.indexOf("Current command"), output.indexOf("Command ready"))
+        const commandReady = output.slice(output.indexOf("Command ready"))
+
+        assert.deepStrictEqual(captured, [[secret, "alice"]])
+        assert.include(currentCommand, "--password=<redacted>")
+        assert.include(commandReady, "--password=<redacted>")
+        assert.notInclude(output, secret)
+      }).pipe(Effect.provide(TestLayer)))
+
     it.effect("should print a message when wizard mode is cancelled", () =>
       Effect.gen(function*() {
         let invoked = false
         const command = Command.make("greet", {
-          name: Flag.string("name")
+          name: Flag.String("name")
         }, () =>
           Effect.sync(() => {
             invoked = true
@@ -188,7 +288,7 @@ describe("Command", () => {
       Effect.gen(function*() {
         const captured: Array<boolean> = []
         const command = Command.make("deploy", {
-          dryRun: Flag.boolean("dry-run")
+          dryRun: Flag.Boolean("dry-run")
         }, ({ dryRun }) => Effect.sync(() => captured.push(dryRun)))
 
         const fiber = yield* Command.runWith(command, { version: "1.0.0" })(["--wizard"]).pipe(Effect.forkChild)
@@ -207,7 +307,7 @@ describe("Command", () => {
       Effect.gen(function*() {
         const captured: Array<string> = []
         const child = Command.make("child", {
-          value: Argument.string("value")
+          value: Argument.String("value")
         }, ({ value }) => Effect.sync(() => captured.push(value)))
         const command = Command.make("root").pipe(Command.withSubcommands([child]))
 
@@ -246,10 +346,10 @@ describe("Command", () => {
       readonly name: string
       readonly expected: string
     }> = [
-      { flag: Flag.string("name").pipe(Flag.optional), name: "name", expected: "string" },
-      { flag: Flag.integer("count").pipe(Flag.optional), name: "count", expected: "integer" },
-      { flag: Flag.path("config").pipe(Flag.optional), name: "config", expected: "path" },
-      { flag: Flag.keyValuePair("env").pipe(Flag.optional), name: "env", expected: "key=value" }
+      { flag: Flag.String("name").pipe(Flag.optional), name: "name", expected: "string" },
+      { flag: Flag.Int("count").pipe(Flag.optional), name: "count", expected: "integer" },
+      { flag: Flag.Path("config").pipe(Flag.optional), name: "config", expected: "path" },
+      { flag: Flag.KeyValuePair("env").pipe(Flag.optional), name: "env", expected: "key=value" }
     ]
 
     for (const { expected, flag, name } of missingValueCases) {
@@ -275,7 +375,7 @@ describe("Command", () => {
       Effect.gen(function*() {
         let invoked = false
         const command = Command.make("demo", {
-          size: Flag.choice("size", ["small", "medium", "large"])
+          size: Flag.Literals("size", ["small", "medium", "large"])
         }, () =>
           Effect.sync(() => {
             invoked = true
@@ -369,7 +469,7 @@ describe("Command", () => {
         const captured: Array<Record<string, string>> = []
 
         const command = Command.make("env", {
-          env: Flag.keyValuePair("env")
+          env: Flag.KeyValuePair("env")
         }, (config) =>
           Effect.sync(() => {
             captured.push(config.env)
@@ -394,9 +494,9 @@ describe("Command", () => {
         const captured: Array<Record<string, unknown>> = []
 
         const command = Command.make("env", {
-          env: Flag.keyValuePair("env"),
-          verbose: Flag.boolean("verbose"),
-          profile: Flag.string("profile")
+          env: Flag.KeyValuePair("env"),
+          verbose: Flag.Boolean("verbose"),
+          profile: Flag.String("profile")
         }, (config) =>
           Effect.sync(() => {
             captured.push(config)
@@ -427,8 +527,8 @@ describe("Command", () => {
 
     it.effect("should expose setting global flags to command handlers", () =>
       Effect.gen(function*() {
-        const Region = GlobalFlag.setting("region")({
-          flag: Flag.string("region").pipe(Flag.optional)
+        const Region = GlobalFlag.Setting("region")({
+          flag: Flag.String("region").pipe(Flag.optional)
         })
         const captured: Array<Option.Option<string>> = []
 
@@ -451,8 +551,8 @@ describe("Command", () => {
 
     it.effect("should expose setting global flags with Flag.withDefault", () =>
       Effect.gen(function*() {
-        const Region = GlobalFlag.setting("region")({
-          flag: Flag.string("region").pipe(Flag.withDefault("us-west-2"))
+        const Region = GlobalFlag.Setting("region")({
+          flag: Flag.String("region").pipe(Flag.withDefault("us-west-2"))
         })
         const captured: Array<string> = []
 
@@ -505,15 +605,15 @@ describe("Command", () => {
         const captured: Array<string> = []
         let handlerInvocations = 0
 
-        const VerboseAction = GlobalFlag.action({
-          flag: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
+        const VerboseAction = GlobalFlag.Action({
+          flag: Flag.Boolean("verbose").pipe(Flag.withDefault(false)),
           run: (value) =>
             Effect.sync(() => {
               actions.push(value)
             })
         })
-        const Format = GlobalFlag.setting("format")({
-          flag: Flag.string("format").pipe(Flag.withDefault("text"))
+        const Format = GlobalFlag.Setting("format")({
+          flag: Flag.String("format").pipe(Flag.withDefault("text"))
         })
 
         const command = Command.make("deploy", {}, () =>
@@ -539,8 +639,8 @@ describe("Command", () => {
     it.effect("should reject explicit values for canonical negated global flags", () =>
       Effect.gen(function*() {
         let handlerInvoked = false
-        const Verbose = GlobalFlag.setting("verbose")({
-          flag: Flag.boolean("verbose")
+        const Verbose = GlobalFlag.Setting("verbose")({
+          flag: Flag.Boolean("verbose")
         })
 
         const command = Command.make("deploy", {}, () =>
@@ -564,8 +664,8 @@ describe("Command", () => {
 
     it.effect("should expose setting global flags in Command.provide APIs", () =>
       Effect.gen(function*() {
-        const Region = GlobalFlag.setting("region")({
-          flag: Flag.string("region").pipe(Flag.optional)
+        const Region = GlobalFlag.Setting("region")({
+          flag: Flag.String("region").pipe(Flag.optional)
         })
         const RegionFromProvide = Context.Service<never, Option.Option<string>>(
           "effect/test/unstable/cli/RegionFromProvide"
@@ -605,8 +705,8 @@ describe("Command", () => {
 
     it.effect("should reject global flags that are out of scope for selected subcommand", () =>
       Effect.gen(function*() {
-        const Region = GlobalFlag.setting("region")({
-          flag: Flag.string("region").pipe(Flag.withDefault("us-east-1"))
+        const Region = GlobalFlag.Setting("region")({
+          flag: Flag.String("region").pipe(Flag.withDefault("us-east-1"))
         })
         let dbInvoked = false
         let deployInvoked = false
@@ -644,8 +744,8 @@ describe("Command", () => {
 
     it.effect("should show only path-active global flags in subcommand help", () =>
       Effect.gen(function*() {
-        const Region = GlobalFlag.setting("region")({
-          flag: Flag.string("region").pipe(Flag.withDefault("us-east-1"))
+        const Region = GlobalFlag.Setting("region")({
+          flag: Flag.String("region").pipe(Flag.withDefault("us-east-1"))
         })
 
         const deploy = Command.make("deploy", {}, () => Effect.void).pipe(
@@ -673,7 +773,7 @@ describe("Command", () => {
         let invoked = false
 
         const command = Command.make("env", {
-          env: Flag.keyValuePair("env")
+          env: Flag.KeyValuePair("env")
         }, () =>
           Effect.sync(() => {
             invoked = true
@@ -722,9 +822,131 @@ describe("Command", () => {
         const result = yield* Effect.flip(Cli.run(["test-failing", "--input", "test"]))
         assert.strictEqual(result, "Handler error")
       }).pipe(Effect.provide(TestLayer)))
+
+    it.effect("should render and rethrow UserError handler failures without help", () =>
+      Effect.gen(function*() {
+        const failure = new CliError.UserError({
+          cause: new Error("internal details"),
+          userMessage: "Deployment failed"
+        })
+        const command = Command.make("deploy", {}, () => failure)
+
+        const error = yield* Effect.flip(Command.runWith(command, { version: "1.0.0" })([]))
+
+        assert.strictEqual(error, failure)
+        assert.isFalse(Runtime.getErrorReported(error))
+        const stderr = yield* TestConsole.errorLines
+        assert.lengthOf(stderr, 1)
+        assert.strictEqual(String(stderr[0]), "\nERROR\n  Deployment failed")
+        assert.isEmpty(yield* TestConsole.logLines)
+      }).pipe(Effect.provide(TestLayer)))
+
+    it.effect("should render UserError handler failures with the installed formatter", () =>
+      Effect.gen(function*() {
+        const formatter: CliOutput.Formatter = {
+          ...CliOutput.defaultFormatter({ colors: false }),
+          formatError: (error) => `CUSTOM ERROR: ${error.message}`
+        }
+        const failure = new CliError.UserError({ cause: "Deployment failed" })
+        const command = Command.make("deploy", {}, () => failure)
+
+        yield* Command.runWith(command, { version: "1.0.0" })([]).pipe(
+          Effect.flip,
+          Effect.provide(TestLayerWithoutFormatter),
+          Effect.provideService(CliOutput.Formatter, formatter)
+        )
+
+        assert.deepStrictEqual(yield* TestConsole.errorLines, ["CUSTOM ERROR: Deployment failed"])
+      }))
+
+    it.effect("should render UserError once when running wizard-generated arguments", () =>
+      Effect.gen(function*() {
+        const failure = new CliError.UserError({ cause: "Deployment failed" })
+        const command = Command.make("deploy", {}, () => failure)
+
+        const fiber = yield* Command.runWith(command, { version: "1.0.0" })(["--wizard"]).pipe(
+          Effect.flip,
+          Effect.forkChild
+        )
+        yield* MockTerminal.inputKey("enter")
+        const error = yield* Fiber.join(fiber)
+
+        assert.strictEqual(error, failure)
+        assert.deepStrictEqual(yield* TestConsole.errorLines, ["\nERROR\n  Deployment failed"])
+      }).pipe(Effect.provide(TestLayer)))
+
+    it.effect("should render UserError argument failures with command help", () =>
+      Effect.gen(function*() {
+        const command = Command.make("deploy", {
+          target: Argument.String("target").pipe(
+            Argument.mapEffect(() =>
+              Effect.fail(
+                new CliError.UserError({
+                  cause: "Invalid deployment target"
+                })
+              )
+            )
+          )
+        })
+
+        const error = yield* Effect.flip(Command.runWith(command, { version: "1.0.0" })(["invalid"]))
+
+        assert.instanceOf(error, CliError.ShowHelp)
+        assert.include((yield* TestConsole.errorLines).join("\n"), "Invalid deployment target")
+        assert.include((yield* TestConsole.logLines).join("\n"), "USAGE")
+      }).pipe(Effect.provide(TestLayer)))
+
+    it.effect("should suppress automatic error rendering", () =>
+      Effect.gen(function*() {
+        const userError = new CliError.UserError({ cause: "Deployment failed" })
+        const command = Command.make("deploy", {}, () => userError)
+        const config = { version: "1.0.0", renderErrors: false } as const
+
+        const handlerFailure = yield* Effect.flip(Command.runWith(command, config)([]))
+        const parseFailure = yield* Effect.flip(Command.runWith(command, config)(["--unknown"]))
+
+        assert.strictEqual(handlerFailure, userError)
+        assert.isTrue(Runtime.getErrorReported(handlerFailure))
+        assert.instanceOf(parseFailure, CliError.ShowHelp)
+        assert.isEmpty(yield* TestConsole.errorLines)
+        assert.include((yield* TestConsole.logLines).join("\n"), "USAGE")
+      }).pipe(Effect.provide(TestLayer)))
+
+    it.effect("should still render help when automatic error rendering is disabled", () =>
+      Effect.gen(function*() {
+        const child = Command.make("child")
+        const command = Command.make("app").pipe(Command.withSubcommands([child]))
+
+        const error = yield* Effect.flip(
+          Command.runWith(command, { version: "1.0.0", renderErrors: false })([])
+        )
+
+        assert.instanceOf(error, CliError.ShowHelp)
+        assert.isEmpty(error.errors)
+        assert.include((yield* TestConsole.logLines).join("\n"), "USAGE")
+        assert.isEmpty(yield* TestConsole.errorLines)
+      }).pipe(Effect.provide(TestLayer)))
   })
 
   describe("withSubcommands", () => {
+    it("preserves unlisted metadata when adding subcommands", () => {
+      const withChild = Command.make("internal").pipe(
+        Command.unlisted,
+        Command.withSubcommands([Command.make("child")])
+      )
+
+      assert.isTrue(withChild.unlisted)
+    })
+
+    it("preserves unlisted metadata when adding shared flags", () => {
+      const withShared = Command.make("internal").pipe(
+        Command.unlisted,
+        Command.withSharedFlags({ verbose: Flag.Boolean("verbose") })
+      )
+
+      assert.isTrue(withShared.unlisted)
+    })
+
     it.effect("should execute parent handler when no subcommand provided", () =>
       Effect.gen(function*() {
         const command = "git"
@@ -874,13 +1096,13 @@ describe("Command", () => {
 
         const parent = Command.make("parent").pipe(
           Command.withSharedFlags({
-            verbose: Flag.boolean("verbose"),
-            config: Flag.string("config")
+            verbose: Flag.Boolean("verbose"),
+            config: Flag.String("config")
           })
         )
 
         // Create subcommand that accesses parent context
-        const child = Command.make("child", { action: Flag.string("action") }, (config) =>
+        const child = Command.make("child", { action: Flag.String("action") }, (config) =>
           Effect.gen(function*() {
             const parentConfig = yield* parent
             messages.push(`child: parent.verbose=${parentConfig.verbose}`)
@@ -916,12 +1138,12 @@ describe("Command", () => {
 
         const root = Command.make("npm").pipe(
           Command.withSharedFlags({
-            global: Flag.boolean("global")
+            global: Flag.Boolean("global")
           })
         )
 
         const install = Command.make("install", {
-          pkg: Flag.string("pkg")
+          pkg: Flag.String("pkg")
         }, (config) =>
           Effect.gen(function*() {
             const parentConfig = yield* root
@@ -946,10 +1168,10 @@ describe("Command", () => {
         const messages: Array<string> = []
 
         const root = Command.make("tool", {
-          workspace: Flag.string("workspace")
+          workspace: Flag.String("workspace")
         }).pipe(
           Command.withSharedFlags({
-            model: Flag.string("model")
+            model: Flag.String("model")
           }),
           Command.withHandler((config) =>
             Effect.sync(() => {
@@ -969,15 +1191,15 @@ describe("Command", () => {
         const messages: Array<string> = []
 
         const root = Command.make("tool", {
-          model: Flag.string("model")
+          model: Flag.String("model")
         }).pipe(
           Command.withSharedFlags({
-            workspace: Flag.string("workspace")
+            workspace: Flag.String("workspace")
           })
         )
 
         const chat = Command.make("chat", {
-          model: Flag.string("model")
+          model: Flag.String("model")
         }, (config) =>
           Effect.gen(function*() {
             const parent = yield* root
@@ -995,15 +1217,15 @@ describe("Command", () => {
     it.effect("should reject parent local flags on subcommand paths", () =>
       Effect.gen(function*() {
         const root = Command.make("tool", {
-          model: Flag.string("model")
+          model: Flag.String("model")
         }).pipe(
           Command.withSharedFlags({
-            workspace: Flag.string("workspace")
+            workspace: Flag.String("workspace")
           })
         )
 
         const chat = Command.make("chat", {
-          topic: Flag.string("topic")
+          topic: Flag.String("topic")
         })
 
         const cli = root.pipe(Command.withSubcommands([chat]))
@@ -1024,12 +1246,12 @@ describe("Command", () => {
 
         const root = Command.make("npm").pipe(
           Command.withSharedFlags({
-            global: Flag.boolean("global")
+            global: Flag.Boolean("global")
           })
         )
 
         const install = Command.make("install", {
-          pkg: Flag.string("pkg")
+          pkg: Flag.String("pkg")
         }, (config) =>
           Effect.gen(function*() {
             const parentConfig = yield* root
@@ -1052,7 +1274,7 @@ describe("Command", () => {
 
         const root = Command.make("app").pipe(
           Command.withSharedFlags({
-            env: Flag.string("env")
+            env: Flag.String("env")
           }),
           Command.withHandler((config) =>
             Effect.gen(function*() {
@@ -1063,7 +1285,7 @@ describe("Command", () => {
 
         const service = Command.make("service").pipe(
           Command.withSharedFlags({
-            name: Flag.string("name")
+            name: Flag.String("name")
           }),
           Command.withHandler((config) =>
             Effect.gen(function*() {
@@ -1075,7 +1297,7 @@ describe("Command", () => {
         )
 
         const deploy = Command.make("deploy", {
-          targetVersion: Flag.string("target-version")
+          targetVersion: Flag.String("target-version")
         }, (config) =>
           Effect.gen(function*() {
             const rootConfig = yield* root
@@ -1118,8 +1340,8 @@ describe("Command", () => {
 
         const parent = Command.make("app").pipe(
           Command.withSharedFlags({
-            verbose: Flag.boolean("verbose"),
-            config: Flag.string("config")
+            verbose: Flag.Boolean("verbose"),
+            config: Flag.String("config")
           }),
           Command.withHandler((config) =>
             Effect.gen(function*() {
@@ -1129,7 +1351,7 @@ describe("Command", () => {
         )
 
         const deploy = Command.make("deploy", {
-          targetVersion: Flag.string("target-version")
+          targetVersion: Flag.String("target-version")
         }, (config) =>
           Effect.gen(function*() {
             const parentConfig = yield* parent
@@ -1162,13 +1384,13 @@ describe("Command", () => {
         const messages: Array<string> = []
 
         const root = Command.make("tool", {
-          dryRun: Flag.boolean("dry-run")
+          dryRun: Flag.Boolean("dry-run")
         }).pipe(
           Command.withSharedFlags({
-            verbose: Flag.boolean("verbose")
+            verbose: Flag.Boolean("verbose")
           }),
           Command.withSharedFlags({
-            format: Flag.string("format")
+            format: Flag.String("format")
           })
         )
 
@@ -1193,10 +1415,10 @@ describe("Command", () => {
         const DbUrl = Context.Service<never, string>("effect/test/unstable/cli/DbUrl")
 
         const root = Command.make("app", {
-          dryRun: Flag.boolean("dry-run")
+          dryRun: Flag.Boolean("dry-run")
         }).pipe(
           Command.withSharedFlags({
-            env: Flag.string("env")
+            env: Flag.String("env")
           })
         )
 
@@ -1221,14 +1443,14 @@ describe("Command", () => {
     it.effect("should reject shared/child flag collisions when withSharedFlags is applied after withSubcommands", () =>
       Effect.sync(() => {
         const child = Command.make("run", {
-          verbose: Flag.boolean("verbose")
+          verbose: Flag.Boolean("verbose")
         })
 
         assert.throws(() =>
           Command.make("tool").pipe(
             Command.withSubcommands([child]),
             Command.withSharedFlags({
-              verbose: Flag.boolean("verbose")
+              verbose: Flag.Boolean("verbose")
             })
           )
         )
@@ -1241,7 +1463,7 @@ describe("Command", () => {
         // withSharedFlags BEFORE withSubcommands — correct ordering
         const root = Command.make("tool").pipe(
           Command.withSharedFlags({
-            verbose: Flag.boolean("verbose")
+            verbose: Flag.Boolean("verbose")
           })
         )
 
@@ -1267,14 +1489,14 @@ describe("Command", () => {
         let childInvoked = false
 
         const root = Command.make("tool", {
-          rest: Argument.string("rest").pipe(Argument.variadic())
+          rest: Argument.String("rest").pipe(Argument.variadic())
         }, (config) =>
           Effect.sync(() => {
             captured.push(config.rest)
           }))
 
         const child = Command.make("child", {
-          value: Flag.string("value")
+          value: Flag.String("value")
         }, () =>
           Effect.sync(() => {
             childInvoked = true
@@ -1289,12 +1511,106 @@ describe("Command", () => {
         assert.deepStrictEqual(captured, [["child", "--value", "x"]])
       }).pipe(Effect.provide(TestLayer)))
 
+    it.effect("should pass trailing operands to the selected subcommand", () =>
+      Effect.gen(function*() {
+        const captured: Array<ReadonlyArray<string>> = []
+
+        const child = Command.make("child", {
+          values: Argument.String("value").pipe(Argument.variadic())
+        }, ({ values }) => Effect.sync(() => captured.push(values)))
+
+        const cli = Command.make("tool").pipe(Command.withSubcommands([child]))
+
+        yield* Command.runWith(cli, { version: "1.0.0" })([
+          "child",
+          "--",
+          "value",
+          "--literal",
+          "-x"
+        ])
+
+        assert.deepStrictEqual(captured, [["value", "--literal", "-x"]])
+      }).pipe(Effect.provide(TestLayer)))
+
+    it.effect("should pass trailing operands through nested subcommands", () =>
+      Effect.gen(function*() {
+        const captured: Array<string> = []
+
+        const child = Command.make("child", {
+          value: Argument.String("value")
+        }, ({ value }) => Effect.sync(() => captured.push(value)))
+        const group = Command.make("group").pipe(Command.withSubcommands([child]))
+        const cli = Command.make("tool").pipe(Command.withSubcommands([group]))
+
+        yield* Command.runWith(cli, { version: "1.0.0" })(["group", "child", "--", "-literal"])
+
+        assert.deepStrictEqual(captured, ["-literal"])
+      }).pipe(Effect.provide(TestLayer)))
+
+    it.effect("should allow no trailing operands after -- for a subcommand", () =>
+      Effect.gen(function*() {
+        let invoked = false
+
+        const child = Command.make("child", {}, () =>
+          Effect.sync(() => {
+            invoked = true
+          }))
+        const cli = Command.make("tool").pipe(Command.withSubcommands([child]))
+
+        yield* Command.runWith(cli, { version: "1.0.0" })(["child", "--"])
+
+        assert.isTrue(invoked)
+      }).pipe(Effect.provide(TestLayer)))
+
+    it.effect("should preserve trailing operands for a leaf command", () =>
+      Effect.gen(function*() {
+        const captured: Array<ReadonlyArray<string>> = []
+
+        const command = Command.make("tool", {
+          values: Argument.String("value").pipe(Argument.variadic())
+        }, ({ values }) => Effect.sync(() => captured.push(values)))
+
+        yield* Command.runWith(command, { version: "1.0.0" })(["--", "--literal", "-x"])
+
+        assert.deepStrictEqual(captured, [["--literal", "-x"]])
+      }).pipe(Effect.provide(TestLayer)))
+
+    it.effect("should preserve inherited flags around a subcommand with trailing operands", () =>
+      Effect.gen(function*() {
+        const captured: Array<{ before: boolean; after: boolean; value: string }> = []
+
+        const root = Command.make("tool").pipe(
+          Command.withSharedFlags({
+            before: Flag.Boolean("before"),
+            after: Flag.Boolean("after")
+          })
+        )
+        const child = Command.make("child", {
+          value: Argument.String("value")
+        }, ({ value }) =>
+          Effect.gen(function*() {
+            const parent = yield* root
+            captured.push({ before: parent.before, after: parent.after, value })
+          }))
+        const cli = root.pipe(Command.withSubcommands([child]))
+
+        yield* Command.runWith(cli, { version: "1.0.0" })([
+          "--before",
+          "child",
+          "--after",
+          "--",
+          "-literal"
+        ])
+
+        assert.deepStrictEqual(captured, [{ before: true, after: true, value: "-literal" }])
+      }).pipe(Effect.provide(TestLayer)))
+
     it.effect("should coerce boolean flags to false when given falsey literals", () =>
       Effect.gen(function*() {
         const captured: Array<boolean> = []
 
         const cmd = Command.make("tool", {
-          verbose: Flag.boolean("verbose")
+          verbose: Flag.Boolean("verbose")
         }, (config) => Effect.sync(() => captured.push(config.verbose)))
 
         const runCmd = Command.runWith(cmd, { version: "1.0.0" })
@@ -1305,12 +1621,28 @@ describe("Command", () => {
         assert.deepStrictEqual(captured, [false, false])
       }).pipe(Effect.provide(TestLayer)))
 
+    it.effect("should parse required boolean flags when explicitly enabled or disabled", () =>
+      Effect.gen(function*() {
+        const captured: Array<boolean> = []
+
+        const cmd = Command.make("tool", {
+          verbose: Flag.Boolean("verbose")
+        }, (config) => Effect.sync(() => captured.push(config.verbose)))
+
+        const runCmd = Command.runWith(cmd, { version: "1.0.0" })
+
+        yield* runCmd(["--verbose"])
+        yield* runCmd(["--no-verbose"])
+
+        assert.deepStrictEqual(captured, [true, false])
+      }).pipe(Effect.provide(TestLayer)))
+
     it.effect("should support optional boolean flags and --no-<flag> negation", () =>
       Effect.gen(function*() {
         const captured: Array<Option.Option<boolean>> = []
 
         const cmd = Command.make("tool", {
-          open: Flag.boolean("open").pipe(Flag.optional)
+          open: Flag.Boolean("open").pipe(Flag.optional)
         }, (config) => Effect.sync(() => captured.push(config.open)))
 
         const runCmd = Command.runWith(cmd, { version: "1.0.0" })
@@ -1331,8 +1663,11 @@ describe("Command", () => {
         const captured: Array<readonly [boolean, boolean]> = []
 
         const cmd = Command.make("tool", {
-          prompt: Flag.boolean("prompt"),
-          force: Flag.boolean("force").pipe(Flag.withAlias("no-prompt"))
+          prompt: Flag.Boolean("prompt"),
+          force: Flag.Boolean("force").pipe(
+            Flag.withAlias("no-prompt"),
+            Flag.withDefault(false)
+          )
         }, (config) => Effect.sync(() => captured.push([config.prompt, config.force] as const)))
 
         const runCmd = Command.runWith(cmd, { version: "1.0.0" })
@@ -1347,7 +1682,7 @@ describe("Command", () => {
         let invoked = false
 
         const cmd = Command.make("tool", {
-          open: Flag.boolean("open")
+          open: Flag.Boolean("open")
         }, () =>
           Effect.sync(() => {
             invoked = true
@@ -1375,7 +1710,7 @@ describe("Command", () => {
           }))
 
         const root = Command.make("tool", {
-          open: Flag.boolean("open")
+          open: Flag.Boolean("open")
         }, () =>
           Effect.sync(() => {
             parentInvoked = true
@@ -1399,7 +1734,7 @@ describe("Command", () => {
         let invoked = false
 
         const cmd = Command.make("tool", {
-          pkg: Flag.string("pkg")
+          pkg: Flag.String("pkg")
         }, () =>
           Effect.sync(() => {
             invoked = true
@@ -1420,9 +1755,9 @@ describe("Command", () => {
         const captured: Array<{ all: boolean; verbose: boolean; pkg: string }> = []
 
         const cmd = Command.make("tool", {
-          all: Flag.boolean("all").pipe(Flag.withAlias("a")),
-          verbose: Flag.boolean("verbose").pipe(Flag.withAlias("v")),
-          pkg: Flag.string("pkg").pipe(Flag.withAlias("p"))
+          all: Flag.Boolean("all").pipe(Flag.withAlias("a")),
+          verbose: Flag.Boolean("verbose").pipe(Flag.withAlias("v")),
+          pkg: Flag.String("pkg").pipe(Flag.withAlias("p"))
         }, (config) =>
           Effect.sync(() => {
             captured.push(config)
@@ -1440,12 +1775,12 @@ describe("Command", () => {
         const captured: Array<{ global: boolean; rest: ReadonlyArray<string> }> = []
 
         const root = Command.make("tool", {
-          global: Flag.boolean("global"),
-          rest: Argument.string("rest").pipe(Argument.variadic())
+          global: Flag.Boolean("global"),
+          rest: Argument.String("rest").pipe(Argument.variadic())
         }, (config) => Effect.sync(() => captured.push({ global: config.global, rest: config.rest })))
 
         const child = Command.make("child", {
-          value: Flag.string("value")
+          value: Flag.String("value")
         })
 
         const cli = root.pipe(Command.withSubcommands([child]))
@@ -1476,8 +1811,8 @@ describe("Command", () => {
         const captured: Array<{ files: ReadonlyArray<string>; verbose: boolean }> = []
 
         const cmd = Command.make("copy", {
-          verbose: Flag.boolean("verbose"),
-          files: Argument.string("file").pipe(Argument.variadic())
+          verbose: Flag.Boolean("verbose"),
+          files: Argument.String("file").pipe(Argument.variadic())
         }, (config) => Effect.sync(() => captured.push({ files: config.files, verbose: config.verbose })))
 
         const runCmd = Command.runWith(cmd, { version: "1.0.0" })
@@ -1633,7 +1968,7 @@ describe("Command", () => {
             childInvoked = true
           }))
         const command = Command.make("tool", {
-          version: Flag.boolean("version")
+          version: Flag.Boolean("version")
         }, (config) =>
           Effect.sync(() => {
             captured.push(config.version)
@@ -1654,7 +1989,7 @@ describe("Command", () => {
         const captured: Array<boolean> = []
         const root = Command.make("tool", {}, () => Effect.void).pipe(
           Command.withSharedFlags({
-            version: Flag.boolean("version")
+            version: Flag.Boolean("version")
           })
         )
         const child = Command.make("child", {}, () =>
@@ -1682,7 +2017,7 @@ describe("Command", () => {
         const captured: Array<string> = []
         const child = Command.make("child", {}, () => Effect.void)
         const command = Command.make("tool", {
-          version: Flag.string("version")
+          version: Flag.String("version")
         }, (config) =>
           Effect.sync(() => {
             captured.push(config.version)
@@ -1706,8 +2041,8 @@ describe("Command", () => {
             childInvoked = true
           }))
         const command = Command.make("tool", {
-          name: Flag.string("name"),
-          version: Flag.boolean("version")
+          name: Flag.String("name"),
+          version: Flag.Boolean("version")
         }, (config) =>
           Effect.sync(() => {
             captured.push(config)
@@ -1732,8 +2067,8 @@ describe("Command", () => {
             childInvoked = true
           }))
         const command = Command.make("tool", {
-          files: Argument.string("file").pipe(Argument.variadic()),
-          version: Flag.boolean("version")
+          files: Argument.String("file").pipe(Argument.variadic()),
+          version: Flag.Boolean("version")
         }, (config) =>
           Effect.sync(() => {
             captured.push(config)
@@ -1758,8 +2093,8 @@ describe("Command", () => {
             childInvoked = true
           }))
         const command = Command.make("tool", {
-          name: Flag.string("name"),
-          version: Flag.boolean("version")
+          name: Flag.String("name"),
+          version: Flag.Boolean("version")
         }, (config) =>
           Effect.sync(() => {
             captured.push(config)
@@ -1779,7 +2114,7 @@ describe("Command", () => {
       Effect.gen(function*() {
         const captured: Array<string> = []
         const release = Command.make("release", {
-          version: Flag.string("version")
+          version: Flag.String("version")
         }, (config) =>
           Effect.sync(() => {
             captured.push(config.version)
@@ -1798,15 +2133,15 @@ describe("Command", () => {
 
     it.effect("should let local short aliases override global short aliases on the selected command", () =>
       Effect.gen(function*() {
-        const Output = GlobalFlag.setting("output")({
-          flag: Flag.choice("output", ["pretty", "json", "yaml"] as const).pipe(
+        const Output = GlobalFlag.Setting("output")({
+          flag: Flag.Literals("output", ["pretty", "json", "yaml"] as const).pipe(
             Flag.withAlias("o"),
             Flag.withDefault("pretty")
           )
         })
         const captured: Array<"summary" | "json" | "csv"> = []
         const report = Command.make("report", {
-          output: Flag.choice("output", ["summary", "json", "csv"] as const).pipe(
+          output: Flag.Literals("output", ["summary", "json", "csv"] as const).pipe(
             Flag.withAlias("o"),
             Flag.withDefault("summary")
           )
@@ -1827,8 +2162,8 @@ describe("Command", () => {
 
     it.effect("should let local flags override scoped global flags from another command branch", () =>
       Effect.gen(function*() {
-        const Region = GlobalFlag.setting("region")({
-          flag: Flag.choice("region", ["us", "eu"] as const).pipe(Flag.withDefault("us"))
+        const Region = GlobalFlag.Setting("region")({
+          flag: Flag.Literals("region", ["us", "eu"] as const).pipe(Flag.withDefault("us"))
         })
         const captured: Array<string> = []
         let deployInvoked = false
@@ -1837,7 +2172,7 @@ describe("Command", () => {
             deployInvoked = true
           })).pipe(Command.withGlobalFlags([Region]))
         const status = Command.make("status", {
-          region: Flag.string("region")
+          region: Flag.String("region")
         }, (config) =>
           Effect.sync(() => {
             captured.push(config.region)
@@ -1959,10 +2294,10 @@ describe("Command", () => {
     it.effect("should include flag choices in help doc descriptions", () =>
       Effect.gen(function*() {
         const command = Command.make("tool", {
-          mode: Flag.choice("mode", ["dev", "prod"]).pipe(
+          mode: Flag.Literals("mode", ["dev", "prod"]).pipe(
             Flag.withDescription("Execution mode")
           ),
-          format: Flag.choice("format", ["json", "yaml"])
+          format: Flag.Literals("format", ["json", "yaml"])
         })
 
         const helpDoc = toImpl(command).buildHelpDoc(["tool"])
@@ -1988,7 +2323,7 @@ describe("Command", () => {
     it.effect("should render flag choices in formatted help output", () =>
       Effect.gen(function*() {
         const command = Command.make("tool", {
-          mode: Flag.choice("mode", ["dev", "prod"]).pipe(
+          mode: Flag.Literals("mode", ["dev", "prod"]).pipe(
             Flag.withDescription("Execution mode")
           )
         })

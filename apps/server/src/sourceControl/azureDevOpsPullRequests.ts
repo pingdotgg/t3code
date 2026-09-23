@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { PositiveInt, TrimmedNonEmptyString } from "@t3tools/contracts";
-import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 export interface NormalizedAzureDevOpsPullRequestRecord {
   readonly number: number;
@@ -77,11 +77,11 @@ function encodeAzureDevOpsPathSegment(segment: string): string {
 }
 
 /**
- * The organization root a REST url belongs to, which is where a browser url and any further
- * REST call have to be hung. Exported because the pull requests page derives its own urls from
- * whatever Azure returned rather than from the local remote, whose shape varies.
+ * The organization root a REST url belongs to, which is where a browser url has to be hung when
+ * Azure answered with neither a web link nor a repository url. Read from what Azure returned
+ * rather than from the local remote, whose shape varies.
  */
-export function azureDevOpsOrganizationBaseFromRestApiUrl(
+function azureDevOpsOrganizationBaseFromRestApiUrl(
   value: string | null | undefined,
 ): string | null {
   const rawUrl = trimOptionalString(value);
@@ -189,8 +189,6 @@ function normalizeAzureDevOpsPullRequestRecord(
 const decodeAzureDevOpsPullRequestList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeAzureDevOpsPullRequest = decodeJsonResult(AzureDevOpsPullRequestSchema);
 const decodeAzureDevOpsPullRequestEntry = Schema.decodeUnknownExit(AzureDevOpsPullRequestSchema);
-
-export const formatAzureDevOpsJsonDecodeError = formatSchemaError;
 
 export function decodeAzureDevOpsPullRequestListJson(
   raw: string,

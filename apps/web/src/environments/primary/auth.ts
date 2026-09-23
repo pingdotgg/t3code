@@ -34,7 +34,7 @@ const PrimaryEnvironmentRequestOperation = Schema.Literals([
 ]);
 type PrimaryEnvironmentRequestOperation = typeof PrimaryEnvironmentRequestOperation.Type;
 
-export class PrimaryEnvironmentRequestError extends Schema.TaggedErrorClass<PrimaryEnvironmentRequestError>()(
+export class PrimaryEnvironmentRequestError extends Schema.TaggedError<PrimaryEnvironmentRequestError>()(
   "PrimaryEnvironmentRequestError",
   {
     operation: PrimaryEnvironmentRequestOperation,
@@ -67,7 +67,7 @@ export class PrimaryEnvironmentRequestError extends Schema.TaggedErrorClass<Prim
 
 const isPrimaryEnvironmentRequestError = Schema.is(PrimaryEnvironmentRequestError);
 
-export class PrimaryEnvironmentPairingCredentialRejectedError extends Schema.TaggedErrorClass<PrimaryEnvironmentPairingCredentialRejectedError>()(
+export class PrimaryEnvironmentPairingCredentialRejectedError extends Schema.TaggedError<PrimaryEnvironmentPairingCredentialRejectedError>()(
   "PrimaryEnvironmentPairingCredentialRejectedError",
   {
     providedLength: Schema.Number,
@@ -83,7 +83,7 @@ export const isPrimaryEnvironmentPairingCredentialRejectedError = Schema.is(
   PrimaryEnvironmentPairingCredentialRejectedError,
 );
 
-export class PrimaryEnvironmentAuthSessionTimeoutError extends Schema.TaggedErrorClass<PrimaryEnvironmentAuthSessionTimeoutError>()(
+export class PrimaryEnvironmentAuthSessionTimeoutError extends Schema.TaggedError<PrimaryEnvironmentAuthSessionTimeoutError>()(
   "PrimaryEnvironmentAuthSessionTimeoutError",
   {
     timeoutMs: Schema.Number,
@@ -95,7 +95,7 @@ export class PrimaryEnvironmentAuthSessionTimeoutError extends Schema.TaggedErro
   }
 }
 
-export class PrimaryEnvironmentPairingCredentialRequiredError extends Schema.TaggedErrorClass<PrimaryEnvironmentPairingCredentialRequiredError>()(
+export class PrimaryEnvironmentPairingCredentialRequiredError extends Schema.TaggedError<PrimaryEnvironmentPairingCredentialRequiredError>()(
   "PrimaryEnvironmentPairingCredentialRequiredError",
   {
     providedLength: Schema.Number,
@@ -307,13 +307,13 @@ function isTransientBootstrapError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-async function bootstrapServerAuth(): Promise<ServerAuthGateState> {
-  const bootstrapCredential = getDesktopBootstrapCredential();
+async function bootstrapServerAuth(urlCredential: string | null): Promise<ServerAuthGateState> {
   const currentSession = await fetchSessionState();
-  if (currentSession.authenticated) {
+  if (currentSession.authenticated && !urlCredential) {
     return { status: "authenticated" };
   }
 
+  const bootstrapCredential = urlCredential ?? getDesktopBootstrapCredential();
   if (!bootstrapCredential) {
     return {
       status: "requires-auth",
@@ -428,19 +428,32 @@ export async function revokeOtherServerClientSessions(): Promise<number> {
 }
 
 export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGateState> {
-  if (resolvedAuthenticatedGateState?.status === "authenticated") {
-    return resolvedAuthenticatedGateState;
+  const urlCredential = takePairingTokenFromUrl();
+  const previousPromise = bootstrapPromise;
+  if (urlCredential) {
+    resolvedAuthenticatedGateState = null;
+  } else {
+    if (previousPromise) {
+      return previousPromise;
+    }
+
+    if (resolvedAuthenticatedGateState?.status === "authenticated") {
+      return resolvedAuthenticatedGateState;
+    }
   }
 
-  if (bootstrapPromise) {
-    return bootstrapPromise;
-  }
-
-  const nextPromise = bootstrapServerAuth();
+  const nextPromise = previousPromise
+    ? previousPromise
+        .catch(() => undefined)
+        .then(() => {
+          resolvedAuthenticatedGateState = null;
+          return bootstrapServerAuth(urlCredential);
+        })
+    : bootstrapServerAuth(urlCredential);
   bootstrapPromise = nextPromise;
   return nextPromise
     .then((result) => {
-      if (result.status === "authenticated") {
+      if (bootstrapPromise === nextPromise && result.status === "authenticated") {
         resolvedAuthenticatedGateState = result;
       }
       return result;

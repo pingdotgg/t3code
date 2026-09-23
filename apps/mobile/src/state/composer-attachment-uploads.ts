@@ -4,6 +4,7 @@ import { Atom } from "effect/unstable/reactivity";
 import { useEffect, useRef } from "react";
 
 import { prepareTurnAttachments } from "../lib/attachmentUpload";
+import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
 import { isFileBackedComposerAttachment } from "../lib/composerImages";
 import {
   composerAttachmentUploadKey,
@@ -20,12 +21,14 @@ import {
   composerDraftsAtom,
   ensureComposerDraftsLoaded,
   flushComposerDrafts,
-  retainComposerAttachmentFileForPreview,
   setComposerDraftAttachmentUpload,
 } from "./use-composer-drafts";
 import { useRemoteConnectionStatus } from "./use-remote-environment-registry";
 
-export { composerAttachmentUploadBlockReason } from "../lib/composerAttachmentUploadQueue";
+export {
+  composerAttachmentUploadBlockReason,
+  composerAttachmentsStillUploading,
+} from "../lib/composerAttachmentUploadQueue";
 
 export const composerAttachmentUploadsAtom = Atom.make<
   Readonly<Record<string, ComposerAttachmentUploadState>>

@@ -16,11 +16,9 @@ import type { SearchInstance } from "./SearchInstance.ts";
  *
  * Provide {@link QuerySearchBinding} in the Worker's runtime layer.
  *
- * @binding
- * @category AI
  *
- * @section Querying AI Search
- * @example Retrieve and generate from a Worker
+ * ### Querying AI Search
+ * **Example:** Retrieve and generate from a Worker
  * Bind the instance during the Worker's init phase, then use `search`
  * (retrieval only) or `chatCompletions` (retrieval + generation) from request
  * handlers.
@@ -36,6 +34,9 @@ import type { SearchInstance } from "./SearchInstance.ts";
  *   }),
  * };
  * ```
+ *
+ * @binding
+ * @category AI
  */
 export interface QuerySearch extends Binding.Service<
   QuerySearch,

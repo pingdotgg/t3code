@@ -67,9 +67,8 @@ export interface Relay extends Resource<
  * server or a third-party filter).
  *
  * All aspects (name, server, port, authentication, tags) update in place.
- * @resource
- * @section Creating Relays
- * @example Unauthenticated Relay
+ * ### Creating Relays
+ * **Example:** Unauthenticated Relay
  * ```typescript
  * import * as MailManager from "alchemy/AWS/MailManager";
  *
@@ -80,7 +79,7 @@ export interface Relay extends Resource<
  * });
  * ```
  *
- * @example Authenticated Relay
+ * **Example:** Authenticated Relay
  * ```typescript
  * const relay = yield* MailManager.Relay("Downstream", {
  *   serverName: "smtp.example.com",
@@ -89,8 +88,8 @@ export interface Relay extends Resource<
  * });
  * ```
  *
- * @section Using in a Rule Set
- * @example Relay Action
+ * ### Using in a Rule Set
+ * **Example:** Relay Action
  * ```typescript
  * const ruleSet = yield* MailManager.RuleSet("Inbound", {
  *   rules: [
@@ -101,6 +100,8 @@ export interface Relay extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const Relay = Resource<Relay>("AWS.MailManager.Relay");
 

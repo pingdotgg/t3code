@@ -49,16 +49,15 @@ export interface AccountConfiguration extends Resource<
  * Like the {@link Certificate} resource, the provider pins its API calls to
  * `us-east-1`.
  *
- * @resource
- * @section Configuring Expiry Events
- * @example Start Expiry Events 30 Days Before Expiration
+ * ### Configuring Expiry Events
+ * **Example:** Start Expiry Events 30 Days Before Expiration
  * ```typescript
  * const config = yield* AccountConfiguration("AcmAccount", {
  *   daysBeforeExpiry: "30 days",
  * });
  * ```
  *
- * @example Consume the Expiry Events
+ * **Example:** Consume the Expiry Events
  * ```typescript
  * // The events arrive on the default EventBridge bus with source "aws.acm".
  * yield* AWS.ACM.consumeExpiryEvents({}, (events) =>
@@ -69,6 +68,8 @@ export interface AccountConfiguration extends Resource<
  *   ),
  * );
  * ```
+ *
+ * @resource
  */
 export const AccountConfiguration = Resource<AccountConfiguration>(
   "AWS.ACM.AccountConfiguration",

@@ -103,15 +103,13 @@ test.provider.skipIf(!!process.env.FAST)(
               : Effect.fail(new Error(`Worker not ready: ${res.status}`)),
           ),
           Effect.retry({
-            // Cap the exponential at 3s — uncapped, the sleeps double each
-            // attempt and a handful of misses burns minutes of the test
-            // timeout on a single send.
+            // Bound fresh workers.dev readiness to roughly 25 seconds.
             schedule: Schedule.max([
               Schedule.min([
                 Schedule.exponential("500 millis"),
                 Schedule.spaced("3 seconds"),
               ]),
-              Schedule.recurs(15),
+              Schedule.recurs(10),
             ]),
           }),
         );
@@ -165,25 +163,24 @@ test.provider.skipIf(!!process.env.FAST)(
                 );
           }),
           Effect.retry({
-            // Cap the exponential at 4s so 40 attempts sample for ~2.5 minutes.
-            // Uncapped, the doubling sleeps pass the whole 240s test budget
-            // after ~9 attempts and the test dies in a single long sleep even
-            // though the consumer would have caught up moments later.
+            // Bound consumer catch-up to roughly 35 seconds.
             schedule: Schedule.max([
               Schedule.min([
                 Schedule.exponential("500 millis"),
                 Schedule.spaced("4 seconds"),
               ]),
-              Schedule.recurs(40),
+              Schedule.recurs(10),
             ]),
           }),
         );
 
       // Poll the DO snapshot until each consumer has caught up.
-      const snapshot = yield* readSnapshot(name, messages.length);
-      const secondarySnapshot = yield* readSnapshot(
-        secondaryName,
-        secondaryMessages.length,
+      const [snapshot, secondarySnapshot] = yield* Effect.all(
+        [
+          readSnapshot(name, messages.length),
+          readSnapshot(secondaryName, secondaryMessages.length),
+        ],
+        { concurrency: "unbounded" },
       );
 
       // The DO observed every message. Cloudflare Queues are
@@ -206,5 +203,5 @@ test.provider.skipIf(!!process.env.FAST)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  { timeout: 120_000 },
 );

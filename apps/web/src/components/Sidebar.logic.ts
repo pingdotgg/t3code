@@ -1,13 +1,19 @@
+import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import {
   isAtomCommandInterrupted,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import type { ContextMenuItem } from "@t3tools/contracts";
+import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
+import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/unstable/reactivity";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
+import {
+  effectiveSnoozed,
+  type ThreadSnoozeShell,
+} from "@t3tools/client-runtime/state/thread-settled";
 import {
   getThreadSortTimestamp,
   resolveSettledThreadTimestamp,
@@ -19,6 +25,22 @@ import {
 import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
+
+export function shouldNavigateAfterThreadPark(input: {
+  readonly threadKey: string;
+  readonly currentThreadKey: string | null;
+  readonly action: "settle" | "snooze";
+  readonly now: string;
+  readonly thread: (ThreadSnoozeShell & Pick<SidebarThreadSummary, "settledOverride">) | null;
+}): boolean {
+  return (
+    input.threadKey === input.currentThreadKey &&
+    input.thread !== null &&
+    (input.action === "settle"
+      ? input.thread.settledOverride === "settled"
+      : effectiveSnoozed(input.thread, { now: input.now }))
+  );
+}
 
 const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
@@ -196,6 +218,23 @@ export type SidebarThreadDropPlan =
       readonly unsnooze: boolean;
     }
   | { readonly kind: "settle" };
+
+/** What dropping in `to` does to a thread lifted from `from`, for the badge
+    on the lifted row. Null while reordering inside one section and for the
+    snoozed shelf, which cannot be a drop target. */
+export type SidebarDropVerb = "pin" | "unpin" | "settle" | "unsettle" | "wake";
+
+export function resolveSidebarDropVerb(
+  from: SidebarSection,
+  to: SidebarSection | null,
+): SidebarDropVerb | null {
+  if (to === null || to === from || to === "snoozed") return null;
+  if (to === "pinned") return "pin";
+  if (to === "settled") return "settle";
+  if (from === "pinned") return "unpin";
+  if (from === "settled") return "unsettle";
+  return "wake";
+}
 
 export function planSidebarThreadDrop(input: {
   readonly activeKey: string;
@@ -785,9 +824,9 @@ export function shouldRecedeSidebarThread(input: {
   isActive: boolean;
   isSelected: boolean;
 }): boolean {
-  if (input.isActive || input.isSelected) return false;
+  if (input.isActive || input.isSelected || input.status === "input") return false;
   if (input.status === "working" || input.status === "monitoring") return true;
-  if (input.status === "ready" || input.status === "approval" || input.status === "input") {
+  if (input.status === "ready" || input.status === "approval") {
     return !input.isUnread && !input.isWoke;
   }
   return false;
@@ -857,32 +896,55 @@ export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@t3tools/c
 export { pinOrderKeyBetween, planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
 export { sortPinnedThreadsByOrderKey as sortPinnedThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
 
+const EMPTY_CONTENT_MATCH_KEYS: ReadonlySet<string> = new Set<string>();
+
 /**
- * Search the already-ordered sidebar thread collection by title only.
- * Keeping the input order means lifecycle ordering (active, snoozed, settled)
- * remains stable while the user narrows the list.
+ * Search the already-ordered sidebar thread collection by title or linked PR,
+ * plus any thread whose messages the server matched (`contentMatchKeys`, keyed
+ * by `threadSearchMatchKey`). Keeping the input order means lifecycle ordering
+ * (active, snoozed, settled) remains stable while the user narrows the list.
  */
-export function searchSidebarThreadsByTitle<T extends { readonly title: string }>(
+export function searchSidebarThreads<
+  T extends {
+    readonly environmentId: EnvironmentId;
+    readonly id: ThreadId;
+    readonly title: string;
+  } & Parameters<typeof threadPullRequestSearchTerms>[0],
+>(
   threads: readonly T[],
   query: string,
+  contentMatchKeys: ReadonlySet<string> = EMPTY_CONTENT_MATCH_KEYS,
 ): T[] {
   const normalizedQuery = query.trim().toLowerCase();
   if (normalizedQuery.length === 0) return [];
-  return threads.filter((thread) => thread.title.toLowerCase().includes(normalizedQuery));
+  const titleMatches: T[] = [];
+  const contentMatches: T[] = [];
+  for (const thread of threads) {
+    const matchesTitle = [thread.title, ...threadPullRequestSearchTerms(thread)].some((term) =>
+      term.toLowerCase().includes(normalizedQuery),
+    );
+    if (matchesTitle) {
+      titleMatches.push(thread);
+    } else if (
+      contentMatchKeys.size > 0 &&
+      contentMatchKeys.has(
+        threadSearchMatchKey({ environmentId: thread.environmentId, threadId: thread.id }),
+      )
+    ) {
+      contentMatches.push(thread);
+    }
+  }
+  return [...titleMatches, ...contentMatches];
 }
 
 export function filterSidebarProjectScopeItems<TItem extends { readonly value: string }>(input: {
   items: readonly TItem[];
-  activeScopeKey: string | null;
   query: string;
   matches: (item: TItem, query: string) => boolean;
 }): readonly TItem[] {
-  const projectItems = input.items.filter((item) => item.value !== "all");
   const query = input.query.trim();
-  if (query.length > 0) {
-    return projectItems.filter((item) => input.matches(item, query));
-  }
-  return input.activeScopeKey === null ? projectItems : input.items;
+  if (query.length === 0) return input.items;
+  return input.items.filter((item) => item.value !== "all" && input.matches(item, query));
 }
 
 export interface SidebarProjectScopeMenuState {

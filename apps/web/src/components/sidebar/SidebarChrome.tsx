@@ -1,9 +1,4 @@
-import {
-  ArrowLeftIcon,
-  ChartNoAxesColumnIcon,
-  GitPullRequestIcon,
-  SettingsIcon,
-} from "lucide-react";
+import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
@@ -22,7 +17,6 @@ import {
 import { Badge } from "../ui/badge";
 import {
   SidebarFooter,
-  SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -31,8 +25,10 @@ import {
 } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
+import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -51,25 +47,26 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
       : null;
 
   return (
-    <SidebarHeader
+    // The titlebar row, not a padded SidebarHeader: it aligns to the window controls.
+    <div
       className={cn(
-        "@container/sidebar-header relative h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center px-3 py-0 md:px-0",
+        "@container/sidebar-header relative flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center gap-2 px-3 md:px-0",
         isElectron && "drag-region",
       )}
     >
       {backdropVariant ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
       <SidebarTrigger
+        // Over the stage artwork: the media viewer's control-on-imagery treatment.
+        variant={backdropVariant ? "media-navigation" : "ghost"}
         className={cn(
-          "relative z-10 md:hidden",
-          backdropVariant &&
-            "focus-visible:ring-white/90 [&_svg]:stroke-white/90! [&_svg]:opacity-100! [&_svg]:hover:stroke-white! [:hover,[data-pressed]]:bg-white/15",
+          "relative top-auto z-10 translate-y-0 md:hidden",
           backdropVariant && resolveSidebarStageFocusRingOffsetClass(backdropVariant),
         )}
       />
       <SidebarBrand onBackdrop={backdropVariant !== null} />
       {pillLabel ? (
         <Badge
-          className="relative z-10 ml-1 hidden rounded-full px-1.5 text-muted-foreground @[15rem]/sidebar-header:inline-flex"
+          className="relative z-10 ml-1 hidden @[15rem]/sidebar-header:inline-flex"
           data-environment-identification="pill"
           size="sm"
           variant="secondary"
@@ -77,7 +74,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           {pillLabel}
         </Badge>
       ) : null}
-    </SidebarHeader>
+    </div>
   );
 });
 
@@ -91,11 +88,12 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
       )}
       to="/"
     >
-      <span className="inline-flex min-w-0 items-baseline gap-1">
-        <T3Wordmark aria-label="T3" className="h-2.5 w-auto shrink-0" />
+      {/* Center the visible capitals, without the font's ascender/descender space. */}
+      <span className="inline-flex min-w-0 items-baseline gap-1 text-sm font-medium tracking-tight">
+        <T3Wordmark aria-label="T3" className="h-[1cap] w-auto shrink-0" />
         <span
           className={cn(
-            "truncate text-sm font-medium tracking-tight",
+            "truncate [text-box:trim-both_cap_alphabetic]",
             onBackdrop ? "text-white/70" : "text-muted-foreground",
           )}
         >
@@ -204,7 +202,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           />
           {pullRequestsSupported ? (
             <SidebarUtilityItem
-              icon={<GitPullRequestIcon />}
+              icon={<PullRequestGlyph.pullRequest />}
               label="Pull Requests"
               onClick={handlePullRequestsClick}
             />
@@ -223,7 +221,8 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
 
 export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   return (
-    <SidebarFooter className="p-[var(--sidebar-content-inset)]">
+    <SidebarFooter>
+      <SidebarThreadUndoNotice />
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
       <SidebarUtilityMenu />

@@ -13,7 +13,7 @@ import type * as Config from "../../Config.ts"
 import type * as Effect from "../../Effect.ts"
 import { dual, type LazyArg } from "../../Function.ts"
 import type * as Option from "../../Option.ts"
-import type * as Redacted from "../../Redacted.ts"
+import type * as Redacted_ from "../../Redacted.ts"
 import type * as Result from "../../Result.ts"
 import type * as Schema from "../../Schema.ts"
 import type * as CliError from "./CliError.ts"
@@ -30,10 +30,7 @@ import type * as Primitive from "./Primitive.ts"
  *
  * **Gotchas**
  *
- * `boolean` is intentionally omitted from Argument constructors. Positional
- * boolean arguments are ambiguous in CLI design since there is no flag name to
- * negate (for example, `--no-verbose`). Use Flag.boolean instead, or use
- * Argument.choice with explicit "true" / "false" strings if needed.
+ * For booleans, use `Flag.Boolean` or `Argument.Literals` with "true" and "false".
  *
  * @category models
  * @since 4.0.0
@@ -49,171 +46,181 @@ export interface Argument<A> extends Param.Param<typeof Param.argumentKind, A> {
  *
  * **Example** (Creating a string argument)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const filename = Argument.string("filename")
+ * const filename = Argument.String("filename")
+ * filename.kind // => "argument"
  * ```
  *
  * @category constructors
  * @since 4.0.0
  */
-export const string = (name: string): Argument<string> => Param.string(Param.argumentKind, name)
+export const String = (name: string): Argument<string> => Param.String(Param.argumentKind, name)
 
 /**
  * Creates a positional integer argument.
  *
  * **Example** (Creating an integer argument)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const count = Argument.integer("count")
+ * const count = Argument.Int("count")
+ * count.kind // => "argument"
  * ```
  *
  * @category constructors
  * @since 4.0.0
  */
-export const integer = (name: string): Argument<number> => Param.integer(Param.argumentKind, name)
+export const Int = (name: string): Argument<number> => Param.Int(Param.argumentKind, name)
 
 /**
  * Creates a positional file path argument.
  *
  * **Example** (Creating file path arguments)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const inputFile = Argument.file("input", { mustExist: true }) // Must exist
- * const outputFile = Argument.file("output", { mustExist: false }) // Must not exist
+ * const inputFile = Argument.File("input", { mustExist: true }) // Must exist
+ * const outputFile = Argument.File("output", { mustExist: false }) // Must not exist
+ * const kinds = [inputFile.kind, outputFile.kind] // => ["argument", "argument"]
  * ```
  *
  * @category constructors
  * @since 4.0.0
  */
-export const file = (name: string, options?: {
+export const File = (name: string, options?: {
   readonly mustExist?: boolean | undefined
-}): Argument<string> => Param.file(Param.argumentKind, name, options)
+}): Argument<string> => Param.File(Param.argumentKind, name, options)
 
 /**
  * Creates a positional directory path argument.
  *
  * **Example** (Creating a directory path argument)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const workspace = Argument.directory("workspace", { mustExist: true }) // Must exist
+ * const workspace = Argument.Directory("workspace", { mustExist: true }) // Must exist
+ * workspace.kind // => "argument"
  * ```
  *
  * @category constructors
  * @since 4.0.0
  */
-export const directory = (name: string, options?: {
+export const Directory = (name: string, options?: {
   readonly mustExist?: boolean | undefined
-}): Argument<string> => Param.directory(Param.argumentKind, name, options)
+}): Argument<string> => Param.Directory(Param.argumentKind, name, options)
 
 /**
- * Creates a positional float argument.
+ * Creates a positional argument that parses finite numbers.
  *
- * **Example** (Creating a float argument)
+ * **Example** (Parsing a finite number)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const ratio = Argument.float("ratio")
+ * const ratio = Argument.Finite("ratio")
+ * ratio.kind // => "argument"
  * ```
  *
  * @category constructors
  * @since 4.0.0
  */
-export const float = (name: string): Argument<number> => Param.float(Param.argumentKind, name)
+export const Finite = (name: string): Argument<number> => Param.Finite(Param.argumentKind, name)
 
 /**
  * Creates a positional date argument.
  *
  * **Example** (Creating a date argument)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const startDate = Argument.date("start-date")
+ * const startDate = Argument.Date("start-date")
+ * startDate.kind // => "argument"
  * ```
  *
  * @category constructors
  * @since 4.0.0
  */
-export const date = (name: string): Argument<Date> => Param.date(Param.argumentKind, name)
+export const Date = (name: string): Argument<globalThis.Date> => Param.Date(Param.argumentKind, name)
 
 /**
  * Creates a positional choice argument.
  *
  * **Example** (Creating a choice argument)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const environment = Argument.choice("environment", ["dev", "staging", "prod"])
+ * const environment = Argument.Literals("environment", ["dev", "staging", "prod"])
+ * environment.kind // => "argument"
  * ```
  *
  * @category constructors
  * @since 4.0.0
  */
-export const choice = <const Choices extends ReadonlyArray<string>>(
+export const Literals = <const Choices extends ReadonlyArray<string>>(
   name: string,
   choices: Choices
-): Argument<Choices[number]> => Param.choice(Param.argumentKind, name, choices)
+): Argument<Choices[number]> => Param.Literals(Param.argumentKind, name, choices)
 
 /**
  * Creates a positional path argument.
  *
  * **Example** (Creating a path argument)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const configPath = Argument.path("config")
+ * const configPath = Argument.Path("config")
+ * configPath.kind // => "argument"
  * ```
  *
  * @category constructors
  * @since 4.0.0
  */
-export const path = (name: string, options?: {
+export const Path = (name: string, options?: {
   pathType?: "file" | "directory" | "either"
   mustExist?: boolean
-}): Argument<string> => Param.path(Param.argumentKind, name, options)
+}): Argument<string> => Param.Path(Param.argumentKind, name, options)
 
 /**
  * Creates a positional redacted argument that obscures its value.
  *
  * **Example** (Creating a redacted argument)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const secret = Argument.redacted("secret")
+ * const secret = Argument.Redacted("secret")
+ * secret.kind // => "argument"
  * ```
  *
  * @category constructors
  * @since 4.0.0
  */
-export const redacted = (name: string): Argument<Redacted.Redacted<string>> => Param.redacted(Param.argumentKind, name)
+export const Redacted = (name: string): Argument<Redacted_.Redacted<string>> => Param.Redacted(Param.argumentKind, name)
 
 /**
  * Creates a positional argument that reads file content as a string.
  *
  * **Example** (Reading file text)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const config = Argument.fileText("config-file")
+ * const config = Argument.FileText("config-file")
+ * config.kind // => "argument"
  * ```
  *
  * @category constructors
  * @since 4.0.0
  */
-export const fileText = (name: string): Argument<string> => Param.fileText(Param.argumentKind, name)
+export const FileText = (name: string): Argument<string> => Param.FileText(Param.argumentKind, name)
 
 /**
  * Creates a positional argument that reads a file and parses its content.
@@ -226,26 +233,27 @@ export const fileText = (name: string): Argument<string> => Param.fileText(Param
  *
  * **Example** (Parsing file content)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const config = Argument.fileParse("config", { format: "json" })
+ * const config = Argument.FileParse("config", { format: "json" })
+ * config.kind // => "argument"
  * ```
  *
  * @category constructors
  * @since 4.0.0
  */
-export const fileParse = (
+export const FileParse = (
   name: string,
   options?: Primitive.FileParseOptions | undefined
-): Argument<unknown> => Param.fileParse(Param.argumentKind, name, options)
+): Argument<unknown> => Param.FileParse(Param.argumentKind, name, options)
 
 /**
  * Creates a positional argument that reads and validates file content using a schema.
  *
  * **Example** (Validating file content with a schema)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { Argument } from "effect/unstable/cli"
  *
@@ -254,34 +262,35 @@ export const fileParse = (
  *   host: Schema.String
  * })
  *
- * const config = Argument.fileSchema("config", ConfigSchema)
+ * const config = Argument.FileSchema("config", ConfigSchema)
+ * config.kind // => "argument"
  * ```
  *
  * @category constructors
  * @since 4.0.0
  */
-export const fileSchema = <A>(
+export const FileSchema = <A>(
   name: string,
   schema: Schema.ConstraintDecoder<A, Environment>,
   options?: Primitive.FileSchemaOptions | undefined
-): Argument<A> => Param.fileSchema(Param.argumentKind, name, schema, options)
+): Argument<A> => Param.FileSchema(Param.argumentKind, name, schema, options)
 
 /**
- * Creates an empty sentinel argument that always fails to parse.
+ * An argument that always fails to parse.
  *
  * **Example** (Creating a sentinel argument)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * // Used as a placeholder or default in combinators
- * const noArg = Argument.none
+ * const noArg = Argument.Never
+ * noArg.kind // => "argument"
  * ```
  *
  * @category constructors
  * @since 4.0.0
  */
-export const none: Argument<never> = Param.none(Param.argumentKind)
+export const Never: Argument<never> = Param.Never(Param.argumentKind)
 
 // -------------------------------------------------------------------------------------
 // combinators
@@ -292,10 +301,11 @@ export const none: Argument<never> = Param.none(Param.argumentKind)
  *
  * **Example** (Making an argument optional)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const optionalVersion = Argument.string("version").pipe(Argument.optional)
+ * const optionalVersion = Argument.String("version").pipe(Argument.optional)
+ * optionalVersion.kind // => "argument"
  * ```
  *
  * @category combinators
@@ -308,12 +318,13 @@ export const optional = <A>(arg: Argument<A>): Argument<Option.Option<A>> => Par
  *
  * **Example** (Adding an argument description)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const filename = Argument.string("filename").pipe(
+ * const filename = Argument.String("filename").pipe(
  *   Argument.withDescription("The input file to process")
  * )
+ * filename.kind // => "argument"
  * ```
  *
  * @category combinators
@@ -329,10 +340,11 @@ export const withDescription: {
  *
  * **Example** (Providing a default value)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const port = Argument.integer("port").pipe(Argument.withDefault(8080))
+ * const port = Argument.Int("port").pipe(Argument.withDefault(8080))
+ * port.kind // => "argument"
  * ```
  *
  * @category combinators
@@ -353,13 +365,14 @@ export const withDefault: {
  *
  * **Example** (Loading a fallback config)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Config } from "effect"
  * import { Argument } from "effect/unstable/cli"
  *
- * const repository = Argument.string("repository").pipe(
- *   Argument.withFallbackConfig(Config.string("REPOSITORY"))
+ * const repository = Argument.String("repository").pipe(
+ *   Argument.withFallbackConfig(Config.String("REPOSITORY"))
  * )
+ * repository.kind // => "argument"
  * ```
  *
  * @category combinators
@@ -375,12 +388,13 @@ export const withFallbackConfig: {
  *
  * **Example** (Showing a fallback prompt)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument, Prompt } from "effect/unstable/cli"
  *
- * const filename = Argument.string("filename").pipe(
- *   Argument.withFallbackPrompt(Prompt.text({ message: "Filename" }))
+ * const filename = Argument.String("filename").pipe(
+ *   Argument.withFallbackPrompt(Prompt.String({ message: "Filename" }))
  * )
+ * filename.kind // => "argument"
  * ```
  *
  * @category combinators
@@ -396,21 +410,23 @@ export const withFallbackPrompt: {
  *
  * **Example** (Accepting multiple values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
  * // Accept any number of files
- * const anyFiles = Argument.string("files").pipe(Argument.variadic)
+ * const anyFiles = Argument.String("files").pipe(Argument.variadic)
  *
  * // Accept at least 1 file
- * const atLeastOneFile = Argument.string("files").pipe(
+ * const atLeastOneFile = Argument.String("files").pipe(
  *   Argument.variadic({ min: 1 })
  * )
  *
  * // Accept between 1 and 5 files
- * const limitedFiles = Argument.string("files").pipe(
+ * const limitedFiles = Argument.String("files").pipe(
  *   Argument.variadic({ min: 1, max: 5 })
  * )
+ *
+ * const kinds = [anyFiles.kind, atLeastOneFile.kind, limitedFiles.kind] // => ["argument", "argument", "argument"]
  * ```
  *
  * @category combinators
@@ -429,12 +445,13 @@ export const variadic: {
  *
  * **Example** (Mapping parsed values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const port = Argument.integer("port").pipe(
+ * const port = Argument.Int("port").pipe(
  *   Argument.map((p) => ({ port: p, url: `http://localhost:${p}` }))
  * )
+ * port.kind // => "argument"
  * ```
  *
  * @category combinators
@@ -450,21 +467,45 @@ export const map: {
  *
  * **Example** (Validating values effectfully)
  *
- * ```ts
- * import { Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Layer, Path, Stdio, Terminal } from "effect"
  * import { Argument, CliError } from "effect/unstable/cli"
+ * import { ChildProcessSpawner } from "effect/unstable/process"
  *
- * const files = Argument.string("files").pipe(
+ * const CliTestLayer = Layer.mergeAll(
+ *   FileSystem.layerNoop({}),
+ *   Path.layer,
+ *   Stdio.layerTest({}),
+ *   Layer.succeed(Terminal.Terminal, Terminal.make({
+ *     columns: Effect.succeed(80),
+ *     rows: Effect.succeed(24),
+ *     readInput: Effect.die("unused"),
+ *     readLine: Effect.die("unused"),
+ *     display: () => Effect.void
+ *   })),
+ *   Layer.succeed(
+ *     ChildProcessSpawner.ChildProcessSpawner,
+ *     ChildProcessSpawner.make(() => Effect.die("unused"))
+ *   )
+ * )
+ *
+ * const files = Argument.String("files").pipe(
  *   Argument.mapEffect((file) =>
  *     file.endsWith(".txt")
  *       ? Effect.succeed(file)
  *       : Effect.fail(
  *         new CliError.UserError({
- *           cause: new Error("Only .txt files allowed")
+ *           cause: new Error(`Unsupported file extension: ${file}`),
+ *           userMessage: "Only .txt files allowed"
  *         })
  *       )
  *   )
  * )
+ *
+ * const [, value] = await Effect.runPromise(
+ *   files.parse({ arguments: ["notes.txt"], flags: {} }).pipe(Effect.provide(CliTestLayer))
+ * )
+ * value // => "notes.txt"
  * ```
  *
  * @category combinators
@@ -488,16 +529,40 @@ export const mapEffect: {
  *
  * **Example** (Mapping values that may throw)
  *
- * ```ts
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Layer, Path, Stdio, Terminal } from "effect"
  * import { Argument } from "effect/unstable/cli"
+ * import { ChildProcessSpawner } from "effect/unstable/process"
  *
- * const json = Argument.string("data").pipe(
+ * const CliTestLayer = Layer.mergeAll(
+ *   FileSystem.layerNoop({}),
+ *   Path.layer,
+ *   Stdio.layerTest({}),
+ *   Layer.succeed(Terminal.Terminal, Terminal.make({
+ *     columns: Effect.succeed(80),
+ *     rows: Effect.succeed(24),
+ *     readInput: Effect.die("unused"),
+ *     readLine: Effect.die("unused"),
+ *     display: () => Effect.void
+ *   })),
+ *   Layer.succeed(
+ *     ChildProcessSpawner.ChildProcessSpawner,
+ *     ChildProcessSpawner.make(() => Effect.die("unused"))
+ *   )
+ * )
+ *
+ * const json = Argument.String("data").pipe(
  *   Argument.mapTryCatch(
  *     (str) => JSON.parse(str),
  *     (error) =>
  *       `Invalid JSON: ${error instanceof Error ? error.message : String(error)}`
  *   )
  * )
+ *
+ * const [, value] = await Effect.runPromise(
+ *   json.parse({ arguments: ['{"enabled":true}'], flags: {} }).pipe(Effect.provide(CliTestLayer))
+ * )
+ * value // => { enabled: true }
  * ```
  *
  * @category combinators
@@ -520,10 +585,11 @@ export const mapTryCatch: {
  *
  * **Example** (Requiring a minimum number of values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const files = Argument.string("files").pipe(Argument.atLeast(1))
+ * const files = Argument.String("files").pipe(Argument.atLeast(1))
+ * files.kind // => "argument"
  * ```
  *
  * @category combinators
@@ -539,10 +605,11 @@ export const atLeast: {
  *
  * **Example** (Limiting the maximum number of values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const files = Argument.string("files").pipe(Argument.atMost(5))
+ * const files = Argument.String("files").pipe(Argument.atMost(5))
+ * files.kind // => "argument"
  * ```
  *
  * @category combinators
@@ -558,10 +625,11 @@ export const atMost: {
  *
  * **Example** (Requiring a range of values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const files = Argument.string("files").pipe(Argument.between(1, 5))
+ * const files = Argument.String("files").pipe(Argument.between(1, 5))
+ * files.kind // => "argument"
  * ```
  *
  * @category combinators
@@ -577,13 +645,14 @@ export const between: {
  *
  * **Example** (Validating parsed values with a schema)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { Argument } from "effect/unstable/cli"
  *
- * const input = Argument.string("input").pipe(
+ * const input = Argument.String("input").pipe(
  *   Argument.withSchema(Schema.NonEmptyString)
  * )
+ * input.kind // => "argument"
  * ```
  *
  * @category combinators
@@ -603,24 +672,25 @@ export const withSchema: {
  *
  * **Example** (Mapping choices to values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const logLevel = Argument.choiceWithValue("level", [
+ * const logLevel = Argument.ChoiceWithValue("level", [
  *   ["debug", 0],
  *   ["info", 1],
  *   ["warn", 2],
  *   ["error", 3]
  * ])
+ * logLevel.kind // => "argument"
  * ```
  *
  * @category constructors
  * @since 4.0.0
  */
-export const choiceWithValue = <const Choices extends ReadonlyArray<readonly [string, any]>>(
+export const ChoiceWithValue = <const Choices extends ReadonlyArray<readonly [string, any]>>(
   name: string,
   choices: Choices
-): Argument<Choices[number][1]> => Param.choiceWithValue(Param.argumentKind, name, choices)
+): Argument<Choices[number][1]> => Param.ChoiceWithValue(Param.argumentKind, name, choices)
 
 // -------------------------------------------------------------------------------------
 // metadata
@@ -636,12 +706,13 @@ export const choiceWithValue = <const Choices extends ReadonlyArray<readonly [st
  *
  * **Example** (Setting a metavar)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const port = Argument.integer("port").pipe(
+ * const port = Argument.Int("port").pipe(
  *   Argument.withMetavar("PORT")
  * )
+ * port.kind // => "argument"
  * ```
  *
  * @category metadata
@@ -657,15 +728,16 @@ export const withMetavar: {
  *
  * **Example** (Filtering parsed values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const positiveInt = Argument.integer("count").pipe(
+ * const positiveInt = Argument.Int("count").pipe(
  *   Argument.filter(
  *     (n) => n > 0,
  *     (n) => `Expected positive integer, got ${n}`
  *   )
  * )
+ * positiveInt.kind // => "argument"
  * ```
  *
  * @category combinators
@@ -686,16 +758,17 @@ export const filter: {
  *
  * **Example** (Filtering and mapping parsed values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Option } from "effect"
  * import { Argument } from "effect/unstable/cli"
  *
- * const positiveInt = Argument.integer("count").pipe(
+ * const positiveInt = Argument.Int("count").pipe(
  *   Argument.filterMap(
  *     (n) => n > 0 ? Option.some(n) : Option.none(),
  *     (n) => `Expected positive integer, got ${n}`
  *   )
  * )
+ * positiveInt.kind // => "argument"
  * ```
  *
  * @category combinators
@@ -715,12 +788,13 @@ export const filterMap: {
  *
  * **Example** (Providing a fallback argument)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const value = Argument.integer("value").pipe(
- *   Argument.orElse(() => Argument.string("value"))
+ * const value = Argument.Int("value").pipe(
+ *   Argument.orElse(() => Argument.String("value"))
  * )
+ * value.kind // => "argument"
  * ```
  *
  * @category combinators
@@ -736,13 +810,14 @@ export const orElse: {
  *
  * **Example** (Returning which fallback succeeded)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Argument } from "effect/unstable/cli"
  *
- * const source = Argument.file("source").pipe(
- *   Argument.orElseResult(() => Argument.string("url"))
+ * const source = Argument.File("source").pipe(
+ *   Argument.orElseResult(() => Argument.String("url"))
  * )
  * // Returns Result<string, string>
+ * source.kind // => "argument"
  * ```
  *
  * @category combinators

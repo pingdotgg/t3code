@@ -96,15 +96,16 @@ export interface Addon extends Resource<
  * `Addon` is intended for optional managed add-ons. On Auto Mode clusters, many
  * core components are already provided by AWS and do not need to be modeled as
  * explicit add-on resources.
- * @resource
- * @section Managing Add-ons
- * @example Install Metrics Server
+ * ### Managing Add-ons
+ * **Example:** Install Metrics Server
  * ```typescript
  * const metricsServer = yield* Addon("MetricsServer", {
  *   clusterName: cluster.clusterName,
  *   addonName: "metrics-server",
  * });
  * ```
+ *
+ * @resource
  */
 export const Addon = Resource<Addon>("AWS.EKS.Addon");
 

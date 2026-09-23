@@ -9,17 +9,16 @@ let root: Root;
 let composer: ReturnType<typeof useComposerFocusState>;
 let isResting: boolean;
 
-function ComposerProbe({ isMobileViewport = false }: { isMobileViewport?: boolean }) {
-  const state = useComposerFocusState(isMobileViewport);
+function ComposerProbe() {
+  const state = useComposerFocusState();
   useLayoutEffect(() => {
     composer = state;
     isResting = shouldUseRestingComposerLayout({
       isExistingThread: true,
-      isMobileViewport,
-      isFocused: state.isComposerFocused,
+      isMobileViewport: false,
       isScrollCollapsed: state.isComposerScrollCollapsed,
       hasExpandedChrome: false,
-      collapseOnBlur: true,
+      hasMultilinePrompt: false,
       timelineOverflows: true,
     });
   });
@@ -54,19 +53,13 @@ afterEach(async () => {
 });
 
 describe("composer focus state", () => {
-  it("expands at the timeline end after a tool call takes focus", async () => {
+  it("stays expanded when the composer loses focus", async () => {
     await act(() => composer.setIsComposerFocused(true));
     expect(isResting).toBe(false);
 
-    // A tool disclosure takes focus before the user scrolls through its output.
+    // A tool disclosure takes focus away from the editor.
     await act(() => composer.setIsComposerFocused(false));
-    expect(isResting).toBe(true);
-
-    await act(() => composer.restoreAfterTimelineReachedEnd());
     expect(isResting).toBe(false);
-
-    await act(() => composer.setIsComposerFocused(false));
-    expect(isResting).toBe(true);
   });
 
   it("can collapse again on the next scroll after returning to the end", async () => {
@@ -80,9 +73,10 @@ describe("composer focus state", () => {
     expect(isResting).toBe(true);
   });
 
-  it("does not expand the phone composer when the timeline reaches the end", async () => {
-    await act(() => root.render(<ComposerProbe isMobileViewport />));
+  it("does not move focus into the composer when the timeline reaches the end", async () => {
+    await act(() => composer.setIsComposerScrollCollapsed(true));
     await act(() => composer.restoreAfterTimelineReachedEnd());
+    expect(isResting).toBe(false);
     expect(composer.isComposerFocused).toBe(false);
   });
 });

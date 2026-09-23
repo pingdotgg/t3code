@@ -20,7 +20,7 @@ import type {
   StyleProp,
   ViewStyle,
 } from "react-native";
-import { Alert, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 import ReanimatedSwipeable, {
   type SwipeableMethods,
 } from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -40,6 +40,7 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/AppText";
+import { registerThreadDismissal } from "./thread-dismissal";
 
 // Wide enough for the longest action label ("Unarchive").
 const ACTION_ITEM_WIDTH = 58;
@@ -67,13 +68,6 @@ interface ThreadSwipeAction {
   };
   readonly onPress: () => void;
 }
-
-/** Dismiss before committing; false restores the row, success changes its resetKey or removes it. */
-type ThreadSwipePrimaryAction = Omit<ThreadSwipeAction, "onPress"> &
-  (
-    | { readonly dismissOnPress: true; readonly onPress: () => Promise<boolean> }
-    | { readonly dismissOnPress?: false; readonly onPress: () => void }
-  );
 
 interface ThreadSwipeSecondaryAction extends ThreadSwipeAction {
   readonly tone: "primary" | "secondary" | "danger";
@@ -252,7 +246,8 @@ interface ThreadSwipeableProps {
   readonly onDelete: () => void;
   readonly onSwipeableClose?: (methods: SwipeableMethods) => void;
   readonly onSwipeableWillOpen?: (methods: SwipeableMethods) => void;
-  readonly primaryAction: ThreadSwipePrimaryAction;
+  readonly primaryAction: ThreadSwipeAction;
+  readonly threadKey: string;
   /**
    * Omitted keeps the v1 destructive Delete action. Explicit null opts out of
    * a secondary action entirely so a gated Snooze can never fall back to an
@@ -288,40 +283,35 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
   const close = useCallback(() => swipeableRef.current?.close(), []);
   const gateEnabled = use(SwipeableScrollGateContext);
   const mountedRef = useRef(true);
-  const pendingDismissRef = useRef<(() => Promise<boolean>) | null>(null);
+  const dismissalRef = useRef<{ finished: Promise<void>; restore: () => void } | null>(null);
+  const pendingDismissRef = useRef<(() => void) | null>(null);
   const activeTranslationRef = useRef<SharedValue<number> | null>(null);
   const [isDismissing, setIsDismissing] = useState(false);
   const dismissing = useSharedValue(false);
   const rowHeight = useSharedValue(0);
   const rowWidth = useSharedValue(props.fullSwipeWidth);
   const collapse = useSharedValue(0);
+  const fallbackTranslation = useSharedValue(0);
   const actionOpacity = useSharedValue(1);
   const primaryAction = props.primaryAction;
   const onSwipeableClose = props.onSwipeableClose;
 
   const restoreRow = useCallback(() => {
-    swipeableRef.current?.close();
+    if (!mountedRef.current) return;
+    dismissalRef.current = null;
+    swipeableRef.current?.reset();
+    fallbackTranslation.set(0);
     collapse.set(0);
     actionOpacity.set(1);
     dismissing.set(false);
     setIsDismissing(false);
-  }, [actionOpacity, collapse, dismissing]);
+  }, [actionOpacity, collapse, dismissing, fallbackTranslation]);
 
-  const finishDismiss = useCallback(async () => {
-    const action = pendingDismissRef.current;
-    if (!action) return;
+  const finishDismiss = useCallback(() => {
+    const finish = pendingDismissRef.current;
     pendingDismissRef.current = null;
-    try {
-      const succeeded = await action();
-      if (!succeeded && mountedRef.current) restoreRow();
-    } catch (error) {
-      if (mountedRef.current) restoreRow();
-      Alert.alert(
-        "Could not settle thread",
-        error instanceof Error ? error.message : "The thread could not be settled.",
-      );
-    }
-  }, [restoreRow]);
+    finish?.();
+  }, []);
 
   useLayoutEffect(() => {
     mountedRef.current = true;
@@ -329,34 +319,18 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
       mountedRef.current = false;
       cancelAnimation(collapse);
       cancelAnimation(actionOpacity);
+      cancelAnimation(fallbackTranslation);
       if (activeTranslationRef.current) cancelAnimation(activeTranslationRef.current);
-      // Scrolling a committed row out of the recycled list must still settle it.
-      void finishDismiss();
+      // Recycling a row must not prevent the waiting action from running.
+      finishDismiss();
     };
-  }, [actionOpacity, collapse, finishDismiss]);
-
-  const beginDismiss = useCallback(
-    (translation: SharedValue<number>) => {
-      if (!primaryAction.dismissOnPress) return;
-      pendingDismissRef.current = primaryAction.onPress;
-      activeTranslationRef.current = translation;
-      fullSwipeArmedRef.current = false;
-      if (!mountedRef.current) {
-        void finishDismiss();
-        return;
-      }
-      setIsDismissing(true);
-      if (swipeableRef.current) onSwipeableClose?.(swipeableRef.current);
-    },
-    [finishDismiss, primaryAction, onSwipeableClose],
-  );
+  }, [actionOpacity, collapse, fallbackTranslation, finishDismiss]);
 
   const dismiss = useCallback(
     (translation: SharedValue<number>) => {
       "worklet";
       if (dismissing.value) return;
       dismissing.set(true);
-      runOnJS(beginDismiss)(translation);
       const timing = {
         duration: 220,
         easing: Easing.out(Easing.cubic),
@@ -375,30 +349,46 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
         }),
       );
     },
-    [actionOpacity, beginDismiss, collapse, dismissing, finishDismiss, rowWidth],
+    [actionOpacity, collapse, dismissing, finishDismiss, rowWidth],
+  );
+  useLayoutEffect(
+    () =>
+      registerThreadDismissal(props.threadKey, () => {
+        if (dismissalRef.current) return dismissalRef.current;
+        const finished = new Promise<void>((resolve) => {
+          pendingDismissRef.current = resolve;
+        });
+        fullSwipeArmedRef.current = false;
+        setIsDismissing(true);
+        if (swipeableRef.current) onSwipeableClose?.(swipeableRef.current);
+        runOnUI(dismiss)(activeTranslationRef.current ?? fallbackTranslation);
+        dismissalRef.current = { finished, restore: restoreRow };
+        return dismissalRef.current;
+      }),
+    [dismiss, fallbackTranslation, onSwipeableClose, props.threadKey, restoreRow],
   );
   const dismissStyle = useAnimatedStyle(() => ({
     height: dismissing.value ? rowHeight.value * (1 - collapse.value) : undefined,
     pointerEvents: dismissing.value ? "none" : "auto",
     overflow: "hidden",
+    transform: [{ translateX: fallbackTranslation.value }],
   }));
   const actionStyle = useAnimatedStyle(() => ({ opacity: actionOpacity.value, height: "100%" }));
-  const dismissOnPress = primaryAction.dismissOnPress === true;
+  const commitPrimaryAction = useCallback(() => {
+    primaryAction.onPress();
+    if (!pendingDismissRef.current) swipeableRef.current?.close();
+  }, [primaryAction]);
   const handleRelease = useCallback(
     (translation: SharedValue<number>) => {
       "worklet";
       if (dismissing.value) return true;
-      if (
-        dismissOnPress &&
-        fullSwipeAction === "primary" &&
-        -translation.value >= fullSwipeThreshold
-      ) {
-        dismiss(translation);
+      if (fullSwipeAction === "primary" && -translation.value >= fullSwipeThreshold) {
+        runOnJS(commitPrimaryAction)();
         return true;
       }
       return false;
     },
-    [dismiss, dismissing, dismissOnPress, fullSwipeAction, fullSwipeThreshold],
+    [commitPrimaryAction, dismissing, fullSwipeAction, fullSwipeThreshold],
   );
   const handleFullSwipeArmedChange = useCallback((armed: boolean) => {
     if (armed && !fullSwipeArmedRef.current) {
@@ -448,20 +438,21 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
             }
 
             props.onSwipeableWillOpen?.(methods);
-            if (fullSwipeArmedRef.current && !(dismissOnPress && fullSwipeAction === "primary")) {
+            if (fullSwipeArmedRef.current && fullSwipeAction !== "primary") {
               fullSwipeArmedRef.current = false;
               methods.close();
-              if (fullSwipeAction === "primary") {
-                props.primaryAction.onPress();
-              } else {
-                props.onDelete();
-              }
+              props.onDelete();
             }
           }}
           overshootFriction={1}
           overshootRight
           renderRightActions={(_progress, translation, methods) => (
-            <Animated.View style={actionStyle}>
+            <Animated.View
+              ref={() => {
+                activeTranslationRef.current = translation;
+              }}
+              style={actionStyle}
+            >
               <ThreadSwipeActions
                 backgroundColor={props.backgroundColor}
                 compact={props.compactActions === true}
@@ -470,14 +461,7 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
                 onFullSwipeArmedChange={handleFullSwipeArmedChange}
                 primaryAction={{
                   ...primaryAction,
-                  onPress: () => {
-                    if (primaryAction.dismissOnPress) {
-                      runOnUI(dismiss)(translation);
-                    } else {
-                      methods.close();
-                      primaryAction.onPress();
-                    }
-                  },
+                  onPress: commitPrimaryAction,
                 }}
                 secondaryAction={resolveSecondaryAction({
                   close: () => methods.close(),

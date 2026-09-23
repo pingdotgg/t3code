@@ -111,6 +111,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     focusedMainOrFirst: Effect.succeed(Option.none()),
     setMain: () => Effect.void,
     clearMain: () => Effect.void,
+    prepareReveal: () => Effect.succeed(false),
     reveal: () => Effect.void,
     sendAll: (_channel, state) =>
       Effect.sync(() => {
@@ -195,6 +196,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
                 ),
           setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
           setWslDistro: () => Effect.die("unexpected WSL distro change"),
+          setLocalEnvironmentEnabled: () => Effect.die("unexpected local environment toggle"),
           setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
           applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
           applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),

@@ -18,9 +18,100 @@ import {
   isRecoverableThreadResumeError,
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
+  readCodexThread,
+  rollbackCodexThread,
   toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+
+describe("Codex thread history", () => {
+  for (const numTurns of [1, 2, 3, 5]) {
+    it.effect(`reverts ${numTurns} paginated turns at the durable boundary`, () =>
+      Effect.gen(function* () {
+        let retained = ["turn-1", "turn-2", "turn-3"];
+        const client: Parameters<typeof rollbackCodexThread>[0] = {
+          request: () => Effect.die("Legacy history API must not be used for paginated threads"),
+          raw: {
+            request: (method, params) =>
+              Effect.sync(() => {
+                if (method === "thread/read") return { thread: { historyMode: "paginated" } };
+                if (method === "thread/turns/list") {
+                  const { cursor } = params as { cursor: string | null };
+                  const start = cursor === null ? 0 : Number(cursor);
+                  const ids = retained.slice(start, start + 2);
+                  return {
+                    data: ids.map((id) => ({ id, items: [], status: "completed" })),
+                    nextCursor: start + 2 < retained.length ? String(start + 2) : null,
+                  };
+                }
+                NodeAssert.equal(method, "thread/revert");
+                const { beforeTurnId } = params as { beforeTurnId: string };
+                retained = retained.slice(0, retained.indexOf(beforeTurnId));
+                return { thread: { id: "thread-1", turns: [] } };
+              }),
+          },
+        };
+        const result = yield* rollbackCodexThread(client, "thread-1", numTurns);
+        const expected = ["turn-1", "turn-2", "turn-3"].slice(0, Math.max(0, 3 - numTurns));
+        NodeAssert.deepEqual(
+          result.turns.map((turn) => turn.id),
+          expected,
+        );
+        NodeAssert.deepEqual(
+          (yield* readCodexThread(client, "thread-1")).turns.map((turn) => turn.id),
+          expected,
+        );
+      }),
+    );
+  }
+
+  for (const cursors of [
+    ["next", "next"],
+    ["first", "second", "first"],
+  ]) {
+    it.effect(`rejects a pagination cursor cycle: ${cursors.join(", ")}`, () =>
+      Effect.gen(function* () {
+        let pageCount = 0;
+        const client: Parameters<typeof readCodexThread>[0] = {
+          request: () => Effect.die("Unexpected legacy request"),
+          raw: {
+            request: (method) =>
+              Effect.sync(() => {
+                if (method === "thread/read") return { thread: { historyMode: "paginated" } };
+                NodeAssert.ok(pageCount < cursors.length, "Repeated cursor was requested");
+                return { data: [], nextCursor: cursors[pageCount++] };
+              }),
+          },
+        };
+        const error = yield* Effect.flip(readCodexThread(client, "thread-1"));
+        NodeAssert.ok(isCodexAppServerRequestError(error));
+        NodeAssert.equal(pageCount, cursors.length);
+      }),
+    );
+  }
+
+  it.effect("keeps the count-based rollback API for older threads", () =>
+    Effect.gen(function* () {
+      const client: Parameters<typeof rollbackCodexThread>[0] = {
+        raw: { request: () => Effect.succeed({ thread: {} }) },
+        request: <M extends CodexRpc.ClientRequestMethod>(
+          method: M,
+          params: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          NodeAssert.equal(method, "thread/rollback");
+          NodeAssert.deepEqual(params, { threadId: "legacy-thread", numTurns: 2 });
+          return Effect.succeed({
+            thread: { id: "legacy-thread", turns: [] },
+          } as unknown as CodexRpc.ClientRequestResponsesByMethod[M]);
+        },
+      };
+      NodeAssert.deepEqual(yield* rollbackCodexThread(client, "legacy-thread", 2), {
+        threadId: "legacy-thread",
+        turns: [],
+      });
+    }),
+  );
+});
 
 describe("CodexSessionRuntimeIdentifierGenerationError", () => {
   it("retains identifier purpose and the random source failure", () => {
@@ -63,6 +154,23 @@ function makeThreadOpenResponse(
 }
 
 describe("buildTurnStartParams", () => {
+  it.effect("sends currency skill aliases in Codex's canonical dollar form", () =>
+    Effect.gen(function* () {
+      for (const symbol of ["€", "£", "¥", "₹", "₩", "₿", "𑿝"]) {
+        const prose = `${symbol}20 ${symbol}20k ${symbol}100M ${symbol}1e6 5${symbol}review`;
+        const params = yield* buildTurnStartParams({
+          threadId: "provider-thread-1",
+          runtimeMode: "full-access",
+          prompt: `${symbol}review ${symbol}2spec $existing ${prose} ${symbol}last`,
+        });
+
+        NodeAssert.deepEqual(params.input, [
+          { type: "text", text: `$review $2spec $existing ${prose} $last` },
+        ]);
+      }
+    }),
+  );
+
   it("keeps invalid turn values only in the schema cause", () => {
     const secret = "codex-turn-input-secret-sentinel";
     const error = Effect.runSync(
@@ -71,8 +179,8 @@ describe("buildTurnStartParams", () => {
         runtimeMode: "full-access",
         attachments: [
           {
-            type: "image",
-            url: { secret } as unknown as string,
+            type: "localImage",
+            path: { secret } as unknown as string,
           },
         ],
       }).pipe(Effect.flip),
@@ -140,8 +248,8 @@ describe("buildTurnStartParams", () => {
         interactionMode: "default",
         attachments: [
           {
-            type: "image",
-            url: "data:image/png;base64,abc",
+            type: "localImage",
+            path: "/tmp/generated.png",
           },
         ],
       }),
@@ -160,8 +268,8 @@ describe("buildTurnStartParams", () => {
           text: "Implement it",
         },
         {
-          type: "image",
-          url: "data:image/png;base64,abc",
+          type: "localImage",
+          path: "/tmp/generated.png",
         },
       ],
       model: "gpt-5.3-codex",
@@ -781,25 +889,123 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  it.effect("resumes metadata when historical turns contain unknown error values", () =>
+    Effect.gen(function* () {
+      const response = makeThreadOpenResponse("saved-thread");
+      const calls: unknown[] = [];
+      const opened = yield* openCodexThread({
+        client: {
+          request: () => Effect.die("A valid resumed thread must not start fresh"),
+          raw: {
+            request: (method, payload) => {
+              calls.push({ method, payload });
+              return Effect.succeed({
+                ...response,
+                thread: {
+                  ...response.thread,
+                  turns: [
+                    {
+                      id: "old-turn",
+                      status: "failed",
+                      items: [],
+                      error: {
+                        message: "Historical provider error",
+                        codexErrorInfo: "misalignment_policy_violation",
+                      },
+                    },
+                  ],
+                },
+              });
+            },
+          },
+        },
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "auto",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: "fast",
+        resumeThreadId: "saved-thread",
+      });
+
+      NodeAssert.deepStrictEqual(opened, {
+        cwd: response.cwd,
+        model: response.model,
+        thread: { id: "saved-thread" },
+      });
+      NodeAssert.deepStrictEqual(calls, [
+        {
+          method: "thread/resume",
+          payload: {
+            threadId: "saved-thread",
+            cwd: "/tmp/project",
+            model: "gpt-5.3-codex",
+            serviceTier: "fast",
+            approvalPolicy: "on-request",
+            sandbox: "workspace-write",
+            approvalsReviewer: "auto_review",
+            excludeTurns: true,
+          },
+        },
+      ]);
+    }),
+  );
+
+  it.effect("rejects malformed required resume metadata without starting a fresh thread", () =>
+    Effect.gen(function* () {
+      for (const invalidMetadata of [
+        { cwd: null },
+        { model: 42 },
+        { thread: { id: null } },
+        { thread: {} },
+      ]) {
+        const error = yield* openCodexThread({
+          client: {
+            request: () => Effect.die("Invalid resume metadata must not start a fresh thread"),
+            raw: {
+              request: () =>
+                Effect.succeed({ ...makeThreadOpenResponse("saved-thread"), ...invalidMetadata }),
+            },
+          },
+          threadId: ThreadId.make("thread-1"),
+          runtimeMode: "full-access",
+          cwd: "/tmp/project",
+          requestedModel: "gpt-5.3-codex",
+          serviceTier: undefined,
+          resumeThreadId: "saved-thread",
+        }).pipe(Effect.flip);
+
+        NodeAssert.ok(isCodexAppServerRequestError(error));
+        NodeAssert.equal(error.operation, "decode-payload");
+        NodeAssert.equal(error.method, "thread/resume");
+      }
+    }),
+  );
+
   it.effect("falls back to thread/start when resume fails recoverably", () =>
     Effect.gen(function* () {
       const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
       const started = makeThreadOpenResponse("fresh-thread");
       const client = {
-        request: <M extends "thread/start" | "thread/resume">(
-          method: M,
-          payload: CodexRpc.ClientRequestParamsByMethod[M],
-        ) => {
-          calls.push({ method, payload });
-          if (method === "thread/resume") {
+        raw: {
+          request: (
+            method: "thread/resume",
+            payload: CodexRpc.ClientRequestParamsByMethod["thread/resume"],
+          ) => {
+            calls.push({ method, payload });
             return Effect.fail(
               new CodexErrors.CodexAppServerRequestError({
                 code: -32603,
                 errorMessage: "thread not found",
               }),
             );
-          }
-          return Effect.succeed(started as CodexRpc.ClientRequestResponsesByMethod[M]);
+          },
+        },
+        request: (
+          method: "thread/start",
+          payload: CodexRpc.ClientRequestParamsByMethod["thread/start"],
+        ) => {
+          calls.push({ method, payload });
+          return Effect.succeed(started);
         },
       };
 
@@ -824,21 +1030,15 @@ describe("openCodexThread", () => {
   it.effect("propagates non-recoverable resume failures", () =>
     Effect.gen(function* () {
       const client = {
-        request: <M extends "thread/start" | "thread/resume">(
-          method: M,
-          _payload: CodexRpc.ClientRequestParamsByMethod[M],
-        ) => {
-          if (method === "thread/resume") {
-            return Effect.fail(
+        request: () => Effect.die("Non-recoverable resume failures must not start a fresh thread"),
+        raw: {
+          request: () =>
+            Effect.fail(
               new CodexErrors.CodexAppServerRequestError({
                 code: -32603,
                 errorMessage: "timed out waiting for server",
               }),
-            );
-          }
-          return Effect.succeed(
-            makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
-          );
+            ),
         },
       };
 

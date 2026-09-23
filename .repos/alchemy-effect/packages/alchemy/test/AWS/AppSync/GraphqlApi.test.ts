@@ -150,7 +150,7 @@ test.provider(
             main: authorizerPath,
             handler: "handler",
             isExternal: true,
-            url: false,
+            functionUrl: false,
           });
           const pool = yield* AWS.Cognito.UserPool("AuthPool", {});
           const api = yield* AWS.AppSync.GraphqlApi("AuthApi", {

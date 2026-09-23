@@ -25,7 +25,7 @@ const DESKTOP_INSTALL_TIMEOUT = Duration.minutes(2);
 
 /** Progress stage a desktop update state maps to, or null when the state
     carries no progress worth streaming. */
-export function desktopUpdateProgressStage(
+function desktopUpdateProgressStage(
   state: DesktopUpdateState,
 ): ServerSelfUpdateProgressStage | null {
   switch (state.status) {

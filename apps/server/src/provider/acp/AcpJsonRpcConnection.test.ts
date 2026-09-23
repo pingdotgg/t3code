@@ -368,6 +368,26 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("attaches child stderr when the ACP process exits before initialize", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          command: process.execPath,
+          args: [
+            "-e",
+            "process.stderr.write(\"Invalid project config at /tmp/project/.cursor/cli.json: schema validation failed. Unrecognized key(s): 'approvalMode', 'sandbox'\\n\"); process.exit(1);",
+          ],
+        },
+      });
+      const error = yield* runtime.start().pipe(Effect.flip);
+      expect(error._tag).toBe("AcpProcessExitedError");
+      expect(error.message).toContain("cli.json");
+      expect(error.message).toContain("Unrecognized key");
+      expect(error.message).not.toContain("ACP process exited with code 1\nACP process exited");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("drains large stderr output and keeps auth-sized logging chunks", () =>
     Effect.gen(function* () {
       const lengths: Array<number> = [];

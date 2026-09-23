@@ -3,6 +3,7 @@ import * as Configuration from "@effect/docgen/Configuration"
 import * as Domain from "@effect/docgen/Domain"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
+import * as ByteSize from "effect/ByteSize"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
@@ -31,7 +32,7 @@ const fileInfo: FileSystem.File.Info = {
   uid: Option.none(),
   gid: Option.none(),
   rdev: Option.none(),
-  size: FileSystem.Size(0),
+  size: ByteSize.zero,
   blksize: Option.none(),
   blocks: Option.none()
 }
@@ -79,7 +80,7 @@ const makeProcess = (env: Record<string, string> = {}) =>
     env: Effect.succeed(env)
   })
 
-const makeTestLive = (env: Record<string, string> = {}) =>
+const makeTestLayer = (env: Record<string, string> = {}) =>
   Configuration.configProviderLayer.pipe(
     Layer.fresh,
     Layer.provideMerge(Layer.mergeAll(
@@ -124,7 +125,7 @@ describe("Configuration", () => {
         examplesCompilerOptions: Configuration.defaultCompilerOptions
       })
     })
-    return testCliFor(program)([]).pipe(Effect.provide(makeTestLive()))
+    return testCliFor(program)([]).pipe(Effect.provide(makeTestLayer()))
   })
 
   it.effect("should use the configuration contained in docgen.json if it exists", () => {
@@ -159,7 +160,7 @@ describe("Configuration", () => {
     })
     return testCliFor(program)([]).pipe(
       Effect.provide(
-        makeTestLive().pipe(Layer.provide(makeDocgenJson({
+        makeTestLayer().pipe(Layer.provide(makeDocgenJson({
           projectHomepage: "myproject",
           srcLink: "mygithub",
           parseCompilerOptions
@@ -172,7 +173,7 @@ describe("Configuration", () => {
     Effect.gen(function*() {
       const result = yield* Effect.exit(
         testCliFor(Effect.void)([]).pipe(
-          Effect.provide(makeTestLive().pipe(Layer.provide(makeDocgenJson({ projectHomepage: 1 } as any))))
+          Effect.provide(makeTestLayer().pipe(Layer.provide(makeDocgenJson({ projectHomepage: 1 } as any))))
         )
       )
       if (Exit.isSuccess(result)) {
@@ -190,7 +191,7 @@ describe("Configuration", () => {
     })
     return testCliFor(program)(["--enable-search", "--enforce-version"]).pipe(
       Effect.provide(
-        makeTestLive().pipe(Layer.provide(makeDocgenJson({
+        makeTestLayer().pipe(Layer.provide(makeDocgenJson({
           enableSearch: false,
           enforceVersion: false
         })))
@@ -206,7 +207,7 @@ describe("Configuration", () => {
     })
     return testCliFor(program)([]).pipe(
       Effect.provide(
-        makeTestLive().pipe(Layer.provide(makeDocgenJson({
+        makeTestLayer().pipe(Layer.provide(makeDocgenJson({
           enableSearch: false,
           enforceVersion: false
         })))
@@ -221,7 +222,7 @@ describe("Configuration", () => {
       assert.isFalse(config.enforceVersion)
     })
     return testCliFor(program)(["--disable-search", "--no-enforce-version"]).pipe(
-      Effect.provide(makeTestLive())
+      Effect.provide(makeTestLayer())
     )
   })
 
@@ -236,7 +237,7 @@ describe("Configuration", () => {
       "--no-enforce-descriptions",
       "--no-enforce-examples",
       "--no-run-examples"
-    ]).pipe(Effect.provide(makeTestLive({
+    ]).pipe(Effect.provide(makeTestLayer({
       DOCGEN_ENFORCE_DESCRIPTIONS: "true",
       DOCGEN_ENFORCE_EXAMPLES: "true",
       DOCGEN_RUN_EXAMPLES: "true"
@@ -250,7 +251,7 @@ describe("Configuration", () => {
     })
     return testCliFor(program)(["--no-run-examples"]).pipe(
       Effect.provide(
-        makeTestLive({ DOCGEN_RUN_EXAMPLES: "true" }).pipe(
+        makeTestLayer({ DOCGEN_RUN_EXAMPLES: "true" }).pipe(
           Layer.provide(makeDocgenJson({ runExamples: true }))
         )
       )
@@ -266,7 +267,7 @@ describe("Configuration", () => {
     })
     return testCliFor(program)([]).pipe(
       Effect.provide(
-        makeTestLive({ DOCGEN_EXCLUDE: "a,b" }).pipe(
+        makeTestLayer({ DOCGEN_EXCLUDE: "a,b" }).pipe(
           Layer.provide(makeDocgenJson({ exclude: ["from-docgen"] }))
         )
       )
@@ -284,7 +285,7 @@ describe("Configuration", () => {
       "{\"strict\":false}",
       "--examples-compiler-options",
       "{\"module\":\"ESNext\"}"
-    ]).pipe(Effect.provide(makeTestLive()))
+    ]).pipe(Effect.provide(makeTestLayer()))
   })
 
   it.effect("rejects both compiler option forms for the same category", () =>
@@ -296,7 +297,7 @@ describe("Configuration", () => {
       for (const [fileFlag, inlineFlag] of cases) {
         const result = yield* Effect.result(
           testCliFor(Effect.void)([fileFlag, existingFile, inlineFlag, "{}"]).pipe(
-            Effect.provide(makeTestLive())
+            Effect.provide(makeTestLayer())
           )
         )
         if (Result.isSuccess(result)) {
@@ -314,7 +315,7 @@ describe("Configuration", () => {
       for (const flag of ["--parse-compiler-options", "--examples-compiler-options"]) {
         for (const value of ["null", "[]", "1", "\"text\""]) {
           const result = yield* Effect.result(
-            testCliFor(Effect.void)([flag, value]).pipe(Effect.provide(makeTestLive()))
+            testCliFor(Effect.void)([flag, value]).pipe(Effect.provide(makeTestLayer()))
           )
           if (Result.isSuccess(result)) {
             return assert.fail(`${flag} should reject ${value}`)

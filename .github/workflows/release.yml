@@ -5,6 +5,7 @@ on:
     tags:
       - "v*.*.*"
       - "!v*-nightly.*"
+      - "!v*-preview.*"
   schedule:
     # Avoid minute zero, when GitHub scheduled jobs are busiest.
     - cron: "8,38 * * * *"
@@ -13,13 +14,14 @@ on:
       channel:
         description: "Release channel"
         required: false
-        default: stable
+        default: preview
         type: choice
         options:
+          - preview
           - stable
           - nightly
       version:
-        description: "Release version (for example 1.2.3 or v1.2.3)"
+        description: "Stable version override (for example 1.2.3). Defaults to the version the latest nightly previewed."
         required: false
         type: string
 
@@ -30,7 +32,7 @@ on:
 # newest-wins single slot, so a queued stable tag can never be silently
 # dropped. Automatic nightlies recheck the release gap after leaving the queue.
 concurrency:
-  group: release-${{ (github.event_name == 'schedule' || inputs.channel == 'nightly') && 'nightly' || 'stable' }}
+  group: release-${{ (github.event_name == 'schedule' || inputs.channel == 'nightly' || inputs.channel == 'preview') && 'nightly' || 'stable' }}
   cancel-in-progress: false
   queue: max
 
@@ -39,33 +41,66 @@ permissions:
   id-token: none
 
 jobs:
-  check_changes:
-    name: Check automatic nightly release
-    if: github.event_name == 'schedule'
+  # Picks the commit every later job builds. Nightlies and tag pushes build the
+  # triggering commit. Manual stable releases build the commit of the latest
+  # published nightly, so stable only ever ships a build that nightly users
+  # have already run. Scheduled runs also decide here whether a nightly is due.
+  resolve_commit:
+    name: Resolve release commit
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 5
     outputs:
-      has_changes: ${{ steps.check.outputs.result }}
+      ref: ${{ steps.resolve.outputs.ref }}
+      nightly_version: ${{ steps.resolve.outputs.nightly_version }}
+      has_changes: ${{ steps.resolve.outputs.has_changes }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           sparse-checkout: .github/scripts
 
-      - id: check
-        name: Check release gap and new commits
+      - id: resolve
+        name: Resolve release commit
         uses: actions/github-script@v8
+        env:
+          DISPATCH_CHANNEL: ${{ inputs.channel }}
         with:
           script: |
-            const { shouldReleaseNightly } = require('./.github/scripts/check-nightly-release.cjs');
-            return await shouldReleaseNightly({ github, context, core });
+            const {
+              assertCommitOnDefaultBranch,
+              assertReleaseSource,
+              shouldReleaseNightly,
+              resolveLatestNightlyCommit,
+            } = require('./.github/scripts/check-nightly-release.cjs');
+
+            const dispatchChannel = process.env.DISPATCH_CHANNEL || 'preview';
+            const releaseChannel = context.eventName === 'schedule'
+              ? 'nightly'
+              : context.eventName === 'workflow_dispatch'
+                ? dispatchChannel
+                : 'stable';
+
+            await assertReleaseSource({ github, context, releaseChannel });
+
+            if (context.eventName === 'schedule') {
+              core.setOutput('has_changes', await shouldReleaseNightly({ github, context, core }));
+              core.setOutput('ref', context.sha);
+            } else if (context.eventName === 'workflow_dispatch' && dispatchChannel === 'stable') {
+              const { tag, sha, version } = await resolveLatestNightlyCommit({ github, context, core });
+              await assertCommitOnDefaultBranch({ github, context, sha });
+              core.notice(`Stable release builds ${sha}, the commit shipped by ${tag}.`);
+              core.setOutput('ref', sha);
+              core.setOutput('nightly_version', version);
+            } else {
+              core.setOutput('ref', context.sha);
+            }
 
   preflight:
     name: Preflight
-    needs: [check_changes]
+    needs: [resolve_commit]
     if: |
-      !failure() && !cancelled() &&
-      (github.event_name != 'schedule' || needs.check_changes.outputs.has_changes == 'true')
+      needs.resolve_commit.result == 'success' &&
+      (github.event_name != 'schedule' || needs.resolve_commit.outputs.has_changes == 'true')
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
@@ -78,11 +113,12 @@ jobs:
       cli_dist_tag: ${{ steps.release_meta.outputs.cli_dist_tag }}
       is_prerelease: ${{ steps.release_meta.outputs.is_prerelease }}
       make_latest: ${{ steps.release_meta.outputs.make_latest }}
-      ref: ${{ github.sha }}
+      ref: ${{ needs.resolve_commit.outputs.ref }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          ref: ${{ needs.resolve_commit.outputs.ref }}
           fetch-depth: 0
           sparse-checkout: |
             /*
@@ -104,11 +140,12 @@ jobs:
         env:
           DISPATCH_CHANNEL: ${{ github.event.inputs.channel }}
           DISPATCH_VERSION: ${{ github.event.inputs.version }}
+          NIGHTLY_VERSION: ${{ needs.resolve_commit.outputs.nightly_version }}
           NIGHTLY_DATE: ${{ github.run_started_at }}
-          NIGHTLY_SHA: ${{ github.sha }}
+          NIGHTLY_SHA: ${{ needs.resolve_commit.outputs.ref }}
           NIGHTLY_RUN_NUMBER: ${{ github.run_number }}
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "schedule" || ( "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_CHANNEL:-stable}" == "nightly" ) ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "schedule" || ( "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_CHANNEL:-preview}" == "nightly" ) ]]; then
             nightly_date="$(date -u -d "$NIGHTLY_DATE" +%Y%m%d)"
 
             node scripts/resolve-nightly-release.ts \
@@ -121,11 +158,33 @@ jobs:
             echo "cli_dist_tag=nightly" >> "$GITHUB_OUTPUT"
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
             echo "make_latest=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_CHANNEL:-preview}" == "preview" ]]; then
+            # Manual-only test train: exercises the whole release flow for a
+            # commit end users must never receive. Never scheduled.
+            # Same versioning as nightly under its own prerelease identifier.
+            # A preview release is reachable only by asking for it: npm gets it
+            # under the `preview` dist-tag, which nothing resolves by default,
+            # its desktop builds carry no update feed, and no updater manifest
+            # is attached to the release, so neither stable nor nightly
+            # installs can ever be offered one.
+            nightly_date="$(date -u -d "$NIGHTLY_DATE" +%Y%m%d)"
+
+            node scripts/resolve-nightly-release.ts \
+              --channel preview \
+              --date "$nightly_date" \
+              --run-number "$NIGHTLY_RUN_NUMBER" \
+              --sha "$NIGHTLY_SHA" \
+              --github-output
+
+            echo "release_channel=preview" >> "$GITHUB_OUTPUT"
+            echo "cli_dist_tag=preview" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
           else
             if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-              raw="${DISPATCH_VERSION}"
+              raw="${DISPATCH_VERSION:-$NIGHTLY_VERSION}"
               if [[ -z "$raw" ]]; then
-                echo "workflow_dispatch stable releases require the version input." >&2
+                echo "workflow_dispatch stable releases need a version input or a published nightly." >&2
                 exit 1
               fi
             else
@@ -200,24 +259,85 @@ jobs:
       - name: Typecheck
         run: vp run typecheck
 
+  # Keep tests on their own runners, using the same package split and server
+  # shards as CI, so the release check job does not spend its budget on tests.
+  test:
+    name: Release tests
+    needs: [preflight]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
       - uses: ./.github/actions/setup-apt-mirrors
 
       - name: Install browser secret helper build libraries
-        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+        run: |
+          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
+          sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config build-essential
 
       - name: Test
-        run: vp run test
+        run: vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' test
+
+  test_server:
+    name: Release server tests ${{ matrix.shard }}
+    needs: [preflight]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      # No Electron setup here: `t3` (apps/server) has no Electron dependency
+      # and none of its tests touch the runtime. Only the non-server `test`
+      # job, which covers @t3tools/desktop, needs the download.
+      - name: Test
+        run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
 
   relay_public_config:
     name: Resolve T3 Connect public config
-    # Consumes only the commit SHA, not preflight's resolved version, so it runs
-    # alongside preflight instead of after it. The condition mirrors preflight's:
-    # check_changes is skipped on manual and tag releases (skipped is neither failure
-    # nor success, so success() would be wrong here).
-    needs: [check_changes]
+    # Consumes only the release commit, not preflight's resolved version, so it
+    # runs alongside preflight instead of after it. The condition mirrors preflight's.
+    needs: [resolve_commit]
     if: |
-      !failure() && !cancelled() &&
-      (github.event_name != 'schedule' || needs.check_changes.outputs.has_changes == 'true')
+      needs.resolve_commit.result == 'success' &&
+      (github.event_name != 'schedule' || needs.resolve_commit.outputs.has_changes == 'true')
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 5
     environment:
@@ -239,7 +359,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.resolve_commit.outputs.ref }}
           sparse-checkout: |
             /*
             !/.repos/
@@ -254,15 +374,31 @@ jobs:
             args:
               - --filter=t3code-relay...
 
-      - id: relay_state
-        name: Read production relay tracing config
+      # The deployed stack's outputs, read from Alchemy's state store without
+      # planning or applying. Select the backend explicitly to avoid loading
+      # the stack's unrelated provider credentials; suppress informational logs
+      # and strip the credential-refresh progress prefix before parsing JSON.
+      # Redacted values are persisted as
+      # {"__redacted__": "<value>"}; the token is masked before it is written.
+      - name: Read production relay tracing config
         shell: bash
+        working-directory: infra/relay
         run: |
-          vp run --filter t3code-relay deploy \
-            --stage prod \
-            --read-state \
-            --github-output \
-            --github-env-file "$RUNNER_TEMP/relay-client-tracing.env"
+          set -euo pipefail
+          output="$(npx alchemy state read T3CodeRelay/prod/output --backend cloudflare --log-level error --no-input | sed -n '/^{/,$p')"
+          field() {
+            jq -er --arg key "$1" '.[$key] | if type == "object" then .__redacted__ else . end | select(. != null and . != "")' <<<"$output" \
+              || { echo "Relay stack output is missing $1" >&2; exit 1; }
+          }
+          url="$(field clientTracingUrl)"
+          dataset="$(field clientTracingDataset)"
+          token="$(field clientTracingToken)"
+          echo "::add-mask::$token"
+          {
+            echo "T3CODE_RELAY_CLIENT_OTLP_TRACES_URL=$url"
+            echo "T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET=$dataset"
+            echo "T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=$token"
+          } > "$RUNNER_TEMP/relay-client-tracing.env"
 
       - name: Upload relay client tracing config
         uses: actions/upload-artifact@v7
@@ -304,117 +440,23 @@ jobs:
           echo "clerk_cli_oauth_client_id=$CLERK_CLI_OAUTH_CLIENT_ID" >> "$GITHUB_OUTPUT"
           echo "relay_url=https://$relay_domain" >> "$GITHUB_OUTPUT"
 
-  # node-pty publishes no Linux prebuilt and the WSL backend runs under the
-  # distro's own (Linux) Node, which can't load the Windows/Electron binary. We
-  # build the Linux pty.node here, on Linux, and hand it to the Windows packaging
-  # job — the Windows artifact then ships a ready WSL backend binary with no
-  # cross-compiling and no first-launch compiler/node-gyp/network on the user's
-  # machine. node-pty is N-API, so one binary works across all WSL Node versions.
-  build_wsl_node_pty:
-    name: Build WSL node-pty (linux-x64)
-    # Same gating as relay_public_config: only the commit SHA is needed, so this
-    # runs alongside preflight. See the condition comment there.
-    needs: [check_changes]
-    if: |
-      !failure() && !cancelled() &&
-      (github.event_name != 'schedule' || needs.check_changes.outputs.has_changes == 'true')
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.sha }}
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
-
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: |
-            args:
-              - --filter=t3...
-
-      - name: Build node-pty linux-x64 prebuild
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Resolve node-pty from apps/server (where it's a dependency) and build
-          # its native binary from source for Linux. node-addon-api resolves from
-          # node-pty's own dependency tree, so node-gyp has everything it needs.
-          pty_pkg="$(node -e "console.log(require.resolve('node-pty/package.json', { paths: ['$GITHUB_WORKSPACE/apps/server'] }))")"
-          pty_dir="$(dirname "$pty_pkg")"
-          ( cd "$pty_dir" && npx --yes node-gyp rebuild )
-          mkdir -p wsl-prebuild
-          cp "$pty_dir/build/Release/pty.node" wsl-prebuild/pty.node
-          file wsl-prebuild/pty.node
-
-      - name: Upload node-pty linux-x64 prebuild
-        uses: actions/upload-artifact@v7
-        with:
-          name: wsl-node-pty-x64
-          path: wsl-prebuild/pty.node
-          if-no-files-found: error
-
-  build:
-    name: Build ${{ matrix.label }}
-    # build_wsl_node_pty stays in `needs` so it runs first and its artifact is
-    # available to download, but only the Windows matrix entry consumes it. We
-    # therefore gate the job on preflight + relay (must succeed) WITHOUT requiring
-    # build_wsl_node_pty, so a failed Linux prebuild doesn't skip the macOS/Linux
-    # builds. `!cancelled()` (not `!failure()`) lets the job run even when
-    # build_wsl_node_pty failed; the Windows-only download step below then fails
-    # that single platform if the prebuild is missing.
-    needs: [preflight, relay_public_config, build_wsl_node_pty]
+  # The platform-independent JS (server bundle, web client, Electron main) is
+  # built exactly once here and handed to every platform job as `js-bundle`.
+  # The relay/Clerk values are baked into the bundle, so they belong to this
+  # job rather than to the packaging jobs.
+  build_bundle:
+    name: Build JS bundle
+    # Same gating as relay_public_config: only the release commit is needed, so
+    # this runs alongside preflight. See the condition comment there.
+    needs: [preflight, relay_public_config]
     if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: blacksmith-32vcpu-ubuntu-2404
     timeout-minutes: 30
     env:
       T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
       T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: macOS arm64
-            runner: blacksmith-12vcpu-macos-26
-            platform: mac
-            target: dmg
-            arch: arm64
-            rust_target: aarch64-apple-darwin
-            resource_key: darwin-arm64
-          - label: macOS x64
-            runner: blacksmith-12vcpu-macos-26
-            platform: mac
-            target: dmg
-            arch: x64
-            rust_target: x86_64-apple-darwin
-            resource_key: darwin-x64
-          - label: Linux x64
-            runner: blacksmith-32vcpu-ubuntu-2404
-            platform: linux
-            target: AppImage
-            arch: x64
-            rust_target: x86_64-unknown-linux-gnu
-            resource_key: linux-x64
-          - label: Windows x64
-            runner: blacksmith-32vcpu-windows-2025
-            platform: win
-            target: nsis
-            arch: x64
-            rust_target: x86_64-pc-windows-msvc
-            resource_key: win32-x64
-          # - label: Windows arm64
-          #   runner: windows-11-arm
-          #   platform: win
-          #   target: nsis
-          #   arch: arm64
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -429,21 +471,8 @@ jobs:
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-          cache: ${{ matrix.platform != 'win' }}
+          cache: true
           run-install: false
-
-      - name: Resolve Windows package cache path
-        if: matrix.platform == 'win'
-        id: package_cache_path
-        shell: pwsh
-        run: '"path=$(vp pm cache dir)" >> $env:GITHUB_OUTPUT'
-
-      - name: Cache Windows packages
-        if: matrix.platform == 'win'
-        uses: actions/cache@v6
-        with:
-          path: ${{ steps.package_cache_path.outputs.path }}
-          key: windows-release-packages-v1-${{ matrix.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
 
       # pnpm checks the lockfile and policy before reusing this result. A missing
       # artifact leaves the cache empty, so installation runs the checks again.
@@ -454,23 +483,10 @@ jobs:
           name: release-dependency-verification
           path: ${{ runner.temp }}/pnpm-metadata
 
-      - name: Install desktop dependencies
+      - name: Install bundle dependencies
         env:
           pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
-        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
-
-      - name: Cache resource monitor
-        id: resource_monitor_cache
-        uses: actions/cache@v6
-        with:
-          path: native/resource-monitor/target/${{ matrix.rust_target }}/release/t3-resource-monitor${{ matrix.platform == 'win' && '.exe' || '' }}
-          key: resource-monitor-${{ matrix.rust_target }}-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
-
-      - name: Setup Rust
-        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.rust_target }}
+        run: vp install --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
 
       - name: Download relay client tracing config
         uses: actions/download-artifact@v8
@@ -489,274 +505,208 @@ jobs:
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
 
-      - name: Download WSL node-pty prebuild
-        if: matrix.platform == 'win'
-        uses: actions/download-artifact@v7
-        with:
-          name: wsl-node-pty-x64
-          path: wsl-prebuild
-
-      - name: Install Spectre-mitigated MSVC libs
-        if: matrix.platform == 'win'
-        shell: pwsh
-        run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $installPath = & $vswhere -products * -latest -property installationPath
-          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
-          $proc = Start-Process -FilePath $setupExe `
-            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
-            "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre", "--quiet", "--norestart" `
-            -Wait -PassThru -NoNewWindow
-          if ($null -eq $proc -or $proc.ExitCode -ne 0) {
-            $code = if ($null -ne $proc) { $proc.ExitCode } else { 1 }
-            Write-Error "Visual Studio Installer failed with exit code $code"
-            exit $code
-          }
-
       - uses: ./.github/actions/setup-apt-mirrors
-        if: matrix.platform == 'linux'
 
-      - name: Install Linux desktop build libraries
-        if: matrix.platform == 'linux'
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsecret-1-dev pkg-config
-          if ! command -v magick >/dev/null 2>&1 && ! command -v convert >/dev/null 2>&1; then
-              sudo apt-get install -y imagemagick
-          fi
+      # @t3tools/desktop#build compiles the Linux browser secret helper on a
+      # Linux host before packing, and that needs libsecret headers.
+      - name: Install browser secret helper build libraries
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
 
-          if command -v magick >/dev/null 2>&1; then
-              magick -version
-          else
-              convert -version
-          fi
+      # Runs t3#build (which depends on @t3tools/web#build) and
+      # @t3tools/desktop#build, so apps/server/dist holds the server bundle
+      # plus the web client and apps/desktop/dist-electron the Electron main.
+      - name: Build JS bundle
+        run: vp run build:desktop
 
-      - name: Prepare Azure Trusted Signing
-        if: matrix.platform == 'win'
-        shell: pwsh
-        env:
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
-          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
-          AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME }}
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $requiredSecrets = @(
-            $env:AZURE_TENANT_ID,
-            $env:AZURE_CLIENT_ID,
-            $env:AZURE_CLIENT_SECRET,
-            $env:AZURE_TRUSTED_SIGNING_ENDPOINT,
-            $env:AZURE_TRUSTED_SIGNING_ACCOUNT_NAME,
-            $env:AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME,
-            $env:AZURE_TRUSTED_SIGNING_PUBLISHER_NAME
-          )
-          if ($requiredSecrets | Where-Object { [string]::IsNullOrWhiteSpace($_) }) {
-            Write-Host "Azure Trusted Signing disabled; skipping TrustedSigning module preparation."
-            exit 0
-          }
-
-          try {
-            Install-PackageProvider `
-              -Name NuGet `
-              -MinimumVersion 2.8.5.201 `
-              -Force `
-              -Scope CurrentUser `
-              -ErrorAction Stop
-          } catch {
-            Write-Warning "Could not bootstrap NuGet package provider. Continuing because the runner may already have a usable provider. $($_.Exception.Message)"
-          }
-
-          Install-Module `
-            -Name TrustedSigning `
-            -MinimumVersion 0.5.0 `
-            -Force `
-            -AllowClobber `
-            -Repository PSGallery `
-            -Scope CurrentUser `
-            -ErrorAction Stop
-
-          Import-Module TrustedSigning -MinimumVersion 0.5.0 -Force
-          Get-Command Invoke-TrustedSigning -ErrorAction Stop
-
-          $moduleRoots = @(
-            [System.IO.Path]::Combine([Environment]::GetFolderPath("MyDocuments"), "PowerShell", "Modules"),
-            [System.IO.Path]::Combine([Environment]::GetFolderPath("MyDocuments"), "WindowsPowerShell", "Modules"),
-            [System.IO.Path]::Combine($env:ProgramFiles, "PowerShell", "Modules"),
-            [System.IO.Path]::Combine($env:ProgramFiles, "WindowsPowerShell", "Modules")
-          )
-          $modulePathEntries = @($moduleRoots + ($env:PSModulePath -split ";")) |
-            Where-Object { $_ -and (Test-Path $_) } |
-            Select-Object -Unique
-          "PSModulePath=$($modulePathEntries -join ';')" >> $env:GITHUB_ENV
-
-      - name: Build desktop artifact
-        shell: bash
-        env:
-          pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
-          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
-          MACOS_PROVISIONING_PROFILE: ${{ secrets.MACOS_PROVISIONING_PROFILE }}
-          T3CODE_CLERK_PASSKEY_RP_DOMAINS: ${{ vars.CLERK_PASSKEY_RP_DOMAINS }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
-          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
-          AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME }}
-        run: |
-          args=(
-            --platform "${{ matrix.platform }}"
-            --target "${{ matrix.target }}"
-            --arch "${{ matrix.arch }}"
-            --build-version "${{ needs.preflight.outputs.version }}"
-            --verbose
-          )
-
-          has_all() {
-            for value in "$@"; do
-              if [[ -z "$value" ]]; then
-                return 1
-              fi
-            done
-            return 0
-          }
-
-          if [[ "${{ matrix.platform }}" == "mac" ]]; then
-            if has_all "$CSC_LINK" "$CSC_KEY_PASSWORD" "$APPLE_API_KEY" "$APPLE_API_KEY_ID" "$APPLE_API_ISSUER"; then
-              if ! has_all "$APPLE_TEAM_ID" "$MACOS_PROVISIONING_PROFILE"; then
-                echo "macOS signing is configured, but APPLE_TEAM_ID or MACOS_PROVISIONING_PROFILE is missing." >&2
-                exit 1
-              fi
-
-              key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
-              printf '%s' "$APPLE_API_KEY" > "$key_path"
-              export APPLE_API_KEY="$key_path"
-
-              profile_path="$RUNNER_TEMP/t3code.provisionprofile"
-              printf '%s' "$MACOS_PROVISIONING_PROFILE" | base64 -D > "$profile_path"
-              security cms -D -i "$profile_path" >/dev/null
-              export T3CODE_APPLE_TEAM_ID="$APPLE_TEAM_ID"
-              export T3CODE_MACOS_PROVISIONING_PROFILE="$profile_path"
-
-              echo "macOS signing enabled."
-              args+=(--signed)
-            else
-              echo "macOS signing disabled (missing one or more Apple signing secrets)."
-            fi
-          elif [[ "${{ matrix.platform }}" == "win" ]]; then
-            # Bundle the Linux node-pty binary built by the build_wsl_node_pty job
-            # so the packaged WSL backend ships a ready binary (no first-launch
-            # compile). Required for a working WSL backend on Windows.
-            args+=(--wsl-prebuild "$GITHUB_WORKSPACE/wsl-prebuild/pty.node")
-            if has_all \
-              "$AZURE_TENANT_ID" \
-              "$AZURE_CLIENT_ID" \
-              "$AZURE_CLIENT_SECRET" \
-              "$AZURE_TRUSTED_SIGNING_ENDPOINT" \
-              "$AZURE_TRUSTED_SIGNING_ACCOUNT_NAME" \
-              "$AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME" \
-              "$AZURE_TRUSTED_SIGNING_PUBLISHER_NAME"; then
-              echo "Windows signing enabled (Azure Trusted Signing)."
-              args+=(--signed)
-            else
-              echo "Windows signing disabled (missing one or more Azure Trusted Signing secrets)."
-            fi
-          else
-            echo "Signing disabled for ${{ matrix.platform }}."
-          fi
-
-          vp run dist:desktop:artifact "${args[@]}"
-
-      - name: Collect release assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p release-publish
-
-          shopt -s nullglob
-          for pattern in \
-            "release/*.dmg" \
-            "release/*.zip" \
-            "release/*.AppImage" \
-            "release/*.exe" \
-            "release/*.blockmap" \
-            "release/*.yml"; do
-            for file in $pattern; do
-              cp "$file" release-publish/
-            done
-          done
-
-          if [[ "${{ matrix.platform }}" == "mac" && "${{ matrix.arch }}" != "arm64" ]]; then
-            shopt -s nullglob
-            for manifest in release-publish/*-mac.yml; do
-              mv "$manifest" "${manifest%.yml}-${{ matrix.arch }}.yml"
-            done
-          fi
-
-          # Enable if Windows arm64 builds are enabled.
-          # Windows updater metadata is channel-specific (for example
-          # "latest.yml" or "nightly.yml"). Suffix each per-arch copy so the
-          # release job can merge matching arm64/x64 manifests back into one
-          # canonical manifest per channel.
-          # if [[ "${{ matrix.platform }}" == "win" ]]; then
-          #   shopt -s nullglob
-          #   for manifest in release-publish/*.yml; do
-          #     mv "$manifest" "${manifest%.yml}-win-${{ matrix.arch }}.yml"
-          #   done
-          # fi
-
-      - name: Collect resource monitor
-        shell: bash
-        run: |
-          set -euo pipefail
-          binary_name="t3-resource-monitor"
-          if [[ "${{ matrix.platform }}" == "win" ]]; then
-            binary_name="${binary_name}.exe"
-          fi
-          source_path="native/resource-monitor/target/${{ matrix.rust_target }}/release/${binary_name}"
-          target_dir="resource-monitor-publish/${{ matrix.resource_key }}"
-          mkdir -p "$target_dir"
-          cp "$source_path" "$target_dir/$binary_name"
-
-      - name: Upload build artifacts
+      # Two paths under apps/ so the artifact root is apps/; consumers download
+      # into `apps` to restore both at their original locations.
+      - name: Upload JS bundle
         uses: actions/upload-artifact@v7
         with:
-          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
-          path: release-publish/*
+          name: js-bundle
+          path: |
+            apps/server/dist
+            apps/desktop/dist-electron
           if-no-files-found: error
+          retention-days: 1
 
-      - name: Upload resource monitor
-        uses: actions/upload-artifact@v7
-        with:
-          name: resource-monitor-${{ matrix.resource_key }}
-          path: resource-monitor-publish/${{ matrix.resource_key }}/*
-          if-no-files-found: error
+  # One job per platform and architecture (see release-desktop.yml), each on
+  # hardware of its own architecture, and each gated only on what it consumes:
+  # every platform needs the JS bundle, and the Windows jobs also need the
+  # same-arch Linux job, whose CLI archive they embed as the WSL runtime. Every
+  # job builds the desktop app; all but macOS x64 also build the CLI archive
+  # for their platform, so a target either ships fully or not at all.
+  desktop_mac_arm64:
+    name: Desktop macOS arm64
+    needs: [preflight, relay_public_config, build_bundle]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.preflight.outputs.version }}
+      ref: ${{ needs.preflight.outputs.ref }}
+      release_channel: ${{ needs.preflight.outputs.release_channel }}
+      clerk_publishable_key: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
+      label: macOS arm64
+      runner: blacksmith-12vcpu-macos-26
+      platform: mac
+      target: dmg
+      arch: arm64
+      rust_target: aarch64-apple-darwin
+      resource_key: darwin-arm64
+      cli_archive: true
 
+  desktop_mac_x64:
+    name: Desktop macOS x64
+    needs: [preflight, relay_public_config, build_bundle]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.preflight.outputs.version }}
+      ref: ${{ needs.preflight.outputs.ref }}
+      release_channel: ${{ needs.preflight.outputs.release_channel }}
+      clerk_publishable_key: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
+      label: macOS x64
+      runner: blacksmith-12vcpu-macos-26
+      platform: mac
+      target: dmg
+      arch: x64
+      rust_target: x86_64-apple-darwin
+      resource_key: darwin-x64
+      # No CLI archive: Node single-executables are unsupported on x64 macOS
+      # (the SEA docs list macOS as arm64 only) and the built binary segfaults
+      # on start. The x64 desktop app is Electron and unaffected.
+      cli_archive: false
+
+  desktop_linux_x64:
+    name: Desktop Linux x64
+    needs: [preflight, relay_public_config, build_bundle]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.preflight.outputs.version }}
+      ref: ${{ needs.preflight.outputs.ref }}
+      release_channel: ${{ needs.preflight.outputs.release_channel }}
+      clerk_publishable_key: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
+      label: Linux x64
+      runner: blacksmith-32vcpu-ubuntu-2404
+      platform: linux
+      target: AppImage
+      arch: x64
+      rust_target: x86_64-unknown-linux-gnu
+      resource_key: linux-x64
+      cli_archive: true
+
+  # node-pty has no Linux prebuild and compiles from source, so the arm64 app
+  # and archive are built on arm64 hardware rather than cross-built.
+  desktop_linux_arm64:
+    name: Desktop Linux arm64
+    needs: [preflight, relay_public_config, build_bundle]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.preflight.outputs.version }}
+      ref: ${{ needs.preflight.outputs.ref }}
+      release_channel: ${{ needs.preflight.outputs.release_channel }}
+      clerk_publishable_key: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
+      label: Linux arm64
+      runner: ubuntu-24.04-arm
+      platform: linux
+      target: AppImage
+      arch: arm64
+      rust_target: aarch64-unknown-linux-gnu
+      resource_key: linux-arm64
+      cli_archive: true
+
+  # The Windows jobs embed the same-arch Linux CLI archive as the WSL runtime.
+  # `!cancelled()` (not `!failure()`) still lets them start when that Linux job
+  # failed; the download step inside then fails this single platform if the
+  # archive is missing.
+  desktop_win_x64:
+    name: Desktop Windows x64
+    needs: [preflight, relay_public_config, build_bundle, desktop_linux_x64]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.preflight.outputs.version }}
+      ref: ${{ needs.preflight.outputs.ref }}
+      release_channel: ${{ needs.preflight.outputs.release_channel }}
+      clerk_publishable_key: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
+      label: Windows x64
+      runner: blacksmith-32vcpu-windows-2025
+      platform: win
+      target: nsis
+      arch: x64
+      rust_target: x86_64-pc-windows-msvc
+      resource_key: win32-x64
+      cli_archive: true
+
+  desktop_win_arm64:
+    name: Desktop Windows arm64
+    needs: [preflight, relay_public_config, build_bundle, desktop_linux_arm64]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.preflight.outputs.version }}
+      ref: ${{ needs.preflight.outputs.ref }}
+      release_channel: ${{ needs.preflight.outputs.release_channel }}
+      clerk_publishable_key: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
+      label: Windows arm64
+      runner: windows-11-arm
+      platform: win
+      target: nsis
+      arch: arm64
+      rust_target: aarch64-pc-windows-msvc
+      resource_key: win32-arm64
+      cli_archive: true
+
+  # npm gets the same bytes as the GitHub Release: the launcher plus one
+  # package per CLI archive. Preview publishes too, under the `preview`
+  # dist-tag, which nothing resolves unless asked for by name.
   publish_cli:
     name: Publish CLI to npm
-    needs: [preflight, relay_public_config, quality, build]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.quality.result == 'success' && needs.build.result == 'success' }}
+    needs:
+      [
+        preflight,
+        relay_public_config,
+        quality,
+        test,
+        test_server,
+        desktop_mac_arm64,
+        desktop_linux_x64,
+        desktop_linux_arm64,
+        desktop_win_x64,
+        desktop_win_arm64,
+      ]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.quality.result == 'success' && needs.test.result == 'success' && needs.test_server.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' }}
     runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
-    env:
-      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
-      T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
-      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
-      T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -775,56 +725,45 @@ jobs:
           run-install: |
             args:
               - --filter=t3...
-              - --filter=@t3tools/web...
               - --filter=@t3tools/scripts...
 
-      - name: Download relay client tracing config
+      - name: Download all CLI archives
         uses: actions/download-artifact@v8
         with:
-          name: relay-client-tracing-config
-          path: ${{ runner.temp }}/relay-client-tracing
+          pattern: cli-*
+          merge-multiple: true
+          path: release-cli
 
-      - name: Load relay client tracing config
-        shell: bash
+      - name: Build npm packages from CLI archives
+        run: node scripts/build-npm-platform-packages.ts --archives-dir release-cli --version "${{ needs.preflight.outputs.version }}" --output-dir npm-packages
+
+      # A dry run of every package first: an auth or scope error here (the
+      # @t3code org missing, a package without a trusted publisher) fails
+      # before anything is live, instead of after some platforms already are.
+      - name: Check npm publish access (dry run)
         run: |
-          config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
-          tracing_token="$(sed -n 's/^T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
-          echo "::add-mask::$tracing_token"
-          cat "$config_path" >> "$GITHUB_ENV"
+          if ! node apps/server/scripts/cli.ts publish --packages-dir npm-packages --tag "${{ needs.preflight.outputs.cli_dist_tag }}" --provenance --dry-run --verbose; then
+            echo "::error::npm publish --dry-run failed. Make sure the @t3code npm org exists and that t3 and every @t3code/t3-<platform> package has a trusted publisher registered for .github/workflows/release.yml (see docs/operations/release.md)." >&2
+            exit 1
+          fi
 
-      - name: Align package versions to release version
-        run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
-
-      # The t3 build task depends on @t3tools/web#build, so the web client is
-      # built (once) as part of this step.
-      - name: Build CLI package
-        run: vp run --filter t3 build
-
-      - name: Download resource monitors
-        uses: actions/download-artifact@v8
-        with:
-          pattern: resource-monitor-*
-          path: ${{ runner.temp }}/resource-monitors
-
-      - name: Bundle resource monitors into CLI package
-        shell: bash
-        run: |
-          set -euo pipefail
-          for artifact_dir in "$RUNNER_TEMP"/resource-monitors/resource-monitor-*; do
-            resource_key="${artifact_dir##*/resource-monitor-}"
-            target_dir="apps/server/dist/resource-monitor/${resource_key}"
-            mkdir -p "$target_dir"
-            cp "$artifact_dir"/t3-resource-monitor* "$target_dir/"
-            chmod +x "$target_dir"/t3-resource-monitor 2>/dev/null || true
-          done
-
-      - name: Publish CLI package
-        run: node apps/server/scripts/cli.ts publish --tag "${{ needs.preflight.outputs.cli_dist_tag }}" --app-version "${{ needs.preflight.outputs.version }}" --verbose
+      - name: Publish CLI packages
+        run: node apps/server/scripts/cli.ts publish --packages-dir npm-packages --tag "${{ needs.preflight.outputs.cli_dist_tag }}" --provenance --verbose
 
   release:
     name: Publish GitHub Release
-    needs: [preflight, build, publish_cli]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success' }}
+    needs:
+      [
+        preflight,
+        desktop_mac_arm64,
+        desktop_mac_x64,
+        desktop_linux_x64,
+        desktop_linux_arm64,
+        desktop_win_x64,
+        desktop_win_arm64,
+        publish_cli,
+      ]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_mac_x64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' && needs.publish_cli.result == 'success' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 30
     permissions:
@@ -855,7 +794,51 @@ jobs:
           merge-multiple: true
           path: release-assets
 
+      - name: Download all CLI archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: cli-*
+          merge-multiple: true
+          path: release-assets
+
+      # Installers verify archives against this file, so it is written from the
+      # signed bytes that get uploaded, never from an earlier stage.
+      - name: Write CLI archive checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          shopt -s nullglob
+          archives=(t3-*.tar.gz t3-*.zip)
+          if [[ ${#archives[@]} -eq 0 ]]; then
+            echo "No CLI archives were produced." >&2
+            exit 1
+          fi
+          sha256sum "${archives[@]}" > SHA256SUMS
+          cat SHA256SUMS
+
+      # The desktop build omits the publish config for preview versions, so
+      # electron-builder emits no updater manifests for them. Refuse to publish
+      # if one shows up anyway: a `latest*.yml` or `nightly*.yml` on a preview
+      # release is what would let a stable or nightly install update onto it.
+      - name: Refuse updater metadata on preview releases
+        if: needs.preflight.outputs.release_channel == 'preview'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob extglob
+          # builder-debug.yml is electron-builder's config dump, not a feed.
+          updater_files=(release-assets/!(builder-debug).yml release-assets/*.blockmap)
+          if [[ ${#updater_files[@]} -ne 0 ]]; then
+            printf 'Preview releases must not carry updater metadata, found: %s\n' "${updater_files[*]}" >&2
+            exit 1
+          fi
+
+      # electron-updater reads one manifest per platform and channel and picks
+      # the file entry whose name carries the running arch, so the per-arch
+      # manifests the build jobs wrote are merged back into that one file.
       - name: Merge macOS updater manifests
+        if: needs.preflight.outputs.release_channel != 'preview'
         run: |
           shopt -s nullglob
           for x64_manifest in release-assets/*-mac-x64.yml; do
@@ -866,6 +849,60 @@ jobs:
             fi
           done
 
+      - name: Merge Windows updater manifests
+        if: needs.preflight.outputs.release_channel != 'preview'
+        run: |
+          shopt -s nullglob
+          for x64_manifest in release-assets/*-win-x64.yml; do
+            arm64_manifest="${x64_manifest%-x64.yml}-arm64.yml"
+            merged_manifest="${x64_manifest%-win-x64.yml}.yml"
+            if [[ -f "$arm64_manifest" ]]; then
+              node scripts/merge-update-manifests.ts --platform win "$x64_manifest" "$arm64_manifest" "$merged_manifest"
+              rm -f "$x64_manifest" "$arm64_manifest"
+            else
+              mv "$x64_manifest" "$merged_manifest"
+            fi
+          done
+
+      # Updater manifests and blockmaps are what electron-updater consumes.
+      # They are only listed for channels an updater is meant to follow.
+      - id: release_files
+        name: Resolve release asset list
+        shell: bash
+        run: |
+          {
+            echo 'files<<EOF'
+            echo 'release-assets/*.dmg'
+            echo 'release-assets/*.zip'
+            echo 'release-assets/*.AppImage'
+            echo 'release-assets/*.exe'
+            if [[ "${{ needs.preflight.outputs.release_channel }}" != "preview" ]]; then
+              echo 'release-assets/*.blockmap'
+              echo 'release-assets/*.yml'
+            fi
+            echo 'release-assets/*.tar.gz'
+            echo 'release-assets/SHA256SUMS'
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      # A preview release gets a warning instead of generated notes. Generated
+      # notes would list every commit since the previous preview, which is
+      # unmerged branch history no one should read as a changelog, and would
+      # make the release look like any other build to someone browsing the
+      # releases page.
+      - name: Write preview release notes
+        if: needs.preflight.outputs.release_channel == 'preview'
+        shell: bash
+        run: |
+          cat > release-notes.md <<'EOF'
+          > [!WARNING]
+          > **This is a preview build. Do not install it unless you know exactly why you are here.**
+          >
+          > Preview builds are cut by maintainers from unreleased branches to exercise the release pipeline. They can be broken, receive no fixes, are never offered as updates, and are not supported. If you want T3 Code, install the [latest release](https://github.com/pingdotgg/t3code/releases/latest) or a nightly instead.
+
+          Built from `${{ needs.preflight.outputs.ref }}`.
+          EOF
+
       - name: Publish release
         if: needs.preflight.outputs.previous_tag != ''
         uses: softprops/action-gh-release@v3
@@ -873,17 +910,12 @@ jobs:
           tag_name: ${{ needs.preflight.outputs.tag }}
           target_commitish: ${{ needs.preflight.outputs.ref }}
           name: ${{ needs.preflight.outputs.release_name }}
-          generate_release_notes: true
+          generate_release_notes: ${{ needs.preflight.outputs.release_channel != 'preview' }}
+          body_path: ${{ needs.preflight.outputs.release_channel == 'preview' && 'release-notes.md' || '' }}
           previous_tag: ${{ needs.preflight.outputs.previous_tag }}
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
-          files: |
-            release-assets/*.dmg
-            release-assets/*.zip
-            release-assets/*.AppImage
-            release-assets/*.exe
-            release-assets/*.blockmap
-            release-assets/*.yml
+          files: ${{ steps.release_files.outputs.files }}
           fail_on_unmatched_files: true
           token: ${{ github.token }}
 
@@ -894,23 +926,18 @@ jobs:
           tag_name: ${{ needs.preflight.outputs.tag }}
           target_commitish: ${{ needs.preflight.outputs.ref }}
           name: ${{ needs.preflight.outputs.release_name }}
-          generate_release_notes: true
+          generate_release_notes: ${{ needs.preflight.outputs.release_channel != 'preview' }}
+          body_path: ${{ needs.preflight.outputs.release_channel == 'preview' && 'release-notes.md' || '' }}
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
-          files: |
-            release-assets/*.dmg
-            release-assets/*.zip
-            release-assets/*.AppImage
-            release-assets/*.exe
-            release-assets/*.blockmap
-            release-assets/*.yml
+          files: ${{ steps.release_files.outputs.files }}
           fail_on_unmatched_files: true
           token: ${{ github.token }}
 
   publish_aur:
     name: Publish AUR package
     needs: [preflight, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     uses: ./.github/workflows/publish-aur.yml
     with:
       release_tag: ${{ needs.preflight.outputs.tag }}
@@ -920,7 +947,7 @@ jobs:
   deploy_web:
     name: Deploy hosted web app
     needs: [preflight, relay_public_config, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.release.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     env:
@@ -1036,6 +1063,60 @@ jobs:
               "${vercel_scope_args[@]}"
           fi
 
+  deploy_marketing:
+    name: Deploy marketing site
+    needs: [preflight, release]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'nightly' }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/marketing...
+
+      - name: Deploy marketing site to Vercel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${VERCEL_TOKEN:-}" || -z "${VERCEL_ORG_ID:-}" ]]; then
+            echo "Missing one or more required Vercel secrets: VERCEL_TOKEN, VERCEL_ORG_ID." >&2
+            exit 1
+          fi
+
+          VERCEL_PROJECT_ID="$(
+            curl --fail --silent --show-error \
+              --header "Authorization: Bearer $VERCEL_TOKEN" \
+              "https://api.vercel.com/v9/projects/t3code-marketing?teamId=$VERCEL_ORG_ID" \
+              | jq --exit-status --raw-output '.id'
+          )"
+          export VERCEL_PROJECT_ID
+
+          vp dlx vercel@53.1.1 deploy \
+            --archive=tgz \
+            --prod \
+            --yes \
+            --token "$VERCEL_TOKEN" \
+            --scope "${VERCEL_TEAM_SLUG:-$VERCEL_ORG_ID}"
+
   finalize:
     name: Finalize release
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' }}
@@ -1120,6 +1201,7 @@ jobs:
     if: |
       always() && !cancelled() &&
       needs.preflight.result == 'success' &&
+      needs.preflight.outputs.release_channel != 'preview' &&
       needs.relay_public_config.result == 'success' &&
       needs.release.result == 'success' &&
       needs.deploy_web.result == 'success' &&

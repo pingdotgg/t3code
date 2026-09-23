@@ -13,7 +13,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-new(root) {
 }
 
 html[data-mobile-composer-route-transition="true"]::view-transition-group(t3-mobile-composer) {
-  animation-duration: 180ms;
+  animation-duration: var(--mobile-composer-transition-duration);
   animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -22,12 +22,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-image-pair(t
 }
 
 html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobile-composer) {
-  animation: t3-mobile-composer-old 180ms linear both;
+  animation: t3-mobile-composer-old var(--mobile-composer-transition-duration) linear both;
   mix-blend-mode: normal;
 }
 
 html[data-mobile-composer-route-transition="true"]::view-transition-new(t3-mobile-composer) {
-  animation: t3-mobile-composer-new 180ms linear both;
+  animation: t3-mobile-composer-new var(--mobile-composer-transition-duration) linear both;
   mix-blend-mode: normal;
 }
 
@@ -57,11 +57,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-new(t3-mobil
 }
 
 html[data-mobile-composer-route-transition="true"]::view-transition-group(t3-mobile-draft-headline) {
-  animation-duration: 130ms;
+  animation-duration: var(--mobile-composer-transition-duration);
 }
 
 html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobile-draft-headline) {
-  animation: t3-mobile-draft-headline-exit 130ms cubic-bezier(0.4, 0, 1, 1) both;
+  animation: t3-mobile-draft-headline-exit var(--mobile-composer-transition-duration)
+    cubic-bezier(0.4, 0, 1, 1) both;
   mix-blend-mode: normal;
 }
 
@@ -100,6 +101,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --command-shell-inset: 0.5rem;
   --command-content-inset: 1rem;
   --floating-content-inset: 0.75rem;
+  /* App layer order: docked sheets, then the floating preview player (47–49, see
+     previewMiniPlayerLayout.ts), then dialogs and popovers (50 and up). */
+  --z-sheet: 46;
   --glass-blur: 12px;
   --glass-opacity: 80%;
   --glass-saturation: 1.14;
@@ -162,6 +166,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-update-surface: var(--update-surface);
   --color-success-foreground: var(--success-foreground);
   --color-success: var(--success);
+  --color-diff-addition: var(--diff-addition);
+  --color-diff-deletion: var(--diff-deletion);
+  --color-diff-addition-foreground: var(--diff-addition-foreground);
+  --color-diff-deletion-foreground: var(--diff-deletion-foreground);
   --color-info-foreground: var(--info-foreground);
   --color-info: var(--info);
   --color-destructive-foreground: var(--destructive-foreground);
@@ -359,7 +367,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   -webkit-mask-position: top, bottom, right;
   -webkit-mask-repeat: no-repeat;
   -webkit-mask-size:
-    100% var(--workspace-titlebar-scroll-fade-height),
+    100% calc(var(--workspace-titlebar-scroll-fade-height) + 1px),
     100% calc(100% - var(--workspace-titlebar-scroll-fade-height)),
     var(--app-scrollbar-width) 100%;
   mask-image:
@@ -377,7 +385,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   mask-position: top, bottom, right;
   mask-repeat: no-repeat;
   mask-size:
-    100% var(--workspace-titlebar-scroll-fade-height),
+    100% calc(var(--workspace-titlebar-scroll-fade-height) + 1px),
     100% calc(100% - var(--workspace-titlebar-scroll-fade-height)),
     var(--app-scrollbar-width) 100%;
 }
@@ -609,6 +617,18 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 @layer components {
+  /* AnimatedHeight owns resizing for its contents. Nested collapsibles must
+     expose their final layout immediately, otherwise each animation frame
+     restarts the parent's transition and the dialog trails behind its content. */
+  [data-slot="animated-height"] [data-slot="collapsible-panel"] {
+    height: auto !important;
+    transition: none !important;
+  }
+
+  [data-slot="animated-height"] [data-slot="collapsible-panel"][data-closed] {
+    display: none;
+  }
+
   /* Each maintainer palette gives the same line art its own material: rose
      vellum, forest drafting paper, marine cyanotype, copper, and violet ink.
      These colors stay deliberately deep at the top edge so the white stage
@@ -1184,39 +1204,6 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --terminal-selection-background: var(--app-theme-terminal-selection-background);
 }
 
-/* The first-run flow owns the whole document so portaled menus and tooltips
-   use the same fixed palette as the wizard. This follows the theme mapping so
-   saved custom themes cannot override it while onboarding is mounted. */
-html[data-onboarding-surface]:root {
-  color-scheme: dark;
-  --accent: #262626;
-  --accent-foreground: #fff;
-  --appearance-contrast-target: #fff;
-  --app-chrome-background: #000;
-  --background: #000;
-  --border: #262626;
-  --card: #000;
-  --card-foreground: #fff;
-  --destructive: var(--color-red-400);
-  --foreground: #fff;
-  --icon-muted: #a1a1aa;
-  --input: #262626;
-  --muted: #171717;
-  --muted-foreground: #a1a1aa;
-  --placeholder: #71717a;
-  --popover: #171717;
-  --popover-foreground: #fff;
-  --ring: #737373;
-  --secondary: #171717;
-  --secondary-foreground: #fff;
-  --secondary-label: #a1a1aa;
-  --success-foreground: var(--color-emerald-400);
-  --terminal-background: #000;
-  --terminal-cursor: #fff;
-  --terminal-foreground: #fff;
-  --terminal-selection-background: rgb(255 255 255 / 20%);
-}
-
 /* Theme-token dependency probes are restored synchronously, before paint. Keep
    transitions from observing the temporary sentinel color in between. */
 html[data-theme-token-probe],
@@ -1320,6 +1307,18 @@ html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="tooltip-trigg
   color: var(--contrast-toolbar-foreground);
 }
 
+html[data-theme-id] [data-panel-layout-controls] [data-slot="toggle"]:disabled,
+html[data-theme-id] [data-panel-layout-controls] [data-slot="tooltip-trigger"]:disabled,
+html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="toggle"]:disabled,
+html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="tooltip-trigger"]:disabled {
+  --control-icon-color: color-mix(
+    in oklab,
+    var(--contrast-toolbar-foreground) 55%,
+    var(--toolbar-background)
+  );
+  color: color-mix(in oklab, var(--contrast-toolbar-foreground) 55%, var(--toolbar-background));
+}
+
 html[data-theme-id] [data-chat-header] [data-slot="button"]:hover,
 html[data-theme-id] [data-chat-header] [data-slot="button"][data-pressed],
 html[data-theme-id] [data-chat-header] [data-slot="menu-trigger"]:hover,
@@ -1351,8 +1350,7 @@ html[data-theme-id] .chat-markdown .chat-markdown-codeblock pre {
   background-color: transparent;
 }
 
-html[data-theme-id] .chat-markdown .chat-markdown-codeblock-header,
-html[data-theme-id] .chat-markdown .chat-markdown-chrome-action {
+html[data-theme-id] .chat-markdown .chat-markdown-codeblock-header {
   color: color-mix(in srgb, var(--code-foreground) 72%, transparent);
 }
 
@@ -1376,11 +1374,6 @@ html[data-theme-id="t3-chat"] {
       color: var(--contrast-message-foreground);
     }
   }
-}
-
-html[data-theme-id] .chat-markdown .chat-markdown-chrome-action:hover,
-html[data-theme-id] .chat-markdown .chat-markdown-chrome-action[aria-pressed="true"] {
-  color: var(--code-foreground);
 }
 
 html[data-theme-id] [data-app-sidebar] {
@@ -1420,8 +1413,7 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
 
 /* Recompute contrast wherever a subtree owns its own semantic color palette. */
 :root,
-[data-app-sidebar],
-[data-onboarding-surface] {
+[data-app-sidebar] {
   --contrast-toolbar-foreground: color-mix(
     in oklab,
     color-mix(
@@ -1625,6 +1617,16 @@ code {
   -webkit-app-region: drag;
 }
 
+/* Electron 44 inherits app-region. Reset children to the initial value so they
+   do not add drag rectangles over fixed controls. Explicit `none` is treated
+   as `no-drag` and breaks titlebar dragging; `initial` emits no rectangle.
+   The base layer lets explicit drag/no-drag utilities take precedence. */
+@layer base {
+  .drag-region > * {
+    -webkit-app-region: initial;
+  }
+}
+
 .drag-region button,
 .drag-region input,
 .drag-region textarea,
@@ -1765,8 +1767,12 @@ code {
 }
 
 .chat-markdown a {
-  color: var(--info-foreground);
   text-decoration: none;
+}
+
+/* File links are Chips and own their color and focus ring. */
+.chat-markdown a:not(.chat-markdown-file-link) {
+  color: var(--info-foreground);
 }
 
 .chat-markdown a:not(.chat-markdown-file-link):hover,
@@ -1820,17 +1826,6 @@ code {
   font-size: 0.75rem;
 }
 
-.chat-markdown .chat-markdown-file-link,
-.chat-markdown .chat-markdown-file-link:hover {
-  color: var(--contrast-foreground);
-  text-decoration: none;
-}
-
-.chat-markdown .chat-markdown-file-link:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 70%, transparent);
-}
-
 .chat-markdown pre {
   max-width: 100%;
   overflow-x: auto;
@@ -1857,18 +1852,8 @@ code {
   background: color-mix(in srgb, var(--contrast-border) 78%, transparent);
 }
 
-.chat-markdown .chat-markdown-codeblock-header,
-.chat-markdown .chat-markdown-chrome-action {
+.chat-markdown .chat-markdown-codeblock-header {
   color: color-mix(in srgb, var(--contrast-foreground) 72%, transparent);
-}
-
-.chat-markdown .chat-markdown-chrome-action:hover {
-  color: var(--contrast-foreground);
-}
-
-.chat-markdown .chat-markdown-chrome-action[aria-pressed="true"] {
-  color: var(--contrast-foreground);
-  background: color-mix(in srgb, var(--contrast-foreground) 8%, transparent);
 }
 
 .chat-markdown .chat-markdown-codeblock pre {
@@ -1885,6 +1870,22 @@ code {
 
 .chat-markdown .chat-markdown-shiki .shiki {
   background: transparent !important;
+}
+
+/* Paragraphs and code blocks arrive in chunks while a response streams. Fade
+   each new block in so the chunk does not pop. @starting-style only applies
+   when an element is first inserted, and the rule is gated on data-streaming,
+   so opening a finished thread never replays the fade. Opacity only, one
+   shot, no layout change. */
+@media (prefers-reduced-motion: no-preference) {
+  .chat-markdown[data-streaming] > *,
+  .chat-markdown[data-streaming] .chat-markdown-shiki {
+    transition: opacity 600ms ease-out;
+
+    @starting-style {
+      opacity: 0;
+    }
+  }
 }
 
 /* Diagnostics-style tables: row separators only, uppercase headers, and a
@@ -1947,6 +1948,17 @@ code {
   }
 }
 
+/* Expanded capture preview swaps between the screenshot and its extracted text.
+   One-shot fade on whichever panel mounts, so nothing repaints continuously. */
+@keyframes snap-shot-contents-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @keyframes provider-update-pill-countdown {
   from {
     transform: scaleX(1);
@@ -1954,6 +1966,28 @@ code {
   to {
     transform: scaleX(0);
   }
+}
+
+:root {
+  --diff-addition: var(--success);
+  --diff-deletion: var(--destructive);
+  --diff-addition-foreground: light-dark(var(--color-emerald-600), var(--color-emerald-400));
+  --diff-deletion-foreground: light-dark(var(--color-red-600), var(--color-red-400));
+}
+
+:root[data-diff-color-scheme="blue-orange"] {
+  --diff-addition: light-dark(var(--color-blue-600), var(--color-blue-400));
+  --diff-deletion: light-dark(var(--color-orange-600), var(--color-orange-400));
+  --diff-addition-foreground: var(--diff-addition);
+  --diff-deletion-foreground: var(--diff-deletion);
+  --diffs-addition-color-override: var(--diff-addition);
+  --diffs-deletion-color-override: var(--diff-deletion);
+  --trees-status-added-override: var(--diff-addition);
+  --trees-status-deleted-override: var(--diff-deletion);
+  --trees-status-untracked-override: var(--diff-addition);
+  --trees-git-added-color-override: var(--diff-addition);
+  --trees-git-deleted-color-override: var(--diff-deletion);
+  --trees-git-untracked-color-override: var(--diff-addition);
 }
 
 .diff-render-surface diffs-container {
@@ -2051,4 +2085,121 @@ code {
   .preview-loading-progress[data-loading="true"] {
     transform: scaleX(0.9);
   }
+}
+
+/* Let the sortable rows open label clearance before painting the dividers.
+   This runs once per pickup; rows retain dnd-kit's normal 200ms transitions. */
+.sidebar-drag-boundary-label {
+  animation: sidebar-drag-label-reveal 200ms step-end;
+}
+
+@keyframes sidebar-drag-label-reveal {
+  from {
+    visibility: hidden;
+  }
+  to {
+    visibility: visible;
+  }
+}
+
+/* Rich text composer (Tiptap). The stored prompt stays markdown; only the
+   surface renders styled text. Markers (** * ` ~~) appear as non-editable
+   widgets while the caret is on styled text. */
+.composer-tiptap {
+  position: relative;
+}
+
+.composer-tiptap p {
+  margin: 0;
+}
+
+.composer-tiptap:focus,
+.composer-tiptap .ProseMirror:focus {
+  outline: none;
+}
+
+.composer-tiptap code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: color-mix(in oklab, var(--muted-foreground) 12%, transparent);
+  border-radius: 0.3em;
+  padding: 0.05em 0.25em;
+}
+
+.composer-rich-marker {
+  color: var(--muted-foreground);
+  opacity: 0.75;
+  font-weight: 400;
+  font-style: normal;
+  text-decoration: none;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* Selected chips (node selection from arrowing into or clicking a chip). */
+.composer-tiptap .ProseMirror-selectednode {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+  border-radius: 6px;
+}
+
+.composer-tiptap .composer-chip-range-selected {
+  position: relative;
+}
+
+.composer-tiptap.ProseMirror-focused .composer-chip-range-selected::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  background: Highlight;
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+/* Rich-text task lists render as real checkboxes. Tiptap's TaskItem NodeView
+   builds the <li> imperatively with only a data-checked attribute (no
+   data-type), so items are targeted that way. Indentation comes from list
+   nesting (two spaces per level from Tab), matching the stored Markdown. */
+.composer-tiptap ul[data-type="taskList"] {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.composer-tiptap ul[data-type="taskList"] ul[data-type="taskList"] {
+  padding-left: 1.375rem;
+}
+
+.composer-tiptap li[data-checked] {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+}
+
+.composer-tiptap li[data-checked] > label {
+  display: flex;
+  align-items: center;
+  flex: none;
+  height: 1lh;
+  cursor: pointer;
+}
+
+.composer-tiptap li[data-checked] > label input[type="checkbox"] {
+  display: block;
+  margin: 0;
+  width: 0.95rem;
+  height: 0.95rem;
+  cursor: pointer;
+}
+
+.composer-tiptap li[data-checked] > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.composer-tiptap li[data-checked] > div > p {
+  margin: 0;
 }

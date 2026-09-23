@@ -40,6 +40,7 @@ import {
   UnknownError
 } from "effect/unstable/sql/SqlError"
 import * as Statement from "effect/unstable/sql/Statement"
+import { Buffer } from "node:buffer"
 import * as Tedious from "tedious"
 import type { ConnectionOptions } from "tedious/lib/connection.ts"
 import type { DataType } from "tedious/lib/data-type.ts"
@@ -160,7 +161,7 @@ export type TypeId = typeof TypeId
 /**
  * Microsoft SQL Server client service, extending `SqlClient` with typed parameter fragments and stored procedure calls.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export interface MssqlClient extends Client.SqlClient {
@@ -206,7 +207,13 @@ export interface MssqlClientConfig {
   readonly domain?: string | undefined
   readonly server: string
   readonly instanceName?: string | undefined
+  /**
+   * Whether to encrypt traffic between the client and server. Defaults to `true`. Setting this to `false` disables transport encryption and transmits credentials in cleartext.
+   */
   readonly encrypt?: boolean | undefined
+  /**
+   * Whether to trust the server certificate without validating it. Defaults to `false`. Setting this to `true` disables TLS certificate validation.
+   */
   readonly trustServer?: boolean | undefined
   readonly port?: number | undefined
   readonly authType?: string | undefined
@@ -284,7 +291,7 @@ export const make = (
         options: {
           port: options.port,
           database: options.database,
-          trustServerCertificate: options.trustServer ?? true,
+          trustServerCertificate: options.trustServer ?? false,
           multiSubnetFailover: options.multiSubnetFailover,
           connectTimeout: options.connectTimeout
             ? Duration.toMillis(Duration.fromInputUnsafe(options.connectTimeout))
@@ -292,7 +299,7 @@ export const make = (
           rowCollectionOnRequestCompletion: true,
           useColumnNames: false,
           instanceName: options.instanceName,
-          encrypt: options.encrypt ?? false,
+          encrypt: options.encrypt ?? true,
           cancelTimeout: options.cancelTimeout
             ? Duration.toMillis(Duration.fromInputUnsafe(options.cancelTimeout))
             : undefined,
@@ -305,6 +312,7 @@ export const make = (
         authentication: {
           type: (options.authType as any) ?? "default",
           options: {
+            domain: options.domain,
             userName: options.username,
             password: options.password
               ? Redacted.value(options.password)
@@ -367,6 +375,7 @@ export const make = (
 
           conn.cancel()
           conn.execSql(req)
+          return Effect.sync(() => conn.cancel())
         })
 
       const runProcedure = (
@@ -390,7 +399,7 @@ export const make = (
                 }
                 resume(
                   Effect.succeed({
-                    params: result,
+                    output: result,
                     rows
                   })
                 )
@@ -415,6 +424,7 @@ export const make = (
 
           conn.cancel()
           conn.callProcedure(req)
+          return Effect.sync(() => conn.cancel())
         })
 
       const connection = identity<MssqlConnection>({
@@ -649,7 +659,7 @@ export const layer = (
 /**
  * Creates the SQL Server statement compiler, using `@1`-style placeholders, bracket-escaped identifiers, and SQL Server `OUTPUT INSERTED` returning clauses.
  *
- * @category compiler
+ * @category constructors
  * @since 4.0.0
  */
 export const makeCompiler = (transform?: (_: string) => string) =>
@@ -698,20 +708,31 @@ function numberToParamName(n: number) {
   return `${Math.ceil(n + 1)}`
 }
 
+const byteArrayParameterType: DataType = {
+  ...Tedious.TYPES.VarBinary,
+  validate(value, collation, options) {
+    return Tedious.TYPES.VarBinary.validate(
+      Buffer.isBuffer(value) ? value : Buffer.from(value.buffer, value.byteOffset, value.byteLength),
+      collation,
+      options
+    )
+  }
+}
+
 /**
  * Default mapping from Effect SQL primitive value kinds to Tedious SQL Server parameter data types.
  *
- * @category configuration
+ * @category constants
  * @since 4.0.0
  */
 export const defaultParameterTypes: Record<Statement.PrimitiveKind, DataType> = {
-  string: Tedious.TYPES.VarChar,
-  number: Tedious.TYPES.Int,
+  string: Tedious.TYPES.NVarChar,
+  number: Tedious.TYPES.Float,
   bigint: Tedious.TYPES.BigInt,
   boolean: Tedious.TYPES.Bit,
   Date: Tedious.TYPES.DateTime,
-  Uint8Array: Tedious.TYPES.VarBinary,
-  Int8Array: Tedious.TYPES.VarBinary,
+  Uint8Array: byteArrayParameterType,
+  Int8Array: byteArrayParameterType,
   null: Tedious.TYPES.Bit
 }
 

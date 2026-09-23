@@ -33,7 +33,7 @@ const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review p
  * move on their own, so this mostly bounds how stale a Homebrew "latest" can
  * get; the npm registry check keeps its own cache.
  */
-export const MAINTENANCE_CAPABILITIES_CACHE_TTL = Duration.hours(1);
+const MAINTENANCE_CAPABILITIES_CACHE_TTL = Duration.hours(1);
 
 const compactEnv = (input: Record<string, Option.Option<string>>): NodeJS.ProcessEnv =>
   Object.fromEntries(
@@ -46,10 +46,10 @@ const compactEnv = (input: Record<string, Option.Option<string>>): NodeJS.Proces
   );
 
 const CommandLookupEnvConfig = Config.all({
-  PATH: Config.string("PATH").pipe(Config.option),
-  Path: Config.string("Path").pipe(Config.option),
-  path: Config.string("path").pipe(Config.option),
-  PATHEXT: Config.string("PATHEXT").pipe(Config.option),
+  PATH: Config.String("PATH").pipe(Config.option),
+  Path: Config.String("Path").pipe(Config.option),
+  path: Config.String("path").pipe(Config.option),
+  PATHEXT: Config.String("PATHEXT").pipe(Config.option),
 }).pipe(Config.map(compactEnv));
 
 const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
@@ -184,6 +184,33 @@ export function makeProviderMaintenanceCapabilities(input: {
     update,
     ...("latestVersion" in input ? { latestVersion: input.latestVersion } : {}),
   };
+}
+
+/** Pin only package-manager actions we own, preserving prefix, scripts, env and lock. */
+export function makeTargetedProviderUpdateAction(
+  capabilities: ProviderMaintenanceCapabilities,
+  version: string,
+): ProviderMaintenanceCommandAction | null {
+  if (!/^\d+\.\d+\.\d+$/.test(version)) return null;
+  const update = capabilities.update;
+  const packageName = capabilities.packageName;
+  if (!update || !packageName) return null;
+  if (!/^(?:npm-global:|bun-global$|pnpm-global$|vite-plus-global$)/.test(update.lockKey))
+    return null;
+  const packageIndex = update.args.findIndex(
+    (arg) => arg === `${packageName}@latest` || arg === packageName,
+  );
+  if (packageIndex < 0) return null;
+  const args = update.args.map((arg, index) =>
+    index === packageIndex ? `${packageName}@${version}` : arg,
+  );
+  const previous = update.args[packageIndex]!;
+  const commandIndex = update.command.lastIndexOf(previous);
+  const command =
+    commandIndex < 0
+      ? update.command
+      : `${update.command.slice(0, commandIndex)}${packageName}@${version}${update.command.slice(commandIndex + previous.length)}`;
+  return { ...update, args, command };
 }
 
 export function makeManualOnlyProviderMaintenanceCapabilities(input: {
@@ -627,6 +654,7 @@ export function createProviderVersionAdvisory(input: {
     latestVersion,
     updateCommand: capabilities.update?.command ?? null,
     canUpdate: capabilities.update !== null,
+    canInstallVersion: makeTargetedProviderUpdateAction(capabilities, "0.0.0") !== null,
     checkedAt: input.checkedAt ?? null,
     message: advisory.message,
   };

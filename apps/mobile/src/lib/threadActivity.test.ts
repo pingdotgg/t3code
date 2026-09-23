@@ -1,7 +1,8 @@
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
-import { describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  ApprovalRequestId,
   EventId,
   MessageId,
   ProjectId,
@@ -25,6 +26,21 @@ import {
   type ThreadFeedEntry,
   type WorkLogEntry,
 } from "./threadActivity";
+
+// Match Hermes: these ES2023 array methods are absent on mobile.
+beforeEach(() => {
+  const methods = ["toSorted", "toReversed"] as const;
+  const descriptors = methods.map((method) =>
+    Object.getOwnPropertyDescriptor(Array.prototype, method),
+  );
+  for (const method of methods) Reflect.deleteProperty(Array.prototype, method);
+  return () => {
+    for (const [index, method] of methods.entries()) {
+      const descriptor = descriptors[index];
+      if (descriptor) Reflect.defineProperty(Array.prototype, method, descriptor);
+    }
+  };
+});
 
 const singleSelectQuestion = {
   id: "runtime",
@@ -100,6 +116,7 @@ describe("pending user input answers", () => {
       {
         requestId: "interaction_1",
         createdAt: requested.createdAt,
+        dismissible: false,
         questions: [nativeQuestion, singleSelectQuestion],
       },
     ]);
@@ -256,6 +273,7 @@ function makeThread(
     interactionMode: "default",
     branch: null,
     worktreePath: null,
+    pullRequests: [],
     latestTurn: null,
     createdAt: "2026-04-01T00:00:00.000Z",
     updatedAt: "2026-04-01T00:00:00.000Z",
@@ -560,8 +578,8 @@ describe("buildThreadFeed", () => {
     const [row] = group.activities;
     expect(row?.workEntry.detail).toBe(command);
     expect(row?.getFullDetail()).toBe(`${command}\n\n${command}`);
-    // Opening it would only repeat the command the row already shows.
-    expect(row?.canExpand).toBe(false);
+    expect(row?.canExpand).toBe(true);
+    expect(workEntryRowLabel(row!.workEntry, true)).toBe("Command");
   });
 
   it.each([
@@ -593,7 +611,7 @@ describe("buildThreadFeed", () => {
         payload: { detail: "Bash is unusable in this environment" },
       },
       label: "Bash is unusable in this environment",
-      canExpand: false,
+      canExpand: true,
     },
     {
       name: "a multi-line task report",
@@ -629,7 +647,7 @@ describe("buildThreadFeed", () => {
       label: "printf hello",
       canExpand: true,
     },
-  ])("only lets $name expand when the body adds something: $canExpand", (input) => {
+  ])("sets expansion availability for $name: $canExpand", (input) => {
     const thread = makeThread({
       id: ThreadId.make("thread-expand-rule"),
       projectId: ProjectId.make("project-1"),
@@ -649,6 +667,107 @@ describe("buildThreadFeed", () => {
     const [row] = group.activities;
     expect(workEntryRowLabel(row!.workEntry)).toBe(input.label);
     expect(row?.canExpand).toBe(input.canExpand);
+  });
+
+  it.each(["runtime.error", "runtime.warning"] as const)(
+    "shows and copies the message of %s without a duplicate expanded body",
+    (kind) => {
+      const message =
+        "You've hit your usage limit for GPT-5.3-Codex-Spark. Switch to another model now, or try again at 5:21 AM.";
+      const thread = makeThread({
+        id: ThreadId.make("runtime-message"),
+        projectId: ProjectId.make("project-1"),
+        title: "Runtime message",
+        activities: [
+          makeActivity({
+            id: EventId.make("runtime-message"),
+            createdAt: "2026-09-01T00:00:00.000Z",
+            kind,
+            tone: "error",
+            summary: "Runtime error",
+            payload: { message },
+          }),
+        ],
+      });
+      const [group] = buildThreadFeed(thread);
+      expect(group?.type).toBe("activity-group");
+      if (group?.type !== "activity-group") return;
+      const row = group.activities[0]!;
+      expect(row.canExpand).toBe(true);
+      expect(workEntryRowLabel(row.workEntry, true)).toBe(message);
+      expect(row.getFullDetail()).toBeNull();
+      expect(row.getCopyText()).toBe(`Runtime error\n${message}`);
+    },
+  );
+
+  it.each([
+    {
+      message: "fallback message",
+      detail: "More specific detail",
+      expected: "More specific detail",
+    },
+    { message: "  ", expected: undefined },
+    { message: { error: "not a string" }, expected: undefined },
+  ])("preserves existing runtime details and ignores invalid messages: $message", (input) => {
+    const thread = makeThread({
+      id: ThreadId.make("runtime-detail"),
+      projectId: ProjectId.make("project-1"),
+      title: "Runtime detail",
+      activities: [
+        makeActivity({
+          id: EventId.make("runtime-detail"),
+          createdAt: "2026-09-01T00:00:00.000Z",
+          kind: "runtime.error",
+          tone: "error",
+          summary: "Runtime error",
+          payload: { message: input.message, detail: input.detail },
+        }),
+      ],
+    });
+    const [group] = buildThreadFeed(thread);
+    expect(group?.type).toBe("activity-group");
+    if (group?.type !== "activity-group") return;
+    expect(group.activities[0]?.workEntry.detail).toBe(input.expected);
+    expect(group.activities[0]?.canExpand).toBe(Boolean(input.expected));
+  });
+
+  it.each([
+    {
+      summary: "Runtime error",
+      kind: "runtime.error" as const,
+      detail:
+        "Request failed.\nThe service returned an unexpected response.\nRetry after checking the connection.",
+    },
+    {
+      summary: "Web search",
+      kind: "tool.completed" as const,
+      detail: "https://itanium-cxx-abi.github.io/cxx-abi/abi.html",
+      itemType: "web_search",
+    },
+  ])("expands the full $summary label once, retaining its formatting and copy text", (input) => {
+    const thread = makeThread({
+      id: ThreadId.make("expanded-label"),
+      projectId: ProjectId.make("project-1"),
+      title: "Expanded label",
+      activities: [
+        makeActivity({
+          id: EventId.make("expanded-label"),
+          createdAt: "2026-09-01T00:00:00.000Z",
+          kind: input.kind,
+          summary: input.summary,
+          payload: { detail: input.detail, itemType: input.itemType },
+        }),
+      ],
+    });
+    const [group] = buildThreadFeed(thread);
+    expect(group?.type).toBe("activity-group");
+    if (group?.type !== "activity-group") return;
+    const row = group.activities[0]!;
+    expect(row.canExpand).toBe(true);
+    expect(workEntryRowLabel(row.workEntry)).toBe(input.detail.replace(/\s+/g, " "));
+    expect(workEntryRowLabel(row.workEntry, true)).toBe(input.detail);
+    expect(row.getFullDetail()).toBeNull();
+    expect(row.getCopyText()).toBe(`${input.summary}\n${input.detail}`);
   });
 
   it("drops a truncated Claude echo of a long command", () => {
@@ -822,6 +941,26 @@ describe("buildThreadFeed", () => {
       if (group?.type !== "activity-group") throw new Error("Expected the setup failure group");
       expect(group.activities[0]?.getCopyText()).toContain("Setup command was not found");
     }
+  });
+
+  it("leaves failed setup snapshots to the setup card", () => {
+    const feed = buildThreadFeed(
+      makeThread({
+        id: ThreadId.make("thread-setup-failed"),
+        projectId: ProjectId.make("project-1"),
+        title: "Failed setup",
+        activities: [
+          makeActivity({
+            id: EventId.make("worktree-failed"),
+            kind: "worktree-setup",
+            summary: "Worktree setup failed",
+            createdAt: "2026-08-30T00:00:00.000Z",
+            tone: "error",
+          }),
+        ],
+      }),
+    );
+    expect(feed).toEqual([]);
   });
 
   it.each(["setup-script.requested", "setup-script.started"])(
@@ -1058,6 +1197,11 @@ describe("buildThreadFeed", () => {
         },
       ],
     });
+    if (group?.type !== "activity-group") return;
+    const row = group.activities[0]!;
+    expect(row.canExpand).toBe(true);
+    expect(row.getFullDetail()).toBeNull();
+    expect(workEntryRowLabel(row.workEntry, true)).toBe(`${imagePath.slice(0, 177)}...`);
   });
 
   it("keeps MCP inputs available to expanded mobile work rows", () => {
@@ -1135,7 +1279,8 @@ describe("buildThreadFeed", () => {
       },
     });
     expect(group.activities[0]?.getFullDetail()).toContain('"query": "work log"');
-    expect(group.activities[0]?.getFullDetail()).toContain("repository.search");
+    expect(workEntryRowLabel(group.activities[0]!.workEntry, true)).toBe("repository.search");
+    expect(group.activities[0]?.getFullDetail()).not.toContain("repository.search");
   });
 
   it.each([
@@ -2167,6 +2312,283 @@ describe("buildThreadFeed", () => {
         { live: false, shimmer: false },
         { live: false, shimmer: false },
       ]);
+    },
+  );
+
+  it("groups ordered reasoning blocks, keeps the live slot, and restores the group after unfolding", () => {
+    const turnId = TurnId.make("reasoning-group");
+    const messages: OrchestrationThread["messages"] = [1, 2, 3, 4].map((second) => ({
+      id: MessageId.make(`reasoning-${second}`),
+      role: "reasoning",
+      text: `**Step ${second}**\n\nCheck ${second}.`,
+      turnId,
+      streaming: second === 4,
+      createdAt: `2026-04-01T00:00:0${second}.000Z`,
+      updatedAt: `2026-04-01T00:00:0${second}.000Z`,
+    }));
+    const thread = makeThread({
+      id: ThreadId.make("reasoning-group"),
+      projectId: ProjectId.make("project-1"),
+      title: "Reasoning",
+      messages,
+      latestTurn: {
+        turnId,
+        state: "running",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:00.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+    });
+    const feed = buildThreadFeed(thread);
+    const rows = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set(), new Set(), "now");
+    expect(rows).toMatchObject([
+      { type: "work-toggle", id: "live-activity-row", summary: "Thinking", hiddenCount: 4 },
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(
+      deriveThreadFeedPresentation(feed, thread.latestTurn, new Set(), new Set(), "now")[0],
+    ).toBe(rows[0]);
+
+    const settledTurn = {
+      ...thread.latestTurn!,
+      state: "completed" as const,
+      completedAt: "2026-04-01T00:00:06.000Z",
+    };
+    // Reasoning alone stays visible, including a streaming flag left behind on settlement.
+    expect(deriveThreadFeedPresentation(feed, settledTurn, new Set())).toMatchObject([
+      { type: "work-toggle", summary: "Thought (×4)", hiddenCount: 4 },
+    ]);
+    const completedMessages = messages.map((message) => ({ ...message, streaming: false }));
+    const waiting = deriveThreadFeedPresentation(
+      buildThreadFeed({ ...thread, messages: completedMessages }),
+      thread.latestTurn,
+      new Set(),
+      new Set(),
+      "now",
+    );
+    expect(waiting).toMatchObject([
+      { type: "work-toggle", id: "live-activity-row", summary: "Thinking", hiddenCount: 4 },
+    ]);
+    const feedWithWork = buildThreadFeed({
+      ...thread,
+      activities: [
+        makeActivity({
+          id: EventId.make("reasoning-tool"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Read files",
+          createdAt: "2026-04-01T00:00:05.000Z",
+          turnId,
+          payload: { itemType: "file_read", status: "completed" },
+        }),
+      ],
+    });
+    const toolRunning = deriveThreadFeedPresentation(
+      feedWithWork,
+      thread.latestTurn,
+      new Set(),
+      new Set(),
+      "now",
+    );
+    expect(toolRunning).toMatchObject([
+      { type: "work-toggle", id: "live-activity-row", shimmer: true, hiddenCount: 5 },
+    ]);
+    expect(toolRunning[0]).not.toMatchObject({ summary: "Thinking" });
+    const nextThought = {
+      ...messages[3]!,
+      id: MessageId.make("reasoning-after-tool"),
+      createdAt: "2026-04-01T00:00:06.000Z",
+      updatedAt: "2026-04-01T00:00:06.000Z",
+    };
+    const reasoningAgainFeed: ThreadFeedEntry[] = [
+      ...feedWithWork,
+      {
+        type: "message",
+        id: nextThought.id,
+        createdAt: nextThought.createdAt,
+        message: nextThought,
+      },
+    ];
+    const reasoningAgain = deriveThreadFeedPresentation(
+      reasoningAgainFeed,
+      thread.latestTurn,
+      new Set(),
+      new Set(),
+      "now",
+    );
+    expect(reasoningAgain.filter((row) => row.id === "live-activity-row")).toMatchObject([
+      { type: "work-toggle", summary: "Thinking", hiddenCount: 6 },
+    ]);
+    expect(reasoningAgain).toHaveLength(1);
+    const expandedLive = deriveThreadFeedPresentation(
+      reasoningAgainFeed,
+      thread.latestTurn,
+      new Set(),
+      new Set([`activity-run:${messages[0]!.id}`]),
+      "now",
+    );
+    expect(expandedLive.map((entry) => entry.type)).toEqual([
+      "work-toggle",
+      "message",
+      "activity-group",
+      "message",
+    ]);
+    expect(expandedLive[1]).toMatchObject({ reasoningMessages: messages });
+    expect(expandedLive[3]).toMatchObject({ message: nextThought });
+    expect(deriveThreadFeedPresentation(feedWithWork, settledTurn, new Set())).toMatchObject([
+      { type: "turn-fold", expanded: false },
+    ]);
+    const reopened = deriveThreadFeedPresentation(
+      feedWithWork,
+      settledTurn,
+      new Set([turnId]),
+      new Set([`activity-run:${messages[0]!.id}`]),
+    );
+    expect(reopened.map((entry) => entry.type)).toEqual([
+      "turn-fold",
+      "work-toggle",
+      "message",
+      "activity-group",
+    ]);
+    expect(reopened[2]).toMatchObject({ id: messages[0]!.id, reasoningMessages: messages });
+    const toolFirstFeed = feedWithWork.filter((entry) => entry.type === "activity-group");
+    const toolFirst = deriveThreadFeedPresentation(
+      toolFirstFeed,
+      thread.latestTurn,
+      new Set(),
+      new Set(),
+      "now",
+    )[0];
+    expect(toolFirst?.type).toBe("work-toggle");
+    if (toolFirst?.type !== "work-toggle") return;
+    const preservedExpansion = deriveThreadFeedPresentation(
+      [...toolFirstFeed, reasoningAgainFeed.at(-1)!],
+      thread.latestTurn,
+      new Set(),
+      new Set([toolFirst.groupId]),
+      "now",
+    );
+    expect(preservedExpansion.map((entry) => entry.type)).toEqual([
+      "work-toggle",
+      "activity-group",
+      "message",
+    ]);
+    expect(preservedExpansion[0]).toMatchObject({
+      id: "live-activity-row",
+      groupId: toolFirst.groupId,
+      expanded: true,
+      summary: "Thinking",
+    });
+    const strandedToolFeed = buildThreadFeed({
+      ...thread,
+      messages: [],
+      activities: [
+        makeActivity({
+          id: EventId.make("stranded-tool"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Running command",
+          createdAt: "2026-04-01T00:00:00.000Z",
+          turnId,
+          payload: {
+            toolCallId: "stranded-tool",
+            itemType: "command_execution",
+            command: "sleep 60",
+            status: "inProgress",
+          },
+        }),
+      ],
+    });
+    const afterStrandedTool = deriveThreadFeedPresentation(
+      [...strandedToolFeed, ...feedWithWork],
+      thread.latestTurn,
+      new Set(),
+      new Set(),
+      "now",
+    );
+    expect(afterStrandedTool).toMatchObject([
+      { type: "work-toggle", id: "live-activity-row", summary: toolFirst.summary, hiddenCount: 6 },
+    ]);
+  });
+
+  it.each(["tool", "failed-tool", "assistant", "turn", "unknown-turn"] as const)(
+    "keeps thoughts in order across a %s in expanded activity history",
+    (boundary) => {
+      const turnId = TurnId.make("reasoning-boundary");
+      const messages: OrchestrationThread["messages"] = [1, 3].map((second) => ({
+        id: MessageId.make(`reasoning-${second}`),
+        role: "reasoning",
+        text: `Step ${second}`,
+        turnId:
+          boundary === "unknown-turn"
+            ? null
+            : boundary === "turn" && second === 3
+              ? TurnId.make("other-turn")
+              : turnId,
+        streaming: false,
+        createdAt: `2026-04-01T00:00:0${second}.000Z`,
+        updatedAt: `2026-04-01T00:00:0${second}.000Z`,
+      }));
+      const thread = makeThread({
+        id: ThreadId.make("reasoning-boundary"),
+        projectId: ProjectId.make("project-1"),
+        title: "Reasoning",
+        messages:
+          boundary === "assistant"
+            ? [
+                messages[0]!,
+                {
+                  ...messages[0]!,
+                  id: MessageId.make("assistant-between"),
+                  role: "assistant",
+                  text: "Checking the next file.",
+                  createdAt: "2026-04-01T00:00:02.000Z",
+                },
+                messages[1]!,
+              ]
+            : messages,
+        activities:
+          boundary === "tool" || boundary === "failed-tool"
+            ? [
+                makeActivity({
+                  id: EventId.make("tool-between"),
+                  kind: "tool.completed",
+                  tone: "tool",
+                  summary: "Read files",
+                  createdAt: "2026-04-01T00:00:02.000Z",
+                  turnId,
+                  payload: {
+                    itemType: "file_read",
+                    status: boundary === "failed-tool" ? "failed" : "completed",
+                  },
+                }),
+              ]
+            : [],
+      });
+      const rows = deriveThreadFeedPresentation(
+        buildThreadFeed(thread),
+        null,
+        new Set([turnId]),
+        new Set(messages.map((message) => `activity-run:${message.id}`)),
+      );
+      const reasoningRows = rows.filter(
+        (entry) => entry.type === "message" && entry.message.role === "reasoning",
+      );
+      if (boundary === "failed-tool") {
+        // A failed call stays inside the run instead of splitting it.
+        expect(rows.filter((entry) => entry.type === "work-toggle")).toMatchObject([
+          { hasFailure: true, hiddenCount: 3 },
+        ]);
+      }
+      expect(reasoningRows).toEqual(
+        messages.map((message) => ({
+          type: "message",
+          id: message.id,
+          createdAt: message.createdAt,
+          message,
+        })),
+      );
     },
   );
 
@@ -3205,4 +3627,124 @@ describe("quiet timeline: nested agents", () => {
       },
     ]);
   });
+});
+
+it("accepts ready attachment-only answers while preserving selected options", () => {
+  const question = {
+    id: "q",
+    header: "Spec",
+    question: "Provide a specification",
+    options: [{ label: "Yes", description: "Approve" }],
+    multiSelect: false,
+  };
+  expect(buildPendingUserInputAnswers([question], { q: { attachmentCount: 1 } })).toEqual({
+    q: "",
+  });
+  expect(
+    buildPendingUserInputAnswers([question], {
+      q: { attachmentCount: 1, selectedOptionValues: ["Yes"] },
+    }),
+  ).toEqual({ q: "Yes" });
+  expect(
+    buildPendingUserInputAnswers([question], {
+      q: { attachmentCount: 1, attachmentsBlocked: true },
+    }),
+  ).toBeNull();
+  expect(
+    buildPendingUserInputAnswers([{ ...question, allowCustomAnswer: false }], {
+      q: { attachmentCount: 1 },
+    }),
+  ).toBeNull();
+});
+
+it("keeps attachment-only question answers expandable outside mobile work groups and turn folds", () => {
+  const turnId = TurnId.make("turn-answer");
+  const answer = {
+    requestId: ApprovalRequestId.make("question-request"),
+    answers: { q: "" },
+    questionTextById: { q: "Attach the specification" },
+    attachmentsByQuestionId: {
+      q: [
+        {
+          type: "file" as const,
+          id: "question-file",
+          name: "spec.txt",
+          mimeType: "text/plain",
+          sizeBytes: 4,
+        },
+      ],
+    },
+  };
+  const thread = makeThread({
+    id: ThreadId.make("thread-answer"),
+    projectId: ProjectId.make("project-answer"),
+    title: "Answer history",
+    latestTurn: {
+      turnId,
+      state: "completed",
+      requestedAt: "2026-09-08T00:00:00.000Z",
+      startedAt: "2026-09-08T00:00:00.000Z",
+      completedAt: "2026-09-08T00:00:04.000Z",
+      assistantMessageId: null,
+    },
+    activities: [
+      makeActivity({
+        id: EventId.make("tool-before-answer"),
+        createdAt: "2026-09-08T00:00:01.000Z",
+        kind: "tool.completed",
+        tone: "tool",
+        summary: "Read files",
+        turnId,
+        payload: { itemType: "command_execution", status: "completed" },
+      }),
+      makeActivity({
+        id: EventId.make("answer-submitted"),
+        createdAt: "2026-09-08T00:00:02.000Z",
+        kind: "user-input.answer-submitted",
+        summary: "Answered questions",
+        turnId,
+        payload: answer,
+      }),
+      makeActivity({
+        id: EventId.make("tool-after-answer"),
+        createdAt: "2026-09-08T00:00:03.000Z",
+        kind: "tool.completed",
+        tone: "tool",
+        summary: "Read files",
+        turnId,
+        payload: { itemType: "command_execution", status: "completed" },
+      }),
+    ],
+  });
+  const feed = buildThreadFeed(thread);
+  expect(feed).toHaveLength(3);
+  const group = feed[1];
+  expect(group?.type).toBe("activity-group");
+  if (group?.type !== "activity-group") return;
+  expect(group.activities[0]).toMatchObject({
+    canExpand: true,
+    workEntry: { questionAnswer: answer },
+  });
+  expect(group.activities[0]?.getFullDetail()).toBeNull();
+  const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
+  expect(collapsed.map((entry) => entry.type)).toEqual(["turn-fold", "activity-group"]);
+  expect(collapsed[1]).toBe(group);
+  const expanded = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set([turnId]));
+  expect(expanded.map((entry) => entry.type)).toEqual([
+    "turn-fold",
+    "work-toggle",
+    "activity-group",
+    "work-toggle",
+  ]);
+  expect(expanded[2]).toBe(group);
+  const running = deriveThreadFeedPresentation(
+    feed,
+    { ...thread.latestTurn!, state: "running", completedAt: null },
+    new Set(),
+    new Set(),
+    "2026-09-08T00:00:00.000Z",
+  );
+  expect(running[0]?.type).toBe("work-toggle");
+  expect(running[1]).toBe(group);
+  expect(running[2]?.type).toBe("work-toggle");
 });

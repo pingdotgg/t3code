@@ -26,7 +26,7 @@ import {
   TRANSFER_HISTORY_TURN_COUNT,
 } from "./fixtures/transferBudget.ts";
 
-export const TRANSFER_PROJECT_ID = ProjectId.make("transfer-budget-project");
+const TRANSFER_PROJECT_ID = ProjectId.make("transfer-budget-project");
 export const TRANSFER_THREAD_ID = ThreadId.make("transfer-budget-thread");
 export const TRANSFER_MEASURED_TURN_INDEX = TRANSFER_HISTORY_TURN_COUNT;
 

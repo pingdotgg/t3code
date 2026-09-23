@@ -15,7 +15,9 @@ import {
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
-  type ModelSelection,
+  ModelSelection,
+  ProjectScript,
+  type ProjectSettingsOverrides,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type UsageLimitSourceConfig,
@@ -51,6 +53,7 @@ import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
   applyServerSettingsPatch,
+  deriveLegacyProjectOverrides,
   isModelSelectionProviderEnabled,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
@@ -118,6 +121,7 @@ const normalizeServerSettings = (
   encodeServerSettings(settings).pipe(
     Effect.flatMap(decodeServerSettings),
     Effect.map(foldProviderInstanceEnabledFlags),
+    Effect.map((next) => ({ ...next, ...deriveLegacyProjectOverrides(next) })),
     Effect.mapError(
       (cause) =>
         new ServerSettingsError({
@@ -142,7 +146,7 @@ function providerEnvironmentSecretName(input: {
  */
 const USAGE_LIMIT_SOURCE_KEY_REDACTED = "\u2022\u2022\u2022\u2022\u2022\u2022";
 
-export function usageLimitSourceSecretName(sourceId: string): string {
+function usageLimitSourceSecretName(sourceId: string): string {
   return `usage-limit-source-${Buffer.from(sourceId, "utf8").toString("base64url")}`;
 }
 
@@ -353,6 +357,7 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "providerHealthRefreshInterval",
   "sourceControlWriterModelSelection",
   "textGenerationModelSelection",
+  "pullRequestMergeMethod",
 ]);
 
 // Preserve both enabled states because provider history cannot recover a new opt-in.
@@ -400,6 +405,93 @@ function stripDefaultServerSettings(current: unknown, defaults: unknown): unknow
   return Object.is(current, defaults) ? undefined : current;
 }
 
+const decodeProjectScriptsJson = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Array(ProjectScript)),
+);
+const decodeModelSelectionJson = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.NullOr(ModelSelection)),
+);
+
+interface LegacyProjectSettingsRow {
+  readonly projectId: string;
+  readonly defaultModelSelection: string | null;
+  readonly defaultThreadEnvMode: string | null;
+  readonly autoPull: number;
+  readonly scripts: string;
+}
+
+/**
+ * One-time fold of the legacy per-project fields into `projectSettingsOverrides`:
+ * the three `project*Overrides` maps and the settings columns on the project
+ * aggregate. Keys already present in the generic record win. Marked with
+ * `projectSettingsFolded` so a later reset in the UI survives restarts.
+ */
+function foldLegacyProjectSettings(
+  settings: ServerSettings,
+  rows: ReadonlyArray<LegacyProjectSettingsRow>,
+): ServerSettings {
+  if (settings.projectSettingsFolded) return settings;
+  // Nothing to fold yet (fresh install): leave the marker off so the file
+  // stays sparse, and check again on the next load.
+  if (
+    rows.length === 0 &&
+    Object.keys(settings.projectAgentBrowserAccessOverrides).length === 0 &&
+    Object.keys(settings.projectAutoPullOverrides).length === 0 &&
+    Object.keys(settings.projectScriptOverrides).length === 0
+  ) {
+    return settings;
+  }
+  const entries: Record<string, ProjectSettingsOverrides> = {
+    ...settings.projectSettingsOverrides,
+  };
+  const set = <K extends keyof ProjectSettingsOverrides>(
+    projectId: string,
+    key: K,
+    value: ProjectSettingsOverrides[K] | undefined,
+  ) => {
+    if (value === undefined) return;
+    const entry = entries[projectId] ?? {};
+    if (Object.hasOwn(entry, key)) return;
+    entries[projectId] = { ...entry, [key]: value };
+  };
+  for (const [projectId, value] of Object.entries(settings.projectAgentBrowserAccessOverrides)) {
+    set(projectId, "enableAgentBrowserAccess", value);
+  }
+  for (const [projectId, value] of Object.entries(settings.projectAutoPullOverrides)) {
+    set(projectId, "defaultAutoPull", value);
+  }
+  // A stored null meant "reset to machine defaults", which is now plain
+  // inheritance; the project's own aggregate scripts must not resurface.
+  const resetScripts = new Set<string>();
+  for (const [projectId, value] of Object.entries(settings.projectScriptOverrides)) {
+    if (value === null) resetScripts.add(projectId);
+    else set(projectId, "defaultProjectScripts", value);
+  }
+  for (const row of rows) {
+    const model = decodeModelSelectionJson(row.defaultModelSelection ?? "null");
+    if (Option.isSome(model) && model.value !== null) {
+      set(row.projectId, "defaultModelSelection", model.value);
+    }
+    if (row.defaultThreadEnvMode === "local" || row.defaultThreadEnvMode === "worktree") {
+      set(row.projectId, "defaultThreadEnvMode", row.defaultThreadEnvMode);
+    }
+    if (row.autoPull === 1) set(row.projectId, "defaultAutoPull", true);
+    const scripts = decodeProjectScriptsJson(row.scripts);
+    if (Option.isSome(scripts) && scripts.value.length > 0 && !resetScripts.has(row.projectId)) {
+      set(row.projectId, "defaultProjectScripts", scripts.value);
+    }
+  }
+  const projectSettingsOverrides = Object.fromEntries(
+    Object.entries(entries).filter(([, entry]) => Object.keys(entry).length > 0),
+  );
+  return {
+    ...settings,
+    projectSettingsOverrides,
+    projectSettingsFolded: true,
+    ...deriveLegacyProjectOverrides({ projectSettingsOverrides }),
+  };
+}
+
 const make = Effect.gen(function* () {
   const { settingsPath } = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
@@ -439,9 +531,36 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  const writeSettingsAtomically = Effect.fnUntraced(
+    function* (settings: ServerSettings) {
+      const sparseSettingsJson = yield* encodeServerSettingsJson(
+        stripDefaultServerSettings(settings, PERSISTED_SERVER_SETTINGS_DEFAULTS) ?? {},
+      );
+
+      return yield* writeFileStringAtomically({
+        filePath: settingsPath,
+        contents: `${sparseSettingsJson}\n`,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, pathService),
+      );
+    },
+    Effect.mapError(
+      (cause) =>
+        new ServerSettingsError({
+          settingsPath,
+          operation: "write-file",
+          cause,
+        }),
+    ),
+  );
+
   const loadSettingsFromDisk = Effect.gen(function* () {
     let settings = DEFAULT_SERVER_SETTINGS;
     let persisted: typeof PersistedOptionalProviderSettings.Type = {};
+    // A file that failed to decode must stay on disk for the user to repair;
+    // the fold below only writes when it started from the file's real contents.
+    let settingsFileTrusted = true;
 
     if (yield* readConfigExists) {
       const raw = yield* readRawConfig;
@@ -452,6 +571,7 @@ const make = Effect.gen(function* () {
       }
       if (decoded._tag === "Failure" || persistedSettings._tag === "Failure") {
         const failure = decoded._tag === "Failure" ? decoded : persistedSettings;
+        settingsFileTrusted = false;
         if (failure._tag === "Failure") {
           yield* Effect.logWarning("failed to parse settings.json, using defaults", {
             path: settingsPath,
@@ -490,9 +610,39 @@ const make = Effect.gen(function* () {
       ),
     );
 
-    return foldProviderInstanceEnabledFlags(
+    const legacyProjectRows =
+      settings.projectSettingsFolded || !settingsFileTrusted
+        ? []
+        : yield* sql<LegacyProjectSettingsRow>`
+          SELECT
+            project_id AS "projectId",
+            default_model_selection_json AS "defaultModelSelection",
+            default_thread_env_mode AS "defaultThreadEnvMode",
+            auto_pull AS "autoPull",
+            scripts_json AS "scripts"
+          FROM projection_projects
+          WHERE deleted_at IS NULL
+        `.pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: "read-project-settings",
+                  cause,
+                }),
+            ),
+          );
+
+    const loaded = foldProviderInstanceEnabledFlags(
       restoreUsedProviders(settings, persisted, providerHistory),
     );
+    const folded = settingsFileTrusted
+      ? foldLegacyProjectSettings(loaded, legacyProjectRows)
+      : loaded;
+    if (folded !== loaded) {
+      yield* writeSettingsAtomically(folded);
+    }
+    return folded;
   });
 
   const settingsCache = yield* Cache.make<typeof cacheKey, ServerSettings, ServerSettingsError>({
@@ -583,14 +733,21 @@ const make = Effect.gen(function* () {
       Stream.map(resolveTextGenerationProvider),
     );
 
-  const persistProviderEnvironmentSecrets = (
-    current: ServerSettings,
-    next: ServerSettings,
-  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
-    Effect.gen(function* () {
+  type SecretChange = {
+    readonly secretName: string;
+    readonly providerInstanceId?: string;
+    readonly environmentVariable?: string;
+  } & (
+    | { readonly kind: "write"; readonly value: Uint8Array }
+    | { readonly kind: "remove"; readonly operation: "remove-secret" | "remove-stale-secret" }
+  );
+
+  const persistProviderEnvironmentSecrets = (current: ServerSettings, next: ServerSettings) =>
+    Effect.sync(() => {
       const providerInstances: Record<string, ProviderInstanceConfig> = {
         ...next.providerInstances,
       };
+      const changes: SecretChange[] = [];
 
       const nextSecretKeys = new Set<string>();
       for (const [instanceId, instance] of Object.entries(next.providerInstances)) {
@@ -599,51 +756,47 @@ const make = Effect.gen(function* () {
         for (const variable of instance.environment) {
           const secretName = providerEnvironmentSecretName({ instanceId, name: variable.name });
           if (!variable.sensitive) {
-            yield* secretStore.remove(secretName).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ServerSettingsError({
-                    settingsPath,
-                    operation: "remove-secret",
-                    providerInstanceId: instanceId,
-                    environmentVariable: variable.name,
-                    cause,
-                  }),
-              ),
-            );
+            changes.push({
+              kind: "remove",
+              secretName,
+              operation: "remove-secret",
+              providerInstanceId: instanceId,
+              environmentVariable: variable.name,
+            });
             environment.push(redactProviderEnvironmentVariable(variable));
             continue;
           }
 
           nextSecretKeys.add(secretName);
-          if (!variable.valueRedacted) {
-            if (variable.value.length > 0) {
-              yield* secretStore.set(secretName, textEncoder.encode(variable.value)).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ServerSettingsError({
-                      settingsPath,
-                      operation: "write-secret",
-                      providerInstanceId: instanceId,
-                      environmentVariable: variable.name,
-                      cause,
-                    }),
-                ),
-              );
+          // Match the provider environment's last-value-wins behavior for duplicate names.
+          const previous = variable.valueRedacted
+            ? current.providerInstances[ProviderInstanceId.make(instanceId)]?.environment?.findLast(
+                (entry) => entry.name === variable.name,
+              )
+            : undefined;
+          const inlineValue =
+            previous?.sensitive && !previous.valueRedacted && previous.value.length > 0
+              ? previous.value
+              : undefined;
+          const value = inlineValue ?? variable.value;
+          if (!variable.valueRedacted || inlineValue !== undefined) {
+            if (value.length > 0) {
+              changes.push({
+                kind: "write",
+                secretName,
+                value: textEncoder.encode(value),
+                providerInstanceId: instanceId,
+                environmentVariable: variable.name,
+              });
               environment.push({ ...variable, value: "", valueRedacted: true });
             } else {
-              yield* secretStore.remove(secretName).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ServerSettingsError({
-                      settingsPath,
-                      operation: "remove-secret",
-                      providerInstanceId: instanceId,
-                      environmentVariable: variable.name,
-                      cause,
-                    }),
-                ),
-              );
+              changes.push({
+                kind: "remove",
+                secretName,
+                operation: "remove-secret",
+                providerInstanceId: instanceId,
+                environmentVariable: variable.name,
+              });
               const { valueRedacted: _omit, ...rest } = variable;
               environment.push(rest);
             }
@@ -663,18 +816,13 @@ const make = Effect.gen(function* () {
           if (!variable.sensitive) continue;
           const secretName = providerEnvironmentSecretName({ instanceId, name: variable.name });
           if (nextSecretKeys.has(secretName)) continue;
-          yield* secretStore.remove(secretName).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ServerSettingsError({
-                  settingsPath,
-                  operation: "remove-stale-secret",
-                  providerInstanceId: instanceId,
-                  environmentVariable: variable.name,
-                  cause,
-                }),
-            ),
-          );
+          changes.push({
+            kind: "remove",
+            secretName,
+            operation: "remove-stale-secret",
+            providerInstanceId: instanceId,
+            environmentVariable: variable.name,
+          });
         }
       }
 
@@ -682,74 +830,150 @@ const make = Effect.gen(function* () {
       for (const [sourceId, source] of Object.entries(next.usageLimitSources)) {
         const secretName = usageLimitSourceSecretName(sourceId);
         if (source.managementKey === USAGE_LIMIT_SOURCE_KEY_REDACTED) {
-          // Unchanged from the client's point of view; the store already has it.
           usageLimitSources[sourceId] = source;
           continue;
         }
         if (source.managementKey.length === 0) {
-          yield* secretStore
-            .remove(secretName)
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ServerSettingsError({ settingsPath, operation: "remove-secret", cause }),
-              ),
-            );
+          changes.push({ kind: "remove", secretName, operation: "remove-secret" });
           usageLimitSources[sourceId] = source;
           continue;
         }
-        yield* secretStore
-          .set(secretName, textEncoder.encode(source.managementKey))
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new ServerSettingsError({ settingsPath, operation: "write-secret", cause }),
-            ),
-          );
+        changes.push({
+          kind: "write",
+          secretName,
+          value: textEncoder.encode(source.managementKey),
+        });
         usageLimitSources[sourceId] = { ...source, managementKey: USAGE_LIMIT_SOURCE_KEY_REDACTED };
       }
       for (const sourceId of Object.keys(current.usageLimitSources)) {
         if (sourceId in next.usageLimitSources) continue;
-        yield* secretStore
-          .remove(usageLimitSourceSecretName(sourceId))
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new ServerSettingsError({ settingsPath, operation: "remove-stale-secret", cause }),
-            ),
-          );
+        changes.push({
+          kind: "remove",
+          secretName: usageLimitSourceSecretName(sourceId),
+          operation: "remove-stale-secret",
+        });
       }
 
       return {
-        ...next,
-        providerInstances: providerInstances as ServerSettings["providerInstances"],
-        usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
+        settings: {
+          ...next,
+          providerInstances: providerInstances as ServerSettings["providerInstances"],
+          usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
+        },
+        changes,
       };
     });
 
-  const writeSettingsAtomically = Effect.fnUntraced(
-    function* (settings: ServerSettings) {
-      const sparseSettingsJson = yield* encodeServerSettingsJson(
-        stripDefaultServerSettings(settings, PERSISTED_SERVER_SETTINGS_DEFAULTS) ?? {},
-      );
+  const rollbackProviderEnvironmentSecretWrites = (
+    writes: ReadonlyArray<{
+      readonly secretName: string;
+      readonly previousValue: Option.Option<Uint8Array>;
+      readonly providerInstanceId?: string;
+      readonly environmentVariable?: string;
+    }>,
+  ) =>
+    Effect.forEach(
+      writes.toReversed(),
+      (write) =>
+        (Option.isSome(write.previousValue)
+          ? secretStore.set(write.secretName, write.previousValue.value)
+          : secretStore.remove(write.secretName)
+        ).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("failed to roll back provider environment secret", {
+              providerInstanceId: write.providerInstanceId,
+              environmentVariable: write.environmentVariable,
+              cause,
+            }),
+          ),
+        ),
+      { discard: true },
+    );
 
-      return yield* writeFileStringAtomically({
-        filePath: settingsPath,
-        contents: `${sparseSettingsJson}\n`,
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, pathService),
-      );
-    },
-    Effect.mapError(
-      (cause) =>
-        new ServerSettingsError({
-          settingsPath,
-          operation: "write-file",
-          cause,
+  const applyProviderEnvironmentSecretChanges = (changes: ReadonlyArray<SecretChange>) => {
+    const applied: Array<{
+      readonly secretName: string;
+      readonly previousValue: Option.Option<Uint8Array>;
+      readonly providerInstanceId?: string;
+      readonly environmentVariable?: string;
+    }> = [];
+    const rollback = Effect.suspend(() => rollbackProviderEnvironmentSecretWrites(applied));
+    return Effect.forEach(
+      changes,
+      (change) =>
+        Effect.gen(function* () {
+          const previousValue = yield* secretStore.get(change.secretName).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: "read-secret",
+                  providerInstanceId: change.providerInstanceId,
+                  environmentVariable: change.environmentVariable,
+                  cause,
+                }),
+            ),
+          );
+          // A store operation may mutate before reporting an error (for example chmod after rename).
+          applied.push({ ...change, previousValue });
+          yield* (
+            change.kind === "write"
+              ? secretStore.set(change.secretName, change.value)
+              : secretStore.remove(change.secretName)
+          ).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: change.kind === "write" ? "write-secret" : change.operation,
+                  providerInstanceId: change.providerInstanceId,
+                  environmentVariable: change.environmentVariable,
+                  cause,
+                }),
+            ),
+          );
         }),
-    ),
-  );
+      { discard: true },
+    ).pipe(
+      Effect.tapError(() => rollback),
+      Effect.as(rollback),
+    );
+  };
+
+  const updateSettings = (
+    patch: ServerSettingsPatch,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    writeSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* getSettingsFromCache;
+        const updated = applyServerSettingsPatch(current, patch);
+        const persisted = yield* persistProviderEnvironmentSecrets(current, updated);
+        const next = yield* normalizeServerSettings(persisted.settings);
+        const materialized = yield* Effect.uninterruptibleMask(() =>
+          Effect.gen(function* () {
+            const rollbackSecretChanges = yield* applyProviderEnvironmentSecretChanges(
+              persisted.changes,
+            );
+            const materializedExit = yield* Effect.exit(
+              materializeProviderEnvironmentSecrets(next),
+            );
+            if (Exit.isFailure(materializedExit)) {
+              yield* rollbackSecretChanges;
+              return yield* Effect.failCause(materializedExit.cause);
+            }
+            const writeExit = yield* Effect.exit(writeSettingsAtomically(next));
+            if (Exit.isFailure(writeExit)) {
+              yield* rollbackSecretChanges;
+              return yield* Effect.failCause(writeExit.cause);
+            }
+            return materializedExit.value;
+          }),
+        );
+        yield* Cache.set(settingsCache, cacheKey, next);
+        yield* emitChange(next);
+        return resolveTextGenerationProvider(materialized);
+      }),
+    );
 
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
     Effect.gen(function* () {
@@ -826,22 +1050,7 @@ const make = Effect.gen(function* () {
       Effect.flatMap(materializeProviderEnvironmentSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
-    updateSettings: (patch) =>
-      writeSemaphore.withPermits(1)(
-        Effect.gen(function* () {
-          const current = yield* getSettingsFromCache;
-          const nextPersisted = yield* persistProviderEnvironmentSecrets(
-            current,
-            applyServerSettingsPatch(current, patch),
-          );
-          const next = yield* normalizeServerSettings(nextPersisted);
-          yield* writeSettingsAtomically(next);
-          yield* Cache.set(settingsCache, cacheKey, next);
-          yield* emitChange(next);
-          const materialized = yield* materializeProviderEnvironmentSecrets(next);
-          return resolveTextGenerationProvider(materialized);
-        }),
-      ),
+    updateSettings,
     get streamChanges() {
       return materializeChanges(Stream.fromPubSub(changesPubSub));
     },

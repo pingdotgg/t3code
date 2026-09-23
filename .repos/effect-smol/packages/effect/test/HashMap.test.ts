@@ -1,5 +1,5 @@
 import { Equal, Hash, HashMap, Option, Result } from "effect"
-import { FastCheck as fc } from "effect/testing"
+import * as fc from "fast-check"
 import { describe, expect, it } from "vitest"
 
 describe("HashMap", () => {
@@ -29,6 +29,23 @@ describe("HashMap", () => {
   })
 
   describe("basic operations", () => {
+    it("modifyHash stores a new key under the supplied hash", () => {
+      const key = {}
+      const hash = 12345
+      const map = HashMap.modifyHash(HashMap.empty<object, string>(), key, hash, () => Option.some("value"))
+
+      expect(HashMap.getHash(map, key, hash)).toEqual(Option.some("value"))
+    })
+
+    it("modifyHash removes a key using the supplied hash", () => {
+      const key = {}
+      const hash = 12345
+      const map = HashMap.modifyHash(HashMap.empty<object, string>(), key, hash, () => Option.some("value"))
+      const removed = HashMap.modifyHash(map, key, hash, () => Option.none())
+
+      expect(HashMap.getHash(removed, key, hash)).toEqual(Option.none())
+    })
+
     it("get - existing key", () => {
       const map = HashMap.make(["a", 1], ["b", 2])
       expect(HashMap.get(map, "a")).toEqual(Option.some(1))
@@ -138,6 +155,15 @@ describe("HashMap", () => {
       const map = HashMap.make(["a", 1], ["b", 2])
       const entries = Array.from(map).sort(([a], [b]) => a.localeCompare(b))
       expect(entries).toEqual([["a", 1], ["b", 2]])
+    })
+
+    it("does not expose mutable collision entries", () => {
+      const map = HashMap.make(["fF", 1], ["AA", 2])
+      const entry = Array.from(HashMap.entries(map)).find(([key]) => key === "fF")!
+
+      entry[1] = 99
+
+      expect(HashMap.getUnsafe(map, "fF")).toBe(1)
     })
   })
 

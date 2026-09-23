@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildPendingUserInputAnswers,
+  carryDisplacedCustomAnswerIntoPrompt,
   countAnsweredPendingUserInputQuestions,
   derivePendingUserInputProgress,
   resolvePendingUserInputAnswer,
@@ -300,5 +301,43 @@ describe("pending user input question progress", () => {
       canAdvance: false,
       isComplete: false,
     });
+  });
+});
+
+it("accepts attachment-only answers after every upload finishes", () => {
+  const questions = [
+    { id: "spec", header: "Spec", question: "Provide a spec", options: [], multiSelect: false },
+  ];
+  expect(buildPendingUserInputAnswers(questions, { spec: { attachmentCount: 1 } })).toEqual({
+    spec: "",
+  });
+  expect(
+    buildPendingUserInputAnswers(questions, {
+      spec: { attachmentCount: 1, attachmentsBlocked: true },
+    }),
+  ).toBeNull();
+  expect(
+    buildPendingUserInputAnswers([{ ...questions[0]!, allowCustomAnswer: false }], {
+      spec: { attachmentCount: 1 },
+    }),
+  ).toBeNull();
+});
+
+describe("carryDisplacedCustomAnswerIntoPrompt", () => {
+  it("keeps the thread draft when nothing was typed into the answer", () => {
+    expect(carryDisplacedCustomAnswerIntoPrompt("draft", undefined)).toBe("draft");
+    expect(carryDisplacedCustomAnswerIntoPrompt("draft", "   ")).toBe("draft");
+  });
+
+  it("moves the typed answer into an empty thread draft", () => {
+    expect(carryDisplacedCustomAnswerIntoPrompt("", "also rename the flag ")).toBe(
+      "also rename the flag",
+    );
+  });
+
+  it("appends the typed answer after an existing thread draft", () => {
+    expect(carryDisplacedCustomAnswerIntoPrompt("first half\n", "second half")).toBe(
+      "first half\n\nsecond half",
+    );
   });
 });

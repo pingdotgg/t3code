@@ -65,7 +65,7 @@ const appendDpopChallengeOnUnauthorized = (error: EnvironmentAuthInvalidError) =
     return yield* error;
   });
 
-export const currentEnvironmentTraceId = Effect.currentParentSpan.pipe(
+const currentEnvironmentTraceId = Effect.currentParentSpan.pipe(
   Effect.map((span) => span.traceId),
   Effect.orElseSucceed(() => "unavailable"),
 );
@@ -273,10 +273,27 @@ export const authHttpApiLayer = HttpApiBuilder.group(
               args.payload.credential,
               deriveAuthClientMetadata({ request }),
             );
-            yield* appendSessionCookie(
-              sessions.cookieName,
-              result.sessionToken,
-              result.response.expiresAt,
+            const cookieName = result.cookieName ?? sessions.cookieName;
+            const selectedCookie = yield* Effect.fromResult(
+              Cookies.set(Cookies.empty, cookieName, result.sessionToken, {
+                expires: DateTime.toDate(result.response.expiresAt),
+                httpOnly: true,
+                path: "/",
+                sameSite: "lax",
+              }),
+            ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")));
+            const sessionCookies = result.expireNormalCookie
+              ? yield* Effect.fromResult(
+                  Cookies.expireCookie(selectedCookie, sessions.cookieName, {
+                    httpOnly: true,
+                    path: "/",
+                    sameSite: "lax",
+                  }),
+                ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")))
+              : selectedCookie;
+
+            yield* HttpEffect.appendPreResponseHandler((_request, response) =>
+              Effect.succeed(HttpServerResponse.mergeCookies(response, sessionCookies)),
             );
             yield* appendCredentialResponseHeaders;
             return result.response;

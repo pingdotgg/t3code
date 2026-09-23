@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * from the last hour (up to 14 days with an explicit time window) — snapshot
  * completions, failovers, configuration changes. Provide the implementation
  * with `Effect.provide(AWS.MemoryDB.DescribeEventsHttp)`.
- * @binding
- * @section Monitoring Clusters
- * @example Read a Cluster's Recent Events
+ * ### Monitoring Clusters
+ * **Example:** Read a Cluster's Recent Events
  * ```typescript
  * const describeEvents = yield* MemoryDB.DescribeEvents();
  *
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  *   yield* Effect.logInfo(`${event.Date}: ${event.Message}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface DescribeEvents extends Binding.Service<
   DescribeEvents,

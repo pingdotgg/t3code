@@ -15,9 +15,8 @@ export interface GetJobRunsRequest extends Omit<
  * `NextToken`), so a function can report run history or find in-flight runs.
  * The job name is injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.Glue.GetJobRunsHttp)`.
- * @binding
- * @section Running Jobs
- * @example List Recent Runs
+ * ### Running Jobs
+ * **Example:** List Recent Runs
  * ```typescript
  * // init
  * const getJobRuns = yield* AWS.Glue.GetJobRuns(job);
@@ -28,6 +27,8 @@ export interface GetJobRunsRequest extends Omit<
  *   (run) => run.JobRunState === "RUNNING",
  * );
  * ```
+ *
+ * @binding
  */
 export interface GetJobRuns extends Binding.Service<
   GetJobRuns,

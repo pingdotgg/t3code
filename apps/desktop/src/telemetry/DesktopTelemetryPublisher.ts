@@ -63,7 +63,6 @@ export class DesktopTelemetryPublisher extends Context.Service<
     readonly latest: Effect.Effect<Option.Option<DesktopHostTelemetrySnapshot>>;
     readonly changes: Stream.Stream<DesktopHostTelemetrySnapshot>;
     readonly encoded: Stream.Stream<Uint8Array>;
-    readonly handleControl: (message: DesktopTelemetryControlMessage) => Effect.Effect<void>;
     readonly handleControlForSource: (
       sourceId: string,
       message: DesktopTelemetryControlMessage,
@@ -145,6 +144,7 @@ function sampleInterval(
   return LIVE_SAMPLE_INTERVAL;
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const powerMonitor = yield* ElectronPowerMonitor.ElectronPowerMonitor;
@@ -364,8 +364,6 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
           : Queue.offer(sampleTriggers, undefined).pipe(Effect.asVoid),
       ),
     );
-  const handleControl: DesktopTelemetryPublisher["Service"]["handleControl"] = (message) =>
-    handleControlForSource("legacy", message);
 
   const snapshots = Stream.unwrap(
     Effect.gen(function* () {
@@ -414,7 +412,6 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
     latest: Ref.get(latest),
     changes: Stream.fromPubSub(changes),
     encoded,
-    handleControl,
     handleControlForSource,
     removeControlSource,
     publishUpdateReport,

@@ -20,9 +20,8 @@ export interface CheckDomainAvailabilityRequest
  * Provide the implementation with
  * `Effect.provide(AWS.Route53Domains.CheckDomainAvailabilityHttp)`.
  *
- * @binding
- * @section Checking Domain Availability
- * @example Check Whether a Domain Can Be Registered
+ * ### Checking Domain Availability
+ * **Example:** Check Whether a Domain Can Be Registered
  * ```typescript
  * // init
  * const checkDomainAvailability =
@@ -36,6 +35,8 @@ export interface CheckDomainAvailabilityRequest
  *   // domain can be registered
  * }
  * ```
+ *
+ * @binding
  */
 export interface CheckDomainAvailability extends Binding.Service<
   CheckDomainAvailability,

@@ -1,4 +1,4 @@
-import { Channel, Data, pipe, Result } from "effect"
+import { Channel, Data, type Effect, pipe, Result } from "effect"
 import { describe, expect, it } from "tstyche"
 
 class ErrorA extends Data.TaggedError("ErrorA")<{ readonly message: string }> {}
@@ -11,6 +11,18 @@ class Quota extends Data.TaggedError("Quota")<{ readonly limit: number }> {}
 class AiError extends Data.TaggedError("AiError")<{ readonly reason: RateLimit | Quota }> {}
 
 declare const aiChannel: Channel.Channel<number, AiError | ErrorB>
+
+describe("Channel.catchDefect", () => {
+  it("supports data-last usage", () => {
+    const result = pipe(channel, Channel.catchDefect(() => Channel.fail("recovery" as const)))
+    expect(result).type.toBe<Channel.Channel<number, ErrorA | ErrorB | "recovery">>()
+  })
+
+  it("supports data-first usage", () => {
+    const result = Channel.catchDefect(channel, () => Channel.succeed("recovered"))
+    expect(result).type.toBe<Channel.Channel<number | string, ErrorA | ErrorB>>()
+  })
+})
 
 describe("Channel.catchTag", () => {
   it("removes the handled error when orElse is omitted", () => {
@@ -108,5 +120,11 @@ describe("Channel.catchReasons", () => {
       )
     )
     expect(result).type.toBe<Channel.Channel<number, ErrorA | ErrorB>>()
+  })
+})
+
+describe("Channel.runCount", () => {
+  it("returns the output count", () => {
+    expect(Channel.runCount(Channel.fromIterable([1, 2, 3]))).type.toBe<Effect.Effect<number>>()
   })
 })

@@ -1,7 +1,9 @@
+import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { EnvironmentId, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
-import { useNavigation } from "@react-navigation/native";
+import { type RouteProp, useIsFocused, useNavigation, useRoute } from "@react-navigation/native";
 import {
   isCompatibleUsageContractVersion,
+  isModelCostUnknown,
   type DailyTotals,
   type MergedUsage,
 } from "@t3tools/shared/usageMerge";
@@ -17,14 +19,14 @@ import {
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
-import Animated, { Easing, FadeIn, LinearTransition, ReduceMotion } from "react-native-reanimated";
+import { Platform, Pressable, RefreshControl, View } from "react-native";
+import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { SegmentedControl } from "../../components/SegmentedControl";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
@@ -64,9 +66,22 @@ const CHART_HEIGHT = 180;
  * pull to refresh, each refreshing its own data.
  */
 export function UsageRouteScreen() {
+  const route = useRoute<RouteProp<{ Usage: { tab?: string } | undefined }, "Usage">>();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const [tab, setTab] = useState<UsageTab>("usage");
+  // Preserve the Limits default while honoring explicit widget/navigation links.
+  const [selection, setSelection] = useState(() => ({
+    params: route.params,
+    tab: (route.params?.tab === "usage" ? "usage" : "limits") as UsageTab,
+  }));
+  if (selection.params !== route.params) {
+    setSelection({
+      params: route.params,
+      tab: route.params?.tab === "usage" ? "usage" : "limits",
+    });
+  }
+  const { tab } = selection;
+  const setTab = (tab: UsageTab) => setSelection({ params: route.params, tab });
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
     window: makeWindow(30),
@@ -80,7 +95,8 @@ export function UsageRouteScreen() {
     window,
     selectedEnvironmentIds,
   );
-  const limits = useRefreshLimits(selectedEnvironmentIds);
+  const isFocused = useIsFocused();
+  const limits = useRefreshLimits(selectedEnvironmentIds, isFocused && tab === "limits");
 
   const days = useMemo(
     () => enumerateDays(window.sinceDay, window.untilDay),
@@ -220,17 +236,7 @@ export function UsageRouteScreen() {
   }, [navigation, environmentFilter]);
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      {Platform.OS === "android" ? (
-        <>
-          <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader
-            title="Usage"
-            onBack={() => navigation.goBack()}
-            trailing={environmentFilter}
-          />
-        </>
-      ) : null}
+    <SettingsScreen title="Usage" trailing={environmentFilter}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -261,20 +267,20 @@ export function UsageRouteScreen() {
             <>
               {/* Period and metric together: neither applies to Limits, and
                 both change every number below, so they share one bar. */}
-              <View className="flex-row items-center gap-3">
+              <View className="gap-3 ios:flex-row ios:items-center">
                 <SegmentedControl
                   options={WINDOW_OPTIONS}
                   selected={windowDays}
                   onSelect={selectWindow}
                   size="compact"
-                  className="flex-1"
+                  className="w-full ios:flex-1"
                 />
                 <SegmentedControl
                   options={METRIC_OPTIONS}
                   selected={metric}
                   onSelect={setMetric}
                   size="compact"
-                  className="w-36"
+                  className="w-full ios:w-36"
                 />
               </View>
               {merged.duplicateSources.length > 0 ? (
@@ -314,77 +320,7 @@ export function UsageRouteScreen() {
           )}
         </Animated.View>
       </ScrollView>
-    </View>
-  );
-}
-
-function SegmentedControl<Value extends number | string>(props: {
-  readonly options: readonly {
-    readonly value: Value;
-    readonly label: string;
-    readonly accessibilityLabel?: string;
-  }[];
-  readonly selected: Value;
-  readonly onSelect: (value: Value) => void;
-  /** The tab bar is full height; filters under it are shorter so it stays primary. */
-  readonly size?: "default" | "compact";
-  /** "tab" for the view switcher; filters stay plain buttons. */
-  readonly role?: "tab" | "button";
-  readonly className?: string;
-}) {
-  const compact = props.size === "compact";
-  return (
-    <View
-      accessible={false}
-      className={cn(
-        "flex-row overflow-hidden rounded-full border-continuous bg-card",
-        props.className,
-      )}
-    >
-      <Animated.View
-        pointerEvents="none"
-        layout={LinearTransition.duration(200)
-          .easing(Easing.out(Easing.cubic))
-          .reduceMotion(ReduceMotion.System)}
-        className="absolute bottom-0 top-0 rounded-full bg-subtle-strong"
-        style={{
-          width: `${100 / props.options.length}%`,
-          start: `${
-            (Math.max(
-              0,
-              props.options.findIndex((option) => option.value === props.selected),
-            ) *
-              100) /
-            props.options.length
-          }%`,
-        }}
-      />
-      {props.options.map((option) => {
-        const active = option.value === props.selected;
-        return (
-          <Pressable
-            key={String(option.value)}
-            accessibilityRole={Platform.OS === "ios" ? "button" : (props.role ?? "button")}
-            accessibilityLabel={option.accessibilityLabel ?? option.label}
-            accessibilityState={{ selected: active }}
-            onPress={() => props.onSelect(option.value)}
-            className={cn(
-              "flex-1 items-center justify-center rounded-full",
-              compact ? "h-9" : "h-11",
-            )}
-          >
-            <Text
-              className={cn(
-                compact ? "text-xs" : "text-sm",
-                active ? "font-t3-medium text-foreground" : "text-foreground-muted",
-              )}
-            >
-              {option.label}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </View>
+    </SettingsScreen>
   );
 }
 
@@ -476,7 +412,7 @@ function ProviderSection(props: {
   );
 
   return (
-    <SettingsSection title="Providers" card>
+    <SettingsSection title="Providers">
       {ordered.map((provider, index) => {
         const share = metric === "cost" ? provider.costShare : provider.tokenShare;
         return (
@@ -527,7 +463,7 @@ function TotalsSection(props: { readonly merged: MergedUsage; readonly isPast24H
   const cachedShare = observedInput === 0 ? 0 : merged.cachedInputTokens / observedInput;
 
   return (
-    <SettingsSection title="Totals" card>
+    <SettingsSection title="Totals">
       <View className="flex-row flex-wrap">
         <MetricCell
           label="Processed tokens"
@@ -588,7 +524,7 @@ function ModelsSection(props: { readonly merged: MergedUsage }) {
   if (merged.models.length === 0) return null;
 
   return (
-    <SettingsSection title="By model" card>
+    <SettingsSection title="By model">
       {merged.models.map((model, index) => (
         <View
           key={`${model.provider}:${model.model}`}
@@ -607,10 +543,14 @@ function ModelsSection(props: { readonly merged: MergedUsage }) {
               {model.model}
             </Text>
             <Text className="text-sm text-foreground-muted">
-              {formatPercent(model.costShare)} of cost · {formatTokens(model.totalTokens)} tokens
+              {isModelCostUnknown(model)
+                ? `no known rates · ${formatTokens(model.totalTokens)} tokens`
+                : `${formatPercent(model.costShare)} of cost · ${formatTokens(model.totalTokens)} tokens`}
             </Text>
           </View>
-          <Text className="text-base tabular-nums text-foreground">{formatUsd(model.costUsd)}</Text>
+          <Text className="text-base tabular-nums text-foreground">
+            {isModelCostUnknown(model) ? "Unpriced" : formatUsd(model.costUsd)}
+          </Text>
         </View>
       ))}
     </SettingsSection>

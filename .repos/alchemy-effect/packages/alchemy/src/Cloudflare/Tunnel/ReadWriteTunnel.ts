@@ -15,16 +15,14 @@ import { writeClient, type WriteTunnelClient } from "./WriteTunnel.ts";
  * the Worker (the token value as a `secret_text` binding) so runtime code can
  * authenticate.
  *
- * @binding
- * @product Tunnels
- * @category Cloudflare One (Zero Trust)
+ * @remarks
  *
  * `ReadWriteTunnel` is a single identifier that is simultaneously the binding's
  * Context tag, its type, and the callable —
  * `yield* Cloudflare.Tunnel.ReadWriteTunnel()`.
  *
- * @section Managing tunnels at runtime
- * @example Create, configure, and delete a tunnel from a request handler
+ * ### Managing tunnels at runtime
+ * **Example:** Create, configure, and delete a tunnel from a request handler
  * ```typescript
  * // init
  * const tunnels = yield* Cloudflare.Tunnel.ReadWriteTunnel();
@@ -44,11 +42,15 @@ import { writeClient, type WriteTunnelClient } from "./WriteTunnel.ts";
  * };
  * ```
  *
- * @section Runtime Layer
+ * ### Runtime Layer
  * Provide {@link ReadWriteTunnelBinding} in the Worker's runtime layer.
  * ```typescript
  * Effect.provide(Cloudflare.Tunnel.ReadWriteTunnelBinding)
  * ```
+ *
+ * @binding
+ * @product Tunnels
+ * @category Cloudflare One (Zero Trust)
  */
 export interface ReadWriteTunnel extends Binding.Service<
   ReadWriteTunnel,

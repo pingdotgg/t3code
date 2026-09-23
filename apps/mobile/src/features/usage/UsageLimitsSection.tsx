@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
   ProviderConsumeResetCreditOutcome,
-  ProviderInstanceId,
+  ProviderConsumeResetCreditInput,
   ServerProvider,
   ServerProviderResetCredits,
   ServerProviderUsageWindow,
@@ -16,7 +16,8 @@ import {
   paceOf,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
+import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import { Alert, Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
@@ -97,6 +98,29 @@ function WindowRow(props: {
   );
 }
 
+function AccountInstanceLabel({ value }: { readonly value: string }) {
+  const [revealed, setRevealed] = useState(false);
+  if (!value.includes("@")) {
+    return (
+      <Text className="shrink text-xs text-foreground-tertiary" numberOfLines={1}>
+        · {value}
+      </Text>
+    );
+  }
+  return (
+    <Pressable
+      className="shrink active:opacity-60"
+      accessibilityRole="button"
+      accessibilityLabel={revealed ? "Hide account label" : "Reveal account label"}
+      onPress={() => setRevealed((current) => !current)}
+    >
+      <Text className="text-xs text-foreground-tertiary" numberOfLines={1}>
+        · {revealed ? value : "••••••@••••••"}
+      </Text>
+    </Pressable>
+  );
+}
+
 /** One account: icon, name and plan on a single line, then its windows. */
 export function AccountLimits(props: {
   readonly driver: Driver;
@@ -128,9 +152,7 @@ export function AccountLimits(props: {
         <View className="min-w-0 flex-1 flex-row items-baseline gap-2">
           <Text className="text-base font-t3-medium text-foreground">{props.label}</Text>
           {props.instanceLabel !== props.label ? (
-            <Text className="shrink text-xs text-foreground-tertiary" numberOfLines={1}>
-              · {props.instanceLabel}
-            </Text>
+            <AccountInstanceLabel key={props.instanceLabel} value={props.instanceLabel} />
           ) : null}
           {props.detail ? (
             <Text className="shrink text-sm text-foreground-muted" numberOfLines={1}>
@@ -168,13 +190,13 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
  */
 export function ResetCredits(props: {
   readonly environmentId: EnvironmentId;
-  readonly instanceId: ProviderInstanceId;
+  readonly input: ProviderConsumeResetCreditInput;
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
   /** A smaller pill for the composer card. */
   readonly dense?: boolean;
 }) {
-  const { environmentId, instanceId, credits, now, dense = false } = props;
+  const { environmentId, input, credits, now, dense = false } = props;
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, {
     reportFailure: false,
   });
@@ -195,10 +217,10 @@ export function ResetCredits(props: {
   const redeem = async () => {
     setBusy(true);
     setStatus(null);
-    const result = await consume({ environmentId, input: { instanceId } });
+    const result = await consume({ environmentId, input });
     setBusy(false);
     if (result._tag === "Success") {
-      setStatus(OUTCOME_TEXT[result.value.outcome]);
+      setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
       return;
     }
     setStatus(
@@ -258,47 +280,79 @@ export function ResetCredits(props: {
  * Environments whose probe failed are named, since their rows keep showing
  * the previous quota with nothing else to say so.
  */
-export function useRefreshLimits(selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null) {
+export function useRefreshLimits(
+  selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
+  active = false,
+) {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
   const [now, setNow] = useState(() => Date.now());
   const [refreshing, setRefreshing] = useState(false);
+  const refreshingRef = useRef(false);
   const [failedEnvironments, setFailedEnvironments] = useState<
     readonly { environmentId: EnvironmentId; label: string }[]
   >([]);
-  // Always toggles `refreshing`, even with nothing to probe: Android's
-  // RefreshControl keeps its spinner up until it sees true then false.
-  const refresh = async () => {
+  const refresh = async (automatic = false) => {
     const connected = [...presentations].filter(
       ([environmentId, presentation]) =>
         presentation.connection.phase === "connected" &&
         (selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId)),
     );
-    setRefreshing(true);
     try {
-      const results = await Promise.all(
-        connected.map(([environmentId]) => refreshProviders({ environmentId, input: {} })),
-      );
-      setFailedEnvironments(
-        connected
-          .filter((_, index) => results[index]?._tag === "Failure")
-          .map(([environmentId, presentation]) => ({
+      await Promise.all(
+        connected.map(async ([environmentId, presentation]) => {
+          const result = await refreshUsageLimits(
             environmentId,
-            label: presentation.entry.target.label,
-          })),
+            () => refreshProviders({ environmentId, input: {} }),
+            automatic,
+          );
+          if (result === undefined) return;
+          setFailedEnvironments((previous) => [
+            ...previous.filter((failed) => failed.environmentId !== environmentId),
+            ...(result._tag === "Failure"
+              ? [{ environmentId, label: presentation.entry.target.label }]
+              : []),
+          ]);
+        }),
       );
     } finally {
       setNow(Date.now());
+    }
+  };
+  // Always toggles `refreshing`, even with nothing to probe: Android's
+  // RefreshControl keeps its spinner up until it sees true then false.
+  const refreshManually = async () => {
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
+    setRefreshing(true);
+    try {
+      await refresh();
+    } finally {
+      refreshingRef.current = false;
       setRefreshing(false);
     }
   };
+  const connectedLimitsEnvironments = [...presentations]
+    .filter(
+      ([environmentId, presentation]) =>
+        presentation.connection.phase === "connected" &&
+        (selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId)),
+    )
+    .map(([environmentId]) => environmentId)
+    .sort()
+    .join(",");
+  const autoRefreshLimits = useEffectEvent(() => refresh(true));
+  useEffect(() => {
+    if (active && connectedLimitsEnvironments) void autoRefreshLimits();
+  }, [active, connectedLimitsEnvironments]);
+
   const failedLabels = failedEnvironments
     .filter(
       ({ environmentId }) =>
         selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId),
     )
     .map(({ label }) => label);
-  return { now, refreshing, failedLabels, refresh };
+  return { now, refreshing, failedLabels, refresh: refreshManually };
 }

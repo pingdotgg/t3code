@@ -90,9 +90,8 @@ export interface ServiceLevelObjective extends Resource<
  * an attainment goal against a service level indicator — any CloudWatch
  * metric or metric-math expression, or a service operation discovered by
  * Application Signals.
- * @resource
- * @section Creating Service Level Objectives
- * @example Period-based SLO on a CloudWatch metric
+ * ### Creating Service Level Objectives
+ * **Example:** Period-based SLO on a CloudWatch metric
  * ```typescript
  * import * as ApplicationSignals from "alchemy/AWS/ApplicationSignals";
  *
@@ -127,7 +126,7 @@ export interface ServiceLevelObjective extends Resource<
  * });
  * ```
  *
- * @example Request-based SLO
+ * **Example:** Request-based SLO
  * ```typescript
  * const slo = yield* ApplicationSignals.ServiceLevelObjective("Availability", {
  *   requestBasedSliConfig: {
@@ -161,6 +160,8 @@ export interface ServiceLevelObjective extends Resource<
  *   goal: { AttainmentGoal: 99.9 },
  * });
  * ```
+ *
+ * @resource
  */
 export const ServiceLevelObjective = Resource<ServiceLevelObjective>(
   "AWS.ApplicationSignals.ServiceLevelObjective",

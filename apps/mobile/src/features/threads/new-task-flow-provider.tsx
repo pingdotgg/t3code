@@ -13,15 +13,13 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  DEFAULT_SERVER_SETTINGS,
   MessageId,
   T3_PROJECT_FILE_NAME,
   ThreadId,
 } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
-import {
-  isDefaultThreadEnvModeSettled,
-  resolveDefaultThreadEnvMode,
-} from "@t3tools/shared/threadEnvMode";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
@@ -42,6 +40,7 @@ import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import {
   appendComposerDraftAttachments,
+  type ComposerDraftInsertion,
   clearComposerDraft,
   composerDraftsAtom,
   createNewTaskDraft,
@@ -53,6 +52,7 @@ import {
   retargetNewTaskDraft,
   scheduleUnusedComposerAttachmentCleanup,
   setComposerDraftText,
+  setComposerDraftContext,
   setStickyComposerModelSelection,
   updateComposerDraftSettings,
   useComposerDraft,
@@ -89,13 +89,14 @@ import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import {
   resolvePendingTaskInteractionMode,
   resolveProviderInteractionMode,
-} from "./legacy-plan-mode";
+} from "../../state/legacy-plan-mode";
 import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -189,11 +190,20 @@ type NewTaskFlowContextValue = {
   readonly beginEditingPendingTask: (messageId: string) => boolean;
   readonly finishEditingPendingTask: () => void;
   readonly cancelEditingPendingTask: () => void;
-  readonly buildPendingTaskMessage: (metadata: TurnCommandMetadata) => QueuedThreadMessage | null;
+  readonly buildPendingTaskMessage: (
+    metadata: TurnCommandMetadata,
+    options?: {
+      /** The live checkout, recorded as a local task's branch when it sends now. */
+      readonly currentCheckoutBranch?: string | null;
+    },
+  ) => QueuedThreadMessage | null;
   readonly setPrompt: (value: string) => void;
   readonly replaceAttachments: (attachments: ReadonlyArray<DraftComposerAttachment>) => void;
   /** Appends draft attachments; returns how many the live cap rejected. */
-  readonly appendAttachments: (attachments: ReadonlyArray<DraftComposerAttachment>) => number;
+  readonly appendAttachments: (
+    attachments: ReadonlyArray<DraftComposerAttachment>,
+    insertion?: ComposerDraftInsertion,
+  ) => number;
   readonly removeAttachment: (imageId: string) => void;
   readonly clearAttachments: () => void;
   readonly setSubmitting: (value: boolean) => void;
@@ -417,23 +427,35 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       : null,
   );
   const t3ProjectFileData = t3ProjectFileQuery.data as ProjectReadFileResult | null;
-  const t3ProjectFileDefaultMode = useMemo(() => {
-    if (t3ProjectFileData === null || t3ProjectFileData.truncated) return null;
-    return parseT3ProjectFile(t3ProjectFileData.contents)?.defaultThreadEnvMode ?? null;
-  }, [t3ProjectFileData]);
-  const defaultWorkspaceMode: WorkspaceMode = resolveDefaultThreadEnvMode({
-    projectSetting: selectedProject?.defaultThreadEnvMode,
-    projectFile: t3ProjectFileDefaultMode,
-    globalDefault: selectedEnvironmentServerConfig?.settings.defaultThreadEnvMode ?? "local",
-  });
-  // While unsettled the resolved default is provisional. Nothing may write
-  // it into the draft during that window (the auto-branch effect does), or
-  // the frozen interim value beats the t3.json default once it loads.
-  const defaultWorkspaceModeSettled = isDefaultThreadEnvModeSettled({
-    explicitMode: selectedProjectDraft.workspaceSelection?.mode,
-    projectSetting: selectedProject?.defaultThreadEnvMode,
-    projectFilePending: t3ProjectFileQuery.isPending,
-  });
+  const t3ProjectFile = useMemo(
+    () =>
+      t3ProjectFileData === null || t3ProjectFileData.truncated
+        ? null
+        : parseT3ProjectFile(t3ProjectFileData.contents),
+    [t3ProjectFileData],
+  );
+  // Environment settings with the project's overrides and its t3.json
+  // applied; the aggregate's own legacy fields still count until the server
+  // folds them.
+  const projectSettings = useMemo(
+    () =>
+      resolveProjectSettings(
+        selectedEnvironmentServerConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
+        selectedProject?.id ?? null,
+        selectedProject,
+        t3ProjectFile,
+      ),
+    [selectedEnvironmentServerConfig?.settings, selectedProject, t3ProjectFile],
+  );
+  const defaultWorkspaceMode: WorkspaceMode = projectSettings.settings.defaultThreadEnvMode;
+  // While the file read is pending and nothing above it decided, the
+  // resolved default is provisional. Nothing may write it into the draft
+  // during that window (the auto-branch effect does), or the frozen interim
+  // value beats the t3.json default once it loads.
+  const defaultWorkspaceModeSettled =
+    selectedProjectDraft.workspaceSelection?.mode !== undefined ||
+    projectSettings.sources.defaultThreadEnvMode !== "environment" ||
+    !t3ProjectFileQuery.isPending;
   const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode;
   const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;
   const selectedWorktreePath = selectedProjectDraft.workspaceSelection?.worktreePath ?? null;
@@ -442,10 +464,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // value keeps tracking the server setting when the config loads late.
   const draftStartFromOrigin = selectedProjectDraft.workspaceSelection?.startFromOrigin;
   const startFromOrigin =
-    draftStartFromOrigin ??
-    selectedEnvironmentServerConfig?.settings.newWorktreesStartFromOrigin ??
-    true;
-  const runtimeMode = selectedProjectDraft.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+    draftStartFromOrigin ?? projectSettings.settings.newWorktreesStartFromOrigin;
+  const defaultRuntimeMode = editingPendingTask
+    ? (editingPendingTask.runtimeMode ?? DEFAULT_RUNTIME_MODE)
+    : projectSettings.settings.defaultRuntimeMode;
+  const runtimeMode = selectedProjectDraft.runtimeMode ?? defaultRuntimeMode;
 
   // Antigravity keeps unavailable selections so sign-out or a catalog change
   // cannot switch the user's model. Other providers retain their fallback
@@ -456,9 +479,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   );
   const projectDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
-    selectedProject?.defaultModelSelection ??
-      selectedEnvironmentServerConfig?.settings.defaultModelSelection ??
-      null,
+    projectSettings.settings.defaultModelSelection,
   );
   const storedStickyModelSelection = useStickyComposerModelSelection();
   const stickyModelSelection = resolveDefaultableModelSelection(
@@ -576,11 +597,17 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // Returns how many attachments the live cap rejected so the caller can
   // tell the user (a concurrent add can fill the draft mid-pick).
   const appendAttachments = useCallback(
-    (nextAttachments: ReadonlyArray<DraftComposerAttachment>): number => {
+    (
+      nextAttachments: ReadonlyArray<DraftComposerAttachment>,
+      insertion?: ComposerDraftInsertion,
+    ): number => {
       if (!selectedProjectDraftKey) {
         return 0;
       }
-      return appendComposerDraftAttachments(selectedProjectDraftKey, nextAttachments);
+      return appendComposerDraftAttachments(selectedProjectDraftKey, nextAttachments, {
+        appendReference: true,
+        insertion,
+      });
     },
     [selectedProjectDraftKey],
   );
@@ -839,10 +866,18 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
 
   useEffect(() => {
     if (
+      !selectedProjectDraftKey ||
       !defaultWorkspaceModeSettled ||
       workspaceMode !== "worktree" ||
       selectedBranchName !== null
     ) {
+      return;
+    }
+    // The draft screen writes a thread's branch and worktree into the draft in
+    // the same commit this effect runs, so the rendered selection above can be
+    // stale. Re-read the draft before replacing it.
+    const live = getComposerDraftSnapshot(selectedProjectDraftKey).workspaceSelection;
+    if (live && (live.mode !== "worktree" || live.branch !== null)) {
       return;
     }
     // The default may only exist as origin/<default> (isRemote), which
@@ -860,6 +895,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     defaultWorkspaceModeSettled,
     selectBranch,
     selectedBranchName,
+    selectedProjectDraftKey,
     workspaceMode,
   ]);
 
@@ -891,6 +927,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     // Only hydrate a fresh editing draft; reopening mid-edit keeps newer edits.
     if (isComposerDraftEmpty(getComposerDraftSnapshot(draftKey))) {
       setComposerDraftText(draftKey, message.text);
+      setComposerDraftContext(draftKey, message.context);
       replaceComposerDraftAttachments(draftKey, message.attachments);
       updateComposerDraftSettings(draftKey, {
         modelSelection: message.modelSelection,
@@ -916,7 +953,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   }, []);
 
   const buildPendingTaskMessage = useCallback(
-    (metadata: TurnCommandMetadata): QueuedThreadMessage | null => {
+    (
+      metadata: TurnCommandMetadata,
+      options?: { readonly currentCheckoutBranch?: string | null },
+    ): QueuedThreadMessage | null => {
       if (!selectedProject || !selectedProjectDraftKey) {
         return null;
       }
@@ -954,8 +994,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         commandId: CommandId.make(metadata.commandId),
         text,
         attachments: draft.attachments,
+        context: draft.context,
         modelSelection: draftModelSelection,
-        runtimeMode: draft.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+        runtimeMode: draft.runtimeMode ?? defaultRuntimeMode,
         interactionMode: resolvePendingTaskInteractionMode({
           preferenceLoaded: planModePreferenceLoaded,
           planModeEnabled: legacyPlanModeEnabled,
@@ -970,11 +1011,15 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           ...(projectTitle !== undefined ? { projectTitle } : {}),
           ...(projectCwd !== undefined ? { projectCwd } : {}),
           workspaceMode: mode,
-          // Only an explicit picker choice, never the current checkout: a
-          // queued local task drains days later against whatever is checked
-          // out then, so recording a queue-time guess would pin a stale label
-          // to a thread that ran somewhere else.
-          branch: workspaceSelection?.branch ?? null,
+          // An explicit picker choice wins. Otherwise only a task sending now
+          // records the current checkout: a queued local task drains days
+          // later against whatever is checked out then, so a queue-time
+          // guess would pin a stale label to a thread that ran somewhere else.
+          branch: resolveProjectThreadCreationBranch({
+            workspaceMode: mode,
+            selectedBranch: workspaceSelection?.branch ?? null,
+            currentCheckoutBranch: options?.currentCheckoutBranch ?? null,
+          }),
           worktreePath: mode === "worktree" ? null : (workspaceSelection?.worktreePath ?? null),
           // The draft only carries the flag when the user touched it; fall
           // back to the resolved default (server settings) so queued tasks
@@ -987,6 +1032,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       };
     },
     [
+      defaultRuntimeMode,
       editingPendingProject,
       editingPendingTask,
       selectedEnvironmentServerConfig,

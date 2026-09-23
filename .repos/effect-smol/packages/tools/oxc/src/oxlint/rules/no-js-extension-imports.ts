@@ -1,4 +1,4 @@
-import type { CreateRule, ESTree, Fixer, Visitor } from "oxlint"
+import type { CreateRule, ESTree, Fixer, Visitor } from "@oxlint/plugins"
 
 const jsExtensions = [".js", ".jsx", ".mjs", ".cjs"]
 const extensionMap: Record<string, string> = {
@@ -44,7 +44,7 @@ const rule: CreateRule = {
       context.report({
         node: source,
         message: `Use "${tsExt}" extension instead of "${ext}" for relative imports`,
-        fix: (fixer: Fixer) => fixer.replaceTextRange(source.range, `"${fixedSource}"`)
+        fix: (fixer: Fixer) => fixer.replaceTextRange(source.range, JSON.stringify(fixedSource))
       })
     }
 

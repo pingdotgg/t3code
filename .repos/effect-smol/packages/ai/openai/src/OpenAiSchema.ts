@@ -9,6 +9,7 @@
 import * as Effect from "effect/Effect"
 import * as Predicate from "effect/Predicate"
 import * as Schema from "effect/Schema"
+import * as SchemaTransformation from "effect/SchemaTransformation"
 
 const UnknownRecord = Schema.Record(Schema.String, Schema.Unknown)
 
@@ -17,6 +18,10 @@ const JsonObject = Schema.Record(Schema.String, Schema.Unknown)
 const MessageRole = Schema.Literals(["system", "developer", "user", "assistant"])
 
 const ImageDetail = Schema.Literals(["low", "high", "auto"])
+
+const PromptCacheBreakpoint = Schema.Struct({
+  mode: Schema.Literal("explicit")
+})
 
 /**
  * Schema for optional `include` values supported by the local handwritten
@@ -75,7 +80,8 @@ export type MessageStatus = typeof MessageStatus.Type
 
 const InputTextContent = Schema.Struct({
   type: Schema.Literal("input_text"),
-  text: Schema.String
+  text: Schema.String,
+  prompt_cache_breakpoint: Schema.optional(PromptCacheBreakpoint)
 })
 
 const InputImageContent = Schema.Struct({
@@ -639,7 +645,7 @@ export type TextResponseFormatConfiguration = typeof TextResponseFormatConfigura
  * Validates the Responses API request payload, including input content, model
  * selection, instructions, reasoning options, text output format, tools,
  * `tool_choice`, streaming, storage, response continuation, sampling options,
- * and optional response fields requested through `include`.
+ * prompt caching, and optional response fields requested through `include`.
  *
  * **Gotchas**
  *
@@ -658,11 +664,16 @@ export const CreateResponse = Schema.Struct({
   temperature: Schema.optional(Schema.Finite),
   top_p: Schema.optional(Schema.Finite),
   user: Schema.optional(Schema.String),
+  prompt_cache_key: Schema.optional(Schema.String),
+  prompt_cache_options: Schema.optional(Schema.Struct({
+    mode: Schema.optional(Schema.Literals(["implicit", "explicit"])),
+    ttl: Schema.optional(Schema.Literal("30m"))
+  })),
   service_tier: Schema.optional(Schema.String),
   previous_response_id: Schema.optional(Schema.String),
   model: Schema.optional(Schema.String),
   reasoning: Schema.optional(Schema.Struct({
-    effort: Schema.optional(Schema.Literals(["none", "minimal", "low", "medium", "high", "xhigh"])),
+    effort: Schema.optional(Schema.Literals(["none", "minimal", "low", "medium", "high", "xhigh", "max"])),
 
     summary: Schema.optional(Schema.Literals(["auto", "concise", "detailed"])),
     generate_summary: Schema.optional(Schema.Literals(["auto", "concise", "detailed"]))
@@ -755,10 +766,12 @@ const ApplyPatchCall = Schema.Struct({
 const CodeInterpreterCall = Schema.Struct({
   id: Schema.String,
   type: Schema.Literal("code_interpreter_call"),
-  code: Schema.optionalKey(Schema.String),
+  code: Schema.optionalKey(Schema.NullOr(Schema.String)),
   container_id: Schema.String,
-  outputs: Schema.optionalKey(Schema.Array(Schema.Unknown)),
-  status: Schema.optionalKey(MessageStatus)
+  outputs: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.Unknown))),
+  status: Schema.optionalKey(
+    Schema.Literals(["in_progress", "completed", "incomplete", "interpreting", "failed"])
+  )
 })
 
 const ComputerCall = Schema.Struct({
@@ -778,8 +791,8 @@ const FileSearchCall = Schema.Struct({
 const ImageGenerationCall = Schema.Struct({
   id: Schema.String,
   type: Schema.Literal("image_generation_call"),
-  result: Schema.optionalKey(Schema.String),
-  status: Schema.optionalKey(MessageStatus)
+  result: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  status: Schema.optionalKey(Schema.Literals(["in_progress", "completed", "generating", "failed"]))
 })
 
 const McpCall = Schema.Struct({
@@ -830,6 +843,11 @@ const OutputItem = Schema.Union([
   WebSearchCall
 ])
 
+const ResponseError = Schema.Struct({
+  code: Schema.String,
+  message: Schema.String
+})
+
 /**
  * Schema for an OpenAI Responses API response object.
  *
@@ -858,6 +876,7 @@ export const Response = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([]))
   ),
   usage: Schema.optionalKey(Schema.NullOr(ResponseUsage)),
+  error: Schema.optionalKey(Schema.NullOr(ResponseError)),
   incomplete_details: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
@@ -888,38 +907,38 @@ export type Response = typeof Response.Type
 const ResponseCreatedEvent = Schema.Struct({
   type: Schema.Literal("response.created"),
   response: Response,
-  sequence_number: Schema.Int
+  sequence_number: Schema.optionalKey(Schema.Int)
 })
 
 const ResponseCompletedEvent = Schema.Struct({
   type: Schema.Literal("response.completed"),
   response: Response,
-  sequence_number: Schema.Int
+  sequence_number: Schema.optionalKey(Schema.Int)
 })
 
 const ResponseIncompleteEvent = Schema.Struct({
   type: Schema.Literal("response.incomplete"),
   response: Response,
-  sequence_number: Schema.Int
+  sequence_number: Schema.optionalKey(Schema.Int)
 })
 
 const ResponseFailedEvent = Schema.Struct({
   type: Schema.Literal("response.failed"),
   response: Response,
-  sequence_number: Schema.Int
+  sequence_number: Schema.optionalKey(Schema.Int)
 })
 
 const ResponseOutputItemAddedEvent = Schema.Struct({
   type: Schema.Literal("response.output_item.added"),
   output_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   item: OutputItem
 })
 
 const ResponseOutputItemDoneEvent = Schema.Struct({
   type: Schema.Literal("response.output_item.done"),
   output_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   item: OutputItem
 })
 
@@ -929,7 +948,7 @@ const ResponseOutputTextDeltaEvent = Schema.Struct({
   output_index: Schema.Int,
   content_index: Schema.Int,
   delta: Schema.String,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   logprobs: Schema.optionalKey(Schema.Array(Schema.Unknown))
 })
 
@@ -939,7 +958,7 @@ const ResponseOutputTextAnnotationAddedEvent = Schema.Struct({
   output_index: Schema.Int,
   content_index: Schema.Int,
   annotation_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   annotation: Annotation
 })
 
@@ -948,7 +967,7 @@ const ResponseReasoningSummaryPartAddedEvent = Schema.Struct({
   item_id: Schema.String,
   output_index: Schema.Int,
   summary_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   part: SummaryTextContent
 })
 
@@ -957,7 +976,7 @@ const ResponseReasoningSummaryPartDoneEvent = Schema.Struct({
   item_id: Schema.String,
   output_index: Schema.Int,
   summary_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   part: SummaryTextContent
 })
 
@@ -967,14 +986,14 @@ const ResponseReasoningSummaryTextDeltaEvent = Schema.Struct({
   output_index: Schema.Int,
   summary_index: Schema.Int,
   delta: Schema.String,
-  sequence_number: Schema.Int
+  sequence_number: Schema.optionalKey(Schema.Int)
 })
 
 const ResponseFunctionCallArgumentsDeltaEvent = Schema.Struct({
   type: Schema.Literal("response.function_call_arguments.delta"),
   item_id: Schema.String,
   output_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   delta: Schema.String
 })
 
@@ -982,7 +1001,7 @@ const ResponseFunctionCallArgumentsDoneEvent = Schema.Struct({
   type: Schema.Literal("response.function_call_arguments.done"),
   item_id: Schema.String,
   output_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   arguments: Schema.String
 })
 
@@ -990,7 +1009,7 @@ const ResponseCodeInterpreterCallCodeDeltaEvent = Schema.Struct({
   type: Schema.Literal("response.code_interpreter_call_code.delta"),
   item_id: Schema.String,
   output_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   delta: Schema.String
 })
 
@@ -998,7 +1017,7 @@ const ResponseCodeInterpreterCallCodeDoneEvent = Schema.Struct({
   type: Schema.Literal("response.code_interpreter_call_code.done"),
   item_id: Schema.String,
   output_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   code: Schema.String
 })
 
@@ -1006,7 +1025,7 @@ const ResponseApplyPatchCallOperationDiffDeltaEvent = Schema.Struct({
   type: Schema.Literal("response.apply_patch_call_operation_diff.delta"),
   item_id: Schema.String,
   output_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   delta: Schema.String
 })
 
@@ -1014,7 +1033,7 @@ const ResponseApplyPatchCallOperationDiffDoneEvent = Schema.Struct({
   type: Schema.Literal("response.apply_patch_call_operation_diff.done"),
   item_id: Schema.String,
   output_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   delta: Schema.optionalKey(Schema.String)
 })
 
@@ -1022,7 +1041,7 @@ const ResponseImageGenerationCallPartialImageEvent = Schema.Struct({
   type: Schema.Literal("response.image_generation_call.partial_image"),
   item_id: Schema.String,
   output_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   partial_image_b64: Schema.String
 })
 
@@ -1031,9 +1050,29 @@ const ResponseErrorEvent = Schema.Struct({
   code: Schema.NullOr(Schema.String),
   message: Schema.String,
   param: Schema.NullOr(Schema.String),
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   status: Schema.optionalKey(Schema.Int)
 })
+
+// OpenAI can nest stream error details under `error`.
+const NestedResponseErrorEvent = Schema.Struct({
+  type: Schema.Literal("error"),
+  error: Schema.Struct({
+    code: Schema.NullOr(Schema.String),
+    message: Schema.String,
+    param: Schema.NullOr(Schema.String)
+  }),
+  sequence_number: Schema.optionalKey(Schema.Int),
+  status: Schema.optionalKey(Schema.Int)
+}).pipe(
+  Schema.decodeTo(
+    ResponseErrorEvent,
+    SchemaTransformation.transform({
+      decode: ({ error, ...rest }) => ({ ...rest, ...error }),
+      encode: ({ code, message, param, ...rest }) => ({ ...rest, error: { code, message, param } })
+    })
+  )
+)
 
 const knownResponseStreamEventTypes = new Set([
   "response.created",
@@ -1123,6 +1162,7 @@ export const ResponseStreamEvent = Schema.Union([
   ResponseApplyPatchCallOperationDiffDoneEvent,
   ResponseImageGenerationCallPartialImageEvent,
   ResponseErrorEvent,
+  NestedResponseErrorEvent,
   UnknownResponseStreamEvent
 ])
 

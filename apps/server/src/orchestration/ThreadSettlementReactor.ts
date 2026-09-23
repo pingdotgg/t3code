@@ -1,4 +1,10 @@
-import { CommandId } from "@t3tools/contracts";
+import {
+  CommandId,
+  type OrchestrationEvent,
+  type ServerSettings as ServerSettingsValue,
+  type ThreadId,
+} from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -32,6 +38,46 @@ export class ThreadSettlementReactor extends Context.Service<
   }
 >()("t3/orchestration/ThreadSettlementReactor") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
+/** Whether any environment default or project override can settle a thread. */
+function autoSettlementConfigured(settings: ServerSettingsValue): boolean {
+  if (settings.sidebarAutoSettleOnMerge || settings.sidebarAutoSettleAfterDays !== null) {
+    return true;
+  }
+  return Object.values(settings.projectSettingsOverrides).some(
+    (entry) =>
+      entry.sidebarAutoSettleOnMerge === true ||
+      (entry.sidebarAutoSettleAfterDays !== undefined && entry.sidebarAutoSettleAfterDays !== null),
+  );
+}
+
+/** Identity of every settlement input, so unrelated settings edits do not trigger a sweep. */
+/** @internal Exported for tests. */
+export function autoSettlementSettingsKey(settings: ServerSettingsValue): string {
+  return JSON.stringify([
+    settings.sidebarAutoSettleOnMerge,
+    settings.sidebarAutoSettleAfterDays,
+    // Only entries that touch settlement, in a stable order, so a project
+    // override on an unrelated key does not queue a sweep. JSON drops
+    // undefined, so inherit (absent) and never (null) need distinct marks.
+    Object.entries(settings.projectSettingsOverrides)
+      .filter(
+        ([, entry]) =>
+          entry.sidebarAutoSettleOnMerge !== undefined ||
+          entry.sidebarAutoSettleAfterDays !== undefined,
+      )
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([projectId, entry]) => [
+        projectId,
+        entry.sidebarAutoSettleOnMerge ?? "inherit",
+        entry.sidebarAutoSettleAfterDays === undefined
+          ? "inherit"
+          : entry.sidebarAutoSettleAfterDays,
+      ]),
+  ]);
+}
+
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const engine = yield* OrchestrationEngine.OrchestrationEngineService;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
@@ -43,19 +89,31 @@ export const make = Effect.gen(function* () {
 
   const sweep = Effect.fn("ThreadSettlementReactor.sweep")(function* (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
+    threadId?: ThreadId,
   ) {
+    const settings = yield* settingsService.getSettings;
+    if (!autoSettlementConfigured(settings)) {
+      return;
+    }
     const snapshot = yield* snapshots.getShellSnapshot();
     const now = DateTime.formatIso(yield* DateTime.now);
     const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
     // A merge rechecks all candidates, including branches that discovery has
     // not linked yet. Those lookups can still have cached the PR as open.
-    const candidates = snapshot.threads.filter((thread) => isAutoSettlementCandidate(thread, now));
+    const candidates = snapshot.threads.filter(
+      (thread) =>
+        (threadId === undefined || thread.id === threadId) &&
+        isAutoSettlementCandidate(thread, now),
+    );
 
     // Return the thread when it still needs a pull request decision. A rejected
     // dispatch skips it for this snapshot instead of retrying through a lookup.
     const settleThread = Effect.fn("ThreadSettlementReactor.settleThread")(
       function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
-        const settings = yield* settingsService.getSettings;
+        const settings = resolveProjectSettings(
+          yield* settingsService.getSettings,
+          thread.projectId,
+        ).settings;
         const decisionNow = DateTime.formatIso(yield* DateTime.now);
         const settledAt = resolveAutoSettlementAt({
           thread,
@@ -98,7 +156,9 @@ export const make = Effect.gen(function* () {
       {
         concurrency: 8,
       },
-    )).filter((thread) => thread !== null);
+    ))
+      .filter((thread) => thread !== null)
+      .filter((thread) => !thread.pullRequests.some((link) => link.source !== "stack-dismissed"));
 
     // Use the same cwd as PR discovery so both paths share GitManager's cache.
     const lookupCwdByThreadId = new Map<string, string>();
@@ -149,9 +209,30 @@ export const make = Effect.gen(function* () {
     };
     const groups = Map.groupBy(lookupCandidates, lookupKey);
 
-    const pullRequestFor = Effect.fn("ThreadSettlementReactor.pullRequestFor")(function* (
-      thread: (typeof candidates)[number],
+    const wouldSettle = Effect.fn("ThreadSettlementReactor.wouldSettle")(function* (
+      group: ReadonlyArray<(typeof candidates)[number]>,
+      pullRequest: SettlementPullRequest,
     ) {
+      const currentSettings = yield* settingsService.getSettings;
+      const decisionNow = DateTime.formatIso(yield* DateTime.now);
+      return group.some((thread) => {
+        const { settings } = resolveProjectSettings(currentSettings, thread.projectId);
+        return (
+          resolveAutoSettlementAt({
+            thread,
+            pullRequest,
+            now: decisionNow,
+            autoSettleAfterDays: settings.sidebarAutoSettleAfterDays,
+            autoSettleOnMerge: settings.sidebarAutoSettleOnMerge,
+          }) !== null
+        );
+      });
+    });
+
+    const pullRequestFor = Effect.fn("ThreadSettlementReactor.pullRequestFor")(function* (
+      group: ReadonlyArray<(typeof candidates)[number]>,
+    ) {
+      const thread = group[0]!;
       const reference = thread.linkedPullRequest ?? thread.branchPullRequest;
       if (reference != null) {
         const matchesMerge =
@@ -176,10 +257,21 @@ export const make = Effect.gen(function* () {
               },
               { recoverTransientFailure: false },
             );
+        const terminal = {
+          state: summary.state,
+          closedAt: summary.closedAt ?? null,
+          mergedAt: summary.mergedAt ?? null,
+        } satisfies SettlementPullRequest;
         const cwd = lookupCwdByThreadId.get(thread.id);
         if (summary.state !== "open" && thread.branch !== null && cwd !== undefined) {
           // A reused branch can already have a new open PR while discovery
           // is replacing its old link. Do not let settlement win that race.
+          // Only pay for the uncached lookup when this sweep would otherwise
+          // settle: a terminal link that settles nothing (resumed thread,
+          // settle-on-merge off) would re-query the host every minute. A
+          // group that becomes eligible after this check waits for the next
+          // sweep rather than settling on the unverified link.
+          if (!(yield* wouldSettle(group, terminal))) return undefined;
           const current = yield* git.branchPullRequest(
             { cwd, branch: thread.branch },
             { refresh: true },
@@ -193,11 +285,7 @@ export const make = Effect.gen(function* () {
             return current;
           }
         }
-        return {
-          state: summary.state,
-          closedAt: summary.closedAt ?? null,
-          mergedAt: summary.mergedAt ?? null,
-        } satisfies SettlementPullRequest;
+        return terminal;
       }
       if (thread.branch === null) return null;
       const cwd = lookupCwdByThreadId.get(thread.id);
@@ -211,7 +299,8 @@ export const make = Effect.gen(function* () {
       groups.values(),
       (group) =>
         Effect.gen(function* () {
-          const pullRequest = yield* pullRequestFor(group[0]!);
+          const pullRequest = yield* pullRequestFor(group);
+          if (pullRequest === undefined) return;
           yield* Effect.forEach(group, (thread) => settleThread(thread, pullRequest), {
             discard: true,
           });
@@ -229,8 +318,11 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const runSweep = (mergedPullRequest: PullRequestService.PullRequestMergeEvent | null) =>
-    sweep(mergedPullRequest).pipe(
+  const runSweep = (
+    mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
+    threadId?: ThreadId,
+  ) =>
+    sweep(mergedPullRequest, threadId).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.failCause(cause)
@@ -239,16 +331,38 @@ export const make = Effect.gen(function* () {
             }),
       ),
     );
-  const worker = yield* makeDrainableWorker(() => runSweep(null));
+  const worker = yield* makeDrainableWorker((threadId: ThreadId | undefined) =>
+    runSweep(null, threadId),
+  );
+
+  const processEvent = (event: OrchestrationEvent) => {
+    switch (event.type) {
+      case "thread.pull-request-linked":
+      case "thread.pull-request-synced":
+      case "thread.pull-request-unlinked":
+        // Merge notifications can arrive before the linked snapshot is projected.
+        // Recheck the persisted state so terminal links settle without the timer.
+        return worker.enqueue(event.payload.threadId);
+      case "thread.session-set":
+        if (
+          event.payload.session.status !== "running" &&
+          event.payload.session.status !== "starting"
+        ) {
+          return worker.enqueue(event.payload.threadId);
+        }
+        break;
+    }
+    return Effect.void;
+  };
 
   const start: ThreadSettlementReactor["Service"]["start"] = Effect.fn(
     "ThreadSettlementReactor.start",
   )(function* () {
     const settingsChanges = yield* settingsService.subscribeChanges;
     const mergedPullRequests = yield* pullRequests.subscribeMerges;
+    const events = yield* engine.subscribeDomainEvents;
     const initialSettings = yield* settingsService.getSettings.pipe(Effect.orDie);
-    let lastAfterDays = initialSettings.sidebarAutoSettleAfterDays;
-    let lastOnMerge = initialSettings.sidebarAutoSettleOnMerge;
+    let lastSettlementSettings = autoSettlementSettingsKey(initialSettings);
     yield* forkParked(
       Effect.gen(function* () {
         yield* worker.enqueue(undefined);
@@ -257,18 +371,16 @@ export const make = Effect.gen(function* () {
     );
     yield* forkParked(
       Stream.runForEach(settingsChanges, (settings) => {
-        if (
-          settings.sidebarAutoSettleAfterDays === lastAfterDays &&
-          settings.sidebarAutoSettleOnMerge === lastOnMerge
-        ) {
+        const key = autoSettlementSettingsKey(settings);
+        if (key === lastSettlementSettings) {
           return Effect.void;
         }
-        lastAfterDays = settings.sidebarAutoSettleAfterDays;
-        lastOnMerge = settings.sidebarAutoSettleOnMerge;
+        lastSettlementSettings = key;
         return worker.enqueue(undefined);
       }),
     );
-    yield* forkParked(Stream.runForEach(mergedPullRequests, runSweep));
+    yield* forkParked(Stream.runForEach(mergedPullRequests, (event) => runSweep(event)));
+    yield* forkParked(Stream.runForEach(events, processEvent));
   });
 
   return { start, drain: worker.drain } satisfies ThreadSettlementReactor["Service"];

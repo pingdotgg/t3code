@@ -99,8 +99,8 @@ export interface ThreatIntelSet extends Resource<
  * exist in S3 before activation; name, location, and activation are
  * updatable in place, while format changes replace the set.
  *
- * @section Custom Threat Intelligence
- * @example Feed a custom threat list
+ * ### Custom Threat Intelligence
+ * **Example:** Feed a custom threat list
  * ```typescript
  * const detector = yield* AWS.GuardDuty.Detector("Detector", {});
  * const threats = yield* AWS.GuardDuty.ThreatIntelSet("BadIPs", {

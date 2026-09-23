@@ -80,9 +80,8 @@ export function consumeQueueMessages<Q extends Queue, Req = never>(
  * layers are `Lambda.QueueEventSource` (event-source mapping + runtime
  * dispatch) and `Server.SQSQueueEventSource` (long-poll receive loop).
  * Consume it through the {@link consumeQueueMessages} helper.
- * @binding
- * @section Consuming a Queue
- * @example Consume Messages in a Lambda Function
+ * ### Consuming a Queue
+ * **Example:** Consume Messages in a Lambda Function
  * ```typescript
  * export default WorkerFunction.make(
  *   { main: import.meta.url },
@@ -98,6 +97,8 @@ export function consumeQueueMessages<Q extends Queue, Req = never>(
  *   }).pipe(Effect.provide(Lambda.QueueEventSource)),
  * );
  * ```
+ *
+ * @binding
  */
 export interface QueueEventSource extends Binding.Service<
   QueueEventSource,

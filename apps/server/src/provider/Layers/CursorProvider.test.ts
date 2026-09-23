@@ -1,14 +1,16 @@
 import * as NodeOS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { it as effectIt } from "@effect/vitest";
 import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { describe, expect, it } from "vite-plus/test";
 import type * as EffectAcpSchema from "effect-acp/schema";
-import type { CursorSettings } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type CursorSettings } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 
 import {
@@ -17,6 +19,7 @@ import {
   checkCursorProviderStatus,
   discoverCursorModelsViaAcp,
   makeCursorModelDiscovery,
+  makeCursorCommandCatalog,
   getCursorParameterizedModelPickerUnsupportedMessage,
   parseCursorAboutOutput,
   parseCursorCliConfigChannel,
@@ -32,6 +35,8 @@ import {
 } from "../Drivers/CursorSkills.ts";
 import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { cursorUsageResponseToLimits, readCursorUsageLimits } from "./cursorUsageLimits.ts";
 
 const runNode = <A, E>(
   effect: Effect.Effect<
@@ -456,6 +461,22 @@ describe("Cursor skills", () => {
     );
   });
 
+  it("rewrites currency-prefixed skill mentions into Cursor slash invocations", () => {
+    const names = new Set(["review", "2spec", "20k", "100M", "1e6"]);
+    for (const symbol of ["€", "£", "¥", "₹", "₩", "₿", "𑿝"]) {
+      expect(hasCursorSkillMention(`please ${symbol}review this`)).toBe(true);
+      expect(hasCursorSkillMention(`please ${symbol}review this`)).toBe(true);
+      expect(rewriteCursorSkillMentions(`${symbol}review then ${symbol}2spec this`, names)).toBe(
+        "/review then /2spec this",
+      );
+      const money = `${symbol}20 ${symbol}20k ${symbol}100M ${symbol}1e6`;
+      expect(hasCursorSkillMention(money)).toBe(false);
+      expect(rewriteCursorSkillMentions(money, names)).toBe(money);
+      const prose = `5${symbol}review ${symbol}unknown`;
+      expect(rewriteCursorSkillMentions(prose, names)).toBe(prose);
+    }
+  });
+
   it("detects and invokes digit-leading Cursor skills without rewriting money", () => {
     const names = new Set(["2spec", "20k", "100M", "1e6"]);
     // Repeated presence checks must not carry a global-regex cursor.
@@ -475,6 +496,87 @@ describe("Cursor skills", () => {
   });
 });
 
+describe("Cursor command catalog", () => {
+  effectIt.effect(
+    "publishes workspace commands without leaking them globally and retains them across refreshes",
+    () =>
+      Effect.gen(function* () {
+        const base = {
+          ...buildCursorProviderSnapshot({
+            checkedAt: "2026-01-01T00:00:00.000Z",
+            cursorSettings: baseCursorSettings,
+            parsed: { version: null, status: "ready", auth: { status: "authenticated" } },
+          }),
+          instanceId: ProviderInstanceId.make("cursor-catalog"),
+          driver: ProviderDriverKind.make("cursor"),
+        };
+        const catalog = yield* makeCursorCommandCatalog({
+          getSnapshot: Effect.succeed(base),
+          refresh: Effect.succeed(base),
+          streamChanges: Stream.empty,
+          resolveMaintenance: () => Effect.die("Not used"),
+          applyUsageLimits: () => Effect.void,
+        });
+        const skills = [
+          { name: "review", path: "/one/.cursor/skills/review/SKILL.md", enabled: true },
+        ];
+        const probedSkills = [
+          { name: "explain", path: "/probed/.cursor/skills/explain/SKILL.md", enabled: true },
+        ];
+        yield* catalog.snapshotForCwd("/probed", probedSkills);
+        yield* catalog.onAvailableCommands(
+          [
+            { name: "review", description: "Review changes", input: { hint: "target" } },
+            { name: "compact", description: "Native duplicate" },
+            { name: "review", description: "Duplicate" },
+          ],
+          "/one",
+          skills,
+        );
+        yield* catalog.onAvailableCommands([{ name: "deploy", description: "Deploy" }], "/two", []);
+        const reprobed = yield* catalog.snapshotForCwd("/one", skills);
+        expect(reprobed.slashCommands.map((command) => command.name)).toEqual([
+          "compact",
+          "review",
+        ]);
+        const published = yield* catalog.snapshot.streamChanges.pipe(
+          Stream.take(1),
+          Stream.runCollect,
+        );
+        expect(published[0]?.slashCommands.map((command) => command.name)).toEqual(["compact"]);
+        const refreshed = yield* catalog.snapshot.refresh;
+        expect(
+          refreshed.workspaceSnapshots?.find((entry) => entry.cwd === "/probed"),
+        ).toMatchObject({
+          slashCommands: [{ name: "compact" }],
+          skills: probedSkills,
+        });
+        expect(refreshed.workspaceSnapshots?.find((entry) => entry.cwd === "/one")).toMatchObject({
+          slashCommands: [
+            { name: "compact" },
+            { name: "review", description: "Review changes", input: { hint: "target" } },
+          ],
+          skills,
+        });
+        yield* catalog.onAvailableCommands([], "/one", skills);
+        const updated = yield* catalog.snapshot.getSnapshot;
+        expect(
+          updated.workspaceSnapshots?.find((entry) => entry.cwd === "/probed")?.skills,
+        ).toEqual(probedSkills);
+        expect(
+          updated.workspaceSnapshots
+            ?.find((entry) => entry.cwd === "/one")
+            ?.slashCommands.map((command) => command.name),
+        ).toEqual(["compact"]);
+        expect(
+          updated.workspaceSnapshots
+            ?.find((entry) => entry.cwd === "/two")
+            ?.slashCommands.map((command) => command.name),
+        ).toEqual(["compact", "deploy"]);
+      }),
+  );
+});
+
 describe("buildCursorProviderSnapshot", () => {
   it("downgrades ready status to warning when ACP model discovery times out", () => {
     expect(
@@ -492,6 +594,7 @@ describe("buildCursorProviderSnapshot", () => {
       status: "warning",
       message: "Cursor ACP model discovery timed out after 15000ms.",
       models: [],
+      supportsConversationRollback: false,
     });
   });
 
@@ -639,7 +742,7 @@ describe("discoverCursorModelsViaAcp", () => {
           apiEndpoint: "",
           customModels: [],
         };
-        const discover = yield* makeCursorModelDiscovery(settings, {
+        const { discover, invalidate } = yield* makeCursorModelDiscovery(settings, {
           ...process.env,
           T3_ACP_REQUEST_LOG_PATH: requestLogPath,
         });
@@ -652,6 +755,10 @@ describe("discoverCursorModelsViaAcp", () => {
         yield* fileSystem.writeFileString(requestLogPath, "");
         expect(yield* discover(about)).toEqual(first);
         expect(yield* fileSystem.readFileString(requestLogPath)).toBe("");
+        yield* invalidate;
+        expect(yield* discover(about)).toEqual(first);
+        expect(yield* fileSystem.readFileString(requestLogPath)).toContain("initialize");
+        yield* fileSystem.writeFileString(requestLogPath, "");
         yield* discover({ ...about, version: "2026.08.12" });
         expect(yield* fileSystem.readFileString(requestLogPath)).toContain("initialize");
         yield* fileSystem.writeFileString(requestLogPath, "");
@@ -865,5 +972,173 @@ describe("resolveCursorAcpConfigUpdates", () => {
       { configId: "effort", value: "max" },
       { configId: "thinking", value: "false" },
     ]);
+  });
+});
+
+describe("Cursor usage limits", () => {
+  const checkedAt = "2026-09-16T00:00:00.000Z";
+
+  it("uses the advertised percentages and billing-cycle reset", () => {
+    const limits = cursorUsageResponseToLimits(
+      {
+        billingCycleEnd: "1789876386000",
+        planUsage: { totalPercentUsed: 72.4, autoPercentUsed: 69.5, apiPercentUsed: 100 },
+      },
+      checkedAt,
+    );
+    expect(limits.windows).toEqual(
+      expect.arrayContaining([
+        {
+          id: "totalPercentUsed",
+          kind: "monthly",
+          label: "Monthly",
+          usedPercent: 72.4,
+          resetsAt: "2026-09-20T03:53:06.000Z",
+        },
+        {
+          id: "autoPercentUsed",
+          kind: "monthly",
+          label: "Monthly · Auto",
+          usedPercent: 69.5,
+          resetsAt: "2026-09-20T03:53:06.000Z",
+        },
+        {
+          id: "apiPercentUsed",
+          kind: "monthly",
+          label: "Monthly · API",
+          usedPercent: 100,
+          resetsAt: "2026-09-20T03:53:06.000Z",
+        },
+      ]),
+    );
+  });
+
+  it("does not invent unused allowance for absent buckets", () => {
+    expect(cursorUsageResponseToLimits({ planUsage: {} }, checkedAt).unavailable?.reason).toBe(
+      "unsupported",
+    );
+    expect(
+      cursorUsageResponseToLimits({ planUsage: { totalPercentUsed: 0 } }, checkedAt).windows,
+    ).toEqual([{ id: "totalPercentUsed", kind: "monthly", label: "Monthly", usedPercent: 0 }]);
+    expect(
+      cursorUsageResponseToLimits({ planUsage: { totalPercentUsed: 150 } }, checkedAt).windows,
+    ).toEqual([{ id: "totalPercentUsed", kind: "monthly", label: "Monthly", usedPercent: 100 }]);
+  });
+
+  it("reads the instance's credentials and endpoint even when usage enabled is false", async () => {
+    await runNode(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        yield* fs.makeDirectory(path.join(directory, "cursor"));
+        yield* fs.writeFileString(
+          path.join(directory, "cursor", "auth.json"),
+          '{"accessToken":"instance-token"}',
+        );
+        const client = HttpClient.make((request) => {
+          expect(request.url).toBe(
+            "https://cursor.example/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+          );
+          expect(request.method).toBe("POST");
+          expect(request.headers.authorization).toBe("Bearer instance-token");
+          expect(request.headers["connect-protocol-version"]).toBe("1");
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({ enabled: false, planUsage: { totalPercentUsed: 42 } }),
+            ),
+          );
+        });
+        yield* fs.makeDirectory(path.join(directory, ".cursor"));
+        yield* fs.writeFileString(
+          path.join(directory, ".cursor", "auth.json"),
+          '{"accessToken":"instance-token"}',
+        );
+        for (const platform of ["linux", "darwin"] as const) {
+          const limits = yield* readCursorUsageLimits(
+            { apiEndpoint: "https://cursor.example/" },
+            { XDG_CONFIG_HOME: directory, HOME: directory, AGENT_CLI_CREDENTIAL_STORE: "file" },
+          ).pipe(
+            Effect.provideService(HostProcessPlatform, platform),
+            Effect.provideService(HttpClient.HttpClient, client),
+          );
+          expect(limits.windows[0]?.usedPercent).toBe(42);
+        }
+      }).pipe(Effect.scoped),
+    );
+  });
+
+  it("never reads stale files for keychain or memory logins, but accepts an explicit auth token", async () => {
+    for (const platform of ["linux", "darwin"] as const) {
+      for (const token of [undefined, "explicit-token"]) {
+        const limits = await runNode(
+          readCursorUsageLimits(
+            { apiEndpoint: "" },
+            {
+              AGENT_CLI_CREDENTIAL_STORE: platform === "linux" ? "memory" : "default",
+              ...(token ? { CURSOR_AUTH_TOKEN: token } : {}),
+            },
+          ).pipe(
+            Effect.provideService(HostProcessPlatform, platform),
+            Effect.provideService(
+              FileSystem.FileSystem,
+              FileSystem.makeNoop({
+                readFileString: () => Effect.die("must not read an unrelated credential file"),
+              }),
+            ),
+            Effect.provideService(
+              HttpClient.HttpClient,
+              HttpClient.make((request) => {
+                expect(token).toBe("explicit-token");
+                expect(request.headers.authorization).toBe("Bearer explicit-token");
+                return Effect.succeed(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    Response.json({ planUsage: { totalPercentUsed: 10 } }),
+                  ),
+                );
+              }),
+            ),
+          ),
+        );
+        if (token) expect(limits.windows[0]?.usedPercent).toBe(10);
+        else expect(limits.unavailable?.reason).toBe("unsupported");
+      }
+    }
+  });
+
+  it("reports failed requests without exposing credentials or response bodies", async () => {
+    const limits = await runNode(
+      readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_AUTH_TOKEN: "private-token" }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response("private response", { status: 401 }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(limits.unavailable).toEqual({
+      reason: "probeFailed",
+      message: "Cursor could not read usage limits.",
+    });
+  });
+
+  it("does not use a stored login for an explicit API key", async () => {
+    const limits = await runNode(
+      readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_API_KEY: "different-account" }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("must not request usage")),
+        ),
+      ),
+    );
+    expect(limits.unavailable?.reason).toBe("unsupported");
   });
 });

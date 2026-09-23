@@ -1,22 +1,29 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-04T19:10:48Z",
+  "updatedAt": "2026-09-22T21:40:00Z",
+  "compatibility": [
+    {
+      "driver": "opencode",
+      "t3CodeRange": ">=0.0.42",
+      "recommendedRange": ">=1.14.19",
+      "ranges": [{ "range": "<1.14.19", "status": "broken" }]
+    }
+  ],
   "currentModels": {
     "codex": [
       "gpt-6-astra",
-      "gpt-5.6-luna",
-      "gpt-5.6-terra",
-      "gpt-5.6-sol",
+      "gpt-6-luna",
+      "gpt-6-sol",
       "gpt-daybreak-blue-latest",
       "gpt-daybreak-red-latest"
     ],
-    "claudeAgent": ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5"],
+    "claudeAgent": ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5"],
     "antigravity": ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"]
   },
   "providers": {
     "claudeAgent": {
       "defaults": {
-        "chat": "claude-sonnet-5"
+        "chat": "claude-fable-5-1"
       },
       "profiles": {
         "fable-5": {
@@ -33,12 +40,12 @@
                   },
                   {
                     "id": "medium",
-                    "label": "Medium"
+                    "label": "Medium",
+                    "isDefault": true
                   },
                   {
                     "id": "high",
-                    "label": "High",
-                    "isDefault": true
+                    "label": "High"
                   },
                   {
                     "id": "xhigh",
@@ -93,6 +100,48 @@
                 "200k": 200000,
                 "1m": 1000000
               }
+            }
+          }
+        },
+        "opus-5-5": {
+          "capabilities": {
+            "optionDescriptors": [
+              {
+                "id": "effort",
+                "label": "Reasoning",
+                "type": "select",
+                "options": [
+                  { "id": "low", "label": "Low" },
+                  { "id": "medium", "label": "Medium", "isDefault": true },
+                  { "id": "high", "label": "High" },
+                  { "id": "xhigh", "label": "Extra High" },
+                  { "id": "max", "label": "Max" },
+                  {
+                    "id": "ultracode",
+                    "label": "Ultracode",
+                    "description": "xhigh effort plus multi-agent workflow orchestration"
+                  },
+                  { "id": "ultrathink", "label": "Ultrathink" }
+                ],
+                "promptInjectedValues": ["ultrathink"]
+              },
+              { "id": "fastMode", "label": "Fast Mode", "type": "boolean" },
+              {
+                "id": "contextWindow",
+                "label": "Context Window",
+                "type": "select",
+                "options": [
+                  { "id": "200k", "label": "200k" },
+                  { "id": "1m", "label": "1M", "isDefault": true }
+                ]
+              }
+            ]
+          },
+          "adapter": {
+            "claudeCode": {
+              "effortMap": { "ultracode": "xhigh", "ultrathink": null },
+              "modelSuffixes": { "contextWindow": { "1m": "[1m]" } },
+              "contextWindowTokens": { "200k": 200000, "1m": 1000000 }
             }
           }
         },
@@ -555,11 +604,19 @@
       },
       "models": [
         {
+          "slug": "claude-opus-5-5",
+          "name": "Claude Opus 5.5",
+          "aliases": ["opus-5.5", "claude-opus-5.5"],
+          "status": "current",
+          "badge": "new",
+          "profile": "opus-5-5",
+          "adapter": { "claudeCode": { "minVersion": "2.1.280" } }
+        },
+        {
           "slug": "claude-fable-5-1",
           "name": "Claude Fable 5.1",
           "aliases": ["fable", "fable-5.1", "claude-fable-5.1"],
           "status": "current",
-          "badge": "new",
           "profile": "fable-5",
           "adapter": {
             "claudeCode": {

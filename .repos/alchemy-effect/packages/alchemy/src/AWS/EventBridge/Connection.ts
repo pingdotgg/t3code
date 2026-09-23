@@ -102,9 +102,8 @@ export interface ConnectionProps {
  *
  * Connections do not support tags, so ownership is tracked by the
  * deterministic physical name.
- * @resource
- * @section Connecting to APIs
- * @example API-Key Connection
+ * ### Connecting to APIs
+ * **Example:** API-Key Connection
  * ```typescript
  * import * as Redacted from "effect/Redacted";
  *
@@ -119,7 +118,7 @@ export interface ConnectionProps {
  * });
  * ```
  *
- * @example OAuth Client-Credentials Connection
+ * **Example:** OAuth Client-Credentials Connection
  * ```typescript
  * const connection = yield* AWS.EventBridge.Connection("OAuthApi", {
  *   authorizationType: "OAUTH_CLIENT_CREDENTIALS",
@@ -135,6 +134,8 @@ export interface ConnectionProps {
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export interface Connection extends Resource<
   "AWS.EventBridge.Connection",

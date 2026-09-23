@@ -124,11 +124,8 @@ export type Lockdown = Resource<
  * state, `read` scans the zone for an existing rule with the same URL set
  * and reports it as `Unowned`, so the engine refuses to take it over unless
  * `--adopt` (or `adopt(true)`) is set.
- * @resource
- * @product Firewall
- * @category Application Security
- * @section Locking down a URL
- * @example Allow a single office IP to reach an admin panel
+ * ### Locking down a URL
+ * **Example:** Allow a single office IP to reach an admin panel
  * ```typescript
  * yield* Cloudflare.Firewall.Lockdown("AdminLockdown", {
  *   zoneId: zone.zoneId,
@@ -138,7 +135,7 @@ export type Lockdown = Resource<
  * });
  * ```
  *
- * @example Allow a CIDR range across multiple URLs
+ * **Example:** Allow a CIDR range across multiple URLs
  * ```typescript
  * yield* Cloudflare.Firewall.Lockdown("StaffOnly", {
  *   zoneId: zone.zoneId,
@@ -150,8 +147,8 @@ export type Lockdown = Resource<
  * });
  * ```
  *
- * @section Pausing a rule
- * @example Temporarily disable a lockdown without deleting it
+ * ### Pausing a rule
+ * **Example:** Temporarily disable a lockdown without deleting it
  * ```typescript
  * yield* Cloudflare.Firewall.Lockdown("AdminLockdown", {
  *   zoneId: zone.zoneId,
@@ -162,6 +159,10 @@ export type Lockdown = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/waf/tools/zone-lockdown/
+ *
+ * @resource
+ * @product Firewall
+ * @category Application Security
  */
 export const Lockdown = Resource<Lockdown>(LockdownTypeId);
 

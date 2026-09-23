@@ -14,7 +14,7 @@ export interface ElectronAppMetadata {
   readonly runningUnderArm64Translation: boolean;
 }
 
-export class ElectronAppMetadataReadError extends Schema.TaggedErrorClass<ElectronAppMetadataReadError>()(
+export class ElectronAppMetadataReadError extends Schema.TaggedError<ElectronAppMetadataReadError>()(
   "ElectronAppMetadataReadError",
   {
     property: Schema.Literals(["app-version", "app-path"]),
@@ -26,7 +26,7 @@ export class ElectronAppMetadataReadError extends Schema.TaggedErrorClass<Electr
   }
 }
 
-export class ElectronAppWhenReadyError extends Schema.TaggedErrorClass<ElectronAppWhenReadyError>()(
+export class ElectronAppWhenReadyError extends Schema.TaggedError<ElectronAppWhenReadyError>()(
   "ElectronAppWhenReadyError",
   {
     isPackaged: Schema.Boolean,
@@ -64,7 +64,6 @@ export class ElectronApp extends Context.Service<
     ) => Effect.Effect<void>;
     readonly setAppUserModelId: (id: string) => Effect.Effect<void>;
     readonly getAppMetrics: Effect.Effect<ReadonlyArray<Electron.ProcessMetric>>;
-    readonly isDefaultProtocolClient: (protocol: string) => Effect.Effect<boolean>;
     readonly setAsDefaultProtocolClient: (
       protocol: string,
       path?: string,
@@ -98,6 +97,7 @@ const addScopedAppListener = <Args extends ReadonlyArray<unknown>>(
       }),
   ).pipe(Effect.asVoid);
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = ElectronApp.of({
   metadata: Effect.gen(function* () {
     const appVersion = yield* Effect.try({
@@ -165,8 +165,6 @@ export const make = ElectronApp.of({
       Electron.app.setAppUserModelId(id);
     }),
   getAppMetrics: Effect.sync(() => Electron.app.getAppMetrics()),
-  isDefaultProtocolClient: (protocol) =>
-    Effect.sync(() => Electron.app.isDefaultProtocolClient(protocol)),
   setAsDefaultProtocolClient: (protocol, path, args) =>
     Effect.sync(() => {
       if (path === undefined) {
