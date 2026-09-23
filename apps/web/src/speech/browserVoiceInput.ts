@@ -144,7 +144,6 @@ export function createBrowserVoiceInputPlatform(input: {
         }
       } finally {
         clearTimeout(timeout);
-        chunks = [];
         cleanupCapture();
       }
     },

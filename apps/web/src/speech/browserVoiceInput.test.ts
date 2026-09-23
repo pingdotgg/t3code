@@ -29,7 +29,7 @@ import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 
 let worklet: {
   port: {
-    onmessage: ((event: { data: Float32Array }) => void) | null;
+    onmessage: ((event: { data: Float32Array | "stopped" }) => void) | null;
     postMessage: () => void;
     close: () => void;
   };
@@ -37,7 +37,7 @@ let worklet: {
 
 afterEach(() => vi.unstubAllGlobals());
 
-it("starts microphone capture while a streaming model is loading and preserves early audio", async () => {
+it("preserves audio when recording stops before the streaming model is ready", async () => {
   const feed = vi.fn();
   worklet = {
     port: { onmessage: null, postMessage: vi.fn(), close: vi.fn() },
@@ -83,6 +83,9 @@ it("starts microphone capture while a streaming model is loading and preserves e
   worklet.port.onmessage?.({ data: earlyAudio });
 
   expect(feed).not.toHaveBeenCalled();
+  const stopping = platform.recorder.stop();
+  worklet.port.onmessage?.({ data: "stopped" });
+  await stopping;
   mocks.stream.resolve({ feed, finish: async () => "hello" });
   await expect(
     transcription.streaming?.finish({ signal: new AbortController().signal }),
