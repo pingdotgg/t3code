@@ -1094,6 +1094,18 @@ describe("buildThreadFeed", () => {
     expect(activity?.getCopyText().split("\n")[0]).toBe("Read a T3 thread");
   });
 
+  it("uses the CUA action title in the mobile feed", () => {
+    const item: OrchestrationV2TurnItem = {
+      ...base("cua", "2026-09-23T20:20:00.000Z", 1),
+      type: "dynamic_tool",
+      toolName: "cua_repl.js",
+      input: { code: "await game.getAXStateAndScreenshot();", title: "Inspect Saga music screen" },
+    };
+    const feed = buildThreadFeed([projected(item, 0)]);
+    const activity = feed[0]?.type === "activity-group" ? feed[0].activities[0] : null;
+    expect(activity?.summary).toBe("Inspect Saga music screen");
+  });
+
   it("uses canonical T3 orchestration summaries in compact work groups", () => {
     const rows = [
       projected(command("2026-06-20T00:00:01.000Z"), 0),

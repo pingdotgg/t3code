@@ -3482,9 +3482,14 @@ function LiveActivityContent({
       icon={
         iconName ? (
           <span
-            className={
-              failed ? failedToolIconClassName : highlighted ? "text-foreground" : "text-icon-muted"
-            }
+            className={cn(
+              "flex size-4 items-center justify-center",
+              failed
+                ? failedToolIconClassName
+                : highlighted
+                  ? "text-foreground"
+                  : "text-icon-muted",
+            )}
             role={announceFailure ? "img" : undefined}
             aria-label={announceFailure ? "Tool call failed" : undefined}
           >
@@ -4565,7 +4570,7 @@ function ToolActivityIconView(props: {
     <NativeAppToolActivityIcon
       app={props.icon.app}
       fallbackName={props.fallbackName}
-      className={props.className}
+      className={cn(props.className, "size-5")}
       muted={props.muted}
     />
   );
@@ -5008,6 +5013,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const canExpandProjectedItem = canExpand || workEntry.projectedItem !== undefined;
   // Reserve destructive row styling for severe failures, not routine tool errors.
   const iconWrapperClass = cn(
+    "flex size-4 items-center justify-center",
     showWarningIndicator
       ? "text-warning"
       : showDestructiveRowStyle

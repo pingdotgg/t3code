@@ -529,6 +529,37 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it("shows the CUA action title for a retained tool item", () => {
+    const fixture = makeStreamingTimelineFixture();
+    const source = fixture.visibleTurnItems.find((row) => row.item.type === "dynamic_tool")!;
+    if (source.item.type !== "dynamic_tool") throw new Error("Expected tool fixture");
+    const item = {
+      ...source.item,
+      title: null,
+      toolName: "cua_repl.js",
+      input: { code: "await game.getAXStateAndScreenshot();", title: "Inspect Saga music screen" },
+    };
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [{ ...source, item }],
+      optimisticMessages: [],
+    });
+    const work = entries.find((entry) => entry.kind === "work");
+    expect(work?.kind === "work" && workEntryDisplayLabel(work.entry, undefined)).toBe(
+      "Inspect Saga music screen",
+    );
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: entries,
+      isWorking: false,
+      runningRunId: fixture.runId,
+      activeTurnStartedAt: fixture.time(0),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(rows.find((row) => row.kind === "work")).toMatchObject({
+      displayLabel: "Inspect Saga music screen",
+    });
+  });
+
   it("presents project MCP calls and summarizes successful clones through the web timeline", () => {
     const fixture = makeStreamingTimelineFixture();
     const source = fixture.visibleTurnItems.find((row) => row.item.type === "dynamic_tool")!;

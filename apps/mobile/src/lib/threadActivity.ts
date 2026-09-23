@@ -48,6 +48,7 @@ import type {
 import { ThreadId } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
+import { computerUseToolTitle } from "@t3tools/shared/toolActivity";
 import * as DateTime from "effect/DateTime";
 
 export type PendingApproval = ThreadPendingApproval;
@@ -471,7 +472,9 @@ function itemSummary(
   if (item.type === "notification") return item.summary;
   if (item.type === "system_notice") return item.message;
   if (item.type === "compaction") return contextCompactionLabel(item);
-  const title = item.title?.trim();
+  const title =
+    (item.type === "dynamic_tool" ? computerUseToolTitle(item.toolName, item.input) : undefined) ??
+    item.title?.trim();
   if (item.type === "subagent") return formatSubagentDisplayTitle(title || "Subagent");
   if (title) return toolPresentation?.displayName ?? capitalizePhrase(title);
   switch (item.type) {

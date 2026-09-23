@@ -697,6 +697,27 @@ describe("CodexAdapterV2 process spawning", () => {
 });
 
 describe("CodexAdapterV2 dynamic tool projection", () => {
+  it("uses the CUA call title while leaving other MCP titles as tool arguments", () => {
+    const call = {
+      type: "mcpToolCall" as const,
+      id: "inspect",
+      server: "cua_repl",
+      tool: "js",
+      status: "completed" as const,
+      arguments: {
+        code: "await game.getAXStateAndScreenshot();",
+        title: "Inspect Saga music screen",
+      },
+      result: { content: [] },
+    };
+    assert.equal(projectCodexDynamicToolItem(call).title, "Inspect Saga music screen");
+    assert.equal(
+      projectCodexDynamicToolItem({ ...call, arguments: { title: "  " } }).title,
+      undefined,
+    );
+    assert.equal(projectCodexDynamicToolItem({ ...call, server: "github" }).title, undefined);
+  });
+
   it("preserves native browser and app icons alongside MCP tool output", () => {
     const browser = projectCodexDynamicToolItem({
       type: "mcpToolCall",

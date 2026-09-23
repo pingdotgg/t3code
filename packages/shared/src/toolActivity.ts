@@ -14,6 +14,15 @@ function asTrimmedString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+/** CUA's `title` describes the action shown in the activity log. */
+export function computerUseToolTitle(
+  toolName: string | null | undefined,
+  input: unknown,
+): string | undefined {
+  if (toolName !== "cua_repl.js") return undefined;
+  return asTrimmedString(asRecord(input)?.title);
+}
+
 function normalizeCommandValue(value: unknown): string | undefined {
   const direct = asTrimmedString(value);
   if (direct) {

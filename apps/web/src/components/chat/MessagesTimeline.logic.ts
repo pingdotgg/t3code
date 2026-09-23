@@ -48,6 +48,7 @@ import {
   type T3McpToolPresentation,
 } from "@t3tools/shared/t3McpToolPresentation";
 import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
+import { computerUseToolTitle } from "@t3tools/shared/toolActivity";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 
 function timelineEntryRunId(entry: TimelineEntry): RunId | null {
@@ -75,7 +76,10 @@ function singleToolCallLabel(entry: WorkLogEntry): string {
   if (toolPresentation) return toolPresentation.displayName;
   const command = entry.command?.trim();
   if (command) return commandDisplayText(command);
-  const heading = normalizeCompactToolLabel(entry.toolTitle || entry.label);
+  const item = entry.structuredPayload;
+  const title =
+    item?.type === "dynamic_tool" ? computerUseToolTitle(item.toolName, item.input) : null;
+  const heading = normalizeCompactToolLabel(title || entry.toolTitle || entry.label);
   return `${heading.charAt(0).toUpperCase()}${heading.slice(1)}`;
 }
 
@@ -88,6 +92,10 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
   // the retained message instead of a generic error heading.
   const providerRetry =
     entry.projectedItem?.item.type === "error" && entry.projectedItem.item.retry !== undefined;
+  const item = entry.structuredPayload;
+  const title =
+    item?.type === "dynamic_tool" ? computerUseToolTitle(item.toolName, item.input) : null;
+  if (title) return title;
   if (entry.detail && !providerRetry) return entry.detail;
   const [firstPath] = entry.changedFiles ?? [];
   if (firstPath) {

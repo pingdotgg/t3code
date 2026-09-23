@@ -25,6 +25,7 @@ import {
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { computerUseToolTitle } from "@t3tools/shared/toolActivity";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import type {
@@ -428,6 +429,7 @@ export function codexBackgroundCommandDetail(item: {
 
 export interface CodexDynamicToolProjection extends McpToolPresentation {
   readonly toolName: string;
+  readonly title?: string;
   readonly input: unknown;
   readonly output?: unknown;
   readonly status: OrchestrationV2TurnItem["status"];
@@ -469,9 +471,11 @@ export function projectCodexDynamicToolItem(
     item.type === "mcpToolCall"
       ? `${item.server}.${item.tool}`
       : [trimText(item.namespace), item.tool].filter(Boolean).join(".");
+  const title = computerUseToolTitle(toolName, item.arguments);
   const projection: CodexDynamicToolProjection = {
     ...(item.type === "mcpToolCall" ? mcpToolPresentation(item) : {}),
     toolName,
+    ...(title ? { title } : {}),
     input: item.arguments,
     status: codexItemStatus(item.status).turnItem,
   };
@@ -3168,7 +3172,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               nativeItemRef: codexNativeItemRef(item.id),
               parentItemId: null,
               ordinal,
-              title: null,
+              title: projection.title ?? null,
               startedAt: context.startedAt,
               completedAt,
               updatedAt,
