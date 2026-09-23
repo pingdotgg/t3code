@@ -148,6 +148,7 @@ effectIt.effect.each([
         cancelDownload: () => Effect.fail(error),
         updateCustomWords: () => Effect.fail(error),
         updateFillerWordRemoval: () => Effect.fail(error),
+        updateAcceleration: () => Effect.fail(error),
         transcribe: () => Effect.fail(error),
         startStream: Effect.fail(error),
         removeModel: () => Effect.fail(error),
