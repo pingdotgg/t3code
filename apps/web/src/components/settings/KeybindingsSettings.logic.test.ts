@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { DEFAULT_RESOLVED_KEYBINDINGS, parseKeybindingShortcut } from "@t3tools/shared/keybindings";
+
+import { resolveShortcutCommand } from "../../keybindings";
 
 import {
   buildKeybindingRows,
@@ -96,10 +98,15 @@ describe("KeybindingsSettings.logic", () => {
   });
 
   it.each([
+    // US layout: the key's own name, so labels and conflicts match the defaults.
     ["@", "Digit2", "mod+shift+2"],
-    ['"', "Digit2", "mod+shift+2"],
-    ["@", "Quote", "mod+shift+'"],
-  ])("captures %s at %s by physical key", (key, code, expected) => {
+    ["{", "BracketLeft", "mod+shift+["],
+    // Other layouts: the character typed, where the US name would name a different character.
+    ['"', "Digit2", 'mod+shift+"'],
+    ["@", "Quote", "mod+shift+@"],
+    // German ISO: the key left of Return types # unshifted and ' with Shift.
+    ["'", "Backslash", "mod+shift+'"],
+  ])("captures shifted %s at %s", (key, code, expected) => {
     expect(
       keybindingFromKeyboardEvent(
         {
@@ -113,6 +120,69 @@ describe("KeybindingsSettings.logic", () => {
         "MacIntel",
       ),
     ).toBe(expected);
+  });
+
+  it.each([
+    ["#", "Backslash", "mod+#"],
+    ["ü", "BracketLeft", "mod+ü"],
+    ["+", "BracketRight", "mod++"],
+  ])("captures the unshifted layout character %s at %s", (key, code, expected) => {
+    const input = keybindingFromKeyboardEvent(
+      { key, code, metaKey: true, ctrlKey: false, altKey: false, shiftKey: false },
+      "MacIntel",
+    );
+    expect(input).toBe(expected);
+    expect(parseKeybindingShortcut(input!)?.key).toBe(key);
+  });
+
+  it("fires a chord recorded on a German layout from the same key", () => {
+    const pressed = {
+      key: "#",
+      code: "Backslash",
+      metaKey: true,
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+    };
+    const shortcut = parseKeybindingShortcut(keybindingFromKeyboardEvent(pressed, "MacIntel")!)!;
+    expect(
+      resolveShortcutCommand(pressed, [{ command: "chat.new", shortcut }], {
+        platform: "MacIntel",
+      }),
+    ).toBe("chat.new");
+  });
+
+  it("captures the key, not the Option symbol, on macOS", () => {
+    expect(
+      keybindingFromKeyboardEvent(
+        {
+          key: "“",
+          code: "BracketLeft",
+          metaKey: true,
+          ctrlKey: false,
+          altKey: true,
+          shiftKey: false,
+        },
+        "MacIntel",
+      ),
+    ).toBe("mod+alt+[");
+  });
+
+  it("captures US key names for global shortcuts, which Electron names by position", () => {
+    expect(
+      keybindingFromKeyboardEvent(
+        {
+          key: "#",
+          code: "Backslash",
+          metaKey: true,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+        },
+        "MacIntel",
+        { physicalKeys: true },
+      ),
+    ).toBe("mod+\\");
   });
 
   it("captures Latin layout keys instead of their punctuation position", () => {

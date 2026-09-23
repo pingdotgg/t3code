@@ -106,7 +106,9 @@ export function useSnapShotShortcutRecorder({
       }
       return;
     }
-    const input = keybindingFromKeyboardEvent(event, navigator.platform);
+    // Electron names accelerator keys by US position (`#` means Shift+3, `ü` is invalid), so a
+    // global shortcut is recorded by the key's position rather than the character it types.
+    const input = keybindingFromKeyboardEvent(event, navigator.platform, { physicalKeys: true });
     if (!input) return;
     const next = parseKeybindingShortcut(input);
     if (!next) return;
