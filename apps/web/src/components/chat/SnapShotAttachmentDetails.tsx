@@ -163,13 +163,8 @@ export function SnapShotContentsButton({
         </TooltipTrigger>
         <TooltipPopup side={side}>{tooltip}</TooltipPopup>
       </Tooltip>
-      <PopoverPopup
-        side={side}
-        align="center"
-        width="md"
-        viewportClassName="max-h-[min(28rem,70vh)]"
-      >
-        <div className="space-y-2">
+      <PopoverPopup side={side} align="center" width="md">
+        <div className="max-h-[min(28rem,70vh)] space-y-2 overflow-y-auto">
           <PopoverTitle>Accessibility data</PopoverTitle>
           {accessibilityDetails ? (
             <SnapShotAccessibilityData

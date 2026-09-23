@@ -134,7 +134,7 @@ export function PullRequestReactionBar({
           >
             <SmilePlusIcon aria-hidden className="size-3.5" />
           </PopoverTrigger>
-          <PopoverPopup align="start" side="top" viewportClassName="py-2">
+          <PopoverPopup align="start" side="top" padding="compact">
             <div className="flex items-center gap-0.5">
               {PULL_REQUEST_REACTION_ORDER.map((content) => {
                 const reacted =

@@ -775,7 +775,6 @@ export default function DiffPanel({
                 <ComboboxList className="max-h-64 min-w-0 overflow-x-hidden">
                   <ComboboxItem
                     className="w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)]"
-                    contentClassName="w-full min-w-0 overflow-hidden"
                     value={AUTOMATIC_BASE_REF}
                   >
                     <span className="block min-w-0 truncate">Automatic</span>
@@ -788,7 +787,6 @@ export default function DiffPanel({
                       <ComboboxItem
                         key={choice.id}
                         className="w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)]"
-                        contentClassName="w-full min-w-0 overflow-hidden"
                         value={item}
                       >
                         <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_2rem] items-center overflow-hidden">

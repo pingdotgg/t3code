@@ -223,11 +223,7 @@ export function SettingInheritance({
         </TooltipTrigger>
         <TooltipPopup side="top">{overrideSummary}</TooltipPopup>
       </Tooltip>
-      <PopoverPopup
-        align="start"
-        width="md"
-        viewportClassName="p-0 [--viewport-inline-padding:0px]"
-      >
+      <PopoverPopup align="start" width="md" padding="none">
         <div className="divide-y divide-border/60">
           {chains.map(({ target, environment, machine, layers }) => (
             <section
