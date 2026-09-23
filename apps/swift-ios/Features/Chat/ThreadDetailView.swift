@@ -1655,6 +1655,20 @@ enum FeatureComposerDraftRestoration {
     }
 }
 
+enum TranscriptPrefetchIdentity {
+    static func messageIDs(
+        at indexPaths: [IndexPath],
+        snapshotItemIDs: [String],
+        reservedItemIDs: Set<String>
+    ) -> [String] {
+        return indexPaths.compactMap { indexPath in
+            guard snapshotItemIDs.indices.contains(indexPath.item) else { return nil }
+            let itemID = snapshotItemIDs[indexPath.item]
+            return reservedItemIDs.contains(itemID) ? nil : itemID
+        }
+    }
+}
+
 /// A recycled transcript surface. SwiftUI still owns each message's rendering,
 /// while UIKit keeps offscreen messages out of the active view hierarchy.
 private struct FeatureTranscriptCollectionView: UIViewRepresentable {
@@ -2185,8 +2199,16 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             _ collectionView: UICollectionView,
             prefetchItemsAt indexPaths: [IndexPath]
         ) {
-            for indexPath in indexPaths where orderedIDs.indices.contains(indexPath.item) {
-                let messageID = orderedIDs[indexPath.item]
+            guard let dataSource else { return }
+            let messageIDs = TranscriptPrefetchIdentity.messageIDs(
+                at: indexPaths,
+                snapshotItemIDs: dataSource.snapshot().itemIdentifiers,
+                reservedItemIDs: [
+                    FeatureTranscriptCollectionView.loadEarlierID,
+                    FeatureTranscriptCollectionView.workingIndicatorID,
+                ]
+            )
+            for messageID in messageIDs {
                 guard markdownPrefetches[messageID] == nil,
                       let message = messagesByID[messageID],
                       !message.text.isEmpty,
@@ -2217,9 +2239,15 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             _ collectionView: UICollectionView,
             cancelPrefetchingForItemsAt indexPaths: [IndexPath]
         ) {
-            let messageIDs = indexPaths.compactMap { indexPath in
-                orderedIDs.indices.contains(indexPath.item) ? orderedIDs[indexPath.item] : nil
-            }
+            guard let dataSource else { return }
+            let messageIDs = TranscriptPrefetchIdentity.messageIDs(
+                at: indexPaths,
+                snapshotItemIDs: dataSource.snapshot().itemIdentifiers,
+                reservedItemIDs: [
+                    FeatureTranscriptCollectionView.loadEarlierID,
+                    FeatureTranscriptCollectionView.workingIndicatorID,
+                ]
+            )
             cancelMarkdownPrefetches(for: Set(messageIDs))
         }
 
