@@ -10,7 +10,7 @@ const INSPECTOR_PREWARM_DELAY_MS = 350;
 function InspectorContentPane(props: {
   readonly children: ReactNode;
   readonly mounted: boolean;
-  readonly resetKey: string | null;
+  readonly resetKeys: readonly [string | null, string | null];
   readonly visible: boolean;
 }) {
   if (!props.mounted) {
@@ -31,7 +31,7 @@ function InspectorContentPane(props: {
       }}
     >
       <RenderErrorBoundary
-        resetKeys={[props.resetKey]}
+        resetKeys={props.resetKeys}
         renderFallback={(fallback) => (
           <RenderFailureView
             {...fallback}
@@ -50,7 +50,7 @@ export function ThreadInspectorContentStack(props: {
   readonly Files: ComponentType;
   readonly Git: ComponentType;
   readonly mode: ThreadInspectorMode;
-  readonly resetKey: string | null;
+  readonly resetKeys: readonly [string | null, string | null];
   readonly Route?: ComponentType;
 }) {
   const [mountedModes, setMountedModes] = useState<ReadonlySet<ThreadInspectorMode>>(
@@ -93,14 +93,14 @@ export function ThreadInspectorContentStack(props: {
     <View className="flex-1">
       <InspectorContentPane
         mounted={mountedModes.has("files") || props.mode === "files"}
-        resetKey={props.resetKey}
+        resetKeys={props.resetKeys}
         visible={props.mode === "files"}
       >
         <Files />
       </InspectorContentPane>
       <InspectorContentPane
         mounted={mountedModes.has("git") || props.mode === "git"}
-        resetKey={props.resetKey}
+        resetKeys={props.resetKeys}
         visible={props.mode === "git"}
       >
         <Git />
@@ -108,7 +108,7 @@ export function ThreadInspectorContentStack(props: {
       {Route ? (
         <InspectorContentPane
           mounted={mountedModes.has("route") || props.mode === "route"}
-          resetKey={props.resetKey}
+          resetKeys={props.resetKeys}
           visible={props.mode === "route"}
         >
           <Route />
