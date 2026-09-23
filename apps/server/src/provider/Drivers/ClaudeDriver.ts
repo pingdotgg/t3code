@@ -263,6 +263,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         snapshot,
         invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
         snapshotForCwd,
+        snapshotsForCwds: (cwds) =>
+          Effect.forEach(cwds, (cwd) =>
+            snapshotForCwd(cwd).pipe(
+              Effect.map((scopedSnapshot) => [cwd, scopedSnapshot] as const),
+            ),
+          ).pipe(Effect.map((entries) => new Map(entries))),
         adapter,
         textGeneration,
       } satisfies ProviderInstance;

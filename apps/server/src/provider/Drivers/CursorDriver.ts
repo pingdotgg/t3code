@@ -11,7 +11,7 @@
  *
  * @module provider/Drivers/CursorDriver
  */
-import { CursorSettings, ProviderDriverKind } from "@t3tools/contracts";
+import { CursorSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -195,7 +195,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         ),
       );
 
-      const { snapshot, onAvailableCommands, snapshotForCwd } =
+      const { snapshot, onAvailableCommands, snapshotForCwd, updateWorkspaceSkills } =
         yield* makeCursorCommandCatalog(managedSnapshot);
       const adapter = yield* makeCursorAdapter(effectiveConfig, {
         environment: processEnv,
@@ -234,6 +234,26 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
                     }),
                 ),
                 Effect.flatMap((skills) => snapshotForCwd(cwd, skills)),
+              ),
+        // The catalog owns Cursor's workspace snapshots and publishes them
+        // itself, so the rebuild writes there and hands the registry nothing.
+        snapshotsForCwds: (cwds) =>
+          !effectiveConfig.enabled
+            ? Effect.succeed(new Map<string, ServerProvider>())
+            : Effect.forEach(cwds, (cwd) =>
+                probeCursorSkills(cwd, processEnv).pipe(
+                  Effect.map((skills) => [[cwd, skills] as const]),
+                  Effect.catch((cause) =>
+                    Effect.logDebug("Cursor workspace skills rebuild failed", { cwd, cause }).pipe(
+                      Effect.as([]),
+                    ),
+                  ),
+                ),
+              ).pipe(
+                Effect.flatMap((entries) => updateWorkspaceSkills(new Map(entries.flat()))),
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+                Effect.as(new Map<string, ServerProvider>()),
               ),
         adapter,
         textGeneration,

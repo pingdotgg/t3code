@@ -376,6 +376,11 @@ export const ProviderRegistryLive = Layer.effect(
     const workspaceRefreshesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstance, ReadonlySet<string>>
     >(new Map());
+    // The provider `checkedAt` each instance last rebuilt its workspace
+    // snapshots for, so every provider refresh triggers at most one rebuild.
+    const workspaceRebuildsRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, string>>(
+      new Map(),
+    );
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
     >(new Map());
@@ -494,6 +499,68 @@ export const ProviderRegistryLive = Layer.effect(
       return providers;
     });
 
+    /**
+     * Workspace snapshots copy skills from disk when first requested. After a
+     * provider refresh, rebuild the ones older than it in the background so
+     * skills installed since reach the composer without a new request. Only
+     * drivers with a cheap or batched `snapshotsForCwds` take part.
+     */
+    const rebuildWorkspaceSnapshots = Effect.fn("rebuildWorkspaceSnapshots")(function* (
+      instanceId: ProviderInstanceId,
+    ) {
+      const instance = yield* instanceRegistry.getInstance(instanceId);
+      const snapshotsForCwds = instance?.snapshotsForCwds;
+      if (!snapshotsForCwds) return;
+      const provider = (yield* Ref.get(providersRef)).find(
+        (candidate) => candidate.instanceId === instanceId,
+      );
+      if (!provider || !provider.enabled || provider.status === "error") return;
+      const staleCwds = (provider.workspaceSnapshots ?? [])
+        .filter((snapshot) => Date.parse(snapshot.checkedAt) < Date.parse(provider.checkedAt))
+        .map((snapshot) => snapshot.cwd);
+      if (staleCwds.length === 0) return;
+      const claimed = yield* Ref.modify(workspaceRebuildsRef, (rebuilds) =>
+        rebuilds.get(instanceId) === provider.checkedAt
+          ? ([false, rebuilds] as const)
+          : ([true, new Map(rebuilds).set(instanceId, provider.checkedAt)] as const),
+      );
+      if (!claimed) return;
+
+      yield* Effect.gen(function* () {
+        const rebuilt = yield* snapshotsForCwds(staleCwds);
+        if ((yield* instanceRegistry.getInstance(instanceId)) !== instance) return;
+        const [previousProviders, nextProviders] = yield* Ref.modify(
+          providersRef,
+          (currentProviders) => {
+            const nextProviders = currentProviders.map((candidate) => {
+              if (candidate.instanceId !== instanceId) return candidate;
+              let next = candidate;
+              for (const [cwd, scopedSnapshot] of rebuilt) {
+                const held = next.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd);
+                // Skip workspaces evicted or rescanned meanwhile, and unchanged
+                // ones so a rebuild that finds nothing new publishes nothing.
+                if (
+                  scopedSnapshot.status === "error" ||
+                  !held ||
+                  Date.parse(held.checkedAt) > Date.parse(scopedSnapshot.checkedAt) ||
+                  (Equal.equals(held.skills, scopedSnapshot.skills) &&
+                    Equal.equals(held.slashCommands, scopedSnapshot.slashCommands))
+                ) {
+                  continue;
+                }
+                next = upsertProviderWorkspaceSnapshot(next, cwd, scopedSnapshot);
+              }
+              return next;
+            });
+            return [[currentProviders, nextProviders] as const, nextProviders];
+          },
+        );
+        if (haveProvidersChanged(previousProviders, nextProviders)) {
+          yield* PubSub.publish(changesPubSub, nextProviders);
+        }
+      }).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(serviceScope));
+    });
+
     const compatibilityRefreshRunning = yield* Ref.make(false);
     const syncProvider = Effect.fn("syncProvider")(function* (
       provider: ServerProvider,
@@ -502,6 +569,7 @@ export const ProviderRegistryLive = Layer.effect(
       },
     ) {
       const providers = yield* upsertProviders([provider], options);
+      yield* rebuildWorkspaceSnapshots(provider.instanceId);
       // Reclassify the current read model after fetching. Never republish the
       // probe captured before the fetch: a newer health result may have landed.
       if (!(yield* Ref.getAndSet(compatibilityRefreshRunning, true))) {

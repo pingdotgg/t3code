@@ -21,7 +21,7 @@
  *
  * @module provider/Drivers/CodexDriver
  */
-import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
+import { CodexSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -45,6 +45,7 @@ import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
   probeCodexSkillsForCwd,
+  probeCodexSkillsForCwds,
   withCodexAppServerClient,
 } from "../Layers/CodexProvider.ts";
 import { resolveCodexLaunchArgs } from "../Layers/codexLaunchArgs.ts";
@@ -274,6 +275,39 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
                   }),
               ),
             );
+      const snapshotsForCwds = (cwds: ReadonlyArray<string>) => {
+        if (!effectiveConfig.enabled || cwds.length === 0) {
+          return Effect.succeed(new Map<string, ServerProvider>());
+        }
+        return Effect.all([
+          snapshot.getSnapshot,
+          probeCodexSkillsForCwds({
+            binaryPath: effectiveConfig.binaryPath,
+            homePath: effectiveConfig.homePath,
+            launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+            cwds,
+            environment: processEnv,
+          }).pipe(
+            Effect.scoped,
+            Effect.timeout("20 seconds"),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          ),
+        ]).pipe(
+          Effect.map(
+            ([machineSnapshot, skillsByCwd]) =>
+              new Map(
+                [...skillsByCwd].map(
+                  ([cwd, skills]) => [cwd, { ...machineSnapshot, skills }] as const,
+                ),
+              ),
+          ),
+          Effect.catch((cause) =>
+            Effect.logDebug("Codex workspace skills rebuild failed", { cause }).pipe(
+              Effect.as(new Map<string, ServerProvider>()),
+            ),
+          ),
+        );
+      };
 
       // Redemption spends something on the user's account. It serialises on
       // the account (instances sharing a Codex home share the credit), keeps
@@ -346,6 +380,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         enabled,
         snapshot,
         snapshotForCwd,
+        snapshotsForCwds,
         consumeResetCredit,
         adapter,
         textGeneration,

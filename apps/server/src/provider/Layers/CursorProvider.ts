@@ -15,6 +15,7 @@ import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -94,6 +95,29 @@ export const makeCursorCommandCatalog = Effect.fn("makeCursorCommandCatalog")(fu
       skills,
     };
   });
+  /**
+   * Replace the skills of held workspaces in one write, so a rebuild emits at
+   * most one change. Workspaces whose skills are unchanged keep their entry.
+   */
+  const updateWorkspaceSkills = Effect.fn("CursorCommandCatalog.updateWorkspaceSkills")(function* (
+    skillsByCwd: ReadonlyMap<string, ServerProvider["skills"]>,
+  ) {
+    const changedSkills = (entry: {
+      readonly cwd: string;
+      readonly skills: ServerProvider["skills"];
+    }) => {
+      const skills = skillsByCwd.get(entry.cwd);
+      return skills !== undefined && !Equal.equals(skills, entry.skills) ? skills : undefined;
+    };
+    if (!(yield* SubscriptionRef.get(workspaces)).some((entry) => changedSkills(entry))) return;
+    const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    yield* SubscriptionRef.update(workspaces, (entries) =>
+      entries.map((entry) => {
+        const skills = changedSkills(entry);
+        return skills ? { ...entry, checkedAt, skills } : entry;
+      }),
+    );
+  });
   const onAvailableCommands = Effect.fn("CursorCommandCatalog.onAvailableCommands")(function* (
     commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
     cwd: string,
@@ -128,6 +152,7 @@ export const makeCursorCommandCatalog = Effect.fn("makeCursorCommandCatalog")(fu
   return {
     onAvailableCommands,
     snapshotForCwd,
+    updateWorkspaceSkills,
     snapshot: {
       ...provider,
       getSnapshot,

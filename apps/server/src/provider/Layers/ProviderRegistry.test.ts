@@ -1591,6 +1591,132 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }),
       );
 
+      it.effect("rebuilds held workspace snapshots after a provider refresh", () =>
+        Effect.gen(function* () {
+          const driver = ProviderDriverKind.make("claudeAgent");
+          const instanceId = ProviderInstanceId.make("claudeAgent");
+          const initialProvider = {
+            instanceId,
+            driver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const firstSkill = { name: "first", path: "/skills/first/SKILL.md", enabled: true };
+          const installedSkill = {
+            name: "installed",
+            path: "/skills/installed/SKILL.md",
+            enabled: true,
+          };
+          const machineProvider = yield* Ref.make<ServerProvider>(initialProvider);
+          const skillsOnDisk = yield* Ref.make<ServerProvider["skills"]>([firstSkill]);
+          const batchRequests = yield* Ref.make<ReadonlyArray<ReadonlyArray<string>>>([]);
+          const scanCwd = (cwd: string) =>
+            Effect.gen(function* () {
+              const skills = yield* Ref.get(skillsOnDisk);
+              return [cwd, { ...(yield* Ref.get(machineProvider)), skills }] as const;
+            });
+          const instance: ProviderInstance = {
+            instanceId,
+            driverKind: driver,
+            continuationIdentity: {
+              driverKind: driver,
+              continuationKey: "claudeAgent:instance:claudeAgent",
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: driver,
+                    packageName: null,
+                  }),
+                ),
+              getSnapshot: Ref.get(machineProvider),
+              refresh: Ref.get(machineProvider),
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+            },
+            snapshotForCwd: (cwd) => scanCwd(cwd).pipe(Effect.map(([, snapshot]) => snapshot)),
+            snapshotsForCwds: (cwds) =>
+              Ref.update(batchRequests, (requests) => [...requests, cwds]).pipe(
+                Effect.andThen(Effect.forEach(cwds, scanCwd)),
+                Effect.map((entries) => new Map(entries)),
+              ),
+            adapter: {} as ProviderInstance["adapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          };
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (requestedId) =>
+                Effect.succeed(requestedId === instanceId ? instance : undefined),
+              listInstances: Effect.succeed([instance]),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+            },
+          );
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-workspace-rebuild-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/a" });
+            yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/b" });
+
+            yield* Ref.set(skillsOnDisk, [firstSkill, installedSkill]);
+            yield* Ref.set(machineProvider, {
+              ...initialProvider,
+              checkedAt: "2026-06-10T00:05:00.000Z",
+            });
+            const rebuilt = yield* registry.streamChanges.pipe(
+              Stream.filter((providers) =>
+                (providers[0]?.workspaceSnapshots ?? []).every(
+                  (snapshot) => snapshot.skills.length === 2,
+                ),
+              ),
+              Stream.runHead,
+              Effect.forkChild,
+            );
+            yield* Effect.yieldNow;
+            yield* registry.refreshInstance(instanceId);
+
+            const published = yield* Fiber.join(rebuilt);
+            assert.strictEqual(published._tag, "Some");
+            assert.deepStrictEqual(yield* Ref.get(batchRequests), [["/a", "/b"]]);
+            assert.deepStrictEqual(
+              (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((snapshot) => [
+                snapshot.cwd,
+                snapshot.skills,
+              ]),
+              [
+                ["/a", [firstSkill, installedSkill]],
+                ["/b", [firstSkill, installedSkill]],
+              ],
+            );
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
       it.effect("refreshes OpenCode catalogs and preserves other providers", () =>
         Effect.gen(function* () {
           const codexDriver = ProviderDriverKind.make("codex");
