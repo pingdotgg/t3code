@@ -32,6 +32,7 @@ import {
   ModelSelection,
   type ProjectId,
   SourceControlProviderError,
+  type SourceControlProviderKind,
   type SourceControlWritingStyleSettings,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -592,6 +593,22 @@ function parseCustomCommitMessage(raw: string): { subject: string; body: string 
     subject,
     body: rest.join("\n").trim(),
   };
+}
+
+const OPEN_PR_PROBE_LIMIT = 10;
+
+// `gh pr list --head` filters on the head ref name alone and accepts anything, so an
+// `owner:branch` or `remote:branch` selector silently lists zero pull requests
+// while spending a GraphQL call. Git branch names cannot contain ":", and the
+// bare head branch is always among the selectors, so GitHub probes skip them and
+// leave the owner check to matchesBranchHeadContext.
+function probeableHeadSelectors(
+  providerKind: SourceControlProviderKind,
+  headSelectors: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  return providerKind === "github"
+    ? headSelectors.filter((selector) => !selector.includes(":"))
+    : headSelectors;
 }
 
 function appendUnique(values: string[], next: string | null | undefined): void {
@@ -1604,12 +1621,16 @@ export const make = Effect.gen(function* () {
       | "isCrossRepository"
     >,
   ) {
-    for (const headSelector of headContext.headSelectors) {
-      const pullRequests = yield* (yield* sourceControlProvider(cwd)).listChangeRequests({
+    const provider = yield* sourceControlProvider(cwd);
+    const headSelectors = probeableHeadSelectors(provider.kind, headContext.headSelectors);
+    for (const headSelector of headSelectors) {
+      const pullRequests = yield* provider.listChangeRequests({
         cwd,
         headSelector,
         state: "open",
-        limit: 1,
+        // A bare branch name also lists same-named branches on other forks,
+        // so leave room for the owner match below.
+        limit: OPEN_PR_PROBE_LIMIT,
       });
       const normalizedPullRequests = pullRequests.map(toPullRequestInfo);
 
@@ -1634,8 +1655,9 @@ export const make = Effect.gen(function* () {
   ) {
     const parsedByNumber = new Map<number, PullRequestInfo>();
 
-    for (const headSelector of headContext.headSelectors) {
-      const pullRequests = yield* (yield* sourceControlProvider(cwd)).listChangeRequests({
+    const provider = yield* sourceControlProvider(cwd);
+    for (const headSelector of probeableHeadSelectors(provider.kind, headContext.headSelectors)) {
+      const pullRequests = yield* provider.listChangeRequests({
         cwd,
         headSelector,
         state: "all",
