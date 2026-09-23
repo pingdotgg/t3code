@@ -196,12 +196,12 @@ export function ComposerSpeechCancelButton(props: {
         render={
           <Button
             type="button"
-            size="icon-sm"
+            size="icon-sm-pill"
             variant="ghost"
             aria-label={label}
             onPointerDown={(event) => event.preventDefault()}
             onClick={props.onCancel}
-            className="shrink-0 rounded-full"
+            className="shrink-0"
           >
             <XIcon />
           </Button>
@@ -235,7 +235,7 @@ export function ComposerSpeechButton(props: {
             size="icon-sm"
             variant="ghost"
             aria-label={label}
-            aria-disabled={props.disabled}
+            disabled={props.disabled}
             onPointerDown={(event) => event.preventDefault()}
             onClick={() => {
               if (props.disabled) return;
@@ -246,10 +246,7 @@ export function ComposerSpeechButton(props: {
               }
               props.onStart();
             }}
-            className={cn(
-              "relative shrink-0",
-              props.disabled && "cursor-not-allowed opacity-64 hover:bg-transparent!",
-            )}
+            className="relative shrink-0"
           >
             <MicIcon />
           </Button>
@@ -296,12 +293,12 @@ export function ComposerSpeechRecordingPill(props: {
             render={
               <Button
                 type="button"
-                size="icon-sm"
+                size="icon-sm-pill"
                 aria-label={label}
                 disabled={!presentation.confirmEnabled}
                 onPointerDown={(event) => event.preventDefault()}
                 onClick={props.onStop}
-                className="shrink-0 rounded-full"
+                className="shrink-0"
               >
                 {presentation.confirmEnabled ? <CheckIcon /> : <Spinner aria-hidden />}
               </Button>
