@@ -51,6 +51,35 @@ const emitStaleXAiPromptCompleteBeforeSecondHang =
 const emitOverlappingXAiPromptCompleteOutOfOrder =
   process.env.T3_ACP_EMIT_OVERLAPPING_XAI_PROMPT_COMPLETE_OUT_OF_ORDER === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
+const emitElicitation = process.env.T3_ACP_EMIT_ELICITATION === "1";
+const failSetSessionModel = process.env.T3_ACP_FAIL_SET_SESSION_MODEL === "1";
+const hangInitialize = process.env.T3_ACP_HANG_INITIALIZE === "1";
+// Simulates Hermes's active provider having changed since an auth-method id
+// was cached: the first `initialize` offers "stale-method" (which
+// `authenticate` rejects); every later `initialize` offers "fresh-method"
+// (which `authenticate` accepts). A retry spawns a brand new mock process
+// (a fresh probe, then a fresh real session), so "first" is tracked via a
+// counter file on disk — an in-memory counter would reset with every spawn.
+const staleAuthMethodOnce = process.env.T3_ACP_STALE_AUTH_METHOD_ONCE === "1";
+// Every `initialize` offers "stale-method", and `authenticate` never
+// accepts it — simulates a retry that also fails.
+const staleAuthMethodAlways = process.env.T3_ACP_STALE_AUTH_METHOD_ALWAYS === "1";
+const staleAuthMethodStatePath = process.env.T3_ACP_STALE_AUTH_METHOD_STATE_PATH;
+/** True once `authenticate` has rejected "stale-method" at least once (across any prior spawn). */
+function hasRejectedStaleAuthMethod(): boolean {
+  if (!staleAuthMethodStatePath) return false;
+  try {
+    return NodeFS.readFileSync(staleAuthMethodStatePath, "utf8").trim() === "rejected";
+  } catch {
+    return false;
+  }
+}
+function markStaleAuthMethodRejected(): void {
+  if (!staleAuthMethodStatePath) return;
+  NodeFS.writeFileSync(staleAuthMethodStatePath, "rejected", "utf8");
+}
+const emitTrailingDeltaBeforeComplete =
+  process.env.T3_ACP_EMIT_TRAILING_DELTA_BEFORE_COMPLETE === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
@@ -383,6 +412,9 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleInitialize((request) =>
     Effect.gen(function* () {
+      if (hangInitialize) {
+        return yield* Effect.never;
+      }
       if (floodStderr) {
         yield* Effect.promise(
           () =>
@@ -393,6 +425,15 @@ const program = Effect.gen(function* () {
       }
       parameterizedModelPicker =
         request.clientCapabilities?._meta?.parameterizedModelPicker === true;
+      if (staleAuthMethodOnce || staleAuthMethodAlways) {
+        const methodId =
+          staleAuthMethodAlways || !hasRejectedStaleAuthMethod() ? "stale-method" : "fresh-method";
+        return {
+          protocolVersion: 1,
+          agentCapabilities: { loadSession: true, sessionCapabilities: { resume: {} } },
+          authMethods: [{ id: methodId, name: "Mock Auth" }],
+        };
+      }
       if (antigravityProfile) {
         return {
           protocolVersion: 1,
@@ -418,8 +459,19 @@ const program = Effect.gen(function* () {
 
   // Mirrors the real agent: the API key method reads GEMINI_API_KEY from the
   // process environment and rejects when it is missing.
-  yield* agent.handleAuthenticate((request) =>
-    !antigravityProfile || request.methodId === "oauth-personal"
+  yield* agent.handleAuthenticate((request) => {
+    if (staleAuthMethodOnce || staleAuthMethodAlways) {
+      if (request.methodId === "fresh-method") {
+        return Effect.succeed({});
+      }
+      markStaleAuthMethodRejected();
+      return Effect.fail(
+        AcpError.AcpRequestError.invalidParams(
+          `Mock rejected stale auth method '${request.methodId}'.`,
+        ),
+      );
+    }
+    return !antigravityProfile || request.methodId === "oauth-personal"
       ? Effect.succeed({})
       : request.methodId === "gemini-api-key" && process.env.GEMINI_API_KEY
         ? Effect.succeed({})
@@ -427,8 +479,8 @@ const program = Effect.gen(function* () {
             AcpError.AcpRequestError.invalidParams(
               `Mock Antigravity rejected auth method ${request.methodId}.`,
             ),
-          ),
-  );
+          );
+  });
   if (antigravityProfile) {
     yield* agent.handleLogout(() => Effect.succeed({}));
   }
@@ -535,6 +587,12 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionModel((request) =>
     Effect.gen(function* () {
+      if (failSetSessionModel) {
+        // Mirrors Hermes rejecting session/set_model mid-turn with -32603.
+        return yield* AcpError.AcpRequestError.internalError(
+          "Mock: Hermes rejected session/set_model mid-turn.",
+        );
+      }
       if (!modelState().availableModels.some((model) => model.modelId === request.modelId)) {
         return yield* AcpError.AcpRequestError.invalidParams(
           `Unknown mock model id: ${request.modelId}`,
@@ -656,8 +714,43 @@ const program = Effect.gen(function* () {
         yield* Effect.sleep(`${promptDelayMs} millis`);
       }
 
+      // A real agent that received session/cancel while this prompt was
+      // still in flight reports it in the response, not just "end_turn"
+      // regardless — tests exercising cancelBehavior: "wait-for-prompt"
+      // (HermesAdapter's mid-turn steer) rely on this to tell "the real
+      // response arrived" apart from "any response arrived".
+      if (cancelledSessions.delete(requestedSessionId)) {
+        return { stopReason: "cancelled" };
+      }
+
       if (failPrompt) {
         return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
+      }
+
+      if (emitElicitation) {
+        const response = yield* agent.client.elicit({
+          mode: "form",
+          sessionId: requestedSessionId,
+          message: "What's your favorite color?",
+          requestedSchema: {
+            type: "object",
+            properties: {
+              color: { type: "string", title: "Color", enum: ["red", "blue"] },
+            },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              // @effect-diagnostics-next-line preferSchemaOverJson:off -- debug string for test assertions, not a real JSON boundary.
+              text: `elicitation-response:${JSON.stringify(response.action)}`,
+            },
+          },
+        });
+        return { stopReason: "end_turn" };
       }
 
       if (emitStaleXAiPromptCompleteBeforeSecondHang && promptCount === 1) {
@@ -1332,6 +1425,20 @@ const program = Effect.gen(function* () {
           content: { type: "text", text: promptResponseText ?? "hello from mock" },
         },
       });
+
+      if (emitTrailingDeltaBeforeComplete) {
+        // Written to the wire immediately before the prompt response so it
+        // is already queued in the client's event stream by the time
+        // session/prompt resolves — the exact race a settlement path that
+        // clears activeTurnId without first draining that queue would lose.
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "trailing-delta" },
+          },
+        });
+      }
 
       return { stopReason: "end_turn" };
     }),
