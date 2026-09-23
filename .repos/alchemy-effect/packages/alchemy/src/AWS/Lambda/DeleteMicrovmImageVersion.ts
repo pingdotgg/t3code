@@ -13,8 +13,9 @@ export interface DeleteMicrovmImageVersionRequest extends Omit<
  *
  * Bind it to a {@link MicrovmImage} to delete a specific image version (the
  * `imageIdentifier` is injected). Idempotent.
+ * ### Image Versions
+ *
  * @binding
- * @section Image Versions
  */
 export interface DeleteMicrovmImageVersion extends Binding.Service<
   DeleteMicrovmImageVersion,

@@ -1,0 +1,20 @@
+"effect/Arbitrary":
+  replacement: "effect/unstable/arbitrary/Arbitrary"
+  note: "Schema-derived generation moved to the native Arbitrary module. Effect no longer bridges to fast-check."
+"effect/Arbitrary#ArbitraryAnnotation":
+  replacement: "Schema.Annotations.ToArbitrary.Declaration"
+  note: "Arbitrary derivation annotations now live in Schema.Annotations. Attach a toCodecArbitrary declaration callback that returns a Schema Link."
+"effect/Arbitrary#ArbitraryGenerationContext":
+  replacement: "Schema.Annotations.ToArbitrary.DeclarationInput"
+  note: "Native arbitrary callbacks receive DeclarationInput with decoded type-parameter schemas and normalized constraints."
+"effect/Arbitrary#LazyArbitrary":
+  replacement: "effect/unstable/arbitrary/Arbitrary#Arbitrary"
+  note: "The generated-value description is now the native Arbitrary interface from effect/unstable/arbitrary."
+"effect/Arbitrary#make":
+  replacement: "effect/unstable/arbitrary/Arbitrary#schema"
+  note: "Derive a native Arbitrary from a Schema. Effect no longer bridges to fast-check."
+  example: "Arbitrary.schema(schema)"
+"effect/Arbitrary#makeLazy":
+  replacement: "effect/unstable/arbitrary/Arbitrary#schema"
+  note: "Lazy and eager Schema derivation are the same native Arbitrary.schema constructor."
+  example: "Arbitrary.schema(schema)"

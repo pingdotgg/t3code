@@ -21,7 +21,7 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
 
-export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedErrorClass<DesktopBackendObservabilitySettingsReadError>()(
+export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedError<DesktopBackendObservabilitySettingsReadError>()(
   "DesktopBackendObservabilitySettingsReadError",
   {
     settingsPath: Schema.String,
@@ -67,11 +67,13 @@ export class DesktopBackendConfiguration extends Context.Service<
 interface BackendObservabilitySettings {
   readonly otlpTracesUrl: Option.Option<string>;
   readonly otlpMetricsUrl: Option.Option<string>;
+  readonly otlpLogsUrl: Option.Option<string>;
 }
 
 const emptyBackendObservabilitySettings: BackendObservabilitySettings = {
   otlpTracesUrl: Option.none(),
   otlpMetricsUrl: Option.none(),
+  otlpLogsUrl: Option.none(),
 };
 
 const DESKTOP_BACKEND_ENV_NAMES = [
@@ -87,13 +89,23 @@ const DESKTOP_BACKEND_ENV_NAMES = [
   "T3CODE_TAILSCALE_SERVE_PORT",
 ] as const;
 
-// Sensitive env vars that the WSL backend needs but Windows process.env won't
-// forward across the wsl.exe boundary without WSLENV. The dev-server URL is
-// handled separately via a `--dev-url` CLI flag because WSLENV translation of
+// Env vars that the WSL backend needs but Windows process.env won't forward
+// across the wsl.exe boundary without WSLENV. The dev-server URL is handled
+// separately via a `--dev-url` CLI flag because WSLENV translation of
 // URL-shaped values (colons / slashes) is unreliable.
-const WSL_FORWARDED_ENV_NAMES = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"] as const;
+const WSL_FORWARDED_ENV_NAMES = [
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "T3CODE_OTLP_HEADERS",
+  "T3CODE_OTLP_PROTOCOL",
+] as const;
 
 const WSL_SERVER_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+const nodeBinDirOf = (nodePath: string): string => {
+  const lastSlash = nodePath.lastIndexOf("/");
+  return lastSlash > 0 ? nodePath.slice(0, lastSlash) : "/usr/bin";
+};
 
 const backendChildEnvPatch = (): Record<string, string | undefined> =>
   Object.fromEntries(DESKTOP_BACKEND_ENV_NAMES.map((name) => [name, undefined]));
@@ -202,7 +214,24 @@ const readPersistedBackendObservabilitySettings = Effect.gen(function* () {
   return {
     otlpTracesUrl: Option.fromNullishOr(parsed.otlpTracesUrl),
     otlpMetricsUrl: Option.fromNullishOr(parsed.otlpMetricsUrl),
+    otlpLogsUrl: Option.fromNullishOr(parsed.otlpLogsUrl),
   };
+});
+
+// The bootstrap is the only channel that carries an OTLP endpoint to every
+// backend. A Windows-native child inherits the desktop process's env, but a
+// WSL child gets nothing across wsl.exe that WSLENV does not declare, and
+// WSLENV translation of URL-shaped values is unreliable, so the endpoints are
+// deliberately not forwarded that way. Env beats the persisted settings file,
+// matching the precedence resolveServerConfig and DesktopObservability apply.
+const readBackendObservabilitySettings = Effect.gen(function* () {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const persisted = yield* readPersistedBackendObservabilitySettings;
+  return {
+    otlpTracesUrl: Option.orElse(environment.otlpTracesUrl, () => persisted.otlpTracesUrl),
+    otlpMetricsUrl: Option.orElse(environment.otlpMetricsUrl, () => persisted.otlpMetricsUrl),
+    otlpLogsUrl: Option.orElse(environment.otlpLogsUrl, () => persisted.otlpLogsUrl),
+  } satisfies BackendObservabilitySettings;
 });
 
 interface SharedBootstrapInput {
@@ -210,18 +239,34 @@ interface SharedBootstrapInput {
   readonly observabilitySettings: BackendObservabilitySettings;
 }
 
+// What the launch runs inside the distro. The staged runtime is the release's
+// self-contained `t3` executable (Node inside); the mounted server tree is a
+// script that needs the distro's own Node.
+type WslPreflightRuntime =
+  | {
+      readonly kind: "executable";
+      readonly entryPath: string;
+    }
+  | {
+      readonly kind: "node-script";
+      // Absolute path to the node binary the preflight validated after the
+      // shared remote resolver repaired PATH. The launch must use this exact
+      // path so it doesn't fall through to a different/old node than the one
+      // node-pty was probed with.
+      readonly nodePath: string;
+      readonly linuxEntryPath: string;
+    };
+
 interface WslPreflightSuccess {
   readonly _tag: "Ready";
   readonly runningDistro: string;
-  readonly linuxEntryPath: string;
-  // Absolute path to the node binary the preflight validated after the shared
-  // remote resolver repaired PATH. The launch must use this exact path so it
-  // doesn't fall through to a different/old node than the one node-pty was
-  // built against.
-  readonly nodePath: string;
-  // PATH captured from the same login shell after the shared resolver loaded
-  // version managers. The launch forwards this value directly without a shell.
+  readonly windowsEntryPath: string;
+  readonly runtime: WslPreflightRuntime;
+  // PATH captured from the user's login shell. The launch forwards this value
+  // directly without a shell so the server can spawn provider CLIs by name.
   readonly resolvedPath: string;
+  // Identifies the distro-local runtime cache selected from the packaged archive.
+  readonly runtimeId?: string;
 }
 
 interface WslPreflightFailure {
@@ -236,18 +281,35 @@ interface WslPreflightFailure {
 }
 
 const WSL_TRANSIENT_PREFLIGHT_RETRY_LIMIT = 12;
+const WSL_RUNTIME_ARCHIVE_NAME = "wsl-runtime.tar.gz";
+const WSL_RUNTIME_ARCHIVE_HASH_NAME = `${WSL_RUNTIME_ARCHIVE_NAME}.sha256`;
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/i;
+
+const parseWslRuntimeArchiveHash = (value: string): string | null => {
+  const trimmed = value.trim();
+  return SHA256_HEX_PATTERN.test(trimmed) ? trimmed.toLowerCase() : null;
+};
+
+type FailedNodePtyResult = Extract<
+  DesktopWslEnvironment.EnsureWslNodePtyResult,
+  { readonly ok: false }
+>;
 
 const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(function* (input: {
   readonly distro: string | null;
-  readonly windowsEntryPath: string;
-  readonly windowsRepoRoot: string;
+  readonly runtimeArchive: DesktopWslEnvironment.WslRuntimeArchive | null;
   readonly allowBuild: boolean;
 }): Effect.fn.Return<
   WslPreflightSuccess | WslPreflightFailure,
   never,
-  DesktopWslEnvironment.DesktopWslEnvironment | FileSystem.FileSystem
+  | DesktopEnvironment.DesktopEnvironment
+  | DesktopWslEnvironment.DesktopWslEnvironment
+  | DesktopWslServerTree.DesktopWslServerTree
+  | FileSystem.FileSystem
 > {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const wslEnv = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+  const wslServerTree = yield* DesktopWslServerTree.DesktopWslServerTree;
   const fileSystem = yield* FileSystem.FileSystem;
 
   const wslAvailable = yield* wslEnv.isAvailable;
@@ -289,44 +351,128 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     } as const;
   }
 
-  const entryExists = yield* fileSystem
-    .exists(input.windowsEntryPath)
-    .pipe(Effect.orElseSucceed(() => false));
-  if (!entryExists) {
-    return {
-      _tag: "Failed",
-      reason: `missing server entry at ${input.windowsEntryPath}`,
-      fatal: true,
-    } as const;
-  }
-
-  const linuxEntry = yield* wslEnv.windowsToWslPath(runningDistro, input.windowsEntryPath);
-  if (Option.isNone(linuxEntry)) {
-    return {
-      _tag: "Failed",
-      reason: `wslpath conversion failed for ${input.windowsEntryPath}`,
-      fatal: false,
-    } as const;
-  }
-
-  const nodePtyResult = yield* wslEnv.ensureNodePty(runningDistro, input.windowsRepoRoot, {
+  const nodePtyOptions = {
     allowBuild: input.allowBuild,
     nodeEngineRange: serverPackageJson.engines.node,
-  });
-  if (!nodePtyResult.ok) {
-    return {
+  };
+  const failedNodePty = (result: FailedNodePtyResult) =>
+    ({
       _tag: "Failed",
-      reason: `WSL node-pty unavailable: ${nodePtyResult.reason}`,
-      fatal: nodePtyResult.fatal,
-      ...(nodePtyResult.retryLimit === undefined ? {} : { retryLimit: nodePtyResult.retryLimit }),
-    } as const;
+      reason: `WSL node-pty unavailable: ${result.reason}`,
+      fatal: result.fatal,
+      ...(result.retryLimit === undefined ? {} : { retryLimit: result.retryLimit }),
+    }) as const;
+
+  // The mounted server tree is the fallback runtime: the Windows-side copy the
+  // distro reads over /mnt. Slower to launch from, but always installed.
+  const resolveMountedAppRoot = Effect.gen(function* () {
+    const serverTree = yield* wslServerTree.ensure;
+    if (!serverTree.ok) {
+      return { ok: false, reason: serverTree.reason, fatal: serverTree.fatal } as const;
+    }
+    const windowsEntryPath = environment.path.join(serverTree.root, "apps/server/dist/bin.mjs");
+    const entryExists = yield* fileSystem
+      .exists(windowsEntryPath)
+      .pipe(Effect.orElseSucceed(() => false));
+    if (!entryExists) {
+      return {
+        ok: false,
+        reason: `missing server entry at ${windowsEntryPath}`,
+        fatal: true,
+      } as const;
+    }
+    const mountedAppRoot = yield* wslEnv.windowsToWslPath(runningDistro, serverTree.root);
+    return Option.isNone(mountedAppRoot)
+      ? ({
+          ok: false,
+          reason: `wslpath conversion failed for ${serverTree.root}`,
+          fatal: false,
+        } as const)
+      : ({ ok: true, windowsEntryPath, linuxAppRoot: mountedAppRoot.value } as const);
+  });
+
+  // Set once a staged runtime has been ruled out by the probe, and carried
+  // through the mounted attempt: if the mounted tree works the cache is the
+  // broken part and gets invalidated, and if the mounted tree returns its own
+  // fatal verdict the cached reason is the more actionable one to report.
+  // A transient mounted failure is neither — it rules nothing out, so it stays
+  // retryable and the staged verdict waits for an attempt that can answer.
+  let stagedFailure: { readonly runtimeId: string; readonly reason: string } | undefined;
+  const failedStaged = (failure: { readonly reason: string }) =>
+    ({
+      _tag: "Failed",
+      reason: `WSL runtime unavailable: ${failure.reason}`,
+      fatal: true,
+    }) as const;
+
+  if (input.runtimeArchive !== null) {
+    const runtime = yield* wslEnv.prepareRuntime(runningDistro, input.runtimeArchive);
+    if (runtime.ok) {
+      // The staged runtime supplies its own Node and node-pty. Provider PATH
+      // discovery must not require either dependency for runtime readiness.
+      const stagedProbe = yield* wslEnv.probeRuntime(runningDistro, runtime.linuxAppRoot);
+      if (stagedProbe.ok) {
+        yield* wslServerTree.cleanupLegacy;
+        return {
+          _tag: "Ready",
+          runningDistro,
+          windowsEntryPath: environment.backendEntryPath,
+          runtime: { kind: "executable", entryPath: `${runtime.linuxAppRoot}/t3` },
+          resolvedPath: stagedProbe.resolvedPath,
+          runtimeId: input.runtimeArchive.runtimeId,
+        } as const;
+      }
+      yield* Effect.logWarning(
+        "The staged WSL runtime did not start; retrying from the mounted server tree.",
+        { reason: stagedProbe.reason },
+      );
+      stagedFailure = { runtimeId: input.runtimeArchive.runtimeId, reason: stagedProbe.reason };
+    } else {
+      yield* Effect.logWarning(
+        "Could not stage the WSL runtime; launching from the mounted server tree instead.",
+        { reason: runtime.reason },
+      );
+    }
+  }
+
+  const mounted = yield* resolveMountedAppRoot;
+  if (!mounted.ok) {
+    return stagedFailure && mounted.fatal
+      ? failedStaged(stagedFailure)
+      : ({ _tag: "Failed", reason: mounted.reason, fatal: mounted.fatal } as const);
+  }
+
+  const nodePtyResult = yield* wslEnv.ensureNodePty(
+    runningDistro,
+    mounted.linuxAppRoot,
+    nodePtyOptions,
+  );
+  if (!nodePtyResult.ok) {
+    // Substituting the staged verdict for a transient mounted failure would
+    // turn a retryable failure into a fatal one, ending the WSL attempt (and,
+    // in wsl-only mode, persisting Windows) before the slow /mnt path had a
+    // chance to answer and clear the bad cache.
+    return stagedFailure && nodePtyResult.fatal
+      ? failedStaged(stagedFailure)
+      : failedNodePty(nodePtyResult);
+  }
+
+  // The mounted tree runs what the cache could not, so the cache is the broken
+  // copy: revoke its ready marker so the next launch reinstalls it instead of
+  // reusing a tree that has already been proven unloadable.
+  if (stagedFailure) {
+    yield* wslEnv.invalidateRuntime(runningDistro, stagedFailure.runtimeId);
   }
 
   return {
     _tag: "Ready",
     runningDistro,
-    linuxEntryPath: linuxEntry.value,
-    nodePath: nodePtyResult.nodePath,
+    windowsEntryPath: mounted.windowsEntryPath,
+    runtime: {
+      kind: "node-script",
+      nodePath: nodePtyResult.nodePath,
+      linuxEntryPath: `${mounted.linuxAppRoot}/apps/server/dist/bin.mjs`,
+    },
     resolvedPath: nodePtyResult.resolvedPath,
   } as const;
 });
@@ -360,6 +506,10 @@ const buildObservabilityFragment = (observabilitySettings: BackendObservabilityS
   ...Option.match(observabilitySettings.otlpMetricsUrl, {
     onNone: () => ({}),
     onSome: (otlpMetricsUrl) => ({ otlpMetricsUrl }),
+  }),
+  ...Option.match(observabilitySettings.otlpLogsUrl, {
+    onNone: () => ({}),
+    onSome: (otlpLogsUrl) => ({ otlpLogsUrl }),
   }),
 });
 
@@ -430,7 +580,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
 > {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
-  const wslServerTree = yield* DesktopWslServerTree.DesktopWslServerTree;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   // Bind to 0.0.0.0 inside WSL so the backend is reachable both via
   // WSL2's automatic localhost forwarding (wslhost: Windows 127.0.0.1
@@ -467,31 +617,54 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     ...buildObservabilityFragment(input.observabilitySettings),
   };
 
-  // In packaged builds the server tree ships inside resources/server.asar —
-  // an archive FILE the Windows primary reads through ELECTRON_RUN_AS_NODE
-  // (asar-aware). The WSL backend launches plain `wsl.exe -- node`, which
-  // can't read an asar, so materialize (or reuse) the extracted copy of the
-  // sidecar before preflighting. In dev the server tree is the real checkout
-  // directory and ensure returns it unchanged.
-  const serverTree = yield* wslServerTree.ensure;
-  const wslAppRoot = serverTree.ok ? serverTree.root : environment.serverRoot;
-  const wslEntryPath = environment.path.join(wslAppRoot, "apps/server/dist/bin.mjs");
+  // The archive is the primary packaged WSL path: it installs directly into
+  // the distro's ext4 filesystem. The server.asar extraction service is only
+  // consulted lazily if the archive is unavailable or cannot be staged.
+  const archivePath = environment.path.join(environment.resourcesPath, WSL_RUNTIME_ARCHIVE_NAME);
+  const archiveHashPath = environment.path.join(
+    environment.resourcesPath,
+    WSL_RUNTIME_ARCHIVE_HASH_NAME,
+  );
 
-  const preflight = serverTree.ok
-    ? yield* runWslPreflight({
-        distro: input.distro,
-        windowsEntryPath: wslEntryPath,
-        windowsRepoRoot: wslAppRoot,
-        // Packaged builds ship a prebuilt Linux node-pty (built on Linux in CI and
-        // attached to the Windows artifact — see build-desktop-artifact.ts), so the
-        // WSL backend never needs a compiler, node-gyp, or network on first launch.
-        // Compiling from source is a dev-only convenience: a checkout has no shipped
-        // prebuilt, and developers have the toolchain. In packaged builds we instead
-        // surface a clear diagnostic if the prebuilt can't load (unsupported
-        // arch/distro), rather than silently dropping into a fragile runtime build.
-        allowBuild: !environment.isPackaged,
-      })
-    : ({ _tag: "Failed", reason: serverTree.reason, fatal: serverTree.fatal } as const);
+  const hasArchive = environment.isPackaged
+    ? yield* fileSystem.exists(archivePath).pipe(Effect.orElseSucceed(() => false))
+    : false;
+  const archiveHash = hasArchive
+    ? yield* fileSystem.readFileString(archiveHashPath).pipe(
+        Effect.map(parseWslRuntimeArchiveHash),
+        Effect.orElseSucceed(() => null),
+      )
+    : null;
+  if (hasArchive && archiveHash === null) {
+    yield* Effect.logWarning(
+      "Ignoring the WSL runtime archive because its SHA-256 identity is missing or invalid; launching from the mounted server tree instead.",
+      { hashPath: archiveHashPath },
+    );
+  }
+
+  const preflight = yield* runWslPreflight({
+    distro: input.distro,
+    runtimeArchive:
+      archiveHash === null
+        ? null
+        : {
+            windowsPath: archivePath,
+            // The verified archive bytes are the cache identity. Release builds
+            // embed the release version and pnpm install metadata, so the
+            // archive changes on every update even when application logic does
+            // not. Later launches of that update still reuse this directory.
+            runtimeId: `sha256-${archiveHash}`,
+            sha256: archiveHash,
+          },
+    // Packaged builds run the self-contained Linux runtime and, on fallback,
+    // whatever Linux node-pty the mounted tree carries, so the WSL backend never
+    // needs a compiler, node-gyp, or network on first launch. Compiling from
+    // source is a dev-only convenience: a checkout has no Linux binary, and
+    // developers have the toolchain. In packaged builds we instead surface a
+    // clear diagnostic if the binary can't load (unsupported arch/distro),
+    // rather than silently dropping into a fragile runtime build.
+    allowBuild: !environment.isPackaged,
+  });
 
   // Every operation after preflight uses the same concrete distro. In
   // default-tracking mode this closes the race where the system default
@@ -537,7 +710,8 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
 
   const baseConfig = {
     executablePath: "wsl.exe",
-    entryPath: wslEntryPath,
+    entryPath:
+      preflight._tag === "Ready" ? preflight.windowsEntryPath : environment.backendEntryPath,
     cwd: environment.backendCwd,
     env: {
       ...parentEnvWithoutT3Home,
@@ -581,15 +755,23 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
 
   // The WSL server spawns commands its providers reference by name — `npm`/`npx`
   // for provider updates, and the installed CLIs themselves (e.g. `codex`). Those
-  // live in the resolved Node's bin dir, which `wsl.exe -- node` does NOT put on
+  // live on the user's login-shell PATH, which `wsl.exe --exec` does NOT put on
   // the process PATH, so `npm install -g ...` fails with NotFound. Pass the
-  // user PATH entries captured by the login-shell preflight. Every dynamic
-  // value is a separate argv entry under `wsl.exe --exec`; no shell command is
-  // involved, so Windows cannot mangle nested quotes and stdin remains reserved
-  // for the bootstrap envelope.
-  const lastSlash = preflight.nodePath.lastIndexOf("/");
-  const nodeBinDir = lastSlash > 0 ? preflight.nodePath.slice(0, lastSlash) : "/usr/bin";
-  const launchPath = `${nodeBinDir}:${WSL_SERVER_SYSTEM_PATH}:${preflight.resolvedPath}`;
+  // user PATH entries captured by the preflight. Every dynamic value is a
+  // separate argv entry under `wsl.exe --exec`; no shell command is involved,
+  // so Windows cannot mangle nested quotes and stdin remains reserved for the
+  // bootstrap envelope. A node-script runtime additionally leads with the
+  // probed Node's bin dir so the server cannot pick up a different node than
+  // the one node-pty was probed with.
+  const runtime = preflight.runtime;
+  const launchPath =
+    runtime.kind === "executable"
+      ? `${WSL_SERVER_SYSTEM_PATH}:${preflight.resolvedPath}`
+      : `${nodeBinDirOf(runtime.nodePath)}:${WSL_SERVER_SYSTEM_PATH}:${preflight.resolvedPath}`;
+  const command =
+    runtime.kind === "executable"
+      ? [runtime.entryPath]
+      : [runtime.nodePath, runtime.linuxEntryPath];
 
   return {
     ...baseConfig,
@@ -598,16 +780,17 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
       "--exec",
       "env",
       `PATH=${launchPath}`,
-      preflight.nodePath,
-      preflight.linuxEntryPath,
+      ...command,
       "--bootstrap-fd",
       "0",
       ...devUrlArgs,
     ],
     preflightFailure: Option.none(),
+    ...(preflight.runtimeId === undefined ? {} : { wslRuntimeId: preflight.runtimeId }),
   } satisfies DesktopBackendManager.DesktopBackendStartConfig;
 });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -644,7 +827,7 @@ export const make = Effect.gen(function* () {
   // restart cycle without having to bounce the desktop process.
   const sharedInputs = Effect.gen(function* () {
     const bootstrapToken = yield* getOrCreateBootstrapToken;
-    const observabilitySettings = yield* readPersistedBackendObservabilitySettings.pipe(
+    const observabilitySettings = yield* readBackendObservabilitySettings.pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );

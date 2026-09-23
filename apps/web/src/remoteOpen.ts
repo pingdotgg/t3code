@@ -36,8 +36,17 @@ export type RemoteOpenState =
 
 export type RemoteOpenMode = RemoteOpenState["mode"];
 
+export interface RemoteOpenResolution {
+  readonly state: RemoteOpenState;
+  readonly isResolved: boolean;
+}
+
 const LOCAL_EXEC: RemoteOpenState = { mode: "local-exec" };
 const REMOTE_UNAVAILABLE: RemoteOpenState = { mode: "remote-unavailable" };
+const UNRESOLVED_REMOTE_OPEN: RemoteOpenResolution = {
+  state: LOCAL_EXEC,
+  isResolved: false,
+};
 
 function parseHostname(url: string): string | null {
   try {
@@ -87,23 +96,30 @@ export function resolveRemoteOpenState(input: {
   return REMOTE_UNAVAILABLE;
 }
 
-export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteOpenState {
+export function useRemoteOpenResolution(environmentId: EnvironmentId | null): RemoteOpenResolution {
   const { presentation } = useEnvironmentPresentation(environmentId);
 
   return useMemo(() => {
     if (presentation === null) {
-      return LOCAL_EXEC;
+      return UNRESOLVED_REMOTE_OPEN;
     }
     const profile = Option.getOrNull(presentation.entry.profile);
     const sshAlias =
       profile !== null && profile._tag === "SshConnectionProfile" ? profile.target.alias : null;
-    return resolveRemoteOpenState({
-      target: presentation.entry.target,
-      sshAlias,
-      remoteOpenTargets: presentation.serverConfig?.remoteOpenTargets,
-      isDesktopRenderer: window.desktopBridge !== undefined,
-    });
+    return {
+      state: resolveRemoteOpenState({
+        target: presentation.entry.target,
+        sshAlias,
+        remoteOpenTargets: presentation.serverConfig?.remoteOpenTargets,
+        isDesktopRenderer: window.desktopBridge !== undefined,
+      }),
+      isResolved: true,
+    };
   }, [presentation]);
+}
+
+export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteOpenState {
+  return useRemoteOpenResolution(environmentId).state;
 }
 
 /**
@@ -113,10 +129,6 @@ export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteO
 const REMOTE_FALLBACK_EDITORS: ReadonlyArray<EditorId> = ["vscode"];
 
 let cachedProbedEditors: ReadonlyArray<EditorId> | null = null;
-
-export function __resetRemoteEditorProbeForTests(): void {
-  cachedProbedEditors = null;
-}
 
 export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
   const [editors, setEditors] = useState<ReadonlyArray<EditorId>>(

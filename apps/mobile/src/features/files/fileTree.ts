@@ -5,6 +5,7 @@ export interface FileTreeNode {
   readonly path: string;
   readonly name: string;
   readonly kind: ProjectEntry["kind"];
+  readonly ignored?: boolean;
   readonly children: ReadonlyArray<FileTreeNode>;
   readonly searchSegments: ReadonlyArray<string>;
   readonly searchWords: ReadonlyArray<string>;
@@ -19,6 +20,7 @@ interface MutableFileTreeNode {
   path: string;
   name: string;
   kind: ProjectEntry["kind"];
+  ignored?: boolean;
   children: Map<string, MutableFileTreeNode>;
 }
 
@@ -68,6 +70,7 @@ function freezeNode(node: MutableFileTreeNode): FileTreeNode {
     path: node.path,
     name: node.name,
     kind: node.kind,
+    ...(node.ignored ? { ignored: true } : {}),
     children: [...node.children.values()].sort(compareNodes).map(freezeNode),
     searchSegments: searchTerms.segments,
     searchWords: searchTerms.words,
@@ -110,23 +113,12 @@ export function buildFileTree(entries: ReadonlyArray<ProjectEntry>): ReadonlyArr
       } else if (isLeaf) {
         child.kind = entry.kind;
       }
+      if (isLeaf && entry.ignored) child.ignored = true;
       current = child;
     }
   }
 
   return [...root.children.values()].sort(compareNodes).map(freezeNode);
-}
-
-export function countFileNodes(nodes: ReadonlyArray<FileTreeNode>): number {
-  let count = 0;
-  for (const node of nodes) {
-    if (node.kind === "file") {
-      count += 1;
-    } else {
-      count += countFileNodes(node.children);
-    }
-  }
-  return count;
 }
 
 export function defaultExpandedTreePaths(nodes: ReadonlyArray<FileTreeNode>): ReadonlySet<string> {
@@ -204,17 +196,4 @@ export function flattenFileTree(input: {
     flattenNode(output, node, 0, input.expanded, searchTokens);
   }
   return output;
-}
-
-export function firstFilePath(nodes: ReadonlyArray<FileTreeNode>): string | null {
-  for (const node of nodes) {
-    if (node.kind === "file") {
-      return node.path;
-    }
-    const child = firstFilePath(node.children);
-    if (child !== null) {
-      return child;
-    }
-  }
-  return null;
 }

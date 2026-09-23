@@ -13,6 +13,7 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
   pendingCount,
   className,
 }: ComposerPendingApprovalPanelProps) {
+  const Detail = approval.requestKind === "mcp-elicitation" ? "span" : "code";
   const fallbackLabel =
     approval.requestKind === "mcp-elicitation"
       ? "App access approval"
@@ -20,7 +21,9 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
         ? "Command approval"
         : approval.requestKind === "file-read"
           ? "File read approval"
-          : "File change approval";
+          : approval.requestKind === "permission"
+            ? "App permission approval"
+            : "File change approval";
   const detailAriaLabel =
     approval.requestKind === "mcp-elicitation"
       ? "App access request"
@@ -28,32 +31,36 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
         ? "Command"
         : approval.requestKind === "file-read"
           ? "File to read"
-          : "File change";
+          : approval.requestKind === "permission"
+            ? "Permission request"
+            : "File change";
 
   return (
-    <div
+    <span
       aria-label={fallbackLabel}
-      className={cn("flex min-w-0 flex-1 items-center gap-2", className)}
+      className={cn("flex min-w-0 flex-1 flex-col items-start gap-1", className)}
       role="group"
     >
-      {approval.appName ? (
-        <span className="max-w-32 shrink truncate text-[11px] font-medium text-foreground">
-          {approval.appName}
-        </span>
-      ) : null}
-      <code
+      <span className="flex w-full min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
+        <span className="shrink-0 font-medium text-warning">{fallbackLabel}</span>
+        {approval.appName ? <span className="min-w-0 truncate">{approval.appName}</span> : null}
+        {pendingCount > 1 ? (
+          <span className="ml-auto shrink-0 tabular-nums">1/{pendingCount}</span>
+        ) : null}
+      </span>
+      <Detail
         aria-label={detailAriaLabel}
-        className="block max-h-20 min-w-0 flex-1 overflow-auto whitespace-pre font-mono text-[11px] text-foreground/85 [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 [&::-webkit-scrollbar]:h-1.5"
+        className={cn(
+          "block max-h-20 w-full min-w-0 overflow-auto text-xs text-foreground [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 [&::-webkit-scrollbar]:h-1.5",
+          approval.requestKind === "mcp-elicitation"
+            ? "whitespace-pre-wrap font-sans wrap-break-word"
+            : "whitespace-pre font-mono",
+        )}
         data-approval-detail="complete"
         tabIndex={0}
       >
         {approval.detail || fallbackLabel}
-      </code>
-      {pendingCount > 1 ? (
-        <span className="shrink-0 text-[10px] font-medium text-muted-foreground tabular-nums">
-          1/{pendingCount}
-        </span>
-      ) : null}
-    </div>
+      </Detail>
+    </span>
   );
 });

@@ -3,15 +3,17 @@ import type {
   PullRequestCheck,
   PullRequestChecksState,
   PullRequestRef,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 
-import { readLocalApi } from "~/localApi";
+import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { toastManager } from "../ui/toast";
 import {
   PullRequestCheckStatusIcon,
   pullRequestCheckStatusLabel,
@@ -27,9 +29,11 @@ import {
 function LazyChecksBody({
   environmentId,
   reference,
+  threadRef,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
+  threadRef: ScopedThreadRef | null;
 }) {
   const detailQuery = useEnvironmentQuery(
     pullRequestEnvironment.detail({ environmentId, input: reference }),
@@ -44,10 +48,17 @@ function LazyChecksBody({
       </p>
     );
   }
-  return <ChecksBody checks={detailQuery.data.checks} />;
+  return <ChecksBody checks={detailQuery.data.checks} threadRef={threadRef} />;
 }
 
-function ChecksBody({ checks }: { checks: ReadonlyArray<PullRequestCheck> }) {
+function ChecksBody({
+  checks,
+  threadRef,
+}: {
+  checks: ReadonlyArray<PullRequestCheck>;
+  threadRef: ScopedThreadRef | null;
+}) {
+  const openLink = useOpenLink(threadRef);
   if (checks.length === 0) {
     return <p className="text-muted-foreground text-xs">No checks reported</p>;
   }
@@ -65,13 +76,19 @@ function ChecksBody({ checks }: { checks: ReadonlyArray<PullRequestCheck> }) {
             <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
           </Tooltip>
           <span className="shrink-0 text-muted-foreground">
-            {pullRequestCheckStatusLabel(check.status)}
+            {pullRequestCheckStatusLabel(check)}
           </span>
           {check.url === null ? null : (
             <button
               type="button"
               className="shrink-0 text-primary hover:underline"
-              onClick={() => void readLocalApi()?.shell.openExternal(check.url ?? "")}
+              onClick={() => {
+                if (!check.url) return;
+                void openLink(check.url).catch((error: unknown) => {
+                  console.error(error);
+                  toastManager.add({ type: "error", title: "Unable to open check details" });
+                });
+              }}
             >
               Details
             </button>
@@ -92,26 +109,32 @@ function ChecksBody({ checks }: { checks: ReadonlyArray<PullRequestCheck> }) {
 export function PullRequestChecksPopover({
   checksState,
   checks,
+  stale = false,
   environmentId,
   reference,
+  threadRef = null,
   className,
 }: {
   checksState: PullRequestChecksState;
   /** The checks already in hand, for the detail header. Absent on a listing row. */
   checks?: ReadonlyArray<PullRequestCheck>;
+  stale?: boolean;
   environmentId?: EnvironmentId;
   reference?: PullRequestRef;
+  /** Thread the popover sits beside; a listing row has none. */
+  threadRef?: ScopedThreadRef | null;
   className?: string;
 }) {
   const presentation = pullRequestChecksStatePresentation(checksState);
   // Counts beat the rollup's own wording where they are known, the way GitHub's own header reads.
-  const summary = checks === undefined ? null : summarizePullRequestChecks(checks);
+  const summary = checks === undefined || stale ? null : summarizePullRequestChecks(checks);
   return (
     <Popover>
       {/* A listing row is itself a button, so the trigger renders as a span: a nested button is
           not valid inside one. The click is stopped here so opening the checks does not also
           select the row it sits on. */}
       <PopoverTrigger
+        nativeButton={false}
         render={
           <span
             role="button"
@@ -124,13 +147,21 @@ export function PullRequestChecksPopover({
       >
         <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
       </PopoverTrigger>
-      <PopoverPopup align="start" className="w-80 max-w-full" side="bottom">
+      <PopoverPopup align="start" width="md" side="bottom">
         <p className="mb-2 font-medium text-sm">{presentation.label}</p>
         {summary === null ? null : <p className="mb-2 text-muted-foreground text-xs">{summary}</p>}
-        {checks !== undefined ? (
-          <ChecksBody checks={checks} />
+        {stale ? (
+          <p className="text-muted-foreground text-xs">
+            Check details are out of date. Refresh the pull request to update them.
+          </p>
+        ) : checks !== undefined ? (
+          <ChecksBody checks={checks} threadRef={threadRef} />
         ) : environmentId !== undefined && reference !== undefined ? (
-          <LazyChecksBody environmentId={environmentId} reference={reference} />
+          <LazyChecksBody
+            environmentId={environmentId}
+            reference={reference}
+            threadRef={threadRef}
+          />
         ) : null}
       </PopoverPopup>
     </Popover>

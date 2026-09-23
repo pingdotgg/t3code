@@ -48,6 +48,7 @@ export function ThreadSearchMatchExcerpt(props: {
   readonly query: string;
   readonly selected?: boolean;
   readonly compact?: boolean;
+  readonly sidebar?: boolean;
 }) {
   const isUser = props.match.source === "user";
   const parts = splitHighlightParts(props.match.snippet, props.query);
@@ -55,7 +56,11 @@ export function ThreadSearchMatchExcerpt(props: {
     <Text
       className={cn(
         props.compact ? "text-sm" : "text-xs",
-        props.selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
+        props.selected
+          ? "text-thread-selected-foreground-muted"
+          : props.sidebar
+            ? "text-drawer-foreground-muted"
+            : "text-foreground-muted",
       )}
       numberOfLines={1}
     >
@@ -63,10 +68,12 @@ export function ThreadSearchMatchExcerpt(props: {
         className={cn(
           props.compact ? "text-sm font-t3-medium" : "text-xs font-t3-medium",
           props.selected
-            ? "text-user-bubble-foreground"
+            ? "text-thread-selected-foreground"
             : isUser
-              ? "text-blue-500 dark:text-blue-400"
-              : "text-emerald-600 dark:text-emerald-400",
+              ? props.sidebar
+                ? "text-drawer-foreground-muted"
+                : "text-foreground-secondary"
+              : "text-adaptive-emerald-600-400",
         )}
       >
         {isUser ? "You:" : "Agent:"}{" "}
@@ -77,10 +84,14 @@ export function ThreadSearchMatchExcerpt(props: {
             props.compact ? "text-sm" : "text-xs",
             part.highlighted && "font-t3-bold",
             props.selected
-              ? "text-user-bubble-foreground"
+              ? "text-thread-selected-foreground"
               : part.highlighted
-                ? "text-foreground"
-                : "text-foreground-muted",
+                ? props.sidebar
+                  ? "text-drawer-foreground"
+                  : "text-foreground"
+                : props.sidebar
+                  ? "text-drawer-foreground-muted"
+                  : "text-foreground-muted",
           )}
           key={part.start}
         >

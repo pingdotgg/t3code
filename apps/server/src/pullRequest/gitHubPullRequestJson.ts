@@ -3,14 +3,18 @@ import * as Exit from "effect/Exit";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
+  PullRequestStackMembership,
   PullRequestActor,
+  PullRequestPreview,
   PullRequestCheck,
   PullRequestCheckStatus,
   PullRequestChecksState,
   PullRequestComment,
   PullRequestCommit,
+  PullRequestFileViewedState,
   PullRequestLabel,
   PullRequestMergeCapabilities,
+  PullRequestMergeMethod,
   PullRequestOmittedFileStat,
   PullRequestMergeability,
   PullRequestReaction,
@@ -23,9 +27,12 @@ import type {
   PullRequestReviewerCandidate,
   PullRequestReviewerCandidateList,
   PullRequestReviewerKind,
+  PullRequestLabelCandidate,
+  PullRequestLabelCandidateList,
   PullRequestState,
   PullRequestThreadComment,
 } from "@t3tools/contracts";
+import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 import { dedupeChecks } from "./pullRequestChecks.ts";
@@ -35,6 +42,8 @@ import { dedupeChecks } from "./pullRequestChecks.ts";
  * release that adds a conclusion or a review state must not fail the whole payload.
  */
 const RawActorSchema = Schema.Struct({
+  __typename: Schema.optional(Schema.String),
+  is_bot: Schema.optional(Schema.Boolean),
   /**
    * Optional because a review can be requested from a team or a mannequin, which the query has
    * no fragment for and GraphQL answers with an empty object. A reviewer with no login names
@@ -57,6 +66,12 @@ const RawReviewRequestSchema = Schema.Struct({
   login: Schema.optional(Schema.NullOr(Schema.String)),
   slug: Schema.optional(Schema.NullOr(Schema.String)),
   name: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+/** One reviewer's most recent review: the state is all the verdict needs, the author is for who. */
+const RawLatestReviewSchema = Schema.Struct({
+  author: Schema.optional(Schema.NullOr(RawActorSchema)),
+  state: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 const RawCheckSchema = Schema.Struct({
@@ -97,6 +112,7 @@ const RawListItemSchema = Schema.Struct({
   updatedAt: Schema.String,
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   reviewRequests: Schema.optional(Schema.Array(RawReviewRequestSchema)),
+  latestReviews: Schema.optional(Schema.NullOr(Schema.Array(RawLatestReviewSchema))),
   labels: Schema.optional(Schema.Array(RawLabelSchema)),
   /**
    * Every check of the head commit, which is the only rollup `gh pr list --json` can give: there
@@ -108,12 +124,22 @@ const RawListItemSchema = Schema.Struct({
   statusCheckRollup: Schema.optional(Schema.NullOr(Schema.Array(RawCheckSchema))),
 });
 
+const RawStackMembershipSchema = Schema.Struct({
+  stack: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({ number: Schema.Int, size: Schema.Int, baseRefName: Schema.String }),
+    ),
+  ),
+  stackEntry: Schema.optional(Schema.NullOr(Schema.Struct({ position: Schema.Int }))),
+});
+
 /**
  * A search's own answer, which is the listing's row one connection deeper: `gh pr list --json`
  * flattens reviewers and labels, and GraphQL does not. Everything below the row is optional
  * because a node that is not a pull request decodes as an empty object, which is skipped.
  */
 const RawSearchItemSchema = Schema.Struct({
+  ...RawStackMembershipSchema.fields,
   number: Schema.Int,
   title: Schema.String,
   url: Schema.String,
@@ -124,6 +150,9 @@ const RawSearchItemSchema = Schema.Struct({
   isDraft: Schema.optional(Schema.Boolean),
   mergeable: Schema.optional(Schema.NullOr(Schema.String)),
   reviewDecision: Schema.optional(Schema.NullOr(Schema.String)),
+  latestReviews: Schema.optional(
+    Schema.NullOr(Schema.Struct({ nodes: Schema.Array(Schema.NullOr(RawLatestReviewSchema)) })),
+  ),
   createdAt: Schema.String,
   updatedAt: Schema.String,
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
@@ -215,6 +244,13 @@ const RawStatsSchema = Schema.Struct({
         ),
       ),
     ),
+  ),
+});
+
+const RawStackMembershipsSchema = Schema.Struct({
+  data: Schema.Record(
+    Schema.String,
+    Schema.NullOr(Schema.Struct({ pullRequest: Schema.NullOr(RawStackMembershipSchema) })),
   ),
 });
 
@@ -359,17 +395,32 @@ const RawCommitSchema = Schema.Struct({
 
 const RawDetailSchema = Schema.Struct({
   ...RawListItemSchema.fields,
+  /** GitHub's explicit distinction between a fork head and a branch in the base repository. */
+  isCrossRepository: Schema.optional(Schema.Boolean),
   /** Names the fork a pull request came from, which is what qualifies its head ref. */
   headRepositoryOwner: Schema.optional(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
+  /** The exact head revision, used to find workflow runs that GitHub has not started yet. */
+  headRefOid: Schema.optional(Schema.NullOr(Schema.String)),
   body: Schema.optional(Schema.String),
   changedFiles: Schema.optional(Schema.Int),
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
-  /**
-   * The standing instruction to merge once GitHub's own requirements are met, which is an object
-   * describing who armed it and how, and a JSON null where nobody has. Nothing inside it is read:
-   * the question the page asks is whether one exists.
-   */
-  autoMergeRequest: Schema.optional(Schema.NullOr(Schema.Unknown)),
+  /** The standing instruction and strategy GitHub will use once its requirements are met. */
+  autoMergeRequest: Schema.optional(
+    Schema.NullOr(Schema.Struct({ mergeMethod: Schema.optional(Schema.NullOr(Schema.String)) })),
+  ),
+});
+
+const RawWorkflowRunApprovalSchema = Schema.Struct({
+  databaseId: Schema.Int,
+  workflowName: Schema.optional(Schema.NullOr(Schema.String)),
+  url: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+const RawPullRequestHeadSchema = Schema.Struct({
+  number: Schema.Int,
+  headRefOid: Schema.String,
+  isCrossRepository: Schema.optional(Schema.Boolean),
+  headRepositoryOwner: Schema.optional(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
 });
 
 const RawActivitySchema = Schema.Struct({
@@ -444,7 +495,7 @@ const RawReviewThreadsSchema = Schema.Struct({
           ),
         ),
         /**
-         * Reviews for their reactions alone: the words and the verdict arrive with
+         * Reviews for their reactions and actor identity: the words and the verdict arrive with
          * `gh pr view --json reviews`, which reports no reaction of any kind.
          */
         reviews: Schema.optional(
@@ -453,6 +504,7 @@ const RawReviewThreadsSchema = Schema.Struct({
               nodes: Schema.Array(
                 Schema.Struct({
                   id: Schema.optional(Schema.NullOr(Schema.String)),
+                  author: Schema.optional(Schema.NullOr(RawActorSchema)),
                   reactionGroups: RawReactionGroupsSchema,
                 }),
               ),
@@ -472,13 +524,7 @@ const RawReviewThreadsSchema = Schema.Struct({
           ),
         ),
         latestReviews: Schema.optional(
-          Schema.NullOr(
-            Schema.Struct({
-              nodes: Schema.Array(
-                Schema.Struct({ author: Schema.optional(Schema.NullOr(RawActorSchema)) }),
-              ),
-            }),
-          ),
+          Schema.NullOr(Schema.Struct({ nodes: Schema.Array(RawLatestReviewSchema) })),
         ),
         reviewDismissals: Schema.optional(
           Schema.NullOr(
@@ -508,6 +554,9 @@ const RawReviewThreadsSchema = Schema.Struct({
                     committedDate: Schema.optional(Schema.NullOr(Schema.String)),
                     additions: Schema.optional(Schema.Int),
                     deletions: Schema.optional(Schema.Int),
+                    parents: Schema.optional(
+                      Schema.NullOr(Schema.Struct({ totalCount: Schema.optional(Schema.Int) })),
+                    ),
                     authors: Schema.optional(
                       Schema.NullOr(
                         Schema.Struct({
@@ -551,6 +600,62 @@ const RawRepositoryAccessSchema = Schema.Struct({
    */
   viewerPermission: Schema.optional(Schema.NullOr(Schema.String)),
 });
+
+const RawCoreSchema = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      ...RawRepositoryAccessSchema.fields,
+      pullRequest: Schema.Struct({
+        ...RawDetailSchema.fields,
+        ...RawViewerFieldsSchema.fields,
+        viewerCanUpdateBranch: Schema.Boolean,
+        baseRef: Schema.NullOr(
+          Schema.Struct({
+            compare: Schema.NullOr(Schema.Struct({ behindBy: Schema.Int })),
+          }),
+        ),
+        reviewRequests: Schema.Struct({
+          nodes: Schema.Array(
+            Schema.Struct({ requestedReviewer: Schema.NullOr(RawReviewRequestSchema) }),
+          ),
+        }),
+        labels: Schema.Struct({ nodes: Schema.Array(RawLabelSchema) }),
+        commits: Schema.Struct({
+          nodes: Schema.Array(
+            Schema.Struct({
+              commit: Schema.Struct({
+                statusCheckRollup: Schema.NullOr(
+                  Schema.Struct({
+                    contexts: Schema.Struct({
+                      nodes: Schema.Array(
+                        Schema.Struct({
+                          ...RawCheckSchema.fields,
+                          checkSuite: Schema.optional(
+                            Schema.NullOr(
+                              Schema.Struct({
+                                workflowRun: Schema.NullOr(
+                                  Schema.Struct({
+                                    workflow: Schema.NullOr(Schema.Struct({ name: Schema.String })),
+                                  }),
+                                ),
+                              }),
+                            ),
+                          ),
+                        }),
+                      ),
+                      pageInfo: Schema.Struct({ hasNextPage: Schema.Boolean }),
+                    }),
+                  }),
+                ),
+              }),
+            }),
+          ),
+        }),
+      }),
+    }),
+  }),
+});
+const decodeCore = decodeJsonResult(RawCoreSchema);
 
 const RawPullRequestFileSchema = Schema.Struct({
   filename: Schema.String,
@@ -597,9 +702,81 @@ export function decodeActorAvatarsJson(
 }
 
 export const PULL_REQUEST_LIST_JSON_FIELDS =
-  "number,title,url,author,headRefName,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,labels,statusCheckRollup";
+  "number,title,url,author,headRefName,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,latestReviews,labels,statusCheckRollup";
 
-export const PULL_REQUEST_DETAIL_JSON_FIELDS = `${PULL_REQUEST_LIST_JSON_FIELDS},body,changedFiles,closedAt,headRepositoryOwner,autoMergeRequest`;
+export const PULL_REQUEST_DETAIL_JSON_FIELDS = `${PULL_REQUEST_LIST_JSON_FIELDS},body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest`;
+
+/** Pull refs let the comparison share the detail read without first resolving a fork branch. */
+export const PULL_REQUEST_CORE_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!, $headRef: String!) {
+  repository(owner: $owner, name: $name) {
+    mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission
+    pullRequest(number: $number) {
+      number title url body state isDraft mergeable reviewDecision
+      additions deletions changedFiles createdAt updatedAt mergedAt closedAt
+      headRefName baseRefName headRefOid isCrossRepository
+      headRepositoryOwner { login }
+      author { login avatarUrl ... on User { id name } }
+      autoMergeRequest { mergeMethod }
+      viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch
+      baseRef { compare(headRef: $headRef) { behindBy } }
+      reviewRequests(first: 100) {
+        nodes { requestedReviewer { ... on User { login name } ... on Bot { login } ... on Team { slug name } } }
+      }
+      labels(first: 100) { nodes { name color } }
+      commits(last: 1) {
+        nodes { commit { statusCheckRollup { contexts(first: 100) {
+          nodes {
+            __typename
+            ... on StatusContext { context state targetUrl createdAt description }
+            ... on CheckRun {
+              name status conclusion startedAt completedAt detailsUrl
+              checkSuite { workflowRun { workflow { name } } }
+            }
+          }
+          pageInfo { hasNextPage }
+        } } } }
+      }
+    }
+  }
+}`;
+
+export const PULL_REQUEST_PREVIEW_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      number title url state isDraft createdAt
+      author { login avatarUrl ... on User { name } }
+    }
+  }
+}`;
+
+const decodePullRequestPreview = decodeJsonResult(
+  Schema.Struct({
+    data: Schema.Struct({
+      repository: Schema.Struct({
+        pullRequest: Schema.Struct({
+          number: Schema.Int,
+          title: Schema.String,
+          url: Schema.String,
+          state: Schema.String,
+          isDraft: Schema.Boolean,
+          createdAt: Schema.String,
+          author: Schema.NullOr(RawActorSchema),
+        }),
+      }),
+    }),
+  }),
+);
+
+export function decodePullRequestPreviewJson(
+  raw: string,
+): Result.Result<Omit<PullRequestPreview, "projectId" | "repository">, DecodeFailure> {
+  return Result.map(decodePullRequestPreview(raw), ({ data }) => ({
+    ...data.repository.pullRequest,
+    author: toActor(data.repository.pullRequest.author),
+    state: toState(data.repository.pullRequest),
+  }));
+}
+
 export const PULL_REQUEST_ACTIVITY_JSON_FIELDS = "author,comments,reviews,commits";
 
 /** GitHub's own ceiling on a connection page, which is what both thread reads ask for. */
@@ -627,22 +804,24 @@ export const PULL_REQUEST_SEARCH_MAX_ROWS = GRAPHQL_PAGE_SIZE;
  * than twenty labels shows twenty, and one that has asked more than twenty people for a review
  * is already past what a row can say.
  */
-export function pullRequestSearchGraphQlQuery(rows: number): string {
+export function pullRequestSearchGraphQlQuery(rows: number, includeStacks = false): string {
   return `query($q: String!) {
   search(query: $q, type: ISSUE, first: ${Math.min(Math.max(Math.trunc(rows), 1), PULL_REQUEST_SEARCH_MAX_ROWS)}) {
     pageInfo { hasNextPage }
     nodes {
       ... on PullRequest {
+        ${includeStacks ? "stack { number size baseRefName } stackEntry { position }" : ""}
         number
         title
         url
-        author { login avatarUrl ... on User { name } }
+        author { __typename login avatarUrl ... on User { name } }
         headRefName
         baseRefName
         state
         isDraft
         mergeable
         reviewDecision
+        latestReviews(first: 20) { nodes { state author { login } } }
         createdAt
         updatedAt
         mergedAt
@@ -696,28 +875,28 @@ export const REVIEW_THREADS_GRAPHQL_QUERY = `query($owner: String!, $name: Strin
           comments(first: 10) {
             totalCount
             pageInfo { hasNextPage endCursor }
-            nodes { id author { login avatarUrl } body createdAt url ${REACTION_GROUPS_FIELDS} }
+            nodes { id author { __typename login avatarUrl } body createdAt url ${REACTION_GROUPS_FIELDS} }
           }
         }
       }
       viewerCanUpdate
       viewerDidAuthor
-      author { login avatarUrl }
+      author { __typename login avatarUrl }
       ${REACTION_GROUPS_FIELDS}
       comments(first: ${GRAPHQL_PAGE_SIZE}) {
-        nodes { id author { login avatarUrl } ${REACTION_GROUPS_FIELDS} }
+        nodes { id author { __typename login avatarUrl } ${REACTION_GROUPS_FIELDS} }
       }
-      reviews(first: ${GRAPHQL_PAGE_SIZE}) { nodes { id ${REACTION_GROUPS_FIELDS} } }
+      reviews(first: ${GRAPHQL_PAGE_SIZE}) { nodes { id author { __typename login avatarUrl } ${REACTION_GROUPS_FIELDS} } }
       reviewRequests(first: 50) {
         nodes {
           requestedReviewer {
             ... on User { login name avatarUrl }
-            ... on Bot { login avatarUrl }
+            ... on Bot { __typename login avatarUrl }
           }
         }
       }
       latestReviews(first: 50) {
-        nodes { author { login avatarUrl } }
+        nodes { state author { __typename login avatarUrl } }
       }
       reviewDismissals: timelineItems(itemTypes: [REVIEW_DISMISSED_EVENT], first: ${GRAPHQL_PAGE_SIZE}) {
         pageInfo { hasNextPage endCursor }
@@ -731,6 +910,7 @@ export const REVIEW_THREADS_GRAPHQL_QUERY = `query($owner: String!, $name: Strin
             committedDate
             additions
             deletions
+            parents(first: 1) { totalCount }
             authors(first: 3) { nodes { name avatarUrl user { login } } }
           }
         }
@@ -752,7 +932,7 @@ export const REVIEW_THREAD_COMMENTS_GRAPHQL_QUERY = `query($owner: String!, $nam
       pullRequest { id }
       comments(first: ${GRAPHQL_PAGE_SIZE}, after: $cursor) {
         pageInfo { hasNextPage endCursor }
-        nodes { id author { login avatarUrl } body createdAt url ${REACTION_GROUPS_FIELDS} }
+        nodes { id author { __typename login avatarUrl } body createdAt url ${REACTION_GROUPS_FIELDS} }
       }
     }
   }
@@ -879,6 +1059,13 @@ export const UPDATE_PULL_REQUEST_GRAPHQL_MUTATION = `mutation($pullRequestId: ID
   }
 }`;
 
+/** Creates a new pull request that reverses a merged pull request. */
+export const REVERT_PULL_REQUEST_GRAPHQL_MUTATION = `mutation($pullRequestId: ID!) {
+  revertPullRequest(input: { pullRequestId: $pullRequestId }) {
+    revertPullRequest { id }
+  }
+}`;
+
 /**
  * The two comment mutations name their comment differently. The variable is spelled the same in
  * both, so a rewrite sends one set of variables whichever kind of remark it is.
@@ -981,15 +1168,8 @@ export function buildReviewSubmissionJson(input: {
   });
 }
 
-/**
- * `viewerPermission` rides along with the merge settings rather than being asked for on its own:
- * `gh repo view --json` serves both out of the same GraphQL repository object, so the viewer's
- * standing on the repository costs no request of its own.
- */
-export const REPOSITORY_ACCESS_JSON_FIELDS =
-  "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,viewerPermission";
-
 export interface GitHubPullRequestListItem {
+  readonly stack?: PullRequestStackMembership;
   /** The author's node id, kept so a batch can resolve the avatar the listing does not carry. */
   readonly authorId: string | null;
   readonly number: number;
@@ -1016,8 +1196,11 @@ export interface GitHubPullRequestListItem {
 }
 
 export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
+  /** True only when GitHub says the head belongs to another repository. */
+  readonly isCrossRepository?: boolean;
   /** The owner of the head branch's repository; null where `gh` did not say. */
   readonly headRepositoryOwner: string | null;
+  readonly headSha?: string | null;
   readonly body: string;
   readonly changedFiles: number;
   readonly mergedAt: string | null;
@@ -1025,6 +1208,21 @@ export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
   readonly checks: ReadonlyArray<PullRequestCheck>;
   /** Absent where `gh` did not answer for auto-merge at all, which is not the same as off. */
   readonly autoMergeEnabled?: boolean;
+  /** Absent where auto-merge is off or GitHub did not report the stored strategy. */
+  readonly autoMergeMethod?: PullRequestMergeMethod;
+}
+
+export interface GitHubWorkflowRunApproval {
+  readonly id: number;
+  readonly name: string;
+  readonly url: string | null;
+}
+
+export interface GitHubPullRequestHead {
+  readonly number: number;
+  readonly headSha: string;
+  readonly isCrossRepository?: boolean;
+  readonly headRepositoryOwner: string | null;
 }
 
 export interface GitHubPullRequestActivity {
@@ -1067,7 +1265,12 @@ function toActor(raw: Schema.Schema.Type<typeof RawActorSchema> | null | undefin
   const login = trimmed(raw?.login);
   return login === null
     ? null
-    : { login, name: trimmed(raw?.name), avatarUrl: trimmed(raw?.avatarUrl) };
+    : {
+        login,
+        name: trimmed(raw?.name),
+        avatarUrl: trimmed(raw?.avatarUrl),
+        ...(raw?.__typename === "Bot" || raw?.is_bot === true ? { isBot: true } : {}),
+      };
 }
 
 function toCommitActor(
@@ -1112,6 +1315,48 @@ function toMergeability(value: string | null | undefined): PullRequestMergeabili
     default:
       return "unknown";
   }
+}
+
+function toMergeMethod(value: string | null | undefined): PullRequestMergeMethod | undefined {
+  switch (value?.trim().toUpperCase()) {
+    case "MERGE":
+      return "merge";
+    case "SQUASH":
+      return "squash";
+    case "REBASE":
+      return "rebase";
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * GitHub's own `reviewDecision` counts only reviews that satisfy the branch rules, so an
+ * approval from an app (a review bot) or from anyone without the required permission leaves it
+ * empty. The reviewers still said something, and a row should show it: when GitHub reports no
+ * verdict, the latest review per reviewer decides, changes requested outranking approval.
+ */
+function toReviewDecisionWithReviews(
+  value: string | null | undefined,
+  // `gh pr list` hands the reviews as an array; the GraphQL reads hand a connection.
+  latestReviews:
+    | ReadonlyArray<Schema.Schema.Type<typeof RawLatestReviewSchema>>
+    | { readonly nodes: ReadonlyArray<Schema.Schema.Type<typeof RawLatestReviewSchema>> }
+    | null
+    | undefined,
+): PullRequestReviewDecision | null {
+  const summarized = toReviewDecision(value);
+  if (summarized === "approved" || summarized === "changes-requested") return summarized;
+  const reviews =
+    latestReviews === null || latestReviews === undefined
+      ? []
+      : "nodes" in latestReviews
+        ? latestReviews.nodes
+        : latestReviews;
+  const states = new Set(reviews.map((review) => review.state?.trim().toUpperCase() ?? ""));
+  if (states.has("CHANGES_REQUESTED")) return "changes-requested";
+  if (states.has("APPROVED")) return "approved";
+  return summarized;
 }
 
 function toReviewDecision(value: string | null | undefined): PullRequestReviewDecision | null {
@@ -1169,12 +1414,12 @@ function toCheckStatus(raw: Schema.Schema.Type<typeof RawCheckSchema>): PullRequ
   switch ((raw.conclusion ?? raw.state)?.trim().toUpperCase()) {
     case "SUCCESS":
       return "success";
+    case "ACTION_REQUIRED":
+      return "action-required";
     case "FAILURE":
     case "ERROR":
     case "TIMED_OUT":
     case "STARTUP_FAILURE":
-    // A completed check asking for manual intervention is blocking, not neutral.
-    case "ACTION_REQUIRED":
       return "failure";
     case "CANCELLED":
       return "cancelled";
@@ -1236,8 +1481,9 @@ function toCheckEntries(
  * GitHub's own indicator reads: a run that has already gone red will not go green by finishing.
  *
  * Null rather than "passing" for a head commit with no checks at all, so a repository that runs
- * none shows nothing instead of a green tick it never earned. Checks whose verdict is neither a
- * pass, a failure nor a wait — skipped, cancelled, neutral — count towards neither.
+ * none shows nothing instead of a green tick it never earned. A cancelled run is a failure, as
+ * GitHub's own rollup and the client's detail rollup both read it; skipped and neutral count
+ * towards neither, so the row and the detail header never disagree about one head commit.
  *
  * Counted off the deduped checks rather than the raw rollup, so the word and the list under it
  * cannot disagree: the run a re-run replaced is not a verdict twice. A row with no name at all is
@@ -1252,8 +1498,8 @@ function rollupChecksState(
     ...(raw ?? []).filter(isNamelessCheck).map((check) => toCheckStatus(check)),
   ];
   if (statuses.length === 0) return null;
-  if (statuses.includes("failure")) return "failing";
-  if (statuses.includes("pending")) return "pending";
+  if (statuses.includes("failure") || statuses.includes("cancelled")) return "failing";
+  if (statuses.includes("pending") || statuses.includes("action-required")) return "pending";
   return statuses.includes("success") ? "passing" : null;
 }
 
@@ -1279,18 +1525,16 @@ function toComments(raw: {
   readonly comments?: ReadonlyArray<Schema.Schema.Type<typeof RawCommentSchema>> | undefined;
   readonly reviews?: ReadonlyArray<Schema.Schema.Type<typeof RawReviewSchema>> | undefined;
 }): ReadonlyArray<PullRequestComment> {
-  const issueComments = (raw.comments ?? []).map(
-    (comment): PullRequestComment => ({
-      id: comment.id,
-      kind: "issue-comment",
-      author: toActor(comment.author),
-      body: comment.body ?? "",
-      createdAt: comment.createdAt,
-      url: trimmed(comment.url),
-      path: null,
-      reviewState: null,
-    }),
-  );
+  const issueComments = (raw.comments ?? []).map((comment): PullRequestComment => ({
+    id: comment.id,
+    kind: "issue-comment",
+    author: toActor(comment.author),
+    body: comment.body ?? "",
+    createdAt: comment.createdAt,
+    url: trimmed(comment.url),
+    path: null,
+    reviewState: null,
+  }));
   // A review with no body is kept only when its state is the event itself — an approval, a
   // request for changes, a dismissal. GitHub also opens a bodiless `COMMENTED` review as the
   // container for line comments, and those comments are read from the review threads, so
@@ -1348,7 +1592,7 @@ function toListItem(raw: Schema.Schema.Type<typeof RawListItemSchema>): GitHubPu
     state: toState(raw),
     isDraft: raw.isDraft ?? false,
     mergeability: toMergeability(raw.mergeable),
-    reviewDecision: toReviewDecision(raw.reviewDecision),
+    reviewDecision: toReviewDecisionWithReviews(raw.reviewDecision, raw.latestReviews),
     additions: raw.additions ?? 0,
     deletions: raw.deletions ?? 0,
     createdAt: raw.createdAt,
@@ -1361,9 +1605,14 @@ function toListItem(raw: Schema.Schema.Type<typeof RawListItemSchema>): GitHubPu
 }
 
 function toDetail(raw: Schema.Schema.Type<typeof RawDetailSchema>): GitHubPullRequestDetail {
+  const autoMergeMethod = toMergeMethod(raw.autoMergeRequest?.mergeMethod);
   return {
     ...toListItem(raw),
+    ...(typeof raw.isCrossRepository === "boolean"
+      ? { isCrossRepository: raw.isCrossRepository }
+      : {}),
     headRepositoryOwner: trimmed(raw.headRepositoryOwner?.login),
+    headSha: trimmed(raw.headRefOid),
     body: raw.body ?? "",
     changedFiles: raw.changedFiles ?? 0,
     mergedAt: trimmed(raw.mergedAt),
@@ -1374,6 +1623,7 @@ function toDetail(raw: Schema.Schema.Type<typeof RawDetailSchema>): GitHubPullRe
     ...(raw.autoMergeRequest === undefined
       ? {}
       : { autoMergeEnabled: raw.autoMergeRequest !== null }),
+    ...(autoMergeMethod === undefined ? {} : { autoMergeMethod }),
   };
 }
 
@@ -1391,9 +1641,10 @@ const decodeSearch = decodeJsonResult(RawSearchSchema);
 const decodeSearchItem = Schema.decodeUnknownExit(RawSearchItemSchema);
 const decodeStats = decodeJsonResult(RawStatsSchema);
 const decodeDetail = decodeJsonResult(RawDetailSchema);
+const decodeWorkflowRunApprovals = decodeJsonResult(Schema.Array(RawWorkflowRunApprovalSchema));
+const decodePullRequestHeads = decodeJsonResult(Schema.Array(RawPullRequestHeadSchema));
 const decodeActivity = decodeJsonResult(RawActivitySchema);
 const decodeFileEntry = Schema.decodeUnknownExit(RawPullRequestFileSchema);
-const decodeRepositoryAccess = decodeJsonResult(RawRepositoryAccessSchema);
 const decodeReviewThreads = decodeJsonResult(RawReviewThreadsSchema);
 const decodeReviewThreadComments = decodeJsonResult(RawReviewThreadCommentsSchema);
 
@@ -1460,9 +1711,13 @@ export function decodePullRequestSearchJson(
     const node = decodedNode.value;
     const repository = trimmed(node.repository?.nameWithOwner);
     if (repository === null) continue;
+    const stack = toStackMembership(node);
     items.push({
       ...toListItem({
         ...node,
+        latestReviews: (node.latestReviews?.nodes ?? []).flatMap((review) =>
+          review === null ? [] : [review],
+        ),
         reviewRequests: (node.reviewRequests?.nodes ?? []).flatMap((request) => {
           const login = trimmed(request?.requestedReviewer?.login);
           return login === null ? [] : [{ login }];
@@ -1475,6 +1730,7 @@ export function decodePullRequestSearchJson(
           return state === null ? [] : [{ state }];
         }),
       }),
+      ...(stack === undefined ? {} : { stack }),
       repository,
     });
   }
@@ -1483,6 +1739,19 @@ export function decodePullRequestSearchJson(
     rawCount: nodes.length,
     hasNextPage: decoded.success.data.search.pageInfo?.hasNextPage ?? false,
   });
+}
+
+function toStackMembership(
+  raw: Schema.Schema.Type<typeof RawStackMembershipSchema>,
+): PullRequestStackMembership | undefined {
+  return raw.stack && raw.stackEntry
+    ? {
+        number: raw.stack.number,
+        size: raw.stack.size,
+        base: raw.stack.baseRefName,
+        position: raw.stackEntry.position,
+      }
+    : undefined;
 }
 
 /** What a repository selector may hold before it is written into a GraphQL document unquoted. */
@@ -1515,6 +1784,42 @@ export function buildPullRequestStatsGraphQlQuery(
   return `query {\n${selections.join("\n")}\n}`;
 }
 
+/** Stack membership for the visible rows of a per-repository listing. */
+export function buildPullRequestStackMembershipsGraphQlQuery(
+  repository: string,
+  numbers: ReadonlyArray<number>,
+): string | null {
+  if (numbers.length === 0) return null;
+  const [owner, name, ...rest] = repository.trim().split("/");
+  if (rest.length > 0 || owner === undefined || name === undefined) return null;
+  if (!REPOSITORY_PART.test(owner) || !REPOSITORY_PART.test(name)) return null;
+  const selections: string[] = [];
+  for (const [index, number] of numbers.entries()) {
+    if (!Number.isSafeInteger(number) || number <= 0) return null;
+    selections.push(
+      `  s${index}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${number}) { stack { number size baseRefName } stackEntry { position } } }`,
+    );
+  }
+  return `query PullRequestStackMemberships {\n${selections.join("\n")}\n}`;
+}
+
+const decodeStackMemberships = decodeJsonResult(RawStackMembershipsSchema);
+
+export function decodePullRequestStackMembershipsJson(
+  raw: string,
+): Result.Result<ReadonlyMap<number, PullRequestStackMembership>, DecodeFailure> {
+  const decoded = decodeStackMemberships(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const memberships = new Map<number, PullRequestStackMembership>();
+  for (const [alias, value] of Object.entries(decoded.success.data)) {
+    const index = /^s(\d+)$/.exec(alias)?.[1];
+    if (index === undefined || value?.pullRequest == null) continue;
+    const stack = toStackMembership(value.pullRequest);
+    if (stack !== undefined) memberships.set(Number(index), stack);
+  }
+  return Result.succeed(memberships);
+}
+
 /**
  * The counts by the position they were asked in. A repository or a pull request GitHub answered
  * nothing for is simply absent, which leaves the row with whatever it already had.
@@ -1542,6 +1847,177 @@ export function decodePullRequestStatsJson(
   return Result.succeed(stats);
 }
 
+/**
+ * The fields a linked thread keeps current, for many pull requests in one aliased read. Same
+ * shape as the search row where the two overlap: the checks arrive as GitHub's one-word rollup
+ * rather than the whole check list `gh pr view` hands back, which is what keeps a batch cheap.
+ */
+const PULL_REQUEST_SUMMARY_SELECTION =
+  "number title url state isDraft mergeable reviewDecision additions deletions changedFiles " +
+  "updatedAt mergedAt closedAt headRefName baseRefName " +
+  "author { __typename login avatarUrl ... on User { name } } " +
+  "latestReviews(first: 20) { nodes { state author { login } } } " +
+  "commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }";
+
+/**
+ * Summaries for pull requests anywhere on one host, one aliased lookup each. Checked and written
+ * into the document the way `buildPullRequestStatsGraphQlQuery` does, so null means "do not send".
+ */
+export function buildPullRequestSummariesGraphQlQuery(
+  changeRequests: ReadonlyArray<{ readonly repository: string; readonly number: number }>,
+): string | null {
+  if (changeRequests.length === 0) return null;
+  const selections: string[] = [];
+  for (const [index, changeRequest] of changeRequests.entries()) {
+    const [owner, name, ...rest] = changeRequest.repository.trim().split("/");
+    if (rest.length > 0 || owner === undefined || name === undefined) return null;
+    if (!REPOSITORY_PART.test(owner) || !REPOSITORY_PART.test(name)) return null;
+    if (!Number.isSafeInteger(changeRequest.number) || changeRequest.number <= 0) return null;
+    selections.push(
+      `  s${index}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${changeRequest.number}) { ${PULL_REQUEST_SUMMARY_SELECTION} } }`,
+    );
+  }
+  return `query PullRequestSummaries {\n${selections.join("\n")}\n}`;
+}
+
+const RawSummarySchema = Schema.Struct({
+  ...RawSearchItemSchema.fields,
+  changedFiles: Schema.optional(Schema.NullOr(Schema.Int)),
+  additions: Schema.optional(Schema.NullOr(Schema.Int)),
+  deletions: Schema.optional(Schema.NullOr(Schema.Int)),
+  closedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  createdAt: Schema.optional(Schema.String),
+});
+const decodeSummaries = decodeJsonResult(
+  Schema.Struct({
+    data: Schema.optional(
+      Schema.NullOr(
+        Schema.Record(
+          Schema.String,
+          Schema.NullOr(Schema.Struct({ pullRequest: Schema.optional(Schema.Unknown) })),
+        ),
+      ),
+    ),
+  }),
+);
+const decodeSummaryEntry = Schema.decodeUnknownExit(RawSummarySchema);
+
+export interface GitHubPullRequestSummary {
+  readonly number: number;
+  readonly title: string;
+  readonly url: string;
+  readonly headBranch: string;
+  readonly baseBranch: string;
+  readonly state: PullRequestState;
+  readonly isDraft: boolean;
+  readonly closedAt: string | null;
+  readonly mergedAt: string | null;
+  readonly updatedAt: string;
+  readonly author: PullRequestActor | null;
+  readonly additions: number;
+  readonly deletions: number;
+  readonly changedFiles: number;
+  readonly reviewDecision: PullRequestReviewDecision | null;
+  readonly checksState: PullRequestChecksState | null;
+  readonly mergeability: PullRequestMergeability;
+}
+
+/**
+ * Summaries by the position they were asked in. A pull request GitHub answered nothing for, or
+ * one whose fields no longer decode, is absent rather than failing the rest of the batch.
+ */
+export function decodePullRequestSummariesJson(
+  raw: string,
+): Result.Result<ReadonlyMap<number, GitHubPullRequestSummary>, DecodeFailure> {
+  const decoded = decodeSummaries(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const summaries = new Map<number, GitHubPullRequestSummary>();
+  for (const [alias, value] of Object.entries(decoded.success.data ?? {})) {
+    const index = /^s(\d+)$/.exec(alias)?.[1];
+    if (index === undefined || value?.pullRequest == null) continue;
+    const entry = decodeSummaryEntry(value.pullRequest);
+    if (!Exit.isSuccess(entry)) continue;
+    const pr = entry.value;
+    summaries.set(Number(index), {
+      number: pr.number,
+      title: pr.title,
+      url: pr.url,
+      headBranch: pr.headRefName,
+      baseBranch: pr.baseRefName,
+      state: toState(pr),
+      isDraft: pr.isDraft ?? false,
+      closedAt: trimmed(pr.closedAt),
+      mergedAt: trimmed(pr.mergedAt),
+      updatedAt: pr.updatedAt,
+      author: toActor(pr.author),
+      additions: pr.additions ?? 0,
+      deletions: pr.deletions ?? 0,
+      changedFiles: pr.changedFiles ?? 0,
+      reviewDecision: toReviewDecisionWithReviews(
+        pr.reviewDecision,
+        (pr.latestReviews?.nodes ?? []).flatMap((review) => (review === null ? [] : [review])),
+      ),
+      // One enum for the head commit, dressed as a single check like the search row's.
+      checksState: rollupChecksState(
+        (pr.commits?.nodes ?? []).flatMap((commitNode) => {
+          const state = trimmed(commitNode?.commit?.statusCheckRollup?.state);
+          return state === null ? [] : [{ state }];
+        }),
+      ),
+      mergeability: toMergeability(pr.mergeable),
+    });
+  }
+  return Result.succeed(summaries);
+}
+
+export interface GitHubPullRequestCore extends GitHubPullRequestDetail {
+  readonly viewerAccess: GitHubViewerAccess & GitHubRepositoryAccess;
+  readonly comparison: GitHubBaseComparison | null;
+  readonly checksTruncated: boolean;
+}
+
+export function decodePullRequestCoreJson(
+  raw: string,
+): Result.Result<GitHubPullRequestCore, DecodeFailure> {
+  const decoded = decodeCore(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const repository = decoded.success.data.repository;
+  const pr = repository.pullRequest;
+  const contexts = pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts;
+  return Result.succeed({
+    ...toDetail({
+      ...pr,
+      reviewRequests: pr.reviewRequests.nodes.flatMap(({ requestedReviewer }) =>
+        requestedReviewer === null ? [] : [requestedReviewer],
+      ),
+      labels: pr.labels.nodes,
+      statusCheckRollup:
+        contexts?.nodes.map((check) => ({
+          ...check,
+          workflowName: check.checkSuite?.workflowRun?.workflow?.name ?? null,
+        })) ?? [],
+    }),
+    viewerAccess: {
+      canWrite: toCanWrite(repository.viewerPermission),
+      canTriage: toCanTriage(repository.viewerPermission),
+      ...toPullRequestViewerFields(pr),
+      mergeCapabilities: {
+        merge: repository.mergeCommitAllowed,
+        squash: repository.squashMergeAllowed,
+        rebase: repository.rebaseMergeAllowed,
+      },
+    },
+    comparison:
+      pr.state !== "OPEN" || pr.baseRef?.compare == null
+        ? null
+        : {
+            behindBy: pr.baseRef.compare.behindBy,
+            viewerCanUpdate: pr.viewerCanUpdateBranch,
+          },
+    checksTruncated: contexts?.pageInfo.hasNextPage === true,
+  });
+}
+
 export function decodePullRequestDetailJson(
   raw: string,
 ): Result.Result<GitHubPullRequestDetail, DecodeFailure> {
@@ -1549,6 +2025,37 @@ export function decodePullRequestDetailJson(
   return Result.isSuccess(decoded)
     ? Result.succeed(toDetail(decoded.success))
     : Result.fail(decoded.failure);
+}
+
+export function decodeWorkflowRunApprovalsJson(
+  raw: string,
+): Result.Result<ReadonlyArray<GitHubWorkflowRunApproval>, DecodeFailure> {
+  const decoded = decodeWorkflowRunApprovals(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  return Result.succeed(
+    decoded.success.map((run) => ({
+      id: run.databaseId,
+      name: trimmed(run.workflowName) ?? `Workflow run ${run.databaseId}`,
+      url: trimmed(run.url),
+    })),
+  );
+}
+
+export function decodePullRequestHeadsJson(
+  raw: string,
+): Result.Result<ReadonlyArray<GitHubPullRequestHead>, DecodeFailure> {
+  const decoded = decodePullRequestHeads(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  return Result.succeed(
+    decoded.success.map((pullRequest) => ({
+      number: pullRequest.number,
+      headSha: pullRequest.headRefOid,
+      ...(typeof pullRequest.isCrossRepository === "boolean"
+        ? { isCrossRepository: pullRequest.isCrossRepository }
+        : {}),
+      headRepositoryOwner: trimmed(pullRequest.headRepositoryOwner?.login),
+    })),
+  );
 }
 
 export function decodePullRequestActivityJson(
@@ -1585,6 +2092,7 @@ export interface GitHubReviewThreadComments {
    * so an app's avatar arrives the same way a person's does.
    */
   readonly avatarsByLogin: ReadonlyMap<string, string>;
+  readonly botLogins: ReadonlySet<string>;
   /** Per-commit line counts carried by the same bounded pull-request query. */
   readonly commitStats: ReadonlyMap<
     string,
@@ -1623,6 +2131,7 @@ export interface GitHubReviewThreadPage {
   readonly reactionsById: ReadonlyMap<string, ReadonlyArray<PullRequestReaction>>;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly avatarsByLogin: ReadonlyMap<string, string>;
+  readonly botLogins: ReadonlySet<string>;
   readonly commitStats: ReadonlyMap<
     string,
     { readonly additions: number; readonly deletions: number }
@@ -1644,19 +2153,17 @@ export function reviewThreadConversation(
   threads: ReadonlyArray<PullRequestReviewThread>,
 ): ReadonlyArray<PullRequestComment> {
   return threads.flatMap((thread) =>
-    thread.comments.map(
-      (comment): PullRequestComment => ({
-        id: comment.id,
-        kind: "review-comment",
-        author: comment.author,
-        body: comment.body,
-        createdAt: comment.createdAt,
-        url: comment.url,
-        path: thread.path,
-        reviewState: null,
-        reactions: comment.reactions ?? [],
-      }),
-    ),
+    thread.comments.map((comment): PullRequestComment => ({
+      id: comment.id,
+      kind: "review-comment",
+      author: comment.author,
+      body: comment.body,
+      createdAt: comment.createdAt,
+      url: comment.url,
+      path: thread.path,
+      reviewState: null,
+      reactions: comment.reactions ?? [],
+    })),
   );
 }
 
@@ -1762,9 +2269,11 @@ export function decodeReviewThreadsJson(
   });
   const pullRequest = decoded.success.data.repository.pullRequest;
   const avatarsByLogin = new Map<string, string>();
+  const botLogins = new Set<string>();
   for (const raw of [
     pullRequest.author,
     ...(pullRequest.comments?.nodes ?? []).map((node) => node.author),
+    ...(pullRequest.reviews?.nodes ?? []).map((node) => node.author),
     ...(pullRequest.reviewRequests?.nodes ?? []).map((node) => node.requestedReviewer),
     ...(pullRequest.latestReviews?.nodes ?? []).map((node) => node.author),
     ...threads.nodes.flatMap((thread) => thread.comments.nodes.map((comment) => comment.author)),
@@ -1772,6 +2281,7 @@ export function decodeReviewThreadsJson(
     const login = trimmed(raw?.login);
     const avatarUrl = trimmed(raw?.avatarUrl);
     if (login !== null && avatarUrl !== null) avatarsByLogin.set(login, avatarUrl);
+    if (login !== null && toActor(raw)?.isBot) botLogins.add(login);
   }
   const reviewers = new Map<string, PullRequestActor>();
   for (const raw of [
@@ -1788,7 +2298,14 @@ export function decodeReviewThreadsJson(
     const commit = node.commit;
     const oid = trimmed(commit.oid);
     if (oid === null) continue;
-    if (commit.additions !== undefined && commit.deletions !== undefined) {
+    // GitHub measures a merge commit against its first parent, so merging the base into the head
+    // reports every upstream change as if it belonged to the pull request. There is no useful
+    // per-commit stat to show for that integration commit without another comparison request.
+    if (
+      (commit.parents?.totalCount ?? 1) <= 1 &&
+      commit.additions !== undefined &&
+      commit.deletions !== undefined
+    ) {
       commitStats.set(oid, {
         additions: Math.max(0, commit.additions),
         deletions: Math.max(0, commit.deletions),
@@ -1823,6 +2340,7 @@ export function decodeReviewThreadsJson(
     reactionsById,
     reviewers: [...reviewers.values()],
     avatarsByLogin,
+    botLogins,
     commitStats,
     commits,
     viewer: toPullRequestViewerFields(pullRequest),
@@ -1863,7 +2381,7 @@ export function decodeReviewThreadCommentsJson(raw: string): Result.Result<
   });
 }
 
-/** What one `gh repo view` answers: what the repository allows, and where the viewer stands. */
+/** Repository settings returned alongside the pull request viewer permissions. */
 export interface GitHubRepositoryAccess {
   readonly mergeCapabilities: PullRequestMergeCapabilities;
   readonly canWrite: boolean;
@@ -1890,20 +2408,9 @@ function toCanWrite(viewerPermission: string | null | undefined): boolean {
   }
 }
 
-export function decodeRepositoryAccessJson(
-  raw: string,
-): Result.Result<GitHubRepositoryAccess, DecodeFailure> {
-  const decoded = decodeRepositoryAccess(raw);
-  return Result.isSuccess(decoded)
-    ? Result.succeed({
-        mergeCapabilities: {
-          merge: decoded.success.mergeCommitAllowed,
-          squash: decoded.success.squashMergeAllowed,
-          rebase: decoded.success.rebaseMergeAllowed,
-        },
-        canWrite: toCanWrite(decoded.success.viewerPermission),
-      })
-    : Result.fail(decoded.failure);
+/** Triage is the least role GitHub lets label a pull request; it is not a write. */
+function toCanTriage(viewerPermission: string | null | undefined): boolean {
+  return viewerPermission?.trim().toUpperCase() === "TRIAGE" || toCanWrite(viewerPermission);
 }
 
 /**
@@ -2118,6 +2625,99 @@ export function buildReviewerRequestJson(
   });
 }
 
+export const LABEL_CANDIDATES_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    labels(first: ${GRAPHQL_PAGE_SIZE}, orderBy: { field: NAME, direction: ASC }) {
+      pageInfo { hasNextPage }
+      nodes { name color description }
+    }
+    pullRequest(number: $number) {
+      labels(first: ${GRAPHQL_PAGE_SIZE}) { nodes { name } }
+    }
+  }
+}`;
+
+const RawLabelCandidatesSchema = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      labels: Schema.optional(
+        Schema.NullOr(
+          Schema.Struct({
+            pageInfo: Schema.optional(RawPageInfoSchema),
+            nodes: Schema.Array(
+              Schema.NullOr(
+                Schema.Struct({
+                  ...RawLabelSchema.fields,
+                  description: Schema.optional(Schema.NullOr(Schema.String)),
+                }),
+              ),
+            ),
+          }),
+        ),
+      ),
+      /** Null for a number that names no pull request the viewer can see. */
+      pullRequest: Schema.NullOr(
+        Schema.Struct({
+          labels: Schema.optional(
+            Schema.NullOr(Schema.Struct({ nodes: Schema.Array(Schema.NullOr(RawLabelSchema)) })),
+          ),
+        }),
+      ),
+    }),
+  }),
+});
+
+const decodeLabelCandidates = decodeJsonResult(RawLabelCandidatesSchema);
+
+/**
+ * The repository's labels, with the ones already on this pull request marked. A label the pull
+ * request wears that the repository no longer defines — deleted since, or past the page — leads
+ * the list anyway, because a label that cannot be seen cannot be taken off.
+ */
+export function decodeLabelCandidatesJson(
+  raw: string,
+): Result.Result<PullRequestLabelCandidateList, DecodeFailure> {
+  const decoded = decodeLabelCandidates(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const repository = decoded.success.data.repository;
+  const applied = new Set(
+    (repository.pullRequest?.labels?.nodes ?? []).flatMap((label) => {
+      const name = trimmed(label?.name);
+      return name === null ? [] : [name];
+    }),
+  );
+  const candidates = new Map<string, PullRequestLabelCandidate>();
+  for (const node of repository.labels?.nodes ?? []) {
+    const name = trimmed(node?.name);
+    if (name === null) continue;
+    candidates.set(name, {
+      name,
+      color: trimmed(node?.color),
+      description: trimmed(node?.description),
+      isApplied: applied.has(name),
+    });
+  }
+  const missing = [...applied].filter((name) => !candidates.has(name));
+  return Result.succeed({
+    candidates: [
+      ...missing.map((name) => ({ name, color: null, description: null, isApplied: true })),
+      ...candidates.values(),
+    ],
+    truncated: repository.labels?.pageInfo?.hasNextPage === true,
+  });
+}
+
+/** The body of `POST /repos/{owner}/{repo}/issues/{number}/labels`, which adds to what is there. */
+const LabelRequestSchema = Schema.Struct({ labels: Schema.Array(Schema.String) });
+
+const encodeLabelRequest = Schema.encodeSync(Schema.fromJsonString(LabelRequestSchema));
+
+export function buildLabelRequestJson(labels: ReadonlyArray<string>): string {
+  return encodeLabelRequest({ labels });
+}
+
 /**
  * Everything GitHub says about what the signed-in account may do here. `canWrite` is about the
  * repository, the other two about this pull request in particular — which is why an author with
@@ -2125,6 +2725,11 @@ export function buildReviewerRequestJson(
  */
 export interface GitHubViewerAccess {
   readonly canWrite: boolean;
+  /**
+   * The viewer's role reaches triage, which is the least that may label. Everyone who can write
+   * can triage; a triager is the one role that can label without being able to merge.
+   */
+  readonly canTriage: boolean;
   /** GitHub's own `viewerCanUpdate`, true for the author as well as for anyone with write. */
   readonly canUpdate: boolean;
   readonly didAuthor: boolean;
@@ -2136,15 +2741,10 @@ export interface GitHubViewerAccess {
   readonly canUpdateBranch?: boolean;
 }
 
-/**
- * The viewer's standing, asked on its own. Only the write path needs this: reading a pull request
- * already carries the same three fields on calls it was making anyway, and this exists so that a
- * merge or a close is decided by what GitHub says now rather than by what the page was told when
- * it loaded.
- */
+/** Core detail and write checks share one read of permissions and merge settings. */
 export const VIEWER_PERMISSIONS_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
-    viewerPermission
+    mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission
     pullRequest(number: $number) { viewerCanUpdate viewerDidAuthor }
   }
 }`;
@@ -2152,7 +2752,7 @@ export const VIEWER_PERMISSIONS_GRAPHQL_QUERY = `query($owner: String!, $name: S
 const RawViewerPermissionsSchema = Schema.Struct({
   data: Schema.Struct({
     repository: Schema.Struct({
-      viewerPermission: Schema.optional(Schema.NullOr(Schema.String)),
+      ...RawRepositoryAccessSchema.fields,
       /** Null for a number that names no pull request the viewer can see. */
       pullRequest: Schema.NullOr(RawViewerFieldsSchema),
     }),
@@ -2163,14 +2763,20 @@ const decodeViewerPermissions = decodeJsonResult(RawViewerPermissionsSchema);
 
 export function decodeViewerPermissionsJson(
   raw: string,
-): Result.Result<GitHubViewerAccess, DecodeFailure> {
+): Result.Result<GitHubViewerAccess & GitHubRepositoryAccess, DecodeFailure> {
   const decoded = decodeViewerPermissions(raw);
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
   }
   const repository = decoded.success.data.repository;
   return Result.succeed({
+    mergeCapabilities: {
+      merge: repository.mergeCommitAllowed,
+      squash: repository.squashMergeAllowed,
+      rebase: repository.rebaseMergeAllowed,
+    },
     canWrite: toCanWrite(repository.viewerPermission),
+    canTriage: toCanTriage(repository.viewerPermission),
     ...toPullRequestViewerFields(repository.pullRequest),
   });
 }
@@ -2219,16 +2825,21 @@ export function decodePullRequestFilesJson(
     }
     // A rename counts its hunks against the old path, which is the only place it is named.
     const oldPath =
-      status === "renamed" ? (trimmed(value.previous_filename) ?? value.filename) : value.filename;
+      status === "renamed" ? value.previous_filename || value.filename : value.filename;
     const header = [
-      `diff --git a/${oldPath} b/${value.filename}`,
+      `diff --git ${quoteGitPatchPath(`a/${oldPath}`)} ${quoteGitPatchPath(`b/${value.filename}`)}`,
       // The files API reports no file mode, so the ordinary one stands in: the viewer reads
       // these lines as "added" and "removed" rather than for the mode they carry.
       ...(status === "added" ? ["new file mode 100644"] : []),
       ...(status === "removed" ? ["deleted file mode 100644"] : []),
-      ...(status === "renamed" ? [`rename from ${oldPath}`, `rename to ${value.filename}`] : []),
-      `--- ${status === "added" ? "/dev/null" : `a/${oldPath}`}`,
-      `+++ ${status === "removed" ? "/dev/null" : `b/${value.filename}`}`,
+      ...(status === "renamed"
+        ? [
+            `rename from ${quoteGitPatchPath(oldPath)}`,
+            `rename to ${quoteGitPatchPath(value.filename)}`,
+          ]
+        : []),
+      `--- ${status === "added" ? "/dev/null" : quoteGitPatchPath(`a/${oldPath}`)}`,
+      `+++ ${status === "removed" ? "/dev/null" : quoteGitPatchPath(`b/${value.filename}`)}`,
     ].join("\n");
     sections.push(hunks.length === 0 ? `${header}\n` : `${header}\n${hunks.replace(/\n?$/, "\n")}`);
   }
@@ -2237,5 +2848,192 @@ export function decodePullRequestFilesJson(
     truncated,
     rawCount: decoded.success.length,
     omittedFileStats,
+  });
+}
+
+/**
+ * Which files of a pull request the signed-in account has cleared. GraphQL only, since the REST
+ * files endpoint the patch is read from carries no viewed state, so this is a second read rather
+ * than a wider version of the first.
+ */
+export const PULL_REQUEST_FILES_VIEWED_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      files(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes { path viewerViewedState }
+      }
+    }
+  }
+}`;
+
+const RawPullRequestFilesViewedSchema = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.NullOr(
+      Schema.Struct({
+        pullRequest: Schema.NullOr(
+          Schema.Struct({
+            files: Schema.Struct({
+              pageInfo: Schema.Struct({
+                hasNextPage: Schema.Boolean,
+                endCursor: Schema.NullOr(Schema.String),
+              }),
+              nodes: Schema.NullOr(
+                Schema.Array(
+                  Schema.NullOr(
+                    Schema.Struct({
+                      path: Schema.String,
+                      // Decoded as a plain string and narrowed below: a GitHub release that adds
+                      // a fourth state must not fail the whole page.
+                      viewerViewedState: Schema.String,
+                    }),
+                  ),
+                ),
+              ),
+            }),
+          }),
+        ),
+      }),
+    ),
+  }),
+});
+
+const decodePullRequestFilesViewed = decodeJsonResult(RawPullRequestFilesViewedSchema);
+
+export interface GitHubPullRequestFilesViewedPage {
+  readonly files: ReadonlyArray<{
+    readonly path: string;
+    readonly state: PullRequestFileViewedState;
+  }>;
+  /** Where the next page carries on, or null once the host has no more to give. */
+  readonly nextCursor: string | null;
+}
+
+/** Anything this host does not name is treated as unread, which is the state that asks for least. */
+function toFileViewedState(raw: string): PullRequestFileViewedState {
+  switch (raw.trim().toUpperCase()) {
+    case "VIEWED":
+      return "viewed";
+    case "DISMISSED":
+      return "dismissed";
+    default:
+      return "unviewed";
+  }
+}
+
+export function decodePullRequestFilesViewedJson(
+  raw: string,
+): Result.Result<GitHubPullRequestFilesViewedPage, DecodeFailure> {
+  const decoded = decodePullRequestFilesViewed(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const files = decoded.success.data.repository?.pullRequest?.files;
+  if (files === undefined) return Result.succeed({ files: [], nextCursor: null });
+  return Result.succeed({
+    files: (files.nodes ?? []).flatMap((node) =>
+      node === null || node.path.length === 0
+        ? []
+        : [{ path: node.path, state: toFileViewedState(node.viewerViewedState) }],
+    ),
+    nextCursor: files.pageInfo.hasNextPage ? files.pageInfo.endCursor : null,
+  });
+}
+
+/**
+ * One document that clears and restores as many files as the reader ticked, rather than one
+ * request each. GitHub has no bulk form of `markFileAsViewed`/`unmarkFileAsViewed`, which each
+ * take a single path, so the batching is done with aliases; top-level mutation fields run in
+ * write order, so the last word about a path is the one that sticks.
+ *
+ * Paths travel as variables rather than interpolated into the document, since a path is data
+ * and a document is not.
+ */
+export function buildSetFilesViewedGraphQlMutation(
+  files: ReadonlyArray<{ readonly path: string; readonly viewed: boolean }>,
+): { readonly query: string; readonly variables: Readonly<Record<string, string>> } | null {
+  if (files.length === 0) return null;
+  const parameters = files.map((_, index) => `$path${index}: String!`).join(", ");
+  const fields = files
+    .map(
+      (file, index) =>
+        `  f${index}: ${file.viewed ? "markFileAsViewed" : "unmarkFileAsViewed"}(input: { pullRequestId: $pullRequestId, path: $path${index} }) { clientMutationId }`,
+    )
+    .join("\n");
+  return {
+    query: `mutation($pullRequestId: ID!, ${parameters}) {\n${fields}\n}`,
+    variables: Object.fromEntries(files.map((file, index) => [`path${index}`, file.path])),
+  };
+}
+
+/** One pull request as the stacks API lists it: a number, a head, and whether it is done. */
+const RawStackPullRequestSchema = Schema.Struct({
+  title: Schema.optional(Schema.String),
+  draft: Schema.optional(Schema.Boolean),
+  number: Schema.Int,
+  head: Schema.Struct({ ref: Schema.String, sha: Schema.optional(Schema.String) }),
+  state: Schema.optional(Schema.NullOr(Schema.String)),
+  merged_at: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+/**
+ * A stack as `GET /repos/{owner}/{repo}/stacks` answers it, in a public preview whose shape may
+ * still move. Only what a stack is made of is required — where it lives, what it stands on, and
+ * its pull requests — and `base` is accepted both as the ref object the preview sends today and
+ * as the bare branch name it started out as.
+ */
+const RawStackSchema = Schema.Struct({
+  id: Schema.optional(Schema.NullOr(Schema.Union([Schema.Int, Schema.String]))),
+  number: Schema.Int,
+  node_id: Schema.optional(Schema.NullOr(Schema.String)),
+  url: Schema.String,
+  html_url: Schema.optional(Schema.NullOr(Schema.String)),
+  base: Schema.Union([Schema.String, Schema.Struct({ ref: Schema.String })]),
+  pull_requests: Schema.Array(RawStackPullRequestSchema),
+});
+
+const decodeStacks = decodeJsonResult(Schema.Array(RawStackSchema));
+
+export interface GitHubPullRequestStackLayer {
+  readonly title?: string;
+  readonly isDraft?: boolean;
+  readonly headSha?: string;
+  readonly number: number;
+  readonly headBranch: string;
+  readonly state: PullRequestState;
+}
+
+export interface GitHubPullRequestStack {
+  readonly id: string;
+  readonly number: number;
+  readonly url: string;
+  readonly base: string;
+  /** Bottom to top, which is the order GitHub lists them in. */
+  readonly layers: ReadonlyArray<GitHubPullRequestStackLayer>;
+}
+
+/**
+ * The first stack of a `?pull_request=` listing, or null for an empty one: a pull request is in
+ * at most one stack, so the array is GitHub's way of saying "none" rather than a page.
+ */
+export function decodePullRequestStacksJson(
+  raw: string,
+): Result.Result<GitHubPullRequestStack | null, DecodeFailure> {
+  const decoded = decodeStacks(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const stack = decoded.success[0];
+  if (stack === undefined) return Result.succeed(null);
+  return Result.succeed({
+    id: stack.id == null ? (trimmed(stack.node_id) ?? String(stack.number)) : String(stack.id),
+    number: stack.number,
+    // The page a person opens where the preview reports one; the API URL is what it always has.
+    url: trimmed(stack.html_url) ?? stack.url,
+    base: typeof stack.base === "string" ? stack.base : stack.base.ref,
+    layers: stack.pull_requests.map((pullRequest) => ({
+      ...(pullRequest.title === undefined ? {} : { title: pullRequest.title }),
+      ...(pullRequest.draft === undefined ? {} : { isDraft: pullRequest.draft }),
+      ...(pullRequest.head.sha === undefined ? {} : { headSha: pullRequest.head.sha }),
+      number: pullRequest.number,
+      headBranch: pullRequest.head.ref,
+      state: toState({ state: pullRequest.state, mergedAt: pullRequest.merged_at }),
+    })),
   });
 }

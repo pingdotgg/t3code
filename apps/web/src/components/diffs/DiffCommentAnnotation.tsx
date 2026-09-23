@@ -1,5 +1,5 @@
 import { MessageCircle, Trash2 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
@@ -25,6 +25,7 @@ interface DiffCommentAnnotationProps {
   submitLabel?: string;
   pending?: boolean;
   secondaryAction?: DiffCommentSecondaryAction;
+  focusOnMount?: boolean;
 }
 
 /** The shared inline comment treatment for file previews, thread diffs, and pull-request diffs. */
@@ -40,10 +41,20 @@ export function DiffCommentAnnotation({
   submitLabel = "Comment",
   pending = false,
   secondaryAction,
+  focusOnMount = true,
 }: DiffCommentAnnotationProps) {
   const [localDraftText, setLocalDraftText] = useState("");
   const displayedText = kind === "draft" && !onTextChange ? localDraftText : text;
   const trimmedText = displayedText.trim();
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (kind !== "draft" || !focusOnMount) return;
+    const frame = window.requestAnimationFrame(() => {
+      textareaRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusOnMount, kind]);
 
   if (kind === "comment") {
     return (
@@ -56,15 +67,16 @@ export function DiffCommentAnnotation({
         <MessageCircle className="mt-0.5 size-3.5 shrink-0 text-primary/70" aria-hidden="true" />
         <p className="min-w-0 flex-1 whitespace-pre-wrap text-[13px] leading-5">{displayedText}</p>
         {onDelete ? (
-          <Button
-            className="-my-1 -mr-1 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/comment:opacity-100 focus-visible:opacity-100 max-sm:opacity-100"
-            variant="ghost"
-            size="icon-xs"
-            aria-label="Delete comment"
-            onClick={onDelete}
-          >
-            <Trash2 className="size-3" />
-          </Button>
+          <span className="-my-1 -mr-1 flex shrink-0 opacity-0 transition-opacity group-hover/comment:opacity-100 focus-within:opacity-100 max-sm:opacity-100">
+            <Button
+              variant="ghost-muted"
+              size="icon-xs"
+              aria-label="Delete comment"
+              onClick={onDelete}
+            >
+              <Trash2 className="size-3" />
+            </Button>
+          </span>
         ) : null}
       </div>
     );
@@ -78,9 +90,8 @@ export function DiffCommentAnnotation({
       onPointerDown={(event) => event.stopPropagation()}
     >
       <Textarea
-        autoFocus
-        unstyled
-        className="relative inline-flex w-full rounded-md border border-border/50 bg-background/20 font-sans text-foreground transition-colors focus-within:border-border/70 [&_[data-slot=textarea]]:min-h-12 [&_[data-slot=textarea]]:cursor-text [&_[data-slot=textarea]]:px-2.5 [&_[data-slot=textarea]]:py-1.5 [&_[data-slot=textarea]]:font-sans [&_[data-slot=textarea]]:text-xs [&_[data-slot=textarea]]:leading-5 max-sm:[&_[data-slot=textarea]]:min-h-12"
+        ref={textareaRef}
+        autoFocus={focusOnMount}
         size="sm"
         value={displayedText}
         placeholder={placeholder}
@@ -103,12 +114,7 @@ export function DiffCommentAnnotation({
       />
       <div className="mt-1.5 flex items-center gap-1">
         <span className="mr-auto text-[10px] text-muted-foreground/70">⌘/Ctrl Enter to send</span>
-        <Button
-          className="text-muted-foreground hover:text-foreground"
-          variant="ghost"
-          size="xs"
-          onClick={onCancel}
-        >
+        <Button variant="ghost-muted" size="xs" onClick={onCancel}>
           Cancel
         </Button>
         {secondaryAction ? (

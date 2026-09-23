@@ -9,6 +9,7 @@
  */
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -23,6 +24,7 @@ import { assert, describe } from "vite-plus/test";
 
 import wireFixture from "../testFixtures/codexMultiAgentWire.json" with { type: "json" };
 import { makeCodexSessionRuntime } from "./CodexSessionRuntime.ts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 const ROOT = wireFixture.rootThreadId;
 const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
@@ -81,10 +83,323 @@ function buildScript() {
   };
 }
 
+function capturedStartedActivity(childId = CHILD_A) {
+  const captured = wireFixture.notifications.find((entry) => {
+    const item = (entry.params as { item?: { type?: string; kind?: string } }).item;
+    return item?.type === "subAgentActivity" && item.kind === "started";
+  });
+  assert.isDefined(captured);
+  return {
+    ...captured,
+    params: {
+      ...captured.params,
+      item: {
+        ...captured.params.item,
+        agentThreadId: childId,
+        agentPath: "/root/model-check",
+      },
+    },
+  };
+}
+
+function capturedSpawnedThread(childId = CHILD_A) {
+  const captured = wireFixture.notifications.find((entry) => entry.method === "thread/started");
+  assert.isDefined(captured);
+  return {
+    ...captured,
+    params: {
+      thread: {
+        ...captured.params.thread,
+        id: childId,
+        sessionId: childId,
+        parentThreadId: ROOT,
+        agentNickname: "model-check",
+        agentRole: "verifier",
+        source: {
+          subAgent: {
+            thread_spawn: {
+              agent_nickname: "model-check",
+              agent_path: "/root/model-check",
+              agent_role: "verifier",
+              depth: 1,
+              parent_thread_id: ROOT,
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
+function childSettings(threadId: string, model: string, effort: string) {
+  return {
+    method: "thread/settings/updated",
+    params: {
+      threadId,
+      threadSettings: {
+        approvalPolicy: "on-request",
+        approvalsReviewer: "auto_review",
+        collaborationMode: { mode: "default", settings: { model } },
+        cwd: "/workspace/repo",
+        effort,
+        model,
+        modelProvider: "openai",
+        sandboxPolicy: { type: "dangerFullAccess" },
+      },
+    },
+  };
+}
+
+function readRecordedRequests() {
+  return NodeFS.readFileSync(`${scriptPath}.requests`, "utf8")
+    .trim()
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as { method: string; params: Record<string, unknown> });
+}
+
 const scriptPath = NodePath.join(import.meta.dirname, "../testFixtures/.collab-script.json");
-const peerPath = NodePath.join(import.meta.dirname, "../testFixtures/codexCollabMockPeer.sh");
+// Windows cannot run the shebang wrapper; the .cmd sibling does the same job.
+const peerPath = NodePath.join(
+  import.meta.dirname,
+  `../testFixtures/codexCollabMockPeer.${HostProcessPlatform.defaultValue() === "win32" ? "cmd" : "sh"}`,
+);
 
 describe("CodexSessionRuntime collab integration", () => {
+  it.effect("looks up child model metadata once after activity registration", () =>
+    Effect.gen(function* () {
+      const script = {
+        rootThreadId: ROOT,
+        recordRequests: true,
+        notifications: [
+          capturedStartedActivity(),
+          capturedStartedActivity(),
+          {
+            ...capturedStartedActivity(CHILD_B),
+            params: {
+              ...capturedStartedActivity(CHILD_B).params,
+              item: { ...capturedStartedActivity(CHILD_B).params.item, kind: "interacted" },
+            },
+          },
+          { method: "thread/closed", params: { threadId: CHILD_B } },
+          capturedSpawnedThread(ROOT),
+        ],
+        childResumeSnapshots: {
+          [CHILD_A]: { model: "gpt-5.6-luna", reasoningEffort: "low" },
+        },
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-model-activity"),
+        binaryPath: peerPath,
+        cwd: NodeOS.tmpdir(),
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const metadataFiber = yield* runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.method === "collabAgent/metadataUpdated" &&
+            (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_A,
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      const session = yield* runtime.start();
+      assert.equal(session.model, "gpt-5.6-sol");
+      yield* runtime.sendTurn({ input: "start one child" });
+      const metadataEvents = Array.from(yield* Fiber.join(metadataFiber));
+      assert.deepInclude(metadataEvents[0]?.payload, {
+        agentThreadId: CHILD_A,
+        model: "gpt-5.6-luna",
+        effort: "low",
+      });
+      assert.deepEqual(readRecordedRequests(), [
+        {
+          method: "thread/resume",
+          params: { threadId: CHILD_A, excludeTurns: true },
+        },
+      ]);
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps child settings and reroutes newer than the resume snapshot", () =>
+    Effect.gen(function* () {
+      const statusChanged = wireFixture.notifications.find(
+        (entry) =>
+          entry.method === "thread/status/changed" &&
+          (entry.params as { threadId?: string }).threadId === CHILD_A,
+      );
+      assert.isDefined(statusChanged);
+      const script = {
+        rootThreadId: ROOT,
+        recordRequests: true,
+        notifications: [
+          childSettings(CHILD_A, "child-before", "medium"),
+          capturedSpawnedThread(),
+          childSettings(CHILD_A, "child-after", "high"),
+          {
+            method: "model/rerouted",
+            params: {
+              threadId: CHILD_A,
+              turnId: `${CHILD_A}-turn`,
+              fromModel: "child-after",
+              toModel: "child-rerouted",
+              reason: "highRiskCyberActivity",
+            },
+          },
+          {
+            method: "model/rerouted",
+            params: {
+              threadId: ROOT,
+              turnId: `${ROOT}-turn`,
+              fromModel: "gpt-5.6-sol",
+              toModel: "root-rerouted",
+              reason: "highRiskCyberActivity",
+            },
+          },
+        ],
+        childResumeSnapshots: {
+          [CHILD_A]: {
+            model: "stale-snapshot",
+            reasoningEffort: "low",
+            notifications: [statusChanged],
+          },
+        },
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-model-spawn"),
+        binaryPath: peerPath,
+        cwd: NodeOS.tmpdir(),
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const eventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil(
+          (event) =>
+            event.method === "collabAgent/statusChanged" &&
+            (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_A,
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "start one spawned child" });
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const started = events.find((event) => event.method === "collabAgent/started");
+      assert.deepInclude(started?.payload, {
+        agentThreadId: CHILD_A,
+        model: "child-before",
+        effort: "medium",
+      });
+      const childStatus = events.find((event) => event.method === "collabAgent/statusChanged");
+      assert.deepInclude(childStatus?.payload, {
+        agentThreadId: CHILD_A,
+        model: "child-rerouted",
+        effort: "high",
+      });
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.method === "model/rerouted" &&
+            (event.payload as { threadId?: string }).threadId === ROOT,
+        ),
+        "the root reroute must stay on the parent path",
+      );
+      assert.isFalse(
+        events.some(
+          (event) =>
+            (event.method === "thread/settings/updated" || event.method === "model/rerouted") &&
+            (event.payload as { threadId?: string }).threadId === CHILD_A,
+        ),
+        "child metadata notifications must not leak to the parent path",
+      );
+      assert.equal(readRecordedRequests().length, 1);
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not delay the parent turn when the child lookup fails", () =>
+    Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+        }),
+      );
+      for (const [name, childSnapshot] of [
+        ["hang", { hang: true }],
+        ["error", { error: "child unavailable" }],
+      ] as const) {
+        yield* Effect.gen(function* () {
+          const marker = `lookup-${name}`;
+          const script = {
+            rootThreadId: ROOT,
+            recordRequests: true,
+            resumeRequestMarker: marker,
+            notifications: [capturedStartedActivity()],
+            childResumeSnapshots: { [CHILD_A]: childSnapshot },
+          };
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+          NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+
+          const runtime = yield* makeCodexSessionRuntime({
+            threadId: ThreadId.make(`thread-collab-model-${name}`),
+            binaryPath: peerPath,
+            cwd: NodeOS.tmpdir(),
+            runtimeMode: "full-access",
+            environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+          });
+          const eventsFiber = yield* runtime.events.pipe(
+            Stream.takeUntil(
+              (event) =>
+                event.method === "serverRequest/resolved" &&
+                (event.payload as { requestId?: string }).requestId === marker,
+            ),
+            Stream.runCollect,
+            Effect.forkScoped,
+          );
+
+          yield* runtime.start();
+          yield* runtime.sendTurn({ input: "finish without child metadata" });
+          const events = Array.from(yield* Fiber.join(eventsFiber));
+          assert.isTrue(events.some((event) => event.method === "turn/completed"));
+          assert.equal(readRecordedRequests().length, 1);
+
+          yield* runtime.close;
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+        }).pipe(Effect.scoped);
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("replays the captured fan-out into synthetic agent events without child leaks", () =>
     Effect.gen(function* () {
       // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -96,7 +411,7 @@ describe("CodexSessionRuntime collab integration", () => {
       const runtime = yield* makeCodexSessionRuntime({
         threadId: ThreadId.make("thread-collab-integration"),
         binaryPath: peerPath,
-        cwd: "/tmp",
+        cwd: NodeOS.tmpdir(),
         runtimeMode: "full-access",
         environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
       });
@@ -238,7 +553,7 @@ describe("CodexSessionRuntime collab integration", () => {
       const runtime = yield* makeCodexSessionRuntime({
         threadId: ThreadId.make("thread-collab-stop"),
         binaryPath: peerPath,
-        cwd: "/tmp",
+        cwd: NodeOS.tmpdir(),
         runtimeMode: "full-access",
         environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
       });
@@ -290,6 +605,108 @@ describe("CodexSessionRuntime collab integration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  // it.live: the runtime talks to a real child process; under it.effect's
+  // TestClock the internal timers freeze and the join never completes.
+  it.live("Stop answers a parked app-permission approval with a withheld grant", () =>
+    Effect.gen(function* () {
+      // Interrupting a turn whose app-permission prompt is still parked must
+      // settle that prompt: the handler resumes with "cancel", the peer gets
+      // an empty grant (permission withheld), and nothing hangs until close.
+      const script = {
+        rootThreadId: ROOT,
+        holdTurnOpen: true,
+        notifications: [],
+        serverRequests: [
+          {
+            method: "item/permissions/requestApproval",
+            label: "perm-1",
+            params: {
+              cwd: "/tmp/project",
+              itemId: "app_1",
+              permissions: { network: { enabled: true } },
+              reason: "Fetch data from api.example.com",
+              startedAtMs: 1_778_000_000_000,
+              threadId: "${threadId}",
+              turnId: "${turnId}",
+            },
+          },
+        ],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      const responsesPath = `${scriptPath}.approvalResponses`;
+      NodeFS.rmSync(responsesPath, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(responsesPath, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-codex-permission-stop"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      // One consumer for the whole stream: `events` is a plain queue stream,
+      // so two forks would compete for events and each could starve the
+      // other's filter. Signal the two milestones through Deferreds instead.
+      const requestedReady = yield* Deferred.make<ProviderEvent>();
+      const settledReady = yield* Deferred.make<ProviderEvent>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => {
+          if (event.method === "item/permissions/requestApproval") {
+            return Deferred.succeed(requestedReady, event);
+          }
+          if (event.method === "serverRequest/resolved" && event.requestKind === "permission") {
+            return Deferred.succeed(settledReady, event);
+          }
+          return Effect.void;
+        }),
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "use the connected app" });
+      const requested = yield* Deferred.await(requestedReady).pipe(
+        Effect.timeoutOption("15 seconds"),
+      );
+      assert.isTrue(requested._tag === "Some", "permission approval request never arrived");
+
+      yield* runtime.interruptTurn();
+
+      // The peer emits serverRequest/resolved only AFTER recording the
+      // runtime's answer, so awaiting this receipt makes reading the sidecar
+      // race-free. The runtime correlates that receipt back to the canonical
+      // request (requestKind + requestId) — the same event chain the adapter
+      // folds into approval.resolved, so the card actually closes.
+      const settled = yield* Deferred.await(settledReady).pipe(Effect.timeoutOption("15 seconds"));
+      assert.isTrue(settled._tag === "Some", "interrupt did not settle the parked approval");
+      const settledEvent = settled._tag === "Some" ? settled.value : undefined;
+      assert.isDefined(settledEvent);
+      assert.isDefined(
+        settledEvent?.requestId,
+        "receipt must correlate back to the canonical approval request",
+      );
+
+      const recorded = NodeFS.readFileSync(responsesPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { id: number; label: string; result: unknown });
+      assert.equal(recorded.length, 1);
+      const answer = recorded[0];
+      assert.isDefined(answer);
+      assert.equal(answer.label, "perm-1");
+      // Cancelled approvals withhold the grant: an empty permission profile.
+      assert.deepEqual(answer.result, { permissions: {} });
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.live("Stop targets the active turn when Codex has accepted a queued follow-up", () =>
     Effect.gen(function* () {
       const activeTurnId = "019fe3e8-f908-7f31-8d51-283f4a47897a";
@@ -316,7 +733,7 @@ describe("CodexSessionRuntime collab integration", () => {
       const runtime = yield* makeCodexSessionRuntime({
         threadId: ThreadId.make("thread-codex-queued-stop"),
         binaryPath: peerPath,
-        cwd: "/tmp",
+        cwd: NodeOS.tmpdir(),
         runtimeMode: "full-access",
         environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
       });
@@ -413,7 +830,7 @@ describe("CodexSessionRuntime collab integration", () => {
         const runtime = yield* makeCodexSessionRuntime({
           threadId: ThreadId.make("thread-codex-mcp-elicitation"),
           binaryPath: peerPath,
-          cwd: "/tmp",
+          cwd: NodeOS.tmpdir(),
           runtimeMode: "auto",
           environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
         });

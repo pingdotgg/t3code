@@ -314,9 +314,8 @@ export interface LifecyclePolicy extends Resource<
  * `IMAGE_MANAGEMENT` policy. Volumes/instances are targeted by tags, and an
  * execution role is created automatically unless an explicit
  * `executionRoleArn` is given.
- * @resource
- * @section Creating Policies
- * @example Daily EBS snapshots retained for a week
+ * ### Creating Policies
+ * **Example:** Daily EBS snapshots retained for a week
  * ```typescript
  * import * as DLM from "alchemy/AWS/DLM";
  *
@@ -335,7 +334,7 @@ export interface LifecyclePolicy extends Resource<
  * });
  * ```
  *
- * @example Cron-scheduled snapshots
+ * **Example:** Cron-scheduled snapshots
  * ```typescript
  * const policy = yield* DLM.LifecyclePolicy("WeeklySnapshots", {
  *   description: "Weekly volume snapshots",
@@ -354,8 +353,8 @@ export interface LifecyclePolicy extends Resource<
  * });
  * ```
  *
- * @section AMI Policies
- * @example EBS-backed AMIs of tagged instances
+ * ### AMI Policies
+ * **Example:** EBS-backed AMIs of tagged instances
  * ```typescript
  * const amis = yield* DLM.LifecyclePolicy("NightlyAmis", {
  *   policyDetails: {
@@ -374,8 +373,8 @@ export interface LifecyclePolicy extends Resource<
  * });
  * ```
  *
- * @section Execution Role
- * @example Bring your own execution role
+ * ### Execution Role
+ * **Example:** Bring your own execution role
  * ```typescript
  * const role = yield* IAM.Role("DlmRole", {
  *   assumeRolePolicyDocument: {
@@ -409,6 +408,8 @@ export interface LifecyclePolicy extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const LifecyclePolicy = Resource<LifecyclePolicy>(
   "AWS.DLM.LifecyclePolicy",
@@ -863,7 +864,7 @@ export const LifecyclePolicyProvider = () =>
             // surface as a typed not-found so the engine can retry the plan.
             return yield* Effect.fail(
               new dlm.ResourceNotFoundException({
-                Message: `DLM lifecycle policy ${policyId} disappeared during reconcile`,
+                message: `DLM lifecycle policy ${policyId} disappeared during reconcile`,
               }),
             );
           }

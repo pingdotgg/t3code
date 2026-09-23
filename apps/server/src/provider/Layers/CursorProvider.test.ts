@@ -1,14 +1,16 @@
 import * as NodeOS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { it as effectIt } from "@effect/vitest";
 import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { describe, expect, it } from "vite-plus/test";
 import type * as EffectAcpSchema from "effect-acp/schema";
-import type { CursorSettings } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type CursorSettings } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 
 import {
@@ -16,7 +18,8 @@ import {
   buildCursorCapabilitiesFromConfigOptions,
   checkCursorProviderStatus,
   discoverCursorModelsViaAcp,
-  getCursorFallbackModels,
+  makeCursorModelDiscovery,
+  makeCursorCommandCatalog,
   getCursorParameterizedModelPickerUnsupportedMessage,
   parseCursorAboutOutput,
   parseCursorCliConfigChannel,
@@ -24,6 +27,16 @@ import {
   resolveCursorAcpBaseModelId,
   resolveCursorAcpConfigUpdates,
 } from "./CursorProvider.ts";
+import {
+  discoverCursorSkills,
+  hasCursorSkillMention,
+  probeCursorSkills,
+  rewriteCursorSkillMentions,
+} from "../Drivers/CursorSkills.ts";
+import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { cursorUsageResponseToLimits, readCursorUsageLimits } from "./cursorUsageLimits.ts";
 
 const runNode = <A, E>(
   effect: Effect.Effect<
@@ -32,6 +45,10 @@ const runNode = <A, E>(
     ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
   >,
 ): Promise<A> => Effect.runPromise(effect.pipe(Effect.provide(NodeServices.layer)));
+
+// Closing the probe kills the agent with SIGTERM; Windows terminates the
+// process instead, so the mock never sees a signal to log.
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 
 const resolveMockAgentPath = Effect.fn("resolveMockAgentPath")(function* () {
   const path = yield* Path.Path;
@@ -67,47 +84,38 @@ const makeMockAgentWrapper = Effect.fn("makeMockAgentWrapper")(function* (
   extraEnv?: Record<string, string>,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const mockAgentPath = yield* resolveMockAgentPath();
   const dir = yield* fileSystem.makeTempDirectory({
     directory: NodeOS.tmpdir(),
     prefix: "cursor-provider-mock-",
   });
-  const wrapperPath = path.join(dir, "fake-agent.sh");
-  const mockAgentCommand = ["node", mockAgentPath].map((arg) => JSON.stringify(arg)).join(" ");
-  const envExports = Object.entries(extraEnv ?? {})
-    .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
-    .join("\n");
-  const script = `#!/bin/sh
-${envExports}
-exec ${mockAgentCommand} "$@"
-`;
-  yield* fileSystem.writeFileString(wrapperPath, script);
-  yield* fileSystem.chmod(wrapperPath, 0o755);
-  return wrapperPath;
+  return writeFakeCli({
+    directory: dir,
+    name: "fake-agent",
+    env: extraEnv ?? {},
+    source: execScriptSource({ scriptPath: mockAgentPath }),
+  });
 });
 
 const makeMockAgentWithAboutWrapper = Effect.fn("makeMockAgentWithAboutWrapper")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const mockAgentPath = yield* resolveMockAgentPath();
   const dir = yield* fileSystem.makeTempDirectory({
     directory: NodeOS.tmpdir(),
     prefix: "cursor-provider-about-mock-",
   });
-  const wrapperPath = path.join(dir, "fake-agent.sh");
-  const mockAgentCommand = ["node", mockAgentPath].map((arg) => JSON.stringify(arg)).join(" ");
-  const script = `#!/bin/sh
-if [ "$1" = "about" ]; then
-  printf 'CLI Version         2026.04.09-f2b0fcd\\n'
-  printf 'User Email          cursor@example.com\\n'
-  exit 0
-fi
-exec ${mockAgentCommand} "$@"
-`;
-  yield* fileSystem.writeFileString(wrapperPath, script);
-  yield* fileSystem.chmod(wrapperPath, 0o755);
-  return wrapperPath;
+  return writeFakeCli({
+    directory: dir,
+    name: "fake-agent",
+    source: [
+      'if (process.argv[2] === "about") {',
+      '  process.stdout.write("CLI Version         2026.04.09-f2b0fcd\\n");',
+      '  process.stdout.write("User Email          cursor@example.com\\n");',
+      "  process.exit(0);",
+      "}",
+      execScriptSource({ scriptPath: mockAgentPath }),
+    ].join("\n"),
+  });
 });
 
 const waitForFileContent = Effect.fn("waitForFileContent")(function* (
@@ -312,14 +320,261 @@ const cursorCliCommandMissingMessage = [
   "See https://cursor.com/docs/cli/installation.",
 ].join(" ");
 
-describe("getCursorFallbackModels", () => {
-  it("does not publish any built-in cursor models before ACP discovery", () => {
+describe("Cursor skills", () => {
+  it("discovers recursive project skills with project precedence", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const userHome = yield* fileSystem.makeTempDirectory({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-skills-home-",
+        });
+        const workspace = yield* fileSystem.makeTempDirectory({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-skills-workspace-",
+        });
+        const writeSkill = Effect.fn("writeCursorSkill")(function* (
+          root: string,
+          name: string,
+          contents: string,
+        ) {
+          const skillDirectory = path.join(root, name);
+          yield* fileSystem.makeDirectory(skillDirectory, { recursive: true });
+          yield* fileSystem.writeFileString(path.join(skillDirectory, "SKILL.md"), contents);
+        });
+
+        yield* writeSkill(
+          path.join(userHome, ".cursor", "skills"),
+          "review",
+          "---\ndescription: user review\n---\n",
+        );
+        yield* writeSkill(
+          path.join(workspace, ".agents", "skills", "nested"),
+          "review",
+          "---\nname: Review changes\ndescription: project review\n---\n",
+        );
+        yield* writeSkill(
+          path.join(workspace, ".cursor", "skills"),
+          "internal",
+          "---\nuser-invocable: false\n---\n",
+        );
+        yield* writeSkill(
+          path.join(workspace, ".cursor", "skills"),
+          "oversized",
+          "x".repeat(1_000_001),
+        );
+        yield* fileSystem.makeDirectory(path.join(userHome, ".codex"), { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(userHome, ".codex", "skills"),
+          "not a directory",
+        );
+
+        const skills = yield* discoverCursorSkills(workspace, { HOME: userHome });
+        expect(skills).toEqual([
+          {
+            name: "internal",
+            path: path.join(workspace, ".cursor", "skills", "internal", "SKILL.md"),
+            scope: "project",
+            enabled: true,
+            userInvocable: false,
+          },
+          {
+            name: "oversized",
+            path: path.join(workspace, ".cursor", "skills", "oversized", "SKILL.md"),
+            scope: "project",
+            enabled: true,
+          },
+          {
+            name: "review",
+            displayName: "Review changes",
+            description: "project review",
+            path: path.join(workspace, ".agents", "skills", "nested", "review", "SKILL.md"),
+            scope: "project",
+            enabled: true,
+          },
+        ]);
+        expect(
+          (yield* probeCursorSkills(workspace, { HOME: userHome }).pipe(Effect.result))._tag,
+        ).toBe("Failure");
+      }),
+    ));
+
+  it("treats a symlinked skill outside the root as a package boundary", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const userHome = yield* fileSystem.makeTempDirectory({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-skills-home-",
+        });
+        const workspace = yield* fileSystem.makeTempDirectory({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-skills-workspace-",
+        });
+        const library = yield* fileSystem.makeTempDirectory({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-skills-library-",
+        });
+        const writeSkill = Effect.fn("writeCursorSkill")(function* (
+          directory: string,
+          contents: string,
+        ) {
+          yield* fileSystem.makeDirectory(directory, { recursive: true });
+          yield* fileSystem.writeFileString(path.join(directory, "SKILL.md"), contents);
+        });
+
+        // A skill package managed in a config repo and installed by symlink.
+        // Its own SKILL.md must be discovered under the link name, but nothing
+        // below the target may be walked.
+        yield* writeSkill(path.join(library, "shared-review"), "---\ndescription: shared\n---\n");
+        yield* writeSkill(path.join(library, "shared-review", "hidden"), "---\n---\n");
+        const root = path.join(workspace, ".cursor", "skills");
+        yield* fileSystem.makeDirectory(root, { recursive: true });
+        yield* fileSystem.symlink(path.join(library, "shared-review"), path.join(root, "review"));
+
+        const skills = yield* discoverCursorSkills(workspace, { HOME: userHome });
+        expect(skills).toEqual([
+          {
+            name: "review",
+            description: "shared",
+            path: path.join(root, "review", "SKILL.md"),
+            scope: "project",
+            enabled: true,
+          },
+        ]);
+        expect(
+          (yield* probeCursorSkills(workspace, { HOME: userHome }).pipe(Effect.result))._tag,
+        ).toBe("Success");
+      }),
+    ));
+
+  it("rewrites only discovered skill mentions into Cursor slash invocations", () => {
+    expect(hasCursorSkillMention("use $Review_Pr:V2 here")).toBe(true);
+    expect(hasCursorSkillMention("please $review this")).toBe(true);
     expect(
-      getCursorFallbackModels({
-        customModels: ["internal/cursor-model"],
-      }).map((model) => model.slug),
-    ).toEqual(["internal/cursor-model"]);
+      rewriteCursorSkillMentions("use $review, keep $HOME and 5$review", new Set(["review"])),
+    ).toBe("use $review, keep $HOME and 5$review");
+    expect(rewriteCursorSkillMentions("please $review this", new Set(["review"]))).toBe(
+      "please /review this",
+    );
   });
+
+  it("rewrites currency-prefixed skill mentions into Cursor slash invocations", () => {
+    const names = new Set(["review", "2spec", "20k", "100M", "1e6"]);
+    for (const symbol of ["€", "£", "¥", "₹", "₩", "₿", "𑿝"]) {
+      expect(hasCursorSkillMention(`please ${symbol}review this`)).toBe(true);
+      expect(hasCursorSkillMention(`please ${symbol}review this`)).toBe(true);
+      expect(rewriteCursorSkillMentions(`${symbol}review then ${symbol}2spec this`, names)).toBe(
+        "/review then /2spec this",
+      );
+      const money = `${symbol}20 ${symbol}20k ${symbol}100M ${symbol}1e6`;
+      expect(hasCursorSkillMention(money)).toBe(false);
+      expect(rewriteCursorSkillMentions(money, names)).toBe(money);
+      const prose = `5${symbol}review ${symbol}unknown`;
+      expect(rewriteCursorSkillMentions(prose, names)).toBe(prose);
+    }
+  });
+
+  it("detects and invokes digit-leading Cursor skills without rewriting money", () => {
+    const names = new Set(["2spec", "20k", "100M", "1e6"]);
+    // Repeated presence checks must not carry a global-regex cursor.
+    expect(hasCursorSkillMention("use $2spec here")).toBe(true);
+    expect(hasCursorSkillMention("use $2spec here")).toBe(true);
+    expect(rewriteCursorSkillMentions("use $2spec here", names)).toBe("use /2spec here");
+    expect(rewriteCursorSkillMentions("use $2spec here", new Set())).toBe("use $2spec here");
+    for (const text of [
+      "pay $20 tomorrow",
+      "budget $20k here",
+      "cost $100M total",
+      "limit $1e6 here",
+    ]) {
+      expect(hasCursorSkillMention(text)).toBe(false);
+      expect(rewriteCursorSkillMentions(text, names)).toBe(text);
+    }
+  });
+});
+
+describe("Cursor command catalog", () => {
+  effectIt.effect(
+    "publishes workspace commands without leaking them globally and retains them across refreshes",
+    () =>
+      Effect.gen(function* () {
+        const base = {
+          ...buildCursorProviderSnapshot({
+            checkedAt: "2026-01-01T00:00:00.000Z",
+            cursorSettings: baseCursorSettings,
+            parsed: { version: null, status: "ready", auth: { status: "authenticated" } },
+          }),
+          instanceId: ProviderInstanceId.make("cursor-catalog"),
+          driver: ProviderDriverKind.make("cursor"),
+        };
+        const catalog = yield* makeCursorCommandCatalog({
+          getSnapshot: Effect.succeed(base),
+          refresh: Effect.succeed(base),
+          streamChanges: Stream.empty,
+          resolveMaintenance: () => Effect.die("Not used"),
+          applyUsageLimits: () => Effect.void,
+        });
+        const skills = [
+          { name: "review", path: "/one/.cursor/skills/review/SKILL.md", enabled: true },
+        ];
+        const probedSkills = [
+          { name: "explain", path: "/probed/.cursor/skills/explain/SKILL.md", enabled: true },
+        ];
+        yield* catalog.snapshotForCwd("/probed", probedSkills);
+        yield* catalog.onAvailableCommands(
+          [
+            { name: "review", description: "Review changes", input: { hint: "target" } },
+            { name: "compact", description: "Native duplicate" },
+            { name: "review", description: "Duplicate" },
+          ],
+          "/one",
+          skills,
+        );
+        yield* catalog.onAvailableCommands([{ name: "deploy", description: "Deploy" }], "/two", []);
+        const reprobed = yield* catalog.snapshotForCwd("/one", skills);
+        expect(reprobed.slashCommands.map((command) => command.name)).toEqual([
+          "compact",
+          "review",
+        ]);
+        const published = yield* catalog.snapshot.streamChanges.pipe(
+          Stream.take(1),
+          Stream.runCollect,
+        );
+        expect(published[0]?.slashCommands.map((command) => command.name)).toEqual(["compact"]);
+        const refreshed = yield* catalog.snapshot.refresh;
+        expect(
+          refreshed.workspaceSnapshots?.find((entry) => entry.cwd === "/probed"),
+        ).toMatchObject({
+          slashCommands: [{ name: "compact" }],
+          skills: probedSkills,
+        });
+        expect(refreshed.workspaceSnapshots?.find((entry) => entry.cwd === "/one")).toMatchObject({
+          slashCommands: [
+            { name: "compact" },
+            { name: "review", description: "Review changes", input: { hint: "target" } },
+          ],
+          skills,
+        });
+        yield* catalog.onAvailableCommands([], "/one", skills);
+        const updated = yield* catalog.snapshot.getSnapshot;
+        expect(
+          updated.workspaceSnapshots?.find((entry) => entry.cwd === "/probed")?.skills,
+        ).toEqual(probedSkills);
+        expect(
+          updated.workspaceSnapshots
+            ?.find((entry) => entry.cwd === "/one")
+            ?.slashCommands.map((command) => command.name),
+        ).toEqual(["compact"]);
+        expect(
+          updated.workspaceSnapshots
+            ?.find((entry) => entry.cwd === "/two")
+            ?.slashCommands.map((command) => command.name),
+        ).toEqual(["compact", "deploy"]);
+      }),
+  );
 });
 
 describe("buildCursorProviderSnapshot", () => {
@@ -339,6 +594,7 @@ describe("buildCursorProviderSnapshot", () => {
       status: "warning",
       message: "Cursor ACP model discovery timed out after 15000ms.",
       models: [],
+      supportsConversationRollback: false,
     });
   });
 
@@ -475,6 +731,46 @@ describe("checkCursorProviderStatus", () => {
 });
 
 describe("discoverCursorModelsViaAcp", () => {
+  it("reuses successful discovery until the CLI version or account changes", async () => {
+    await runNode(
+      Effect.gen(function* () {
+        const { requestLogPath, wrapperPath } = yield* makeProviderStatusEnvFixture();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = {
+          enabled: true,
+          binaryPath: wrapperPath,
+          apiEndpoint: "",
+          customModels: [],
+        };
+        const { discover, invalidate } = yield* makeCursorModelDiscovery(settings, {
+          ...process.env,
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        });
+        const about = {
+          version: "2026.08.11",
+          auth: { status: "authenticated" as const, label: "first@example.test" },
+        };
+        const first = yield* discover(about);
+        expect(first.length).toBeGreaterThan(0);
+        yield* fileSystem.writeFileString(requestLogPath, "");
+        expect(yield* discover(about)).toEqual(first);
+        expect(yield* fileSystem.readFileString(requestLogPath)).toBe("");
+        yield* invalidate;
+        expect(yield* discover(about)).toEqual(first);
+        expect(yield* fileSystem.readFileString(requestLogPath)).toContain("initialize");
+        yield* fileSystem.writeFileString(requestLogPath, "");
+        yield* discover({ ...about, version: "2026.08.12" });
+        expect(yield* fileSystem.readFileString(requestLogPath)).toContain("initialize");
+        yield* fileSystem.writeFileString(requestLogPath, "");
+        yield* discover({
+          version: "2026.08.12",
+          auth: { ...about.auth, label: "second@example.test" },
+        });
+        expect(yield* fileSystem.readFileString(requestLogPath)).toContain("initialize");
+      }),
+    );
+  });
+
   it("keeps the ACP probe runtime alive long enough to discover models", async () => {
     const wrapperPath = await runNode(makeMockAgentWrapper());
 
@@ -495,7 +791,7 @@ describe("discoverCursorModelsViaAcp", () => {
     ]);
   });
 
-  it("closes the ACP probe runtime after discovery completes", async () => {
+  it.skipIf(windowsHost)("closes the ACP probe runtime after discovery completes", async () => {
     const { exitLogPath, wrapperPath } = await runNode(
       makeExitLogFixture("cursor-provider-exit-log-"),
     );
@@ -676,5 +972,173 @@ describe("resolveCursorAcpConfigUpdates", () => {
       { configId: "effort", value: "max" },
       { configId: "thinking", value: "false" },
     ]);
+  });
+});
+
+describe("Cursor usage limits", () => {
+  const checkedAt = "2026-09-16T00:00:00.000Z";
+
+  it("uses the advertised percentages and billing-cycle reset", () => {
+    const limits = cursorUsageResponseToLimits(
+      {
+        billingCycleEnd: "1789876386000",
+        planUsage: { totalPercentUsed: 72.4, autoPercentUsed: 69.5, apiPercentUsed: 100 },
+      },
+      checkedAt,
+    );
+    expect(limits.windows).toEqual(
+      expect.arrayContaining([
+        {
+          id: "totalPercentUsed",
+          kind: "monthly",
+          label: "Monthly",
+          usedPercent: 72.4,
+          resetsAt: "2026-09-20T03:53:06.000Z",
+        },
+        {
+          id: "autoPercentUsed",
+          kind: "monthly",
+          label: "Monthly · Auto",
+          usedPercent: 69.5,
+          resetsAt: "2026-09-20T03:53:06.000Z",
+        },
+        {
+          id: "apiPercentUsed",
+          kind: "monthly",
+          label: "Monthly · API",
+          usedPercent: 100,
+          resetsAt: "2026-09-20T03:53:06.000Z",
+        },
+      ]),
+    );
+  });
+
+  it("does not invent unused allowance for absent buckets", () => {
+    expect(cursorUsageResponseToLimits({ planUsage: {} }, checkedAt).unavailable?.reason).toBe(
+      "unsupported",
+    );
+    expect(
+      cursorUsageResponseToLimits({ planUsage: { totalPercentUsed: 0 } }, checkedAt).windows,
+    ).toEqual([{ id: "totalPercentUsed", kind: "monthly", label: "Monthly", usedPercent: 0 }]);
+    expect(
+      cursorUsageResponseToLimits({ planUsage: { totalPercentUsed: 150 } }, checkedAt).windows,
+    ).toEqual([{ id: "totalPercentUsed", kind: "monthly", label: "Monthly", usedPercent: 100 }]);
+  });
+
+  it("reads the instance's credentials and endpoint even when usage enabled is false", async () => {
+    await runNode(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        yield* fs.makeDirectory(path.join(directory, "cursor"));
+        yield* fs.writeFileString(
+          path.join(directory, "cursor", "auth.json"),
+          '{"accessToken":"instance-token"}',
+        );
+        const client = HttpClient.make((request) => {
+          expect(request.url).toBe(
+            "https://cursor.example/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+          );
+          expect(request.method).toBe("POST");
+          expect(request.headers.authorization).toBe("Bearer instance-token");
+          expect(request.headers["connect-protocol-version"]).toBe("1");
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({ enabled: false, planUsage: { totalPercentUsed: 42 } }),
+            ),
+          );
+        });
+        yield* fs.makeDirectory(path.join(directory, ".cursor"));
+        yield* fs.writeFileString(
+          path.join(directory, ".cursor", "auth.json"),
+          '{"accessToken":"instance-token"}',
+        );
+        for (const platform of ["linux", "darwin"] as const) {
+          const limits = yield* readCursorUsageLimits(
+            { apiEndpoint: "https://cursor.example/" },
+            { XDG_CONFIG_HOME: directory, HOME: directory, AGENT_CLI_CREDENTIAL_STORE: "file" },
+          ).pipe(
+            Effect.provideService(HostProcessPlatform, platform),
+            Effect.provideService(HttpClient.HttpClient, client),
+          );
+          expect(limits.windows[0]?.usedPercent).toBe(42);
+        }
+      }).pipe(Effect.scoped),
+    );
+  });
+
+  it("never reads stale files for keychain or memory logins, but accepts an explicit auth token", async () => {
+    for (const platform of ["linux", "darwin"] as const) {
+      for (const token of [undefined, "explicit-token"]) {
+        const limits = await runNode(
+          readCursorUsageLimits(
+            { apiEndpoint: "" },
+            {
+              AGENT_CLI_CREDENTIAL_STORE: platform === "linux" ? "memory" : "default",
+              ...(token ? { CURSOR_AUTH_TOKEN: token } : {}),
+            },
+          ).pipe(
+            Effect.provideService(HostProcessPlatform, platform),
+            Effect.provideService(
+              FileSystem.FileSystem,
+              FileSystem.makeNoop({
+                readFileString: () => Effect.die("must not read an unrelated credential file"),
+              }),
+            ),
+            Effect.provideService(
+              HttpClient.HttpClient,
+              HttpClient.make((request) => {
+                expect(token).toBe("explicit-token");
+                expect(request.headers.authorization).toBe("Bearer explicit-token");
+                return Effect.succeed(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    Response.json({ planUsage: { totalPercentUsed: 10 } }),
+                  ),
+                );
+              }),
+            ),
+          ),
+        );
+        if (token) expect(limits.windows[0]?.usedPercent).toBe(10);
+        else expect(limits.unavailable?.reason).toBe("unsupported");
+      }
+    }
+  });
+
+  it("reports failed requests without exposing credentials or response bodies", async () => {
+    const limits = await runNode(
+      readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_AUTH_TOKEN: "private-token" }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response("private response", { status: 401 }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(limits.unavailable).toEqual({
+      reason: "probeFailed",
+      message: "Cursor could not read usage limits.",
+    });
+  });
+
+  it("does not use a stored login for an explicit API key", async () => {
+    const limits = await runNode(
+      readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_API_KEY: "different-account" }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("must not request usage")),
+        ),
+      ),
+    );
+    expect(limits.unavailable?.reason).toBe("unsupported");
   });
 });

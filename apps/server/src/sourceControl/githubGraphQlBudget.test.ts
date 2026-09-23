@@ -3,17 +3,18 @@ import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as GitHubGraphQlBudget from "./githubGraphQlBudget.ts";
+import { CredentialScope } from "./SourceControlRateLimit.ts";
 
 const RESET_AT = "2026-08-13T14:00:00.000Z";
 const NEXT_RESET_AT = "2026-08-13T15:00:00.000Z";
 const BEFORE_RESET = Date.parse("2026-08-13T13:30:00.000Z");
 const AFTER_RESET = Date.parse("2026-08-13T14:00:01.000Z");
 
-function rateLimit(remaining: number, limit = 5_000, resetAt = RESET_AT): string {
+function rateLimit(remaining: number, limit = 5_000, resetAt = RESET_AT, cost = 14): string {
   return JSON.stringify({
     data: {
       viewer: { login: "bilal" },
-      rateLimit: { cost: 14, limit, remaining, resetAt },
+      rateLimit: { cost, limit, remaining, resetAt },
     },
   });
 }
@@ -71,6 +72,23 @@ describe("GitHub GraphQL budget", () => {
     }).pipe(Effect.provide(GitHubGraphQlBudget.layer)),
   );
 
+  it.effect("isolates query reservations and observations by credential", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(BEFORE_RESET);
+      const budget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
+      const query = budget.query("github.com", "query { viewer { login } }");
+      yield* budget
+        .observe("github.com", rateLimit(0))
+        .pipe(Effect.provideService(CredentialScope, "first"));
+      yield* budget
+        .observe("github.com", rateLimit(5000))
+        .pipe(Effect.provideService(CredentialScope, "second"));
+      yield* query.pipe(Effect.provideService(CredentialScope, "second"));
+      const error = yield* query.pipe(Effect.provideService(CredentialScope, "first"), Effect.flip);
+      expect(error.retryAt).toBe(Date.parse(RESET_AT));
+    }).pipe(Effect.provide(GitHubGraphQlBudget.layer)),
+  );
+
   it.effect("keeps the lower remaining value from out-of-order responses", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(BEFORE_RESET);
@@ -79,6 +97,27 @@ describe("GitHub GraphQL budget", () => {
       yield* budget.observe("github.com", rateLimit(600));
 
       const error = yield* Effect.flip(budget.query("github.com", "query { viewer { login } }"));
+      expect(error).toMatchObject({
+        _tag: "SourceControlRateLimitPausedError",
+        retryAt: Date.parse(RESET_AT),
+      });
+    }).pipe(Effect.provide(GitHubGraphQlBudget.layer)),
+  );
+
+  it.effect("learns a cheaper observed cost without restoring reserved quota", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(BEFORE_RESET);
+      const budget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
+      const query = "query { viewer { login } }";
+      yield* budget.observe("github.com", rateLimit(512, 5_000, RESET_AT, 8));
+      yield* budget.query("github.com", query);
+      // The admission reserved eight points, but the completed read only cost one.
+      yield* budget.observe("github.com", rateLimit(511, 5_000, RESET_AT, 1));
+
+      for (let count = 0; count < 4; count += 1) {
+        expect(yield* budget.query("github.com", query)).toContain("rateLimit");
+      }
+      const error = yield* Effect.flip(budget.query("github.com", query));
       expect(error).toMatchObject({
         _tag: "SourceControlRateLimitPausedError",
         retryAt: Date.parse(RESET_AT),
@@ -157,6 +196,19 @@ describe("GitHub GraphQL budget", () => {
         _tag: "SourceControlRateLimitPausedError",
         retryAt: Date.parse(RESET_AT),
       });
+    }).pipe(Effect.provide(GitHubGraphQlBudget.layer)),
+  );
+
+  it.effect("stops interactive reads when the reserve is exhausted", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(BEFORE_RESET);
+      const budget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
+      yield* budget.observe("github.com", rateLimit(1, 5000, RESET_AT, 1));
+      yield* budget.query("github.com", "query { viewer { login } }", { allowReserve: true });
+      const error = yield* budget
+        .query("github.com", "query { viewer { login } }", { allowReserve: true })
+        .pipe(Effect.flip);
+      expect(error.retryAt).toBe(Date.parse(RESET_AT));
     }).pipe(Effect.provide(GitHubGraphQlBudget.layer)),
   );
 

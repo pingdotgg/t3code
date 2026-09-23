@@ -1,18 +1,23 @@
-import type { ScopedProjectRef } from "@t3tools/contracts";
+import type { DraftId } from "~/composerDraftStore";
+import { useComposerDraftStore } from "~/composerDraftStore";
+import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { FolderPlusIcon } from "lucide-react";
 import { useCallback, useMemo } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
-import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useClientSettings } from "~/hooks/useSettings";
+import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
 import { selectProjectGroupingSettings } from "~/logicalProject";
 import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
+  projectGroupsSpanEnvironments,
 } from "~/sidebarProjectGrouping";
 import { useProjects, useThreadShells } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
+import { ProjectEnvironmentBadge } from "../ProjectEnvironmentBadge";
+import { ProjectFavicon } from "../ProjectFavicon";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import {
   Menu,
@@ -24,13 +29,17 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { InlineButton } from "../ui/button";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
 interface DraftHeroHeadlineProps {
+  readonly draftId: DraftId | null;
   readonly activeProjectRef: ScopedProjectRef | null;
   readonly activeProjectTitle: string | null;
 }
 
 export function DraftHeroHeadline({
+  draftId,
   activeProjectRef,
   activeProjectTitle,
 }: DraftHeroHeadlineProps) {
@@ -40,7 +49,12 @@ export function DraftHeroHeadline({
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
-  const handleNewThread = useNewThreadHandler();
+  const setLogicalProjectDraftThreadId = useComposerDraftStore(
+    (store) => store.setLogicalProjectDraftThreadId,
+  );
+  const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
+  const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
+  const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
 
   const environmentLabelById = useMemo(
@@ -71,6 +85,26 @@ export function DraftHeroHeadline({
       projects,
       threads,
     ],
+  );
+  // Same-named projects on two machines are only told apart by where they
+  // live, so rows on another machine carry its icon once the catalog spans
+  // more than one environment; a single-machine catalog stays as it was.
+  const showProjectEnvironments = useMemo(
+    () => projectGroupsSpanEnvironments(projectGroups),
+    [projectGroups],
+  );
+  const environmentMachineById = useMemo(
+    () =>
+      new Map(
+        environments.map(
+          (environment) =>
+            [
+              environment.environmentId,
+              resolveEnvironmentMachineKind(environment.serverConfig),
+            ] as const,
+        ),
+      ),
+    [environments],
   );
   const projectPickerEntries = useMemo(
     () =>
@@ -103,21 +137,23 @@ export function DraftHeroHeadline({
       <Tooltip>
         <TooltipTrigger
           render={
+            // The trigger's accessible name comes from its visible text (the
+            // project title) so the hero sentence reads naturally: an
+            // aria-label here would replace the title with an action phrase
+            // mid-sentence and baffle screen-reader users.
             <MenuTrigger
-              aria-label={hasResolvedProject ? "Change project" : "Choose a project"}
-              className="pointer-events-auto inline-block max-w-64 truncate border-foreground/60 border-b border-dotted align-baseline text-foreground transition-colors hover:border-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+              render={<InlineButton tone="picker" />}
+              className="pointer-events-auto max-w-64 align-baseline"
             />
           }
         >
-          {activeProjectDisplayName ?? "Choose a project"}
+          <span className="min-w-0 truncate">{activeProjectDisplayName ?? "Choose a project"}</span>
         </TooltipTrigger>
         {activeProjectDisplayName ? (
-          <TooltipPopup side="top" className="max-w-80">
-            {activeProjectDisplayName}
-          </TooltipPopup>
+          <TooltipPopup side="top">{activeProjectDisplayName}</TooltipPopup>
         ) : null}
       </Tooltip>
-      <MenuPopup align="center" className="max-h-80 min-w-40! w-max max-w-64 overflow-y-auto">
+      <MenuPopup align="center" className="max-h-80 overflow-y-auto">
         <MenuRadioGroup
           value={activeProjectKey}
           onValueChange={(value) => {
@@ -126,25 +162,54 @@ export function DraftHeroHeadline({
               return;
             }
             const project = entry.targetProject;
-            // Changing the repo of a draft moves the typed content along:
-            // the user started writing in the wrong project, not a new task.
-            void handleNewThread(scopeProjectRef(project.environmentId, project.id), {
-              replace: true,
-              carryComposerContent: true,
-            });
+            if (!draftId) {
+              return;
+            }
+            // Project selection changes the target of the open draft in
+            // place. The prompt stays in the same composer session, so the
+            // sidebar only gets a draft row if the user later navigates away.
+            const currentDraft = getComposerDraft(draftId);
+            setLogicalProjectDraftThreadId(
+              entry.group.projectKey,
+              scopeProjectRef(project.environmentId, project.id),
+              draftId,
+            );
+            if (!hasExplicitComposerModelSelection(currentDraft)) {
+              applyStickyState(draftId);
+              const environmentSettings = environments.find(
+                (environment) => environment.environmentId === project.environmentId,
+              )?.serverConfig?.settings;
+              const defaultModelSelection = environmentSettings
+                ? resolveProjectSettings(environmentSettings, project.id, project).settings
+                    .defaultModelSelection
+                : project.defaultModelSelection;
+              if (defaultModelSelection) {
+                setModelSelection(draftId, defaultModelSelection, {
+                  replaceOptions: true,
+                });
+              }
+            }
           }}
         >
           {projectPickerEntries.map(({ group }) => {
             return (
               <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>
-                <Tooltip>
-                  <TooltipTrigger render={<span className="block min-w-0 truncate" />}>
-                    {group.displayName}
-                  </TooltipTrigger>
-                  <TooltipPopup side="top" className="max-w-80">
-                    {group.displayName}
-                  </TooltipPopup>
-                </Tooltip>
+                <span className="flex min-w-0 items-center gap-2">
+                  <ProjectFavicon project={group} className="size-4 shrink-0" />
+                  <Tooltip>
+                    <TooltipTrigger render={<span className="block min-w-0 truncate" />}>
+                      {group.displayName}
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">{group.displayName}</TooltipPopup>
+                  </Tooltip>
+                  {showProjectEnvironments ? (
+                    <ProjectEnvironmentBadge
+                      group={group}
+                      primaryEnvironmentId={primaryEnvironmentId}
+                      machineByEnvironmentId={environmentMachineById}
+                    />
+                  ) : null}
+                </span>
               </MenuRadioItem>
             );
           })}
@@ -166,8 +231,21 @@ export function DraftHeroHeadline({
     </button>
   );
 
+  // The composer hero is a sentence, so the heading's accessible name must be
+  // a complete sentence too. The project picker is a control rendered inline
+  // in the h1; without an explicit label its widget state bleeds into the
+  // announced phrase.
+  const headingLabel = hasResolvedProject
+    ? `What should we build in ${activeProjectDisplayName}?`
+    : canChooseProject
+      ? `${activeProjectDisplayName ?? "Choose a project"} to start`
+      : "Add a project to start";
+
   return (
-    <h1 className="mx-auto w-full max-w-5xl text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
+    <h1
+      aria-label={headingLabel}
+      className="mx-auto w-full max-w-5xl text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl"
+    >
       {hasResolvedProject ? (
         <>What should we build in {projectSelector}?</>
       ) : canChooseProject ? (

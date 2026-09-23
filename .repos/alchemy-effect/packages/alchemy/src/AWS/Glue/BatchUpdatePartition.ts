@@ -16,9 +16,8 @@ export interface BatchUpdatePartitionRequest extends Omit<
  * response's `Errors` list. The database/table names and catalog id are
  * injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.Glue.BatchUpdatePartitionHttp)`.
- * @binding
- * @section Managing Partitions
- * @example Bulk-Update Partition Parameters
+ * ### Managing Partitions
+ * **Example:** Bulk-Update Partition Parameters
  * ```typescript
  * // init
  * const batchUpdatePartition = yield* AWS.Glue.BatchUpdatePartition(table);
@@ -36,6 +35,8 @@ export interface BatchUpdatePartitionRequest extends Omit<
  *   ],
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchUpdatePartition extends Binding.Service<
   BatchUpdatePartition,

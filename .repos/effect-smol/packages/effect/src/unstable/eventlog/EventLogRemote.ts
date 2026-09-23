@@ -30,7 +30,7 @@ import {
   Authenticate,
   ChangesRpc,
   ChunkedMessage,
-  type EventLogProtocolError,
+  EventLogProtocolError,
   EventLogRemoteRpcs,
   type HelloResponse,
   type StoreId,
@@ -83,7 +83,16 @@ export class EventLogRemote extends Context.Service<EventLogRemote, {
 export class EventLogRemoteError extends Data.TaggedError("EventLogRemoteError")<{
   readonly method: string
   readonly cause: unknown
-}> {}
+}> {
+  /**
+   * Returns `true` when the value is an `EventLogRemoteError`.
+   *
+   * @since 4.0.0
+   */
+  static is(u: unknown): u is EventLogRemoteError {
+    return Predicate.isTagged(u, "EventLogRemoteError")
+  }
+}
 
 const getIdentityRootSecretMaterial = makeGetIdentityRootSecretMaterial(globalThis.crypto)
 
@@ -119,7 +128,7 @@ const makeAuthenticate = Effect.fnUntraced(function*(options: {
  * Use to provide the RPC client used by remote event-log replicas to
  * authenticate, write entries, and subscribe to changes.
  *
- * @category RPC client
+ * @category services
  * @since 4.0.0
  */
 export class EventLogRemoteClient extends Context.Service<
@@ -206,8 +215,10 @@ export const makeWith = Effect.fnUntraced(function*({ encodeWrite, decodeChanges
     Effect.retry(effect, {
       while(e) {
         hello = null
-        const isForbidden = Predicate.isTagged(e, "EventLogProtocolError") &&
-          (e as any as EventLogProtocolError).code === "Forbidden"
+        const error = EventLogRemoteError.is(e) && e.method === "authenticate"
+          ? e.cause
+          : e
+        const isForbidden = EventLogProtocolError.is(error) && error.code === "Forbidden"
         return Cache.invalidate(authCache, options.identity.publicKey).pipe(
           Effect.as(isForbidden)
         )
@@ -307,14 +318,14 @@ export const makeEncrypted = Effect.gen(function*(): Effect.fn.Return<
   return yield* makeWith({
     encodeWrite: (options) =>
       encryption.encrypt(options.identity, options.entries).pipe(
-        Effect.flatMap((msg) =>
+        Effect.flatMap((encryptedEntries) =>
           new WriteEntries({
             publicKey: options.identity.publicKey,
             storeId: options.storeId,
-            iv: msg.iv,
-            encryptedEntries: msg.encryptedEntries.map((entry, i) => ({
+            encryptedEntries: encryptedEntries.map((entry, i) => ({
               entryId: options.entries[i].id,
-              encryptedEntry: entry
+              iv: entry.iv,
+              encryptedEntry: entry.encryptedEntry
             }))
           }).encoded
         )

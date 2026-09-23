@@ -7,9 +7,9 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
 import {
+  appendClientConnectionParams,
   bootstrapRemoteBearerSession,
   exchangeRemoteDpopAccessToken,
-  fetchRemoteDpopSessionState,
   fetchRemoteSessionState,
   issueRemoteDpopWebSocketTicket,
   issueRemoteWebSocketTicket,
@@ -209,6 +209,47 @@ describe("remote environment authorization", () => {
     }),
   );
 
+  it.effect("keeps OS sentinels in telemetry but out of display metadata", () =>
+    Effect.gen(function* () {
+      const tokenResponse = () =>
+        Response.json(
+          {
+            access_token: "bearer-token",
+            issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+            token_type: "Bearer",
+            expires_in: 3600,
+            scope: "orchestration:read",
+          },
+          { status: 200 },
+        );
+      const fetch = recordedFetch(tokenResponse(), tokenResponse());
+
+      for (const os of ["unknown", "other"] as const) {
+        yield* bootstrapRemoteBearerSession({
+          httpBaseUrl: "https://remote.example.com/",
+          credential: "pairing-token",
+          clientMetadata: {
+            label: "T3 Code Web",
+            deviceType: "desktop",
+            os,
+          },
+        }).pipe(provideRemoteHttp(fetch.fetchFn));
+      }
+
+      for (const [, init] of fetch.calls) {
+        expect(String(init.body)).not.toContain("client_os=");
+      }
+
+      const websocketUrl = new URL("wss://remote.example.com/ws");
+      appendClientConnectionParams(websocketUrl, {
+        surface: "web",
+        deviceType: "desktop",
+        os: "unknown",
+      });
+      expect(websocketUrl.searchParams.get("clientOs")).toBe("unknown");
+    }),
+  );
+
   it.effect("allows a client to explicitly narrow a pairing grant", () =>
     Effect.gen(function* () {
       const fetch = recordedFetch(
@@ -338,45 +379,6 @@ describe("remote environment authorization", () => {
     }),
   );
 
-  it.effect("loads remote session state with a DPoP-bound access token", () =>
-    Effect.gen(function* () {
-      const fetch = recordedFetch(
-        Response.json({
-          authenticated: true,
-          auth: {
-            policy: "remote-reachable",
-            bootstrapMethods: ["one-time-token"],
-            sessionMethods: ["dpop-access-token"],
-            sessionCookieName: "t3_session",
-          },
-          sessionMethod: "dpop-access-token",
-          scopes: [
-            "orchestration:read",
-            "orchestration:operate",
-            "terminal:operate",
-            "review:write",
-          ],
-          expiresAt: "2026-05-01T12:00:00.000Z",
-        }),
-      );
-
-      yield* fetchRemoteDpopSessionState({
-        httpBaseUrl: "https://remote.example.com/",
-        accessToken: "dpop-access-token",
-        dpopProof: "dpop-proof",
-      }).pipe(provideRemoteHttp(fetch.fetchFn));
-
-      expectFetchCall(fetch.calls, 1, {
-        url: "https://remote.example.com/api/auth/session",
-        method: "GET",
-        headers: {
-          authorization: "DPoP dpop-access-token",
-          dpop: "dpop-proof",
-        },
-      });
-    }),
-  );
-
   it.effect("fails hung fetch requests on the configured timeout", () =>
     Effect.gen(function* () {
       const fetch = hangingFetch();
@@ -467,9 +469,20 @@ describe("remote environment authorization", () => {
         wsBaseUrl: "wss://remote.example.com/",
         httpBaseUrl: "https://remote.example.com/",
         bearerToken: "bearer-token",
+        clientMetadata: {
+          surface: "mobile",
+          appVersion: "1.2.3",
+          deviceType: "mobile",
+          os: "Android",
+          osMajorVersion: 15,
+          deviceModel: "Pixel 9",
+        },
+        connectionMethod: "relay",
       }).pipe(provideRemoteHttp(fetch.fetchFn));
 
-      expect(url).toBe("wss://remote.example.com/ws?wsTicket=ws-ticket");
+      expect(url).toBe(
+        "wss://remote.example.com/ws?wsTicket=ws-ticket&clientSurface=mobile&clientAppVersion=1.2.3&clientDeviceType=phone&clientOs=Android&clientOsMajorVersion=15&clientDeviceModel=Pixel+9&connectionMethod=relay",
+      );
     }),
   );
 });

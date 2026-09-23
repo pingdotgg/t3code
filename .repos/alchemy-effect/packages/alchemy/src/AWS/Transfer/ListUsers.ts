@@ -11,9 +11,8 @@ import type { Server } from "./Server.ts";
  * large user sets. The building block for self-service user portals over a
  * service-managed server. Provide the implementation with
  * `Effect.provide(AWS.Transfer.ListUsersHttp)`.
- * @binding
- * @section Managing Users at Runtime
- * @example List the Server's Users
+ * ### Managing Users at Runtime
+ * **Example:** List the Server's Users
  * ```typescript
  * // init — bind the operation to the server
  * const listUsers = yield* AWS.Transfer.ListUsers(server);
@@ -22,6 +21,8 @@ import type { Server } from "./Server.ts";
  * const { Users } = yield* listUsers();
  * yield* Effect.log(`users: ${Users.map((u) => u.UserName).join(", ")}`);
  * ```
+ *
+ * @binding
  */
 export interface ListUsers extends Binding.Service<
   ListUsers,

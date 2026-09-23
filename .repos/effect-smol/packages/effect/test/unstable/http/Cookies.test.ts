@@ -1,12 +1,78 @@
 import { assert, describe, it } from "@effect/vitest"
 import { assertNone, assertSome, deepStrictEqual } from "@effect/vitest/utils"
-import { Schema } from "effect"
+import { Result, Schema } from "effect"
 import * as Option from "effect/Option"
 import { TestSchema } from "effect/testing"
 import { Cookies } from "effect/unstable/http"
-import { assertSuccess } from "../../utils/assert.ts"
+import { assertFailure, assertSuccess } from "../../utils/assert.ts"
 
 describe("Cookies", () => {
+  describe("makeCookie", () => {
+    it("rejects cookie attribute delimiters in names, domains, and paths", () => {
+      assertFailure(
+        Cookies.makeCookie("a; Domain=evil.com; b", "token"),
+        Cookies.CookiesError.fromReason("InvalidCookieName")
+      )
+      assertFailure(
+        Cookies.makeCookie("session", "token", { domain: "legit.com; Domain=.parent.tld" }),
+        Cookies.CookiesError.fromReason("InvalidCookieDomain")
+      )
+      assertFailure(
+        Cookies.makeCookie("session", "token", { path: "/; HttpOnly" }),
+        Cookies.CookiesError.fromReason("InvalidCookiePath")
+      )
+    })
+
+    it("accepts RFC 6265 token names and legitimate domains and paths", () => {
+      for (const domain of ["sub.example.com", ".sub.example.com"]) {
+        const cookie = Result.getOrThrow(
+          Cookies.makeCookie("!#$%&'*+-.^_`|~", "token", {
+            domain,
+            path: "/some-path_with~chars/%20"
+          })
+        )
+
+        assert.strictEqual(
+          Cookies.serializeCookie(cookie),
+          `!#$%&'*+-.^_\`|~=token; Domain=${domain}; Path=/some-path_with~chars/%20`
+        )
+      }
+    })
+  })
+
+  describe("fromSetCookie", () => {
+    it("ignores invalid cookie names", () => {
+      const cookies = Cookies.fromSetCookie([
+        "bad name=value",
+        "session=abc"
+      ])
+
+      assertNone(Cookies.get(cookies, "bad name"))
+      assertSome(Cookies.getValue(cookies, "session"), "abc")
+    })
+  })
+
+  describe("toSetCookieHeaders", () => {
+    const invalidCookie = {
+      name: "session",
+      value: "token",
+      valueEncoded: "token",
+      options: { domain: "legit.com; Domain=.evil.com" }
+    } as unknown as Cookies.Cookie
+
+    it("rejects invalid cookies supplied through fromIterable", () => {
+      const cookies = Cookies.fromIterable([invalidCookie])
+
+      assert.throws(() => Cookies.toSetCookieHeaders(cookies), /InvalidCookieDomain/)
+    })
+
+    it("rejects invalid cookies supplied through setCookie", () => {
+      const cookies = Cookies.setCookie(Cookies.empty, invalidCookie)
+
+      assert.throws(() => Cookies.toSetCookieHeaders(cookies), /InvalidCookieDomain/)
+    })
+  })
+
   it("expireCookie returns a Result with an expired Set-Cookie value", () => {
     assertSuccess(
       Cookies.expireCookie(Cookies.empty, "session", { path: "/", secure: true }),
@@ -35,9 +101,9 @@ describe("Cookies", () => {
     )
   })
 
-  describe("CookiesSchema", () => {
+  describe("Schema.Cookies", () => {
     it("serializerIso annotation", () => {
-      const _sessionId = Schema.toIso(Cookies.CookiesSchema).at("sessionId")
+      const _sessionId = Schema.toIso(Schema.Cookies).at("sessionId")
       const cookies = Cookies.fromSetCookie([
         "sessionId=abc123; Path=/; HttpOnly; Secure",
         "theme=dark; Path=/; Max-Age=3600",
@@ -50,7 +116,7 @@ describe("Cookies", () => {
     })
 
     it("toCodecJson", async () => {
-      const schema = Cookies.CookiesSchema
+      const schema = Schema.Cookies
       const asserts = new TestSchema.Asserts(Schema.toCodecJson(Schema.toType(schema)))
 
       const encoding = asserts.encoding()
@@ -68,6 +134,21 @@ describe("Cookies", () => {
         ]
       )
     })
+  })
+
+  it("RecordFromCookies converts cookies to decoded string values", () => {
+    const cookies = Cookies.fromSetCookie(["session=abc", "theme=dark"])
+
+    deepStrictEqual(Schema.decodeSync(Schema.RecordFromCookies)(cookies), {
+      session: "abc",
+      theme: "dark"
+    })
+    deepStrictEqual(
+      Cookies.toSetCookieHeaders(
+        Schema.encodeSync(Schema.RecordFromCookies)({ session: "abc", theme: "dark" })
+      ),
+      ["session=abc", "theme=dark"]
+    )
   })
 
   it("get and getValue return Option", () => {

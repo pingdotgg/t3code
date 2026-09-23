@@ -42,7 +42,7 @@ import { RpcProviderProxy } from "./RpcProviderProxy.ts";
  * ```
  *
  * @param cls - The tag of the resource class to construct a provider for.
- * @param serverEntryUrl - The main file for the server entry point, if the provider is to be run in a separate process. This is typically obtained using `import.meta.url` or `import.meta.resolve`.
+ * @param providersUrl - URL of the module whose default export is the provider group's layer (the layer this provider is registered in). When the provider runs in the dev sidecar, the sidecar imports that module on first use — see `Local/Sidecar.ts`. Typically `import.meta.resolve("./Local.ts")`.
  * @param eff - The Effect to use to construct the provider.
  * @returns A layer containing the RpcProvider.
  */
@@ -165,8 +165,8 @@ export const effect = <
   LogsReq = never,
   ListReq = never,
 >(
-  cls: ResourceClassLike<R> | Platform<R, any, any, any, any>,
-  serverEntryUrl: string,
+  cls: ResourceClassLike<R> | Platform<R, any, any, any, any, any>,
+  providersUrl: string,
   eff: Effect.Effect<
     RpcProviderService<
       R,
@@ -223,7 +223,7 @@ export const effect = <
           },
         });
       }
-      return withDefaultList(yield* client.value.get(serverEntryUrl, cls.Type));
+      return withDefaultList(yield* client.value.get(providersUrl, cls.Type));
     }),
   );
 
@@ -254,16 +254,21 @@ export const providerServices = <ROut, E, RIn>(
  * Conditionally constructs a layer for use by an RpcProvider.
  * If the {@link RpcProviderProxy} is present in context, the layer is empty because it will not be used in this process.
  * Otherwise, the given layer is returned.
+ *
+ * Note that unlike earlier versions this is no longer gated on
+ * `AlchemyContext.dev`: local providers are registered via
+ * `ProviderLayer.dual` and their dependency layers are composed inside the
+ * *lazily built* local variant, so in a live run these services are only
+ * constructed when the local provider is actually demanded (e.g. deleting a
+ * `providerMode: "local"` state row during `alchemy deploy`).
  * @param self - An effect which returns a layer that is used by the RpcProvider.
  */
 export const providerServicesEffect = <A, E1, R1, E, R>(
   self: Effect.Effect<Layer.Layer<A, E1, R1>, E, R>,
 ): Layer.Layer<A, E | E1, R1 | Exclude<R, Scope> | AlchemyContext> =>
-  Effect.zip(AlchemyContext, Effect.serviceOption(RpcProviderProxy)).pipe(
-    Effect.flatMap(([context, client]) =>
-      context.dev && client._tag === "None"
-        ? self
-        : (Effect.succeed(Layer.empty) as never),
+  Effect.serviceOption(RpcProviderProxy).pipe(
+    Effect.flatMap((client) =>
+      client._tag === "None" ? self : (Effect.succeed(Layer.empty) as never),
     ),
     Layer.unwrap,
   );

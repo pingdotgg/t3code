@@ -31,9 +31,8 @@ export interface StartTopicsDetectionJobRequest extends Omit<
  * action (which has no resource-level IAM). Track the job with
  * {@link DescribeTopicsDetectionJob}.
  *
- * @binding
- * @section Starting Analysis Jobs
- * @example Start a Topic Modeling Job
+ * ### Starting Analysis Jobs
+ * **Example:** Start a Topic Modeling Job
  * ```typescript
  * // deploy time — bind the Comprehend data-access role
  * const startTopicsDetectionJob = yield* AWS.Comprehend.StartTopicsDetectionJob(dataAccessRole);
@@ -45,6 +44,8 @@ export interface StartTopicsDetectionJobRequest extends Omit<
  * });
  * // job.JobId, job.JobStatus === "SUBMITTED"
  * ```
+ *
+ * @binding
  */
 export interface StartTopicsDetectionJob extends Binding.Service<
   StartTopicsDetectionJob,

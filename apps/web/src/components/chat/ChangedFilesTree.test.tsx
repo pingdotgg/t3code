@@ -10,37 +10,21 @@ describe("ChangedFilesCard", () => {
       <ChangedFilesCard
         turnId={TurnId.make("turn-1")}
         files={[{ path: "README.md", kind: "modified", additions: 2, deletions: 1 }]}
-        expanded
-        showCompactPreview={false}
         allDirectoriesExpanded
         resolvedTheme="light"
-        onExpandedChange={() => {}}
         onToggleAllDirectories={() => {}}
         onOpenTurnDiff={() => {}}
       />,
     );
 
-    expect(markup).toContain('data-changed-files-state="expanded"');
-    expect(markup).toContain('aria-expanded="true"');
-    expect(markup).toContain("whitespace-nowrap");
-    expect(markup).toContain('class="group flex min-w-0 flex-1 items-center rounded-xl');
-    expect(markup).not.toMatch(/class="group flex min-w-0 flex-1 items-center[^"]*overflow-hidden/);
-    expect(markup).toContain('class="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden"');
-    expect(markup).toContain('class="flex shrink-0 items-center gap-1 whitespace-nowrap');
-    expect(markup).toContain('class="ml-1 hidden min-w-0 flex-1 truncate');
-    expect(markup).toContain("@[24rem]/changed-files:inline");
-    expect(markup).not.toContain("sm:inline");
-    expect(markup).toContain('class="flex shrink-0 items-center gap-1.5 pr-1"');
-    expect(markup).toContain("!size-[22px]");
-    expect(markup).toContain("size-3");
-    expect(markup).toContain('aria-label="Collapse all folders"');
+    expect(markup).toContain('data-changed-files-state="tree"');
     expect(markup).toContain('aria-label="Open diff"');
     expect(markup).toContain('role="group" aria-label="2 additions, 1 deletions"');
     expect(markup).toContain("1 changed file");
     expect(markup).not.toContain("1 changed files");
   });
 
-  it("renders a scope and representative-file preview for a large latest change", () => {
+  it("shows collapsed folders and root files together", () => {
     const markup = renderToStaticMarkup(
       <ChangedFilesCard
         turnId={TurnId.make("turn-1")}
@@ -55,46 +39,39 @@ describe("ChangedFilesCard", () => {
           },
           { path: "README.md", kind: "modified", additions: 3, deletions: 0 },
         ]}
-        expanded={false}
-        showCompactPreview
         allDirectoriesExpanded={false}
         resolvedTheme="light"
-        onExpandedChange={() => {}}
         onToggleAllDirectories={() => {}}
         onOpenTurnDiff={() => {}}
       />,
     );
 
-    expect(markup).toContain('data-changed-files-state="preview"');
+    expect(markup).toContain('data-changed-files-state="tree"');
     expect(markup).toContain('aria-expanded="false"');
-    expect(markup).toContain("apps");
-    expect(markup).toContain("2 files");
-    expect(markup).toContain("packages");
-    expect(markup).toContain("root");
-    expect(markup).toContain("App.tsx");
-    expect(markup).toContain("git.ts");
+    expect(markup).toContain("apps/web/src");
+    expect(markup).not.toContain("App.tsx");
+    expect(markup).toContain("packages/shared/src");
+    expect(markup).not.toContain("git.ts");
     expect(markup).toContain("README.md");
-    expect(markup).toContain("Show all 4 files");
+    expect(markup).not.toContain("Show all");
     expect(markup).not.toContain("App.test.tsx");
   });
 
-  it("keeps older collapsed changes to a one-line receipt", () => {
+  it("keeps the folder tree visible when folders are collapsed", () => {
     const markup = renderToStaticMarkup(
       <ChangedFilesCard
         turnId={TurnId.make("turn-1")}
         files={[{ path: "apps/web/src/App.tsx", kind: "modified", additions: 120, deletions: 20 }]}
-        expanded={false}
-        showCompactPreview={false}
         allDirectoriesExpanded={false}
         resolvedTheme="light"
-        onExpandedChange={() => {}}
         onToggleAllDirectories={() => {}}
         onOpenTurnDiff={() => {}}
       />,
     );
 
-    expect(markup).toContain('data-changed-files-state="collapsed"');
+    expect(markup).toContain('data-changed-files-state="tree"');
     expect(markup).toContain("1 changed file");
+    expect(markup).toContain("apps/web/src");
     expect(markup).not.toContain("Show all");
     expect(markup).not.toContain("App.tsx");
   });

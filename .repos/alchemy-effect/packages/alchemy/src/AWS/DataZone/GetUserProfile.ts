@@ -14,9 +14,8 @@ export interface GetUserProfileRequest extends Omit<
  * Reads a user profile in the bound domain — e.g. to resolve the requester of a subscription request. The domain id is injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DataZone.GetUserProfileHttp)`.
- * @binding
- * @section Portal, Profiles & Notifications
- * @example Resolve a User Profile
+ * ### Portal, Profiles & Notifications
+ * **Example:** Resolve a User Profile
  * ```typescript
  * // init — bind the operation to the domain
  * const getUserProfile = yield* AWS.DataZone.GetUserProfile(domain);
@@ -24,6 +23,8 @@ export interface GetUserProfileRequest extends Omit<
  * // runtime
  * const profile = yield* getUserProfile({ userIdentifier: userId });
  * ```
+ *
+ * @binding
  */
 export interface GetUserProfile extends Binding.Service<
   GetUserProfile,

@@ -19,14 +19,15 @@ export interface DeleteRecoveryPointRequest extends Omit<
  * Deletes a recovery point from the bound {@link BackupVault} — e.g. a
  * retention janitor pruning on-demand backups. Provide the implementation
  * with `Effect.provide(AWS.Backup.DeleteRecoveryPointHttp)`.
- * @binding
- * @section Recovery Points
- * @example Prune A Recovery Point
+ * ### Recovery Points
+ * **Example:** Prune A Recovery Point
  * ```typescript
  * const deleteRecoveryPoint = yield* AWS.Backup.DeleteRecoveryPoint(vault);
  *
  * yield* deleteRecoveryPoint({ RecoveryPointArn: recoveryPointArn });
  * ```
+ *
+ * @binding
  */
 export interface DeleteRecoveryPoint extends Binding.Service<
   DeleteRecoveryPoint,

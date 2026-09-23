@@ -1,10 +1,5 @@
-import {
-  ExternalLinkIcon,
-  PackagePlusIcon,
-  PaletteIcon,
-  RefreshCwIcon,
-  SearchIcon,
-} from "lucide-react";
+import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { ExternalLinkIcon, PackagePlusIcon, PaletteIcon, SearchIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   importOpenVsxThemeExtension,
@@ -204,13 +199,12 @@ export function ThemeSearchSection({
       return;
     }
     void runSearch(debouncedQuery);
-    // `installingId` and `sortBy` are deliberately not dependencies: the
-    // guards above read the current values from the fresh render closure. An
-    // install finishing reruns the search only when the query or sort changed
-    // while it was in flight (checked via lastSearchKeyRef, recorded only
-    // once a search succeeds), so the install error the user needs to see is
-    // preserved across that rerun.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // `sortBy` is deliberately not a direct dependency: the guards above read
+    // the current value from the fresh render closure. An install finishing
+    // reruns the search only when the query or sort changed while it was in
+    // flight (checked via lastSearchKeyRef, recorded only once a search
+    // succeeds), so the install error the user needs to see is preserved
+    // across that rerun.
   }, [open, query, debouncedQuery, installingId, runSearch]);
 
   const handleSortChange = useCallback((value: OpenVsxThemeSort | null) => {
@@ -418,7 +412,7 @@ export function ThemeSearchSection({
                       {isInstalling ? (
                         <Spinner />
                       ) : isInstalled ? (
-                        <RefreshCwIcon />
+                        <RefreshIcon />
                       ) : (
                         <PackagePlusIcon />
                       )}

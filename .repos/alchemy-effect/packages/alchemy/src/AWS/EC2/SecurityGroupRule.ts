@@ -1,8 +1,11 @@
 import * as ec2 from "@distilled.cloud/aws/ec2";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import { isResolved } from "../../Diff.ts";
+import { canonicalCidr } from "../../Utils/ip-address.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
 import type { Providers } from "../Providers.ts";
@@ -11,7 +14,10 @@ import {
   getDefaultVpcDefaultSecurityGroupId,
   getDefaultVpcScope,
 } from "./defaultVpcScope.ts";
-import type { SecurityGroupId } from "./SecurityGroup.ts";
+import type {
+  SecurityGroupId,
+  SecurityGroupRuleData,
+} from "./SecurityGroup.ts";
 
 export type SecurityGroupRuleId<ID extends string = string> = `sgr-${ID}`;
 export const SecurityGroupRuleId = <ID extends string>(
@@ -148,20 +154,25 @@ export interface SecurityGroupRule extends Resource<
 /**
  * A single ingress or egress rule attached to an existing security group,
  * managed as a standalone resource. Use this when you want to manage a
- * security group's rules independently of the group itself — for example, to
- * add rules to a group owned by another stack, or to add rules without
- * triggering a full re-sync of the group's inline rule set.
+ * security group's rules independently of its inline rules, or to add rules
+ * to a group not managed by an Alchemy SecurityGroup resource.
  *
- * Most properties (protocol, ports, source, `type`) replace the rule when
- * changed; only `description` and `tags` are updated in place.
+ * Declare the group and rule in the same stack and stage, passing the group's
+ * `groupId` output to establish ordering. The group recognizes the current
+ * declaration and its persisted physical rule ID, not cloud tags. Rules in
+ * another stack or stage are not protected from the group's reconciliation;
+ * cross-stack ownership is unsupported.
  *
- * @resource
- * @section Ingress vs Egress
+ * Changes to protocol, ports, source, or `type` props replace the rule.
+ * External edits to protocol, ports, source, description, and tags are repaired
+ * on unchanged deployment. Description and tag prop changes update in place.
+ *
+ * ### Ingress vs Egress
  * The `type` field decides the direction: `"ingress"` for inbound rules and
  * `"egress"` for outbound. Everything else (protocol, ports, source) is shared
  * between the two directions.
  *
- * @example Inbound HTTPS from anywhere
+ * **Example:** Inbound HTTPS from anywhere
  * ```typescript
  * const httpsRule = yield* AWS.EC2.SecurityGroupRule("HttpsIngress", {
  *   groupId: sg.groupId,
@@ -177,7 +188,7 @@ export interface SecurityGroupRule extends Resource<
  * Opens TCP 443 inbound from the entire internet on the target group. A single
  * port is expressed by setting `fromPort` and `toPort` to the same value.
  *
- * @example Outbound to a database port
+ * **Example:** Outbound to a database port
  * ```typescript
  * const egressRule = yield* AWS.EC2.SecurityGroupRule("DbEgress", {
  *   groupId: sg.groupId,
@@ -190,16 +201,16 @@ export interface SecurityGroupRule extends Resource<
  * });
  * ```
  *
- * An egress rule restricts where the group's members may connect out to — here,
- * only PostgreSQL within the VPC CIDR. Adding any egress rule to a group
- * supersedes the default allow-all-outbound behavior.
+ * This rule allows outbound PostgreSQL within the VPC CIDR. Set `egress: []`
+ * on the parent group to remove its default allow-all-outbound rule; adding a
+ * standalone egress rule does not remove other rules.
  *
- * @section Rule Sources
+ * ### Rule Sources
  * A rule's source (for ingress) or destination (for egress) is exactly one of:
  * an IPv4 CIDR (`cidrIpv4`), an IPv6 CIDR (`cidrIpv6`), another security group
  * (`referencedGroupId`), or a managed prefix list (`prefixListId`).
  *
- * @example Allow traffic from another security group
+ * **Example:** Allow traffic from another security group
  * ```typescript
  * const dbFromWeb = yield* AWS.EC2.SecurityGroupRule("DbFromWeb", {
  *   groupId: dbSg.groupId,
@@ -216,7 +227,7 @@ export interface SecurityGroupRule extends Resource<
  * reach the database, even as the tier's IPs change. This is the preferred way
  * to wire trust between tiers.
  *
- * @example Allow an IPv6 range
+ * **Example:** Allow an IPv6 range
  * ```typescript
  * const ipv6Rule = yield* AWS.EC2.SecurityGroupRule("HttpsIpv6", {
  *   groupId: sg.groupId,
@@ -233,7 +244,7 @@ export interface SecurityGroupRule extends Resource<
  * `0.0.0.0/0`. IPv4 and IPv6 are separate rules — you'd pair this with a
  * `cidrIpv4` rule to cover both.
  *
- * @example Allow from a managed prefix list
+ * **Example:** Allow from a managed prefix list
  * ```typescript
  * const sshRule = yield* AWS.EC2.SecurityGroupRule("SshFromCorp", {
  *   groupId: sg.groupId,
@@ -249,12 +260,12 @@ export interface SecurityGroupRule extends Resource<
  * A `prefixListId` references a centrally-managed set of CIDRs by ID, so the
  * rule's effective ranges update automatically whenever the prefix list does.
  *
- * @section Protocols & Ports
+ * ### Protocols & Ports
  * `ipProtocol` accepts `tcp`, `udp`, `icmp`/`icmpv6`, a protocol number, or `-1`
  * for all protocols. For ICMP, `fromPort` is the ICMP type and `toPort` is the
  * ICMP code, with `-1` meaning "all".
  *
- * @example Allow all traffic from a trusted CIDR
+ * **Example:** Allow all traffic from a trusted CIDR
  * ```typescript
  * const allRule = yield* AWS.EC2.SecurityGroupRule("AllFromVpc", {
  *   groupId: sg.groupId,
@@ -268,7 +279,7 @@ export interface SecurityGroupRule extends Resource<
  * With `ipProtocol: "-1"`, ports are ignored and every protocol is permitted —
  * appropriate only for fully trusted sources such as your own VPC CIDR.
  *
- * @example Allow ICMP echo (ping)
+ * **Example:** Allow ICMP echo (ping)
  * ```typescript
  * const icmpRule = yield* AWS.EC2.SecurityGroupRule("AllowPing", {
  *   groupId: sg.groupId,
@@ -284,10 +295,18 @@ export interface SecurityGroupRule extends Resource<
  * For ICMP the port fields carry the type and code: type `8` / code `0` is an
  * echo request (ping). Use `fromPort: -1, toPort: -1` to allow every ICMP
  * type/code instead.
+ *
+ * @resource
  */
 export const SecurityGroupRule = Resource<SecurityGroupRule>(
   "AWS.EC2.SecurityGroupRule",
 );
+
+class SecurityGroupRuleNotConverged extends Data.TaggedError(
+  "SecurityGroupRuleNotConverged",
+)<{
+  ruleId: string;
+}> {}
 
 export const SecurityGroupRuleProvider = () =>
   Provider.effect(
@@ -341,13 +360,30 @@ export const SecurityGroupRuleProvider = () =>
         description: rule.Description,
       });
 
+      const tagsMatch = (
+        rule: ec2.SecurityGroupRule,
+        tags: Record<string, string>,
+      ) => {
+        const { removed, upsert } = diffTags(
+          Object.fromEntries(
+            (rule.Tags ?? []).map((tag) => [tag.Key!, tag.Value!]),
+          ),
+          tags,
+        );
+        return removed.length === 0 && upsert.length === 0;
+      };
+
       return {
         stables: ["securityGroupRuleId", "groupOwnerId"],
 
         read: Effect.fn(function* ({ output }) {
           if (!output) return undefined;
-          const rule = yield* describeRule(output.securityGroupRuleId);
-          return toAttrs(rule);
+          return yield* describeRule(output.securityGroupRuleId).pipe(
+            Effect.map(toAttrs),
+            Effect.catchTag("InvalidSecurityGroupRuleId.NotFound", () =>
+              Effect.succeed(undefined),
+            ),
+          );
         }),
 
         // Account/region-scoped: every rule is enumerable via
@@ -385,7 +421,7 @@ export const SecurityGroupRuleProvider = () =>
             );
           }),
 
-        diff: Effect.fn(function* ({ news, olds }) {
+        diff: Effect.fn(function* ({ id, news, olds, output }) {
           if (!isResolved(news)) return;
           // Most properties require replacement
           if (
@@ -401,7 +437,25 @@ export const SecurityGroupRuleProvider = () =>
           ) {
             return { action: "replace" };
           }
-          // Description and tags can be updated
+          if (output) {
+            const observed = yield* describeRule(
+              output.securityGroupRuleId,
+            ).pipe(
+              Effect.catchTag("InvalidSecurityGroupRuleId.NotFound", () =>
+                Effect.succeed(undefined),
+              ),
+            );
+            if (!observed) {
+              return { action: "update", stables: ["groupOwnerId"] };
+            }
+            if (
+              observedSecurityGroupRuleKey(observed) !==
+                securityGroupRuleKey(news) ||
+              !tagsMatch(observed, yield* createTags(id, news.tags))
+            ) {
+              return { action: "update" };
+            }
+          }
         }),
 
         reconcile: Effect.fn(function* ({ id, news, output, session }) {
@@ -482,9 +536,8 @@ export const SecurityGroupRuleProvider = () =>
 
           const ruleId = observed.SecurityGroupRuleId!;
 
-          // Sync description — modifySecurityGroupRules patches the
-          // mutable description in place when it drifts.
-          if ((observed.Description ?? undefined) !== news.description) {
+          const desiredKey = securityGroupRuleKey(news);
+          if (observedSecurityGroupRuleKey(observed) !== desiredKey) {
             yield* ec2.modifySecurityGroupRules({
               GroupId: news.groupId as string,
               SecurityGroupRules: [
@@ -494,13 +547,13 @@ export const SecurityGroupRuleProvider = () =>
                     IpProtocol: news.ipProtocol,
                     FromPort: news.fromPort,
                     ToPort: news.toPort,
-                    CidrIpv4: news.cidrIpv4,
-                    CidrIpv6: news.cidrIpv6,
+                    CidrIpv4: canonicalCidr(news.cidrIpv4),
+                    CidrIpv6: canonicalCidr(news.cidrIpv6),
                     ReferencedGroupId: news.referencedGroupId as
                       | string
                       | undefined,
                     PrefixListId: news.prefixListId as string | undefined,
-                    Description: news.description,
+                    Description: news.description ?? "",
                   },
                 },
               ],
@@ -527,8 +580,21 @@ export const SecurityGroupRuleProvider = () =>
             });
           }
 
-          // Re-read final state.
-          const final = yield* describeRule(ruleId);
+          const matches = (rule: ec2.SecurityGroupRule) =>
+            observedSecurityGroupRuleKey(rule) === desiredKey &&
+            tagsMatch(rule, desiredTags);
+          const final = yield* describeRule(ruleId).pipe(
+            Effect.repeat({
+              until: matches,
+              schedule: Schedule.spaced("1 second"),
+              times: 8,
+            }),
+          );
+          if (!matches(final)) {
+            return yield* Effect.fail(
+              new SecurityGroupRuleNotConverged({ ruleId }),
+            );
+          }
           return toAttrs(final);
         }),
 
@@ -553,7 +619,10 @@ export const SecurityGroupRuleProvider = () =>
               })
               .pipe(
                 Effect.catchTag(
-                  "InvalidPermission.NotFound",
+                  [
+                    "InvalidPermission.NotFound",
+                    "InvalidSecurityGroupRuleId.NotFound",
+                  ],
                   () => Effect.void,
                 ),
                 Effect.catchTag("InvalidGroup.NotFound", () => Effect.void),
@@ -567,7 +636,10 @@ export const SecurityGroupRuleProvider = () =>
               })
               .pipe(
                 Effect.catchTag(
-                  "InvalidPermission.NotFound",
+                  [
+                    "InvalidPermission.NotFound",
+                    "InvalidSecurityGroupRuleId.NotFound",
+                  ],
                   () => Effect.void,
                 ),
                 Effect.catchTag("InvalidGroup.NotFound", () => Effect.void),
@@ -578,4 +650,57 @@ export const SecurityGroupRuleProvider = () =>
         }),
       };
     }),
+  );
+
+const protocols: Record<string, string> = {
+  "6": "tcp",
+  "17": "udp",
+  "1": "icmp",
+  "58": "icmpv6",
+};
+
+export const securityGroupRuleKey = (rule: SecurityGroupRuleData) => {
+  const protocol = protocols[rule.ipProtocol] ?? rule.ipProtocol;
+  const hasPorts = ["tcp", "udp", "icmp", "icmpv6"].includes(protocol);
+  return JSON.stringify({
+    protocol,
+    from: hasPorts
+      ? (rule.fromPort ?? (protocol === "icmpv6" ? -1 : undefined))
+      : undefined,
+    to: hasPorts
+      ? (rule.toPort ?? (protocol === "icmpv6" ? -1 : undefined))
+      : undefined,
+    ipv4: canonicalCidr(rule.cidrIpv4),
+    ipv6: canonicalCidr(rule.cidrIpv6),
+    group: rule.referencedGroupId,
+    prefix: rule.prefixListId,
+    description: rule.description ?? "",
+  });
+};
+
+export const observedSecurityGroupRuleKey = (rule: ec2.SecurityGroupRule) =>
+  securityGroupRuleKey({
+    ipProtocol: rule.IpProtocol!,
+    fromPort: rule.FromPort,
+    toPort: rule.ToPort,
+    cidrIpv4: rule.CidrIpv4,
+    cidrIpv6: rule.CidrIpv6,
+    referencedGroupId: rule.ReferencedGroupInfo?.GroupId as
+      | SecurityGroupId
+      | undefined,
+    prefixListId: rule.PrefixListId,
+    description: rule.Description,
+  });
+
+// EC2 creates one physical rule per source in an IpPermission.
+export const expandSecurityGroupRules = (rules: SecurityGroupRuleData[]) =>
+  rules.flatMap(
+    ({ cidrIpv4, cidrIpv6, referencedGroupId, prefixListId, ...rule }) => [
+      ...(cidrIpv4 === undefined ? [] : [{ ...rule, cidrIpv4 }]),
+      ...(cidrIpv6 === undefined ? [] : [{ ...rule, cidrIpv6 }]),
+      ...(referencedGroupId === undefined
+        ? []
+        : [{ ...rule, referencedGroupId }]),
+      ...(prefixListId === undefined ? [] : [{ ...rule, prefixListId }]),
+    ],
   );

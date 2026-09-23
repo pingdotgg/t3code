@@ -10,14 +10,15 @@ import * as Binding from "../../Binding.ts";
  * grant is on `*`. Provide the implementation with
  * `Effect.provide(AWS.Location.CancelJobHttp)`.
  *
- * @binding
- * @section Managing Batch Jobs
- * @example Cancel a Batch Job
+ * ### Managing Batch Jobs
+ * **Example:** Cancel a Batch Job
  * ```typescript
  * const cancelJob = yield* Location.CancelJob();
  *
  * yield* cancelJob({ JobId: jobId });
  * ```
+ *
+ * @binding
  */
 export interface CancelJob extends Binding.Service<
   CancelJob,

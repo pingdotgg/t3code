@@ -12,8 +12,8 @@ The JavaScript code to evaluate.
 Must be a valid module with a default export function accepting no arguments.
 Can return any value, including a Promise.`;
 
-export class Eval extends AI.Tool<Eval>()("eval")`
-Evaluate JavaScript ${code}` {}
+export class Eval extends (AI.Tool<Eval>()("eval")`
+Evaluate JavaScript ${code}`) {}
 
 export const EvalLive = Layer.effect(
   Eval,
@@ -24,7 +24,7 @@ export const EvalLive = Layer.effect(
       vm
         .load({
           mainModule: "index.js",
-          compatibilityDate: "2026-01-28",
+          compatibilityDate: "2026-08-31",
           modules: {
             "code.js": code,
             "index.js": dedent`

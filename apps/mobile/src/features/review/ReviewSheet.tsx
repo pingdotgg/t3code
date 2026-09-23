@@ -1,11 +1,10 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import type { MenuAction } from "@react-native-menu/menu";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import {
-  NativeHeaderToolbar,
-  NativeStackScreenOptions,
-  nativeHeaderScrollEdgeEffects,
-} from "../../native/StackHeader";
+import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
+import { ScreenHeader } from "../../components/ScreenHeader";
+import type { ScreenHeaderMenuItem } from "../../components/ScreenHeader.types";
+import type { ReviewSectionItem } from "./reviewModel";
+import { useReviewHeaderPresentation } from "./useReviewHeaderPresentation";
 import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
 import {
   memo,
@@ -23,6 +22,7 @@ import {
   FlatList,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   type NativeSyntheticEvent,
   StyleSheet,
@@ -32,12 +32,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
-import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { ControlPillMenu } from "../../components/ControlPill";
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { MaterialScreenContent } from "../../components/MaterialScreenContent";
+import { cn } from "../../lib/cn";
 import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
@@ -47,14 +48,7 @@ import {
   useAdaptiveWorkspacePaneRole,
   useRegisterWorkspaceInspector,
 } from "../layout/AdaptiveWorkspaceLayout";
-import { useEnvironmentQuery } from "../../state/query";
-import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
-import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
-import { useThreadSelection } from "../../state/use-thread-selection";
-import { vcsEnvironment } from "../../state/vcs";
-import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
-import { ThreadGitMenu } from "../threads/ThreadGitControls";
 import { useReviewCacheForThread } from "./reviewState";
 import {
   isNativeReviewDiffDrawEvent,
@@ -72,21 +66,109 @@ import { useReviewCommentSelectionController } from "./useReviewCommentSelection
 import { resolveReviewAvailability } from "./reviewAvailability";
 import { resolveSelectedReviewFileId } from "./reviewPaneSelection";
 import { buildReviewSectionMenu } from "./review-section-menu";
-import type { ReviewSectionItem } from "./reviewModel";
 import { reportShowcaseSceneRendered } from "../showcase/showcaseRenderSignal";
+
+function ReviewHeader(
+  props: Parameters<typeof useReviewHeaderPresentation>[0] & {
+    readonly iconColor: string;
+    readonly sectionMenu: ReturnType<typeof buildReviewSectionMenu>;
+    readonly showSectionToolbar: boolean;
+    readonly showChangedFilesToggle: boolean;
+    readonly onSelectSection: (sectionId: string) => void;
+    readonly onReturnToThread: () => void;
+  },
+) {
+  const { panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const presentation = useReviewHeaderPresentation(props);
+  const sectionAction = (
+    section: ReviewSectionItem | null,
+    title: string,
+  ): ScreenHeaderMenuItem => ({
+    id: section ? `section:${section.id}` : `unavailable:${title}`,
+    title,
+    disabled: section === null,
+    selected: section !== null && section.id === props.selectedSection?.id,
+    onPress: () => {
+      if (section) props.onSelectSection(section.id);
+    },
+  });
+  return (
+    <ScreenHeader
+      title={presentation.title}
+      subtitle={presentation.subtitle}
+      onBack={props.onReturnToThread}
+      hideBottomBorder
+      options={{ headerTintColor: props.iconColor, headerTitle: props.title }}
+      backInSplitView={{ accessibilityLabel: "Back to chat", icon: "chevron.left" }}
+      actions={
+        props.showChangedFilesToggle
+          ? [
+              {
+                accessibilityLabel: panes.auxiliaryPaneVisible
+                  ? "Hide changed files"
+                  : "Show changed files",
+                icon: "sidebar.right",
+                selected: panes.auxiliaryPaneVisible,
+                onPress: toggleAuxiliaryPane,
+              },
+            ]
+          : undefined
+      }
+      menus={[
+        ...(presentation.gitMenu ? [presentation.gitMenu] : []),
+        ...(props.showSectionToolbar
+          ? [
+              {
+                title: "Select diff",
+                icon: presentation.menuIcon,
+                items: [
+                  {
+                    id: "sections",
+                    inline: true,
+                    items: [
+                      sectionAction(props.sectionMenu.workingTree, "Working tree"),
+                      sectionAction(props.sectionMenu.branchChanges, "Branch changes"),
+                      sectionAction(props.sectionMenu.latestTurn, "Latest turn"),
+                    ],
+                  },
+                  ...(props.sectionMenu.turns.length > 0
+                    ? [
+                        {
+                          id: "turns",
+                          title: "Turn",
+                          items: props.sectionMenu.turns.map((section) => ({
+                            id: `section:${section.id}`,
+                            title: section.title,
+                            subtitle: section.subtitle ?? undefined,
+                            selected: section.id === props.selectedSection?.id,
+                            onPress: () => props.onSelectSection(section.id),
+                          })),
+                        },
+                      ]
+                    : []),
+                  ...(presentation.refreshAction ? [presentation.refreshAction] : []),
+                ],
+              },
+            ]
+          : []),
+      ]}
+    />
+  );
+}
 
 const REVIEW_HEADER_SPACING = 0;
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
 const ReviewNotice = memo(function ReviewNotice(props: { readonly notice: string }) {
   return (
-    <View className="border-b border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/60 dark:bg-amber-950/40">
-      <Text className="text-xs font-t3-bold uppercase text-amber-700 dark:text-amber-300">
-        Partial diff
-      </Text>
-      <Text className="text-xs leading-normal text-amber-800 dark:text-amber-200">
-        {props.notice}
-      </Text>
+    <View
+      className={cn(
+        "bg-warning px-4 py-3",
+        Platform.OS === "android" ? "m-2 rounded-[20px]" : "border-b border-warning-border",
+      )}
+    >
+      <Text className="text-xs font-t3-bold uppercase text-warning-foreground">Partial diff</Text>
+      <Text className="text-xs leading-normal text-warning-foreground">{props.notice}</Text>
     </View>
   );
 });
@@ -97,7 +179,6 @@ function ReviewSelectionActionBar(props: {
   readonly onOpenComment: (() => void) | null;
   readonly onClear: () => void;
 }) {
-  const foreground = useThemeColor("--color-primary-foreground");
   if (!props.title) {
     return null;
   }
@@ -107,7 +188,7 @@ function ReviewSelectionActionBar(props: {
       <SymbolView
         name={props.onOpenComment ? "text.bubble" : "line.3.horizontal.decrease.circle"}
         size={16}
-        tintColor={foreground}
+        tintColorClassName="accent-primary-foreground"
         type="monochrome"
       />
       <Text className="text-base font-t3-bold text-primary-foreground">{props.title}</Text>
@@ -144,7 +225,12 @@ function ReviewSelectionActionBar(props: {
         className="h-12 w-12 items-center justify-center rounded-full bg-primary"
         onPress={props.onClear}
       >
-        <SymbolView name="xmark" size={16} tintColor={foreground} type="monochrome" />
+        <SymbolView
+          name="xmark"
+          size={16}
+          tintColorClassName="accent-primary-foreground"
+          type="monochrome"
+        />
       </Pressable>
     </View>
   );
@@ -173,9 +259,14 @@ const ReviewFileNavigatorRow = memo(function ReviewFileNavigatorRow(props: {
       accessibilityRole="button"
       accessibilityState={{ selected }}
       className={
-        selected
-          ? "mt-1 min-h-12 justify-center rounded-xl bg-subtle-strong px-3 py-2"
-          : "mt-1 min-h-12 justify-center rounded-xl px-3 py-2 active:bg-subtle"
+        Platform.OS === "android"
+          ? cn(
+              "mt-1 min-h-12 justify-center rounded-[20px] px-3 py-2 active:bg-subtle",
+              selected && "bg-subtle-strong",
+            )
+          : selected
+            ? "mt-1 min-h-12 justify-center rounded-xl bg-subtle-strong px-3 py-2"
+            : "mt-1 min-h-12 justify-center rounded-xl px-3 py-2 active:bg-subtle"
       }
       onPress={handlePress}
     >
@@ -190,8 +281,10 @@ const ReviewFileNavigatorRow = memo(function ReviewFileNavigatorRow(props: {
         {file.path}
       </Text>
       <View className="mt-1 flex-row gap-2">
-        <Text className="text-2xs font-t3-bold text-emerald-600">+{file.additions}</Text>
-        <Text className="text-2xs font-t3-bold text-rose-600">-{file.deletions}</Text>
+        <Text className="text-2xs font-t3-bold text-adaptive-emerald-700-300">
+          +{file.additions}
+        </Text>
+        <Text className="text-2xs font-t3-bold text-adaptive-rose-700-300">-{file.deletions}</Text>
       </View>
     </Pressable>
   );
@@ -217,8 +310,9 @@ function ReviewFileNavigator({
   ref,
 }: ReviewFileNavigatorProps) {
   const insets = useSafeAreaInsets();
-  const sheetColor = String(useThemeColor("--color-sheet"));
-  const foregroundColor = String(useThemeColor("--color-foreground"));
+  const theme = useUniwindTheme();
+  const sheetColor = theme["--color-sheet"];
+  const foregroundColor = theme["--color-foreground"];
   const headerScrollEdgeEffects = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
   const [fileSelection, setFileSelection] = useState<{
     readonly sectionId: string | null;
@@ -321,16 +415,28 @@ function ReviewFileNavigator({
   }
 
   return (
-    <View className="flex-1 border-l border-border bg-sheet">
-      <View className="border-b border-border" style={{ paddingTop: headerInset }}>
-        <View className="px-4 py-3">
-          <Text className="text-sm font-t3-bold text-foreground">Changed files</Text>
-          <Text className="text-xs text-foreground-muted">
-            {files.length} {files.length === 1 ? "file" : "files"}
-          </Text>
+    <View
+      className={
+        Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 border-l border-border bg-sheet"
+      }
+    >
+      {Platform.OS === "android" ? (
+        <AndroidScreenHeader
+          title="Changed files"
+          subtitle={`${files.length} ${files.length === 1 ? "file" : "files"}`}
+          hideBottomBorder
+        />
+      ) : (
+        <View className="border-b border-border" style={{ paddingTop: headerInset }}>
+          <View className="px-4 py-3">
+            <Text className="text-sm font-t3-bold text-foreground">Changed files</Text>
+            <Text className="text-xs text-foreground-muted">
+              {files.length} {files.length === 1 ? "file" : "files"}
+            </Text>
+          </View>
         </View>
-      </View>
-      {fileList}
+      )}
+      <MaterialScreenContent insetHorizontal>{fileList}</MaterialScreenContent>
     </View>
   );
 }
@@ -341,37 +447,20 @@ type ReviewSheetProps = StaticScreenProps<{
 }>;
 
 export function ReviewSheet(props: ReviewSheetProps) {
-  const isAndroid = Platform.OS === "android";
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
   useAdaptiveWorkspacePaneRole("inspector");
-  const { panes, showAuxiliaryPane, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const { panes, showAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { themeAppearance: selectedTheme } = useAppearancePreferences();
-  const headerIcon = String(useThemeColor("--color-icon"));
+  const headerIcon = String(useUniwindTheme()["--color-icon"]);
   const { environmentId, threadId } = props.route.params;
   const environment = useEnvironmentPresentation(environmentId);
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
   const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
   const { draftMessage } = useThreadDraftForThread({ environmentId, threadId });
   const reviewCache = useReviewCacheForThread({ environmentId, threadId });
-  /* ─── Git actions for the toolbar menu (commit/push without leaving review) ── */
-  const { selectedThread } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
-  const gitState = useSelectedThreadGitState();
-  const gitActions = useSelectedThreadGitActions();
-  const gitStatusQuery = useEnvironmentQuery(
-    selectedThread !== null && selectedThreadCwd !== null
-      ? vcsEnvironment.status({
-          environmentId: selectedThread.environmentId,
-          input: { cwd: selectedThreadCwd },
-        })
-      : null,
-  );
-  // The selection-based git hooks only apply when this review belongs to the
-  // selected thread (it always does when reached from the thread's toolbar).
-  const gitMenuAvailable =
-    selectedThread !== null && String(selectedThread.id) === String(threadId);
   // With a solid (non-overlay) header the content lays out below the header
   // natively, so no manual top inset is needed. (Android renders its own
   // in-flow AndroidScreenHeader, so it needs no inset either.)
@@ -380,25 +469,45 @@ export function ReviewSheet(props: ReviewSheetProps) {
   useEffect(() => {
     showAuxiliaryPane("inspector");
   }, [environmentId, showAuxiliaryPane, threadId]);
-  const { error, reviewSections, selectedSection, refreshSelectedSection, selectSection } =
-    useReviewSections({
-      enabled: isEnvironmentReady,
-      environmentId,
-      threadId,
-      reviewCache,
-    });
+  const {
+    error,
+    reviewSections,
+    selectedSection,
+    refreshSelectedSection,
+    selectSection,
+    isSelectedSectionPending,
+    diffPreviewRevision,
+  } = useReviewSections({
+    enabled: isEnvironmentReady,
+    environmentId,
+    threadId,
+    reviewCache,
+  });
   useReviewDiffPrewarming({
     threadKey: reviewCache.threadKey,
     sections: reviewSections,
     selectedSectionId: selectedSection?.id ?? null,
   });
-  const { headerDiffSummary, nativeReviewDiffData, parsedDiff, pendingReviewCommentCount } =
-    useReviewDiffData({
-      threadKey: reviewCache.threadKey,
-      selectedSection,
-      draftMessage,
-    });
-  const NativeReviewDiffView = resolveNativeReviewDiffView()!;
+  const {
+    headerDiffSummary,
+    nativeReviewDiffData,
+    parsedDiff,
+    pendingReviewCommentCount,
+    loadVisibleFile,
+    isPending: areFilePatchesPending,
+  } = useReviewDiffData({
+    threadKey: reviewCache.threadKey,
+    environmentId,
+    cwd: selectedThreadCwd,
+    selectedSection,
+    revision: diffPreviewRevision,
+    draftMessage,
+  });
+  // Resolution returns null while Expo registers the native view (or forever
+  // when the binary lacks it). Rendering a null component type crashes the
+  // app, so callers must fall back — ThreadFeed's ReviewCommentCard does the
+  // same check.
+  const NativeReviewDiffView = resolveNativeReviewDiffView();
   const nativeReviewDiffViewRef = useRef<NativeReviewDiffViewHandle>(null);
   const showcasedReviewDrawRef = useRef<string | null>(null);
   // Native pull-to-refresh on the diff surface (replaces the old Refresh menu item).
@@ -463,6 +572,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
 
   const handleSelectFile = useCallback(
     (fileId: string | null) => {
+      loadVisibleFile(fileId, true);
       commentSelection.clearSelection();
       if (fileId !== null && collapsedFileIds.includes(fileId)) {
         toggleExpandedFile(fileId);
@@ -475,13 +585,14 @@ export function ReviewSheet(props: ReviewSheetProps) {
         console.error("[review] Failed to navigate to diff file", error);
       });
     },
-    [collapsedFileIds, commentSelection, toggleExpandedFile],
+    [collapsedFileIds, commentSelection, toggleExpandedFile, loadVisibleFile],
   );
   const handleVisibleFileChange = useCallback(
     (event: NativeSyntheticEvent<{ readonly fileId?: string | null }>) => {
+      loadVisibleFile(event.nativeEvent.fileId ?? null);
       reviewFileNavigatorRef.current?.setVisibleFile(event.nativeEvent.fileId ?? null);
     },
-    [],
+    [loadVisibleFile],
   );
   const renderInspector = useCallback(
     () => (
@@ -502,10 +613,11 @@ export function ReviewSheet(props: ReviewSheetProps) {
     (event: NativeSyntheticEvent<{ readonly fileId?: string }>) => {
       const { fileId } = event.nativeEvent;
       if (fileId) {
+        loadVisibleFile(fileId, true);
         toggleExpandedFile(fileId);
       }
     },
-    [toggleExpandedFile],
+    [toggleExpandedFile, loadVisibleFile],
   );
 
   const handleNativeToggleViewedFile = useCallback(
@@ -529,52 +641,6 @@ export function ReviewSheet(props: ReviewSheetProps) {
     hasCachedSelectedDiff,
     hasAnyCachedDiff,
   });
-  const androidSectionMenuActions = useMemo<MenuAction[]>(() => {
-    const sectionAction = (section: ReviewSectionItem | null, title: string): MenuAction => ({
-      id: section ? `section:${section.id}` : `unavailable:${title}`,
-      title: section?.id === selectedSection?.id ? `${title} (selected)` : title,
-      attributes: section ? undefined : { disabled: true },
-    });
-    const actions: MenuAction[] = [
-      sectionAction(sectionMenu.workingTree, "Working tree"),
-      sectionAction(sectionMenu.branchChanges, "Branch changes"),
-      sectionAction(sectionMenu.latestTurn, "Latest turn"),
-    ];
-
-    if (sectionMenu.turns.length > 0) {
-      actions.push({
-        id: "turns",
-        title: "Turn",
-        subactions: sectionMenu.turns.map((section) => ({
-          id: `section:${section.id}`,
-          title: section.id === selectedSection?.id ? `${section.title} (selected)` : section.title,
-          subtitle: section.subtitle ?? undefined,
-        })),
-      });
-    }
-
-    // The Android native diff surface has no pull-to-refresh, so refresh
-    // stays a menu action there (iOS refreshes via pull-to-refresh instead).
-    actions.push({
-      id: "refresh",
-      title: "Refresh current diff",
-      attributes: {
-        disabled: !selectedSection || selectedSection.isLoading,
-      },
-    });
-    return actions;
-  }, [sectionMenu, selectedSection]);
-  const handleAndroidSectionMenuAction = useCallback(
-    (event: { nativeEvent: { event: string } }) => {
-      const id = event.nativeEvent.event;
-      if (id === "refresh") {
-        void refreshSelectedSection();
-      } else if (id.startsWith("section:")) {
-        selectSection(id.slice("section:".length));
-      }
-    },
-    [refreshSelectedSection, selectSection],
-  );
   const handleRetryEnvironment = useCallback(() => {
     void retryEnvironment(environmentId);
   }, [environmentId, retryEnvironment]);
@@ -596,18 +662,32 @@ export function ReviewSheet(props: ReviewSheetProps) {
     .filter((part): part is string => Boolean(part))
     .join(" · ");
 
-  // The changed-files navigator lives in the workspace inspector column —
-  // the single right-hand pane per route — instead of an in-screen panel.
+  // The changed-files navigator drives the native diff surface via
+  // scrollToFile, so it is only useful when that surface resolved. In raw
+  // fallback mode the ref is necessarily null and the raw patch neither
+  // scrolls nor filters — registering the navigator would present working
+  // controls that cannot navigate.
   const showChangedFilesPane =
-    !showConnectionNotice && selectedSection !== null && parsedDiff.kind === "files";
+    !showConnectionNotice &&
+    selectedSection !== null &&
+    parsedDiff.kind === "files" &&
+    NativeReviewDiffView !== null;
   useRegisterWorkspaceInspector(showChangedFilesPane ? renderInspector : undefined);
+  // A toggle needs registered content; loading, errors and raw patches have no navigator pane.
+  const showChangedFilesToggle = panes.supportsAuxiliaryPane && showChangedFilesPane;
 
   const listHeader = useMemo(() => {
     const children: ReactElement[] = [];
 
     if (error) {
       children.push(
-        <View key="review-error" className="border-b border-border bg-card px-4 py-3">
+        <View
+          key="review-error"
+          className={cn(
+            "bg-card px-4 py-3",
+            Platform.OS === "android" ? "m-2 rounded-[20px]" : "border-b border-border",
+          )}
+        >
           <Text className="text-sm font-t3-bold text-foreground">Review unavailable</Text>
           <Text className="text-xs leading-normal text-foreground-muted">{error}</Text>
         </View>,
@@ -637,245 +717,204 @@ export function ReviewSheet(props: ReviewSheetProps) {
 
   return (
     <>
-      <NativeStackScreenOptions
-        options={
-          isAndroid
-            ? // Android draws its own in-flow header (AndroidScreenHeader below).
-              { headerShown: false }
-            : {
-                // Static header config lives in Stack.tsx (SOLID_HEADER_OPTIONS — the native
-                // diff scrolls internally, nothing for glass to sample). Only dynamic values
-                // here.
-                headerTintColor: headerIcon,
-                headerTitle: headerTitleText,
-                title: headerTitleText,
-                unstable_headerSubtitle:
-                  Platform.OS === "ios" && headerSubtitle.length > 0 ? headerSubtitle : undefined,
-              }
-        }
+      <ReviewHeader
+        environmentId={environmentId}
+        threadId={threadId}
+        title={headerTitleText}
+        subtitle={headerSubtitle}
+        androidSubtitle={androidHeaderSubtitle}
+        iconColor={headerIcon}
+        selectedThreadCwd={selectedThreadCwd}
+        sectionMenu={sectionMenu}
+        selectedSection={selectedSection}
+        showSectionToolbar={showSectionToolbar}
+        showChangedFilesToggle={showChangedFilesToggle}
+        onRefresh={handlePullToRefresh}
+        onSelectSection={selectSection}
+        onReturnToThread={handleReturnToThread}
       />
 
-      {isAndroid ? (
-        <AndroidScreenHeader
-          title="Review changes"
-          subtitle={androidHeaderSubtitle || "Select a diff"}
-          onBack={handleReturnToThread}
-          trailing={
-            showSectionToolbar ? (
-              <ControlPillMenu
-                actions={androidSectionMenuActions}
-                isAnchoredToRight
-                onPressAction={handleAndroidSectionMenuAction}
-              >
-                <AndroidHeaderIconButton
-                  accessibilityLabel="Select review diff"
-                  icon="ellipsis.circle"
-                />
-              </ControlPillMenu>
-            ) : null
-          }
-        />
-      ) : null}
-
-      <WorkspaceSidebarToolbar>
-        <NativeHeaderToolbar.Button
-          accessibilityLabel="Back to chat"
-          icon="chevron.left"
-          onPress={handleReturnToThread}
-        />
-      </WorkspaceSidebarToolbar>
-
-      {!isAndroid && (showSectionToolbar || panes.supportsAuxiliaryPane || gitMenuAvailable) ? (
-        <NativeHeaderToolbar placement="right">
-          {panes.supportsAuxiliaryPane ? (
-            <NativeHeaderToolbar.Button
-              accessibilityLabel={
-                panes.auxiliaryPaneVisible ? "Hide changed files" : "Show changed files"
-              }
-              icon="sidebar.right"
-              onPress={toggleAuxiliaryPane}
-              separateBackground
-            />
-          ) : null}
-          {gitMenuAvailable && selectedThread !== null ? (
-            <ThreadGitMenu
-              environmentId={environmentId}
-              threadId={threadId}
-              currentBranch={selectedThread.branch ?? null}
-              gitStatus={gitStatusQuery.data}
-              gitOperationLabel={gitState.gitOperationLabel}
-              onPull={gitActions.onPullSelectedThreadBranch}
-              onRunAction={gitActions.onRunSelectedThreadGitAction}
-            />
-          ) : null}
-          {showSectionToolbar ? (
-            <NativeHeaderToolbar.Menu icon="ellipsis" title="Select diff" separateBackground>
-              <NativeHeaderToolbar.Menu inline>
-                <NativeHeaderToolbar.MenuAction
-                  disabled={sectionMenu.workingTree === null}
-                  isOn={selectedSection?.id === sectionMenu.workingTree?.id}
-                  onPress={() => {
-                    if (sectionMenu.workingTree) {
-                      selectSection(sectionMenu.workingTree.id);
-                    }
-                  }}
-                >
-                  <NativeHeaderToolbar.Label>Working tree</NativeHeaderToolbar.Label>
-                </NativeHeaderToolbar.MenuAction>
-                <NativeHeaderToolbar.MenuAction
-                  disabled={sectionMenu.branchChanges === null}
-                  isOn={selectedSection?.id === sectionMenu.branchChanges?.id}
-                  onPress={() => {
-                    if (sectionMenu.branchChanges) {
-                      selectSection(sectionMenu.branchChanges.id);
-                    }
-                  }}
-                >
-                  <NativeHeaderToolbar.Label>Branch changes</NativeHeaderToolbar.Label>
-                </NativeHeaderToolbar.MenuAction>
-                <NativeHeaderToolbar.MenuAction
-                  disabled={sectionMenu.latestTurn === null}
-                  isOn={selectedSection?.id === sectionMenu.latestTurn?.id}
-                  onPress={() => {
-                    if (sectionMenu.latestTurn) {
-                      selectSection(sectionMenu.latestTurn.id);
-                    }
-                  }}
-                >
-                  <NativeHeaderToolbar.Label>Latest turn</NativeHeaderToolbar.Label>
-                </NativeHeaderToolbar.MenuAction>
-                {sectionMenu.turns.length > 0 ? (
-                  <NativeHeaderToolbar.Menu title="Turn">
-                    {sectionMenu.turns.map((section) => (
-                      <NativeHeaderToolbar.MenuAction
-                        key={section.id}
-                        isOn={section.id === selectedSection?.id}
-                        onPress={() => selectSection(section.id)}
-                        subtitle={section.subtitle ?? undefined}
-                      >
-                        <NativeHeaderToolbar.Label>{section.title}</NativeHeaderToolbar.Label>
-                      </NativeHeaderToolbar.MenuAction>
-                    ))}
-                  </NativeHeaderToolbar.Menu>
-                ) : null}
-              </NativeHeaderToolbar.Menu>
-            </NativeHeaderToolbar.Menu>
-          ) : null}
-        </NativeHeaderToolbar>
-      ) : null}
-
-      <View className="flex-1 bg-sheet">
-        {showConnectionNotice ? (
-          <View className="flex-1" style={{ paddingTop: topContentInset }}>
-            <EnvironmentConnectionNotice
-              environmentLabel={environment.presentation?.entry.target.label ?? "Environment"}
-              connection={
-                environment.presentation?.connection ?? {
-                  phase: "available",
-                  error: null,
-                  traceId: null,
+      <MaterialScreenContent>
+        <View className="flex-1 bg-sheet android:bg-sheet-solid">
+          {showConnectionNotice ? (
+            <View className="flex-1" style={{ paddingTop: topContentInset }}>
+              <EnvironmentConnectionNotice
+                environmentLabel={environment.presentation?.entry.target.label ?? "Environment"}
+                connection={
+                  environment.presentation?.connection ?? {
+                    phase: "available",
+                    error: null,
+                    traceId: null,
+                  }
                 }
-              }
-              resourceName="review"
-              onRetry={handleRetryEnvironment}
-            />
-          </View>
-        ) : selectedSection && parsedDiff.kind === "files" ? (
-          <View
-            className="flex-1"
-            style={{
-              backgroundColor: nativeBridge.theme.background,
-            }}
-          >
+                resourceName="review"
+                onRetry={handleRetryEnvironment}
+              />
+            </View>
+          ) : selectedSection && parsedDiff.kind === "files" && NativeReviewDiffView ? (
             <View
-              className="min-w-0 flex-1"
-              style={{ paddingTop: topContentInset + REVIEW_HEADER_SPACING }}
+              className="flex-1"
+              style={{
+                backgroundColor: nativeBridge.theme.background,
+              }}
             >
-              {listHeader}
-              <View className="min-w-0 flex-1" collapsable={false}>
-                <NativeReviewDiffView
-                  collapsable={false}
-                  testID="review-native-diff-view"
-                  refreshing={isPullRefreshing}
-                  onPullToRefresh={() => void handlePullToRefresh()}
-                  style={StyleSheet.absoluteFill}
-                  appearanceScheme={selectedTheme}
-                  collapsedFileIdsJson={nativeBridge.collapsedFileIdsJson}
-                  collapsedCommentIdsJson={nativeBridge.collapsedCommentIdsJson}
-                  contentResetKey={`${reviewCache.threadKey}:${selectedSection.id}`}
-                  contentWidth={NATIVE_REVIEW_DIFF_CONTENT_WIDTH}
-                  nativeViewRef={nativeReviewDiffViewRef}
-                  rowHeight={nativeReviewDiffStyle.rowHeight}
-                  rowsJson={nativeBridge.rowsJson}
-                  selectedRowIdsJson={nativeBridge.selectedRowIdsJson}
-                  styleJson={nativeBridge.styleJson}
-                  themeJson={nativeBridge.themeJson}
-                  tokensPatchJson={nativeBridge.tokensPatchJson}
-                  tokensResetKey={nativeBridge.tokensResetKey}
-                  viewedFileIdsJson={nativeBridge.viewedFileIdsJson}
-                  onDebug={handleNativeDebug}
-                  onPressLine={commentSelection.onPressLine}
-                  onVisibleFileChange={handleVisibleFileChange}
-                  onToggleComment={nativeBridge.onToggleComment}
-                  onToggleFile={handleNativeToggleFile}
-                  onToggleViewedFile={handleNativeToggleViewedFile}
-                />
+              <View
+                className="min-w-0 flex-1"
+                style={{ paddingTop: topContentInset + REVIEW_HEADER_SPACING }}
+              >
+                {listHeader}
+                <View className="min-w-0 flex-1" collapsable={false}>
+                  <NativeReviewDiffView
+                    collapsable={false}
+                    testID="review-native-diff-view"
+                    refreshing={
+                      isPullRefreshing || isSelectedSectionPending || areFilePatchesPending
+                    }
+                    onPullToRefresh={() => void handlePullToRefresh()}
+                    style={StyleSheet.absoluteFill}
+                    appearanceScheme={selectedTheme}
+                    collapsedFileIdsJson={nativeBridge.collapsedFileIdsJson}
+                    collapsedCommentIdsJson={nativeBridge.collapsedCommentIdsJson}
+                    contentResetKey={`${reviewCache.threadKey}:${selectedSection.id}`}
+                    contentWidth={NATIVE_REVIEW_DIFF_CONTENT_WIDTH}
+                    nativeViewRef={nativeReviewDiffViewRef}
+                    rowHeight={nativeReviewDiffStyle.rowHeight}
+                    rowsJson={nativeBridge.rowsJson}
+                    selectedRowIdsJson={nativeBridge.selectedRowIdsJson}
+                    styleJson={nativeBridge.styleJson}
+                    themeJson={nativeBridge.themeJson}
+                    tokensPatchJson={nativeBridge.tokensPatchJson}
+                    tokensResetKey={nativeBridge.tokensResetKey}
+                    viewedFileIdsJson={nativeBridge.viewedFileIdsJson}
+                    onDebug={handleNativeDebug}
+                    onPressLine={commentSelection.onPressLine}
+                    onVisibleFileChange={handleVisibleFileChange}
+                    onToggleComment={nativeBridge.onToggleComment}
+                    onToggleFile={handleNativeToggleFile}
+                    onToggleViewedFile={handleNativeToggleViewedFile}
+                  />
+                </View>
               </View>
             </View>
-          </View>
-        ) : (
-          <ScrollView
-            contentInsetAdjustmentBehavior="never"
-            contentInset={{ top: topContentInset, bottom: Math.max(insets.bottom, 18) + 18 }}
-            contentOffset={{ x: 0, y: -topContentInset }}
-            scrollIndicatorInsets={{
-              top: topContentInset,
-              bottom: Math.max(insets.bottom, 18) + 18,
-            }}
-            showsVerticalScrollIndicator={false}
-            className="flex-1"
-          >
-            {listHeader}
-            {!selectedSection ? (
-              <View className="border-b border-border bg-card px-4 py-5">
-                <Text className="text-sm font-t3-bold text-foreground">No review diffs</Text>
-                <Text className="text-xs leading-normal text-foreground-muted">
-                  This thread has no ready turn diffs and the worktree diff is empty.
-                </Text>
-              </View>
-            ) : selectedSection.isLoading && selectedSection.diff === null ? (
-              <View className="items-center gap-3 border-b border-border bg-card px-4 py-6">
-                <ActivityIndicator size="small" />
-                <Text className="text-xs text-foreground-muted">Loading diff…</Text>
-              </View>
-            ) : parsedDiff.kind === "empty" ? (
-              <View className="border-b border-border bg-card px-4 py-5">
-                <Text className="text-sm font-t3-bold text-foreground">No changes</Text>
-                <Text className="text-xs leading-normal text-foreground-muted">
-                  {selectedSection.subtitle ?? "This diff is empty."}
-                </Text>
-              </View>
-            ) : parsedDiff.kind === "raw" ? (
-              <View className="gap-3 border-b border-border bg-card px-4 py-4">
-                <Text className="text-xs leading-normal text-foreground-muted">
-                  {parsedDiff.reason}
-                </Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
-                  <Text selectable className="font-mono text-xs leading-relaxed text-foreground">
-                    {parsedDiff.text}
+          ) : (
+            <ScrollView
+              contentContainerStyle={
+                Platform.OS === "android" && (parsedDiff.kind === "empty" || !selectedSection)
+                  ? { flexGrow: 1, justifyContent: "center" }
+                  : undefined
+              }
+              contentInsetAdjustmentBehavior="never"
+              contentInset={{ top: topContentInset, bottom: Math.max(insets.bottom, 18) + 18 }}
+              contentOffset={{ x: 0, y: -topContentInset }}
+              scrollIndicatorInsets={{
+                top: topContentInset,
+                bottom: Math.max(insets.bottom, 18) + 18,
+              }}
+              showsVerticalScrollIndicator={false}
+              className="flex-1"
+              refreshControl={
+                // The native diff surface owns pull-to-refresh via onPullToRefresh;
+                // the raw fallback (and empty states) need an explicit control —
+                // iOS has no other refresh affordance here (the explicit
+                // "Refresh current diff" menu is Android-only).
+                <RefreshControl
+                  refreshing={isPullRefreshing || isSelectedSectionPending || areFilePatchesPending}
+                  onRefresh={() => void handlePullToRefresh()}
+                />
+              }
+            >
+              {listHeader}
+              {!selectedSection ? (
+                <View
+                  className={
+                    Platform.OS === "android"
+                      ? "items-center px-6 py-5"
+                      : "border-b border-border bg-card px-4 py-5"
+                  }
+                >
+                  <Text className="text-sm font-t3-bold text-foreground">No review diffs</Text>
+                  <Text
+                    className={cn(
+                      "text-xs leading-normal text-foreground-muted",
+                      Platform.OS === "android" && "mt-2 text-center",
+                    )}
+                  >
+                    This thread has no ready turn diffs and the worktree diff is empty.
                   </Text>
-                </ScrollView>
-              </View>
-            ) : null}
-          </ScrollView>
-        )}
-        <ReviewSelectionActionBar
-          bottomInset={insets.bottom}
-          title={commentSelection.selectionAction?.title ?? null}
-          onOpenComment={commentSelection.selectionAction?.onOpenComment ?? null}
-          onClear={commentSelection.clearSelection}
-        />
-      </View>
+                </View>
+              ) : selectedSection.isLoading && selectedSection.diff === null ? (
+                <View
+                  className={cn(
+                    "items-center gap-3 px-4 py-6",
+                    Platform.OS !== "android" && "border-b border-border bg-card",
+                  )}
+                >
+                  <ActivityIndicator size="small" />
+                  <Text className="text-xs text-foreground-muted">Loading diff…</Text>
+                </View>
+              ) : parsedDiff.kind === "empty" ? (
+                <View
+                  className={
+                    Platform.OS === "android"
+                      ? "items-center px-6 py-5"
+                      : "border-b border-border bg-card px-4 py-5"
+                  }
+                >
+                  <Text className="text-sm font-t3-bold text-foreground">No changes</Text>
+                  <Text
+                    className={cn(
+                      "text-xs leading-normal text-foreground-muted",
+                      Platform.OS === "android" && "mt-2 text-center",
+                    )}
+                  >
+                    {selectedSection.subtitle ?? "This diff is empty."}
+                  </Text>
+                </View>
+              ) : parsedDiff.kind === "raw" ? (
+                <View
+                  className={cn(
+                    "gap-3 bg-card px-4 py-4",
+                    Platform.OS === "android" ? "m-2 rounded-[20px]" : "border-b border-border",
+                  )}
+                >
+                  <Text className="text-xs leading-normal text-foreground-muted">
+                    {parsedDiff.reason}
+                  </Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
+                    <Text selectable className="font-mono text-xs leading-relaxed text-foreground">
+                      {parsedDiff.text}
+                    </Text>
+                  </ScrollView>
+                </View>
+              ) : parsedDiff.kind === "files" ? (
+                // The native diff surface could not be resolved on this binary;
+                // degrade to the raw patch instead of crashing the app.
+                <View
+                  className={cn(
+                    "gap-3 bg-card px-4 py-4",
+                    Platform.OS === "android" ? "m-2 rounded-[20px]" : "border-b border-border",
+                  )}
+                >
+                  <Text className="text-xs leading-normal text-foreground-muted">
+                    Native diff view unavailable. Showing the raw patch.
+                  </Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
+                    <Text selectable className="font-mono text-xs leading-relaxed text-foreground">
+                      {selectedSection?.diff ?? ""}
+                    </Text>
+                  </ScrollView>
+                </View>
+              ) : null}
+            </ScrollView>
+          )}
+          <ReviewSelectionActionBar
+            bottomInset={insets.bottom}
+            title={commentSelection.selectionAction?.title ?? null}
+            onOpenComment={commentSelection.selectionAction?.onOpenComment ?? null}
+            onClear={commentSelection.clearSelection}
+          />
+        </View>
+      </MaterialScreenContent>
     </>
   );
 }

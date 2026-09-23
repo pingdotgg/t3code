@@ -14,7 +14,6 @@ import {
   CircleIcon,
   HammerIcon,
   MessageSquareIcon,
-  PencilIcon,
   Trash2Icon,
 } from "lucide-react";
 import { useRef, useState } from "react";
@@ -23,6 +22,7 @@ import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { cn } from "~/lib/utils";
 
 import { Button } from "../ui/button";
+import { PullRequestEditButton } from "./PullRequestEditButton";
 import { Textarea } from "../ui/textarea";
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import {
@@ -264,15 +264,25 @@ export function ReviewThreadCard({
           <div className="mt-2 space-y-3">
             {comments.map((comment) => (
               <article key={comment.id} className="group min-w-0">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <PullRequestActorLabel actor={comment.author} className="text-foreground" />
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <PullRequestActorLabel actor={comment.author} />
                   <span>{formatRelativeTimeLabel(comment.createdAt)}</span>
+                  <PullRequestReactionBar
+                    className="ml-auto justify-end"
+                    reactions={comment.reactions ?? []}
+                    canReact={canReact}
+                    subjectId={comment.id}
+                    environmentId={environmentId}
+                    reference={reference}
+                    onRefresh={onReacted}
+                  />
                 </div>
                 {editingId === comment.id ? (
                   <PullRequestMarkdownEditor
                     className="mt-1"
                     value={comment.body}
                     cwd={workspaceRoot}
+                    environmentId={environmentId}
                     label="Edit comment"
                     saving={savingEdit}
                     onSave={(body) => void saveEdit(comment.id, body)}
@@ -284,29 +294,16 @@ export function ReviewThreadCard({
                       className="min-w-0 flex-1 text-sm"
                       text={comment.body}
                       cwd={workspaceRoot}
+                      environmentId={environmentId}
                     />
                     {canEditComment(comment) ? (
-                      <Button
-                        size="icon-xs"
-                        variant="ghost"
-                        className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
+                      <PullRequestEditButton
                         aria-label="Edit comment"
                         onClick={() => setEditingId(comment.id)}
-                      >
-                        <PencilIcon className="size-3" />
-                      </Button>
+                      />
                     ) : null}
                   </div>
                 )}
-                <PullRequestReactionBar
-                  className="mt-1.5"
-                  reactions={comment.reactions ?? []}
-                  canReact={canReact}
-                  subjectId={comment.id}
-                  environmentId={environmentId}
-                  reference={reference}
-                  onRefresh={onReacted}
-                />
               </article>
             ))}
           </div>
@@ -315,7 +312,6 @@ export function ReviewThreadCard({
               <Button
                 size="xs"
                 variant="ghost"
-                className="px-1"
                 disabled={loadingMore}
                 onClick={() => void loadMore()}
               >
@@ -355,12 +351,7 @@ export function ReviewThreadCard({
                 </div>
               </div>
             ) : (
-              <Button
-                size="xs"
-                variant="ghost"
-                className="mt-2 px-1"
-                onClick={() => setReplying(true)}
-              >
+              <Button size="xs" variant="ghost" className="mt-2" onClick={() => setReplying(true)}>
                 Reply
               </Button>
             )

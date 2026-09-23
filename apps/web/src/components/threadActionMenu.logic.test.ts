@@ -4,6 +4,7 @@ import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./thread
 
 const baseState: ThreadActionMenuState = {
   branch: null,
+  projectFilter: null,
   isPinned: false,
   isSettled: false,
   isSnoozed: false,
@@ -33,7 +34,39 @@ describe("buildThreadActionMenuItems", () => {
         ...baseState,
         supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
       }),
-    ).toEqual(["rename", "mark-unread", "copy", "archive", "delete"]);
+    ).toEqual(["rename", "mark-unread", "copy", "project-settings", "archive", "delete"]);
+  });
+
+  it("groups project settings with utility actions before archive", () => {
+    const items = buildThreadActionMenuItems(baseState);
+    const copyIndex = items.findIndex((item) => item.id === "copy");
+    expect(items[copyIndex + 1]).toMatchObject({
+      id: "project-settings",
+      label: "Project settings",
+      icon: "settings",
+    });
+    expect(items[copyIndex + 2]?.id).toBe("archive");
+  });
+
+  it("offers project filtering only for surfaces with a scoped thread list", () => {
+    expect(ids(baseState)).not.toContain("filter-by-project");
+    expect(
+      buildThreadActionMenuItems({
+        ...baseState,
+        projectFilter: { label: "Beta Project", isActive: false },
+      }).find((item) => item.id === "filter-by-project"),
+    ).toMatchObject({ label: "Filter by Beta Project", icon: "folder-tree" });
+  });
+
+  it("offers the way back to all projects once the list is scoped", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      projectFilter: { label: "Beta Project", isActive: true },
+    });
+    const filterIndex = items.findIndex((candidate) => candidate.id === "filter-by-project");
+    expect(items[filterIndex]).toMatchObject({ label: "Show all projects", icon: "folder-tree" });
+    expect(items[filterIndex - 1]?.id).toBe("mark-unread");
+    expect(items[filterIndex + 1]?.id).toBe("copy");
   });
 
   it("includes branch items only for threads with a branch", () => {
@@ -56,7 +89,7 @@ describe("buildThreadActionMenuItems", () => {
       (item) => item.id === "snooze",
     );
     expect(snooze?.disabled).toBe(true);
-    expect(snooze?.children?.map((child) => child.id)).toEqual(["snooze:hour"]);
+    expect(snooze?.children?.map((child) => child.id)).toEqual(["snooze:hour", "snooze:custom"]);
   });
 
   it("disables title regeneration while one is in flight", () => {

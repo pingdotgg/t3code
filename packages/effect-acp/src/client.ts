@@ -1,6 +1,5 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Stdio from "effect/Stdio";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -23,10 +22,22 @@ import {
 } from "./_internal/shared.ts";
 import { makeChildStdio, makeTerminationError } from "./_internal/stdio.ts";
 
+const decodeElicitationRequest = Schema.decodeUnknownEffect(AcpSchema.ElicitationRequest);
+
 export interface AcpClientOptions {
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
   readonly logger?: (event: AcpProtocol.AcpProtocolLogEvent) => Effect.Effect<void, never>;
+  /** Transforms child output before protocol logging and parsing. */
+  readonly transformStdout?: (
+    stdout: ChildProcessSpawner.ChildProcessHandle["stdout"],
+  ) => AcpProtocol.AcpStdio["stdin"];
+  /** Transforms decoded session updates before buffering or delivery. */
+  readonly transformSessionUpdate?: (
+    notification: AcpSchema.SessionNotification,
+  ) => AcpSchema.SessionNotification;
+  /** Reports input failures and process exits, even between requests. */
+  readonly onTermination?: (error: AcpError.AcpError) => Effect.Effect<void, never, never>;
 }
 
 type AcpClientRaw = {
@@ -142,7 +153,7 @@ export class AcpClient extends Context.Service<
       ) => Effect.Effect<AcpSchema.RequestPermissionResponse, AcpError.AcpError>,
     ) => Effect.Effect<void>;
     /**
-     * Registers a handler for `session/elicitation`.
+     * Registers a handler for `session/elicitation` and `elicitation/create`.
      * @see https://agentclientprotocol.com/protocol/schema#session/elicitation
      */
     readonly handleElicitation: (
@@ -223,7 +234,7 @@ export class AcpClient extends Context.Service<
       ) => Effect.Effect<void, AcpError.AcpError>,
     ) => Effect.Effect<void>;
     /**
-     * Registers a handler for `session/elicitation/complete`.
+     * Registers a handler for `session/elicitation/complete` and `elicitation/complete`.
      * @see https://agentclientprotocol.com/protocol/schema#session/elicitation/complete
      */
     readonly handleElicitationComplete: (
@@ -307,7 +318,7 @@ interface BufferedNotificationHandler<A> {
 }
 
 export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
-  stdio: Stdio.Stdio,
+  stdio: AcpProtocol.AcpStdio,
   options: AcpClientOptions = {},
   terminationError?: Effect.Effect<AcpError.AcpError>,
 ): Effect.fn.Return<AcpClient["Service"], never, Scope.Scope> {
@@ -404,6 +415,10 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     ...(options.logIncoming !== undefined ? { logIncoming: options.logIncoming } : {}),
     ...(options.logOutgoing !== undefined ? { logOutgoing: options.logOutgoing } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
+    ...(options.transformSessionUpdate
+      ? { transformSessionUpdate: options.transformSessionUpdate }
+      : {}),
+    ...(options.onTermination ? { onTermination: options.onTermination } : {}),
     onNotification: dispatchNotification,
     onExtRequest: dispatchExtRequest,
   });
@@ -418,6 +433,22 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
         ),
       [CLIENT_METHODS.session_elicitation]: (payload) =>
         runHandler(coreHandlers.elicitation, payload, CLIENT_METHODS.session_elicitation),
+      "elicitation/create": (payload) =>
+        decodeElicitationRequest(payload).pipe(
+          Effect.mapError((cause) =>
+            AcpError.AcpRequestError.invalidExtensionPayload(
+              "elicitation/create",
+              cause,
+            ).toProtocolError(),
+          ),
+          Effect.flatMap((request) =>
+            runHandler(coreHandlers.elicitation, request, "elicitation/create"),
+          ),
+          Effect.map(({ action, _meta }) => ({
+            ...action,
+            ...(_meta !== undefined ? { _meta } : {}),
+          })),
+        ),
       [CLIENT_METHODS.fs_read_text_file]: (payload) =>
         runHandler(coreHandlers.readTextFile, payload, CLIENT_METHODS.fs_read_text_file),
       [CLIENT_METHODS.fs_write_text_file]: (payload) =>
@@ -572,14 +603,14 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
   });
 });
 
-export const layer = (stdio: Stdio.Stdio, options: AcpClientOptions = {}): Layer.Layer<AcpClient> =>
-  Layer.effect(AcpClient, make(stdio, options));
-
 export const layerChildProcess = (
   handle: ChildProcessSpawner.ChildProcessHandle,
   options: AcpClientOptions = {},
 ): Layer.Layer<AcpClient> => {
-  const stdio = makeChildStdio(handle);
+  const stdio = {
+    ...makeChildStdio(handle),
+    stdin: options.transformStdout?.(handle.stdout) ?? handle.stdout,
+  };
   const terminationError = makeTerminationError(handle);
   return Layer.effect(AcpClient, make(stdio, options, terminationError));
 };

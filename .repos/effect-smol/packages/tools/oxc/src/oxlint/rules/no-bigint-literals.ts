@@ -1,4 +1,4 @@
-import type { CreateRule, Visitor } from "oxlint"
+import type { CreateRule, Visitor } from "@oxlint/plugins"
 
 const rule: CreateRule = {
   meta: {
@@ -10,7 +10,7 @@ const rule: CreateRule = {
     return {
       Literal(node) {
         if (typeof node.value === "bigint") {
-          const fixedSource = `BigInt(${node.value})`
+          const fixedSource = `BigInt("${node.value}")`
           context.report({
             node,
             message: "BigInt literals are not allowed",

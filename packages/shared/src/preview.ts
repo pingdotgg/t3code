@@ -36,18 +36,7 @@ export function isLoopbackHost(host: string): boolean {
   return false;
 }
 
-/** True when a raw URL string looks like a loopback dev URL we can preview. */
-export function isPreviewableUrl(rawUrl: string): boolean {
-  try {
-    const parsed = new URL(rawUrl);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-    return isLoopbackHost(parsed.hostname);
-  } catch {
-    return false;
-  }
-}
-
-export class PreviewUrlNormalizationError extends Schema.TaggedErrorClass<PreviewUrlNormalizationError>()(
+export class PreviewUrlNormalizationError extends Schema.TaggedError<PreviewUrlNormalizationError>()(
   "PreviewUrlNormalizationError",
   {
     inputLength: Schema.Number,

@@ -20,7 +20,7 @@ import * as Fiber from "../../Fiber.ts"
 import * as Filter from "../../Filter.ts"
 import { constFalse, constTrue, dual, identity } from "../../Function.ts"
 import * as Layer from "../../Layer.ts"
-import * as Option from "../../Option.ts"
+import type * as Option from "../../Option.ts"
 import * as Predicate from "../../Predicate.ts"
 import type * as Schedule from "../../Schedule.ts"
 import * as Schema from "../../Schema.ts"
@@ -200,7 +200,7 @@ export interface AnyStructSchema extends Schema.Top {
  * Type-level marker for services associated with a specific workflow
  * execution tag.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export interface Execution<Tag extends string> {
@@ -252,7 +252,7 @@ export interface AnyWithProps extends Any {
 /**
  * Extracts the payload schema from a `Workflow`.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type PayloadSchema<W> = W extends Workflow<
@@ -267,7 +267,7 @@ export type PayloadSchema<W> = W extends Workflow<
  * Computes the schema services required by clients that execute or poll
  * workflows.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type RequirementsClient<Workflows extends Any> = Workflows extends Workflow<
@@ -285,7 +285,7 @@ export type RequirementsClient<Workflows extends Any> = Workflows extends Workfl
  * Computes the schema services required by handlers that decode workflow
  * payloads and encode workflow results.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type RequirementsHandler<Workflows extends Any> = Workflows extends Workflow<
@@ -347,7 +347,7 @@ const Proto = {
   ) {
     return Effect.suspend(() => {
       const payload = this.payloadSchema.make(fields)
-      return Effect.flatMap(
+      const run = Effect.flatMap(
         EngineTag,
         (engine) =>
           Effect.flatMap(makeExecutionIdFromPayload(this, payload), (executionId) =>
@@ -361,6 +361,9 @@ const Proto = {
               })
             ))
       )
+      // Register with the parent before the execution id is computed, so a
+      // sibling that suspends first waits for this child to be dispatched.
+      return opts?.discard ? run : withPendingActivity(run)
     }).pipe(
       Effect.withSpan(
         `${this._tag}.execute`,
@@ -465,7 +468,7 @@ const ResultTypeId = "~effect/workflow/Workflow/Result"
 /**
  * Returns `true` when a value is a workflow `Result`.
  *
- * @category results
+ * @category guards
  * @since 4.0.0
  */
 export const isResult = <A = unknown, E = unknown>(
@@ -476,7 +479,7 @@ export const isResult = <A = unknown, E = unknown>(
  * Result of a workflow execution, either a completed exit or a suspended
  * workflow state.
  *
- * @category results
+ * @category models
  * @since 4.0.0
  */
 export type Result<A, E> = Complete<A, E> | Suspended
@@ -484,7 +487,7 @@ export type Result<A, E> = Complete<A, E> | Suspended
 /**
  * Encoded representation of a workflow `Result`.
  *
- * @category results
+ * @category models
  * @since 4.0.0
  */
 export type ResultEncoded<A, E> =
@@ -495,7 +498,7 @@ export type ResultEncoded<A, E> =
  * Encoded representation of a completed workflow result containing an encoded
  * `Exit`.
  *
- * @category results
+ * @category models
  * @since 4.0.0
  */
 export interface CompleteEncoded<A, E> {
@@ -527,7 +530,7 @@ export interface CompleteSchema<
 /**
  * Represents a completed workflow execution with its success or failure `Exit`.
  *
- * @category results
+ * @category models
  * @since 4.0.0
  */
 export class Complete<A, E> extends Data.TaggedClass("Complete")<{
@@ -557,16 +560,13 @@ export class Complete<A, E> extends Data.TaggedClass("Complete")<{
       [Schema.Exit(options.success, options.error, Schema.Defect())],
       ([exit]) => (input, ast, options) => {
         if (!(isResult(input) && input._tag === "Complete")) {
-          return Effect.fail(new SchemaIssue.InvalidType(ast, Option.some(input)))
+          return Effect.fail(new SchemaIssue.InvalidType(ast, input, options))
         }
         return Effect.mapBothEager(
           SchemaParser.decodeEffect(exit)(input.exit, options),
           {
             onSuccess: (exit) => new Complete({ exit }),
-            onFailure: (issue) =>
-              new SchemaIssue.Composite(ast, Option.some(input), [
-                new SchemaIssue.Pointer(["exit"], issue)
-              ])
+            onFailure: (issue) => SchemaIssue.makeCompositeAtKey(ast, "exit", issue, input, options)
           }
         )
       },
@@ -599,7 +599,7 @@ export class Complete<A, E> extends Data.TaggedClass("Complete")<{
  * Represents a suspended workflow execution, optionally carrying the cause that
  * triggered suspension.
  *
- * @category results
+ * @category schemas
  * @since 4.0.0
  */
 export class Suspended extends Schema.Class<Suspended>(
@@ -620,7 +620,7 @@ export class Suspended extends Schema.Class<Suspended>(
  * Creates a schema for workflow results using the supplied success and error
  * schemas.
  *
- * @category results
+ * @category schemas
  * @since 4.0.0
  */
 export const Result = <
@@ -636,7 +636,7 @@ const AnyOrVoid = Schema.Union([Schema.Any, Schema.Void])
 /**
  * Schema for encoded workflow results with generic success and error payloads.
  *
- * @category results
+ * @category schemas
  * @since 4.0.0
  */
 export const ResultEncoded: Schema.Codec<ResultEncoded<any, any>> = Schema.toEncoded(
@@ -653,7 +653,7 @@ export const ResultEncoded: Schema.Codec<ResultEncoded<any, any>> = Schema.toEnc
  * `Result`, handling suspension, defect capture, interruption, and workflow
  * scope finalization.
  *
- * @category results
+ * @category converting
  * @since 4.0.0
  */
 export const intoResult = <A, E, R>(
@@ -674,6 +674,9 @@ export const intoResult = <A, E, R>(
       Effect.interruptible,
       suspendOnFailure
         ? Effect.catchCause((cause) => {
+          if (instance.abandoned) {
+            return Effect.failCause(cause)
+          }
           instance.suspended = true
           if (!Cause.hasInterruptsOnly(cause)) {
             instance.cause = Cause.die(Cause.squash(cause))
@@ -691,10 +694,19 @@ export const intoResult = <A, E, R>(
           )
           const hasInterruptsOnly = interrupts.length === cause.reasons.length
           const filtered = reasons.length === 0 ? cause : Cause.fromReasons(reasons)
-          return instance.suspended && hasInterruptsOnly
-            ? Effect.succeed(new Suspended({ cause: instance.cause }))
-            : (!instance.interrupted && hasInterruptsOnly) ||
-                (!captureDefects && Cause.hasDies(cause))
+          const abandoned = instance.abandoned && !instance.interrupted && hasInterruptsOnly
+          instance.abandoned = abandoned
+          if (instance.suspended && hasInterruptsOnly && !abandoned) {
+            return Effect.succeed(new Suspended({ cause: instance.cause }))
+          }
+          if (!instance.interrupted && hasInterruptsOnly) {
+            // External interrupts exit without a result. When the cluster has
+            // marked this attempt abandoned, owner-local resources are
+            // released without running durable workflow finalizers so the run
+            // can replay elsewhere.
+            return Effect.failCause(filtered as Cause.Cause<never>)
+          }
+          return !captureDefects && Cause.hasDies(cause)
             ? Effect.failCause(filtered as Cause.Cause<never>)
             : Effect.succeed(new Complete({ exit: Exit.failCause(filtered) }))
         }
@@ -716,7 +728,7 @@ export const intoResult = <A, E, R>(
  * Wraps an activity-like effect so workflow suspension waits for currently
  * running activities to finish or suspend.
  *
- * @category results
+ * @category resource management
  * @since 4.0.0
  */
 export const wrapActivityResult = <A, E, R>(
@@ -725,28 +737,82 @@ export const wrapActivityResult = <A, E, R>(
 ): Effect.Effect<A, E, R | WorkflowInstance> =>
   Effect.contextWith((context: Context.Context<WorkflowInstance>) => {
     const instance = Context.get(context, InstanceTag)
-    const state = instance.activityState
-    if (state.count === 0) state.latch.closeUnsafe()
-    state.count++
-    return Effect.onExit(effect, (exit) => {
-      state.count--
-      const isSuspended = Exit.isSuccess(exit) && isSuspend(exit.value)
-      if (
-        Exit.isSuccess(exit) &&
-        isResult(exit.value) &&
-        exit.value._tag === "Suspended" &&
-        exit.value.cause
-      ) {
-        instance.cause = instance.cause
-          ? Cause.combine(instance.cause, exit.value.cause)
-          : exit.value.cause
+    return Effect.acquireUseRelease(
+      Effect.sync(() => adoptActivityUnsafe(context, instance) ?? registerActivityUnsafe(instance)),
+      () => effect,
+      (registration, exit) => {
+        releaseActivityUnsafe(registration)
+        const isSuspended = Exit.isSuccess(exit) && isSuspend(exit.value)
+        if (
+          Exit.isSuccess(exit) &&
+          isResult(exit.value) &&
+          exit.value._tag === "Suspended" &&
+          exit.value.cause
+        ) {
+          instance.cause = instance.cause
+            ? Cause.combine(instance.cause, exit.value.cause)
+            : exit.value.cause
+        }
+        return isSuspended && instance.activityState.count > 0
+          ? waitForZero(instance)
+          : Effect.void
       }
-      return state.count === 0
-        ? state.latch.open
-        : isSuspended
-        ? waitForZero(instance)
-        : Effect.void
-    })
+    )
+  })
+
+interface ActivityRegistration {
+  readonly instance: WorkflowInstance["Service"]
+  state: "pending" | "adopted" | "released"
+}
+
+const PendingActivityRegistration = Context.Service<ActivityRegistration>(
+  "effect/workflow/Workflow/PendingActivityRegistration"
+)
+
+const registerActivityUnsafe = (instance: WorkflowInstance["Service"]): ActivityRegistration => {
+  const state = instance.activityState
+  if (state.count === 0) state.latch.closeUnsafe()
+  state.count++
+  return { instance, state: "pending" }
+}
+
+const adoptActivityUnsafe = (
+  context: Context.Context<never>,
+  instance: WorkflowInstance["Service"]
+): ActivityRegistration | undefined => {
+  const pending = Context.getOrUndefined(context, PendingActivityRegistration)
+  if (!pending || pending.instance !== instance) {
+    return undefined
+  }
+  if (pending.state !== "pending") {
+    throw new Error("Workflow.wrapActivityResult: pending child registration has already been consumed")
+  }
+  pending.state = "adopted"
+  return pending
+}
+
+const releaseActivityUnsafe = (registration: ActivityRegistration) => {
+  if (registration.state === "released") return
+  registration.state = "released"
+  const state = registration.instance.activityState
+  state.count--
+  if (state.count === 0) state.latch.openUnsafe()
+}
+
+/**
+ * Registers a pending child workflow execution with the current workflow
+ * instance before any asynchronous work runs. `wrapActivityResult` adopts the
+ * registration once the execution is dispatched.
+ */
+const withPendingActivity = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Effect.contextWith((context: Context.Context<never>) => {
+    const instance = Context.getOrUndefined(context, InstanceTag)
+    if (!instance) return effect
+    return Effect.acquireUseRelease(
+      Effect.sync(() => registerActivityUnsafe(instance)),
+      (registration) => Effect.provideService(effect, PendingActivityRegistration, registration),
+      (registration) => Effect.sync(() => releaseActivityUnsafe(registration))
+    )
   })
 
 const waitForZero = Effect.fnUntraced(function*(instance: WorkflowInstance["Service"]) {
@@ -792,6 +858,14 @@ export const provideScope = <A, E, R>(
  * Adds an exit finalizer to the current workflow scope, preserving the
  * services available when the finalizer is registered.
  *
+ * **Details**
+ *
+ * Body-level `Effect.onExit` finalizers cannot observe a deposited workflow
+ * interrupt. Use this function for terminal-state work that must observe it.
+ * Finalizers are skipped when a cluster owner abandons a run attempt for
+ * replay; owner-local scope finalizers registered with {@link provideScope}
+ * still run.
+ *
  * @category resource management
  * @since 4.0.0
  */
@@ -804,9 +878,12 @@ export const addFinalizer: <R>(
 > = Effect.fnUntraced(function*<R>(
   f: (exit: Exit.Exit<unknown, unknown>) => Effect.Effect<void, never, R>
 ) {
-  const scope = (yield* InstanceTag).scope
+  const instance = yield* InstanceTag
   const services = yield* Effect.context<R>()
-  yield* Scope.addFinalizerExit(scope, (exit) => Effect.provideContext(f(exit), services))
+  yield* Scope.addFinalizerExit(
+    instance.scope,
+    (exit) => instance.abandoned ? Effect.void : Effect.provideContext(f(exit), services)
+  )
 })
 
 /**
@@ -825,7 +902,7 @@ export const addFinalizer: <R>(
  *
  * Compensation finalizers are only registered for top-level effects in the workflow and do not work for nested activities.
  *
- * @category Compensation
+ * @category compensation
  * @since 4.0.0
  */
 export const withCompensation: {
@@ -853,7 +930,7 @@ export const withCompensation: {
  * Marks a workflow instance as suspended and interrupts the current fiber to
  * stop execution until it is resumed.
  *
- * @category results
+ * @category interruption
  * @since 4.0.0
  */
 export const suspend = (instance: WorkflowInstance["Service"]): Effect.Effect<never> =>
@@ -870,7 +947,7 @@ export const suspend = (instance: WorkflowInstance["Service"]): Effect.Effect<ne
  *
  * By default, this annotation is set to `true`, meaning defects are captured.
  *
- * @category annotations
+ * @category services
  * @since 4.0.0
  */
 export const CaptureDefects = Context.Reference<boolean>(
@@ -887,7 +964,7 @@ export const CaptureDefects = Context.Reference<boolean>(
  *
  * The suspended execution can later be resumed with the workflow's `resume` method, for example `MyWorkflow.resume(executionId)`.
  *
- * @category annotations
+ * @category services
  * @since 4.0.0
  */
 export const SuspendOnFailure = Context.Reference<boolean>(

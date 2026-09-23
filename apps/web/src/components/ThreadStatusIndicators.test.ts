@@ -1,20 +1,24 @@
-import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
-import { ProjectId, ProviderInstanceId, ThreadId, type VcsStatusResult } from "@t3tools/contracts";
+import { ProjectId, type PullRequestSummary, type VcsStatusResult } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
-import * as Effect from "effect/Effect";
-import { AtomRegistry } from "effect/unstable/reactivity";
 
 import {
-  nextThreadChangeRequestSnapshot,
+  ChangeRequestStatusIcon,
   prStatusIndicator,
-  resolveDisplayedThreadPr,
-  resolveDisplayedThreadPrProvider,
-  resolveThreadPr,
-  settledPrHoverColorClass,
-  threadChangeRequestSnapshotsAtom,
-  type ThreadChangeRequestSnapshot,
+  resolveThreadPullRequestBadgePresentation,
 } from "./ThreadStatusIndicators";
+import { newestPullRequestSummary } from "../state/pullRequests";
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+
+describe("ChangeRequestStatusIcon", () => {
+  it.each([
+    ["open", "open", false, PullRequestGlyph.pullRequest],
+    ["draft", "open", true, PullRequestGlyph.draft],
+    ["closed", "closed", false, PullRequestGlyph.closed],
+    ["merged", "merged", false, PullRequestGlyph.merged],
+  ] as const)("uses the %s pull request glyph", (_label, state, isDraft, expectedIcon) => {
+    expect(ChangeRequestStatusIcon({ state, isDraft }).type).toBe(expectedIcon);
+  });
+});
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   return {
@@ -39,419 +43,45 @@ function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   };
 }
 
-function mergedFeaturePr(): NonNullable<VcsStatusResult["pr"]> {
+function pullRequestSummary(
+  state: PullRequestSummary["state"],
+  updatedAt: string,
+): PullRequestSummary {
   return {
+    provider: "github",
+    projectId: ProjectId.make("project-1"),
+    repository: "pingdotgg/t3code",
     number: 42,
     title: "Feature PR",
     url: "https://github.com/pingdotgg/t3code/pull/42",
-    baseRef: "main",
-    headRef: "feature/current",
-    state: "merged",
+    state,
+    headBranch: "feature/current",
+    baseBranch: "main",
+    updatedAt,
   };
 }
 
-function snapshotFor(
-  branch: string,
-  pr: NonNullable<VcsStatusResult["pr"]>,
-  sourceControlProvider?: VcsStatusResult["sourceControlProvider"],
-): ThreadChangeRequestSnapshot {
-  return { branch, pr, sourceControlProvider };
-}
+describe("shared pull request state", () => {
+  it("shows a panel-observed merge instead of an older sidebar summary", () => {
+    const open = pullRequestSummary("open", "2026-09-03T01:00:00.000Z");
+    const merged = pullRequestSummary("merged", "2026-09-03T01:01:00.000Z");
 
-describe("resolveThreadPr", () => {
-  it("keeps local-checkout PR indicators scoped to the stored thread branch", () => {
-    expect(
-      resolveThreadPr({
-        threadBranch: "feature/other",
-        gitStatus: status(),
-      }),
-    ).toBeNull();
+    expect(newestPullRequestSummary(open, merged)).toBe(merged);
   });
 
-  it("hides PR indicators when a dedicated worktree has switched away from the thread branch", () => {
-    expect(
-      resolveThreadPr({
-        threadBranch: "stack/base",
-        gitStatus: status(),
-      }),
-    ).toBeNull();
+  it("never lets a stale open response regress a merged observation", () => {
+    const merged = pullRequestSummary("merged", "2026-09-03T01:01:00.000Z");
+    const staleOpen = pullRequestSummary("open", "2026-09-03T01:00:00.000Z");
+
+    expect(newestPullRequestSummary(merged, staleOpen)).toBe(merged);
   });
 
-  it("hides PR indicators when thread branch metadata is missing", () => {
-    expect(
-      resolveThreadPr({
-        threadBranch: null,
-        gitStatus: status(),
-      }),
-    ).toBeNull();
+  it("accepts a newer open state after a closed pull request is reopened", () => {
+    const closed = pullRequestSummary("closed", "2026-09-03T01:00:00.000Z");
+    const reopened = pullRequestSummary("open", "2026-09-03T01:01:00.000Z");
+
+    expect(newestPullRequestSummary(closed, reopened)).toBe(reopened);
   });
-
-  it("shows the PR when the live checkout matches the stored thread branch", () => {
-    const gitStatus = status();
-
-    expect(
-      resolveThreadPr({
-        threadBranch: "feature/current",
-        gitStatus,
-      }),
-    ).toBe(gitStatus.pr);
-  });
-});
-
-describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
-  const featureBranch = "feature/current";
-  const mergedPr = mergedFeaturePr();
-  const provider = {
-    kind: "github" as const,
-    name: "GitHub",
-    baseUrl: "https://github.com",
-  };
-
-  it("returns the live merged PR when the checkout matches the feature branch", () => {
-    const gitStatus = status({
-      refName: featureBranch,
-      pr: mergedPr,
-      sourceControlProvider: provider,
-    });
-
-    expect(
-      resolveDisplayedThreadPr({
-        threadBranch: featureBranch,
-        gitStatus,
-        snapshot: undefined,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toBe(mergedPr);
-    expect(
-      resolveDisplayedThreadPrProvider({
-        threadBranch: featureBranch,
-        gitStatus,
-        snapshot: undefined,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toEqual(provider);
-  });
-
-  it("after caching a merged PR, resolves main status back to the cached feature PR", () => {
-    const matchingStatus = status({
-      refName: featureBranch,
-      pr: mergedPr,
-      sourceControlProvider: provider,
-    });
-    const cached = nextThreadChangeRequestSnapshot({
-      threadBranch: featureBranch,
-      gitStatus: matchingStatus,
-      snapshot: undefined,
-      retainTerminalOnBranchMismatch: true,
-    });
-    expect(cached).toEqual(snapshotFor(featureBranch, mergedPr, provider));
-
-    const mainStatus = status({
-      refName: "main",
-      isDefaultRef: true,
-      pr: {
-        number: 99,
-        title: "Unrelated main PR",
-        url: "https://github.com/pingdotgg/t3code/pull/99",
-        baseRef: "main",
-        headRef: "main",
-        state: "open",
-      },
-      sourceControlProvider: provider,
-    });
-
-    expect(
-      resolveDisplayedThreadPr({
-        threadBranch: featureBranch,
-        gitStatus: mainStatus,
-        snapshot: cached as ThreadChangeRequestSnapshot,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toEqual(mergedPr);
-    expect(
-      resolveDisplayedThreadPrProvider({
-        threadBranch: featureBranch,
-        gitStatus: mainStatus,
-        snapshot: cached as ThreadChangeRequestSnapshot,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toEqual(provider);
-  });
-
-  it("never attaches a PR reported by main to the feature thread", () => {
-    const mainPr = {
-      number: 99,
-      title: "Unrelated main PR",
-      url: "https://github.com/pingdotgg/t3code/pull/99",
-      baseRef: "develop",
-      headRef: "main",
-      state: "merged" as const,
-    };
-    expect(
-      resolveDisplayedThreadPr({
-        threadBranch: featureBranch,
-        gitStatus: status({ refName: "main", pr: mainPr }),
-        snapshot: undefined,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toBeNull();
-    expect(
-      nextThreadChangeRequestSnapshot({
-        threadBranch: featureBranch,
-        gitStatus: status({ refName: "main", pr: mainPr }),
-        snapshot: undefined,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toBeNull();
-  });
-
-  it("does not show a cached open PR across a branch mismatch", () => {
-    const openSnapshot = snapshotFor(featureBranch, {
-      ...mergedPr,
-      state: "open",
-      title: "Still open",
-    });
-
-    expect(
-      resolveDisplayedThreadPr({
-        threadBranch: featureBranch,
-        gitStatus: status({ refName: "main", pr: null }),
-        snapshot: openSnapshot,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toBeNull();
-  });
-
-  it("retains a cached closed PR across a branch mismatch", () => {
-    const closedPr = { ...mergedPr, state: "closed" as const, title: "Closed feature" };
-    const closedSnapshot = snapshotFor(featureBranch, closedPr, provider);
-
-    expect(
-      resolveDisplayedThreadPr({
-        threadBranch: featureBranch,
-        gitStatus: status({ refName: "main", pr: null }),
-        snapshot: closedSnapshot,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toEqual(closedPr);
-  });
-
-  it("does not retain or display a terminal PR when a worktree switches branches", () => {
-    const terminalSnapshot = snapshotFor(featureBranch, mergedPr, provider);
-    const mismatchedStatus = status({ refName: "feature/other", pr: null });
-
-    expect(
-      resolveDisplayedThreadPr({
-        threadBranch: featureBranch,
-        gitStatus: mismatchedStatus,
-        snapshot: terminalSnapshot,
-        retainTerminalOnBranchMismatch: false,
-      }),
-    ).toBeNull();
-    expect(
-      resolveDisplayedThreadPrProvider({
-        threadBranch: featureBranch,
-        gitStatus: mismatchedStatus,
-        snapshot: terminalSnapshot,
-        retainTerminalOnBranchMismatch: false,
-      }),
-    ).toBeUndefined();
-    expect(
-      nextThreadChangeRequestSnapshot({
-        threadBranch: featureBranch,
-        gitStatus: mismatchedStatus,
-        snapshot: terminalSnapshot,
-        retainTerminalOnBranchMismatch: false,
-      }),
-    ).toBeNull();
-  });
-
-  it("retains a local terminal snapshot when thread metadata follows the new branch", () => {
-    const otherBranchSnapshot = snapshotFor("feature/other", mergedPr, provider);
-
-    expect(
-      resolveDisplayedThreadPr({
-        threadBranch: featureBranch,
-        gitStatus: status({ refName: "main", pr: null }),
-        snapshot: otherBranchSnapshot,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toEqual(mergedPr);
-  });
-
-  it("retains a terminal snapshot when a local thread and status move to a branch with no PR", () => {
-    const terminalSnapshot = snapshotFor(featureBranch, mergedPr, provider);
-
-    expect(
-      nextThreadChangeRequestSnapshot({
-        threadBranch: "main",
-        gitStatus: status({ refName: "main", pr: null }),
-        snapshot: terminalSnapshot,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toBeUndefined();
-    expect(
-      resolveDisplayedThreadPr({
-        threadBranch: "main",
-        gitStatus: status({ refName: "main", pr: null }),
-        snapshot: terminalSnapshot,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toEqual(mergedPr);
-  });
-
-  it("clears an open snapshot when a local thread moves to a branch with no PR", () => {
-    const openSnapshot = snapshotFor(featureBranch, { ...mergedPr, state: "open" });
-
-    expect(
-      nextThreadChangeRequestSnapshot({
-        threadBranch: "main",
-        gitStatus: status({ refName: "main", pr: null }),
-        snapshot: openSnapshot,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toBeNull();
-  });
-
-  it("clears an open snapshot when a local checkout moves to a different branch", () => {
-    const openSnapshot = snapshotFor(featureBranch, { ...mergedPr, state: "open" });
-
-    expect(
-      nextThreadChangeRequestSnapshot({
-        threadBranch: featureBranch,
-        gitStatus: status({ refName: "main", pr: null }),
-        snapshot: openSnapshot,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toBeNull();
-  });
-
-  it("clears a retained snapshot when the thread branch is cleared", () => {
-    const terminalSnapshot = snapshotFor(featureBranch, mergedPr, provider);
-
-    expect(
-      nextThreadChangeRequestSnapshot({
-        threadBranch: null,
-        gitStatus: status({ refName: "main", pr: null }),
-        snapshot: terminalSnapshot,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toBeNull();
-    expect(
-      resolveDisplayedThreadPr({
-        threadBranch: null,
-        gitStatus: status({ refName: "main", pr: null }),
-        snapshot: terminalSnapshot,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toBeNull();
-    expect(
-      resolveDisplayedThreadPrProvider({
-        threadBranch: null,
-        gitStatus: status({ refName: "main", pr: null }),
-        snapshot: terminalSnapshot,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toBeUndefined();
-  });
-
-  it("does not erase a terminal snapshot when VCS data is missing", () => {
-    const terminalSnapshot = snapshotFor(featureBranch, mergedPr, provider);
-
-    expect(
-      nextThreadChangeRequestSnapshot({
-        threadBranch: featureBranch,
-        gitStatus: null,
-        snapshot: terminalSnapshot,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toBeUndefined();
-    expect(
-      resolveDisplayedThreadPr({
-        threadBranch: featureBranch,
-        gitStatus: null,
-        snapshot: terminalSnapshot,
-        retainTerminalOnBranchMismatch: true,
-      }),
-    ).toEqual(mergedPr);
-  });
-
-  it("keeps effectiveSettled true for a retained merged PR after a main checkout", () => {
-    const matchingStatus = status({
-      refName: featureBranch,
-      pr: mergedPr,
-      sourceControlProvider: provider,
-    });
-    const cached = nextThreadChangeRequestSnapshot({
-      threadBranch: featureBranch,
-      gitStatus: matchingStatus,
-      snapshot: undefined,
-      retainTerminalOnBranchMismatch: true,
-    });
-    expect(cached).not.toBeNull();
-    expect(cached).not.toBeUndefined();
-
-    const mainStatus = status({ refName: "main", pr: null, isDefaultRef: true });
-    const displayed = resolveDisplayedThreadPr({
-      threadBranch: "main",
-      gitStatus: mainStatus,
-      snapshot: cached as ThreadChangeRequestSnapshot,
-      retainTerminalOnBranchMismatch: true,
-    });
-    expect(displayed?.state).toBe("merged");
-
-    const shell = {
-      id: ThreadId.make("thread-1"),
-      projectId: ProjectId.make("project-1"),
-      title: "Feature thread",
-      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: "main",
-      worktreePath: null,
-      latestTurn: null,
-      session: null,
-      createdAt: "2026-04-09T00:00:00.000Z",
-      updatedAt: "2026-04-09T00:00:00.000Z",
-      archivedAt: null,
-      settledAt: null,
-      settledOverride: null,
-      latestUserMessageAt: "2026-04-09T00:00:00.000Z",
-      hasPendingApprovals: false,
-      hasPendingUserInput: false,
-      hasActionableProposedPlan: false,
-    } as OrchestrationThreadShell;
-
-    expect(
-      effectiveSettled(shell, {
-        now: "2026-04-10T00:00:00.000Z",
-        autoSettleAfterDays: null,
-        changeRequest: displayed,
-      }),
-    ).toBe(true);
-  });
-});
-
-describe("threadChangeRequestSnapshotsAtom", () => {
-  it.effect("retains snapshots while sidebar and chat consumers are unmounted", () =>
-    Effect.gen(function* () {
-      const registry = AtomRegistry.make();
-      const threadKey = "environment-1:thread-1";
-      const snapshot = snapshotFor("feature/current", mergedFeaturePr());
-
-      const unmount = registry.mount(threadChangeRequestSnapshotsAtom);
-      registry.set(threadChangeRequestSnapshotsAtom, new Map([[threadKey, snapshot]]));
-      unmount();
-
-      yield* Effect.yieldNow;
-
-      const remount = registry.mount(threadChangeRequestSnapshotsAtom);
-      expect(registry.get(threadChangeRequestSnapshotsAtom).get(threadKey)).toEqual(snapshot);
-
-      remount();
-      registry.dispose();
-    }),
-  );
 });
 
 describe("prStatusIndicator", () => {
@@ -471,14 +101,144 @@ describe("prStatusIndicator", () => {
       "text-red-600",
     );
   });
+
+  it("uses gray and draft wording for draft pull requests", () => {
+    const draftPr = status().pr;
+    if (!draftPr) throw new Error("Expected pull request fixture");
+
+    expect(prStatusIndicator({ ...draftPr, isDraft: true }, undefined)).toMatchObject({
+      label: "PR draft",
+      colorClass: "text-zinc-500 dark:text-zinc-400/80",
+      tooltipLead: "PR #42 - Draft",
+    });
+  });
 });
 
-describe("settledPrHoverColorClass", () => {
+describe("resolveThreadPullRequestBadgePresentation", () => {
+  const url = "https://github.com/pingdotgg/t3code/pull/42";
+
+  it("returns the pending pull-request badge when no snapshot is available", () => {
+    expect(
+      resolveThreadPullRequestBadgePresentation({
+        badge: null,
+        number: 42,
+        url,
+        status: null,
+      }),
+    ).toEqual({
+      Icon: PullRequestGlyph.pullRequest,
+      toneClassName: "text-muted-foreground",
+      label: "PR #42, status pending",
+      text: 42,
+    });
+  });
+
   it.each([
-    ["open", "text-emerald-600"],
-    ["merged", "text-violet-600"],
-    ["closed", "text-red-600"],
-  ] as const)("restores the %s pull request color on row hover", (state, colorClass) => {
-    expect(settledPrHoverColorClass(state)).toContain(`group-hover/v2-row:${colorClass}`);
+    [
+      "open",
+      { state: "open", isDraft: false },
+      PullRequestGlyph.pullRequest,
+      "text-emerald-600 dark:text-emerald-300/90",
+      "PR #42 - Open: PR branch",
+    ],
+    [
+      "draft",
+      { state: "open", isDraft: true },
+      PullRequestGlyph.draft,
+      "text-zinc-500 dark:text-zinc-400/80",
+      "PR #42 - Draft: PR branch",
+    ],
+    [
+      "closed",
+      { state: "closed", isDraft: false },
+      PullRequestGlyph.closed,
+      "text-red-600 dark:text-red-300/90",
+      "PR #42 - Closed: PR branch",
+    ],
+    [
+      "merged",
+      { state: "merged", isDraft: false },
+      PullRequestGlyph.merged,
+      "text-violet-600 dark:text-violet-300/90",
+      "PR #42 - Merged: PR branch",
+    ],
+  ] as const)(
+    "keeps the %s state for one linked pull request",
+    (_state, prOverrides, expectedIcon, expectedToneClassName, expectedLabel) => {
+      const fixture = status().pr;
+      if (!fixture) throw new Error("Expected pull request fixture");
+      const prStatus = prStatusIndicator({ ...fixture, ...prOverrides }, undefined);
+      if (!prStatus) throw new Error("Expected pull request status");
+
+      expect(
+        resolveThreadPullRequestBadgePresentation({
+          badge: { kind: "pull-request", others: 0, state: "open" },
+          number: fixture.number,
+          url: fixture.url,
+          status: prStatus,
+        }),
+      ).toEqual({
+        Icon: expectedIcon,
+        toneClassName: expectedToneClassName,
+        label: expectedLabel,
+        text: fixture.number,
+      });
+    },
+  );
+
+  it.each([
+    ["open", "text-emerald-600 dark:text-emerald-300/90"],
+    ["draft", "text-zinc-500 dark:text-zinc-400/80"],
+    ["merged", "text-violet-600 dark:text-violet-300/90"],
+  ] as const)(
+    "uses a layers badge with the %s stack tone without a link identity",
+    (state, expectedToneClassName) => {
+      expect(
+        resolveThreadPullRequestBadgePresentation({
+          badge: { kind: "stack", layers: 3, state },
+          status: null,
+        }),
+      ).toEqual({
+        Icon: PullRequestGlyph.stack,
+        toneClassName: expectedToneClassName,
+        label: `Stack of 3 pull requests, ${state}`,
+        text: 3,
+      });
+    },
+  );
+
+  it.each([
+    ["open", PullRequestGlyph.pullRequest, "text-emerald-600 dark:text-emerald-300/90"],
+    ["draft", PullRequestGlyph.draft, "text-zinc-500 dark:text-zinc-400/80"],
+    ["merged", PullRequestGlyph.merged, "text-violet-600 dark:text-violet-300/90"],
+  ] as const)(
+    "draws the count of unrelated linked pull requests with their %s aggregate state",
+    (state, expectedIcon, expectedToneClassName) => {
+      const fixture = status().pr;
+      if (!fixture) throw new Error("Expected pull request fixture");
+      const closedStatus = prStatusIndicator(
+        { ...fixture, state: "closed", isDraft: false },
+        undefined,
+      );
+      if (!closedStatus) throw new Error("Expected pull request status");
+
+      expect(
+        resolveThreadPullRequestBadgePresentation({
+          badge: { kind: "pull-request", others: 2, state },
+          number: fixture.number,
+          url: fixture.url,
+          status: closedStatus,
+        }),
+      ).toEqual({
+        Icon: expectedIcon,
+        toneClassName: expectedToneClassName,
+        label: `PR #42 - Closed: PR branch, and 2 more linked; overall ${state}`,
+        text: "+3",
+      });
+    },
+  );
+
+  it("omits the control when neither a stack nor a linked identity can be shown", () => {
+    expect(resolveThreadPullRequestBadgePresentation({ badge: null, status: null })).toBeNull();
   });
 });

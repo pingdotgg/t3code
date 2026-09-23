@@ -37,6 +37,11 @@ export interface ProjectionStateRepositoryShape {
    */
   readonly upsert: (row: ProjectionState) => Effect.Effect<void, ProjectionRepositoryError>;
 
+  /** Insert or replace projector cursors in one statement. Empty batches do nothing. */
+  readonly upsertMany: (
+    rows: ReadonlyArray<ProjectionState>,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
   /**
    * Read projection cursor state for a projector key.
    */
@@ -48,13 +53,6 @@ export interface ProjectionStateRepositoryShape {
    * List all projector cursor rows.
    */
   readonly listAll: () => Effect.Effect<ReadonlyArray<ProjectionState>, ProjectionRepositoryError>;
-
-  /**
-   * Read the minimum applied sequence across all projectors.
-   *
-   * Returns `null` when no projector state rows exist.
-   */
-  readonly minLastAppliedSequence: () => Effect.Effect<number | null, ProjectionRepositoryError>;
 }
 
 /**

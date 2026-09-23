@@ -5,7 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 
 describe("ComposerPendingApprovalActions", () => {
-  it("states that the persistent approval lasts for this session", () => {
+  it("keeps the main decisions visible and secondary decisions in the menu", () => {
     const markup = renderToStaticMarkup(
       <ComposerPendingApprovalActions
         requestId={ApprovalRequestId.make("approval-1")}
@@ -14,15 +14,13 @@ describe("ComposerPendingApprovalActions", () => {
       />,
     );
 
-    expect(markup).toContain(">Cancel<");
-    expect(markup).toContain("Always allow this session");
-    expect(markup).not.toContain(">Always allow<");
-    expect(markup).toContain("h-5");
-    expect(markup).toContain("sm:text-[11px]");
-    expect(markup).not.toContain("sm:h-6");
+    expect(markup).toContain(">Decline<");
+    expect(markup).toContain(">Approve<");
+    expect(markup).not.toContain(">Cancel<");
+    expect(markup).not.toContain("Always allow this session");
   });
 
-  it("shows only the approval choices advertised by an MCP server", () => {
+  it("keeps secondary provider labels out of the compact action row", () => {
     const markup = renderToStaticMarkup(
       <ComposerPendingApprovalActions
         requestId={ApprovalRequestId.make("approval-safari")}
@@ -36,23 +34,27 @@ describe("ComposerPendingApprovalActions", () => {
       />,
     );
 
-    expect(markup).toContain("Always allow Safari");
+    expect(markup).not.toContain("Always allow Safari");
     expect(markup).toContain(">Approve<");
     expect(markup).not.toContain("Always allow this session");
   });
 
-  it("limits provider-supplied approval labels so narrow rows can wrap", () => {
-    const label = "Allow ".repeat(40).trim();
+  it("preserves provider labels for the main decisions", () => {
     const markup = renderToStaticMarkup(
       <ComposerPendingApprovalActions
-        requestId={ApprovalRequestId.make("approval-long-label")}
+        requestId={ApprovalRequestId.make("approval-1")}
         isResponding={false}
-        options={[{ decision: "acceptAlways", label }]}
+        options={[
+          { decision: "accept", label: "Allow once" },
+          { decision: "decline", label: "Deny" },
+        ]}
         onRespondToApproval={async () => undefined}
       />,
     );
 
-    expect(markup).toContain('class="max-w-40 truncate"');
-    expect(markup).toContain(label);
+    expect(markup).toContain("Allow once");
+    expect(markup).toContain("Deny");
+    expect(markup).not.toContain(">Approve<");
+    expect(markup).not.toContain(">Decline<");
   });
 });

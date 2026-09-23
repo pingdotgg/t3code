@@ -5,14 +5,15 @@ import type { Cluster } from "./Cluster.ts";
 
 /**
  * Runtime binding for `elasticmapreduce:ListSessions` — lists the bound cluster's interactive sessions, optionally filtered by state.
- * @binding
- * @section Interactive Sessions
- * @example List Idle Sessions
+ * ### Interactive Sessions
+ * **Example:** List Idle Sessions
  * ```typescript
  * const listSessions = yield* AWS.EMR.ListSessions(cluster);
  *
  * const { Sessions } = yield* listSessions({ SessionStates: ["IDLE"] });
  * ```
+ *
+ * @binding
  */
 export interface ListSessions extends Binding.Service<
   ListSessions,

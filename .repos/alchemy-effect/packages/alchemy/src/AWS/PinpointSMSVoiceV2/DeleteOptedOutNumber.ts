@@ -22,9 +22,8 @@ export interface DeleteOptedOutNumberRequest extends Omit<
  * `sms-voice:DeleteOptedOutNumber` on the list. Provide the
  * implementation with
  * `Effect.provide(AWS.PinpointSMSVoiceV2.DeleteOptedOutNumberHttp)`.
- * @binding
- * @section Managing Opt-Outs
- * @example Opt a Number Back In
+ * ### Managing Opt-Outs
+ * **Example:** Opt a Number Back In
  * ```typescript
  * // init
  * const deleteOptedOut =
@@ -33,6 +32,8 @@ export interface DeleteOptedOutNumberRequest extends Omit<
  * // runtime
  * yield* deleteOptedOut({ OptedOutNumber: "+12065550100" });
  * ```
+ *
+ * @binding
  */
 export interface DeleteOptedOutNumber extends Binding.Service<
   DeleteOptedOutNumber,

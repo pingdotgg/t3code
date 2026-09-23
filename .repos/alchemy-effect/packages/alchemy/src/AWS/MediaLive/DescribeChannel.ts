@@ -12,9 +12,8 @@ import type { Channel } from "./Channel.ts";
  * starts a channel that is not already running. The channel id is
  * injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.MediaLive.DescribeChannelHttp)`.
- * @binding
- * @section Observing Channels
- * @example Read the Channel's Current State
+ * ### Observing Channels
+ * **Example:** Read the Channel's Current State
  * ```typescript
  * // init — bind the operation to the channel
  * const describeChannel = yield* AWS.MediaLive.DescribeChannel(channel);
@@ -23,6 +22,8 @@ import type { Channel } from "./Channel.ts";
  * const { State } = yield* describeChannel();
  * const running = State === "RUNNING";
  * ```
+ *
+ * @binding
  */
 export interface DescribeChannel extends Binding.Service<
   DescribeChannel,

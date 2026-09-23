@@ -15,9 +15,8 @@ export interface CreateApplicationPresignedUrlRequest extends Omit<
  * operator a dashboard link from an internal tool. The URL must be used
  * within 3 minutes; the session it opens lives for
  * `SessionExpirationDurationInSeconds` (default 12 hours).
- * @binding
- * @section Operating the Application
- * @example Mint a Flink dashboard link
+ * ### Operating the Application
+ * **Example:** Mint a Flink dashboard link
  * ```typescript
  * const createPresignedUrl = yield* AWS.KinesisAnalyticsV2.CreateApplicationPresignedUrl(app);
  *
@@ -26,6 +25,8 @@ export interface CreateApplicationPresignedUrlRequest extends Omit<
  *   SessionExpirationDurationInSeconds: 1800,
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateApplicationPresignedUrl extends Binding.Service<
   CreateApplicationPresignedUrl,

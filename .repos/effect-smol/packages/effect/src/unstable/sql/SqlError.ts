@@ -28,7 +28,7 @@ const ReasonFields = {
  * @category errors
  * @since 4.0.0
  */
-export class ConnectionError extends Schema.TaggedErrorClass<ConnectionError>("effect/sql/SqlError/ConnectionError")(
+export class ConnectionError extends Schema.TaggedError<ConnectionError>("effect/sql/SqlError/ConnectionError")(
   "ConnectionError",
   ReasonFields
 ) {
@@ -56,7 +56,7 @@ export class ConnectionError extends Schema.TaggedErrorClass<ConnectionError>("e
  * @category errors
  * @since 4.0.0
  */
-export class AuthenticationError extends Schema.TaggedErrorClass<AuthenticationError>(
+export class AuthenticationError extends Schema.TaggedError<AuthenticationError>(
   "effect/sql/SqlError/AuthenticationError"
 )("AuthenticationError", ReasonFields) {
   /**
@@ -83,7 +83,7 @@ export class AuthenticationError extends Schema.TaggedErrorClass<AuthenticationE
  * @category errors
  * @since 4.0.0
  */
-export class AuthorizationError extends Schema.TaggedErrorClass<AuthorizationError>(
+export class AuthorizationError extends Schema.TaggedError<AuthorizationError>(
   "effect/sql/SqlError/AuthorizationError"
 )("AuthorizationError", ReasonFields) {
   /**
@@ -109,7 +109,7 @@ export class AuthorizationError extends Schema.TaggedErrorClass<AuthorizationErr
  * @category errors
  * @since 4.0.0
  */
-export class SqlSyntaxError extends Schema.TaggedErrorClass<SqlSyntaxError>("effect/sql/SqlError/SqlSyntaxError")(
+export class SqlSyntaxError extends Schema.TaggedError<SqlSyntaxError>("effect/sql/SqlError/SqlSyntaxError")(
   "SqlSyntaxError",
   ReasonFields
 ) {
@@ -142,7 +142,7 @@ const UniqueViolationFields = {
  * @category errors
  * @since 4.0.0
  */
-export class UniqueViolation extends Schema.TaggedErrorClass<UniqueViolation>("effect/sql/SqlError/UniqueViolation")(
+export class UniqueViolation extends Schema.TaggedError<UniqueViolation>("effect/sql/SqlError/UniqueViolation")(
   "UniqueViolation",
   UniqueViolationFields
 ) {
@@ -169,7 +169,7 @@ export class UniqueViolation extends Schema.TaggedErrorClass<UniqueViolation>("e
  * @category errors
  * @since 4.0.0
  */
-export class ConstraintError extends Schema.TaggedErrorClass<ConstraintError>("effect/sql/SqlError/ConstraintError")(
+export class ConstraintError extends Schema.TaggedError<ConstraintError>("effect/sql/SqlError/ConstraintError")(
   "ConstraintError",
   ReasonFields
 ) {
@@ -196,7 +196,7 @@ export class ConstraintError extends Schema.TaggedErrorClass<ConstraintError>("e
  * @category errors
  * @since 4.0.0
  */
-export class DeadlockError extends Schema.TaggedErrorClass<DeadlockError>("effect/sql/SqlError/DeadlockError")(
+export class DeadlockError extends Schema.TaggedError<DeadlockError>("effect/sql/SqlError/DeadlockError")(
   "DeadlockError",
   ReasonFields
 ) {
@@ -224,7 +224,7 @@ export class DeadlockError extends Schema.TaggedErrorClass<DeadlockError>("effec
  * @category errors
  * @since 4.0.0
  */
-export class SerializationError extends Schema.TaggedErrorClass<SerializationError>(
+export class SerializationError extends Schema.TaggedError<SerializationError>(
   "effect/sql/SqlError/SerializationError"
 )("SerializationError", ReasonFields) {
   /**
@@ -251,7 +251,7 @@ export class SerializationError extends Schema.TaggedErrorClass<SerializationErr
  * @category errors
  * @since 4.0.0
  */
-export class LockTimeoutError extends Schema.TaggedErrorClass<LockTimeoutError>("effect/sql/SqlError/LockTimeoutError")(
+export class LockTimeoutError extends Schema.TaggedError<LockTimeoutError>("effect/sql/SqlError/LockTimeoutError")(
   "LockTimeoutError",
   ReasonFields
 ) {
@@ -278,7 +278,7 @@ export class LockTimeoutError extends Schema.TaggedErrorClass<LockTimeoutError>(
  * @category errors
  * @since 4.0.0
  */
-export class StatementTimeoutError extends Schema.TaggedErrorClass<StatementTimeoutError>(
+export class StatementTimeoutError extends Schema.TaggedError<StatementTimeoutError>(
   "effect/sql/SqlError/StatementTimeoutError"
 )("StatementTimeoutError", ReasonFields) {
   /**
@@ -304,7 +304,7 @@ export class StatementTimeoutError extends Schema.TaggedErrorClass<StatementTime
  * @category errors
  * @since 4.0.0
  */
-export class UnknownError extends Schema.TaggedErrorClass<UnknownError>("effect/sql/SqlError/UnknownError")(
+export class UnknownError extends Schema.TaggedError<UnknownError>("effect/sql/SqlError/UnknownError")(
   "UnknownError",
   ReasonFields
 ) {
@@ -384,7 +384,7 @@ export const SqlErrorReason: Schema.Union<[
  * @category errors
  * @since 4.0.0
  */
-export class SqlError extends Schema.TaggedErrorClass<SqlError>("effect/sql/SqlError")("SqlError", {
+export class SqlError extends Schema.TaggedError<SqlError>("effect/sql/SqlError")("SqlError", {
   reason: SqlErrorReason
 }) {
   /**
@@ -574,7 +574,7 @@ export const classifySqliteError = (
  * @since 4.0.0
  */
 export class ResultLengthMismatch
-  extends Schema.TaggedErrorClass<ResultLengthMismatch>("effect/sql/ResultLengthMismatch")("ResultLengthMismatch", {
+  extends Schema.TaggedError<ResultLengthMismatch>("effect/sql/ResultLengthMismatch")("ResultLengthMismatch", {
     expected: Schema.Natural,
     actual: Schema.Natural
   })

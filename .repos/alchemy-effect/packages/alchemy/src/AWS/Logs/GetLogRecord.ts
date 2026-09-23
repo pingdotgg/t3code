@@ -12,9 +12,8 @@ export interface GetLogRecordRequest extends Logs.GetLogRecordRequest {}
  * fetch the complete log record behind a query-result row: every row returned
  * by {@link import("./GetQueryResults.ts").GetQueryResults} carries a `@ptr`
  * field that identifies the record.
- * @binding
- * @section Logs Insights
- * @example Fetch the Full Record Behind a Query Result
+ * ### Logs Insights
+ * **Example:** Fetch the Full Record Behind a Query Result
  * ```typescript
  * const getLogRecord = yield* AWS.Logs.GetLogRecord(logGroup);
  *
@@ -22,6 +21,8 @@ export interface GetLogRecordRequest extends Logs.GetLogRecordRequest {}
  * const { logRecord } = yield* getLogRecord({ logRecordPointer: ptr! });
  * // logRecord["@message"] is the full unparsed log line
  * ```
+ *
+ * @binding
  */
 export interface GetLogRecord extends Binding.Service<
   GetLogRecord,

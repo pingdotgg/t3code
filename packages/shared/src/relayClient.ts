@@ -20,7 +20,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
 
 export const CLOUDFLARED_VERSION = "2026.5.2";
-export const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
+const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
 
 export type RelayClientExecutableSource = "override" | "managed" | "path";
 
@@ -103,7 +103,7 @@ const INSTALL_LOCK_RETRY_DELAY = "100 millis";
 const INSTALL_LOCK_STALE_MS = 5 * 60 * 1_000;
 
 const trimmedString = (name: string) =>
-  Config.string(name).pipe(
+  Config.String(name).pipe(
     Config.option,
     Config.map(
       Option.flatMap((value) => {
@@ -421,7 +421,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
           .pipe(wrapInstallFailure("write_failed", "Could not make the relay client executable."));
       }
       yield* report("validating");
-      yield* runCommand(executablePath, ["--version"]).pipe(
+      yield* runCommand(executablePath, ["version"]).pipe(
         wrapInstallFailure("validation_failed", "The downloaded relay client binary did not run."),
       );
 

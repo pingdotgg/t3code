@@ -1,15 +1,20 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
+import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
+  resolveEnvironmentMachineKind,
   ServerConfig,
+  ServerObservability,
   ServerProvider,
   ServerProviders,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
+import { ServerSettings } from "./settings.ts";
 
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
 const decodeServerProviders = Schema.decodeUnknownSync(ServerProviders);
+const decodeServerObservability = Schema.decodeUnknownSync(ServerObservability);
 const decodeUpsertKeybindingResult = Schema.decodeUnknownSync(ServerUpsertKeybindingResult);
 const decodeAvailableEditors = Schema.decodeUnknownSync(ServerConfig.fields.availableEditors);
 
@@ -153,5 +158,94 @@ describe("server config forward compatibility", () => {
     ]);
 
     expect(parsed).toEqual([decodedBase]);
+  });
+
+  it("drops usage windows this build cannot decode instead of failing the provider", () => {
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      usageLimits: {
+        checkedAt: "2026-04-10T00:00:00.000Z",
+        windows: [
+          { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
+          { id: "future", kind: "some-future-kind", label: "Future", usedPercent: 1 },
+          { id: "bad", kind: "weekly", label: "Weekly", usedPercent: 120 },
+        ],
+      },
+    });
+
+    expect(parsed.usageLimits?.windows).toEqual([
+      { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
+    ]);
+  });
+});
+
+describe("ServerObservability", () => {
+  it("reads a server from before the log signal as exporting no logs", () => {
+    const parsed = decodeServerObservability({
+      logsDirectoryPath: "/tmp/t3/logs",
+      localTracingEnabled: true,
+      otlpTracesUrl: "https://collector.example.com/v1/traces",
+      otlpTracesEnabled: true,
+      otlpMetricsEnabled: false,
+    });
+
+    expect(parsed.otlpLogsEnabled).toBe(false);
+    expect(parsed.otlpLogsUrl).toBeUndefined();
+  });
+});
+
+describe("resolveEnvironmentMachineKind", () => {
+  const decodeDescriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor);
+  const decodeSettings = Schema.decodeUnknownSync(ServerSettings);
+  const descriptor = (platform: Record<string, unknown>) =>
+    decodeDescriptor({
+      environmentId: "env-1",
+      label: "Box",
+      platform: { os: "linux", arch: "x64", ...platform },
+      serverVersion: "1.0.0",
+      capabilities: {},
+    });
+
+  it("prefers the user's pick over what the server detected", () => {
+    expect(
+      resolveEnvironmentMachineKind({
+        environment: descriptor({ machine: "mac-mini" }),
+        settings: decodeSettings({ environmentIcon: "laptop" }),
+      }),
+    ).toBe("laptop");
+  });
+
+  it("uses detection when nothing is picked", () => {
+    expect(
+      resolveEnvironmentMachineKind({
+        environment: descriptor({ machine: "mac-mini" }),
+        settings: decodeSettings({}),
+      }),
+    ).toBe("mac-mini");
+  });
+
+  it("uses detection from a bare descriptor before connecting", () => {
+    expect(resolveEnvironmentMachineKind({ environment: descriptor({ machine: "laptop" }) })).toBe(
+      "laptop",
+    );
+  });
+
+  it("falls back to a server for older servers and before connect", () => {
+    expect(
+      resolveEnvironmentMachineKind({
+        environment: descriptor({}),
+        settings: decodeSettings({}),
+      }),
+    ).toBe("server");
+    expect(resolveEnvironmentMachineKind(null)).toBe("server");
+  });
+
+  it("drops a machine kind this build does not know instead of failing the descriptor", () => {
+    const parsed = descriptor({ machine: "toaster" });
+
+    expect(parsed.platform.machine).toBeUndefined();
+    expect(
+      resolveEnvironmentMachineKind({ environment: parsed, settings: decodeSettings({}) }),
+    ).toBe("server");
   });
 });

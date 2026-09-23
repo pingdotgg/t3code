@@ -1,8 +1,49 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Array, Effect, Exit, Fiber, Latch, PubSub, Stream } from "effect"
+import { Array, Effect, Exit, Fiber, Latch, MutableList, PubSub, Scope, Stream } from "effect"
 import { pipe } from "effect/Function"
 
 describe("PubSub", () => {
+  for (const batch of [false, true]) {
+    it.effect.each([1, 2, 3])(
+      `sliding capacity %s delivers each retained message once per subscriber (batch: ${batch})`,
+      (capacity) =>
+        Effect.gen(function*() {
+          const pubsub = yield* PubSub.sliding<number>(capacity)
+          const first = yield* PubSub.subscribe(pubsub)
+          const second = yield* PubSub.subscribe(pubsub)
+          const values = Array.range(1, capacity + 2)
+          const retained = values.slice(-capacity)
+          yield* PubSub.publishAll(pubsub, values)
+
+          const received = batch
+            ? yield* PubSub.takeAll(first)
+            : yield* Effect.forEach(retained, () => PubSub.take(first))
+          const duplicate = yield* PubSub.takeUpTo(first, capacity)
+          const other = yield* PubSub.takeUpTo(second, capacity)
+
+          assert.deepStrictEqual([received, duplicate, other], [retained, [], retained])
+        })
+    )
+  }
+
+  it.effect.each([1, 2, 3])(
+    "unsubscribing after a slide preserves the other subscriber's messages (capacity: %s)",
+    (capacity) =>
+      Effect.gen(function*() {
+        const pubsub = yield* PubSub.sliding<number>(capacity)
+        const scope = yield* Scope.make()
+        const first = yield* PubSub.subscribe(pubsub).pipe(Scope.provide(scope))
+        const second = yield* PubSub.subscribe(pubsub)
+        const values = Array.range(1, capacity + 2)
+        const retained = values.slice(-capacity)
+        yield* PubSub.publishAll(pubsub, values)
+        yield* PubSub.takeAll(first)
+        yield* Scope.close(scope, Exit.void)
+
+        assert.deepStrictEqual(yield* PubSub.takeUpTo(second, capacity), retained)
+      })
+  )
+
   it.effect("publishAll - capacity 2 (BoundedPubSubPow2)", () => {
     const messages = [1, 2]
     return PubSub.bounded<number>(2).pipe(
@@ -398,7 +439,93 @@ describe("PubSub", () => {
       assert.deepStrictEqual(PubSub.sizeUnsafe(pubsub), 0)
     }))
 
+  it("normalizes low-level polling and replay counts", () => {
+    const implementations = [
+      PubSub.makeAtomicBounded<number>(1),
+      PubSub.makeAtomicBounded<number>(3),
+      PubSub.makeAtomicBounded<number>(4),
+      PubSub.makeAtomicUnbounded<number>()
+    ]
+
+    for (const pubsub of implementations) {
+      const subscription = pubsub.subscribe()
+      pubsub.publishAll([1, 2, 3])
+      assert.deepStrictEqual(subscription.pollUpTo(1.9), [1])
+      assert.deepStrictEqual(subscription.pollUpTo(Number.NaN), [])
+    }
+
+    const replayPubSub = PubSub.makeAtomicUnbounded<number>({ replay: 3 })
+    replayPubSub.publishAll([1, 2, 3])
+    const replay = replayPubSub.replayWindow()
+    assert.deepStrictEqual(replay.takeN(1.9), [1])
+    assert.deepStrictEqual(replay.takeN(Number.NaN), [])
+    assert.deepStrictEqual(replay.takeAll(), [2, 3])
+  })
+
+  it("polls MutableList.Empty as a value", () => {
+    const pubsub = PubSub.makeAtomicBounded<symbol>(1)
+    const subscription = pubsub.subscribe()
+    pubsub.publish(MutableList.Empty)
+
+    assert.deepStrictEqual(subscription.pollUpTo(1), [MutableList.Empty])
+  })
+
+  it("publishes after a capacity-one subscriber unsubscribes from a slid message", () => {
+    const pubsub = PubSub.makeAtomicBounded<number>(1)
+    const subscription = pubsub.subscribe()
+    pubsub.publish(1)
+    pubsub.slide()
+    subscription.unsubscribe()
+
+    const next = pubsub.subscribe()
+    assert.isTrue(pubsub.publish(2))
+    assert.strictEqual(pubsub.size(), 1)
+    assert.deepStrictEqual(next.pollUpTo(1), [2])
+  })
+
   describe("replay", () => {
+    it("does not retain values published after the replay window is drained", () => {
+      const pubsub = PubSub.makeAtomicUnbounded<object>({ replay: 1 })
+      pubsub.publish({})
+      const replayWindow = pubsub.replayWindow()
+      replayWindow.take()
+
+      const slidOut = {}
+      pubsub.publish(slidOut)
+      pubsub.publish({})
+
+      assert.isFalse(retains(replayWindow, slidOut))
+    })
+
+    it("does not retain values published outside an undrained replay window", () => {
+      const pubsub = PubSub.makeAtomicUnbounded<object>({ replay: 1 })
+      const replayed = {}
+      pubsub.publish(replayed)
+      const replayWindow = pubsub.replayWindow()
+
+      const slidOut = {}
+      pubsub.publish(slidOut)
+      pubsub.publish({})
+
+      assert.isFalse(retains(replayWindow, slidOut))
+      assert.strictEqual(replayWindow.take(), replayed)
+    })
+
+    it("preserves replay order across multiple slides", () => {
+      const pubsub = PubSub.makeAtomicBounded<number>({ capacity: 4, replay: 3 })
+      pubsub.publishAll([1, 2, 3, 4, 5])
+      const subscription = pubsub.subscribe()
+      const replayWindow = pubsub.replayWindow()
+      pubsub.publishAll([6, 7, 8, 9])
+      for (const value of [10, 11, 12]) {
+        pubsub.slide()
+        pubsub.publish(value)
+      }
+
+      assert.deepStrictEqual(replayWindow.takeAll(), [6, 7, 8])
+      assert.deepStrictEqual(subscription.pollUpTo(Number.POSITIVE_INFINITY), [9, 10, 11, 12])
+    })
+
     it.effect("unbounded", () =>
       Effect.gen(function*() {
         const messages = [1, 2, 3, 4, 5]
@@ -406,6 +533,22 @@ describe("PubSub", () => {
         yield* PubSub.publishAll(pubsub, messages)
         const sub = yield* PubSub.subscribe(pubsub)
         assert.deepStrictEqual(yield* PubSub.takeAll(sub), [3, 4, 5])
+      }))
+
+    it.effect("unbounded rounds up fractional replay", () =>
+      Effect.gen(function*() {
+        const pubsub = yield* PubSub.unbounded<number>({ replay: 1.5 })
+        yield* PubSub.publishAll(pubsub, [1, 2, 3, 4])
+        const sub = yield* PubSub.subscribe(pubsub)
+        assert.deepStrictEqual(yield* PubSub.takeAll(sub), [3, 4])
+      }))
+
+    it.effect("unbounded disables non-positive replay", () =>
+      Effect.gen(function*() {
+        const pubsub = yield* PubSub.unbounded<number>({ replay: -1 })
+        yield* PubSub.publishAll(pubsub, [1, 2])
+        const sub = yield* PubSub.subscribe(pubsub)
+        assert.deepStrictEqual(yield* PubSub.takeUpTo(sub, 2), [])
       }))
 
     it.effect("unbounded takeUpTo", () => {
@@ -430,6 +573,26 @@ describe("PubSub", () => {
         )
       )
     })
+
+    it.effect("takeUpTo and takeBetween normalize message counts", () =>
+      Effect.gen(function*() {
+        const livePubSub = yield* PubSub.unbounded<number>()
+        const live = yield* PubSub.subscribe(livePubSub)
+        yield* PubSub.publishAll(livePubSub, [1, 2, 3])
+        assert.deepStrictEqual(yield* PubSub.takeUpTo(live, 1.9), [1])
+
+        const betweenPubSub = yield* PubSub.unbounded<number>()
+        const between = yield* PubSub.subscribe(betweenPubSub)
+        yield* PubSub.publishAll(betweenPubSub, [1, 2, 3])
+        assert.deepStrictEqual(yield* PubSub.takeBetween(between, 1.9, 2.9), [1, 2])
+
+        const replayPubSub = yield* PubSub.unbounded<number>({ replay: 3 })
+        yield* PubSub.publishAll(replayPubSub, [1, 2, 3])
+        const replay = yield* PubSub.subscribe(replayPubSub)
+        assert.deepStrictEqual(yield* PubSub.takeUpTo(replay, 1.9), [1])
+        assert.deepStrictEqual(yield* PubSub.takeUpTo(replay, Number.NaN), [])
+        assert.deepStrictEqual(yield* PubSub.takeAll(replay), [2, 3])
+      }))
 
     it.effect("dropping", () =>
       Effect.gen(function*() {
@@ -474,47 +637,53 @@ describe("PubSub", () => {
         const sub3 = yield* PubSub.subscribe(pubsub)
         assert.deepStrictEqual(yield* PubSub.takeAll(sub3), [14, 15, 16])
       }))
+
+    it.effect("sliding preserves publish order with a lagging subscriber", () =>
+      Effect.gen(function*() {
+        const pubsub = yield* PubSub.sliding<number>({ capacity: 4, replay: 3 })
+        yield* PubSub.subscribe(pubsub)
+        yield* PubSub.publishAll(pubsub, [1, 2])
+        const subscription = yield* PubSub.subscribe(pubsub)
+        yield* PubSub.publishAll(pubsub, [3, 4, 5])
+
+        const values = yield* PubSub.takeAll(subscription)
+        assert.isTrue(values.every((value, index) => index === 0 || values[index - 1] <= value))
+      }))
   })
 
   it.effect("shutdown interrupts suspended subscribers", () =>
-    Effect.scoped(
-      Effect.gen(function*() {
-        const pubsub = yield* PubSub.unbounded<number>()
-        const subscription = yield* PubSub.subscribe(pubsub)
-        const fiber = yield* Effect.forkChild(PubSub.take(subscription), { startImmediately: true })
+    Effect.gen(function*() {
+      const pubsub = yield* PubSub.unbounded<number>()
+      const subscription = yield* PubSub.subscribe(pubsub)
+      const fiber = yield* Effect.forkChild(PubSub.take(subscription), { startImmediately: true })
 
-        yield* PubSub.shutdown(pubsub)
+      yield* PubSub.shutdown(pubsub)
 
-        const exit = yield* Fiber.await(fiber)
-        assert.isTrue(Exit.hasInterrupts(exit!))
-      })
-    ))
+      const exit = yield* Fiber.await(fiber)
+      assert.isTrue(Exit.hasInterrupts(exit!))
+    }))
 
   it.effect("publish succeeds after interrupting a suspended subscriber", () =>
-    Effect.scoped(
-      Effect.gen(function*() {
-        const pubsub = yield* PubSub.dropping<number>(1)
-        const subscription = yield* PubSub.subscribe(pubsub)
-        const fiber = yield* Effect.forkChild(PubSub.take(subscription), { startImmediately: true })
+    Effect.gen(function*() {
+      const pubsub = yield* PubSub.dropping<number>(1)
+      const subscription = yield* PubSub.subscribe(pubsub)
+      const fiber = yield* Effect.forkChild(PubSub.take(subscription), { startImmediately: true })
 
-        yield* Fiber.interrupt(fiber)
+      yield* Fiber.interrupt(fiber)
 
-        assert.isTrue(yield* PubSub.publish(pubsub, 42))
-        assert.strictEqual(yield* PubSub.take(subscription), 42)
-      })
-    ))
+      assert.isTrue(yield* PubSub.publish(pubsub, 42))
+      assert.strictEqual(yield* PubSub.take(subscription), 42)
+    }))
 
   it.effect("shutdown interrupts suspended takeAll subscribers", () =>
-    Effect.scoped(
-      Effect.gen(function*() {
-        const pubsub = yield* PubSub.unbounded<number>()
-        const subscription = yield* PubSub.subscribe(pubsub)
-        const fiber = yield* Effect.forkChild(PubSub.takeAll(subscription), { startImmediately: true })
-        yield* PubSub.shutdown(pubsub)
-        const exit = yield* Fiber.await(fiber)
-        assert.isTrue(Exit.hasInterrupts(exit))
-      })
-    ))
+    Effect.gen(function*() {
+      const pubsub = yield* PubSub.unbounded<number>()
+      const subscription = yield* PubSub.subscribe(pubsub)
+      const fiber = yield* Effect.forkChild(PubSub.takeAll(subscription), { startImmediately: true })
+      yield* PubSub.shutdown(pubsub)
+      const exit = yield* Fiber.await(fiber)
+      assert.isTrue(Exit.hasInterrupts(exit))
+    }))
 
   it.effect("Stream.fromPubSub completes after shutdown", () =>
     Effect.gen(function*() {
@@ -531,22 +700,41 @@ describe("PubSub", () => {
     }))
 
   it.effect("publish returns false after shutdown", () =>
-    Effect.scoped(
-      Effect.gen(function*() {
-        const pubsub = yield* PubSub.unbounded<number>()
-        yield* PubSub.shutdown(pubsub)
+    Effect.gen(function*() {
+      const pubsub = yield* PubSub.unbounded<number>()
+      yield* PubSub.shutdown(pubsub)
 
-        assert.strictEqual(yield* PubSub.publish(pubsub, 1), false)
-      })
-    ))
+      assert.strictEqual(yield* PubSub.publish(pubsub, 1), false)
+    }))
 
   it.effect("publishAll returns false after shutdown", () =>
-    Effect.scoped(
-      Effect.gen(function*() {
-        const pubsub = yield* PubSub.unbounded<number>()
-        yield* PubSub.shutdown(pubsub)
+    Effect.gen(function*() {
+      const pubsub = yield* PubSub.unbounded<number>()
+      yield* PubSub.shutdown(pubsub)
 
-        assert.strictEqual(yield* PubSub.publishAll(pubsub, [1, 2, 3]), false)
-      })
-    ))
+      assert.strictEqual(yield* PubSub.publishAll(pubsub, [1, 2, 3]), false)
+    }))
 })
+
+const retains = (root: object, target: object): boolean => {
+  const objects = [root]
+  const seen = new Set<object>()
+  while (objects.length > 0) {
+    const current = objects.pop()!
+    if (current === target) {
+      return true
+    }
+    if (seen.has(current)) {
+      continue
+    }
+    seen.add(current)
+    for (const key of Reflect.ownKeys(current)) {
+      const descriptor = Object.getOwnPropertyDescriptor(current, key)
+      const value = descriptor && "value" in descriptor ? descriptor.value : undefined
+      if (typeof value === "object" && value !== null) {
+        objects.push(value)
+      }
+    }
+  }
+  return false
+}
