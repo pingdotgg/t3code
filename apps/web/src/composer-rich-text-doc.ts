@@ -694,6 +694,10 @@ export function stepCaretAcrossStyledEdge(
 ): Transaction | null {
   const edge = styledEdge(state);
   if (!edge) return null;
+  // Marks the user toggled by hand (neither stop) are theirs: move as usual.
+  if (!Mark.sameSet(edge.current, edge.before) && !Mark.sameSet(edge.current, edge.after)) {
+    return null;
+  }
   const target = direction === -1 ? edge.before : edge.after;
   if (Mark.sameSet(edge.current, target)) return null;
   return state.tr.setStoredMarks(target);
