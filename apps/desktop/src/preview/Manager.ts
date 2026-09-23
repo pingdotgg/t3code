@@ -2767,11 +2767,25 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   // the page sees; mouse input stays mouse. Emulation.setEmitTouchEventsForMouse
   // is not an option: Chromium shares that converter with the embedding window,
   // so T3's own UI would lose hover and get taps instead of clicks.
-  const sendTouchEmulation = (control: BrowserControlSession, tabId: string, enabled: boolean) =>
-    attemptPromise(
-      { operation: "applyTouchEmulation", tabId, webContentsId: control.webContentsId },
-      () => control.debugger.sendCommand("Emulation.setTouchEmulationEnabled", { enabled }),
-    );
+  //
+  // Sends the tab's committed value rather than a caller's snapshot, and
+  // re-checks after each send: a restore and a setter can interleave, and the
+  // last command Chromium receives must match the tab state.
+  const syncTouchEmulation = Effect.fn("PreviewManager.syncTouchEmulation")(function* (
+    control: BrowserControlSession,
+    tabId: string,
+  ) {
+    let sent: boolean | undefined;
+    while (true) {
+      const enabled = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.touchEmulation ?? false;
+      if (enabled === sent) return;
+      yield* attemptPromise(
+        { operation: "applyTouchEmulation", tabId, webContentsId: control.webContentsId },
+        () => control.debugger.sendCommand("Emulation.setTouchEmulationEnabled", { enabled }),
+      );
+      sent = enabled;
+    }
+  });
 
   // Re-establish the control session after a detach, restoring any
   // color-scheme or touch override the tab carries. Both are read after the
@@ -2800,7 +2814,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         );
       }
       if (afterAttach.touchEmulation) {
-        yield* sendTouchEmulation(control, tabId, true);
+        yield* syncTouchEmulation(control, tabId);
       }
     }).pipe(Effect.ignore);
 
@@ -2822,7 +2836,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const wc = webContents.fromId(webContentsId);
     if (!wc || wc.isDestroyed()) return;
     const control = yield* ensureControlSession(wc);
-    yield* sendTouchEmulation(control, tabId, enabled);
+    yield* syncTouchEmulation(control, tabId);
   });
 
   const setColorScheme = Effect.fn("PreviewManager.setColorScheme")(function* (

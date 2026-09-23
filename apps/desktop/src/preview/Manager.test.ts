@@ -1599,7 +1599,9 @@ describe("PreviewManager", () => {
   );
 
   const makeDebuggerWebContents = (id: number) => {
-    const sendCommand = vi.fn(async () => undefined);
+    const sendCommand = vi.fn(
+      async (_method: string, _params?: unknown): Promise<unknown> => undefined,
+    );
     return {
       sendCommand,
       wc: {
@@ -1718,6 +1720,59 @@ describe("PreviewManager", () => {
           enabled: false,
         });
         expect(states.at(-1)?.touchEmulation).toBe(false);
+      }),
+    ),
+  );
+
+  effectIt.effect("keeps the latest touch setting when a webview swap races with it", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const first = makeDebuggerWebContents(42);
+        fromId.mockReturnValue(first.wc);
+        yield* manager.createTab("tab_touch_race");
+        yield* manager.registerWebview("tab_touch_race", 42);
+        yield* Effect.yieldNow;
+        yield* manager.setColorScheme("tab_touch_race", "dark");
+        yield* manager.setTouchEmulation("tab_touch_race", true);
+
+        // The swap's restore reads the tab state, then waits on the color
+        // scheme before applying touch. Touch is turned off in that gap.
+        let reachColorScheme!: () => void;
+        const colorSchemeReached = new Promise<void>((resolve) => {
+          reachColorScheme = resolve;
+        });
+        let releaseColorScheme!: () => void;
+        let reachTouchAfterRelease!: () => void;
+        const touchAfterRelease = new Promise<void>((resolve) => {
+          reachTouchAfterRelease = resolve;
+        });
+        let released = false;
+        const replacement = makeDebuggerWebContents(43);
+        replacement.sendCommand.mockImplementation(async (method) => {
+          if (method === "Emulation.setEmulatedMedia") {
+            reachColorScheme();
+            await new Promise<void>((resolve) => {
+              releaseColorScheme = resolve;
+            });
+          }
+          if (method === "Emulation.setTouchEmulationEnabled" && released) {
+            reachTouchAfterRelease();
+          }
+          return undefined;
+        });
+        fromId.mockReturnValue(replacement.wc);
+        yield* manager.registerWebview("tab_touch_race", 43);
+        yield* Effect.promise(() => colorSchemeReached);
+
+        yield* manager.setTouchEmulation("tab_touch_race", false);
+        released = true;
+        releaseColorScheme();
+        yield* Effect.promise(() => touchAfterRelease);
+
+        const touchCommands = replacement.sendCommand.mock.calls.filter(
+          ([method]) => method === "Emulation.setTouchEmulationEnabled",
+        );
+        expect(touchCommands.at(-1)?.[1]).toEqual({ enabled: false });
       }),
     ),
   );
