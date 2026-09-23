@@ -270,6 +270,16 @@ enum TerminalBufferDelta: Equatable {
     }
 }
 
+@MainActor
+private final class TerminalAccessibilityViewport: UIView {
+    var valueProvider: (() -> String?)?
+
+    override var accessibilityValue: String? {
+        get { valueProvider?() ?? super.accessibilityValue }
+        set { super.accessibilityValue = newValue }
+    }
+}
+
 private enum GhosttyRuntime {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var initialized = false
@@ -730,10 +740,7 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
 
     var buffer = "" {
         didSet {
-            guard applyRemoteBuffer(buffer), UIAccessibility.isVoiceOverRunning else { return }
-            terminalViewport.accessibilityValue = TerminalText.plainText(
-                from: String(buffer.suffix(8_192))
-            )
+            _ = applyRemoteBuffer(buffer)
         }
     }
 
@@ -776,7 +783,7 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
         }
     }
 
-    private let terminalViewport = UIView()
+    private let terminalViewport = TerminalAccessibilityViewport()
     private let inputField = TerminalInputField()
     private let accessoryView = TerminalAccessoryView()
     private let keyboardButton = UIButton(type: .system)
@@ -816,6 +823,10 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
         terminalViewport.isAccessibilityElement = true
         terminalViewport.accessibilityLabel = "Terminal output"
         terminalViewport.accessibilityTraits = .staticText
+        terminalViewport.valueProvider = { [weak self] in
+            guard let self else { return nil }
+            return TerminalText.plainText(from: String(self.buffer.suffix(8_192)))
+        }
 
         inputField.delegate = self
         inputField.inputAccessoryView = accessoryView
