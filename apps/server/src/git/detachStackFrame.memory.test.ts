@@ -5,10 +5,10 @@ import * as NodeUtil from "node:util";
 import { expect, it } from "vite-plus/test";
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 it.each([false, true])(
-  "releases the traced caller snapshot while caching a result (failure=%s)",
+  "a detached cache lookup releases the traced caller snapshot (failure=%s)",
   async (failure) => {
     const fixture = NodeURL.fileURLToPath(
-      new URL("./testing/LookupRetention.fixture.mjs", import.meta.url),
+      new URL("./testing/StackRetention.fixture.mjs", import.meta.url),
     );
     const { stdout } = await execFile(process.execPath, [
       "--expose-gc",

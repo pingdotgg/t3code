@@ -1,4 +1,3 @@
-import * as LookupResultCache from "./LookupResultCache.ts";
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
@@ -66,6 +65,7 @@ import {
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
+import { detachStackFrame } from "./detachStackFrame.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -1093,7 +1093,7 @@ export const make = Effect.gen(function* () {
     prLookupFailureStreakByKey.set(key, streak);
     return prLookupFailureTtl(streak);
   };
-  const prLookupCache = yield* LookupResultCache.make(
+  const prLookupCache = yield* Cache.makeWith(
     (key: string) => {
       const [
         cwd = "",
@@ -1141,6 +1141,7 @@ export const make = Effect.gen(function* () {
       },
     },
   );
+  const getPrLookup = (key: string) => detachStackFrame(Cache.get(prLookupCache, key));
   // A transient lookup failure (rate limit, network blip) must not clear an
   // already-known PR badge, so the last successful answer per branch sticks
   // around as the fallback. Keep the resolved head context with it so a
@@ -1214,14 +1215,14 @@ export const make = Effect.gen(function* () {
     const branchKey = `${cwd}\u0000${details.branch}`;
     const cacheKey = prLookupCacheKey(cwd, details);
     if (refreshMissingPullRequest) {
-      const cached = yield* prLookupCache
-        .getOption(cacheKey)
-        .pipe(Effect.orElseSucceed(() => Option.none()));
+      const cached = yield* Cache.getOption(prLookupCache, cacheKey).pipe(
+        Effect.orElseSucceed(() => Option.none()),
+      );
       if (Option.isSome(cached) && cached.value.latest === null) {
-        yield* prLookupCache.invalidate(cacheKey);
+        yield* Cache.invalidate(prLookupCache, cacheKey);
       }
     }
-    return yield* prLookupCache.get(cacheKey).pipe(
+    return yield* getPrLookup(cacheKey).pipe(
       Effect.map(({ latest, headContext }) => {
         if (!latest) return { pr: null, headContext };
         // On the default branch, only surface open PRs.
@@ -2226,12 +2227,12 @@ export const make = Effect.gen(function* () {
     if (options?.refresh) {
       // A completed turn can create a PR or reuse a merged PR's branch.
       // Refresh successful answers, but keep failed lookups' retry backoff.
-      const cached = yield* prLookupCache
-        .getOption(cacheKey)
-        .pipe(Effect.orElseSucceed(() => Option.none()));
-      if (Option.isSome(cached)) yield* prLookupCache.invalidate(cacheKey);
+      const cached = yield* Cache.getOption(prLookupCache, cacheKey).pipe(
+        Effect.orElseSucceed(() => Option.none()),
+      );
+      if (Option.isSome(cached)) yield* Cache.invalidate(prLookupCache, cacheKey);
     }
-    let cached = yield* prLookupCache.get(cacheKey);
+    let cached = yield* getPrLookup(cacheKey);
     // The cached head context may have resolved on a different remote than
     // the saved upstream: a branch tracking origin/main but pushed to a fork
     // is looked up on the fork. Verify against the remote the lookup used.
@@ -2258,8 +2259,8 @@ export const make = Effect.gen(function* () {
       });
     }
     if (!hasSameIdentity(cached.headContext, currentIdentity)) {
-      yield* prLookupCache.invalidate(cacheKey);
-      cached = yield* prLookupCache.get(cacheKey);
+      yield* Cache.invalidate(prLookupCache, cacheKey);
+      cached = yield* getPrLookup(cacheKey);
       const refreshedIdentity = yield* resolvePrLookupRepositoryIdentity(
         cacheCwd,
         branch,
