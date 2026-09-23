@@ -58,18 +58,13 @@ import {
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
-import {
-  COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME,
-  COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-  COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
-  COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME,
-  SKILL_CHIP_ICON_SVG,
-} from "./composerInlineChip";
-import { FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
+import { FileTagChipContent } from "./chat/FileTagChip";
+import { SkillChipIcon } from "./chat/SkillInlineText";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { getTimelinePageScrollKey } from "./chat/pageScrollController";
 import { ContextChipPopover } from "./contextChipParts";
 import { Button } from "./ui/button";
+import { ContextChip } from "./ContextChip";
 import {
   ComposerContextActionsContext,
   ComposerContextReferenceChip,
@@ -190,6 +185,13 @@ function resolvedThemeFromDocument(): "light" | "dark" {
 
 // ── Inline atom nodes (chips) ─────────────────────────────────────────────
 
+/**
+ * Wraps an inline chip node view: keeps the caret and text selection out of the chip and
+ * paints the editor's node selection over it.
+ */
+const CHIP_NODE_SELECTION_CLASS_NAME =
+  "relative inline-flex select-none items-center align-middle leading-none data-[composer-chip-selected]:after:pointer-events-none data-[composer-chip-selected]:after:absolute data-[composer-chip-selected]:after:inset-0 data-[composer-chip-selected]:after:rounded-[6px] data-[composer-chip-selected]:after:bg-[Highlight] data-[composer-chip-selected]:after:opacity-30 data-[composer-chip-selected]:after:content-['']";
+
 const ComposerMentionExtension = Node.create({
   name: "composer-mention",
   group: "inline",
@@ -217,11 +219,11 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
   const actions = use(ComposerContextActionsContext);
   const path = (node.attrs.path as string) ?? "";
   const chip = (
-    <Button
-      variant="chip"
+    <ContextChip
+      kind="mention"
+      render={<button type="button" />}
       onClick={() => actions.openMention(path)}
       aria-label={`Preview ${path}`}
-      className={`${FILE_TAG_CHIP_CLASS_NAME} cursor-pointer focus-visible:outline-2`}
       contentEditable={false}
       spellCheck={false}
       data-composer-mention-chip="true"
@@ -231,10 +233,10 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
         label={basenameOfPath(path)}
         theme={resolvedThemeFromDocument()}
       />
-    </Button>
+    </ContextChip>
   );
   return (
-    <NodeViewWrapper as="span" className={COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME}>
+    <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <Tooltip>
         <TooltipTrigger render={chip} />
         <TooltipPopup side="top">{path}</TooltipPopup>
@@ -275,20 +277,12 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
   const skillDescription = (node.attrs.skillDescription as string | null) ?? null;
   const skill = skills.find((candidate) => candidate.name === skillName);
   return (
-    <NodeViewWrapper as="span" className={COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME}>
+    <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <ContextChipPopover
+        kind="skill"
+        icon={<SkillChipIcon />}
+        label={skillLabel}
         accessibleLabel={`Skill ${skillLabel}`}
-        triggerClassName={COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME}
-        chip={
-          <>
-            <span
-              aria-hidden="true"
-              className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
-              dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
-            />
-            <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{skillLabel}</span>
-          </>
-        }
       >
         <div className="space-y-3 p-2 text-sm">
           <p className="font-medium">{skillLabel}</p>
@@ -380,7 +374,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
   return (
     <NodeViewWrapper
       as="span"
-      className="inline-flex min-w-0 max-w-full"
+      className="inline-flex min-w-0 max-w-full select-none"
       contentEditable={false}
       spellCheck={false}
       data-composer-citation-chip="true"
@@ -435,7 +429,7 @@ const ComposerContextReferenceExtension = Node.create({
 
 function ComposerContextReferenceNodeView({ node }: NodeViewProps) {
   return (
-    <NodeViewWrapper as="span" className={COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME}>
+    <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <ComposerContextReferenceChip
         kind={(node.attrs.kind as string) ?? ""}
         contextId={(node.attrs.contextId as string) ?? ""}
