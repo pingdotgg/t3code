@@ -139,10 +139,20 @@ interface HomeScreenProps {
 /* ─── Layout constants ───────────────────────────────────────────────── */
 
 const ESTIMATED_THREAD_ROW_HEIGHT = 72;
-// v2 cards run taller than v1's compact rows (title can take two lines plus
-// the branch/PR footer); settled slim rows run shorter. The estimate only
-// sizes the recycler's initial container pool, so the taller bias is safe.
-const ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT = 92;
+// v2 rows are mixed-height: settled slim rows run ~60dp, single-line cards
+// measured ~74dp on device (252px on the Pixel 10 Pro screenshot), two-line
+// cards ~94dp. The estimate seeds the recycler's container count:
+// `ceil(contentSpan / estimate)`, which LegendList clamps to the content span
+// while the list is shorter than viewport + 2x drawDistance. An estimate at
+// or below the average row height keeps that count above the item count, so
+// a shelf-expand re-layout (which transiently demands slightly more
+// containers than there are items) finds one pooled instead of logging the
+// dev-mode "no unused container available" warning and creating one on
+// demand. An estimate tuned to the tallest card (~92) fires that warning on
+// every short/expanded list, so the average wins; oversized cards self-correct
+// through LegendList's measured spans, and long lists pool 3x the estimated
+// container count regardless.
+const ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT = 72;
 const PRE_LIQUID_GLASS_BOTTOM_TOOLBAR_HEIGHT = 44;
 /**
  * Top spacing between the list and the Android custom header. The Android
