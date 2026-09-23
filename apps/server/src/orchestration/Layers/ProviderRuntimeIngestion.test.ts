@@ -296,6 +296,7 @@ describe("ProviderRuntimeIngestion", () => {
     threadTitle?: string;
     workspaceSubdirectory?: string;
     isGitRepository?: CheckpointStore.CheckpointStore["Service"]["isGitRepository"];
+    beforeDispatch?: (command: OrchestrationCommand) => Effect.Effect<void>;
   }) {
     const repositoryRoot = makeTempDir("t3-provider-project-");
     NodeChildProcess.execFileSync("git", ["init", "--initial-branch=main"], {
@@ -347,7 +348,18 @@ describe("ProviderRuntimeIngestion", () => {
     };
     const layer = ProviderRuntimeIngestionLive.pipe(
       Layer.provide(Layer.succeed(Clock.Clock, shiftedClock)),
-      Layer.provideMerge(orchestrationLayer),
+      Layer.provideMerge(
+        Layer.effect(
+          OrchestrationEngineService,
+          Effect.map(OrchestrationEngineService, (engine) => ({
+            ...engine,
+            dispatch: (command, dispatchOptions) =>
+              (options?.beforeDispatch?.(command) ?? Effect.void).pipe(
+                Effect.andThen(engine.dispatch(command, dispatchOptions)),
+              ),
+          })),
+        ).pipe(Layer.provide(orchestrationLayer)),
+      ),
       Layer.provideMerge(ingestionProjectionSnapshotLayer),
       // Single shared liveness instance across ingestion (writer), the
       // engine, and the snapshot query (reader).
@@ -4117,6 +4129,107 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
   });
+
+  effectIt.effect("advances another diff key while unrelated lifecycle work is blocked", () =>
+    Effect.gen(function* () {
+      const firstDiffStarted = yield* Deferred.make<void>();
+      const releaseFirstDiff = yield* Deferred.make<void>();
+      const lifecycleBlocked = yield* Deferred.make<void>();
+      const releaseLifecycle = yield* Deferred.make<void>();
+      const secondDetection = yield* Deferred.make<void>();
+      let detectionCount = 0;
+      let blockLifecycle = false;
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          isGitRepository: () =>
+            Effect.gen(function* () {
+              if (++detectionCount === 2) yield* Deferred.succeed(secondDetection, undefined);
+              return true;
+            }),
+          beforeDispatch: (command) => {
+            if (command.type === "thread.turn.diff.complete" && command.threadId === "thread-1") {
+              return Deferred.succeed(firstDiffStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseFirstDiff)),
+              );
+            }
+            if (blockLifecycle && command.type === "thread.session.set") {
+              return Deferred.succeed(lifecycleBlocked, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseLifecycle)),
+              );
+            }
+            return Effect.void;
+          },
+        }),
+      );
+      yield* Effect.addFinalizer(() =>
+        Deferred.succeed(releaseFirstDiff, undefined).pipe(
+          Effect.andThen(Deferred.succeed(releaseLifecycle, undefined)),
+        ),
+      );
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      yield* Effect.promise(() =>
+        harness.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-second-diff-thread"),
+          threadId: asThreadId("thread-2"),
+          projectId: asProjectId("project-1"),
+          title: "Second thread",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        }),
+      );
+      const first = {
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        createdAt,
+      };
+      const second = { ...first, threadId: asThreadId("thread-2"), turnId: asTurnId("turn-2") };
+      yield* Effect.promise(() =>
+        harness.emitAndDrain([
+          { ...first, type: "turn.started", eventId: asEventId("start-first") },
+          { ...second, type: "turn.started", eventId: asEventId("start-second") },
+        ]),
+      );
+      harness.emit({
+        ...first,
+        type: "turn.diff.updated",
+        eventId: asEventId("diff-first"),
+        payload: { unifiedDiff: "first" },
+      });
+      yield* Deferred.await(firstDiffStarted);
+      blockLifecycle = true;
+      harness.emit({
+        ...first,
+        type: "session.state.changed",
+        eventId: asEventId("unrelated-state"),
+        payload: { state: "running" },
+      });
+      harness.emit({
+        ...second,
+        type: "turn.diff.updated",
+        eventId: asEventId("diff-second"),
+        payload: { unifiedDiff: "second" },
+      });
+      yield* Deferred.succeed(releaseFirstDiff, undefined);
+      yield* Deferred.await(lifecycleBlocked);
+      // The second key must reach detection before the lifecycle queue becomes idle.
+      yield* Deferred.await(secondDetection);
+      yield* Deferred.succeed(releaseLifecycle, undefined);
+      yield* Effect.promise(harness.drain);
+      const snapshot = yield* Effect.promise(harness.readModel);
+      expect(
+        snapshot.threads.find((thread) => thread.id === first.threadId)?.checkpoints,
+      ).toHaveLength(1);
+      expect(
+        snapshot.threads.find((thread) => thread.id === second.threadId)?.checkpoints,
+      ).toHaveLength(1);
+    }),
+  );
 
   effectIt.effect("settles the turn while repository detection for a diff is blocked", () =>
     Effect.gen(function* () {

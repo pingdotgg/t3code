@@ -24,6 +24,7 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -159,6 +160,7 @@ type RuntimeIngestionInput =
       /** A diff whose workspace the diff worker confirmed is a Git repository. */
       source: "diff";
       event: ProviderDiffEvent;
+      processed: Deferred.Deferred<void>;
     };
 
 function toTurnId(value: TurnId | string | undefined): TurnId | undefined {
@@ -2657,7 +2659,9 @@ const make = Effect.gen(function* () {
       case "domain":
         return processDomainEvent(input.event);
       case "diff":
-        return recordProviderDiff(input.event);
+        return recordProviderDiff(input.event).pipe(
+          Effect.ensuring(Deferred.succeed(input.processed, undefined)),
+        );
     }
   };
 
@@ -2694,10 +2698,12 @@ const make = Effect.gen(function* () {
       .pipe(Effect.map(Option.getOrUndefined));
     const workspaceCwd = checkpointContext?.worktreePath ?? checkpointContext?.workspaceRoot;
     if (!workspaceCwd || !(yield* checkpointStore.isGitRepository(workspaceCwd))) return;
-    yield* worker.enqueue({ source: "diff", event });
+    const processed = yield* Deferred.make<void>();
+    yield* worker.enqueue({ source: "diff", event, processed });
     // Keep this key active until its lifecycle work has finished, so a slow
     // lifecycle worker cannot accumulate one queued signal per snapshot either.
-    yield* worker.drain;
+    // Other keys can advance without waiting for unrelated lifecycle work.
+    yield* Deferred.await(processed);
   });
   const diffWorker = yield* makeKeyedCoalescingWorker({
     merge: (_current: ProviderDiffEvent, next: ProviderDiffEvent) => next,
