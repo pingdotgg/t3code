@@ -325,8 +325,10 @@ export function DeviceStreamView(props: {
       ) : null}
       <div
         ref={hostRef}
-        className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-        style={controlsInset ? { paddingRight: controlsInset } : undefined}
+        className={cn(
+          "relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+          controlsInset && "pr-14",
+        )}
         tabIndex={0}
         role="application"
         aria-label={`${props.platform === "ios" ? "iOS Simulator" : "Android Emulator"} screen`}
