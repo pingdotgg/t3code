@@ -45,6 +45,49 @@ const environmentValue = (id: EnvironmentId) => `environment:${id}`;
 const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
 const languageNames = new Intl.DisplayNames(["en"], { type: "language" });
 const languageLabel = (code: string) => languageNames.of(code) ?? code;
+// Ethnologue 2026 total speakers, for languages that map clearly to our model codes.
+// https://en.wikipedia.org/wiki/List_of_languages_by_total_number_of_speakers#Ethnologue_(2026)
+const rankedLanguageCodes = [
+  "en",
+  "zh",
+  "hi",
+  "es",
+  "fr",
+  "bn",
+  "pt",
+  "id",
+  "ur",
+  "ru",
+  "de",
+  "ja",
+  "mr",
+  "vi",
+  "te",
+  "sw",
+  "ha",
+  "tr",
+  "tl",
+  "ta",
+  "jw",
+  "ko",
+  "am",
+  "th",
+  "it",
+  "gu",
+  "kn",
+  "yo",
+] as const;
+const languageRanks = new Map<string, number>(
+  rankedLanguageCodes.map((code, rank) => [code, rank]),
+);
+const compareLanguages = (a: string, b: string) => {
+  const aRank = languageRanks.get(a);
+  const bRank = languageRanks.get(b);
+  if (aRank !== undefined && bRank !== undefined) return aRank - bRank;
+  if (aRank !== undefined) return -1;
+  if (bRank !== undefined) return 1;
+  return languageLabel(a).localeCompare(languageLabel(b));
+};
 
 function ModelCard(props: {
   readonly model: EnvironmentSpeechModel;
@@ -312,8 +355,8 @@ export function VoiceSettingsPanel() {
   };
   const currentModels = currentStatus?.supported ? models : [];
   const activeModel = currentModels.find((model) => model.active);
-  const languages = [...new Set(currentModels.flatMap((model) => model.languages))].sort((a, b) =>
-    languageLabel(a).localeCompare(languageLabel(b)),
+  const languages = [...new Set(currentModels.flatMap((model) => model.languages))].sort(
+    compareLanguages,
   );
   const language =
     selectedLanguage?.environmentId === environmentId && languages.includes(selectedLanguage.code)

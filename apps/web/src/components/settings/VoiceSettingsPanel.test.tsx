@@ -169,6 +169,44 @@ it("shows models for the selected language while keeping the active model summar
   expect(modelNames()).toContain("French Model");
   expect(modelNames()).toContain("English Model");
 });
+it("orders supported languages by speaker ranking, then alphabetically", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("navigator", {});
+  vi.stubGlobal("window", { setInterval, clearInterval });
+  mocks.listModels.mockResolvedValue({
+    models: [
+      {
+        id: "multilingual",
+        name: "Multilingual Model",
+        description: "Multilingual speech",
+        languages: ["ca", "es", "ar", "hi", "en", "de", "af"],
+        state: "installed",
+        active: true,
+        recommended: false,
+        supportsStreaming: false,
+        size: 100,
+        accuracy: 90,
+        speed: 90,
+      },
+    ],
+  });
+  await act(async () => {
+    root = create(createElement(VoiceSettingsPanel));
+  });
+
+  const languageList = root.root.findByProps({
+    "aria-label": "Browse transcription models by language",
+  });
+  expect(languageList.findAllByType("button").map((button) => button.children.join(""))).toEqual([
+    "English",
+    "Hindi",
+    "Spanish",
+    "German",
+    "Afrikaans",
+    "Arabic",
+    "Catalan",
+  ]);
+});
 it("shows cancellation errors without clearing the download state", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("navigator", {});
