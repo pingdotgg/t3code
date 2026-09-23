@@ -43,7 +43,7 @@ it("maps voice input phases to composer actions", () => {
   expect(
     resolveSpeechPresentation({ phase: "post-processing", error: null, errorAction: null }, null),
   ).toMatchObject({
-    status: "Post-processing transcription",
+    status: "Post-processing",
     showsCancel: true,
     confirmEnabled: false,
     showsSend: false,

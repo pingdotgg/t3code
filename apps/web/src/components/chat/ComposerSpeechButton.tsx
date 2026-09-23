@@ -77,7 +77,7 @@ export function resolveSpeechPresentation(
       };
     case "post-processing":
       return {
-        status: "Post-processing transcription",
+        status: "Post-processing",
         showsCancel: true,
         showsConfirm: true,
         confirmEnabled: false,
