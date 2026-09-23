@@ -1125,10 +1125,7 @@ export default function DiffPanel({
                               <Button
                                 size="icon-micro"
                                 variant="ghost"
-                                className={cn(
-                                  "-ms-0.5 [--control-icon-color:currentColor] bg-transparent hover:bg-foreground/10",
-                                  getDiffCollapseIconClassName(fileDiff),
-                                )}
+                                className="-ms-0.5"
                                 aria-label={
                                   collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`
                                 }
@@ -1142,9 +1139,13 @@ export default function DiffPanel({
                             }
                           >
                             {collapsed ? (
-                              <ChevronRightIcon className="size-4" />
+                              <ChevronRightIcon
+                                className={cn("size-4", getDiffCollapseIconClassName(fileDiff))}
+                              />
                             ) : (
-                              <ChevronDownIcon className="size-4" />
+                              <ChevronDownIcon
+                                className={cn("size-4", getDiffCollapseIconClassName(fileDiff))}
+                              />
                             )}
                           </TooltipTrigger>
                           <TooltipPopup side="top">

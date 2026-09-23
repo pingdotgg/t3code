@@ -242,10 +242,7 @@ export function BrowserDeviceToolbar({
           onChange={(event) => updateCustomDimension("width", event.target.value)}
           aria-label="Viewport width"
           aria-invalid={!customValid}
-          className={cn(
-            "text-center [&_[data-slot=input]::-webkit-inner-spin-button]:appearance-none [&_[data-slot=input]]:[appearance:textfield]",
-            width >= 360 ? "w-14" : "w-13",
-          )}
+          className={width >= 360 ? "w-14" : "w-13"}
         />
         <span className="text-xs text-muted-foreground">×</span>
         <Input
@@ -270,10 +267,7 @@ export function BrowserDeviceToolbar({
           onChange={(event) => updateCustomDimension("height", event.target.value)}
           aria-label="Viewport height"
           aria-invalid={!customValid}
-          className={cn(
-            "text-center [&_[data-slot=input]::-webkit-inner-spin-button]:appearance-none [&_[data-slot=input]]:[appearance:textfield]",
-            width >= 360 ? "w-14" : "w-13",
-          )}
+          className={width >= 360 ? "w-14" : "w-13"}
         />
       </form>
 
@@ -281,14 +275,13 @@ export function BrowserDeviceToolbar({
         <TooltipTrigger
           render={
             <Button
-              variant="ghost"
+              variant={aspectRatio === null ? "ghost" : "secondary"}
               size="icon-xs"
               type="button"
               aria-label={
                 aspectRatio === null ? "Lock viewport aspect ratio" : "Unlock viewport aspect ratio"
               }
               aria-pressed={aspectRatio !== null}
-              className={cn(aspectRatio !== null && "bg-accent text-foreground")}
               disabled={pending || !customValid}
               onPointerDown={(event) => event.preventDefault()}
               onClick={toggleAspectRatio}
@@ -315,19 +308,21 @@ export function BrowserDeviceToolbar({
       >
         <ScreenRotationIcon />
       </Button>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        type="button"
-        aria-label="Close device toolbar"
-        className="sticky right-0 ml-auto bg-background/95"
-        disabled={pending}
-        onClick={() => {
-          apply({ _tag: "fill" }, null);
-        }}
-      >
-        <X />
-      </Button>
+      {/* Sticky backing so scrolled controls do not show through the close action. */}
+      <span className="sticky right-0 ml-auto flex bg-background/95">
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          type="button"
+          aria-label="Close device toolbar"
+          disabled={pending}
+          onClick={() => {
+            apply({ _tag: "fill" }, null);
+          }}
+        >
+          <X />
+        </Button>
+      </span>
     </div>
   );
 }

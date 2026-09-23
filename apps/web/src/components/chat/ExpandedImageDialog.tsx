@@ -193,7 +193,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             type="button"
             size="icon"
             variant="media-navigation"
-            className="left-0 top-auto -bottom-12 translate-y-0 rounded-full bg-white/10 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
+            className="left-0 top-auto -bottom-12 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
             aria-label="Previous media"
             onClick={() => navigateImage(-1)}
           >
@@ -252,12 +252,11 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                       <Button
                         aria-label={contentsLabel}
                         aria-pressed={showingAccessibilityDetails}
-                        className="[--control-icon-color:currentColor] hover:bg-white/10 hover:text-white"
                         onClick={() =>
                           setAccessibilityDetailsSrc(showingAccessibilityDetails ? null : item.src)
                         }
                         size="icon-micro"
-                        variant="ghost-muted"
+                        variant="overlay"
                       />
                     }
                   >
@@ -266,11 +265,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                   <TooltipPopup side="top">{contentsLabel}</TooltipPopup>
                 </Tooltip>
               ) : item.source ? (
-                <SnapShotContentsButton
-                  source={item.source}
-                  side="top"
-                  className="hover:bg-white/10 hover:text-white"
-                />
+                <SnapShotContentsButton source={item.source} side="top" />
               ) : null}
             </div>
           </div>
@@ -280,7 +275,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             type="button"
             size="icon"
             variant="media-navigation"
-            className="right-0 top-auto -bottom-12 translate-y-0 rounded-full bg-white/10 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
+            className="right-0 top-auto -bottom-12 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
             aria-label="Next media"
             onClick={() => navigateImage(1)}
           >

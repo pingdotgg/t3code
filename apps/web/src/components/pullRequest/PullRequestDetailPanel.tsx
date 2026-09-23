@@ -2662,8 +2662,7 @@ export function PullRequestDetailPanel({
                 </PullRequestMetaLine>
                 <Button
                   size="xs"
-                  variant="ghost"
-                  className="h-7 px-2 text-[10px] text-muted-foreground"
+                  variant="ghost-muted"
                   aria-label={
                     timelineOrder === "newest"
                       ? "Show oldest activity first"

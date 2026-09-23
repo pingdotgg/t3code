@@ -265,8 +265,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 <Button
                   type="button"
                   size="icon-micro"
-                  variant="ghost"
-                  className="shrink-0 text-sidebar-muted-foreground hover:bg-sidebar-control-surface hover:text-sidebar-foreground"
+                  variant="ghost-muted"
+                  className="shrink-0"
                   aria-label="Clear settings search"
                   onClick={() => {
                     clearSearch();

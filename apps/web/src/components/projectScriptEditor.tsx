@@ -319,7 +319,7 @@ export function ProjectScriptEditorDialog({
                           <Button
                             type="button"
                             variant="outline"
-                            className="size-9 shrink-0 hover:bg-popover active:bg-popover data-pressed:bg-popover data-pressed:shadow-xs/5 data-pressed:before:shadow-[0_1px_--theme(--color-black/4%)] dark:border-transparent dark:bg-white/[0.035] dark:data-pressed:before:shadow-none"
+                            className="size-9 shrink-0"
                             aria-label="Choose icon"
                           />
                         }
