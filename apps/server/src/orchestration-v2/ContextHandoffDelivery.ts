@@ -9,7 +9,7 @@ import { historyCost, renderHistory, selectHistory } from "./ContextHandoffBudge
 
 /** Persist before/after injection: an ambiguous pending delivery requires a fresh native thread. */
 export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextHandoffs")(
-  function* <InjectError, PersistError, BudgetError = never>(input: {
+  function* <InjectError = never, PersistError = never, BudgetError = never>(input: {
     readonly handoffs: ReadonlyArray<OrchestrationV2ContextHandoff>;
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly budget: number | Effect.Effect<number, BudgetError>;
