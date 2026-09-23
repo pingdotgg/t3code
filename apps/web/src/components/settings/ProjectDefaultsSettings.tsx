@@ -129,97 +129,149 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     updateSettings({ defaultModelSelection: value });
   };
 
+  const modelRow = (
+    <SettingsRow
+      serverScoped
+      settingKeys={["defaultModelSelection"]}
+      mixed={mixedModel}
+      id="default-model"
+      title="Model"
+      description={
+        isProjectScope
+          ? "Model for new threads in this project."
+          : "Default model for new threads. Projects can override it."
+      }
+      status={
+        unavailable || mixedModel || modelSource === "project"
+          ? undefined
+          : settings.defaultModelSelection === null
+            ? "Automatic"
+            : undefined
+      }
+      resetAction={
+        settings.defaultModelSelection !== null ? (
+          <SettingResetButton label="default model" onClick={() => setModel(null)} />
+        ) : null
+      }
+      control={
+        selection && activeEntry ? (
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+            <ProviderModelPicker
+              activeInstanceId={selection.instanceId}
+              model={selection.model}
+              lockedProvider={null}
+              instanceEntries={entries}
+              modelOptionsByInstance={modelOptions}
+              triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+              {...(mixedModel ? { triggerLabel: "Mixed" } : {})}
+              getModelDisabledReason={modelDisabledReason}
+              onOpenProviderSetup={(instanceId) => {
+                if (representative)
+                  void navigate({
+                    to: "/settings/providers",
+                    search: { environmentId: representative.environmentId, instanceId },
+                  });
+              }}
+              onInstanceModelChange={(instanceId, model) =>
+                setModel(createModelSelection(instanceId, model))
+              }
+            />
+            {!mixedModel ? (
+              <TraitsPicker
+                provider={activeEntry.driverKind}
+                models={activeEntry.models}
+                model={selection.model}
+                prompt=""
+                onPromptChange={() => {}}
+                modelOptions={selection.options ?? []}
+                allowPromptInjectedEffort={false}
+                planModeEnabled={settings.planModeEnabled}
+                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                onModelOptionsChange={(options) =>
+                  setModel(createModelSelection(selection.instanceId, selection.model, options))
+                }
+              />
+            ) : null}
+          </div>
+        ) : (
+          <span className="text-sm text-muted-foreground">No providers available</span>
+        )
+      }
+    />
+  );
+  const workspaceRow = (
+    <SettingsRow
+      serverScoped
+      settingKeys={["defaultThreadEnvMode"]}
+      mixed={mixedWorkspace}
+      id={searchableSetting("new-threads").id}
+      title="Workspace"
+      description={
+        isProjectScope
+          ? "Where new threads in this project start."
+          : "Where new threads start. Projects and their t3.json can override it."
+      }
+      resetAction={
+        !isProjectScope && settings.defaultThreadEnvMode !== null ? (
+          <SettingResetButton
+            label="default workspace"
+            onClick={() => updateSettings({ defaultThreadEnvMode: null })}
+          />
+        ) : null
+      }
+      control={
+        <Select
+          value={mixedWorkspace ? null : (effective?.defaultThreadEnvMode ?? null)}
+          onValueChange={(value) => {
+            if (value === "local" || value === "worktree")
+              updateSettings({ defaultThreadEnvMode: value });
+          }}
+        >
+          <SelectTrigger size="sm" aria-label="Default workspace">
+            <SelectValue>
+              {(value: string | null) =>
+                value === "local" || value === "worktree"
+                  ? resolveEnvModeLabel(value)
+                  : unavailable
+                    ? "Unavailable"
+                    : "Mixed"
+              }
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
+            <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
+          </SelectPopup>
+        </Select>
+      }
+    />
+  );
+
   return (
     <SettingsSection
       id={
-        category === "general"
+        category === "general" || category === "project"
           ? "project-defaults"
           : category === "integrations"
             ? "browser-access"
             : "source-control-defaults"
       }
       title={
-        category === "general"
+        category === "general" || category === "project"
           ? "New threads"
           : category === "integrations"
             ? "Browser"
             : "Repositories"
       }
     >
-      {category === "general" ? (
+      {category === "project" ? (
         <>
-          <SettingsRow
-            serverScoped
-            settingKeys={["defaultModelSelection"]}
-            mixed={mixedModel}
-            id="default-model"
-            title="Model"
-            description={
-              isProjectScope
-                ? "Model for new threads in this project."
-                : "Default model for new threads. Projects can override it."
-            }
-            status={
-              unavailable || mixedModel || modelSource === "project"
-                ? undefined
-                : settings.defaultModelSelection === null
-                  ? "Automatic"
-                  : undefined
-            }
-            resetAction={
-              settings.defaultModelSelection !== null ? (
-                <SettingResetButton label="default model" onClick={() => setModel(null)} />
-              ) : null
-            }
-            control={
-              selection && activeEntry ? (
-                <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
-                  <ProviderModelPicker
-                    activeInstanceId={selection.instanceId}
-                    model={selection.model}
-                    lockedProvider={null}
-                    instanceEntries={entries}
-                    modelOptionsByInstance={modelOptions}
-                    triggerVariant="outline"
-                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                    {...(mixedModel ? { triggerLabel: "Mixed" } : {})}
-                    getModelDisabledReason={modelDisabledReason}
-                    onOpenProviderSetup={(instanceId) => {
-                      if (representative)
-                        void navigate({
-                          to: "/settings/providers",
-                          search: { environmentId: representative.environmentId, instanceId },
-                        });
-                    }}
-                    onInstanceModelChange={(instanceId, model) =>
-                      setModel(createModelSelection(instanceId, model))
-                    }
-                  />
-                  {!mixedModel ? (
-                    <TraitsPicker
-                      provider={activeEntry.driverKind}
-                      models={activeEntry.models}
-                      model={selection.model}
-                      prompt=""
-                      onPromptChange={() => {}}
-                      modelOptions={selection.options ?? []}
-                      allowPromptInjectedEffort={false}
-                      planModeEnabled={settings.planModeEnabled}
-                      triggerVariant="outline"
-                      triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                      onModelOptionsChange={(options) =>
-                        setModel(
-                          createModelSelection(selection.instanceId, selection.model, options),
-                        )
-                      }
-                    />
-                  ) : null}
-                </div>
-              ) : (
-                <span className="text-sm text-muted-foreground">No providers available</span>
-              )
-            }
-          />
+          {modelRow}
+          {workspaceRow}
+        </>
+      ) : category === "general" ? (
+        <>
+          {modelRow}
           <SettingsRow
             serverScoped
             settingKeys={["defaultRuntimeMode"]}
@@ -281,51 +333,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               </Select>
             }
           />
-          <SettingsRow
-            serverScoped
-            settingKeys={["defaultThreadEnvMode"]}
-            mixed={mixedWorkspace}
-            id={searchableSetting("new-threads").id}
-            title="Workspace"
-            description={
-              isProjectScope
-                ? "Where new threads in this project start."
-                : "Where new threads start. Projects and their t3.json can override it."
-            }
-            resetAction={
-              !isProjectScope && settings.defaultThreadEnvMode !== null ? (
-                <SettingResetButton
-                  label="default workspace"
-                  onClick={() => updateSettings({ defaultThreadEnvMode: null })}
-                />
-              ) : null
-            }
-            control={
-              <Select
-                value={mixedWorkspace ? null : (effective?.defaultThreadEnvMode ?? null)}
-                onValueChange={(value) => {
-                  if (value === "local" || value === "worktree")
-                    updateSettings({ defaultThreadEnvMode: value });
-                }}
-              >
-                <SelectTrigger size="sm" aria-label="Default workspace">
-                  <SelectValue>
-                    {(value: string | null) =>
-                      value === "local" || value === "worktree"
-                        ? resolveEnvModeLabel(value)
-                        : unavailable
-                          ? "Unavailable"
-                          : "Mixed"
-                    }
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
-                  <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
-                </SelectPopup>
-              </Select>
-            }
-          />
+          {workspaceRow}
           <SettingsRow
             serverScoped
             settingKeys={["worktreeSubmodules"]}

@@ -78,11 +78,7 @@ function CommentIdentity({
       : null;
   return (
     <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-      <PullRequestActorLabel
-        actor={actor}
-        profileUrl={profileUrl}
-        className="max-w-full font-medium text-foreground [&>img]:size-6 [&>span:first-child]:size-6"
-      />
+      <PullRequestActorLabel actor={actor} profileUrl={profileUrl} className="max-w-full" />
       <Tooltip>
         <TooltipTrigger
           render={
@@ -383,22 +379,26 @@ function CommentGroup({
         <div className="flex items-center gap-3 pl-3">
           <div className="flex shrink-0 -space-x-1.5">
             {authors.slice(0, 3).map((actor) => (
-              <PullRequestActorLabel
+              // The ring separates the overlapping faces; it belongs to the stack, not the actor.
+              <span
                 key={actor?.login ?? "ghost"}
-                actor={actor}
-                profileUrl={
-                  detail.provider === "github" && actor
-                    ? new URL(
-                        actor.isBot || actor.login.endsWith("[bot]")
-                          ? `/apps/${encodeURIComponent(actor.login.replace(/\[bot\]$/, ""))}`
-                          : `/${encodeURIComponent(actor.login)}`,
-                        detail.url,
-                      ).toString()
-                    : null
-                }
-                labelClassName="sr-only"
-                className="relative rounded-full bg-background ring-2 ring-background hover:z-10 focus-visible:z-10 [&>img]:size-6 [&>span:first-child]:size-6"
-              />
+                className="relative flex rounded-full ring-2 ring-background hover:z-10 focus-within:z-10"
+              >
+                <PullRequestActorLabel
+                  actor={actor}
+                  profileUrl={
+                    detail.provider === "github" && actor
+                      ? new URL(
+                          actor.isBot || actor.login.endsWith("[bot]")
+                            ? `/apps/${encodeURIComponent(actor.login.replace(/\[bot\]$/, ""))}`
+                            : `/${encodeURIComponent(actor.login)}`,
+                          detail.url,
+                        ).toString()
+                      : null
+                  }
+                  variant="avatar"
+                />
+              </span>
             ))}
             {authors.length > 3 ? (
               <span className="relative flex size-6 items-center justify-center rounded-full bg-muted text-[10px] text-muted-foreground ring-2 ring-background">
@@ -752,14 +752,7 @@ export function PullRequestSummaryTab({
                           <PullRequestActorLabel
                             actor={entry.actor}
                             tooltip={false}
-                            className={cn(
-                              "gap-0 [&>span:last-child]:sr-only",
-                              // Only where the wrapper is not already drawing one, or the opaque
-                              // separator would cover the verdict in the band they share.
-                              entry.outcome
-                                ? undefined
-                                : "[&>img]:ring-2 [&>img]:ring-background [&>span:first-child]:ring-2 [&>span:first-child]:ring-background",
-                            )}
+                            variant="avatar"
                           />
                           {/* Colour alone says nothing to a reader who cannot see it, and the
                               login beside this is already in the accessible name. */}
@@ -929,8 +922,8 @@ export function PullRequestSummaryTab({
         actions={
           <Button
             size="xs"
-            variant="ghost"
-            className="h-7 shrink-0 px-2 text-[10px] text-muted-foreground"
+            variant="ghost-muted"
+            className="shrink-0"
             aria-label={
               commentOrder === "newest"
                 ? "Show oldest comments first"

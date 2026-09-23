@@ -749,7 +749,8 @@ export default function DiffPanel({
               }}
             >
               <ComboboxTrigger
-                className="inline-flex min-w-0 max-w-48 items-center gap-1 overflow-hidden rounded-md px-1.5 py-1 outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                render={<Button variant="ghost-muted" size="xs" />}
+                className="min-w-0 max-w-48"
                 aria-label={`Change comparison target. Currently ${selectedGitSource.baseRef}`}
               >
                 <span className="min-w-0 truncate">{selectedGitSource.baseRef}</span>
@@ -775,7 +776,6 @@ export default function DiffPanel({
                 <ComboboxList className="max-h-64 min-w-0 overflow-x-hidden">
                   <ComboboxItem
                     className="w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)]"
-                    contentClassName="w-full min-w-0 overflow-hidden"
                     value={AUTOMATIC_BASE_REF}
                   >
                     <span className="block min-w-0 truncate">Automatic</span>
@@ -788,7 +788,6 @@ export default function DiffPanel({
                       <ComboboxItem
                         key={choice.id}
                         className="w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)]"
-                        contentClassName="w-full min-w-0 overflow-hidden"
                         value={item}
                       >
                         <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_2rem] items-center overflow-hidden">
@@ -1126,10 +1125,7 @@ export default function DiffPanel({
                               <Button
                                 size="icon-micro"
                                 variant="ghost"
-                                className={cn(
-                                  "-ms-0.5 [--control-icon-color:currentColor] bg-transparent hover:bg-foreground/10",
-                                  getDiffCollapseIconClassName(fileDiff),
-                                )}
+                                className="-ms-0.5"
                                 aria-label={
                                   collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`
                                 }
@@ -1143,9 +1139,13 @@ export default function DiffPanel({
                             }
                           >
                             {collapsed ? (
-                              <ChevronRightIcon className="size-4" />
+                              <ChevronRightIcon
+                                className={cn("size-4", getDiffCollapseIconClassName(fileDiff))}
+                              />
                             ) : (
-                              <ChevronDownIcon className="size-4" />
+                              <ChevronDownIcon
+                                className={cn("size-4", getDiffCollapseIconClassName(fileDiff))}
+                              />
                             )}
                           </TooltipTrigger>
                           <TooltipPopup side="top">

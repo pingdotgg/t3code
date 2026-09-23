@@ -108,8 +108,8 @@ export function SidebarThreadHeader({
           <Button
             type="button"
             size="icon-micro"
-            variant="ghost"
-            className="shrink-0 text-sidebar-muted-foreground hover:bg-sidebar-control-surface hover:text-sidebar-foreground"
+            variant="ghost-muted"
+            className="shrink-0"
             aria-label="Clear thread search"
             onClick={() => {
               onClearSearch();
@@ -187,10 +187,7 @@ export function SidebarHeaderIconButton({
             type="button"
             aria-label={label}
             {...rest}
-            className={cn(
-              "relative size-7 shrink-0 focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar",
-              className,
-            )}
+            className={cn("relative size-7 shrink-0", className)}
           />
         }
       >

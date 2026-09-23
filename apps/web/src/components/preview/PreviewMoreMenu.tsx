@@ -185,7 +185,6 @@ export function PreviewMoreMenu({
               type="button"
               onClick={callTab(bridge.resetZoom)}
               aria-label="Reset zoom"
-              className="[:hover,[data-pressed]]:bg-foreground/10"
               disabled={tabDisabled}
             >
               <RotateCcw />
@@ -206,10 +205,11 @@ export function PreviewMoreMenu({
             each one drove the popup far past its width.
           */}
           {profileName ? (
-            // Truncation sits on the label itself: it renders a block box, so
-            // `text-overflow` on an inline child inside it never applies and a
-            // long name would push the popup past its width instead.
-            <MenuGroupLabel className="max-w-64 truncate">Profile: {profileName}</MenuGroupLabel>
+            // Truncation needs a block box: `text-overflow` on an inline child
+            // never applies and a long name would push the popup past its width.
+            <MenuGroupLabel className="max-w-64">
+              <span className="block truncate">Profile: {profileName}</span>
+            </MenuGroupLabel>
           ) : null}
           <MenuItem
             onClick={() =>

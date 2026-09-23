@@ -388,12 +388,7 @@ function PullRequestBaseFreshnessWarning({
         {children}
         <TriangleAlertIcon aria-hidden className={cn("size-3.5 shrink-0", iconClassName)} />
       </PopoverTrigger>
-      <PopoverPopup
-        align="start"
-        side="bottom"
-        className="max-w-80"
-        viewportClassName="py-2.5 [--viewport-inline-padding:--spacing(3)]"
-      >
+      <PopoverPopup align="start" side="bottom" className="max-w-80" padding="compact">
         <p className="text-xs text-foreground">{summary}</p>
         <p className="mt-0.5 text-xs text-muted-foreground">Changes can be cleanly merged.</p>
         {/* Each way the host offers and this reader may take, as its own button: a split button
@@ -2257,8 +2252,8 @@ export function PullRequestDetailPanel({
                     <PullRequestActorLabel
                       actor={detail.author}
                       profileUrl={authorProfileUrl}
-                      className="shrink-0 rounded-full"
-                      labelClassName="sr-only"
+                      variant="avatar"
+                      className="shrink-0"
                     />
                     <span className="shrink-0">{formatRelativeTimeLabel(detail.updatedAt)}</span>
                   </span>
@@ -2433,11 +2428,7 @@ export function PullRequestDetailPanel({
                 )}
                 <div className="mt-2 flex min-h-5 min-w-0 items-center gap-2 text-xs text-muted-foreground">
                   <PullRequestMetaLine className="min-w-0 whitespace-nowrap">
-                    <PullRequestActorLabel
-                      actor={detail.author}
-                      profileUrl={authorProfileUrl}
-                      className="font-medium"
-                    />
+                    <PullRequestActorLabel actor={detail.author} profileUrl={authorProfileUrl} />
                     <span>updated {formatRelativeTimeLabel(detail.updatedAt)}</span>
                   </PullRequestMetaLine>
                   {checkoutCommand ? (
@@ -2671,8 +2662,7 @@ export function PullRequestDetailPanel({
                 </PullRequestMetaLine>
                 <Button
                   size="xs"
-                  variant="ghost"
-                  className="h-7 px-2 text-[10px] text-muted-foreground"
+                  variant="ghost-muted"
                   aria-label={
                     timelineOrder === "newest"
                       ? "Show oldest activity first"

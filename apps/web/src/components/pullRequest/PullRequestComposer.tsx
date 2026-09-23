@@ -78,13 +78,7 @@ export function PullRequestComposer({
       }}
     >
       <PopoverTrigger
-        render={
-          <Button
-            size="icon"
-            variant="glass"
-            className="rounded-full shadow-lg [--glass-opacity:50%]"
-          />
-        }
+        render={<Button size="icon" variant="glass" />}
         // The only label this control has, so the pending count belongs in it: the badge beside
         // the icon is decorative and a reader who cannot see it still needs the number.
         aria-label={

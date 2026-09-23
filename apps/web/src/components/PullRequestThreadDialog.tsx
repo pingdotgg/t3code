@@ -196,8 +196,8 @@ export function PullRequestThreadDialog({
     >
       <DialogPopup className="max-w-xl">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <SourceControlIcon className="size-4" />
+          <DialogTitle className="flex items-center">
+            <SourceControlIcon className="me-2 size-4" />
             Checkout {terminology.singular}
           </DialogTitle>
           <DialogDescription>
