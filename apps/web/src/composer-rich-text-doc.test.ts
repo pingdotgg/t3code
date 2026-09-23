@@ -440,6 +440,15 @@ describe("caret stops at styled edges", () => {
     expect(stepCaretAcrossStyledEdge(outside, 1)).toBeNull();
   });
 
+  it("keeps marks the user toggled at an edge and lets the arrow move", () => {
+    const inside = stateAt("a **b** c", 3);
+    const toggled = inside.apply(
+      inside.tr.setStoredMarks([schema.marks.bold!.create(), schema.marks.italic!.create()]),
+    );
+    expect(stepCaretAcrossStyledEdge(toggled, 1)).toBeNull();
+    expect(stepCaretAcrossStyledEdge(toggled, -1)).toBeNull();
+  });
+
   it("leaves arrow keys alone away from styled edges", () => {
     expect(stepCaretAcrossStyledEdge(stateAt("**bold** tail", 3), -1)).toBeNull();
     expect(stepCaretAcrossStyledEdge(stateAt("plain text", 1), -1)).toBeNull();
