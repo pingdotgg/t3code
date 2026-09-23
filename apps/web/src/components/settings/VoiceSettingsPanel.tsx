@@ -212,6 +212,7 @@ export function VoiceSettingsPanel() {
   const [operation, setOperation] = useState<string | null>(null);
   const [customWordDraft, setCustomWordDraft] = useState("");
   const [languageSearch, setLanguageSearch] = useState("");
+  const [modelSearch, setModelSearch] = useState("");
   const [selectedLanguage, setSelectedLanguage] = useState<{
     readonly environmentId: EnvironmentId | null;
     readonly code: string;
@@ -378,8 +379,16 @@ export function VoiceSettingsPanel() {
     selectedLanguage?.environmentId === environmentId && languages.includes(selectedLanguage.code)
       ? selectedLanguage.code
       : (activeModel?.languages[0] ?? languages[0]);
-  const visibleModels = currentModels
-    .filter((model) => model.languages.includes(language ?? ""))
+  const modelsForLanguage = currentModels.filter((model) =>
+    model.languages.includes(language ?? ""),
+  );
+  const modelSearchTerm = modelSearch.trim().toLocaleLowerCase();
+  const visibleModels = modelsForLanguage
+    .filter(
+      (model) =>
+        !modelSearchTerm ||
+        `${model.name} ${model.description}`.toLocaleLowerCase().includes(modelSearchTerm),
+    )
     .sort(
       (a, b) =>
         modelSortOrder(a) - modelSortOrder(b) || Number(b.recommended) - Number(a.recommended),
@@ -623,58 +632,89 @@ export function VoiceSettingsPanel() {
                 ) : null}
               </div>
             </div>
-            <div className="min-h-0 min-w-0 flex-1 space-y-2 overflow-y-auto p-3">
-              <p className="pb-1 text-xs text-muted-foreground">
-                Models for {language ? languageLabel(language) : "this environment"}
-              </p>
-              {visibleModels.map((model) => (
-                <ModelCard
-                  key={model.id}
-                  model={model}
-                  busy={operation !== null}
-                  onDownload={() =>
-                    runModelOperation(model.id, async () => {
-                      const result = await runtime.runPromise(
-                        downloadEnvironmentSpeechModel(prepared, model.id),
-                      );
-                      if (
-                        result.models.some(
-                          (candidate) =>
-                            candidate.id === model.id && candidate.state === "installed",
-                        )
-                      ) {
-                        await runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id));
-                      }
-                    })
-                  }
-                  onSelect={() =>
-                    runModelOperation(model.id, () =>
-                      runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id)),
-                    )
-                  }
-                  onCancel={() =>
-                    void runtime
-                      .runPromise(cancelEnvironmentSpeechModelDownload(prepared, model.id))
-                      .then(refreshModels)
-                      .catch(reportModelError)
-                  }
-                  onDelete={() =>
-                    void ensureLocalApi()
-                      .dialogs.confirm(`Delete ${model.name} from this T3 environment?`)
-                      .then((confirmed) => {
-                        if (confirmed)
-                          runModelOperation(model.id, () =>
-                            runtime.runPromise(removeEnvironmentSpeechModel(prepared, model.id)),
-                          );
-                      })
-                  }
-                />
-              ))}
-              {currentModels.length === 0 ? (
-                <p className="py-8 text-center text-xs text-muted-foreground">
-                  No transcription models are available.
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <div className="space-y-2 border-b border-border/50 p-3">
+                <p className="text-xs text-muted-foreground">
+                  Models for {language ? languageLabel(language) : "this environment"}
                 </p>
-              ) : null}
+                <div className="flex items-center gap-1">
+                  <Input
+                    type="search"
+                    size="compact"
+                    aria-label="Search transcription models"
+                    placeholder="Search models"
+                    value={modelSearch}
+                    onChange={(event) => setModelSearch(event.target.value)}
+                  />
+                  {modelSearch ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Clear model search"
+                      onClick={() => setModelSearch("")}
+                    >
+                      <XIcon className="size-3.5" />
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+                {visibleModels.map((model) => (
+                  <ModelCard
+                    key={model.id}
+                    model={model}
+                    busy={operation !== null}
+                    onDownload={() =>
+                      runModelOperation(model.id, async () => {
+                        const result = await runtime.runPromise(
+                          downloadEnvironmentSpeechModel(prepared, model.id),
+                        );
+                        if (
+                          result.models.some(
+                            (candidate) =>
+                              candidate.id === model.id && candidate.state === "installed",
+                          )
+                        ) {
+                          await runtime.runPromise(
+                            selectEnvironmentSpeechModel(prepared, model.id),
+                          );
+                        }
+                      })
+                    }
+                    onSelect={() =>
+                      runModelOperation(model.id, () =>
+                        runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id)),
+                      )
+                    }
+                    onCancel={() =>
+                      void runtime
+                        .runPromise(cancelEnvironmentSpeechModelDownload(prepared, model.id))
+                        .then(refreshModels)
+                        .catch(reportModelError)
+                    }
+                    onDelete={() =>
+                      void ensureLocalApi()
+                        .dialogs.confirm(`Delete ${model.name} from this T3 environment?`)
+                        .then((confirmed) => {
+                          if (confirmed)
+                            runModelOperation(model.id, () =>
+                              runtime.runPromise(removeEnvironmentSpeechModel(prepared, model.id)),
+                            );
+                        })
+                    }
+                  />
+                ))}
+                {modelsForLanguage.length === 0 ? (
+                  <p className="py-8 text-center text-xs text-muted-foreground">
+                    No transcription models are available.
+                  </p>
+                ) : visibleModels.length === 0 ? (
+                  <p className="py-8 text-center text-xs text-muted-foreground">
+                    No models match your search.
+                  </p>
+                ) : null}
+              </div>
             </div>
           </div>
         ) : (

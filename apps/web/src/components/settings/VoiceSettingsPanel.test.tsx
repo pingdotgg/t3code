@@ -275,6 +275,22 @@ it("puts the active model first, then installed and downloading models", async (
     "Downloading description",
     "Available description",
   ]);
+  const search = root.root.findByProps({ "aria-label": "Search transcription models" });
+  await act(async () => search.props.onChange({ target: { value: "installed" } }));
+  expect(
+    root.root
+      .findAllByType("p")
+      .map((paragraph) => paragraph.children.join(""))
+      .filter((text) => text.endsWith(" description")),
+  ).toEqual(["Installed description"]);
+  await act(async () => search.props.onChange({ target: { value: "missing" } }));
+  expect(root.root.findAllByType("p").map((paragraph) => paragraph.children.join(""))).toContain(
+    "No models match your search.",
+  );
+  await act(async () =>
+    root.root.findByProps({ "aria-label": "Clear model search" }).props.onClick(),
+  );
+  expect(search.props.value).toBe("");
 });
 it("shows cancellation errors without clearing the download state", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
