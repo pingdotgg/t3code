@@ -128,8 +128,9 @@ export function cursorAcpUnsupportedModelError(modelId: string): EffectAcpErrors
 /**
  * Map a requested model id onto a live Cursor catalog select value.
  * Catalog entries can be bare (`composer-2.5`) or parameterized
- * (`gpt-5.6-sol[context=272k,...]`); match on the base slug and return the
- * exact catalog value ACP expects for `setModel`.
+ * (`gpt-5.6-sol[context=272k,...]`). Exact and bare matches win; base-slug
+ * fallback to a parameterized catalog value is only for bare requests so we
+ * never remap an explicit suffix (e.g. context=1m) onto a different one.
  */
 export function resolveCursorAcpCatalogModelId(
   allowedValues: ReadonlyArray<string>,
@@ -142,6 +143,10 @@ export function resolveCursorAcpCatalogModelId(
   const baseModelId = resolveCursorAcpBaseModelId(model);
   if (allowedValues.includes(baseModelId)) {
     return baseModelId;
+  }
+  // Parameterized request with no exact/bare hit: reject rather than remap.
+  if (trimmed && trimmed !== baseModelId) {
+    return undefined;
   }
   return allowedValues.find((value) => resolveCursorAcpBaseModelId(value) === baseModelId);
 }
