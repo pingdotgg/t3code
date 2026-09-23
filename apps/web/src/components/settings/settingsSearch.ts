@@ -523,6 +523,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["voice speech transcription hesitation um uh cleanup"],
   },
   {
+    id: "speech-acceleration",
+    title: "Transcription acceleration",
+    to: "/settings/voice",
+    searchTerms: ["voice speech gpu cpu hardware transcription"],
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/threads",

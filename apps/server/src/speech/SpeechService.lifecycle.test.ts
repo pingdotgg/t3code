@@ -64,7 +64,10 @@ const modelDefinitions = vi.hoisted(() => [
     supportsStreaming: false,
   },
 ]);
-vi.mock("./native.ts", () => ({ loadNativeSpeechModel: loadNative }));
+vi.mock("./native.ts", () => ({
+  loadNativeSpeechModel: loadNative,
+  listNativeSpeechGpuDevices: vi.fn(async () => [{ id: '["vulkan","gpu-1"]', name: "Test GPU" }]),
+}));
 vi.mock("./model.ts", () => ({
   DEFAULT_SPEECH_MODEL_ID: "test-model",
   SPEECH_MODELS: modelDefinitions,
@@ -347,6 +350,69 @@ it.effect("retries accelerated inference on CPU after the native process fails",
   }),
 );
 
+it.effect("uses a selected GPU without falling back to CPU after inference fails", () =>
+  Effect.gen(function* () {
+    native.transcribe.mockRejectedValueOnce(new Error("GPU failed"));
+    yield* Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const acceleration = 'gpu:["vulkan","gpu-1"]';
+      expect(yield* speech.updateAcceleration(acceleration)).toMatchObject({ acceleration });
+      const result = yield* speech.transcribe(pcm()).pipe(Effect.result);
+      expect(Result.isFailure(result)).toBe(true);
+      expect(loadNative).toHaveBeenCalledTimes(1);
+      expect(loadNative.mock.calls[0]?.[3]).toBe(acceleration);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("reports an unavailable selected GPU without loading CPU", () =>
+  Effect.gen(function* () {
+    loadNative.mockRejectedValueOnce(new Error("The selected speech GPU is unavailable."));
+    yield* Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      yield* speech.updateAcceleration('gpu:["vulkan","missing"]');
+      const result = yield* speech.transcribe(pcm()).pipe(Effect.result);
+      expect(Result.isFailure(result)).toBe(true);
+      expect(loadNative).toHaveBeenCalledTimes(1);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("reloads a cached model after acceleration changes", () =>
+  Effect.gen(function* () {
+    yield* Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      yield* speech.transcribe(pcm());
+      yield* speech.updateAcceleration("cpu");
+      yield* speech.transcribe(pcm());
+      expect(loadNative).toHaveBeenCalledTimes(2);
+      expect(loadNative.mock.calls[1]?.[3]).toBe("cpu");
+      expect(native.dispose).toHaveBeenCalled();
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("applies an acceleration change after an active stream finishes", () =>
+  Effect.gen(function* () {
+    yield* Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const stream = yield* speech.startStream;
+          expect(yield* speech.updateAcceleration("cpu")).toMatchObject({
+            state: "transcribing",
+            acceleration: "cpu",
+          });
+          yield* stream.finish;
+        }),
+      );
+      yield* speech.transcribe(pcm());
+      expect(loadNative).toHaveBeenCalledTimes(2);
+      expect(loadNative.mock.calls[1]?.[3]).toBe("cpu");
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 it.effect("replays streaming audio on CPU after an accelerated feed crashes", () =>
   Effect.gen(function* () {
     native.feed.mockRejectedValueOnce(new Error("worker stopped"));
@@ -360,6 +426,24 @@ it.effect("replays streaming audio on CPU after an accelerated feed crashes", ()
       expect(native.feed).toHaveBeenCalledTimes(2);
       yield* stream.finish;
     }).pipe(Effect.scoped, Effect.provide(layer));
+  }),
+);
+
+it.effect("reports a selected GPU streaming failure without replaying on CPU", () =>
+  Effect.gen(function* () {
+    native.feed.mockRejectedValueOnce(new Error("GPU failed"));
+    yield* Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      yield* speech.updateAcceleration('gpu:["vulkan","gpu-1"]');
+      const result = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const stream = yield* speech.startStream;
+          return yield* stream.feed(pcm()).pipe(Effect.result);
+        }),
+      );
+      expect(Result.isFailure(result)).toBe(true);
+      expect(loadNative).toHaveBeenCalledTimes(1);
+    }).pipe(Effect.provide(layer));
   }),
 );
 it.effect(

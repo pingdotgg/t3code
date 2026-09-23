@@ -13,7 +13,12 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 vi.mock("@t3tools/client-runtime/voice-input", () => ({
-  getEnvironmentSpeechStatus: () => Promise.resolve({ supported: true }),
+  getEnvironmentSpeechStatus: () =>
+    Promise.resolve({
+      supported: true,
+      acceleration: "auto",
+      gpuDevices: [{ id: '["vulkan","gpu-1"]', name: "Test GPU" }],
+    }),
   updateEnvironmentSpeechFillerWordRemoval: () => Promise.resolve({ supported: true }),
   getEnvironmentSpeechModels: () =>
     mocks.listModels() ??
@@ -111,6 +116,10 @@ it("shows friendly labels for default voice options", async () => {
   const labels = root.root.findAllByType("span").map((span) => span.children.join(""));
   expect(labels).toContain("My Computer (Primary)");
   expect(labels).toContain("System default");
+  expect(labels).toContain("Auto");
+  expect(root.root.findAllByType("option").map((option) => option.children.join(""))).toContain(
+    "Test GPU",
+  );
   expect(labels).not.toContain("primary-environment");
   expect(labels).not.toContain("system-default");
 });

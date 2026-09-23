@@ -10,8 +10,17 @@ let stream;
 process.on("message", async (message) => {
   try {
     if (message.kind === "load") {
-      const { TranscribeModel } = await import(message.moduleUrl);
-      model = await TranscribeModel.load(message.path, { backend: message.backend });
+      const { TranscribeModel, getAvailableBackends } = await import(message.moduleUrl);
+      const device = message.acceleration.startsWith("gpu:")
+        ? getAvailableBackends().find((item) =>
+            (item.deviceType === "gpu" || item.deviceType === "igpu") &&
+            JSON.stringify([item.kind, item.deviceId ?? item.name]) === message.acceleration.slice(4))
+        : undefined;
+      if (message.acceleration.startsWith("gpu:") && !device)
+        throw new Error("The selected speech GPU is unavailable.");
+      model = await TranscribeModel.load(message.path, device
+        ? { device }
+        : { backend: message.acceleration });
       process.send({ type: "t3-speech-reply", ok: true, backend: model.backend,
         supportsStreaming: model.capabilities.supportsStreaming,
         supportsInitialPrompt: model.supports("initial_prompt") });
@@ -58,11 +67,35 @@ type Reply = {
   readonly preview?: SpeechStreamText | null;
 };
 
+export async function listNativeSpeechGpuDevices(
+  moduleUrl = import.meta.resolve("transcribe-cpp"),
+) {
+  const script = `const { getAvailableBackends } = await import(process.argv[1]);
+    process.send(getAvailableBackends().filter((device) =>
+      device.deviceType === "gpu" || device.deviceType === "igpu").map((device) => ({
+        id: JSON.stringify([device.kind, device.deviceId ?? device.name]),
+        name: device.description || device.name,
+      })));`;
+  const child = NodeChildProcess.spawn(
+    process.execPath,
+    ["--input-type=module", "-e", script, moduleUrl],
+    {
+      stdio: ["ignore", "ignore", "inherit", "ipc"],
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    },
+  );
+  return await new Promise<{ id: string; name: string }[]>((resolve, reject) => {
+    child.once("message", (devices) => resolve(devices as { id: string; name: string }[]));
+    child.once("error", reject);
+    child.once("exit", (code) => reject(new Error(`Speech device discovery exited (${code}).`)));
+  });
+}
+
 export async function loadNativeSpeechModel(
   path: string,
   signal: AbortSignal,
   moduleUrl = import.meta.resolve("transcribe-cpp"),
-  requestedBackend: "auto" | "cpu" = "auto",
+  acceleration = "auto",
 ) {
   signal.throwIfAborted();
   const child = NodeChildProcess.spawn(process.execPath, ["--input-type=module", "-e", entry], {
@@ -129,7 +162,7 @@ export async function loadNativeSpeechModel(
   let supportsInitialPrompt: boolean;
   let backend: string;
   try {
-    const loaded = await send({ kind: "load", path, moduleUrl, backend: requestedBackend });
+    const loaded = await send({ kind: "load", path, moduleUrl, acceleration });
     supportsStreaming = loaded.supportsStreaming === true;
     supportsInitialPrompt = loaded.supportsInitialPrompt === true;
     backend = loaded.backend ?? "unknown";

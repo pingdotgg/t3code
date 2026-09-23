@@ -19,6 +19,10 @@ after recording stops.
 
 In Voice settings, you can also choose the microphone used by this browser or
 app, switch between downloaded models, or remove models from the environment.
+**Transcription acceleration** defaults to Auto, which uses a GPU when available.
+Choose CPU to avoid GPU use, or select a specific GPU on the transcription
+environment. If that GPU fails or becomes unavailable, transcription reports an
+error instead of switching to CPU.
 
 Add names, technical terms, and other uncommon vocabulary to the **Dictionary**.
 The words are stored on the selected transcription environment and apply to every

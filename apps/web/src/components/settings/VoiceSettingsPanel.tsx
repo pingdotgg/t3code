@@ -7,11 +7,13 @@ import {
   selectEnvironmentSpeechModel,
   updateEnvironmentSpeechCustomWords,
   updateEnvironmentSpeechFillerWordRemoval,
+  updateEnvironmentSpeechAcceleration,
 } from "@t3tools/client-runtime/voice-input";
 import type {
   EnvironmentId,
   EnvironmentSpeechModel,
   EnvironmentSpeechStatus,
+  SpeechAcceleration,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { CheckIcon, DownloadIcon, GlobeIcon, RefreshCwIcon, Trash2Icon, XIcon } from "lucide-react";
@@ -269,6 +271,8 @@ export function VoiceSettingsPanel() {
   const removeFillerWords = currentStatus?.supported
     ? (currentStatus.removeFillerWords ?? true)
     : true;
+  const acceleration = currentStatus?.supported ? (currentStatus.acceleration ?? "auto") : "auto";
+  const gpuDevices = currentStatus?.supported ? (currentStatus.gpuDevices ?? []) : [];
   const normalizedCustomWord = customWordDraft
     .replace(/[<>"']/g, "")
     .replace(/\s+/g, " ")
@@ -464,6 +468,57 @@ export function VoiceSettingsPanel() {
                 </div>
               ) : null}
             </div>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("speech-acceleration")}
+          description="Choose where transcription runs on the selected environment. Auto uses a GPU when available."
+          control={
+            <Select
+              value={acceleration}
+              disabled={!currentStatus?.supported || operation !== null}
+              onValueChange={(value) => {
+                if (!prepared || !value) return;
+                setOperation("acceleration");
+                void runtime
+                  .runPromise(
+                    updateEnvironmentSpeechAcceleration(prepared, value as SpeechAcceleration),
+                  )
+                  .then((nextStatus) => setStatus({ prepared, value: nextStatus }))
+                  .catch((error) => {
+                    toastManager.add({
+                      type: "error",
+                      title: "Could not update acceleration",
+                      description: error instanceof Error ? error.message : String(error),
+                    });
+                  })
+                  .finally(() => setOperation(null));
+              }}
+            >
+              <SelectTrigger size="sm" aria-label="Transcription acceleration" className="max-w-80">
+                <SelectValue>
+                  {acceleration === "auto"
+                    ? "Auto"
+                    : acceleration === "cpu"
+                      ? "CPU"
+                      : (gpuDevices.find((device) => `gpu:${device.id}` === acceleration)?.name ??
+                        "Selected GPU (Unavailable)")}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem value="auto">Auto</SelectItem>
+                {acceleration.startsWith("gpu:") &&
+                !gpuDevices.some((device) => `gpu:${device.id}` === acceleration) ? (
+                  <SelectItem value={acceleration}>Selected GPU (Unavailable)</SelectItem>
+                ) : null}
+                {gpuDevices.map((device) => (
+                  <SelectItem key={device.id} value={`gpu:${device.id}`}>
+                    {device.name}
+                  </SelectItem>
+                ))}
+                <SelectItem value="cpu">CPU</SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
         <SettingsRow

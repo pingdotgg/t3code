@@ -1,4 +1,8 @@
-import type { EnvironmentSpeechModel, EnvironmentSpeechStatus } from "@t3tools/contracts";
+import type {
+  EnvironmentSpeechModel,
+  EnvironmentSpeechStatus,
+  SpeechAcceleration,
+} from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -10,7 +14,7 @@ import { SPEECH_STREAM_MAX_CHUNK_BYTES } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { loadNativeSpeechModel } from "./native.ts";
+import { listNativeSpeechGpuDevices, loadNativeSpeechModel } from "./native.ts";
 import {
   DEFAULT_SPEECH_MODEL_ID,
   downloadSpeechModel,
@@ -147,6 +151,9 @@ export class SpeechService extends Context.Service<
     readonly updateFillerWordRemoval: (
       enabled: boolean,
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
+    readonly updateAcceleration: (
+      acceleration: SpeechAcceleration,
+    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly startStream: Effect.Effect<SpeechStream, SpeechError, Scope.Scope>;
     readonly removeModel: (modelId: string) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
   }
@@ -170,6 +177,8 @@ export const make = Effect.gen(function* () {
   const modelDirectory = path.join(config.stateDir, "speech", "models");
   let model: LoadedModel | undefined;
   let loadedModelId: string | undefined;
+  let loadedAcceleration: string | undefined;
+  let gpuDevices: ReturnType<typeof listNativeSpeechGpuDevices> | undefined;
   let loading: Promise<LoadedModel> | undefined;
   let downloading:
     | { modelId: string; downloaded: number; verifying: boolean; controller: AbortController }
@@ -186,6 +195,7 @@ export const make = Effect.gen(function* () {
       await model?.dispose();
       model = undefined;
       loadedModelId = undefined;
+      loadedAcceleration = undefined;
       loading = undefined;
     }),
   );
@@ -231,30 +241,28 @@ export const make = Effect.gen(function* () {
   const loadModel = async (
     definition: ReturnType<typeof selectedModel>,
     signal = lifetime.signal,
-    backend: "auto" | "cpu" = "auto",
+    acceleration = "auto",
   ) => {
-    if (
-      model &&
-      loadedModelId === definition.id &&
-      (backend === "auto" || model.backend.toLowerCase() === "cpu")
-    )
+    if (model && loadedModelId === definition.id && loadedAcceleration === acceleration)
       return model;
     if (model) {
       await model.dispose();
       model = undefined;
       loadedModelId = undefined;
+      loadedAcceleration = undefined;
     }
     const pending =
       loading ??
       download(definition.id, signal)
         .then(async (modelPath) => {
-          const loaded = await loadNativeSpeechModel(modelPath, signal, undefined, backend);
+          const loaded = await loadNativeSpeechModel(modelPath, signal, undefined, acceleration);
           if (closing) {
             await loaded.dispose();
             throw new SpeechBusyError({ operation: "model preparation" });
           }
           model = loaded;
           loadedModelId = definition.id;
+          loadedAcceleration = acceleration;
           loading = undefined;
           return loaded;
         })
@@ -324,6 +332,8 @@ export const make = Effect.gen(function* () {
       model: definition.name,
       size: definition.size,
       supportsStreaming: definition.supportsStreaming,
+      acceleration: settings.speechAcceleration,
+      gpuDevices: await (gpuDevices ??= listNativeSpeechGpuDevices().catch(() => [])),
       customWords: normalizeSpeechCustomWords(settings.speechCustomWords),
       removeFillerWords: settings.speechRemoveFillerWords,
     };
@@ -400,6 +410,7 @@ export const make = Effect.gen(function* () {
             await (loaded ?? model)?.dispose();
             model = undefined;
             loadedModelId = undefined;
+            loadedAcceleration = undefined;
           }
           activeTranscriptions -= 1;
           if (activeOperation === released.promise) activeOperation = undefined;
@@ -408,7 +419,7 @@ export const make = Effect.gen(function* () {
       );
       const preparation = yield* attemptSpeech(operation, async () => {
         const startedAt = performance.now();
-        const prepared = await loadModel(definition, signal);
+        const prepared = await loadModel(definition, signal, settings.speechAcceleration);
         if (!prepared.supportsStreaming)
           throw new Error("The selected model does not support streaming.");
         await prepared.begin();
@@ -460,12 +471,18 @@ export const make = Effect.gen(function* () {
                   : null,
               };
             } catch (cause) {
-              if (usedCpuFallback || streamModel.backend.toLowerCase() === "cpu") throw cause;
+              if (
+                usedCpuFallback ||
+                settings.speechAcceleration !== "auto" ||
+                streamModel.backend.toLowerCase() === "cpu"
+              )
+                throw cause;
               usedCpuFallback = true;
               await streamModel.dispose();
               if (model === streamModel) {
                 model = undefined;
                 loadedModelId = undefined;
+                loadedAcceleration = undefined;
                 loading = undefined;
               }
               streamModel = await loadModel(definition, signal, "cpu");
@@ -521,6 +538,7 @@ export const make = Effect.gen(function* () {
         await model?.dispose();
         model = undefined;
         loadedModelId = undefined;
+        loadedAcceleration = undefined;
         loading = undefined;
       }).pipe(
         Effect.andThen(writeSettings("model selection", { speechModelId: modelId })),
@@ -544,6 +562,10 @@ export const make = Effect.gen(function* () {
         ),
         Effect.andThen(freshStatus("filler word removal update")),
       ),
+    updateAcceleration: (acceleration) =>
+      writeSettings("acceleration update", { speechAcceleration: acceleration }).pipe(
+        Effect.andThen(freshStatus("acceleration update")),
+      ),
     transcribe: (pcmBytes) =>
       readSettings("transcription").pipe(
         Effect.flatMap((settings) =>
@@ -557,7 +579,11 @@ export const make = Effect.gen(function* () {
             try {
               const definition = selectedModel(settings);
               const prepareStartedAt = performance.now();
-              const loaded = await loadModel(definition).catch((cause) => {
+              const loaded = await loadModel(
+                definition,
+                lifetime.signal,
+                settings.speechAcceleration,
+              ).catch((cause) => {
                 throw speechError("model preparation", cause);
               });
               const prepareDurationMs = performance.now() - prepareStartedAt;
@@ -585,16 +611,23 @@ export const make = Effect.gen(function* () {
                 if (model === inferenceModel) {
                   model = undefined;
                   loadedModelId = undefined;
+                  loadedAcceleration = undefined;
                   loading = undefined;
                 }
-                if (inferenceModel.backend.toLowerCase() === "cpu")
+                if (
+                  settings.speechAcceleration !== "auto" ||
+                  inferenceModel.backend.toLowerCase() === "cpu"
+                ) {
+                  await inferenceModel.dispose();
                   throw new SpeechOperationError({ operation: "inference", cause });
+                }
                 await inferenceModel.dispose();
                 inferenceModel = await loadModel(definition, lifetime.signal, "cpu");
                 result = await inferenceModel.transcribe(pcm, options).catch((fallbackCause) => {
                   if (model === inferenceModel) {
                     model = undefined;
                     loadedModelId = undefined;
+                    loadedAcceleration = undefined;
                     loading = undefined;
                   }
                   throw new SpeechOperationError({ operation: "inference", cause: fallbackCause });
@@ -644,6 +677,7 @@ export const make = Effect.gen(function* () {
               await model?.dispose();
               model = undefined;
               loadedModelId = undefined;
+              loadedAcceleration = undefined;
               loading = undefined;
             }
             await removeSpeechModel(modelDirectory, definition);

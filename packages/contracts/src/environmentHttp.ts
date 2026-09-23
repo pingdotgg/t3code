@@ -55,6 +55,7 @@ import {
   EnvironmentSpeechStatus,
   EnvironmentSpeechCustomWordsRequest,
   EnvironmentSpeechFillerWordsRequest,
+  EnvironmentSpeechAccelerationRequest,
   EnvironmentSpeechPostProcessingRequest,
   EnvironmentSpeechPostProcessingResult,
   EnvironmentSpeechTranscriptionResult,
@@ -826,6 +827,14 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     HttpApiEndpoint.post("updateFillerWordRemoval", "/api/voice/filler-word-removal", {
       headers: OptionalBearerHeaders,
       payload: EnvironmentSpeechFillerWordsRequest,
+      success: EnvironmentSpeechStatus,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("updateAcceleration", "/api/voice/acceleration", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechAccelerationRequest,
       success: EnvironmentSpeechStatus,
       error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
     }).middleware(EnvironmentAuthenticatedAuth),

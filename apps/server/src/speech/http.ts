@@ -145,6 +145,24 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "updateAcceleration",
+        Effect.fn("environment.voice.updateAcceleration")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          return yield* speech.updateAcceleration(args.payload.acceleration).pipe(
+            Effect.catchTags({
+              SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),
+              SpeechUnsupportedPlatformError: () =>
+                failEnvironmentInvalidRequest("speech_unavailable"),
+              SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechDownloadCancelledError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
+              SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
+            }),
+          );
+        }),
+      )
+      .handle(
         "postProcess",
         Effect.fn("environment.voice.postProcess")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);

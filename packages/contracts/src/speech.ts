@@ -7,6 +7,13 @@ export type SpeechModelId = typeof SpeechModelId.Type;
 export const SpeechCustomWord = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(50));
 export const SpeechCustomWords = Schema.Array(SpeechCustomWord).check(Schema.isMaxLength(100));
 export type SpeechCustomWords = typeof SpeechCustomWords.Type;
+export const SpeechAcceleration = Schema.Union([
+  Schema.Literal("auto"),
+  Schema.Literal("cpu"),
+  Schema.String.check(Schema.isPattern(/^gpu:.+/), Schema.isMaxLength(500)),
+]);
+export type SpeechAcceleration = typeof SpeechAcceleration.Type;
+export const SpeechGpuDevice = Schema.Struct({ id: Schema.String, name: Schema.String });
 
 export const EnvironmentSpeechModelState = Schema.Literals([
   "downloadable",
@@ -55,6 +62,8 @@ export const EnvironmentSpeechStatus = Schema.Union([
     model: Schema.String,
     size: Schema.Finite,
     supportsStreaming: Schema.Boolean,
+    acceleration: SpeechAcceleration.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
+    gpuDevices: Schema.Array(SpeechGpuDevice).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
     customWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
     removeFillerWords: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   }),
@@ -67,6 +76,9 @@ export const EnvironmentSpeechTranscriptionResult = Schema.Struct({
 
 export const EnvironmentSpeechCustomWordsRequest = Schema.Struct({ words: SpeechCustomWords });
 export const EnvironmentSpeechFillerWordsRequest = Schema.Struct({ enabled: Schema.Boolean });
+export const EnvironmentSpeechAccelerationRequest = Schema.Struct({
+  acceleration: SpeechAcceleration,
+});
 export const SpeechPostProcessingPrompt = Schema.Struct({
   id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
   name: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),

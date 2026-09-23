@@ -26,6 +26,8 @@ describe("environment speech contracts", () => {
       model: "Moonshine Tiny",
       size: 35_466_912,
       supportsStreaming: false,
+      acceleration: "auto",
+      gpuDevices: [],
       customWords: ["T3 Code"],
       removeFillerWords: false,
     });

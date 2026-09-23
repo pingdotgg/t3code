@@ -70,6 +70,7 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
           updateCustomWords: () => Effect.succeed({ supported: false as const, reason: "test" }),
           updateFillerWordRemoval: () =>
             Effect.succeed({ supported: false as const, reason: "test" }),
+          updateAcceleration: () => Effect.succeed({ supported: false as const, reason: "test" }),
           transcribe,
           startStream: Effect.die("not used"),
           removeModel: () => Effect.succeed({ supported: false as const, reason: "test" }),
