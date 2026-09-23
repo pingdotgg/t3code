@@ -1,0 +1,154 @@
+/**
+ * Device-local preferences for the voice overlay UI (collapsed state, screen
+ * position, activation mode), persisted in guarded localStorage the same way
+ * as the fast-commands preference. Client-local on purpose: nothing here
+ * belongs to the server or the wire.
+ */
+import { useCallback, useSyncExternalStore } from "react";
+
+const KEY = "t3code:voice-overlay:v1";
+const EVENT = "t3code:voice-overlay-preferences";
+
+export type VoiceActivationMode = "manual" | "always" | "hold" | "double-press";
+
+export const VOICE_ACTIVATION_MODES: readonly VoiceActivationMode[] = [
+  "manual",
+  "always",
+  "hold",
+  "double-press",
+];
+
+export const VOICE_ACTIVATION_LABELS: Record<VoiceActivationMode, string> = {
+  manual: "Manual",
+  always: "Always listening",
+  hold: "Hold to talk",
+  "double-press": "Double-press to toggle",
+};
+
+export interface VoiceOverlayPosition {
+  readonly x: number;
+  readonly y: number;
+}
+
+export interface VoiceOverlayPreferences {
+  /** True renders the small corner button; false the full panel. */
+  readonly collapsed: boolean;
+  /** Top-left corner of the overlay, clamped to the viewport; null anchors
+      the overlay in its default bottom-right corner. */
+  readonly position: VoiceOverlayPosition | null;
+  readonly activation: VoiceActivationMode;
+}
+
+export const DEFAULT_VOICE_OVERLAY_PREFERENCES: VoiceOverlayPreferences = {
+  collapsed: true,
+  position: null,
+  activation: "manual",
+};
+
+function isActivationMode(value: unknown): value is VoiceActivationMode {
+  return typeof value === "string" && VOICE_ACTIVATION_MODES.includes(value as VoiceActivationMode);
+}
+
+export function sanitizeVoiceOverlayPreferences(raw: unknown): VoiceOverlayPreferences {
+  if (typeof raw !== "object" || raw === null) {
+    return DEFAULT_VOICE_OVERLAY_PREFERENCES;
+  }
+  const record = raw as Record<string, unknown>;
+  let position: VoiceOverlayPosition | null = null;
+  if (
+    typeof record.position === "object" &&
+    record.position !== null &&
+    Number.isFinite((record.position as Record<string, unknown>).x) &&
+    Number.isFinite((record.position as Record<string, unknown>).y)
+  ) {
+    const rawPosition = record.position as Record<string, unknown>;
+    position = { x: rawPosition.x as number, y: rawPosition.y as number };
+  }
+  return {
+    collapsed: typeof record.collapsed === "boolean" ? record.collapsed : true,
+    position,
+    activation: isActivationMode(record.activation) ? record.activation : "manual",
+  };
+}
+
+function readVoiceOverlayPreferences(): VoiceOverlayPreferences {
+  try {
+    const raw = localStorage.getItem(KEY);
+    return raw === null
+      ? DEFAULT_VOICE_OVERLAY_PREFERENCES
+      : sanitizeVoiceOverlayPreferences(JSON.parse(raw));
+  } catch {
+    return DEFAULT_VOICE_OVERLAY_PREFERENCES;
+  }
+}
+
+/** Memoized snapshot over the raw stored bytes. useSyncExternalStore requires
+    getSnapshot to return a stable value while the store is unchanged; parsing
+    localStorage on every call would return a fresh object each time and loop
+    React's re-render check. */
+let overlaySnapshotCache: {
+  readonly raw: string | null;
+  readonly value: VoiceOverlayPreferences;
+} | null = null;
+
+function snapshotVoiceOverlayPreferences(): VoiceOverlayPreferences {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(KEY);
+  } catch {
+    raw = null;
+  }
+  if (overlaySnapshotCache !== null && overlaySnapshotCache.raw === raw) {
+    return overlaySnapshotCache.value;
+  }
+  let value: VoiceOverlayPreferences;
+  if (raw === null) {
+    value = DEFAULT_VOICE_OVERLAY_PREFERENCES;
+  } else {
+    try {
+      value = sanitizeVoiceOverlayPreferences(JSON.parse(raw));
+    } catch {
+      value = DEFAULT_VOICE_OVERLAY_PREFERENCES;
+    }
+  }
+  overlaySnapshotCache = { raw, value };
+  return value;
+}
+
+/** Merges a partial update into the stored record. Storage failures are
+    swallowed: the overlay still works, it just forgets its placement and
+    mode across reloads. */
+export function writeVoiceOverlayPreferences(patch: Partial<VoiceOverlayPreferences>): void {
+  try {
+    localStorage.setItem(KEY, JSON.stringify({ ...readVoiceOverlayPreferences(), ...patch }));
+    window.dispatchEvent(new Event(EVENT));
+  } catch {
+    // Storage unavailable (quota, privacy mode): see above.
+  }
+}
+
+function subscribe(listener: () => void) {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener("storage", listener);
+  window.addEventListener(EVENT, listener);
+  return () => {
+    window.removeEventListener("storage", listener);
+    window.removeEventListener(EVENT, listener);
+  };
+}
+
+export function useVoiceOverlayPreferences(): readonly [
+  VoiceOverlayPreferences,
+  (update: Partial<VoiceOverlayPreferences>) => void,
+] {
+  const prefs = useSyncExternalStore(
+    subscribe,
+    snapshotVoiceOverlayPreferences,
+    () => DEFAULT_VOICE_OVERLAY_PREFERENCES,
+  );
+  const update = useCallback(
+    (patch: Partial<VoiceOverlayPreferences>) => writeVoiceOverlayPreferences(patch),
+    [],
+  );
+  return [prefs, update] as const;
+}
