@@ -8,13 +8,15 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import type * as EffectAcpErrors from "effect-acp/errors";
+import * as EffectAcpErrors from "effect-acp/errors";
+import type * as EffectAcpSchema from "effect-acp/schema";
 
 import {
   CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
   resolveCursorAcpBaseModelId,
   resolveCursorAcpConfigUpdates,
 } from "../Layers/CursorProvider.ts";
+import { collectSessionConfigOptionValues, findSessionConfigOption } from "./AcpRuntimeModel.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 type CursorAcpRuntimeCursorSettings = Pick<CursorSettings, "apiEndpoint" | "binaryPath">;
@@ -103,6 +105,26 @@ interface CursorAcpModelSelectionRuntime {
   readonly setModel: (model: string) => Effect.Effect<unknown, EffectAcpErrors.AcpError>;
 }
 
+function findCursorModelSelectOption(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+): EffectAcpSchema.SessionConfigOption | undefined {
+  const byId = findSessionConfigOption(configOptions, "model");
+  if (byId?.type === "select") {
+    return byId;
+  }
+  return configOptions?.find((option) => option.category === "model" && option.type === "select");
+}
+
+/** Fail before ACP when the id is outside cursor-agent's live account catalog. */
+export function cursorAcpUnsupportedModelError(modelId: string): EffectAcpErrors.AcpRequestError {
+  return new EffectAcpErrors.AcpRequestError({
+    code: -32602,
+    errorMessage: `Cursor CLI only runs models from your Cursor account catalog, so "${modelId}" cannot be used. OpenRouter and other BYOK model ids work in the Cursor IDE app, not through cursor-agent. Use an OpenCode provider instance with an OpenRouter model (for example openrouter/deepseek/deepseek-v4.1-flash), or pick a model from Cursor's catalog.`,
+    data: { requestedModel: modelId },
+    method: "session/set_model",
+  });
+}
+
 export function applyCursorAcpModelSelection<E>(input: {
   readonly runtime: CursorAcpModelSelectionRuntime;
   readonly model: string | null | undefined;
@@ -110,7 +132,22 @@ export function applyCursorAcpModelSelection<E>(input: {
   readonly mapError: (context: CursorAcpModelSelectionErrorContext) => E;
 }): Effect.Effect<void, E> {
   return Effect.gen(function* () {
-    yield* input.runtime.setModel(resolveCursorAcpBaseModelId(input.model)).pipe(
+    const baseModelId = resolveCursorAcpBaseModelId(input.model);
+    const configOptions = yield* input.runtime.getConfigOptions;
+    const modelOption = findCursorModelSelectOption(configOptions);
+    if (modelOption?.type === "select") {
+      const allowedValues = collectSessionConfigOptionValues(modelOption);
+      if (allowedValues.length > 0 && !allowedValues.includes(baseModelId)) {
+        yield* Effect.fail(
+          input.mapError({
+            cause: cursorAcpUnsupportedModelError(baseModelId),
+            step: "set-model",
+          }),
+        );
+      }
+    }
+
+    yield* input.runtime.setModel(baseModelId).pipe(
       Effect.mapError((cause) =>
         input.mapError({
           cause,
@@ -119,10 +156,7 @@ export function applyCursorAcpModelSelection<E>(input: {
       ),
     );
 
-    const configUpdates = resolveCursorAcpConfigUpdates(
-      yield* input.runtime.getConfigOptions,
-      input.selections,
-    );
+    const configUpdates = resolveCursorAcpConfigUpdates(configOptions, input.selections);
     for (const update of configUpdates) {
       yield* input.runtime.setConfigOption(update.configId, update.value).pipe(
         Effect.mapError((cause) =>

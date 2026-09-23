@@ -145,4 +145,76 @@ describe("applyCursorAcpModelSelection", () => {
       { type: "config", configId: "fast", value: "true" },
     ]);
   });
+
+  it("rejects OpenRouter-style ids outside the live Cursor catalog before setModel", async () => {
+    const calls: string[] = [];
+    const runtime = {
+      getConfigOptions: Effect.succeed(parameterizedGpt54ConfigOptions),
+      setModel: (value: string) =>
+        Effect.sync(() => {
+          calls.push(value);
+        }),
+      setConfigOption: () => Effect.void,
+    };
+
+    const error = await Effect.runPromise(
+      applyCursorAcpModelSelection({
+        runtime,
+        model: "deepseek/deepseek-v4.1-flash",
+        selections: [],
+        mapError: ({ cause }) => cause.message,
+      }).pipe(Effect.flip),
+    );
+
+    expect(error).toContain("Cursor CLI only runs models from your Cursor account catalog");
+    expect(error).toContain("deepseek/deepseek-v4.1-flash");
+    expect(error).toContain("OpenCode");
+    expect(calls).toEqual([]);
+  });
+
+  it("still accepts bracketed built-in models after stripping options", async () => {
+    const calls: string[] = [];
+    const runtime = {
+      getConfigOptions: Effect.succeed(parameterizedGpt54ConfigOptions),
+      setModel: (value: string) =>
+        Effect.sync(() => {
+          calls.push(value);
+        }),
+      setConfigOption: () => Effect.void,
+    };
+
+    await Effect.runPromise(
+      applyCursorAcpModelSelection({
+        runtime,
+        model: "gpt-5.4-medium-fast[context=1m]",
+        selections: [],
+        mapError: ({ cause }) => cause.message,
+      }),
+    );
+
+    expect(calls).toEqual(["gpt-5.4-medium-fast"]);
+  });
+
+  it("passes through when the session has no select model option", async () => {
+    const calls: string[] = [];
+    const runtime = {
+      getConfigOptions: Effect.succeed([]),
+      setModel: (value: string) =>
+        Effect.sync(() => {
+          calls.push(value);
+        }),
+      setConfigOption: () => Effect.void,
+    };
+
+    await Effect.runPromise(
+      applyCursorAcpModelSelection({
+        runtime,
+        model: "deepseek/deepseek-v4.1-flash",
+        selections: [],
+        mapError: ({ cause }) => cause.message,
+      }),
+    );
+
+    expect(calls).toEqual(["deepseek/deepseek-v4.1-flash"]);
+  });
 });
