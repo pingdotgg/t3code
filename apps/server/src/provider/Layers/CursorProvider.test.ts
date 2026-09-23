@@ -575,6 +575,63 @@ describe("Cursor command catalog", () => {
         ).toEqual(["compact", "deploy"]);
       }),
   );
+
+  effectIt.effect("rebuilds changed workspace skills in one write and skips unchanged ones", () =>
+    Effect.gen(function* () {
+      const base = {
+        ...buildCursorProviderSnapshot({
+          checkedAt: "2026-01-01T00:00:00.000Z",
+          cursorSettings: baseCursorSettings,
+          parsed: { version: null, status: "ready", auth: { status: "authenticated" } },
+        }),
+        instanceId: ProviderInstanceId.make("cursor-catalog"),
+        driver: ProviderDriverKind.make("cursor"),
+      };
+      const catalog = yield* makeCursorCommandCatalog({
+        getSnapshot: Effect.succeed(base),
+        refresh: Effect.succeed(base),
+        streamChanges: Stream.empty,
+        resolveMaintenance: () => Effect.die("Not used"),
+        applyUsageLimits: () => Effect.void,
+      });
+      const oneSkills = [
+        { name: "review", path: "/one/.cursor/skills/review/SKILL.md", enabled: true },
+      ];
+      const twoSkills = [
+        { name: "deploy", path: "/two/.cursor/skills/deploy/SKILL.md", enabled: true },
+      ];
+      const installedSkill = {
+        name: "installed",
+        path: "/home/.cursor/skills/installed/SKILL.md",
+        enabled: true,
+      };
+      yield* catalog.snapshotForCwd("/one", oneSkills);
+      yield* catalog.snapshotForCwd("/two", twoSkills);
+      const before = (yield* catalog.snapshot.getSnapshot).workspaceSnapshots;
+
+      yield* catalog.updateWorkspaceSkills(
+        new Map([
+          ["/one", oneSkills],
+          ["/two", twoSkills],
+        ]),
+      );
+      expect((yield* catalog.snapshot.getSnapshot).workspaceSnapshots).toBe(before);
+
+      yield* catalog.updateWorkspaceSkills(
+        new Map([
+          ["/one", [...oneSkills, installedSkill]],
+          ["/two", twoSkills],
+          ["/evicted", [installedSkill]],
+        ]),
+      );
+      const after = (yield* catalog.snapshot.getSnapshot).workspaceSnapshots;
+      expect(after?.map((entry) => [entry.cwd, entry.skills])).toEqual([
+        ["/one", [...oneSkills, installedSkill]],
+        ["/two", twoSkills],
+      ]);
+      expect(after?.[1]).toBe(before?.[1]);
+    }),
+  );
 });
 
 describe("buildCursorProviderSnapshot", () => {

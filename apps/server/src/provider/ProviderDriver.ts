@@ -73,6 +73,16 @@ export interface ProviderInstance {
   readonly enabled: boolean;
   readonly snapshot: ServerProviderShape;
   readonly snapshotForCwd?: (cwd: string) => Effect.Effect<ServerProvider, ProviderDriverError>;
+  /**
+   * Rebuild several workspace snapshots at once, keyed by cwd. The registry
+   * calls it after each provider refresh for the workspaces it holds, so
+   * skills installed since their first scan show up. A cwd left out of the
+   * result keeps its snapshot. Drivers whose workspace scan is expensive and
+   * cannot be batched leave it out.
+   */
+  readonly snapshotsForCwds?: (
+    cwds: ReadonlyArray<string>,
+  ) => Effect.Effect<ReadonlyMap<string, ServerProvider>>;
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
   /** Invalidate T3-owned discovery caches before an explicit provider refresh. */
   readonly invalidateCaches?: Effect.Effect<void>;
