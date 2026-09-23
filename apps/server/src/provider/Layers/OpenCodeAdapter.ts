@@ -306,6 +306,15 @@ function isOpenCodeAbortError(error: unknown): boolean {
   );
 }
 
+function isOpenCodeContextOverflowError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "ContextOverflowError"
+  );
+}
+
 function isOpenCodeChildRequestEvent(event: OpenCodeSubscribedEvent): boolean {
   switch (event.type) {
     case "permission.asked":
@@ -336,6 +345,12 @@ type OpenCodeTextPartState = Pick<OpenCodeTextPart, "id" | "messageID" | "type" 
 
 type OpenCodeStepUsage = Pick<Extract<Part, { readonly type: "step-finish" }>, "id" | "tokens">;
 
+interface OpenCodeContextOverflow {
+  readonly turnId: TurnId;
+  readonly message: string;
+  readonly error: unknown;
+}
+
 interface OpenCodeSessionContext {
   session: ProviderSession;
   readonly client: OpencodeClient;
@@ -353,8 +368,14 @@ interface OpenCodeSessionContext {
   // OpenCode permits edits to completed parts. Keep text for snapshot comparison
   // until native removal or session teardown, but do not retain other part payloads.
   readonly textPartsByMessageId: Map<string, Map<string, OpenCodeTextPartState>>;
+  // Compaction summaries are context for OpenCode's next request, not replies.
+  // The compaction activity marks the spot, so their text is never emitted.
+  readonly compactionSummaryMessageIds: Set<string>;
   turnTokenUsage: OpenCodeTurnTokenUsageAccumulator | undefined;
   activeTurnId: TurnId | undefined;
+  // OpenCode compacts and retries after a context overflow, so the turn stays
+  // open. It fails only if OpenCode goes idle before a compaction succeeds.
+  pendingContextOverflow: OpenCodeContextOverflow | undefined;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
   cancellation: OpenCodeCancellation | undefined;
@@ -1132,7 +1153,12 @@ export function makeOpenCodeAdapter(
       ) {
         context.pendingIdleReconciliation = undefined;
       }
-      const tokenUsage = takeOpenCodeTurnTokenUsage(context, true);
+      const contextOverflow =
+        context.pendingContextOverflow?.turnId === turnId
+          ? context.pendingContextOverflow
+          : undefined;
+      context.pendingContextOverflow = undefined;
+      const tokenUsage = takeOpenCodeTurnTokenUsage(context, contextOverflow === undefined);
       context.activeTurnId = undefined;
       context.activeAgent = undefined;
       context.activeVariant = undefined;
@@ -1145,7 +1171,9 @@ export function makeOpenCodeAdapter(
       context.autoRepliedRequestIds.clear();
       applyProviderSessionUpdate(
         context,
-        { status: "ready" },
+        contextOverflow
+          ? { status: "error", lastError: contextOverflow.message }
+          : { status: "ready" },
         { clearActiveTurnId: true },
         updatedAt,
       );
@@ -1160,11 +1188,24 @@ export function makeOpenCodeAdapter(
           raw,
         })),
         type: "turn.completed",
-        payload: {
-          state: "completed",
-          tokenUsage,
-        },
+        payload: contextOverflow
+          ? { state: "failed", errorMessage: contextOverflow.message, tokenUsage }
+          : { state: "completed", tokenUsage },
       });
+      if (contextOverflow) {
+        yield* emit({
+          ...(yield* buildEventBase({
+            threadId: context.session.threadId,
+            raw,
+          })),
+          type: "runtime.error",
+          payload: {
+            message: contextOverflow.message,
+            class: "provider_error",
+            detail: contextOverflow.error,
+          },
+        });
+      }
     });
 
     const scheduleIdleReconciliation = Effect.fn("scheduleIdleReconciliation")(function* (
@@ -2312,6 +2353,7 @@ export function makeOpenCodeAdapter(
           break;
         }
         case "session.compacted": {
+          context.pendingContextOverflow = undefined;
           yield* emit({
             ...(yield* buildEventBase({
               threadId: context.session.threadId,
@@ -2349,6 +2391,13 @@ export function makeOpenCodeAdapter(
           }
           context.messageRoleById.set(event.properties.info.id, event.properties.info.role);
           if (event.properties.info.role === "user") {
+            context.textPartsByMessageId.delete(event.properties.info.id);
+          }
+          if (
+            event.properties.info.role === "assistant" &&
+            event.properties.info.summary === true
+          ) {
+            context.compactionSummaryMessageIds.add(event.properties.info.id);
             context.textPartsByMessageId.delete(event.properties.info.id);
           }
           if (event.properties.info.role === "assistant") {
@@ -2395,6 +2444,7 @@ export function makeOpenCodeAdapter(
         case "message.removed": {
           context.messageRoleById.delete(event.properties.messageID);
           context.textPartsByMessageId.delete(event.properties.messageID);
+          context.compactionSummaryMessageIds.delete(event.properties.messageID);
           break;
         }
 
@@ -2468,7 +2518,11 @@ export function makeOpenCodeAdapter(
             }
           }
 
-          if ((part.type === "text" || part.type === "reasoning") && messageRole !== "user") {
+          if (
+            (part.type === "text" || part.type === "reasoning") &&
+            messageRole !== "user" &&
+            !context.compactionSummaryMessageIds.has(part.messageID)
+          ) {
             const state = retainOpenCodeTextPart(context, part);
             if (messageRole === "assistant") {
               yield* emitAssistantTextDelta(context, state, turnId, event);
@@ -2661,6 +2715,35 @@ export function makeOpenCodeAdapter(
             if (context.interruptedTurnId !== undefined || context.reconcileIdleStatus) {
               break;
             }
+          }
+          if (
+            activeTurnId !== undefined &&
+            cancellation?.turnId !== activeTurnId &&
+            isOpenCodeContextOverflowError(event.properties.error)
+          ) {
+            const alreadyPending = context.pendingContextOverflow?.turnId === activeTurnId;
+            context.pendingContextOverflow = {
+              turnId: activeTurnId,
+              message,
+              error: event.properties.error,
+            };
+            // Another overflow before a compaction succeeds is the compaction
+            // request itself overflowing. The idle that follows fails the turn.
+            if (!alreadyPending) {
+              yield* emit({
+                ...(yield* buildEventBase({
+                  threadId: context.session.threadId,
+                  turnId: activeTurnId,
+                  raw: event,
+                })),
+                type: "runtime.warning",
+                payload: {
+                  message:
+                    "Context window exceeded. Waiting for OpenCode to compact the conversation.",
+                },
+              });
+            }
+            break;
           }
           yield* cancelIdleReconciliation(context);
           const terminalCancellation =
@@ -3017,8 +3100,10 @@ export function makeOpenCodeAdapter(
           pendingQuestions: new Map(),
           textPartsByMessageId: new Map(),
           messageRoleById: new Map(),
+          compactionSummaryMessageIds: new Set(),
           turnTokenUsage: undefined,
           activeTurnId: undefined,
+          pendingContextOverflow: undefined,
           activeAgent: undefined,
           activeVariant: undefined,
           cancellation: undefined,
@@ -3976,8 +4061,10 @@ export function makeOpenCodeAdapter(
           context.relatedSessionIds.add(forkedSessionId);
           context.messageRoleById.clear();
           context.textPartsByMessageId.clear();
+          context.compactionSummaryMessageIds.clear();
           context.turnTokenUsage = undefined;
           context.activeTurnId = undefined;
+          context.pendingContextOverflow = undefined;
           context.interruptedTurnId = undefined;
           context.reconcileIdleStatus = false;
           context.awaitingBusyAfterInterruption = false;
