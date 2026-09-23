@@ -76,9 +76,9 @@ it("switches to fixed authenticated feeds while retaining one HID socket, routes
       return new Response(stream);
     }),
   );
-  const present = vi.fn(),
-    cover = vi.fn(),
-    inner = vi.fn();
+  const present = vi.fn((_source: CanvasImageSource, _width: number, _height: number) => true),
+    cover = vi.fn((_source: CanvasImageSource, _width: number, _height: number) => true),
+    inner = vi.fn((_source: CanvasImageSource, _width: number, _height: number) => true);
   let panelFailed = () => {};
   const panelFailure = new Promise<void>((resolve) => {
     panelFailed = resolve;

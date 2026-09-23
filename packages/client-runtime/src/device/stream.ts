@@ -764,13 +764,13 @@ export function createDeviceStreamClient(
         {
           present(source, width, height) {
             if (id === null) {
-              sink.present(source, width, height);
-              return;
+              return sink.present(source, width, height);
             }
             // An inactive native LCD can emit its shutdown black frame. Retain its last useful image.
-            if (screen?.screenId !== id) return;
-            output.present(source, width, height);
-            sink.present(source, width, height);
+            if (screen?.screenId !== id) return true;
+            const retained = output.present(source, width, height);
+            const primary = sink.present(source, width, height);
+            return retained && primary;
           },
         },
         {
