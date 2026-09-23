@@ -1072,6 +1072,7 @@ function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children:
   );
 }
 import { Button } from "../ui/button";
+import { Toggle } from "../ui/toggle";
 import { Select, SelectItem, SelectPopup, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
@@ -7554,19 +7555,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     <Tooltip>
                       <TooltipTrigger
                         render={
-                          <Button
-                            type="button"
+                          <Toggle
                             variant="ghost"
-                            size="icon-sm"
+                            size="sm"
                             // aria-disabled rather than disabled keeps the tooltip explaining why.
-                            className={cn(
-                              voiceEngaged && "bg-accent text-foreground",
-                              "aria-disabled:cursor-not-allowed aria-disabled:opacity-64",
-                            )}
+                            className="aria-disabled:cursor-not-allowed aria-disabled:opacity-64"
+                            pressed={voiceEngaged}
                             onPointerDown={(event) => event.preventDefault()}
-                            onClick={voiceButtonDisabledReason === null ? toggleVoice : undefined}
+                            onPressedChange={() => {
+                              if (voiceButtonDisabledReason === null) toggleVoice();
+                            }}
                             aria-disabled={voiceButtonDisabledReason !== null || undefined}
-                            aria-pressed={voiceEngaged}
                             aria-label={voiceButtonLabel}
                           />
                         }

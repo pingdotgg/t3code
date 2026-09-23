@@ -10,10 +10,10 @@
  */
 import type { ProviderVoiceSessionEvent } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as CodexClient from "effect-codex-app-server/client";
@@ -86,9 +86,11 @@ function transcriptRole(role: string): "user" | "assistant" {
   return role === "user" ? "user" : "assistant";
 }
 
-export class CodexVoiceSessionError extends Data.TaggedError("CodexVoiceSessionError")<{
-  readonly detail: string;
-}> {
+/** Codex ended the realtime session with an error; `detail` is Codex's explanation for the user. */
+export class CodexVoiceSessionError extends Schema.TaggedError<CodexVoiceSessionError>()(
+  "CodexVoiceSessionError",
+  { detail: Schema.String },
+) {
   override get message(): string {
     return this.detail;
   }

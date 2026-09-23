@@ -6,6 +6,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as CodexClient from "effect-codex-app-server/client";
@@ -183,7 +184,7 @@ describe("makeCodexVoice", () => {
       const exit = yield* Fiber.await(voice.fiber);
       NodeAssert.ok(Exit.isFailure(exit));
       const error = exit.cause.reasons[0];
-      NodeAssert.ok(error?._tag === "Fail" && error.error instanceof CodexVoiceSessionError);
+      NodeAssert.ok(error?._tag === "Fail" && Schema.is(CodexVoiceSessionError)(error.error));
       NodeAssert.equal(error.error.detail, "realtime unavailable");
     }),
   );
