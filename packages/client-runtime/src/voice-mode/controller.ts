@@ -92,7 +92,7 @@ export interface VoiceLevels {
   readonly speaker: number;
 }
 
-export const VOICE_CONNECT_TIMEOUT_MS = 20_000;
+const VOICE_CONNECT_TIMEOUT_MS = 20_000;
 const LEVEL_SAMPLE_INTERVAL_MS = 100;
 const MAX_CAPTIONS = 4;
 const MAX_CAPTION_CHARS = 1024;

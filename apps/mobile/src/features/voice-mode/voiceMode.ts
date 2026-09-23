@@ -105,7 +105,10 @@ voiceMode.subscribe(({ phase }) => {
     }
     const activation = keepAwake;
     keepAwake = null;
-    activation?.then(() => deactivateKeepAwake(KEEP_AWAKE_TAG)).catch(() => undefined);
+    // Every conversation shares the tag, so a newer one must keep its lock.
+    activation
+      ?.then(() => (keepAwake === null ? deactivateKeepAwake(KEEP_AWAKE_TAG) : undefined))
+      .catch(() => undefined);
   }
 });
 

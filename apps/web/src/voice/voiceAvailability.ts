@@ -9,7 +9,7 @@ export type VoiceAvailability =
   | { readonly kind: "unavailable"; readonly reason: string }
   | { readonly kind: "ready" };
 
-export const VOICE_UNSUPPORTED: VoiceAvailability = { kind: "unsupported" };
+const VOICE_UNSUPPORTED: VoiceAvailability = { kind: "unsupported" };
 
 export function resolveVoiceAvailability(input: {
   /** The provider instance that runs (or will run) the thread's turns. */

@@ -1,10 +1,7 @@
 export {
   INITIAL_VOICE_MODE_STATE,
-  VOICE_CONNECT_TIMEOUT_MS,
   VoiceModeController,
-  appendVoiceCaption,
   describeVoiceEnd,
-  finishVoiceCaption,
   type VoiceCaption,
   type VoiceLevels,
   type VoiceMediaStream,

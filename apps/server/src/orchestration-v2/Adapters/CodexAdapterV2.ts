@@ -1708,8 +1708,13 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         const voiceProviderThread = yield* Ref.make<OrchestrationV2ProviderThread | undefined>(
           undefined,
         );
-        /** Native turns Codex started for a voice handoff -> the spoken request. */
-        const voiceResubmits = yield* Ref.make(new Map<string, string>());
+        /** Native turns Codex started for a voice handoff -> the request and its thread. */
+        const voiceResubmits = yield* Ref.make(
+          new Map<
+            string,
+            { readonly text: string; readonly providerThread: OrchestrationV2ProviderThread }
+          >(),
+        );
         const finalAnswerItemIdsByTurn = yield* Ref.make(new Map<string, Set<string>>());
         const completedFinalAnswerTextsByTurn = yield* Ref.make(new Map<string, Set<string>>());
         // Native completion and the interrupt timeout share one finalization
@@ -4042,7 +4047,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               const voiceThread = yield* Ref.get(voiceProviderThread);
               if (
                 handoff !== undefined &&
-                voiceThread?.nativeThreadRef?.nativeId === payload.threadId &&
+                voiceThread !== undefined &&
+                voiceThread.nativeThreadRef?.nativeId === payload.threadId &&
                 !(yield* Ref.get(activeTurns)).has(payload.turnId) &&
                 !(yield* Ref.get(pendingRootTurns)).has(payload.threadId)
               ) {
@@ -4050,7 +4056,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 // are orchestrator-owned, so stop it and resubmit the request
                 // as an ordinary run once it settles (see turn/completed).
                 yield* Ref.update(voiceResubmits, (current) =>
-                  new Map(current).set(payload.turnId, handoff),
+                  new Map(current).set(payload.turnId, {
+                    text: handoff,
+                    providerThread: voiceThread,
+                  }),
                 );
                 yield* client
                   .request("turn/interrupt", { threadId: payload.threadId, turnId: payload.turnId })
@@ -5347,14 +5356,16 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 updated.delete(payload.turn.id);
                 return updated;
               });
-              const voiceThread = yield* Ref.get(voiceProviderThread);
-              if (voiceThread !== undefined && continuationRequests !== undefined) {
-                yield* voice.expectSpokenTurn(voiceResubmit);
+              // Resubmit only a turn Codex confirms it stopped. If the
+              // interrupt lost the race, Codex already did the work (and the
+              // voice speaks its answer), so running it again would repeat it.
+              if (payload.turn.status === "interrupted" && continuationRequests !== undefined) {
+                yield* voice.expectSpokenTurn(voiceResubmit.text);
                 yield* continuationRequests.offer({
-                  threadId: voiceThread.appThreadId ?? input.threadId,
-                  providerThreadId: voiceThread.id,
+                  threadId: voiceResubmit.providerThread.appThreadId ?? input.threadId,
+                  providerThreadId: voiceResubmit.providerThread.id,
                   driver: CODEX_PROVIDER,
-                  detail: voiceResubmit,
+                  detail: voiceResubmit.text,
                   delivery: "message_text",
                   origin: "voice",
                 });
@@ -6125,7 +6136,12 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 });
               }),
             ).pipe(
-              Stream.ensuring(Ref.set(voiceProviderThread, undefined)),
+              // A replaced conversation must not clear its successor's thread.
+              Stream.ensuring(
+                Ref.update(voiceProviderThread, (current) =>
+                  current === voiceInput.providerThread ? undefined : current,
+                ),
+              ),
               Stream.mapError((cause) =>
                 cause._tag === "ProviderAdapterProtocolError"
                   ? cause

@@ -576,7 +576,7 @@ function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fields>(
 
 // Voices the Codex realtime V3 session accepts (`thread/realtime/listVoices`
 // v1 list). An empty value lets Codex use its own configured default.
-export const CODEX_VOICE_OPTIONS = [
+const CODEX_VOICE_OPTIONS = [
   { value: "", label: "Codex default" },
   { value: "cove", label: "Cove" },
   { value: "juniper", label: "Juniper" },
