@@ -100,7 +100,7 @@ export function PullRequestListEmptyState({
   // Ahead of the search and the filters, because neither can produce a row until a project does.
   if (!hasProjects) {
     return (
-      <Empty className="py-16">
+      <Empty>
         <BranchMark joined={false} />
         <EmptyHeader>
           <EmptyTitle>No projects in this workspace</EmptyTitle>
@@ -131,7 +131,7 @@ export function PullRequestListEmptyState({
 
   if (query.length > 0) {
     return (
-      <Empty className="py-16">
+      <Empty>
         <BranchMark joined={false} />
         <EmptyHeader>
           {/* A pasted paragraph is still a search, but it is not a title. */}
@@ -142,7 +142,7 @@ export function PullRequestListEmptyState({
             The hosts were searched for it. Try fewer words, or search by number, author or branch.
           </EmptyDescription>
         </EmptyHeader>
-        <EmptyContent className="flex-row flex-wrap justify-center gap-2">
+        <div className="flex flex-wrap justify-center gap-2">
           <Button size="sm" variant="outline" onClick={onClearQuery}>
             <SearchIcon className="size-3.5" />
             Clear search
@@ -153,13 +153,13 @@ export function PullRequestListEmptyState({
             <RefreshIcon size="sm" refreshing={refreshing} />
             {refreshing ? "Checking..." : "Check again"}
           </Button>
-        </EmptyContent>
+        </div>
       </Empty>
     );
   }
 
   return (
-    <Empty className="py-16">
+    <Empty>
       <BranchMark joined={false} />
       <EmptyHeader>
         <EmptyTitle>{filtered ? "Nothing under these filters" : "No pull requests"}</EmptyTitle>
@@ -169,7 +169,7 @@ export function PullRequestListEmptyState({
             : "Pull requests from every project in this workspace appear here."}
         </EmptyDescription>
       </EmptyHeader>
-      <EmptyContent className="flex-row flex-wrap justify-center gap-2">
+      <div className="flex flex-wrap justify-center gap-2">
         {canLoadMore ? (
           <Button size="sm" variant="outline" disabled={loadingMore} onClick={onLoadMore}>
             {loadingMore ? "Loading..." : "Load more pull requests"}
@@ -179,7 +179,7 @@ export function PullRequestListEmptyState({
           <RefreshIcon size="sm" refreshing={refreshing} />
           {refreshing ? "Checking..." : "Check again"}
         </Button>
-      </EmptyContent>
+      </div>
     </Empty>
   );
 }

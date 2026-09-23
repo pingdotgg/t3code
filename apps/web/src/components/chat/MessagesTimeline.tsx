@@ -214,6 +214,7 @@ import {
   ContextChipShell,
   FileChip,
   ImageChipButton,
+  PULL_REQUEST_CHIP_KINDS,
   PullRequestChip,
   UnresolvedChip,
 } from "../contextChipParts";
@@ -236,15 +237,7 @@ import {
   encodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
 import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
-import {
-  CHAT_INLINE_CHIP_CLASS_NAME,
-  CHAT_INLINE_CHIP_LABEL_CLASS_NAME,
-  COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-  SKILL_CHIP_ICON_SVG,
-  CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES,
-  CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES,
-  PULL_REQUEST_INLINE_CHIP_TONE_CLASS_NAMES,
-} from "../composerInlineChip";
+import { ContextChip, ContextChipLabel, type ContextChipKind } from "../ContextChip";
 import { createContextPresentationRegistry } from "../contextPresentationRegistry";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
@@ -254,7 +247,7 @@ import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 
-import { SkillInlineText } from "./SkillInlineText";
+import { SkillChipIcon, SkillInlineText } from "./SkillInlineText";
 import { deriveAgentSpawnSummary } from "./agentSpawnSummary";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
@@ -1814,9 +1807,8 @@ function QueuedMessageTimelineRow({
                 render={
                   <Button
                     type="button"
-                    size="icon-micro"
+                    size="icon-xs"
                     variant="ghost-muted"
-                    className="size-6"
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={() => ctx.onSteerQueuedMessage(queuedMessage.id)}
                     aria-label="Send now"
@@ -1837,9 +1829,8 @@ function QueuedMessageTimelineRow({
                 render={
                   <Button
                     type="button"
-                    size="icon-micro"
+                    size="icon-xs"
                     variant="ghost-muted"
-                    className="size-6"
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={() => ctx.onRemoveQueuedMessage(queuedMessage.id)}
                     aria-label="Cancel and return to the composer"
@@ -2561,8 +2552,9 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
       <PopoverTrigger
         render={
           <Button
-            variant="chip"
-            className="ml-auto inline-flex h-5 min-w-0 shrink-0 items-center gap-1 rounded-full border border-border/70 px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            variant="ghost-muted"
+            size="micro"
+            className="ml-auto min-w-0 shrink-0"
             aria-label={`${scriptName} is still running. Show setup progress.`}
           />
         }
@@ -2570,12 +2562,7 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
         <Spinner size="xs" className="shrink-0" />
         <span className="truncate">{scriptName}</span>
       </PopoverTrigger>
-      <PopoverPopup
-        side="bottom"
-        align="end"
-        className="surface-glass! w-[28rem] max-w-[calc(100vw-2rem)]"
-        viewportClassName="py-3 [--viewport-inline-padding:--spacing(3)]"
-      >
+      <PopoverPopup side="bottom" align="end" width="lg" padding="compact">
         <WorktreeSetupCard
           snapshot={snapshot}
           embedded
@@ -3454,14 +3441,10 @@ function UserMessageMentionChip(props: {
     <Tooltip>
       <TooltipTrigger
         render={
-          <button
-            type="button"
+          <ContextChip
+            kind="mention"
+            render={<button type="button" />}
             aria-label={`Preview ${props.record.path}`}
-            className={cn(
-              CHAT_INLINE_CHIP_CLASS_NAME,
-              CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.mention,
-              "cursor-pointer focus-visible:outline-2",
-            )}
             data-markdown-copy={props.copyMarkdown}
             onClick={() => {
               if (ctx.threadRef)
@@ -3472,10 +3455,9 @@ function UserMessageMentionChip(props: {
               pathValue={props.record.path}
               kind={inferEntryKindFromPath(props.record.path)}
               theme={ctx.resolvedTheme}
-              className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
             />
-            <span className={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}>{props.record.label}</span>
-          </button>
+            <ContextChipLabel>{props.record.label}</ContextChipLabel>
+          </ContextChip>
         }
       />
       <TooltipPopup>{props.record.path}</TooltipPopup>
@@ -3489,21 +3471,16 @@ function UserMessageContextChip(props: {
   kindLabel?: string;
   copyMarkdown: string;
   tooltip?: string;
-  toneClassName?: string;
-  interactive?: boolean;
-  unresolved?: boolean;
+  kind: ContextChipKind;
 }) {
   return (
     <ContextChipShell
+      kind={props.kind}
       icon={props.icon}
       label={props.label}
-      className={cn(CHAT_INLINE_CHIP_CLASS_NAME, props.toneClassName)}
-      labelClassName={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}
       aria-label={props.kindLabel ? `${props.kindLabel}, ${props.label}` : undefined}
       data-markdown-copy={props.copyMarkdown}
       tooltip={props.tooltip}
-      interactive={props.interactive === true}
-      unresolved={props.unresolved === true}
     />
   );
 }
@@ -3511,7 +3488,7 @@ function UserMessageContextChip(props: {
 function UserMessagePullRequestContextChip(props: {
   record: Extract<KnownComposerContextRecord, { kind: "review-comment" }>;
   copyMarkdown: string;
-  toneClassName: string;
+  kind: ContextChipKind;
 }) {
   const { activeThreadEnvironmentId, openPullRequest } = use(TimelineRowCtx);
   const metadata = props.record.pullRequest;
@@ -3522,8 +3499,7 @@ function UserMessagePullRequestContextChip(props: {
       environmentId={activeThreadEnvironmentId}
       label={reviewCommentContextLabel(props.record)}
       kindLabel={pullRequestContextKindLabel(props.record)}
-      className={cn(CHAT_INLINE_CHIP_CLASS_NAME, props.toneClassName)}
-      labelClassName={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}
+      kind={props.kind}
       copyMarkdown={props.copyMarkdown}
       onOpen={openPullRequest}
     />
@@ -3676,11 +3652,8 @@ function UnavailableUserMessageContextChip(props: UserMessageContextRenderContex
   return (
     <UnresolvedChip
       label={props.reference.label}
-      className={CHAT_INLINE_CHIP_CLASS_NAME}
-      labelClassName={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}
       copyMarkdown={props.copyMarkdown}
       tooltip="This context is no longer available."
-      tooltipClassName="max-w-96 whitespace-pre-wrap leading-tight"
     />
   );
 }
@@ -3708,18 +3681,12 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
       render: (record, context) =>
         record.kind === "skill" ? (
           <UserMessageContextChip
-            icon={
-              <span
-                aria-hidden="true"
-                className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
-                dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
-              />
-            }
+            icon={<SkillChipIcon />}
             label={record.label || record.name}
             kindLabel="Skill"
             tooltip={`$${record.name}`}
             copyMarkdown={context.copyMarkdown}
-            toneClassName={CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.skill}
+            kind="skill"
           />
         ) : (
           <UnavailableUserMessageContextChip {...context} />
@@ -3744,8 +3711,6 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
           <ImageChipButton
             name={record.name}
             previewUrl={attachment.previewUrl}
-            className={CHAT_INLINE_CHIP_CLASS_NAME}
-            labelClassName={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}
             size={formatAttachmentSize(record.sizeBytes)}
             data-markdown-copy={context.copyMarkdown}
             onClick={() => context.onExpandImage(attachment)}
@@ -3778,8 +3743,6 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
             size={size}
             isVideo={isVideo}
             theme={context.resolvedTheme}
-            className={CHAT_INLINE_CHIP_CLASS_NAME}
-            labelClassName={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}
             disabled={disabled}
             accessibleLabel={`${isVideo ? "Video" : "File"} attachment, ${record.name}, ${size}`}
             copyMarkdown={context.copyMarkdown}
@@ -3798,7 +3761,6 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         record.kind === "terminal" ? (
           <span data-markdown-copy={context.copyMarkdown}>
             <TerminalContextInlineChip
-              surface="transcript"
               label={record.label}
               terminalLabel={record.terminalLabel}
               lineStart={record.lineStart}
@@ -3819,24 +3781,9 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
           <UserMessageContextPopover
             copyMarkdown={context.copyMarkdown}
             accessibleLabel={`Browser element, ${record.label}`}
-            chip={
-              <UserMessageContextChip
-                icon={
-                  <MousePointerClickIcon
-                    className={cn(
-                      COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-                      CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES.element,
-                      "size-3.5",
-                    )}
-                  />
-                }
-                label={record.label}
-                kindLabel="Browser element"
-                copyMarkdown={context.copyMarkdown}
-                interactive
-                toneClassName={CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.element}
-              />
-            }
+            kind="element"
+            icon={<MousePointerClickIcon />}
+            label={record.label}
           >
             <UserMessageElementDetails record={record} />
           </UserMessageContextPopover>
@@ -3860,7 +3807,7 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
             <UserMessagePullRequestContextChip
               record={record}
               copyMarkdown={context.copyMarkdown}
-              toneClassName={PULL_REQUEST_INLINE_CHIP_TONE_CLASS_NAMES[pullRequestState]}
+              kind={PULL_REQUEST_CHIP_KINDS[pullRequestState]}
             />
           );
         }
@@ -3868,38 +3815,9 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
           <UserMessageContextPopover
             copyMarkdown={context.copyMarkdown}
             accessibleLabel={`${kindLabel}, ${label}${record.pullRequest ? `, ${record.pullRequest.title}` : ""}`}
-            chip={
-              <UserMessageContextChip
-                icon={
-                  isPullRequest ? (
-                    <PullRequestGlyph.pullRequest
-                      className={cn(
-                        COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-                        CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES["pull-request"],
-                        "size-3.5",
-                      )}
-                    />
-                  ) : (
-                    <MessageCircleIcon
-                      className={cn(
-                        COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-                        CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES["review-comment"],
-                        "size-3.5",
-                      )}
-                    />
-                  )
-                }
-                label={label}
-                kindLabel={kindLabel}
-                copyMarkdown={context.copyMarkdown}
-                interactive
-                toneClassName={
-                  isPullRequest
-                    ? PULL_REQUEST_INLINE_CHIP_TONE_CLASS_NAMES[pullRequestState]
-                    : CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES["review-comment"]
-                }
-              />
-            }
+            kind={isPullRequest ? PULL_REQUEST_CHIP_KINDS[pullRequestState] : "review-comment"}
+            icon={isPullRequest ? <PullRequestGlyph.pullRequest /> : <MessageCircleIcon />}
+            label={label}
           >
             <UserMessageReviewCommentCard
               comment={{
@@ -3930,24 +3848,9 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
           <UserMessageContextPopover
             copyMarkdown={context.copyMarkdown}
             accessibleLabel={`Preview annotation, ${record.label}`}
-            chip={
-              <UserMessageContextChip
-                icon={
-                  <MousePointerClickIcon
-                    className={cn(
-                      COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-                      CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES["preview-annotation"],
-                      "size-3.5",
-                    )}
-                  />
-                }
-                label={record.label}
-                kindLabel="Preview annotation"
-                copyMarkdown={context.copyMarkdown}
-                interactive
-                toneClassName={CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES["preview-annotation"]}
-              />
-            }
+            kind="preview-annotation"
+            icon={<MousePointerClickIcon />}
+            label={record.label}
           >
             <UserMessagePreviewAnnotationDetails record={record} image={context.annotationImage} />
           </UserMessageContextPopover>
@@ -4053,11 +3956,11 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
             <Button
               type="button"
               size="xs"
-              variant="ghost"
+              variant="ghost-muted"
               aria-expanded={expanded}
               data-scroll-anchor-ignore
               onClick={() => setExpanded((value) => !value)}
-              className="-ml-1 h-6 rounded-md px-1.5 text-secondary-label text-xs hover:bg-muted/55 hover:text-message-foreground"
+              className="-ml-1"
             >
               {expanded ? "Show less" : "Show full message"}
             </Button>
@@ -4476,7 +4379,7 @@ function workToneIcon(tone: TimelineWorkEntry["tone"]): {
   if (tone === "thinking") {
     return {
       iconName: "brain",
-      className: "text-foreground",
+      className: "text-icon-muted",
     };
   }
   if (tone === "info") {

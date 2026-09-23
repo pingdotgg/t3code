@@ -303,7 +303,9 @@ export const make = Effect.gen(function* () {
               Effect.catchCause(logSkipped("pull request sync skipped", { key })),
             )
           : Effect.void,
-      { concurrency: 8, discard: true },
+      // As wide as one batched summary read, so the sweep's reads on a host arrive together and
+      // GitHub answers them in one request rather than one `gh pr view` apiece.
+      { concurrency: 25, discard: true },
     );
   });
 

@@ -208,30 +208,22 @@ export function SettingInheritance({
                   size="icon-micro"
                   variant="ghost-muted"
                   aria-label={`${overrideSummary}. Show where this value comes from`}
-                  className={cn(
-                    "[--control-icon-color:currentColor]",
-                    state === "overridden"
-                      ? "text-primary hover:text-primary"
-                      : state === "mixed"
-                        ? "text-warning hover:text-warning"
-                        : state === "environment"
-                          ? "text-foreground/70 hover:text-foreground"
-                          : "text-muted-foreground/60 hover:text-foreground",
-                  )}
                 />
               }
             />
           }
         >
-          <LayersIcon className="size-3" />
+          <LayersIcon
+            className={cn(
+              "size-3",
+              state === "overridden" && "text-primary",
+              state === "mixed" && "text-warning",
+            )}
+          />
         </TooltipTrigger>
         <TooltipPopup side="top">{overrideSummary}</TooltipPopup>
       </Tooltip>
-      <PopoverPopup
-        align="start"
-        className="w-72 max-w-[calc(100vw-2rem)]"
-        viewportClassName="p-0 [--viewport-inline-padding:0px]"
-      >
+      <PopoverPopup align="start" width="md" padding="none">
         <div className="divide-y divide-border/60">
           {chains.map(({ target, environment, machine, layers }) => (
             <section
@@ -290,10 +282,7 @@ export function SettingInheritance({
                     <div className="flex items-center justify-between gap-3 px-2 text-xs text-muted-foreground">
                       <span>Overridden by</span>
                       {onClearOverrides ? (
-                        <InlineButton
-                          className="font-medium text-foreground underline-offset-2 hover:underline"
-                          onClick={() => onClearOverrides(overriding)}
-                        >
+                        <InlineButton onClick={() => onClearOverrides(overriding)}>
                           Reset {overriding.length === 1 ? "it" : "all"}
                         </InlineButton>
                       ) : null}
@@ -304,10 +293,7 @@ export function SettingInheritance({
                           key={project.projectId}
                           className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-2 py-1"
                         >
-                          <InlineButton
-                            className="min-w-0 justify-start text-left text-foreground underline-offset-2 hover:underline"
-                            onClick={project.open}
-                          >
+                          <InlineButton className="min-w-0 justify-start" onClick={project.open}>
                             <span className="truncate">{project.label}</span>
                           </InlineButton>
                           <span className="max-w-32 truncate text-muted-foreground tabular-nums">
