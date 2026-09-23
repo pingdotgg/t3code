@@ -554,7 +554,7 @@ export const make = Effect.gen(function* () {
               const definition = selectedModel(settings);
               const prepareStartedAt = performance.now();
               const loaded = await loadModel(definition).catch((cause) => {
-                throw new SpeechOperationError({ operation: "model preparation", cause });
+                throw speechError("model preparation", cause);
               });
               const prepareDurationMs = performance.now() - prepareStartedAt;
               const inferenceStartedAt = performance.now();

@@ -1,17 +1,21 @@
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@t3tools/contracts";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { describe, expect, vi } from "vite-plus/test";
 
-import type * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { postProcessTranscript } from "./postProcessing.ts";
 
-const textGeneration = (
+const runPostProcess = (
+  input: { readonly transcript: string; readonly cwd: string; readonly settings: ServerSettings },
   generate: TextGeneration.TextGeneration["Service"]["generateTranscriptionPostProcessing"],
 ) =>
-  ({
-    generateTranscriptionPostProcessing: generate,
-  }) as unknown as TextGeneration.TextGeneration["Service"];
+  postProcessTranscript(input).pipe(
+    Effect.provide(
+      Layer.mock(TextGeneration.TextGeneration)({ generateTranscriptionPostProcessing: generate }),
+    ),
+  );
 
 describe("postProcessTranscript", () => {
   it.effect("uses the dedicated model selection and selected prompt", () =>
@@ -23,12 +27,14 @@ describe("postProcessTranscript", () => {
       };
 
       expect(
-        yield* postProcessTranscript({
-          transcript: "uh clean text",
-          cwd: "C:/neutral",
-          settings,
-          textGeneration: textGeneration(generate),
-        }),
+        yield* runPostProcess(
+          {
+            transcript: "uh clean text",
+            cwd: "C:/neutral",
+            settings,
+          },
+          generate,
+        ),
       ).toBe("Clean text.");
       expect(generate).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -44,12 +50,14 @@ describe("postProcessTranscript", () => {
     Effect.gen(function* () {
       const generate = vi.fn(() => Effect.succeed({ transcription: "unexpected" }));
       expect(
-        yield* postProcessTranscript({
-          transcript: "raw text",
-          cwd: "C:/neutral",
-          settings: { ...DEFAULT_SERVER_SETTINGS, speechPostProcessingEnabled: false },
-          textGeneration: textGeneration(generate),
-        }),
+        yield* runPostProcess(
+          {
+            transcript: "raw text",
+            cwd: "C:/neutral",
+            settings: { ...DEFAULT_SERVER_SETTINGS, speechPostProcessingEnabled: false },
+          },
+          generate,
+        ),
       ).toBe("raw text");
       expect(generate).not.toHaveBeenCalled();
     }),
@@ -59,12 +67,14 @@ describe("postProcessTranscript", () => {
     Effect.gen(function* () {
       const generate = vi.fn(() => Effect.succeed({ transcription: "I want yellow." }));
       const settings = { ...DEFAULT_SERVER_SETTINGS, speechCorrectionWord: "err" };
-      yield* postProcessTranscript({
-        transcript: "I want orange, err, yellow.",
-        cwd: "C:/neutral",
-        settings,
-        textGeneration: textGeneration(generate),
-      });
+      yield* runPostProcess(
+        {
+          transcript: "I want orange, err, yellow.",
+          cwd: "C:/neutral",
+          settings,
+        },
+        generate,
+      );
       expect(generate).toHaveBeenCalledWith(
         expect.objectContaining({
           prompt: expect.stringContaining('Correction cue: "err"'),
@@ -90,12 +100,14 @@ describe("postProcessTranscript", () => {
   it.effect("preserves the original when the provider returns blank output", () =>
     Effect.gen(function* () {
       expect(
-        yield* postProcessTranscript({
-          transcript: "raw text",
-          cwd: "C:/neutral",
-          settings: { ...DEFAULT_SERVER_SETTINGS, speechPostProcessingEnabled: true },
-          textGeneration: textGeneration(() => Effect.succeed({ transcription: "   " })),
-        }),
+        yield* runPostProcess(
+          {
+            transcript: "raw text",
+            cwd: "C:/neutral",
+            settings: { ...DEFAULT_SERVER_SETTINGS, speechPostProcessingEnabled: true },
+          },
+          () => Effect.succeed({ transcription: "   " }),
+        ),
       ).toBe("raw text");
     }),
   );

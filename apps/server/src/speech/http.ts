@@ -18,7 +18,6 @@ import {
 } from "../auth/http.ts";
 import * as SpeechService from "./SpeechService.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { postProcessTranscript } from "./postProcessing.ts";
 
 const bodyLimit = Layer.succeed(EnvironmentVoiceBodyLimit, (effect) =>
@@ -151,7 +150,6 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
           const settingsService = yield* ServerSettings.ServerSettingsService;
-          const textGeneration = yield* TextGeneration.TextGeneration;
           const fileSystem = yield* FileSystem.FileSystem;
           const text = yield* Effect.gen(function* () {
             const settings = yield* settingsService.getSettings;
@@ -162,7 +160,6 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
               transcript: args.payload.transcript,
               cwd,
               settings,
-              textGeneration,
             });
           }).pipe(
             Effect.scoped,

@@ -233,6 +233,36 @@ it.effect("preserves a busy error during stream preparation", () =>
     });
   }),
 );
+it.effect("preserves a cancelled download during transcription preparation", () =>
+  Effect.gen(function* () {
+    downloadModel.mockRejectedValueOnce(
+      new SpeechService.SpeechDownloadCancelledError({ modelId: "test-model" }),
+    );
+    const result = yield* Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      return yield* Effect.result(speech.transcribe(pcm()));
+    }).pipe(Effect.provide(layer));
+    expect(Result.isFailure(result) && result.failure).toMatchObject({
+      _tag: "SpeechDownloadCancelledError",
+      modelId: "test-model",
+    });
+  }),
+);
+it.effect("preserves a busy error during transcription preparation", () =>
+  Effect.gen(function* () {
+    loadNative.mockRejectedValueOnce(
+      new SpeechService.SpeechBusyError({ operation: "model preparation" }),
+    );
+    const result = yield* Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      return yield* Effect.result(speech.transcribe(pcm()));
+    }).pipe(Effect.provide(layer));
+    expect(Result.isFailure(result) && result.failure).toMatchObject({
+      _tag: "SpeechBusyError",
+      operation: "model preparation",
+    });
+  }),
+);
 it.effect("releases the loaded native model when its service scope closes", () =>
   Effect.gen(function* () {
     yield* Effect.gen(function* () {
