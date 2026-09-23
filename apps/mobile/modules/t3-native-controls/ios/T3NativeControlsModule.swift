@@ -11,6 +11,14 @@ public final class T3NativeControlsModule: Module {
   private var filePresentation: T3NativeFilePresentation?
 
   public func definition() -> ModuleDefinition {
+    Constants {
+      ["supportsWorkspaceColumns": NSClassFromString("RNSSplitHostComponentView") != nil]
+    }
+    View(T3LayoutMetricsView.self) {
+      ViewName("LayoutMetrics")
+      Events("onMetricsChange")
+    }
+
     AsyncFunction("presentVideo") { (url: URL, title: String, sourceIdentifier: String, identifier: String, promise: Promise) in
       try self.presentVideo(
         url: url,

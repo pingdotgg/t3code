@@ -1,0 +1,1290 @@
+diff --git a/android/src/main/java/com/swmansion/rnscreens/legacy/ScreenStackHeaderConfigViewManager.kt b/android/src/main/java/com/swmansion/rnscreens/legacy/ScreenStackHeaderConfigViewManager.kt
+--- a/android/src/main/java/com/swmansion/rnscreens/legacy/ScreenStackHeaderConfigViewManager.kt
++++ b/android/src/main/java/com/swmansion/rnscreens/legacy/ScreenStackHeaderConfigViewManager.kt
+@@ -124,6 +124,34 @@
+         config.setTitle(title)
+     }
+ 
++    // The t3 patch adds these iOS glass-chrome props to the native spec; they have
++    // no Android implementation, but the codegen-generated interface requires the
++    // setters to exist. No-ops keep the Android build compiling.
++    override fun setSubtitle(
++        config: ScreenStackHeaderConfig,
++        subtitle: String?,
++    ) = Unit
++
++    override fun setLargeSubtitle(
++        config: ScreenStackHeaderConfig,
++        largeSubtitle: String?,
++    ) = Unit
++
++    override fun setNavigationItemStyle(
++        config: ScreenStackHeaderConfig,
++        navigationItemStyle: String?,
++    ) = Unit
++
++    override fun setHeaderCenterBarButtonItems(
++        config: ScreenStackHeaderConfig,
++        headerCenterBarButtonItems: ReadableArray?,
++    ) = Unit
++
++    override fun setHeaderToolbarItems(
++        config: ScreenStackHeaderConfig,
++        headerToolbarItems: ReadableArray?,
++    ) = Unit
++
+     override fun setTitleFontFamily(
+         config: ScreenStackHeaderConfig,
+         titleFontFamily: String?,
+diff --git a/android/src/main/java/com/swmansion/rnscreens/legacy/ScreenStackHeaderSubviewManager.kt b/android/src/main/java/com/swmansion/rnscreens/legacy/ScreenStackHeaderSubviewManager.kt
+--- a/android/src/main/java/com/swmansion/rnscreens/legacy/ScreenStackHeaderSubviewManager.kt
++++ b/android/src/main/java/com/swmansion/rnscreens/legacy/ScreenStackHeaderSubviewManager.kt
+@@ -47,6 +47,12 @@
+         Log.w("[RNScreens]", "hidesSharedBackground prop is not available on Android")
+     }
+ 
++    // Bar button transition identifiers only apply on iOS.
++    override fun setIdentifier(
++        view: ScreenStackHeaderSubview,
++        identifier: String?,
++    ) = Unit
++
+     // synchronousShadowStateUpdatesEnabled is not available on Android atm,
+     // however we must override their setters
+     override fun setSynchronousShadowStateUpdatesEnabled(
+diff --git a/ios/conversion/RNSConversions-Stack.mm b/ios/conversion/RNSConversions-Stack.mm
+--- a/ios/conversion/RNSConversions-Stack.mm
++++ b/ios/conversion/RNSConversions-Stack.mm
+@@ -14,6 +14,8 @@
+ RNSHeaderItemPlacement convert(react::RNSHeaderItemIOSPlacement placement)
+ {
+   switch (placement) {
++    case react::RNSHeaderItemIOSPlacement::Toolbar:
++      return RNSHeaderItemPlacementToolbar;
+     case react::RNSHeaderItemIOSPlacement::Leading:
+       return RNSHeaderItemPlacementLeading;
+     case react::RNSHeaderItemIOSPlacement::Trailing:
+@@ -31,6 +33,8 @@
+ RNSHeaderItemSpacerPlacement convert(react::RNSHeaderItemSpacerIOSPlacement placement)
+ {
+   switch (placement) {
++    case react::RNSHeaderItemSpacerIOSPlacement::Toolbar:
++      return RNSHeaderItemSpacerPlacementToolbar;
+     case react::RNSHeaderItemSpacerIOSPlacement::Leading:
+       return RNSHeaderItemSpacerPlacementLeading;
+     case react::RNSHeaderItemSpacerIOSPlacement::Trailing:
+diff --git a/ios/header/RNSHeaderConfigComponentView.mm b/ios/header/RNSHeaderConfigComponentView.mm
+--- a/ios/header/RNSHeaderConfigComponentView.mm
++++ b/ios/header/RNSHeaderConfigComponentView.mm
+@@ -1,4 +1,5 @@
+ #import "RNSHeaderConfigComponentView.h"
++#import "RNSSearchBar.h"
+ #import "RNSConversions.h"
+ #import "RNSHeaderAppearanceMapper.h"
+ #import "RNSHeaderConfigEventEmitter.h"
+@@ -27,7 +28,7 @@
+ static void RNSAssertIsValidHeaderChild(UIView *child)
+ {
+   RCTAssert([child isKindOfClass:RNSHeaderItemComponentView.class] ||
+-                [child isKindOfClass:RNSHeaderItemSpacerComponentView.class],
++                [child isKindOfClass:RNSHeaderItemSpacerComponentView.class] || [child isKindOfClass:RNSSearchBar.class],
+             @"[RNScreens] Unexpected child of type: %@, expected %@ or %@",
+             child.class,
+             RNSHeaderItemComponentView.class,
+@@ -73,6 +74,24 @@
+   _titleMenu = nil;
+   _standardAppearance = nil;
+   _scrollEdgeAppearance = nil;
++}
++
++- (BOOL)backButtonHidden
++{
++  return std::static_pointer_cast<const react::RNSHeaderConfigIOSProps>(_props)->backButtonHidden;
++}
++
++- (BOOL)editorStyle
++{
++  return std::static_pointer_cast<const react::RNSHeaderConfigIOSProps>(_props)->editorStyle;
++}
++
++- (RNSSearchBar *)searchBar
++{
++  for (id child in _children) {
++    if ([child isKindOfClass:RNSSearchBar.class]) return child;
++  }
++  return nil;
+ }
+ 
+ - (NSArray<id> *)children
+diff --git a/ios/header/RNSHeaderConfigDataProviding.h b/ios/header/RNSHeaderConfigDataProviding.h
+--- a/ios/header/RNSHeaderConfigDataProviding.h
++++ b/ios/header/RNSHeaderConfigDataProviding.h
+@@ -3,11 +3,15 @@
+ #import <UIKit/UIKit.h>
+ 
+ @class RNSHeaderMenuData;
++@class RNSSearchBar;
+ 
+ NS_ASSUME_NONNULL_BEGIN
+ 
+ @protocol RNSHeaderConfigDataProviding <NSObject>
+ 
++@property (nonatomic, readonly, nullable) RNSSearchBar *searchBar;
++@property (nonatomic, readonly) BOOL editorStyle;
++@property (nonatomic, readonly) BOOL backButtonHidden;
+ @property (nonatomic, readonly, nullable) NSString *title;
+ @property (nonatomic, readonly, nullable) NSString *subtitle;
+ @property (nonatomic, readonly) BOOL hidden;
+diff --git a/ios/header/RNSHeaderCoordinator.mm b/ios/header/RNSHeaderCoordinator.mm
+--- a/ios/header/RNSHeaderCoordinator.mm
++++ b/ios/header/RNSHeaderCoordinator.mm
+@@ -1,4 +1,5 @@
+ #import "RNSHeaderCoordinator.h"
++#import "RNSSearchBar.h"
+ #import <React/RCTAssert.h>
+ #import <React/RCTLog.h>
+ #import "RNSDefines.h"
+@@ -23,6 +24,7 @@
+ 
+   RNSHeaderMenuTrackerRegistry *_Nonnull _trackerRegistry;
+ 
++  NSMutableArray<UIBarButtonItem *> *_Nonnull _toolbarBarButtonItems;
+   NSMutableArray<UIBarButtonItem *> *_Nonnull _leadingBarButtonItems;
+   NSMutableArray<UIBarButtonItem *> *_Nonnull _trailingBarButtonItems;
+   NSMutableDictionary<NSString *, UIBarButtonItem *> *_Nonnull _barButtonItemsByItemId;
+@@ -33,6 +35,7 @@
+   if (self = [super init]) {
+     _screenController = controller;
+     _trackerRegistry = [RNSHeaderMenuTrackerRegistry new];
++    _toolbarBarButtonItems = [NSMutableArray new];
+     _leadingBarButtonItems = [NSMutableArray new];
+     _trailingBarButtonItems = [NSMutableArray new];
+     _barButtonItemsByItemId = [NSMutableDictionary new];
+@@ -51,6 +54,9 @@
+ 
+   BOOL hidden = _configDataProvider == nil || _configDataProvider.hidden;
+   [navController.navigationBarCoordinator setHidden:hidden forNavigationController:navController animated:animated];
++#if !TARGET_OS_TV
++  [navController setToolbarHidden:_screenController.toolbarItems.count == 0 animated:animated];
++#endif
+ }
+ 
+ - (void)rebuild
+@@ -60,7 +66,10 @@
+   }
+ 
+   UIViewController *controller = [self requireScreenController];
+-
++  // The system search placement item needs its controller before items are built.
++  [self applyConfigPropertiesForController:controller];
++
++  [_toolbarBarButtonItems removeAllObjects];
+   [_leadingBarButtonItems removeAllObjects];
+   [_trailingBarButtonItems removeAllObjects];
+   [_barButtonItemsByItemId removeAllObjects];
+@@ -75,6 +84,9 @@
+       id<RNSHeaderItemDataProviding> item = (id<RNSHeaderItemDataProviding>)child;
+ 
+       switch (item.placement) {
++        case RNSHeaderItemPlacementToolbar:
++          [_toolbarBarButtonItems addObject:[self buildBarButtonItemForItem:item]];
++          break;
+         case RNSHeaderItemPlacementLeading:
+           [_leadingBarButtonItems addObject:[self buildBarButtonItemForItem:item]];
+           break;
+@@ -104,6 +116,9 @@
+       id<RNSHeaderItemSpacerDataProviding> spacer = (id<RNSHeaderItemSpacerDataProviding>)child;
+       UIBarButtonItem *barButtonItem = [RNSHeaderContentFactory spacerForHeaderSpacerItem:spacer];
+       switch (spacer.placement) {
++        case RNSHeaderItemSpacerPlacementToolbar:
++          [_toolbarBarButtonItems addObject:barButtonItem];
++          break;
+         case RNSHeaderItemSpacerPlacementLeading:
+           [_leadingBarButtonItems addObject:barButtonItem];
+           break;
+@@ -114,7 +129,6 @@
+     }
+   }
+ 
+-  [self applyConfigPropertiesForController:controller];
+   [self applyItemsWithTitleView:titleView
+                    subtitleView:subtitleView
+               largeSubtitleView:largeSubtitleView
+@@ -172,6 +186,13 @@
+   UIViewController *controller = [self requireScreenController];
+ 
+   switch (targetItem.placement) {
++    case RNSHeaderItemPlacementToolbar: {
++      UIBarButtonItem *newBarButtonItem = [self buildBarButtonItemForItem:targetItem];
++      NSUInteger index = oldBarButtonItem == nil ? NSNotFound : [_toolbarBarButtonItems indexOfObject:oldBarButtonItem];
++      if (index != NSNotFound) _toolbarBarButtonItems[index] = newBarButtonItem;
++      [controller setToolbarItems:[_toolbarBarButtonItems copy] animated:YES];
++      break;
++    }
+     case RNSHeaderItemPlacementLeading: {
+       UIBarButtonItem *newBarButtonItem = [self buildBarButtonItemForItem:targetItem];
+ 
+@@ -302,6 +323,7 @@
+   _eventsDelegate = nil;
+   _imageLoader = nil;
+ 
++  [_toolbarBarButtonItems removeAllObjects];
+   [_leadingBarButtonItems removeAllObjects];
+   [_trailingBarButtonItems removeAllObjects];
+   [_barButtonItemsByItemId removeAllObjects];
+@@ -310,6 +332,7 @@
+   UIViewController *controller = [self requireScreenController];
+   UINavigationItem *navItem = controller.navigationItem;
+ 
++  [controller setToolbarItems:@[] animated:YES];
+   navItem.title = nil;
+   navItem.titleView = nil;
+   navItem.standardAppearance = nil;
+@@ -422,6 +445,21 @@
+   UINavigationItem *navItem = controller.navigationItem;
+ 
+   navItem.title = _configDataProvider.title;
++#if !TARGET_OS_TV
++  navItem.hidesBackButton = _configDataProvider.backButtonHidden;
++  RNSSearchBar *searchBar = _configDataProvider.searchBar;
++  navItem.searchController = searchBar.controller;
++  navItem.hidesSearchBarWhenScrolling = searchBar == nil ? YES : searchBar.hideWhenScrolling;
++  if (@available(iOS 16.0, *)) {
++    navItem.preferredSearchBarPlacement = searchBar == nil ? UINavigationItemSearchBarPlacementAutomatic : [searchBar placementAsUINavigationItemSearchBarPlacement];
++  }
++#if RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
++  if (@available(iOS 26.0, *)) {
++    navItem.style = _configDataProvider.editorStyle ? UINavigationItemStyleEditor : UINavigationItemStyleNavigator;
++    navItem.searchBarPlacementAllowsToolbarIntegration = searchBar.allowToolbarIntegration;
++  }
++#endif
++#endif
+   navItem.standardAppearance = _configDataProvider.standardAppearance;
+   navItem.scrollEdgeAppearance = _configDataProvider.scrollEdgeAppearance;
+ 
+@@ -491,6 +529,7 @@
+   [navItem setLeftBarButtonItems:[_leadingBarButtonItems copy] animated:YES];
+   [navItem setRightBarButtonItems:[_trailingBarButtonItems copy] animated:YES];
+ 
++  [controller setToolbarItems:[_toolbarBarButtonItems copy] animated:YES];
+   navItem.titleView = titleView;
+ 
+ #if RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
+@@ -536,10 +575,20 @@
+ 
+ - (UIBarButtonItem *)buildBarButtonItemForItem:(id<RNSHeaderItemDataProviding>)item
+ {
+-  UIBarButtonItem *barButtonItem = [RNSHeaderContentFactory barButtonItemForHeaderItem:item
+-                                                               withFrameChangeDelegate:_frameChangeDelegate
+-                                                              withHeaderEventsDelegate:_eventsDelegate
+-                                                                       withImageLoader:_imageLoader];
++  UIBarButtonItem *barButtonItem = nil;
++#if !TARGET_OS_TV && RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
++  if (@available(iOS 26.0, *)) {
++    if (item.searchBarPlacement) {
++      barButtonItem = [self requireScreenController].navigationItem.searchBarPlacementBarButtonItem;
++    }
++  }
++#endif
++  if (barButtonItem == nil) {
++    barButtonItem = [RNSHeaderContentFactory barButtonItemForHeaderItem:item
++                                                withFrameChangeDelegate:_frameChangeDelegate
++                                               withHeaderEventsDelegate:_eventsDelegate
++                                                        withImageLoader:_imageLoader];
++  }
+ 
+ #if RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
+   if (@available(iOS 26.0, *)) {
+diff --git a/ios/header/RNSHeaderItemComponentView.mm b/ios/header/RNSHeaderItemComponentView.mm
+--- a/ios/header/RNSHeaderItemComponentView.mm
++++ b/ios/header/RNSHeaderItemComponentView.mm
+@@ -92,6 +92,11 @@
+ 
+ #pragma mark - RNSHeaderItemDataProviding
+ 
++- (BOOL)searchBarPlacement
++{
++  return std::static_pointer_cast<const react::RNSHeaderItemIOSProps>(_props)->searchBarPlacement;
++}
++
+ - (nullable UIView *)customView
+ {
+   return self.subviews.count > 0 ? self : nil;
+@@ -178,7 +183,7 @@
+   const auto &newItemProps = *std::static_pointer_cast<const react::RNSHeaderItemIOSProps>(props);
+   const auto &oldItemProps = *std::static_pointer_cast<const react::RNSHeaderItemIOSProps>(_props);
+ 
+-  BOOL needsUpdate = NO;
++  BOOL needsUpdate = oldItemProps.searchBarPlacement != newItemProps.searchBarPlacement;
+   BOOL menuDidChange = NO;
+ 
+   if (oldItemProps.itemId != newItemProps.itemId) {
+diff --git a/ios/header/RNSHeaderItemDataProviding.h b/ios/header/RNSHeaderItemDataProviding.h
+--- a/ios/header/RNSHeaderItemDataProviding.h
++++ b/ios/header/RNSHeaderItemDataProviding.h
+@@ -17,6 +17,7 @@
+ @property (nonatomic, readonly, nullable) RNSHeaderIconData *icon;
+ @property (nonatomic, readonly, nullable) RNSHeaderMenuData *menu;
+ @property (nonatomic, readonly, nullable) UIView *customView;
++@property (nonatomic, readonly) BOOL searchBarPlacement;
+ @property (nonatomic, readonly) BOOL respondsToOnPress;
+ @property (nonatomic, readonly) BOOL hidesSharedBackground;
+ 
+diff --git a/ios/header/RNSHeaderItemPlacement.h b/ios/header/RNSHeaderItemPlacement.h
+--- a/ios/header/RNSHeaderItemPlacement.h
++++ b/ios/header/RNSHeaderItemPlacement.h
+@@ -3,6 +3,7 @@
+ #import <Foundation/Foundation.h>
+ 
+ typedef NS_ENUM(NSInteger, RNSHeaderItemPlacement) {
++  RNSHeaderItemPlacementToolbar,
+   RNSHeaderItemPlacementLeading,
+   RNSHeaderItemPlacementTrailing,
+   RNSHeaderItemPlacementTitle,
+diff --git a/ios/header/RNSHeaderItemSpacerPlacement.h b/ios/header/RNSHeaderItemSpacerPlacement.h
+--- a/ios/header/RNSHeaderItemSpacerPlacement.h
++++ b/ios/header/RNSHeaderItemSpacerPlacement.h
+@@ -3,6 +3,7 @@
+ #import <Foundation/Foundation.h>
+ 
+ typedef NS_ENUM(NSInteger, RNSHeaderItemSpacerPlacement) {
++  RNSHeaderItemSpacerPlacementToolbar,
+   RNSHeaderItemSpacerPlacementLeading,
+   RNSHeaderItemSpacerPlacementTrailing,
+ };
+diff --git a/ios/header/RNSHeaderMenuCoordinator.mm b/ios/header/RNSHeaderMenuCoordinator.mm
+--- a/ios/header/RNSHeaderMenuCoordinator.mm
++++ b/ios/header/RNSHeaderMenuCoordinator.mm
+@@ -261,6 +261,9 @@
+                                          [weakDelegate didPressMenuItem:data.menuElementId];
+                                        }];
+ 
++  action.attributes |= (data.disabled ? UIMenuElementAttributesDisabled : 0) | (data.destructive ? UIMenuElementAttributesDestructive : 0);
++  action.state = data.state;
++  if (@available(iOS 15.0, *)) action.subtitle = data.subtitle;
+   [self decorateActionKeepsMenuPresented:action withData:data];
+ 
+   return action;
+diff --git a/ios/header/RNSHeaderMenuData.h b/ios/header/RNSHeaderMenuData.h
+--- a/ios/header/RNSHeaderMenuData.h
++++ b/ios/header/RNSHeaderMenuData.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #import <Foundation/Foundation.h>
++#import <UIKit/UIKit.h>
+ 
+ @class RNSHeaderIconData;
+ 
+@@ -19,6 +20,10 @@
+ @end
+ 
+ @interface RNSHeaderMenuItemData : NSObject <RNSHeaderMenuElement>
++@property (nonatomic) BOOL disabled;
++@property (nonatomic) BOOL destructive;
++@property (nonatomic, copy, nullable) NSString *subtitle;
++@property (nonatomic) UIMenuElementState state;
+ 
+ @property (nonatomic, copy, readonly, nullable) NSString *title;
+ @property (nonatomic, readonly) RNSMenuItemType itemType;
+diff --git a/ios/header/RNSHeaderMenuMapper.mm b/ios/header/RNSHeaderMenuMapper.mm
+--- a/ios/header/RNSHeaderMenuMapper.mm
++++ b/ios/header/RNSHeaderMenuMapper.mm
+@@ -14,7 +14,7 @@
+                                                                             @"icon",
+                                                                             nil];
+ static NSSet<NSString *> *const kRNSAllowedMenuItemKeys = [NSSet
+-    setWithObjects:@"id", @"type", @"title", @"itemType", @"initialToggleState", @"keepsMenuPresented", @"icon", nil];
++    setWithObjects:@"id", @"type", @"title", @"itemType", @"initialToggleState", @"keepsMenuPresented", @"icon", @"disabled", @"destructive", @"subtitle", @"state", nil];
+ 
+ @implementation RNSHeaderMenuMapper
+ 
+@@ -72,12 +72,18 @@
+ 
+     RNSHeaderIconData *icon = [RNSHeaderIconMapper iconFromDictionary:dict[@"icon"]];
+ 
+-    return [[RNSHeaderMenuItemData alloc] initWithId:[self stringForKey:@"id" in:dict]
++    RNSHeaderMenuItemData *data = [[RNSHeaderMenuItemData alloc] initWithId:[self stringForKey:@"id" in:dict]
+                                                title:[self stringForKey:@"title" in:dict]
+                                             itemType:[self itemTypeFromString:[self stringForKey:@"itemType" in:dict]]
+                                   initialToggleState:[self boolForKey:@"initialToggleState" in:dict]
+                                   keepsMenuPresented:[self boolForKey:@"keepsMenuPresented" in:dict]
+                                                 icon:icon];
++    data.disabled = [self boolForKey:@"disabled" in:dict];
++    data.destructive = [self boolForKey:@"destructive" in:dict];
++    data.subtitle = [self stringForKey:@"subtitle" in:dict];
++    NSString *state = [self stringForKey:@"state" in:dict];
++    data.state = [state isEqual:@"on"] ? UIMenuElementStateOn : ([state isEqual:@"mixed"] ? UIMenuElementStateMixed : UIMenuElementStateOff);
++    return data;
+   }
+ 
+   return nil;
+diff --git a/ios/helpers/stack/RNSStackNavigationController.h b/ios/helpers/stack/RNSStackNavigationController.h
+--- a/ios/helpers/stack/RNSStackNavigationController.h
++++ b/ios/helpers/stack/RNSStackNavigationController.h
+@@ -12,6 +12,9 @@
+ 
+ @property (nonatomic, readonly, nonnull) RNSStackNavigationBarCoordinator *navigationBarCoordinator;
+ 
++// Split columns can be empty while the compact presentation shows the list.
++@property (nonatomic) BOOL allowsEmptyStack;
++
+ - (void)enqueuePushOperation:(nonnull UIView<RNSStackScreenProviding> *)stackScreen;
+ 
+ - (void)enqueuePopOperation:(nonnull UIView<RNSStackScreenProviding> *)stackScreen;
+diff --git a/ios/helpers/stack/RNSStackNavigationController.mm b/ios/helpers/stack/RNSStackNavigationController.mm
+--- a/ios/helpers/stack/RNSStackNavigationController.mm
++++ b/ios/helpers/stack/RNSStackNavigationController.mm
+@@ -109,16 +109,22 @@
+   }
+ 
+   for ([[maybe_unused]] RNSPopOperation *op in _pendingPopOperations) {
+-    RCTAssert([self.viewControllers count] > 1, @"[RNScreens] Attempt to pop last screen from the stack");
++    RCTAssert(self.allowsEmptyStack || [self.viewControllers count] > 1,
++              @"[RNScreens] Attempt to pop last screen from the stack");
+     RCTAssert(self.topViewController == op.stackScreen.controller, @"[RNScreens] Attempt to pop non-top screen");
+-    [self popViewControllerAnimated:YES];
++    if (self.allowsEmptyStack && self.viewControllers.count == 1) {
++      [self setViewControllers:@[] animated:NO];
++    } else {
++      [self popViewControllerAnimated:YES];
++    }
+   }
+ 
+   for (RNSPushOperation *op in _pendingPushOperations) {
+     [self pushViewController:op.stackScreen.controller animated:YES];
+   }
+ 
+-  RCTAssert([self.viewControllers count] > 0, @"[RNScreens] Stack should never be empty after updates");
++  RCTAssert(self.allowsEmptyStack || [self.viewControllers count] > 0,
++            @"[RNScreens] Stack should never be empty after updates");
+ 
+   [self dumpStackModel];
+ 
+diff --git a/ios/split/RNSSplitAppearanceApplicator.mm b/ios/split/RNSSplitAppearanceApplicator.mm
+--- a/ios/split/RNSSplitAppearanceApplicator.mm
++++ b/ios/split/RNSSplitAppearanceApplicator.mm
+@@ -164,7 +164,32 @@
+ - (void)updateSplitViewDisplayModeFor:(id<RNSSplitHostAppearanceProvider>)provider
+                        withController:(RNSSplitHostController *)splitHostController
+ {
+-  splitHostController.preferredDisplayMode = provider.preferredDisplayMode;
++  const auto preferredDisplayMode = provider.preferredDisplayMode;
++  if (splitHostController.preferredDisplayMode == preferredDisplayMode) {
++    return;
++  }
++
++  UIView *view = splitHostController.viewIfLoaded;
++  // Animate an already displayed split; initial configuration and compact
++  // column navigation must not start a sidebar transition.
++  const BOOL shouldAnimate = view.window != nil && !splitHostController.isCollapsed &&
++      splitHostController.preferredDisplayMode != UISplitViewControllerDisplayModeAutomatic &&
++      !UIAccessibilityIsReduceMotionEnabled();
++  if (!shouldAnimate) {
++    splitHostController.preferredDisplayMode = preferredDisplayMode;
++    return;
++  }
++
++  [view layoutIfNeeded];
++  [UIView animateWithDuration:0.35
++                        delay:0
++                      options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction |
++                          UIViewAnimationOptionCurveEaseInOut
++                   animations:^{
++                     splitHostController.preferredDisplayMode = preferredDisplayMode;
++                     [view layoutIfNeeded];
++                   }
++                   completion:nil];
+ }
+ 
+ - (void)validateColumnConstraintsWithMinWidth:(CGFloat)minWidth maxWidth:(CGFloat)maxWidth
+diff --git a/ios/split/RNSSplitColumnController.mm b/ios/split/RNSSplitColumnController.mm
+--- a/ios/split/RNSSplitColumnController.mm
++++ b/ios/split/RNSSplitColumnController.mm
+@@ -22,6 +22,7 @@
+ {
+   if (self = [super init]) {
+     _navigationController = [RNSStackNavigationController new];
++    _navigationController.allowsEmptyStack = YES;
+     _operationCoordinator = [RNSStackOperationCoordinator new];
+     _renderedScreens = [NSMutableArray new];
+     // The view must exist to observe its frame; it is loaded before the Split installs it in a column anyway.
+diff --git a/ios/split/RNSSplitHostController.mm b/ios/split/RNSSplitHostController.mm
+--- a/ios/split/RNSSplitHostController.mm
++++ b/ios/split/RNSSplitHostController.mm
+@@ -141,8 +141,8 @@
+ }
+ 
+ /**
+- * @brief Installs the navigation controllers of the columns in the Split once every column has its first screen;
+- * afterwards the columns live for the host's lifetime and only their stacks change.
++ * @brief Installs the navigation controllers once and keeps them alive for the host's lifetime.
++ * A detail column can be empty while the compact presentation shows only the primary list.
+  */
+ - (void)installColumnsIfNeeded
+ {
+@@ -150,9 +150,6 @@
+     NSMutableArray<UIViewController *> *navigationControllers =
+         [NSMutableArray arrayWithCapacity:_columnControllers.count];
+     for (RNSSplitColumnController *columnController in _columnControllers) {
+-      if (columnController.navigationController.viewControllers.count == 0) {
+-        return;
+-      }
+       [navigationControllers addObject:columnController.navigationController];
+     }
+     self.viewControllers = navigationControllers;
+@@ -270,7 +267,7 @@
+ - (void)reactMountingTransactionDidMount
+ {
+   [self flushPendingColumnUpdates];
+-  RCTAssert(_columnsInstalled, @"[RNScreens] Every column of the Split must have a screen");
++  RCTAssert(_columnsInstalled, @"[RNScreens] Split column controllers must be installed");
+   [self updateSplitAppearanceIfNeeded];
+ }
+ 
+@@ -306,8 +303,9 @@
+               NSStringFromClass(viewController.class));
+ 
+     UIViewController *maybeSplitScreenController = navigationController.topViewController;
+-    RCTAssert(
+-        maybeSplitScreenController != nil, @"[RNScreens] RNSSplitScreenController is nil for column %ld", (long)column);
++    if (maybeSplitScreenController == nil) {
++      continue;
++    }
+     RCTAssert([maybeSplitScreenController isKindOfClass:RNSSplitScreenController.class],
+               @"[RNScreens] Expected RNSSplitScreenController but got %@",
+               NSStringFromClass(maybeSplitScreenController.class));
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -18,14 +18,13 @@
+     "lint-js": "eslint --ext '.js,.ts,.tsx' --fix src",
+     "lint-android": "./android/gradlew -p android spotlessCheck -q",
+     "lint": "yarn lint-js && yarn lint-android",
+-    "release": "yarn prepare && npm login && release-it",
+-    "prepare": "bob build && husky install"
++    "release": "yarn prepare && npm login && release-it"
+   },
+   "main": "lib/commonjs/index",
+   "module": "lib/module/index",
+   "react-native": "src/index",
+   "source": "src/index",
+-  "types": "lib/typescript/index.d.ts",
++  "types": "src/index.tsx",
+   "files": [
+     "src/",
+     "common/",
+diff --git a/src/components/stack/header/StackHeaderConfig.ios.tsx b/src/components/stack/header/StackHeaderConfig.ios.tsx
+index e4d94a4085e..b90439374ec 100644
+--- a/src/components/stack/header/StackHeaderConfig.ios.tsx
++++ b/src/components/stack/header/StackHeaderConfig.ios.tsx
+@@ -45,9 +45,10 @@ function StackHeaderConfig(
+ ) {
+   // android props are safely dropped
+   // eslint-disable-next-line @typescript-eslint/no-unused-vars
+-  const { ios, android, ...restProps } = props;
++  const { ios, android, searchBar, ...restProps } = props;
+ 
+   const {
++    toolbarItems,
+     leadingItems,
+     trailingItems,
+     titleItem,
+@@ -114,9 +115,10 @@ function StackHeaderConfig(
+         ...(trailingItems ?? [])
+           .filter(it => it && it.type === 'item')
+           .map(it => it.menu),
++        ...(toolbarItems ?? []).filter(it => it && it.type === 'item').map(it => it.menu),
+         titleMenu,
+       ].filter(it => !!it),
+-    [leadingItems, trailingItems, titleMenu],
++    [leadingItems, trailingItems, toolbarItems, titleMenu],
+   );
+ 
+   const handleMenuItemPress = useCallback(
+@@ -172,12 +174,14 @@ function StackHeaderConfig(
+       style={styles.config}
+       onMenuItemPress={handleMenuItemPress}
+       onMenuSelectionChange={handleSelectionChange}>
++      {searchBar}
+       {leadingItems?.map(item => makeItemViewFromItem(item, 'leading'))}
+       {titleItem && makeItemViewFromItem(titleItem, 'title')}
+       {subtitleItem && makeItemViewFromItem(subtitleItem, 'subtitle')}
+       {largeSubtitleItem &&
+         makeItemViewFromItem(largeSubtitleItem, 'largeSubtitle')}
+       {trailingItems?.map(item => makeItemViewFromItem(item, 'trailing'))}
++      {toolbarItems?.map(item => makeItemViewFromItem(item, 'toolbar'))}
+     </StackHeaderConfigIOSNativeComponent>
+   );
+ }
+@@ -188,6 +192,8 @@ function mapAppearanceToNativeProp(
+   if (!appearance) return undefined;
+ 
+   const {
++    backgroundColor,
++    shadowColor,
+     titleFontColor,
+     titleFontWeight,
+     largeTitleFontColor,
+@@ -198,6 +204,8 @@ function mapAppearanceToNativeProp(
+ 
+   return {
+     ...appearance,
++    backgroundColor: processColor(backgroundColor),
++    shadowColor: processColor(shadowColor),
+     titleFontColor: processColor(titleFontColor),
+     titleFontWeight:
+       titleFontWeight !== undefined ? String(titleFontWeight) : undefined,
+@@ -223,7 +231,7 @@ function makeItemViewFromItem(
+   if ('type' in item && item.type === 'spacer') {
+     const { id, ...rest } = item;
+ 
+-    if (!(placement === 'leading' || placement === 'trailing')) {
++    if (!(placement === 'leading' || placement === 'trailing' || placement === 'toolbar')) {
+       console.warn(
+         `[Stack] Invalid placement for spacer: "${placement}", defaulting to "trailing"`,
+       );
+diff --git a/src/components/stack/header/StackHeaderConfig.ios.types.ts b/src/components/stack/header/StackHeaderConfig.ios.types.ts
+index cdcba4e8d6b..21380057c7f 100644
+--- a/src/components/stack/header/StackHeaderConfig.ios.types.ts
++++ b/src/components/stack/header/StackHeaderConfig.ios.types.ts
+@@ -148,6 +148,8 @@ export interface StackHeaderInlineItemIOS
+    * @platform iOS
+    */
+   type: 'item';
++  /** Uses UINavigationItem's system search placement item on iOS 26+. */
++  searchBarPlacement?: boolean | undefined;
+   /**
+    * @summary Callback invoked when the header item is pressed.
+    *
+@@ -312,6 +314,9 @@ export type StackHeaderBackButtonDisplayModeIOS =
+   | 'minimal';
+ 
+ export interface StackHeaderAppearanceIOS {
++  /** Explicit clear color removes the bar material; other colors use an opaque background. */
++  backgroundColor?: TextStyle['color'] | undefined;
++  shadowColor?: TextStyle['color'] | undefined;
+   /**
+    * @summary Specifies the font family used for the title of the header.
+    *
+@@ -425,6 +430,7 @@ export interface StackHeaderAppearanceIOS {
+ }
+ 
+ export interface StackHeaderConfigPropsIOS {
++  toolbarItems?: (StackHeaderInlineItemIOS | StackHeaderInlineCustomItemIOS | StackHeaderSpacerItemIOS)[] | undefined;
+   /**
+    * @summary Title displayed next to the back button on this screen.
+    *
+diff --git a/src/components/stack/header/StackHeaderConfig.types.ts b/src/components/stack/header/StackHeaderConfig.types.ts
+--- a/src/components/stack/header/StackHeaderConfig.types.ts
++++ b/src/components/stack/header/StackHeaderConfig.types.ts
+@@ -1,9 +1,12 @@
++import type { ReactElement } from 'react';
+ import type { StackHeaderConfigCommandsAndroid } from './StackHeaderConfig.android.types';
+ import { StackHeaderConfigPropsAndroid } from './StackHeaderConfig.android.types';
+ import type { StackHeaderConfigCommandsIOS } from './StackHeaderConfig.ios.types';
+ import { StackHeaderConfigPropsIOS } from './StackHeaderConfig.ios.types';
+ 
+ export interface StackHeaderConfigPropsBase {
++  searchBar?: ReactElement | undefined;
++  editorStyle?: boolean | undefined;
+   /**
+    * @summary Title displayed in the header.
+    *
+diff --git a/src/components/stack/header/ios/StackHeaderItem.ios.types.ts b/src/components/stack/header/ios/StackHeaderItem.ios.types.ts
+--- a/src/components/stack/header/ios/StackHeaderItem.ios.types.ts
++++ b/src/components/stack/header/ios/StackHeaderItem.ios.types.ts
+@@ -3,6 +3,7 @@
+ import type { StackHeaderMenuIOS } from './StackHeaderMenu.ios.types';
+ 
+ export type StackHeaderItemPlacement =
++  | 'toolbar'
+   | 'leading'
+   | 'trailing'
+   | 'title'
+@@ -11,6 +12,7 @@
+ 
+ export type StackHeaderItemProps = {
+   placement: StackHeaderItemPlacement;
++  searchBarPlacement?: boolean | undefined;
+   itemId?: string | undefined;
+   identifier?: string | undefined;
+   hidesSharedBackground?: boolean | undefined;
+diff --git a/src/components/stack/header/ios/StackHeaderItemSpacer.ios.types.ts b/src/components/stack/header/ios/StackHeaderItemSpacer.ios.types.ts
+--- a/src/components/stack/header/ios/StackHeaderItemSpacer.ios.types.ts
++++ b/src/components/stack/header/ios/StackHeaderItemSpacer.ios.types.ts
+@@ -2,7 +2,7 @@
+ 
+ export type StackHeaderItemSpacerPlacement = Extract<
+   StackHeaderItemPlacement,
+-  'leading' | 'trailing'
++  'leading' | 'trailing' | 'toolbar'
+ >;
+ 
+ export type StackHeaderItemSpacerProps = {
+diff --git a/src/components/stack/header/ios/StackHeaderMenu.ios.types.ts b/src/components/stack/header/ios/StackHeaderMenu.ios.types.ts
+--- a/src/components/stack/header/ios/StackHeaderMenu.ios.types.ts
++++ b/src/components/stack/header/ios/StackHeaderMenu.ios.types.ts
+@@ -11,6 +11,10 @@
+ import type { PlatformIconIOS } from '../../../shared/types';
+ 
+ export interface StackHeaderMenuItemIOS {
++  disabled?: boolean | undefined;
++  destructive?: boolean | undefined;
++  subtitle?: string | undefined;
++  state?: "off" | "on" | "mixed" | undefined;
+   /**
+    * @summary Unique identifier of the menu item.
+    *
+diff --git a/src/fabric/header/HeaderConfigIOSNativeComponent.ts b/src/fabric/header/HeaderConfigIOSNativeComponent.ts
+index 3ee33816f65..e27b5060517 100644
+--- a/src/fabric/header/HeaderConfigIOSNativeComponent.ts
++++ b/src/fabric/header/HeaderConfigIOSNativeComponent.ts
+@@ -16,6 +16,8 @@ import { UnsafeMixed } from '../codegenUtils';
+ type BackButtonDisplayMode = 'default' | 'generic' | 'minimal';
+ 
+ export type HeaderAppearance = {
++  backgroundColor?: ProcessedColorValue | null | undefined;
++  shadowColor?: ProcessedColorValue | null | undefined;
+   titleFontFamily?: string | undefined;
+   titleFontSize?: CT.Float | undefined;
+   titleFontWeight?: string | undefined;
+@@ -43,6 +45,7 @@ export type MenuSelectionChangeEvent = Readonly<{
+ }>;
+ 
+ export interface NativeProps extends ViewProps {
++  editorStyle?: CT.WithDefault<boolean, false>;
+   title?: string | undefined;
+   subtitle?: string | undefined;
+   hidden?: CT.WithDefault<boolean, false>;
+diff --git a/src/fabric/header/HeaderItemIOSNativeComponent.ts b/src/fabric/header/HeaderItemIOSNativeComponent.ts
+--- a/src/fabric/header/HeaderItemIOSNativeComponent.ts
++++ b/src/fabric/header/HeaderItemIOSNativeComponent.ts
+@@ -10,6 +10,7 @@
+ import { UnsafeMixed } from '../codegenUtils';
+ 
+ export type Placement =
++  | 'toolbar'
+   | 'leading'
+   | 'trailing'
+   | 'title'
+@@ -69,6 +70,7 @@
+ 
+ export interface NativeProps extends ViewProps {
+   placement?: CT.WithDefault<Placement, 'trailing'>;
++  searchBarPlacement?: CT.WithDefault<boolean, false>;
+   itemId?: string | undefined;
+   identifier?: string | undefined;
+   hidesSharedBackground?: CT.WithDefault<boolean, false>;
+diff --git a/src/fabric/header/HeaderItemSpacerIOSNativeComponent.ts b/src/fabric/header/HeaderItemSpacerIOSNativeComponent.ts
+--- a/src/fabric/header/HeaderItemSpacerIOSNativeComponent.ts
++++ b/src/fabric/header/HeaderItemSpacerIOSNativeComponent.ts
+@@ -8,7 +8,7 @@
+ import { codegenNativeComponent } from 'react-native';
+ 
+ type SpacerSize = 'fixed' | 'flexible';
+-type Placement = 'leading' | 'trailing';
++type Placement = 'leading' | 'trailing' | 'toolbar';
+ 
+ export interface NativeProps extends ViewProps {
+   placement?: CT.WithDefault<Placement, 'trailing'>;
+diff --git a/src/fabric/legacy/ScreenStackHeaderConfigNativeComponent.ts b/src/fabric/legacy/ScreenStackHeaderConfigNativeComponent.ts
+--- a/src/fabric/legacy/ScreenStackHeaderConfigNativeComponent.ts
++++ b/src/fabric/legacy/ScreenStackHeaderConfigNativeComponent.ts
+@@ -19,6 +19,7 @@
+ type OnPressHeaderBarButtonMenuItemEvent = Readonly<{ menuId: string }>;
+ 
+ type BackButtonDisplayMode = 'minimal' | 'default' | 'generic';
++type NavigationItemStyle = 'navigator' | 'browser' | 'editor';
+ 
+ type BlurEffect =
+   | 'none'
+@@ -66,12 +67,15 @@
+   largeTitleColor?: ColorValue | undefined;
+   translucent?: boolean | undefined;
+   title?: string | undefined;
++  subtitle?: string | undefined;
++  largeSubtitle?: string | undefined;
+   titleFontFamily?: string | undefined;
+   titleFontSize?: CT.Int32 | undefined;
+   titleFontWeight?: string | undefined;
+   titleColor?: ColorValue | undefined;
+   disableBackButtonMenu?: boolean | undefined;
+   backButtonDisplayMode?: CT.WithDefault<BackButtonDisplayMode, 'default'>;
++  navigationItemStyle?: CT.WithDefault<NavigationItemStyle, 'navigator'>;
+   hideBackButton?: boolean | undefined;
+   backButtonInCustomView?: boolean | undefined;
+   blurEffect?: CT.WithDefault<BlurEffect, 'none'>;
+@@ -79,6 +83,8 @@
+   topInsetEnabled?: boolean | undefined;
+   headerLeftBarButtonItems?: CT.UnsafeMixed[] | undefined;
+   headerRightBarButtonItems?: CT.UnsafeMixed[] | undefined;
++  headerCenterBarButtonItems?: CT.UnsafeMixed[] | undefined;
++  headerToolbarItems?: CT.UnsafeMixed[] | undefined;
+   onPressHeaderBarButtonItem?:
+     | CT.DirectEventHandler<OnPressHeaderBarButtonItemEvent>
+     | undefined;
+diff --git a/src/fabric/legacy/ScreenStackHeaderSubviewNativeComponent.ts b/src/fabric/legacy/ScreenStackHeaderSubviewNativeComponent.ts
+--- a/src/fabric/legacy/ScreenStackHeaderSubviewNativeComponent.ts
++++ b/src/fabric/legacy/ScreenStackHeaderSubviewNativeComponent.ts
+@@ -18,6 +18,7 @@
+ export interface NativeProps extends ViewProps {
+   type?: CT.WithDefault<HeaderSubviewTypes, 'left'>;
+   hidesSharedBackground?: boolean | undefined;
++  identifier?: string | undefined;
+   synchronousShadowStateUpdatesEnabled?: CT.WithDefault<boolean, true>;
+ }
+ 
+diff --git a/src/legacy/components/ScreenStackHeaderConfig.tsx b/src/legacy/components/ScreenStackHeaderConfig.tsx
+--- a/src/legacy/components/ScreenStackHeaderConfig.tsx
++++ b/src/legacy/components/ScreenStackHeaderConfig.tsx
+@@ -54,7 +54,12 @@
+     props.disableBottomInsetApplication ?? false,
+   );
+ 
+-  const { headerLeftBarButtonItems, headerRightBarButtonItems } = props;
++  const {
++    headerLeftBarButtonItems,
++    headerRightBarButtonItems,
++    headerCenterBarButtonItems,
++    headerToolbarItems,
++  } = props;
+ 
+   const preparedHeaderLeftBarButtonItems =
+     headerLeftBarButtonItems && isHeaderBarButtonsAvailableForCurrentPlatform
+@@ -64,22 +69,36 @@
+     headerRightBarButtonItems && isHeaderBarButtonsAvailableForCurrentPlatform
+       ? prepareHeaderBarButtonItems(headerRightBarButtonItems, 'right')
+       : undefined;
++  const preparedHeaderCenterBarButtonItems =
++    headerCenterBarButtonItems && isHeaderBarButtonsAvailableForCurrentPlatform
++      ? prepareHeaderBarButtonItems(headerCenterBarButtonItems, 'center')
++      : undefined;
++  const preparedHeaderToolbarItems =
++    headerToolbarItems && isHeaderBarButtonsAvailableForCurrentPlatform
++      ? prepareHeaderBarButtonItems(headerToolbarItems, 'toolbar')
++      : undefined;
+   const hasHeaderBarButtonItems =
+     isHeaderBarButtonsAvailableForCurrentPlatform &&
+     (preparedHeaderLeftBarButtonItems?.length ||
+-      preparedHeaderRightBarButtonItems?.length);
++      preparedHeaderRightBarButtonItems?.length ||
++      preparedHeaderCenterBarButtonItems?.length ||
++      preparedHeaderToolbarItems?.length);
+ 
+   // Handle bar button item presses
+   const onPressHeaderBarButtonItem = hasHeaderBarButtonItems
+     ? (event: NativeSyntheticEvent<{ buttonId: string }>) => {
+-        const pressedItem = [
++        const buttonId = event.nativeEvent.buttonId;
++        const allItems = [
+           ...(preparedHeaderLeftBarButtonItems ?? []),
+           ...(preparedHeaderRightBarButtonItems ?? []),
+-        ].find(
++          ...(preparedHeaderCenterBarButtonItems ?? []),
++          ...(preparedHeaderToolbarItems ?? []),
++        ];
++        const pressedItem = allItems.find(
+           item =>
+             item &&
+             'buttonId' in item &&
+-            item.buttonId === event.nativeEvent.buttonId,
++            item.buttonId === buttonId,
+         );
+         if (
+           pressedItem &&
+@@ -87,6 +106,32 @@
+           pressedItem.onPress
+         ) {
+           pressedItem.onPress();
++          return;
++        }
++        for (const item of allItems) {
++          if (!item || item.type !== 'mailSearchToolbar') {
++            continue;
++          }
++          if (item.filterButtonId === buttonId) {
++            item.onFilterPress?.();
++            return;
++          }
++          if (item.composeButtonId === buttonId) {
++            item.onComposePress?.();
++            return;
++          }
++          const searchTextChangePrefix = item.searchTextChangeId
++            ? `${item.searchTextChangeId}:`
++            : undefined;
++          if (
++            searchTextChangePrefix &&
++            buttonId.startsWith(searchTextChangePrefix)
++          ) {
++            item.onSearchTextChange?.(
++              buttonId.slice(searchTextChangePrefix.length),
++            );
++            return;
++          }
+         }
+       }
+     : undefined;
+@@ -117,6 +162,8 @@
+         const allItems = [
+           ...(preparedHeaderLeftBarButtonItems ?? []),
+           ...(preparedHeaderRightBarButtonItems ?? []),
++          ...(preparedHeaderCenterBarButtonItems ?? []),
++          ...(preparedHeaderToolbarItems ?? []),
+         ];
+         for (const item of allItems) {
+           if (item && item.type === 'menu' && item.menu) {
+@@ -125,6 +172,17 @@
+               action.onPress();
+               return;
+             }
++          } else if (item && item.type === 'mailSearchToolbar') {
++            const toolbarMenus = [item.filterMenu, item.composeMenu].filter(
++              Boolean,
++            );
++            for (const toolbarMenu of toolbarMenus) {
++              const action = toolbarMenu ? findInMenu(toolbarMenu, event.nativeEvent.menuId) : undefined;
++              if (action) {
++                action.onPress();
++                return;
++              }
++            }
+           }
+         }
+       }
+@@ -136,6 +194,8 @@
+       userInterfaceStyle={props.experimental_userInterfaceStyle}
+       headerLeftBarButtonItems={preparedHeaderLeftBarButtonItems}
+       headerRightBarButtonItems={preparedHeaderRightBarButtonItems}
++      headerCenterBarButtonItems={preparedHeaderCenterBarButtonItems}
++      headerToolbarItems={preparedHeaderToolbarItems}
+       onPressHeaderBarButtonItem={onPressHeaderBarButtonItem}
+       onPressHeaderBarButtonMenuItem={onPressHeaderBarButtonMenuItem}
+       ref={ref}
+diff --git a/src/legacy/components/helpers/prepareHeaderBarButtonItems.ts b/src/legacy/components/helpers/prepareHeaderBarButtonItems.ts
+--- a/src/legacy/components/helpers/prepareHeaderBarButtonItems.ts
++++ b/src/legacy/components/helpers/prepareHeaderBarButtonItems.ts
+@@ -12,7 +12,7 @@
+ const prepareMenu = (
+   menu: HeaderBarButtonItemWithMenu['menu'],
+   index: number,
+-  side: 'left' | 'right',
++  placement: 'left' | 'right' | 'center' | 'toolbar',
+   path: string = '',
+ ): HeaderBarButtonItemWithMenu['menu'] => {
+   return {
+@@ -39,7 +39,7 @@
+           xcassetName,
+           imageSource,
+           templateSource,
+-          ...prepareMenu(menuItem, index, side, currentPath),
++          ...prepareMenu(menuItem, index, placement, currentPath),
+         };
+       }
+       return {
+@@ -48,19 +48,52 @@
+         xcassetName,
+         imageSource,
+         templateSource,
+-        menuId: `${currentPath}-${index}-${side}`,
++        menuId: `${currentPath}-${index}-${placement}`,
+       };
+     }),
+   };
+ };
+ 
+ export const prepareHeaderBarButtonItems = (
+-  barButtonItems: HeaderBarButtonItem[],
+-  side: 'left' | 'right',
++  barButtonItems:
++    | HeaderBarButtonItem[]
++    | HeaderBarButtonItem
++    | null
++    | undefined,
++  placement: 'left' | 'right' | 'center' | 'toolbar',
+ ) => {
+-  return barButtonItems?.map((item, index) => {
++  const items = Array.isArray(barButtonItems)
++    ? barButtonItems
++    : barButtonItems && typeof barButtonItems === 'object' && 'type' in barButtonItems
++      ? [barButtonItems]
++      : undefined;
++
++  return items?.map((item, index) => {
+     if (item.type === 'spacing') {
+       return item;
++    }
++    if (item.type === 'searchBarPlacement') {
++      if (placement !== 'toolbar') {
++        return null;
++      }
++      return {
++        ...item,
++        searchBarPlacement: true,
++      };
++    }
++    if (item.type === 'searchField') {
++      return {
++        ...item,
++        searchField: true,
++      };
++    }
++    if (item.type === 'mailSearchToolbar') {
++      return {
++        ...item,
++        mailSearchToolbar: true,
++        filterMenu: item.filterMenu ? prepareMenu(item.filterMenu, index, placement, 'filter') : undefined,
++        composeMenu: item.composeMenu ? prepareMenu(item.composeMenu, index, placement, 'compose') : undefined,
++      };
+     }
+     let imageSource: ResolvedImageAsset | undefined,
+       templateSource: ResolvedImageAsset | undefined;
+@@ -97,15 +130,15 @@
+     if (item.type === 'button') {
+       return {
+         ...processedItem,
+-        buttonId: `${index}-${side}`,
++        buttonId: `${index}-${placement}`,
+       };
+     }
+     if (item.type === 'menu') {
+       return {
+         ...processedItem,
+-        menu: prepareMenu(item.menu, index, side),
++        menu: prepareMenu(item.menu, index, placement),
+       };
+     }
+     return null;
+-  });
++  }).filter(item => item !== null);
+ };
+diff --git a/src/legacy/components/helpers/sheet.tsx b/src/legacy/components/helpers/sheet.tsx
+--- a/src/legacy/components/helpers/sheet.tsx
++++ b/src/legacy/components/helpers/sheet.tsx
+@@ -10,7 +10,7 @@
+ 
+ export function assertDetentsArrayIsSorted(array: number[]) {
+   for (let i = 1; i < array.length; i++) {
+-    if (array[i - 1] > array[i]) {
++    if (array[i - 1]! > array[i]!) {
+       throw new Error(
+         '[RNScreens] The detent array is not sorted in ascending order!',
+       );
+diff --git a/src/legacy/types.ts b/src/legacy/types.ts
+--- a/src/legacy/types.ts
++++ b/src/legacy/types.ts
+@@ -35,6 +35,7 @@
+ };
+ 
+ export type BackButtonDisplayMode = 'default' | 'generic' | 'minimal';
++export type NavigationItemStyle = 'navigator' | 'browser' | 'editor';
+ 
+ export type StackPresentationTypes =
+   | 'push'
+@@ -731,6 +732,14 @@
+    */
+   backButtonDisplayMode?: BackButtonDisplayMode | undefined;
+   /**
++   * Controls the UIKit `UINavigationItem.style` used by native iOS headers.
++   *
++   * `editor` matches modern document/editor-style bars with leading-aligned compact titles and glass controls.
++   *
++   * @platform ios
++   */
++  navigationItemStyle?: NavigationItemStyle | undefined;
++  /**
+    * Array of UIBarButtomItems to the left side of the header.
+    *
+    * @platform ios
+@@ -742,6 +751,26 @@
+    * @platform ios
+    */
+   headerRightBarButtonItems?: HeaderBarButtonItem[] | undefined;
++  /**
++   * Array of UIBarButtonItems to the centered item group in modern iOS headers.
++   *
++   * This maps to `UINavigationItem.centerItemGroups` on iOS 26+ and lets
++   * document/editor-style chrome keep primary actions visually centered while
++   * leaving trailing search separate.
++   *
++   * @platform ios
++   */
++  headerCenterBarButtonItems?: HeaderBarButtonItem[] | undefined;
++  /**
++   * Array of UIBarButtonItems to display in the native toolbar attached to
++   * the current screen's navigation controller.
++   *
++   * On iOS 26+, this can contain a `searchBarPlacement` item to let UIKit
++   * render integrated Mail-style search chrome using the attached SearchBar.
++   *
++   * @platform ios
++   */
++  headerToolbarItems?: HeaderBarButtonItem[] | undefined;
+   /**
+    * When set to true the header will be hidden while the parent Screen is on the top of the stack. The default value is false.
+    */
+@@ -803,6 +832,20 @@
+    * String that can be displayed in the header as a fallback for `headerTitle`.
+    */
+   title?: string | undefined;
++  /**
++   * String displayed below the compact navigation title on iOS 26+.
++   *
++   * @platform ios
++   */
++  subtitle?: string | undefined;
++  /**
++   * String displayed below the large navigation title on iOS 26+.
++   *
++   * Falls back to `subtitle` when omitted.
++   *
++   * @platform ios
++   */
++  largeSubtitle?: string | undefined;
+   /**
+    * Allows for setting text color of the title.
+    */
+@@ -1116,6 +1159,13 @@
+ 
+ export interface ScreenStackHeaderSubviewProps {
+   /**
++   * An identifier used to match this item across navigation bar transitions.
++   * Only applicable to type="right" and type="left" subviews on iOS 26.0 and later.
++   *
++   * Read more: https://developer.apple.com/documentation/uikit/uibarbuttonitem/identifier
++   */
++  identifier?: string | undefined;
++  /**
+    * A boolean value indicating whether the background this item may share with other items in the bar should be hidden.
+    * Only applicable to type="right" and type="left" subviews.
+    * Only available from iOS 26.0 and later.
+@@ -1156,6 +1206,11 @@
+    * Read more: https://developer.apple.com/documentation/uikit/uibarbuttonitem/style-swift.property
+    */
+   variant?: 'plain' | 'done' | 'prominent' | undefined;
++  /**
++   * Render the item with UIButtonConfiguration.glassButtonConfiguration.
++   * Only available from iOS 26.0 and later.
++   */
++  glassEffect?: boolean | undefined;
+   /**
+    * The tint color to apply to the item.
+    *
+@@ -1311,11 +1366,47 @@
+ export interface HeaderBarButtonItemSpacing {
+   type: 'spacing';
+   spacing: number;
++  flexible?: boolean | undefined;
++}
++
++export interface HeaderBarButtonSearchBarPlacementItem {
++  type: 'searchBarPlacement';
++  activatesSearchController?: boolean | undefined;
++  customView?: boolean | undefined;
++  index?: number | undefined;
++  width?: number | undefined;
++}
++
++export interface HeaderBarButtonSearchFieldItem {
++  type: 'searchField';
++  placeholder?: string | undefined;
++  width?: number | undefined;
++}
++
++export interface HeaderBarButtonMailSearchToolbarItem {
++  type: 'mailSearchToolbar';
++  composeButtonId?: string | undefined;
++  composeMenu?: HeaderBarButtonItemWithMenu['menu'] | undefined;
++  composeSystemImageName?: string | undefined;
++  filterButtonId?: string | undefined;
++  filterMenu?: HeaderBarButtonItemWithMenu['menu'] | undefined;
++  filterSystemImageName?: string | undefined;
++  onComposePress?: (() => void) | undefined;
++  onFilterPress?: (() => void) | undefined;
++  onSearchTextChange?: ((text: string) => void) | undefined;
++  placeholder?: string | undefined;
++  searchTextChangeId?: string | undefined;
++  showsSearchDismissButton?: boolean | undefined;
++  useFallbackSearchField?: boolean | undefined;
++  width?: number | undefined;
+ }
+ 
+ export type HeaderBarButtonItem =
+   | HeaderBarButtonItemWithAction
+   | HeaderBarButtonItemWithMenu
++  | HeaderBarButtonMailSearchToolbarItem
++  | HeaderBarButtonSearchFieldItem
++  | HeaderBarButtonSearchBarPlacementItem
+   | HeaderBarButtonItemSpacing;
+ 
+ /**
+diff --git a/ios/header/RNSHeaderAppearanceMapper.mm b/ios/header/RNSHeaderAppearanceMapper.mm
+index 7bac022f033..91fb7e517d5 100644
+--- a/ios/header/RNSHeaderAppearanceMapper.mm
++++ b/ios/header/RNSHeaderAppearanceMapper.mm
+@@ -13,6 +13,7 @@ + (nullable UINavigationBarAppearance *)appearanceFromDictionary:(nullable NSDic
+   }
+ 
+   UINavigationBarAppearance *appearance = [UINavigationBarAppearance new];
++  [self applyBackgroundFromDictionary:appearanceDict toAppearance:appearance];
+   [self applyTextAttributesFromDictionary:appearanceDict toAppearance:appearance];
+   return appearance;
+ }
+@@ -31,10 +32,29 @@ + (nullable UINavigationBarAppearance *)scrollEdgeAppearanceFromDictionary:(null
+   // not suddenly bring back the default bar background at the scroll edge.
+   [appearance configureWithTransparentBackground];
+ 
++  [self applyBackgroundFromDictionary:appearanceDict toAppearance:appearance];
+   [self applyTextAttributesFromDictionary:appearanceDict toAppearance:appearance];
+   return appearance;
+ }
+ 
+++ (void)applyBackgroundFromDictionary:(nullable NSDictionary *)appearanceDict
++                        toAppearance:(nonnull UINavigationBarAppearance *)appearance
++{
++  UIColor *backgroundColor = [RCTConvert UIColor:appearanceDict[@"backgroundColor"]];
++  if (backgroundColor != nil) {
++    // Explicit transparent headers must also remove UIKit's default bar material.
++    if (CGColorGetAlpha(backgroundColor.CGColor) == 0) {
++      [appearance configureWithTransparentBackground];
++    } else {
++      [appearance configureWithOpaqueBackground];
++    }
++    appearance.backgroundColor = backgroundColor;
++  }
++  if (appearanceDict[@"shadowColor"] != nil) {
++    appearance.shadowColor = [RCTConvert UIColor:appearanceDict[@"shadowColor"]];
++  }
++}
++
+ + (void)applyTextAttributesFromDictionary:(nullable NSDictionary *)appearanceDict
+                              toAppearance:(nonnull UINavigationBarAppearance *)appearance
+ {
+diff --git a/ios/header/RNSHeaderContentFactory.mm b/ios/header/RNSHeaderContentFactory.mm
+--- a/ios/header/RNSHeaderContentFactory.mm
++++ b/ios/header/RNSHeaderContentFactory.mm
+@@ -82,6 +82,23 @@
+   wrapperView.translatesAutoresizingMaskIntoConstraints = NO;
+   [wrapperView addSubview:contentView];
+ 
++#if RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
++  if (@available(iOS 26.0, *)) {
++    if (item.placement == RNSHeaderItemPlacementTitle || item.placement == RNSHeaderItemPlacementSubtitle ||
++        item.placement == RNSHeaderItemPlacementLargeSubtitle) {
++      // UIKit shapes automatic scroll-edge effects around native labels, but does
++      // not recognize Fabric text views. Supply the custom title's geometry without
++      // drawing additional text or changing the Fabric children's mount indices.
++      UILabel *titleScrollEdgeEffectGuide = [UILabel new];
++      titleScrollEdgeEffectGuide.accessibilityElementsHidden = YES;
++      titleScrollEdgeEffectGuide.userInteractionEnabled = NO;
++      titleScrollEdgeEffectGuide.frame = wrapperView.bounds;
++      titleScrollEdgeEffectGuide.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
++      [wrapperView addSubview:titleScrollEdgeEffectGuide];
++    }
++  }
++#endif
++
+   [NSLayoutConstraint activateConstraints:@[
+     [contentView.leadingAnchor constraintEqualToAnchor:wrapperView.leadingAnchor],
+     [contentView.trailingAnchor constraintEqualToAnchor:wrapperView.trailingAnchor],

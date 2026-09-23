@@ -1,3 +1,4 @@
+import { NATIVE_WORKSPACE_COLUMNS_SUPPORTED } from "../native/NativeWorkspaceColumns";
 import Constants from "expo-constants";
 import type { NativeStackNavigationOptions } from "@react-navigation/native-stack";
 import { Platform, View } from "react-native";
@@ -13,7 +14,7 @@ import { resolveMobileStageLabel } from "../lib/mobileBranding";
  */
 export function brandTitleOffset(): number {
   if (Platform.OS !== "ios") return 0;
-  return Platform.isPad ? IPAD_HOME_TITLE_OFFSET : 0;
+  return Platform.isPad && !NATIVE_WORKSPACE_COLUMNS_SUPPORTED ? IPAD_HOME_TITLE_OFFSET : 0;
 }
 
 /**
