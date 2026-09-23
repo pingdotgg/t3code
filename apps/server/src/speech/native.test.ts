@@ -1,5 +1,18 @@
 import { expect, it } from "vite-plus/test";
-import { loadNativeSpeechModel } from "./native.ts";
+import { listNativeSpeechGpuDevices, loadNativeSpeechModel } from "./native.ts";
+
+it("ignores unrelated device probe messages and returns GPU devices", async () => {
+  const moduleUrl = `data:text/javascript,${encodeURIComponent(`
+    process.send?.({ type: "unrelated-control-message" });
+    export const getAvailableBackends = () => [
+      { kind: "vulkan", deviceType: "gpu", deviceId: "gpu-1", name: "GPU", description: "Test GPU" },
+      { kind: "cpu", deviceType: "cpu", deviceId: null, name: "CPU", description: "CPU" },
+    ];
+  `)}`;
+  await expect(listNativeSpeechGpuDevices(moduleUrl)).resolves.toEqual([
+    { id: '["vulkan","gpu-1"]', name: "Test GPU" },
+  ]);
+});
 
 const fixture = (transcribe: string) =>
   `data:text/javascript,${encodeURIComponent(`export const TranscribeModel = { load: async () => ({ capabilities: { supportsStreaming: false }, supports: () => false, transcribe: ${transcribe} }) };`)}`;

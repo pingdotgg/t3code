@@ -85,7 +85,21 @@ export async function listNativeSpeechGpuDevices(
     },
   );
   return await new Promise<{ id: string; name: string }[]>((resolve, reject) => {
-    child.once("message", (devices) => resolve(devices as { id: string; name: string }[]));
+    child.on("message", (devices: unknown) => {
+      if (
+        Array.isArray(devices) &&
+        devices.every(
+          (device: unknown) =>
+            typeof device === "object" &&
+            device !== null &&
+            "id" in device &&
+            typeof device.id === "string" &&
+            "name" in device &&
+            typeof device.name === "string",
+        )
+      )
+        resolve(devices);
+    });
     child.once("error", reject);
     child.once("exit", (code) => reject(new Error(`Speech device discovery exited (${code}).`)));
   });
