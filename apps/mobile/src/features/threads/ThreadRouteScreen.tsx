@@ -615,7 +615,7 @@ function ThreadRouteContent(
   // Hand the inspector to the workspace so it renders beside the navigator,
   // outside this screen's native header — the terminal/git/files toolbar
   // stays anchored to the chat pane instead of floating above the inspector.
-  useRegisterWorkspaceInspector(activeInspectorRenderer, inspectorMode ?? undefined);
+  useRegisterWorkspaceInspector(activeInspectorRenderer);
 
   const handleOpenConnectionEditor = useCallback(() => {
     void navigation.navigate("Connections");

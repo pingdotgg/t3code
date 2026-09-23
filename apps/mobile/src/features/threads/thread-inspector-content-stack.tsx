@@ -1,6 +1,8 @@
 import { useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { View } from "react-native";
 
+import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
+
 export type ThreadInspectorMode = "route" | "git" | "files";
 
 const INSPECTOR_PREWARM_DELAY_MS = 350;
@@ -27,7 +29,13 @@ function InspectorContentPane(props: {
         zIndex: props.visible ? 1 : 0,
       }}
     >
-      {props.children}
+      <RenderErrorBoundary
+        renderFallback={(fallback) => (
+          <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
+        )}
+      >
+        {props.children}
+      </RenderErrorBoundary>
     </View>
   );
 }
