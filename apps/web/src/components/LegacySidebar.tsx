@@ -2732,9 +2732,7 @@ function ProjectSortMenu({
     <Menu>
       <Tooltip>
         <TooltipTrigger
-          render={
-            <MenuTrigger className="inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-icon-muted transition-colors hover:bg-accent hover:text-foreground" />
-          }
+          render={<MenuTrigger render={<Button size="icon-xs" variant="ghost-muted" />} />}
         >
           <ArrowUpDownIcon className="size-3.5" />
         </TooltipTrigger>
