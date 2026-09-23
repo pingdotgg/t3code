@@ -206,6 +206,56 @@ it("orders supported languages by speaker ranking, then alphabetically", async (
     "Arabic",
     "Catalan",
   ]);
+  const search = root.root.findByProps({ "aria-label": "Search languages" });
+  await act(async () => search.props.onChange({ target: { value: "ar" } }));
+  expect(languageList.findAllByType("button").map((button) => button.children.join(""))).toEqual([
+    "Arabic",
+  ]);
+  await act(async () =>
+    root.root.findByProps({ "aria-label": "Clear language search" }).props.onClick(),
+  );
+  expect(languageList.findAllByType("button")).toHaveLength(7);
+});
+it("puts the active model first, then installed and downloading models", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("navigator", {});
+  vi.stubGlobal("window", { setInterval, clearInterval });
+  const model = (name: string, state: string, active = false) => ({
+    id: name,
+    name,
+    description: `${name} description`,
+    languages: ["en"],
+    state,
+    active,
+    recommended: false,
+    supportsStreaming: false,
+    size: 100,
+    accuracy: 90,
+    speed: 90,
+  });
+  mocks.listModels.mockResolvedValue({
+    models: [
+      model("Available", "downloadable"),
+      model("Downloading", "downloading"),
+      model("Installed", "installed"),
+      model("Active", "installed", true),
+    ],
+  });
+  await act(async () => {
+    root = create(createElement(VoiceSettingsPanel));
+  });
+
+  expect(
+    root.root
+      .findAllByType("p")
+      .map((paragraph) => paragraph.children.join(""))
+      .filter((text) => text.endsWith(" description")),
+  ).toEqual([
+    "Active description",
+    "Installed description",
+    "Downloading description",
+    "Available description",
+  ]);
 });
 it("shows cancellation errors without clearing the download state", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

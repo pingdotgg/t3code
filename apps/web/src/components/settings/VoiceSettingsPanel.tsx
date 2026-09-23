@@ -88,6 +88,12 @@ const compareLanguages = (a: string, b: string) => {
   if (bRank !== undefined) return 1;
   return languageLabel(a).localeCompare(languageLabel(b));
 };
+const modelSortOrder = (model: EnvironmentSpeechModel) => {
+  if (model.active) return 0;
+  if (model.state === "installed") return 1;
+  if (model.state === "downloading" || model.state === "verifying") return 2;
+  return 3;
+};
 
 function ModelCard(props: {
   readonly model: EnvironmentSpeechModel;
@@ -204,6 +210,7 @@ export function VoiceSettingsPanel() {
   const [loadingMicrophones, setLoadingMicrophones] = useState(false);
   const [operation, setOperation] = useState<string | null>(null);
   const [customWordDraft, setCustomWordDraft] = useState("");
+  const [languageSearch, setLanguageSearch] = useState("");
   const [selectedLanguage, setSelectedLanguage] = useState<{
     readonly environmentId: EnvironmentId | null;
     readonly code: string;
@@ -358,11 +365,21 @@ export function VoiceSettingsPanel() {
   const languages = [...new Set(currentModels.flatMap((model) => model.languages))].sort(
     compareLanguages,
   );
+  const searchTerm = languageSearch.trim().toLocaleLowerCase();
+  const matchingLanguages = searchTerm
+    ? languages.filter(
+        (code) =>
+          code.toLocaleLowerCase().includes(searchTerm) ||
+          languageLabel(code).toLocaleLowerCase().includes(searchTerm),
+      )
+    : languages;
   const language =
     selectedLanguage?.environmentId === environmentId && languages.includes(selectedLanguage.code)
       ? selectedLanguage.code
       : (activeModel?.languages[0] ?? languages[0]);
-  const visibleModels = currentModels.filter((model) => model.languages.includes(language ?? ""));
+  const visibleModels = currentModels
+    .filter((model) => model.languages.includes(language ?? ""))
+    .sort((a, b) => modelSortOrder(a) - modelSortOrder(b));
 
   return (
     <SettingsPageContainer>
@@ -490,25 +507,53 @@ export function VoiceSettingsPanel() {
         />
         {currentStatus?.supported && prepared ? (
           <div className="flex h-80 min-h-0 flex-col border-t border-border/50 sm:flex-row">
-            <div
-              role="group"
-              aria-label="Browse transcription models by language"
-              className="flex shrink-0 gap-1 overflow-x-auto border-b border-border/50 bg-muted/20 p-2 sm:w-40 sm:flex-col sm:overflow-y-auto sm:border-r sm:border-b-0"
-            >
-              <span className="hidden px-2.5 pb-1 text-[11px] text-muted-foreground sm:block">
-                Language
-              </span>
-              {languages.map((code) => (
-                <button
-                  key={code}
-                  type="button"
-                  aria-pressed={language === code}
-                  className={`shrink-0 rounded-md px-2.5 py-2 text-left text-xs transition-colors hover:bg-muted/50 ${language === code ? "bg-muted text-foreground" : "text-muted-foreground"}`}
-                  onClick={() => setSelectedLanguage({ environmentId, code })}
-                >
-                  {languageLabel(code)}
-                </button>
-              ))}
+            <div className="flex min-h-0 shrink-0 flex-col border-b border-border/50 bg-muted/20 sm:w-44 sm:border-r sm:border-b-0">
+              <div className="flex items-center gap-1 p-2 sm:flex-col sm:items-stretch">
+                <span className="hidden px-0.5 text-[11px] text-muted-foreground sm:block">
+                  Language
+                </span>
+                <div className="flex min-w-0 flex-1 items-center gap-1 sm:flex-none">
+                  <Input
+                    type="search"
+                    size="compact"
+                    aria-label="Search languages"
+                    placeholder="Search languages"
+                    value={languageSearch}
+                    onChange={(event) => setLanguageSearch(event.target.value)}
+                  />
+                  {languageSearch ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Clear language search"
+                      onClick={() => setLanguageSearch("")}
+                    >
+                      <XIcon className="size-3.5" />
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+              <div
+                role="group"
+                aria-label="Browse transcription models by language"
+                className="flex min-h-0 gap-1 overflow-x-auto px-2 pb-2 sm:flex-1 sm:flex-col sm:overflow-y-auto"
+              >
+                {matchingLanguages.map((code) => (
+                  <button
+                    key={code}
+                    type="button"
+                    aria-pressed={language === code}
+                    className={`shrink-0 rounded-md px-2.5 py-2 text-left text-xs transition-colors hover:bg-muted/50 ${language === code ? "bg-muted text-foreground" : "text-muted-foreground"}`}
+                    onClick={() => setSelectedLanguage({ environmentId, code })}
+                  >
+                    {languageLabel(code)}
+                  </button>
+                ))}
+                {matchingLanguages.length === 0 ? (
+                  <p className="px-2.5 py-2 text-xs text-muted-foreground">No languages found</p>
+                ) : null}
+              </div>
             </div>
             <div className="min-h-0 min-w-0 flex-1 space-y-2 overflow-y-auto p-3">
               <p className="pb-1 text-xs text-muted-foreground">
