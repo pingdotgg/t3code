@@ -595,7 +595,11 @@ function parseCustomCommitMessage(raw: string): { subject: string; body: string 
   };
 }
 
-const OPEN_PR_PROBE_LIMIT = 10;
+// Without the owner selector, a bare branch name also lists same-named
+// branches on other forks (`main`, `patch-1`), so GitHub probes ask for a full
+// page and let matchesBranchHeadContext pick the right head. gh fetches up to
+// 100 in one request, and GitHub prices a first:100 connection like first:1.
+const GITHUB_HEAD_BRANCH_PROBE_LIMIT = 100;
 
 // `gh pr list --head` filters on the head ref name alone and accepts anything, so an
 // `owner:branch` or `remote:branch` selector silently lists zero pull requests
@@ -1628,9 +1632,7 @@ export const make = Effect.gen(function* () {
         cwd,
         headSelector,
         state: "open",
-        // A bare branch name also lists same-named branches on other forks,
-        // so leave room for the owner match below.
-        limit: OPEN_PR_PROBE_LIMIT,
+        limit: provider.kind === "github" ? GITHUB_HEAD_BRANCH_PROBE_LIMIT : 1,
       });
       const normalizedPullRequests = pullRequests.map(toPullRequestInfo);
 
@@ -1661,7 +1663,7 @@ export const make = Effect.gen(function* () {
         cwd,
         headSelector,
         state: "all",
-        limit: 20,
+        limit: provider.kind === "github" ? GITHUB_HEAD_BRANCH_PROBE_LIMIT : 20,
       });
 
       for (const pr of pullRequests.map(toPullRequestInfo)) {
