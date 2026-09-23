@@ -23,8 +23,6 @@ export function TerminalContextInlineChip(props: TerminalContextInlineChipProps)
         icon={<TerminalIcon />}
         label={label}
         accessibleLabel={`Terminal excerpt, ${label}`}
-        popupClassName="w-[min(40rem,calc(100vw-2rem))]"
-        viewportClassName="overflow-hidden p-2"
       >
         <div className="overflow-hidden rounded-md border border-border/70 bg-background/80">
           <div className="flex items-center gap-2 border-b border-border/70 px-3 py-2">

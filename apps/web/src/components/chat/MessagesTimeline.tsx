@@ -2567,7 +2567,7 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
         align="end"
         width="lg"
         className="surface-glass!"
-        viewportClassName="py-3 [--viewport-inline-padding:--spacing(3)]"
+        padding="compact"
       >
         <WorktreeSetupCard
           snapshot={snapshot}

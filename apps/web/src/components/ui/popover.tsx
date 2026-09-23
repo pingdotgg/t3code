@@ -25,10 +25,19 @@ const popoverPopupWidthClassName = {
   lg: "w-96",
 } as const;
 
+// The inset around the content. "compact" suits dense content (a list, a code excerpt, a
+// row of reactions); "none" is for content that draws its own frame edge to edge.
+const popoverViewportPaddingClassName = {
+  default: "py-4 [--viewport-inline-padding:--spacing(4)]",
+  compact: "py-2 [--viewport-inline-padding:--spacing(3)]",
+  // Rounded to the popup so edge-to-edge content clips to its corners.
+  none: "rounded-[calc(var(--radius-lg)-1px)] py-0 [--viewport-inline-padding:0px]",
+} as const;
+
 function PopoverPopup({
   children,
   className,
-  viewportClassName,
+  padding = "default",
   width = "auto",
   side = "bottom",
   align = "center",
@@ -39,7 +48,7 @@ function PopoverPopup({
   anchor,
   ...props
 }: PopoverPrimitive.Popup.Props & {
-  viewportClassName?: string;
+  padding?: keyof typeof popoverViewportPaddingClassName;
   side?: PopoverPrimitive.Positioner.Props["side"];
   align?: PopoverPrimitive.Positioner.Props["align"];
   sideOffset?: PopoverPrimitive.Positioner.Props["sideOffset"];
@@ -78,11 +87,11 @@ function PopoverPopup({
         >
           <Viewport
             className={cn(
-              "relative size-full max-h-(--available-height) overflow-clip px-(--viewport-inline-padding) py-4 [--viewport-inline-padding:--spacing(4)] has-data-[slot=calendar]:p-2 data-instant:transition-none **:data-current:data-ending-style:opacity-0 **:data-current:data-starting-style:opacity-0 **:data-previous:data-ending-style:opacity-0 **:data-previous:data-starting-style:opacity-0 **:data-current:w-[calc(var(--popup-width)-2*var(--viewport-inline-padding)-2px)] **:data-previous:w-[calc(var(--popup-width)-2*var(--viewport-inline-padding)-2px)] **:data-current:opacity-100 **:data-previous:opacity-100 **:data-current:transition-opacity **:data-previous:transition-opacity",
-              tooltipStyle
+              "relative size-full max-h-(--available-height) overflow-clip px-(--viewport-inline-padding) has-data-[slot=calendar]:p-2 data-instant:transition-none **:data-current:data-ending-style:opacity-0 **:data-current:data-starting-style:opacity-0 **:data-previous:data-ending-style:opacity-0 **:data-previous:data-starting-style:opacity-0 **:data-current:w-[calc(var(--popup-width)-2*var(--viewport-inline-padding)-2px)] **:data-previous:w-[calc(var(--popup-width)-2*var(--viewport-inline-padding)-2px)] **:data-current:opacity-100 **:data-previous:opacity-100 **:data-current:transition-opacity **:data-previous:transition-opacity",
+              tooltipStyle && padding === "default"
                 ? "py-1 [--viewport-inline-padding:--spacing(2)]"
-                : "not-data-transitioning:overflow-y-auto",
-              viewportClassName,
+                : popoverViewportPaddingClassName[padding],
+              !tooltipStyle && "not-data-transitioning:overflow-y-auto",
             )}
             data-slot="popover-viewport"
           >

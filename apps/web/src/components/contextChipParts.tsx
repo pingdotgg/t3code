@@ -8,7 +8,6 @@ import {
   type ReactNode,
 } from "react";
 
-import { cn } from "~/lib/utils";
 import { PULL_REQUEST_STATE_PRESENTATION } from "~/components/pullRequest/pullRequestIcons";
 import type { PullRequestContextDisplayState } from "~/lib/composerContextRecords";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
@@ -70,8 +69,6 @@ export function ContextChipPopover(props: {
   copyMarkdown?: string;
   accessibleLabel: string;
   children: ReactNode;
-  popupClassName?: string;
-  viewportClassName?: string;
 }) {
   return (
     <Popover>
@@ -88,12 +85,7 @@ export function ContextChipPopover(props: {
         {props.icon}
         <ContextChipLabel>{props.label}</ContextChipLabel>
       </PopoverTrigger>
-      <PopoverPopup
-        side="top"
-        width="lg"
-        className={props.popupClassName}
-        viewportClassName={cn("overflow-x-auto p-2", props.viewportClassName)}
-      >
+      <PopoverPopup side="top" width="lg" padding="compact">
         <PopoverTitle className="sr-only">{props.accessibleLabel}</PopoverTitle>
         {props.children}
       </PopoverPopup>

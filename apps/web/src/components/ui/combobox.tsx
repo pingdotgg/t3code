@@ -30,7 +30,6 @@ function Combobox<Value, Multiple extends boolean | undefined = false>(
 
 function ComboboxInput({
   className,
-  inputClassName,
   showTrigger = true,
   showClear = false,
   startAddon,
@@ -38,7 +37,6 @@ function ComboboxInput({
   unstyled = false,
   ...props
 }: Omit<ComboboxPrimitive.Input.Props, "size"> & {
-  inputClassName?: string;
   showTrigger?: boolean;
   showClear?: boolean;
   startAddon?: React.ReactNode;
@@ -71,7 +69,10 @@ function ComboboxInput({
         data-slot="combobox-input"
         render={
           <Input
-            className={cn("has-disabled:opacity-100", inputClassName)}
+            className={cn(
+              "has-disabled:opacity-100",
+              unstyled && "rounded-none bg-transparent text-sm",
+            )}
             nativeInput
             size={sizeValue}
             unstyled={unstyled}
@@ -116,7 +117,6 @@ function ComboboxSearchInput(props: React.ComponentProps<typeof ComboboxInput>) 
         <ComboboxInput
           {...props}
           className="[&_input]:h-6.5 [&_input]:ps-5 [&_input]:font-sans [&_input]:leading-6.5"
-          inputClassName="rounded-none bg-transparent text-sm"
           showTrigger={false}
           size="sm"
           unstyled
@@ -185,12 +185,10 @@ function ComboboxPopup({
 
 function ComboboxItem({
   className,
-  contentClassName,
   children,
   hideIndicator: _hideIndicator = false,
   ...props
 }: ComboboxPrimitive.Item.Props & {
-  contentClassName?: string;
   hideIndicator?: boolean;
 }) {
   return (
@@ -202,11 +200,9 @@ function ComboboxItem({
       data-slot="combobox-item"
       {...props}
     >
+      {/* Children lay out as one row: a label that truncates, then any trailing meta. */}
       <div
-        className={cn(
-          "min-w-0 flex-1 [&_svg:not([class*='text-'])]:text-muted-foreground",
-          contentClassName,
-        )}
+        className="flex min-w-0 flex-1 items-center gap-2 [&_svg:not([class*='text-'])]:text-muted-foreground"
         data-slot="combobox-item-content"
       >
         {children}

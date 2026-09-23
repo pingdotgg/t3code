@@ -88,7 +88,7 @@ export function ContextWindowMeter(props: {
         tooltipStyle
         side="top"
         align="end"
-        viewportClassName="p-0"
+        padding="none"
         width="sm"
         className="text-left whitespace-normal"
       >
