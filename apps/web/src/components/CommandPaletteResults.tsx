@@ -41,7 +41,7 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
     <CommandList>
       {props.groups.map((group) => (
         <CommandGroup items={group.items} key={group.value}>
-          <CommandGroupLabel className="ps-[9px]">{group.label}</CommandGroupLabel>
+          <CommandGroupLabel>{group.label}</CommandGroupLabel>
           <CommandCollection>
             {(item) =>
               item.disabled ? (
@@ -109,7 +109,6 @@ function CommandPaletteResultRow(props: {
     <CommandItem
       value={props.item.value}
       active={props.isActive}
-      className="gap-2"
       onMouseDown={(event) => {
         event.preventDefault();
       }}

@@ -169,7 +169,6 @@ function CustomSnoozeDialog() {
                 ) : (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <NumberField
-                      className="gap-1.5"
                       id={`${id}-amount`}
                       min={0}
                       step="any"

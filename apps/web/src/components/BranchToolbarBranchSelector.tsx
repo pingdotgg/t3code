@@ -704,7 +704,6 @@ export function BranchToolbarBranchSelector({
           key={itemValue}
           index={index}
           value={itemValue}
-          className="pe-2"
           onClick={() => selectPickerItem(itemValue)}
         >
           <div className="flex min-w-0 items-center gap-2 py-1">
@@ -726,7 +725,6 @@ export function BranchToolbarBranchSelector({
           key={itemValue}
           index={index}
           value={itemValue}
-          className="pe-1.5"
           onClick={() => selectPickerItem(itemValue)}
         >
           <span className="truncate">Create new ref &quot;{newRefName}&quot;</span>
@@ -754,7 +752,6 @@ export function BranchToolbarBranchSelector({
         key={itemValue}
         index={index}
         value={itemValue}
-        className="pe-1.5"
         onClick={() => selectPickerItem(itemValue)}
         onContextMenu={(event) => handleBranchContextMenu(event, itemValue)}
       >
@@ -809,10 +806,10 @@ export function BranchToolbarBranchSelector({
           onContextMenu={(event) => handleBranchContextMenu(event, resolvedActiveBranch)}
         >
           <ComboboxTrigger
-            render={<Button variant="ghost" size="xs" />}
+            render={<ComposerControl size="xs" />}
             // No press-scale: the popup aligns live to this trigger, so a
             // momentary 0.97 shrink would drag the open popup ~3px sideways.
-            className="min-w-0 max-w-full font-normal text-muted-foreground/70 text-xs! hover:text-foreground/80 active:scale-100"
+            className="min-w-0 max-w-full active:scale-100"
             disabled={isInitialBranchesLoadPending || isBranchActionPending}
           >
             <GitBranchIcon className="size-3 shrink-0 opacity-70" />

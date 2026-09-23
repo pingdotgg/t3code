@@ -46,7 +46,7 @@ function ProviderCustomColorPanel(props: {
         />
         <Input
           nativeInput
-          size="sm"
+          size="compact"
           value={hexDraft ?? currentColor}
           onChange={(event) => {
             const nextColor = event.currentTarget.value;
@@ -57,7 +57,6 @@ function ProviderCustomColorPanel(props: {
           }}
           onBlur={() => setHexDraft(null)}
           font="mono"
-          className="text-xs"
           aria-label="Custom hex accent color"
           spellCheck={false}
         />

@@ -650,7 +650,7 @@ function CommandPaletteDialog(props: {
             ? "Search project contents"
             : "Command palette"
       }
-      className={cn("overflow-hidden p-0", props.mode === "content" && "h-105")}
+      className={cn("overflow-hidden", props.mode === "content" && "h-105")}
       data-command-palette="true"
       data-palette-mode={props.mode}
       data-testid="command-palette"

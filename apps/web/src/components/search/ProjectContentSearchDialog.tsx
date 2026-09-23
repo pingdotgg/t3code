@@ -89,11 +89,13 @@ function EmptyContentSearchDialog() {
       footerActionLabel="Open file"
       inputProps={{ disabled: true, placeholder: "Search project contents…" }}
       mode="none"
-      panelClassName="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground"
+      panelClassName="flex min-h-0 flex-1 items-center justify-center"
       testId="project-content-search"
       value=""
     >
-      Open a project to search its files.
+      <p className="px-6 text-center text-muted-foreground text-sm">
+        Open a project to search its files.
+      </p>
     </CommandPaletteContent>
   );
 }

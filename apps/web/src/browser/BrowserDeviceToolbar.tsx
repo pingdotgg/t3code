@@ -189,10 +189,7 @@ export function BrowserDeviceToolbar({
         <SelectTrigger
           variant="ghost"
           size="xs"
-          className={cn(
-            "shrink-0 justify-between px-1.5 font-medium",
-            width >= 440 ? "w-36" : "w-24",
-          )}
+          className={cn("shrink-0 justify-between", width >= 440 ? "w-36" : "w-24")}
           aria-label="Browser device preset"
         >
           <SelectValue />
@@ -227,7 +224,8 @@ export function BrowserDeviceToolbar({
           nativeInput
           type="number"
           inputMode="numeric"
-          size="sm"
+          size="compact"
+          font="mono"
           min={PREVIEW_VIEWPORT_MIN_DIMENSION}
           max={PREVIEW_VIEWPORT_MAX_DIMENSION}
           value={presentedSize.width}
@@ -245,8 +243,8 @@ export function BrowserDeviceToolbar({
           aria-label="Viewport width"
           aria-invalid={!customValid}
           className={cn(
-            "h-6 rounded-md text-center tabular-nums [&_[data-slot=input]]:h-full [&_[data-slot=input]]:px-1 [&_[data-slot=input]]:text-xs [&_[data-slot=input]]:leading-none [&_[data-slot=input]::-webkit-inner-spin-button]:appearance-none [&_[data-slot=input]]:[appearance:textfield]",
-            width >= 360 ? "w-14" : "w-11",
+            "text-center [&_[data-slot=input]::-webkit-inner-spin-button]:appearance-none [&_[data-slot=input]]:[appearance:textfield]",
+            width >= 360 ? "w-14" : "w-13",
           )}
         />
         <span className="text-xs text-muted-foreground">×</span>
@@ -254,7 +252,8 @@ export function BrowserDeviceToolbar({
           nativeInput
           type="number"
           inputMode="numeric"
-          size="sm"
+          size="compact"
+          font="mono"
           min={PREVIEW_VIEWPORT_MIN_DIMENSION}
           max={PREVIEW_VIEWPORT_MAX_DIMENSION}
           value={presentedSize.height}
@@ -272,8 +271,8 @@ export function BrowserDeviceToolbar({
           aria-label="Viewport height"
           aria-invalid={!customValid}
           className={cn(
-            "h-6 rounded-md text-center tabular-nums [&_[data-slot=input]]:h-full [&_[data-slot=input]]:px-1 [&_[data-slot=input]]:text-xs [&_[data-slot=input]]:leading-none [&_[data-slot=input]::-webkit-inner-spin-button]:appearance-none [&_[data-slot=input]]:[appearance:textfield]",
-            width >= 360 ? "w-14" : "w-11",
+            "text-center [&_[data-slot=input]::-webkit-inner-spin-button]:appearance-none [&_[data-slot=input]]:[appearance:textfield]",
+            width >= 360 ? "w-14" : "w-13",
           )}
         />
       </form>
