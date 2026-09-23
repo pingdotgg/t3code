@@ -84,8 +84,6 @@ export function buildHomeListFilterMenu(props: {
     });
   }
 
-
-
   return {
     title: "Thread list options",
     items,

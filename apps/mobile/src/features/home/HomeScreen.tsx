@@ -635,10 +635,7 @@ export function HomeScreen(props: HomeScreenProps) {
     ],
   );
 
-  useThreadJumpShortcuts(
-    threadListV2Items,
-    props.onSelectThread,
-  );
+  useThreadJumpShortcuts(threadListV2Items, props.onSelectThread);
 
   const renderV2Item = useCallback(
     ({ item }: { readonly item: ThreadListV2ListItem }) => {
@@ -807,7 +804,6 @@ export function HomeScreen(props: HomeScreenProps) {
     ],
   );
 
-
   /* Empty states */
   // The signal must ignore the search/environment filters: an active query
   // that matches nothing needs the in-list "No results" state, not the
@@ -906,10 +902,7 @@ export function HomeScreen(props: HomeScreenProps) {
       />
     );
 
-  if (
-    Platform.OS === "android" &&
-    threadListV2Items.length === 0
-  ) {
+  if (Platform.OS === "android" && threadListV2Items.length === 0) {
     return (
       <View className="flex-1 bg-header">
         <View
@@ -924,54 +917,54 @@ export function HomeScreen(props: HomeScreenProps) {
 
   return (
     <View className="flex-1 bg-screen android:bg-header">
-        <View
-          className={
-            Platform.OS === "android"
-              ? "flex-1 overflow-hidden rounded-t-[28px] bg-screen"
-              : "flex-1 bg-screen"
-          }
-        >
-          {/* Same recycler the iPad sidebar and the legacy list use: cells are
+      <View
+        className={
+          Platform.OS === "android"
+            ? "flex-1 overflow-hidden rounded-t-[28px] bg-screen"
+            : "flex-1 bg-screen"
+        }
+      >
+        {/* Same recycler the iPad sidebar and the legacy list use: cells are
             reused across data rebuilds and `itemsAreEqual` keeps a minute tick
             (or an unrelated shell update) from re-rendering untouched rows. */}
-          <SwipeableScrollGateProvider enabled={swipeEnabled}>
-            <LegendList
-              data={threadListV2Items}
-              renderItem={renderV2Item}
-              keyExtractor={v2KeyExtractor}
-              getItemType={(item) => item.type}
-              itemsAreEqual={threadListV2ListItemsAreEqual}
-              estimatedItemSize={ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT}
-              drawDistance={500}
-              recycleItems
-              extraData={v2ExtraData}
-              ListHeaderComponent={v2ListHeader}
-              ListFooterComponent={
-                settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
-                  <ThreadListV2ShowMoreRow
-                    hiddenCount={threadListV2Layout.hiddenSettledCount}
-                    onPress={showMoreSettled}
-                  />
-                ) : null
-              }
-              ListEmptyComponent={v2ListEmpty}
-              style={{ flex: 1 }}
-              automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
-              contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
-              showsVerticalScrollIndicator={false}
-              keyboardDismissMode="on-drag"
-              keyboardShouldPersistTaps="handled"
-              {...scrollGateHandlers}
-              scrollEventThrottle={16}
-              contentContainerStyle={{
-                paddingBottom:
-                  Platform.OS === "ios"
-                    ? Math.max(insets.bottom, 24) + 96 + iosBottomToolbarClearance
-                    : Math.max(insets.bottom, 16) + (Platform.OS === "android" ? 148 : 88),
-              }}
-            />
-          </SwipeableScrollGateProvider>
-        </View>
+        <SwipeableScrollGateProvider enabled={swipeEnabled}>
+          <LegendList
+            data={threadListV2Items}
+            renderItem={renderV2Item}
+            keyExtractor={v2KeyExtractor}
+            getItemType={(item) => item.type}
+            itemsAreEqual={threadListV2ListItemsAreEqual}
+            estimatedItemSize={ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT}
+            drawDistance={500}
+            recycleItems
+            extraData={v2ExtraData}
+            ListHeaderComponent={v2ListHeader}
+            ListFooterComponent={
+              settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
+                <ThreadListV2ShowMoreRow
+                  hiddenCount={threadListV2Layout.hiddenSettledCount}
+                  onPress={showMoreSettled}
+                />
+              ) : null
+            }
+            ListEmptyComponent={v2ListEmpty}
+            style={{ flex: 1 }}
+            automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
+            contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+            showsVerticalScrollIndicator={false}
+            keyboardDismissMode="on-drag"
+            keyboardShouldPersistTaps="handled"
+            {...scrollGateHandlers}
+            scrollEventThrottle={16}
+            contentContainerStyle={{
+              paddingBottom:
+                Platform.OS === "ios"
+                  ? Math.max(insets.bottom, 24) + 96 + iosBottomToolbarClearance
+                  : Math.max(insets.bottom, 16) + (Platform.OS === "android" ? 148 : 88),
+            }}
+          />
+        </SwipeableScrollGateProvider>
       </View>
-    );
+    </View>
+  );
 }

@@ -141,4 +141,3 @@ export function sortHomeProjectScopes(input: {
 const RECENT_THREAD_WINDOW_MS = 5 * 24 * 60 * 60 * 1000;
 /** Fallback when a project has no threads inside the recency window. */
 const RECENT_THREAD_FALLBACK_COUNT = 3;
-

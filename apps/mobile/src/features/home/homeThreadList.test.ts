@@ -6,10 +6,7 @@ import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-searc
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  buildHomeProjectScopes,
-  sortHomeProjectScopes,
-} from "./homeThreadList";
+import { buildHomeProjectScopes, sortHomeProjectScopes } from "./homeThreadList";
 
 function makeProject(
   input: Partial<EnvironmentProject> & Pick<EnvironmentProject, "environmentId" | "id" | "title">,
@@ -96,7 +93,6 @@ describe("home project scopes", () => {
       })),
     );
   });
-
 
   it("keeps repository identity from an older duplicate when the freshness winner lacks it", () => {
     const localEnvironmentId = EnvironmentId.make("environment-local");
@@ -293,15 +289,4 @@ describe("home project scopes", () => {
       }),
     ).toHaveLength(2);
   });
-
-
-
-
-
-
-
-
-
-
-
 });

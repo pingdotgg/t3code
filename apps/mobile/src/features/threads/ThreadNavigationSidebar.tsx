@@ -589,11 +589,7 @@ function ThreadNavigationSidebarPane(
         return;
       }
     },
-    [
-      environments,
-      projectFilterOptions,
-      setSelectedEnvironmentId,
-    ],
+    [environments, projectFilterOptions, setSelectedEnvironmentId],
   );
 
   const [measuredHeaderHeight, setMeasuredHeaderHeight] = useState<number | null>(null);
@@ -861,8 +857,7 @@ function ThreadNavigationSidebarPane(
   );
   // The list ignores sort/group options, so only the environment and project
   // filters can light the "customized" state.
-  const filterCustomized =
-    options.selectedEnvironmentId !== null || selectedProjectKey !== null;
+  const filterCustomized = options.selectedEnvironmentId !== null || selectedProjectKey !== null;
   const filterIcon = filterCustomized
     ? "line.3.horizontal.decrease.circle.fill"
     : "line.3.horizontal.decrease.circle";
@@ -876,13 +871,7 @@ function ThreadNavigationSidebarPane(
         onEnvironmentChange: setSelectedEnvironmentId,
         onProjectChange: setSelectedProjectKey,
       }),
-    [
-      environments,
-      options,
-      projectFilterOptions,
-      selectedProjectKey,
-      setSelectedEnvironmentId,
-      ],
+    [environments, options, projectFilterOptions, selectedProjectKey, setSelectedEnvironmentId],
   );
   const nativeHeaderItems = useMemo(
     () =>
@@ -1092,10 +1081,7 @@ function ThreadNavigationSidebarPane(
             />
             <View className="flex-row items-center gap-2.5">
               <ControlPillMenu actions={listMenuActions} onPressAction={handleListMenuAction}>
-                <SidebarFilterButton
-                  accessibilityLabel="Filter threads"
-                  icon={filterIcon}
-                />
+                <SidebarFilterButton accessibilityLabel="Filter threads" icon={filterIcon} />
               </ControlPillMenu>
               <SidebarHeaderActions onOpenSettings={props.onOpenSettings} />
             </View>

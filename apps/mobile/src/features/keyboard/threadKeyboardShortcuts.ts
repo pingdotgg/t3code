@@ -8,9 +8,7 @@ import {
   type HardwareKeyboardCommand,
 } from "./hardwareKeyboardCommands";
 
-type ThreadShortcutListItem =
-  | ThreadListV2ListItem
-  | { readonly type: "v2-show-more" };
+type ThreadShortcutListItem = ThreadListV2ListItem | { readonly type: "v2-show-more" };
 
 export function threadJumpIndex(command: HardwareKeyboardCommand) {
   return THREAD_JUMP_KEYBINDING_COMMANDS.findIndex((candidate) => candidate === command);

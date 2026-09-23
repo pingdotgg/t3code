@@ -76,10 +76,8 @@ export function HomeRouteScreen() {
     () => new Set(environments.map((environment) => environment.environmentId)),
     [environments],
   );
-  const {
-    options: listOptions,
-    setSelectedEnvironmentId,
-  } = useHomeListOptions(availableEnvironmentIds);
+  const { options: listOptions, setSelectedEnvironmentId } =
+    useHomeListOptions(availableEnvironmentIds);
   const selectedEnvironmentId = listOptions.selectedEnvironmentId;
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const projectFilterOptions = useMemo(
