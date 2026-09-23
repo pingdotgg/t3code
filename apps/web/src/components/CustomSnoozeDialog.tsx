@@ -93,7 +93,7 @@ function CustomSnoozeDialog() {
             <DialogTitle>Custom snooze</DialogTitle>
             <DialogDescription>Choose when snoozed threads return to your inbox.</DialogDescription>
           </DialogHeader>
-          <DialogPanel className="text-base sm:text-sm">
+          <DialogPanel>
             <div className="flex flex-col gap-4">
               <ToggleGroup
                 aria-label="Schedule type"
@@ -147,10 +147,7 @@ function CustomSnoozeDialog() {
                         </PopoverPopup>
                       </Popover>
                     </div>
-                    <Label
-                      className="flex min-w-0 flex-col items-stretch gap-1.5"
-                      htmlFor={`${id}-time`}
-                    >
+                    <Label className="flex min-w-0 flex-col items-stretch" htmlFor={`${id}-time`}>
                       Time
                       <Input
                         nativeInput
@@ -185,10 +182,7 @@ function CustomSnoozeDialog() {
                         <NumberFieldIncrement aria-label="Increase duration" />
                       </NumberFieldGroup>
                     </NumberField>
-                    <Label
-                      className="flex min-w-0 flex-col items-stretch gap-1.5"
-                      htmlFor={`${id}-unit`}
-                    >
+                    <Label className="flex min-w-0 flex-col items-stretch" htmlFor={`${id}-unit`}>
                       Unit
                       <Select
                         value={unit}

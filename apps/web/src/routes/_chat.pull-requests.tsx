@@ -218,7 +218,7 @@ function PullRequestGroupHeader({
       <Icon aria-hidden className="size-3.5 shrink-0" />
       <h2 className="shrink-0">{group.label}</h2>
       <span className="shrink-0 tabular-nums text-muted-foreground/50">{group.entries.length}</span>
-      <Separator className="min-w-2 flex-1 bg-border/60" />
+      <Separator className="min-w-2 flex-1" />
     </div>
   );
 }

@@ -279,17 +279,17 @@ function Children({ className, render, ...props }: useRender.ComponentProps<"div
 }
 
 /** Bounded banner content uses the app's scroll area and fades only overflowing edges. */
-function Scroll({ className, ...props }: ComponentProps<typeof ScrollArea>) {
+function Scroll({ className, children, ...props }: ComponentProps<typeof ScrollArea>) {
   return (
     <ScrollArea
       radius="none"
       scrollFade
-      className={cn(
-        "h-auto max-h-[min(24rem,40dvh)] [&>[data-slot=scroll-area-viewport][data-has-overflow-y]]:pe-2",
-        className,
-      )}
+      className={cn("h-auto max-h-[min(24rem,40dvh)]", className)}
       {...props}
-    />
+    >
+      {/* Clears the overlay scrollbar only once there is something to scroll. */}
+      <div className="[[data-has-overflow-y]>&]:pe-2">{children}</div>
+    </ScrollArea>
   );
 }
 

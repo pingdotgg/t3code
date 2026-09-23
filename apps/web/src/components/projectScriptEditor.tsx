@@ -431,7 +431,7 @@ export function ProjectScriptEditorDialog({
               </fieldset>
             </form>
           </DialogPanel>
-          <DialogFooter className="dark:border-transparent dark:bg-transparent">
+          <DialogFooter variant="bare">
             {isEditing && (
               <Button
                 type="button"

@@ -584,8 +584,8 @@ function PairingForm({
               {isPairing ? "Pairing..." : "Pair"}
             </Button>
           </div>
-          <CollapsiblePanel className="pt-3">
-            <p className="text-sm text-muted-foreground">
+          <CollapsiblePanel>
+            <p className="pt-3 text-sm text-muted-foreground">
               Run this on the computer with your code.
             </p>
             <CommandBlock command="npx t3 pair" className="mt-2" />
