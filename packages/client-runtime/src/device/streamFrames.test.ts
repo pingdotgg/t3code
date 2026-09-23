@@ -3,7 +3,7 @@ import { createDeviceStreamClient } from "./stream.ts";
 
 afterEach(() => vi.unstubAllGlobals());
 
-it("delivers borrowed decoded frames to a sink, closes them even on failure, and discards late output after stop", async () => {
+it("delivers borrowed decoded frames, reports presentation failure, and discards late output", async () => {
   let decoderOutput: VideoFrameOutputCallback | undefined;
   let resolveOutput!: () => void;
   const outputReady = new Promise<void>((resolve) => {
@@ -47,7 +47,7 @@ it("delivers borrowed decoded frames to a sink, closes them even on failure, and
         ),
     ),
   );
-  const present = vi.fn();
+  const present = vi.fn(() => true);
   const events = {
     onStatus: vi.fn(),
     onScreen: vi.fn(),
@@ -84,8 +84,14 @@ it("delivers borrowed decoded frames to a sink, closes them even on failure, and
   });
   expect(() => decoderOutput?.(frame)).toThrow("renderer failed");
   expect(frame.close).toHaveBeenCalledTimes(2);
-  client.stop();
+  present.mockReturnValueOnce(false);
   decoderOutput?.(frame);
-  expect(present).toHaveBeenCalledTimes(2);
+  expect(events.onStatus).toHaveBeenLastCalledWith(
+    "error",
+    "Could not display the device stream. Reconnect to try again.",
+  );
   expect(frame.close).toHaveBeenCalledTimes(3);
+  decoderOutput?.(frame);
+  expect(present).toHaveBeenCalledTimes(3);
+  expect(frame.close).toHaveBeenCalledTimes(4);
 });

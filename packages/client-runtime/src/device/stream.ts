@@ -408,7 +408,10 @@ export function createDeviceStreamClient(
       screen = { width, height, orientation: width > height ? "landscape_left" : "portrait" };
       events.onScreen(screen);
     }
-    sink.present(source, width, height);
+    if (!sink.present(source, width, height)) {
+      fail("Could not display the device stream. Reconnect to try again.");
+      return;
+    }
     frameReceived();
   };
 

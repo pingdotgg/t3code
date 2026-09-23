@@ -17,3 +17,16 @@ it("retains a borrowed frame at its native size before notifying the viewer", ()
   createCanvasFrameSink(canvas, notify).present(source, 1170, 2532);
   expect(notify).toHaveBeenCalledOnce();
 });
+
+it("reports when a canvas cannot present a frame", () => {
+  const canvas = {
+    width: 300,
+    height: 150,
+    getContext: () => null,
+  } as unknown as HTMLCanvasElement;
+  const notify = vi.fn();
+  expect(createCanvasFrameSink(canvas, notify).present({} as CanvasImageSource, 1170, 2532)).toBe(
+    false,
+  );
+  expect(notify).not.toHaveBeenCalled();
+});

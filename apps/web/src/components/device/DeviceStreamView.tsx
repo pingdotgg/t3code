@@ -7,6 +7,7 @@ import { refreshDeviceHubAccess, useDeviceHubAccess } from "~/state/device";
 import { createCanvasFrameSink } from "@t3tools/client-runtime/device/frame";
 import { resolveDeviceShape } from "@t3tools/client-runtime/device/shape-profile";
 import { deviceKeyboard, deviceModel } from "./deviceModels";
+import { fitDeviceFrame } from "./deviceFrameLayout";
 import { DevicePhoneViewport } from "./DevicePhoneViewport";
 import { DeviceLoadingView } from "./DeviceLoadingView";
 import { type DeviceAxElement, fetchDeviceAxTree } from "./deviceHubApi";
@@ -19,6 +20,7 @@ import {
 } from "@t3tools/client-runtime/device/stream";
 
 const AX_POLL_INTERVAL_MS = 2_000;
+const CONTROLS_RAIL_WIDTH = 56;
 
 export interface DeviceViewControls {
   readonly phone: boolean;
@@ -168,6 +170,16 @@ export function DeviceStreamView(props: {
     return w / h;
   }, [props.platform, screen]);
 
+  const showPhone =
+    props.allowPhoneView &&
+    status === "streaming" &&
+    props.visible &&
+    presentation === "phone" &&
+    !phoneUnavailable &&
+    !mjpegUrl &&
+    !props.axOverlay;
+  const controlsInset = props.renderControls && !showPhone ? CONTROLS_RAIL_WIDTH : 0;
+
   // The frame is the largest box at `aspect` that fits the container, so a
   // narrow panel shows a shorter phone rather than a squeezed one. CSS
   // `aspect-ratio` alone cannot do this: with the height pinned to 100% the
@@ -191,12 +203,8 @@ export function DeviceStreamView(props: {
     return () => observer.disconnect();
   }, []);
   const frame = useMemo(() => {
-    if (host.width === 0 || host.height === 0) return { width: 0, height: 0 };
-    const byHeight = { width: host.height * aspect, height: host.height };
-    return byHeight.width <= host.width
-      ? byHeight
-      : { width: host.width, height: host.width / aspect };
-  }, [aspect, host]);
+    return fitDeviceFrame(aspect, host.width, host.height, controlsInset);
+  }, [aspect, controlsInset, host]);
 
   // serve-sim streams the raw framebuffer; rotate the display for a device
   // that reports landscape while its frames stay portrait.
@@ -260,14 +268,6 @@ export function DeviceStreamView(props: {
     };
   }, [access, props.axOverlay, props.deviceId, props.platform, props.visible]);
 
-  const showPhone =
-    props.allowPhoneView &&
-    status === "streaming" &&
-    props.visible &&
-    presentation === "phone" &&
-    !phoneUnavailable &&
-    !mjpegUrl &&
-    !props.axOverlay;
   const pointerActive = useRef(false);
   const normalizedPoint = (event: React.PointerEvent<HTMLElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -326,6 +326,7 @@ export function DeviceStreamView(props: {
       <div
         ref={hostRef}
         className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+        style={controlsInset ? { paddingRight: controlsInset } : undefined}
         tabIndex={0}
         role="application"
         aria-label={`${props.platform === "ios" ? "iOS Simulator" : "Android Emulator"} screen`}
