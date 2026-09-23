@@ -404,7 +404,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     subtitle={
                       projectSelected
                         ? "Environment-wide setting. Select All projects to change it."
-                        : "Check installed provider CLIs for newer versions."
+                        : "Check installed provider CLIs for newer versions and fetch model catalog updates."
                     }
                     value={uniform("enableProviderUpdateChecks")}
                     disabled={disabledFor("enableProviderUpdateChecks")}
