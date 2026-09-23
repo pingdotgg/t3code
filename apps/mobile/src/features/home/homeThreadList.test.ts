@@ -2,7 +2,6 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -47,8 +46,6 @@ function makeThread(
     settledAt: input.settledAt ?? null,
   };
 }
-
-const NOW = Date.parse("2026-06-29T00:00:00.000Z");
 
 describe("home project scopes", () => {
   it("builds one v2 scope for the same repository across environments", () => {

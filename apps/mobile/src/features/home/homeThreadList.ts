@@ -1,31 +1,22 @@
-import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
-import {
-  buildProjectGroups,
-  derivePhysicalProjectKey,
-  deriveProjectGroupLabel,
-} from "@t3tools/client-runtime/state/project-grouping";
+import { buildProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import {
   getThreadSortTimestamp,
-  sortThreads,
   toSortableTimestamp,
 } from "@t3tools/client-runtime/state/thread-sort";
-import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import type {
   EnvironmentId,
   ScopedProjectRef,
   SidebarProjectGroupingMode,
   SidebarProjectSortOrder,
-  SidebarThreadSortOrder,
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
-import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 
-import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
+import { scopedProjectKey } from "../../lib/scopedEntities";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
 export type HomeProjectSortOrder = Exclude<SidebarProjectSortOrder, "manual">;
@@ -133,11 +124,3 @@ export function sortHomeProjectScopes(input: {
     ),
   );
 }
-
-/**
- * Default home view only surfaces threads active within this window, to keep the
- * screen compact while keeping recent work visible.
- */
-const RECENT_THREAD_WINDOW_MS = 5 * 24 * 60 * 60 * 1000;
-/** Fallback when a project has no threads inside the recency window. */
-const RECENT_THREAD_FALLBACK_COUNT = 3;

@@ -924,9 +924,9 @@ export function HomeScreen(props: HomeScreenProps) {
             : "flex-1 bg-screen"
         }
       >
-        {/* Same recycler the iPad sidebar and the legacy list use: cells are
-            reused across data rebuilds and `itemsAreEqual` keeps a minute tick
-            (or an unrelated shell update) from re-rendering untouched rows. */}
+        {/* Shared with the iPad sidebar: cells are reused across data
+            rebuilds and `itemsAreEqual` keeps a minute tick (or an unrelated
+            shell update) from re-rendering untouched rows. */}
         <SwipeableScrollGateProvider enabled={swipeEnabled}>
           <LegendList
             data={threadListV2Items}
