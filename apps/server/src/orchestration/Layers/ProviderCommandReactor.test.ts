@@ -177,6 +177,7 @@ describe("ProviderCommandReactor", () => {
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly serverActivation?: Effect.Effect<void>;
+    readonly serverSettings?: Parameters<typeof ServerSettingsService.layerTest>[0];
     readonly beforeReadySessionDispatch?: () => Effect.Effect<void>;
     readonly beforeTurnStartDispatch?: () => Effect.Effect<void>;
     readonly afterTurnStartDispatch?: () => Effect.Effect<void>;
@@ -490,7 +491,7 @@ describe("ProviderCommandReactor", () => {
           generateThreadTitle,
         }),
       ),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(ServerSettingsService.layerTest(input?.serverSettings)),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -2602,6 +2603,63 @@ describe("ProviderCommandReactor", () => {
         ?.messages.find((entry) => entry.id === asMessageId("user-message-branch-model"))?.text,
     ).toBe(prompt);
   });
+
+  it.each([
+    { worktreeBranchPrefix: "yekta", expected: "yekta/add-safer-backoff" },
+    { worktreeBranchPrefix: "", expected: "add-safer-backoff" },
+  ])(
+    "renames the first-turn worktree branch under the configured prefix $worktreeBranchPrefix",
+    async ({ worktreeBranchPrefix, expected }) => {
+      const harness = await createHarness({ serverSettings: { worktreeBranchPrefix } });
+      const now = "2026-01-01T00:00:00.000Z";
+      const statusRefreshed = await harness.runEffect(Deferred.make<void>());
+      const refreshStatus = harness.refreshStatus.getMockImplementation()!;
+      harness.refreshStatus.mockImplementation((cwd) =>
+        refreshStatus(cwd).pipe(Effect.tap(() => Deferred.succeed(statusRefreshed, undefined))),
+      );
+      harness.generateBranchName.mockImplementation(() =>
+        Effect.succeed({ branch: "Add safer backoff" }),
+      );
+
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-thread-branch-prefix"),
+          threadId: ThreadId.make("thread-1"),
+          branch: "t3code/1234abcd",
+          worktreePath: "/tmp/provider-project-worktree",
+        }),
+      );
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-branch-prefix"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-branch-prefix"),
+            role: "user",
+            text: "Add a safer reconnect backoff.",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
+
+      await harness.runEffect(Deferred.await(statusRefreshed));
+      await harness.drain();
+      expect(harness.renameBranch).toHaveBeenCalledWith({
+        cwd: "/tmp/provider-project-worktree",
+        oldBranch: "t3code/1234abcd",
+        newBranch: expected,
+      });
+      const readModel = await harness.readModel();
+      expect(
+        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.branch,
+      ).toBe(expected);
+    },
+  );
 
   it("recreates a missing worktree from the thread branch before starting a turn", async () => {
     const harness = await createHarness();

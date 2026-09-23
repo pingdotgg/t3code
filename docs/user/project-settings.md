@@ -62,6 +62,13 @@ itself, or **Skip** to leave them for a setup script. It resolves in the same or
 workspace default: a `"worktreeSubmodules"` value in the `t3.json` of the branch being checked out
 applies when the project and environment are both on **Inherit**.
 
+A worktree's branch is named from your first message, under the `t3code/` namespace by default.
+Set **Branch prefix** in **Settings → General** to use another namespace, such as your name or a
+team convention, or leave it empty to name the branch without one. Select the project to set a
+different prefix for it. The prefix applies to worktrees created after the change. Do not use the
+name of a git remote, such as `origin`: git treats `origin/…` as a remote branch, and T3 Code
+publishes such a branch without that part.
+
 ## Storage cleanup
 
 Open **Settings → Storage** to enable automatic cleanup on one machine or all connected

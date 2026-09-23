@@ -4,6 +4,7 @@ import {
   type ProviderInstanceId,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
+import { normalizeWorktreeBranchPrefix } from "@t3tools/shared/git";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
@@ -22,6 +23,7 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
 import { TraitsPicker } from "../chat/TraitsPicker";
+import { DraftInput } from "../ui/draft-input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
@@ -77,6 +79,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
   const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
   const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);
+  const mixedBranchPrefix = useScopedSettingsMixed(["worktreeBranchPrefix"]);
   const mixedBrowser = useScopedSettingsMixed(["enableAgentBrowserAccess"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
@@ -378,6 +381,43 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                   ))}
                 </SelectPopup>
               </Select>
+            }
+          />
+          <SettingsRow
+            serverScoped
+            settingKeys={["worktreeBranchPrefix"]}
+            mixed={mixedBranchPrefix}
+            {...searchableSetting("worktree-branch-prefix")}
+            description={
+              isProjectScope
+                ? "Namespace for the branches of new worktrees in this project. Leave empty for none."
+                : "Namespace for the branches of new worktrees, as in t3code/add-login. Leave empty for none. Projects can override it."
+            }
+            resetAction={
+              !isProjectScope &&
+              settings.worktreeBranchPrefix !== DEFAULT_SERVER_SETTINGS.worktreeBranchPrefix ? (
+                <SettingResetButton
+                  label="branch prefix"
+                  onClick={() =>
+                    updateSettings({
+                      worktreeBranchPrefix: DEFAULT_SERVER_SETTINGS.worktreeBranchPrefix,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <DraftInput
+                size="sm"
+                className="w-full sm:w-72"
+                value={mixedBranchPrefix ? "" : settings.worktreeBranchPrefix}
+                onCommit={(next) =>
+                  updateSettings({ worktreeBranchPrefix: normalizeWorktreeBranchPrefix(next) })
+                }
+                placeholder={mixedBranchPrefix ? "Mixed" : "No prefix"}
+                spellCheck={false}
+                aria-label="Worktree branch prefix"
+              />
             }
           />
         </>
