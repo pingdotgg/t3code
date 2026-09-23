@@ -1093,7 +1093,7 @@ function ThreadNavigationSidebarPane(
             <View className="flex-row items-center gap-2.5">
               <ControlPillMenu actions={listMenuActions} onPressAction={handleListMenuAction}>
                 <SidebarFilterButton
-                  accessibilityLabel="Filter and sort threads"
+                  accessibilityLabel="Filter threads"
                   icon={filterIcon}
                 />
               </ControlPillMenu>
