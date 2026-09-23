@@ -583,7 +583,11 @@ function AdaptiveWorkspaceLayoutContent(
               <View className="flex-1" style={{ width: layout.listPaneWidth }}>
                 <RenderErrorBoundary
                   renderFallback={(fallback) => (
-                    <RenderFailureView {...fallback} title="The sidebar couldn't be displayed" />
+                    <RenderFailureView
+                      {...fallback}
+                      title="The sidebar couldn't be displayed"
+                      exit={{ label: "Open settings", onPress: handleOpenSettings }}
+                    />
                   )}
                 >
                   <AndroidHomeFabLayout sidebar onStartNewTask={handleStartNewTask}>
