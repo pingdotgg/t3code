@@ -307,6 +307,9 @@ function ThemeBackgroundSync() {
       definition,
       resolvedTheme,
     );
+    // The OS window frame and theme-color meta follow the scene tint while a
+    // scene is on and the theme surface once it is off.
+    syncBrowserChromeTheme();
   }, [themeBackground, theme, resolvedTheme, themeHalves]);
 
   useEffect(() => {

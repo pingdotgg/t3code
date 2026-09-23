@@ -158,6 +158,7 @@ export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationM
  * Which scenic backdrop paints behind the interface, dimmed like tinted glass.
  * The theme ids mirror `BUILT_IN_THEME_IDS` in `@t3tools/shared/themePalettes`
  * (contracts cannot import shared); "auto" follows the active built-in theme.
+ * Off by default so upgrading never changes how the workspace looks.
  */
 export const ThemeBackgroundChoice = Schema.Literals([
   "auto",
@@ -181,7 +182,7 @@ export const ThemeBackgroundChoice = Schema.Literals([
   "terraces",
 ]);
 export type ThemeBackgroundChoice = typeof ThemeBackgroundChoice.Type;
-const DEFAULT_THEME_BACKGROUND: ThemeBackgroundChoice = "auto";
+const DEFAULT_THEME_BACKGROUND: ThemeBackgroundChoice = "none";
 
 /**
  * How transparent the interface is over the background scene, 0-100%. Higher

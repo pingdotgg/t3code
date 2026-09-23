@@ -10,6 +10,7 @@ import {
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
+  ThemeBackgroundChoice,
 } from "./settings.ts";
 
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
@@ -555,10 +556,10 @@ describe("ClientSettings environment identification", () => {
 });
 
 describe("ClientSettings theme background", () => {
-  it("defaults to the theme-matched scene and accepts every choice", () => {
-    expect(decodeClientSettings({}).themeBackground).toBe("auto");
+  it("defaults to off and accepts every choice", () => {
+    expect(decodeClientSettings({}).themeBackground).toBe("none");
 
-    for (const choice of ["auto", "none", "t3-chat", "grove", "ocean", "ember", "iris"] as const) {
+    for (const choice of ThemeBackgroundChoice.literals) {
       expect(decodeClientSettingsPatch({ themeBackground: choice }).themeBackground).toBe(choice);
     }
   });

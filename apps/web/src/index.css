@@ -2235,11 +2235,6 @@ code {
 html[data-app-backdrop="on"][data-app-backdrop="on"] {
   --backdrop-surface-opacity: calc(100% - var(--backdrop-transparency, 20%));
   --backdrop-dim: 20%;
-  --background: color-mix(
-    in srgb,
-    var(--app-backdrop-tint) var(--backdrop-surface-opacity),
-    transparent
-  );
   --app-chrome-background: var(--background);
   --toolbar-background: color-mix(
     in srgb,
@@ -2255,10 +2250,39 @@ html[data-app-backdrop="on"][data-app-backdrop="on"] {
   }
 }
 
+/* Form controls keep a solid fill: a see-through switch thumb or input on
+   top of the glass would lose its shape. */
+html[data-app-backdrop="on"][data-app-backdrop="on"]
+  :is(
+    [data-slot="switch-thumb"],
+    [data-slot="checkbox"],
+    [data-slot="radio"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="select-trigger"],
+    [data-slot="number-field-group"],
+    [data-slot="input-group"],
+    [data-slot="toggle"]
+  ) {
+  --background: var(--app-backdrop-tint);
+}
+
 /* The workspace nests several containers that all paint bg-background; with
    translucent fills they would stack into near-opaque layers. Only the
    outermost one keeps the glass fill. */
-html[data-app-backdrop="on"][data-app-backdrop="on"] .bg-background .bg-background {
+html[data-app-backdrop="on"][data-app-backdrop="on"]
+  .bg-background
+  .bg-background:not(
+    [data-slot="switch-thumb"],
+    [data-slot="checkbox"],
+    [data-slot="radio"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="select-trigger"],
+    [data-slot="number-field-group"],
+    [data-slot="input-group"],
+    [data-slot="toggle"]
+  ) {
   background-color: transparent;
 }
 
