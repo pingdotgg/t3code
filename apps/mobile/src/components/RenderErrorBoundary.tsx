@@ -1,5 +1,5 @@
 import { Component, useEffect, type ReactNode } from "react";
-import { AccessibilityInfo, View } from "react-native";
+import { AccessibilityInfo, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "./AppText";
 import { MaterialButton } from "./MaterialButton";
@@ -94,9 +94,12 @@ export function RenderFailureView(
   }, [title]);
 
   return (
-    <View
-      className="flex-1 items-center justify-center gap-5 bg-screen px-6 py-8"
-      style={{ paddingBottom: props.bottomInset }}
+    <ScrollView
+      className="flex-1 bg-screen"
+      contentContainerClassName="flex-grow items-center justify-center gap-5 px-6 py-8"
+      contentContainerStyle={
+        props.bottomInset ? { paddingBottom: 32 + props.bottomInset } : undefined
+      }
     >
       <Text accessibilityRole="header" className="text-center text-xl font-t3-bold">
         {title}
@@ -123,6 +126,6 @@ export function RenderFailureView(
           />
         ) : null}
       </View>
-    </View>
+    </ScrollView>
   );
 }
