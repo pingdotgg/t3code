@@ -1,3 +1,5 @@
+import type { ServerSettings } from "@t3tools/contracts";
+
 const MATCH_THRESHOLD = 0.18;
 
 const matchKey = (value: string) =>
@@ -138,4 +140,17 @@ export function normalizeSpeechCustomWords(words: readonly string[]): string[] {
   return [...new Set(normalized)]
     .filter((word) => word.length > 0 && word.length <= 50)
     .slice(0, 100);
+}
+
+export function transcriptionCustomWords(
+  settings: Pick<
+    ServerSettings,
+    "speechCustomWords" | "speechCorrectionWord" | "speechPostProcessingEnabled"
+  >,
+): string[] {
+  return normalizeSpeechCustomWords(
+    settings.speechPostProcessingEnabled
+      ? [settings.speechCorrectionWord, ...settings.speechCustomWords]
+      : settings.speechCustomWords,
+  );
 }

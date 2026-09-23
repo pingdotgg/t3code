@@ -100,6 +100,56 @@ const customWordsLayer = SpeechService.layer.pipe(
   Layer.provide(NodeServices.layer),
 );
 
+const correctionWordLayer = SpeechService.layer.pipe(
+  Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-correction-word-" })),
+  Layer.provide(
+    ServerSettings.layerTest({
+      speechModelId: "test-model",
+      speechCustomWords: ["T3 Code"],
+      speechCorrectionWord: "err",
+    }),
+  ),
+  Layer.provide(NodeServices.layer),
+);
+
+it.effect("recognizes the correction word without showing it in the dictionary", () =>
+  Effect.gen(function* () {
+    native.transcribe.mockResolvedValueOnce({ text: "I want orange, er, yellow." });
+    const speech = yield* SpeechService.SpeechService;
+    expect(yield* speech.transcribe(pcm())).toBe("I want orange, err, yellow.");
+    expect(yield* speech.status).toMatchObject({ customWords: ["T3 Code"] });
+  }).pipe(Effect.provide(correctionWordLayer)),
+);
+
+it.effect("includes the correction word in the model's initial prompt", () =>
+  Effect.gen(function* () {
+    native.supportsInitialPrompt = true;
+    const speech = yield* SpeechService.SpeechService;
+    yield* speech.transcribe(pcm());
+    expect(native.transcribe.mock.calls[0]?.[1]).toMatchObject({
+      family: { kind: "whisper", initialPrompt: "err, T3 Code" },
+    });
+  }).pipe(Effect.provide(correctionWordLayer)),
+);
+
+it.effect("recognizes the correction word in stream previews and final text", () =>
+  Effect.gen(function* () {
+    native.feed.mockResolvedValueOnce({
+      revision: 1,
+      text: { committed: "orange, er,", tentative: "yellow" },
+    });
+    native.finish.mockResolvedValueOnce("orange, er, yellow");
+    const speech = yield* SpeechService.SpeechService;
+    yield* Effect.gen(function* () {
+      const stream = yield* speech.startStream;
+      expect(yield* stream.feed(pcm())).toMatchObject({
+        text: { committed: "orange, err,", tentative: "yellow" },
+      });
+      expect(yield* stream.finish).toBe("orange, err, yellow");
+    }).pipe(Effect.scoped);
+  }).pipe(Effect.provide(correctionWordLayer)),
+);
+
 it.effect("corrects custom words for models without prompt support", () =>
   Effect.gen(function* () {
     native.transcribe.mockResolvedValueOnce({ text: "open t 3 code" });

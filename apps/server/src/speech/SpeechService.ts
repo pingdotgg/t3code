@@ -19,7 +19,11 @@ import {
   removeSpeechModel,
   SPEECH_MODELS,
 } from "./model.ts";
-import { applySpeechCustomWords, normalizeSpeechCustomWords } from "./customWords.ts";
+import {
+  applySpeechCustomWords,
+  normalizeSpeechCustomWords,
+  transcriptionCustomWords,
+} from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
 
 const SAMPLE_RATE = 16_000;
@@ -381,7 +385,7 @@ export const make = Effect.gen(function* () {
       let finished = false;
       let loaded: LoadedModel | undefined;
       const settings = yield* readSettings("custom words loading");
-      const customWords = normalizeSpeechCustomWords(settings.speechCustomWords);
+      const customWords = transcriptionCustomWords(settings);
       const removeFillerWords = settings.speechRemoveFillerWords;
       const definition =
         getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
@@ -559,7 +563,7 @@ export const make = Effect.gen(function* () {
               const prepareDurationMs = performance.now() - prepareStartedAt;
               const inferenceStartedAt = performance.now();
               let inferenceModel = loaded;
-              const customWords = normalizeSpeechCustomWords(settings.speechCustomWords);
+              const customWords = transcriptionCustomWords(settings);
               const removeFillerWords = settings.speechRemoveFillerWords;
               const fillerWordLanguage =
                 definition.languages.length === 1 ? definition.languages[0] : undefined;
