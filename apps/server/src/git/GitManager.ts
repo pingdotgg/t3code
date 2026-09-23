@@ -144,6 +144,12 @@ const STATUS_RESULT_CACHE_CAPACITY = 2_048;
 // exponentially via prLookupFailureTtl, so throttling pressure still drops
 // under 429s instead of amplifying it.
 const PR_LOOKUP_CACHE_TTL = Duration.seconds(60);
+// Answers without an open PR ("no PR yet", merged, closed) only change when
+// someone opens a PR, and the paths that do that in-app (turn end, push,
+// create PR, user refresh) bypass this cache. Re-asking every minute for each
+// idle branch was the bulk of background GitHub quota use, so these wait out
+// a longer TTL and a PR opened outside the app shows up within minutes.
+const PR_LOOKUP_NO_OPEN_PR_CACHE_TTL = Duration.minutes(5);
 const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
@@ -1105,7 +1111,9 @@ export const make = Effect.gen(function* () {
       timeToLive: (exit, key) => {
         if (Exit.isSuccess(exit)) {
           prLookupFailureStreakByKey.delete(key);
-          return PR_LOOKUP_CACHE_TTL;
+          return exit.value.latest?.state === "open"
+            ? PR_LOOKUP_CACHE_TTL
+            : PR_LOOKUP_NO_OPEN_PR_CACHE_TTL;
         }
         return nextPrLookupFailureTtl(key);
       },

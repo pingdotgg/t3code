@@ -15,6 +15,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import { TestClock } from "effect/testing";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
 import type {
@@ -1487,6 +1488,53 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         repositoryKey: "github.com/pingdotgg/codething-mvp",
       });
       expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
+    }),
+  );
+
+  it.effect("branch PR lookup rechecks open PRs every minute and settled answers less often", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      for (const branch of ["feature/open-pr", "feature/merged-pr", "feature/no-pr"]) {
+        yield* runGit(repoDir, ["checkout", "-b", branch, "main"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", branch]);
+      }
+      const pullRequest = (number: number, headRefName: string, state: string) => ({
+        number,
+        title: headRefName,
+        url: `https://github.com/pingdotgg/codething-mvp/pull/${number}`,
+        baseRefName: "main",
+        headRefName,
+        state,
+        updatedAt: "2026-04-07T15:00:00Z",
+      });
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListByHeadSelector: {
+            "feature/open-pr": encodeCliJson([pullRequest(301, "feature/open-pr", "OPEN")]),
+            "feature/merged-pr": encodeCliJson([pullRequest(302, "feature/merged-pr", "MERGED")]),
+          },
+        },
+      });
+      const lookupAll = Effect.forEach(
+        ["feature/open-pr", "feature/merged-pr", "feature/no-pr"],
+        (branch) => manager.branchPullRequest({ cwd: repoDir, branch }),
+      );
+      const prListCalls = () => ghCalls.filter((call) => call.startsWith("pr list "));
+
+      yield* lookupAll;
+      expect(prListCalls()).toHaveLength(3);
+
+      yield* TestClock.adjust("61 seconds");
+      yield* lookupAll;
+      expect(prListCalls()).toHaveLength(4);
+      expect(prListCalls().at(-1)).toContain("--head feature/open-pr");
+
+      yield* TestClock.adjust("5 minutes");
+      yield* lookupAll;
+      expect(prListCalls()).toHaveLength(7);
     }),
   );
 

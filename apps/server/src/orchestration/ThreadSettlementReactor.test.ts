@@ -547,6 +547,16 @@ describe("ThreadSettlementReactor", () => {
             new Set((yield* Ref.get(fixture.commands)).map((command) => command.threadId)),
             new Set([ThreadId.make("retained-terminal"), ThreadId.make("foreign-branch-pr")]),
           );
+          // Resumed threads would not settle from their merged PR, so their
+          // shared "main" group must not pay for an uncached branch lookup.
+          assert.deepStrictEqual(
+            new Set((yield* Ref.get(fixture.branchCalls)).map((call) => call.branch)),
+            new Set(["main", "reused", "foreign"]),
+          );
+          assert.strictEqual(
+            (yield* Ref.get(fixture.branchCalls)).filter((call) => call.branch === "main").length,
+            1,
+          );
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
