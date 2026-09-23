@@ -97,17 +97,24 @@ export const makeCursorCommandCatalog = Effect.fn("makeCursorCommandCatalog")(fu
   });
   /**
    * Replace the skills of held workspaces in one write, so a rebuild emits at
-   * most one change. Workspaces whose skills are unchanged keep their entry.
+   * most one change. `scannedAt` is when the scan started: workspaces written
+   * since then, or whose skills are unchanged, keep their entry.
    */
   const updateWorkspaceSkills = Effect.fn("CursorCommandCatalog.updateWorkspaceSkills")(function* (
     skillsByCwd: ReadonlyMap<string, ServerProvider["skills"]>,
+    scannedAt: string,
   ) {
     const changedSkills = (entry: {
       readonly cwd: string;
+      readonly checkedAt: string;
       readonly skills: ServerProvider["skills"];
     }) => {
       const skills = skillsByCwd.get(entry.cwd);
-      return skills !== undefined && !Equal.equals(skills, entry.skills) ? skills : undefined;
+      return skills !== undefined &&
+        Date.parse(entry.checkedAt) < Date.parse(scannedAt) &&
+        !Equal.equals(skills, entry.skills)
+        ? skills
+        : undefined;
     };
     if (!(yield* SubscriptionRef.get(workspaces)).some((entry) => changedSkills(entry))) return;
     const checkedAt = DateTime.formatIso(yield* DateTime.now);

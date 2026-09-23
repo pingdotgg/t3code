@@ -3,10 +3,12 @@ import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import type * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { describe, expect, it } from "vite-plus/test";
 import type * as EffectAcpSchema from "effect-acp/schema";
@@ -576,61 +578,75 @@ describe("Cursor command catalog", () => {
       }),
   );
 
-  effectIt.effect("rebuilds changed workspace skills in one write and skips unchanged ones", () =>
-    Effect.gen(function* () {
-      const base = {
-        ...buildCursorProviderSnapshot({
-          checkedAt: "2026-01-01T00:00:00.000Z",
-          cursorSettings: baseCursorSettings,
-          parsed: { version: null, status: "ready", auth: { status: "authenticated" } },
-        }),
-        instanceId: ProviderInstanceId.make("cursor-catalog"),
-        driver: ProviderDriverKind.make("cursor"),
-      };
-      const catalog = yield* makeCursorCommandCatalog({
-        getSnapshot: Effect.succeed(base),
-        refresh: Effect.succeed(base),
-        streamChanges: Stream.empty,
-        resolveMaintenance: () => Effect.die("Not used"),
-        applyUsageLimits: () => Effect.void,
-      });
-      const oneSkills = [
-        { name: "review", path: "/one/.cursor/skills/review/SKILL.md", enabled: true },
-      ];
-      const twoSkills = [
-        { name: "deploy", path: "/two/.cursor/skills/deploy/SKILL.md", enabled: true },
-      ];
-      const installedSkill = {
-        name: "installed",
-        path: "/home/.cursor/skills/installed/SKILL.md",
-        enabled: true,
-      };
-      yield* catalog.snapshotForCwd("/one", oneSkills);
-      yield* catalog.snapshotForCwd("/two", twoSkills);
-      const before = (yield* catalog.snapshot.getSnapshot).workspaceSnapshots;
+  effectIt.effect(
+    "rebuilds changed workspace skills in one write and skips unchanged or newer ones",
+    () =>
+      Effect.gen(function* () {
+        const base = {
+          ...buildCursorProviderSnapshot({
+            checkedAt: "2026-01-01T00:00:00.000Z",
+            cursorSettings: baseCursorSettings,
+            parsed: { version: null, status: "ready", auth: { status: "authenticated" } },
+          }),
+          instanceId: ProviderInstanceId.make("cursor-catalog"),
+          driver: ProviderDriverKind.make("cursor"),
+        };
+        const catalog = yield* makeCursorCommandCatalog({
+          getSnapshot: Effect.succeed(base),
+          refresh: Effect.succeed(base),
+          streamChanges: Stream.empty,
+          resolveMaintenance: () => Effect.die("Not used"),
+          applyUsageLimits: () => Effect.void,
+        });
+        const oneSkills = [
+          { name: "review", path: "/one/.cursor/skills/review/SKILL.md", enabled: true },
+        ];
+        const twoSkills = [
+          { name: "deploy", path: "/two/.cursor/skills/deploy/SKILL.md", enabled: true },
+        ];
+        const installedSkill = {
+          name: "installed",
+          path: "/home/.cursor/skills/installed/SKILL.md",
+          enabled: true,
+        };
+        const scanStartedBeforeWrites = DateTime.formatIso(yield* DateTime.now);
+        yield* TestClock.adjust("1 second");
+        yield* catalog.snapshotForCwd("/one", oneSkills);
+        yield* catalog.snapshotForCwd("/two", twoSkills);
+        yield* TestClock.adjust("1 second");
+        const scanStartedAfterWrites = DateTime.formatIso(yield* DateTime.now);
+        const before = (yield* catalog.snapshot.getSnapshot).workspaceSnapshots;
 
-      yield* catalog.updateWorkspaceSkills(
-        new Map([
-          ["/one", oneSkills],
-          ["/two", twoSkills],
-        ]),
-      );
-      expect((yield* catalog.snapshot.getSnapshot).workspaceSnapshots).toBe(before);
+        yield* catalog.updateWorkspaceSkills(
+          new Map([
+            ["/one", oneSkills],
+            ["/two", twoSkills],
+          ]),
+          scanStartedAfterWrites,
+        );
+        expect((yield* catalog.snapshot.getSnapshot).workspaceSnapshots).toBe(before);
 
-      yield* catalog.updateWorkspaceSkills(
-        new Map([
+        yield* catalog.updateWorkspaceSkills(
+          new Map([["/one", [installedSkill]]]),
+          scanStartedBeforeWrites,
+        );
+        expect((yield* catalog.snapshot.getSnapshot).workspaceSnapshots).toBe(before);
+
+        yield* catalog.updateWorkspaceSkills(
+          new Map([
+            ["/one", [...oneSkills, installedSkill]],
+            ["/two", twoSkills],
+            ["/evicted", [installedSkill]],
+          ]),
+          scanStartedAfterWrites,
+        );
+        const after = (yield* catalog.snapshot.getSnapshot).workspaceSnapshots;
+        expect(after?.map((entry) => [entry.cwd, entry.skills])).toEqual([
           ["/one", [...oneSkills, installedSkill]],
           ["/two", twoSkills],
-          ["/evicted", [installedSkill]],
-        ]),
-      );
-      const after = (yield* catalog.snapshot.getSnapshot).workspaceSnapshots;
-      expect(after?.map((entry) => [entry.cwd, entry.skills])).toEqual([
-        ["/one", [...oneSkills, installedSkill]],
-        ["/two", twoSkills],
-      ]);
-      expect(after?.[1]).toBe(before?.[1]);
-    }),
+        ]);
+        expect(after?.[1]).toBe(before?.[1]);
+      }),
   );
 });
 
