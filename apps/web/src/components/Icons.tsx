@@ -273,6 +273,29 @@ export const GrokIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+export const HermesIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 24 24"
+    fill="none"
+    className={cn("fill-[#0F0F0F] dark:fill-[#F5F5F5]", className)}
+  >
+    <circle cx="12" cy="12" r="10.5" stroke="currentColor" strokeWidth="1.5" />
+    <path
+      d="M6 9.5C8.5 7.5 10 12 12 12C14 12 15.5 7.5 18 9.5"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+    />
+    <path
+      d="M6 14.5C8.5 16.5 10 12 12 12C14 12 15.5 16.5 18 14.5"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+    />
+  </svg>
+);
+
 export const TraeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 24 24" fill="currentColor">
     {/* Back rectangle: left strip + bottom strip drawn separately — empty bottom-left corner is the gap between them */}

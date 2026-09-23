@@ -20,6 +20,20 @@ describe("ProviderSettingsForm helpers", () => {
     ]);
   });
 
+  it("derives visible provider config fields for Hermes", () => {
+    const hermes = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("hermes")];
+
+    expect(hermes).toBeDefined();
+    expect(deriveProviderSettingsFields(hermes!).map((field) => field.key)).toEqual([
+      "binaryPath",
+      "homePath",
+    ]);
+    const homePath = deriveProviderSettingsFields(hermes!).find(
+      (field) => field.key === "homePath",
+    );
+    expect(homePath).toMatchObject({ label: "Hermes home (HERMES_HOME)" });
+  });
+
   it("sources labels and descriptions from schema annotations", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
     expect(opencode).toBeDefined();

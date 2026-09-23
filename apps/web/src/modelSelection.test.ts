@@ -184,6 +184,29 @@ describe("instance-scoped model selection", () => {
     );
   });
 
+  it("includes Hermes custom models from the selected provider instance", () => {
+    const providers = [
+      provider({ provider: ProviderDriverKind.make("hermes"), instanceId: "hermes" }),
+    ];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        ...settingsWithProviderInstances().providerInstances,
+        [ProviderInstanceId.make("hermes")]: {
+          driver: ProviderDriverKind.make("hermes"),
+          config: { customModels: ["anthropic:claude-opus-4-8"] },
+        },
+      },
+    };
+    const hermes = deriveProviderInstanceEntries(providers).find(
+      (entry) => entry.instanceId === "hermes",
+    )!;
+
+    expect(getAppModelOptionsForInstance(settings, hermes).map((option) => option.slug)).toContain(
+      "anthropic:claude-opus-4-8",
+    );
+  });
+
   it("does not inject an unknown selected slug into the stock instance list", () => {
     const providers = [
       provider({
