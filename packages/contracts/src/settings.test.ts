@@ -538,6 +538,10 @@ describe("ServerSettings speech model", () => {
     expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingModelSelection).not.toBe(
       DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
     );
+    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingModelSelection).toMatchObject({
+      model: "gpt-6-luna",
+      options: [{ id: "reasoningEffort", value: "low" }],
+    });
     expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingPrompts).toHaveLength(1);
     expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingSelectedPromptId).toBe(
       "improve-transcription",
