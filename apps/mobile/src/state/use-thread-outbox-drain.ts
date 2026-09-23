@@ -17,6 +17,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
 
+import { createDebugLogger } from "../lib/debugLog";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
 import { serializeComposerMessageForServer, uploadedComposerContext } from "../lib/composerContext";
@@ -55,6 +56,7 @@ import {
   type QueuedThreadCreation,
   type QueuedThreadMessage,
   type ThreadOutboxCommandStage,
+  type ThreadOutboxFailureAction,
 } from "./thread-outbox-model";
 import { environmentThreadShells, threadEnvironment } from "./threads";
 import {
@@ -81,6 +83,92 @@ import {
   setPendingConnectionError,
   useRemoteConnectionStatus,
 } from "./use-remote-environment-registry";
+
+// Ordinary offline behavior (a socket dropping mid-request, a retryable
+// attachment upload failure) must not spam `console.warn` on every backoff
+// retry; it goes to the filterable `[t3-thread-outbox]` debug log instead.
+// Failures the server decided stay on `console.warn`.
+const threadOutboxDebug = createDebugLogger("thread-outbox");
+
+/**
+ * On the queued-request path (settings sync, startTurn) the RPC client
+ * reports ordinary transport drops as the raw socket/worker reason tags, and
+ * reserves `RpcClientDefect` for client-side protocol violations and decoding
+ * failures — unlike the shared config-subscription stream, which
+ * deliberately re-wraps transport causes under that tag. Defects still retry,
+ * but they are not ordinary offline behavior and must not hide behind the
+ * offline debug log.
+ */
+function isRpcClientDecodeDefect(error: unknown): boolean {
+  if (
+    typeof error !== "object" ||
+    error === null ||
+    !("_tag" in error) ||
+    error._tag !== "RpcClientError"
+  ) {
+    return false;
+  }
+  const reason: unknown = (error as { readonly reason?: unknown }).reason;
+  return (
+    typeof reason === "object" &&
+    reason !== null &&
+    "_tag" in reason &&
+    reason._tag === "RpcClientDefect"
+  );
+}
+
+function isOrdinaryThreadOutboxTransportFailure(error: unknown): boolean {
+  return shouldRetryThreadOutboxDelivery(error) && !isRpcClientDecodeDefect(error);
+}
+
+/**
+ * Logs one queued-message delivery failure and returns the retry-or-restore
+ * decision for the caller. Ordinary transport retries — what an offline
+ * device or a flapping socket produces on every backoff attempt — go to the
+ * debug log. Server-decided failures warn. Settings-sync failures always
+ * resolve to a retry even when the server rejected the command, so the
+ * error, not the resolved action, must decide the log level there; routing
+ * every retry to debug could hide a permanently rejected update forever.
+ */
+function logThreadOutboxDeliveryFailure(input: {
+  readonly stage: ThreadOutboxCommandStage;
+  readonly error: unknown;
+  readonly interrupted: boolean;
+  readonly context: Record<string, unknown>;
+}): ThreadOutboxFailureAction {
+  const action = resolveThreadOutboxFailureAction({
+    stage: input.stage,
+    error: input.error,
+    interrupted: input.interrupted,
+  });
+  const details = { ...input.context, stage: input.stage, action };
+  const ordinaryTransportRetry =
+    action === "retry" &&
+    !isRpcClientDecodeDefect(input.error) &&
+    (input.interrupted ||
+      input.stage !== "settings-sync" ||
+      shouldRetryThreadOutboxDelivery(input.error));
+  if (ordinaryTransportRetry) {
+    threadOutboxDebug.log("queued message delivery failed", details);
+  } else {
+    console.warn("[thread-outbox] queued message delivery failed", details);
+  }
+  return action;
+}
+
+/** Attachment uploads retry like delivery: transport failures are ordinary offline noise. */
+function logThreadOutboxUploadFailure(queuedMessage: QueuedThreadMessage, error: unknown): void {
+  const context = {
+    environmentId: queuedMessage.environmentId,
+    threadId: queuedMessage.threadId,
+    messageId: queuedMessage.messageId,
+  };
+  if (isOrdinaryThreadOutboxTransportFailure(error)) {
+    threadOutboxDebug.log("attachment upload failed; retrying", { ...context, error });
+  } else {
+    console.warn("[thread-outbox] failed to upload attachments", { ...context, error });
+  }
+}
 
 function beginDispatchingQueuedMessage(queuedMessageId: MessageId): void {
   appAtomRegistry.set(dispatchingQueuedMessageIdAtom, queuedMessageId);
@@ -215,14 +303,13 @@ export async function completeQueuedMessageDelivery(
     );
     if (!removed) {
       forgetAcknowledgedThreadMessage(queuedMessage);
-      console.warn(
-        "[thread-outbox] delivered message was edited before cleanup; keeping the newer message",
-        {
-          environmentId: queuedMessage.environmentId,
-          threadId: queuedMessage.threadId,
-          messageId: queuedMessage.messageId,
-        },
-      );
+      // Losing the cleanup race to a user edit is an expected outcome the
+      // caller handles by keeping the newer message; it is not a warning.
+      threadOutboxDebug.log("delivered message was edited before cleanup", {
+        environmentId: queuedMessage.environmentId,
+        threadId: queuedMessage.threadId,
+        messageId: queuedMessage.messageId,
+      });
       return "edited";
     }
     return "removed";
@@ -667,18 +754,16 @@ export function useThreadOutboxDrain(): void {
         return null;
       }
       const error = Cause.squash(commandResult.cause);
-      const action = resolveThreadOutboxFailureAction({
+      const action = logThreadOutboxDeliveryFailure({
         stage,
         error,
         interrupted: Cause.hasInterruptsOnly(commandResult.cause),
-      });
-      console.warn("[thread-outbox] queued message delivery failed", {
-        environmentId: queuedMessage.environmentId,
-        threadId: queuedMessage.threadId,
-        messageId: queuedMessage.messageId,
-        stage,
-        cause: commandResult.cause,
-        action,
+        context: {
+          environmentId: queuedMessage.environmentId,
+          threadId: queuedMessage.threadId,
+          messageId: queuedMessage.messageId,
+          cause: commandResult.cause,
+        },
       });
       return {
         action,
@@ -772,7 +857,7 @@ export function useThreadOutboxDrain(): void {
           return true;
         }
       } catch (error) {
-        console.warn("[thread-outbox] failed to upload attachments", error);
+        logThreadOutboxUploadFailure(queuedMessage, error);
         if (!shouldRetryThreadOutboxDelivery(error)) {
           return restoreQueuedMessage(
             queuedMessage,
@@ -900,7 +985,7 @@ export function useThreadOutboxDrain(): void {
           return true;
         }
       } catch (error) {
-        console.warn("[thread-outbox] failed to upload attachments", error);
+        logThreadOutboxUploadFailure(queuedMessage, error);
         if (!shouldRetryThreadOutboxDelivery(error)) {
           return restoreQueuedMessage(
             queuedMessage,
