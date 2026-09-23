@@ -78,7 +78,19 @@ jobs:
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: eas env:pull preview --non-interactive
+        run: |
+          eas env:pull preview --non-interactive
+          # EAS Update disables dotenv loading. Keep the downloaded native config
+          # in its process environment so Android build and OTA fingerprints match.
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+          import { parseEnv } from "node:util";
+          const env = parseEnv(readFileSync(".env.local", "utf8"));
+          const googleServicesFile = env.T3CODE_ANDROID_GOOGLE_SERVICES_FILE;
+          if (googleServicesFile) {
+            appendFileSync(process.env.GITHUB_ENV, `T3CODE_ANDROID_GOOGLE_SERVICES_FILE=${googleServicesFile}\n`);
+          }
+          NODE
 
       - name: Deploy with fingerprint check
         if: steps.expo-token.outputs.present == 'true'

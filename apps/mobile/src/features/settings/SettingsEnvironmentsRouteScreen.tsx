@@ -47,7 +47,6 @@ export function SettingsEnvironmentsRouteScreen() {
   const connectedCloudEnvironments = SHOWCASE_ENABLED
     ? SHOWCASE_CONNECTED_CLOUD_ENVIRONMENTS
     : environmentSections.connectedCloudEnvironments;
-  const [expandedId, setExpandedId] = useState<EnvironmentId | null>(null);
   const headerIconColor = useUniwindTheme()["--color-icon"];
   const relaySession = useAtomValue(managedRelaySessionAtom);
   const refreshRelayEnvironments = useAtomCommand(
@@ -68,9 +67,15 @@ export function SettingsEnvironmentsRouteScreen() {
     }
   }
 
-  const handleToggle = useCallback((environmentId: EnvironmentId) => {
-    setExpandedId((prev) => (prev === environmentId ? null : environmentId));
-  }, []);
+  const openEnvironment = useCallback(
+    (environmentId: EnvironmentId) => {
+      navigation.navigate("SettingsSheet", {
+        screen: "SettingsContent",
+        params: { screen: "SettingsEnvironmentDetail", params: { environmentId } },
+      });
+    },
+    [navigation],
+  );
   const handleUpdateEnvironment = useCallback(
     (
       environmentId: EnvironmentId,
@@ -159,8 +164,9 @@ export function SettingsEnvironmentsRouteScreen() {
       >
         <LocalEnvironmentList
           environments={localEnvironments}
-          expandedId={expandedId}
-          onToggle={handleToggle}
+          expandedId={null}
+          onToggle={openEnvironment}
+          opensDetails
           onReconnect={onReconnectEnvironment}
           onRemove={onRemoveEnvironmentPress}
           onSetEnabled={onSetEnvironmentEnabled}
@@ -172,6 +178,7 @@ export function SettingsEnvironmentsRouteScreen() {
             user is signed out — the component gates discovery itself. */}
         <CloudEnvironmentRows
           connectedCloudEnvironments={connectedCloudEnvironments}
+          onOpenEnvironment={openEnvironment}
           onSetEnvironmentEnabled={onSetEnvironmentEnabled}
           onRemoveEnvironment={onRemoveEnvironmentPress}
           {...(SHOWCASE_ENABLED

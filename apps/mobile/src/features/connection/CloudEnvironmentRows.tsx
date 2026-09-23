@@ -35,6 +35,7 @@ import { type RelayEnvironmentView, useConnectionController } from "./useConnect
 
 interface CloudEnvironmentRowsProps {
   readonly connectedCloudEnvironments: ReadonlyArray<ConnectedEnvironmentSummary>;
+  readonly onOpenEnvironment?: (environmentId: EnvironmentId) => void;
   readonly onSetEnvironmentEnabled: (environmentId: EnvironmentId, enabled: boolean) => void;
   /** Long-press on a saved row. The callback owns the confirm. */
   readonly onRemoveEnvironment: (environmentId: EnvironmentId) => void;
@@ -124,26 +125,30 @@ function CloudEnvironmentRowsContent(
       ) : null}
 
       {hasCloudRows ? (
-        <View collapsable={false} className="overflow-hidden rounded-[24px] bg-card">
-          {props.connectedCloudEnvironments.map((environment, index) => (
+        <View collapsable={false} className="overflow-hidden rounded-[24px] bg-grouped-card">
+          {props.connectedCloudEnvironments.map((environment) => (
             <ConnectedCloudEnvironmentRow
               key={environment.environmentId}
               environment={environment}
               descriptor={discoveredDescriptors.get(environment.environmentId)}
-              borderTop={index !== 0}
               onSetEnabled={(enabled) =>
                 props.onSetEnvironmentEnabled(environment.environmentId, enabled)
               }
               onRemove={() => props.onRemoveEnvironment(environment.environmentId)}
+              onOpen={
+                props.onOpenEnvironment
+                  ? () => props.onOpenEnvironment?.(environment.environmentId)
+                  : undefined
+              }
               errorExpanded={expandedErrorId === environment.environmentId}
               onToggleError={() => handleToggleCloudError(environment.environmentId)}
             />
           ))}
-          {availableCloudEnvironments.map((environment, index) => (
+          {availableCloudEnvironments.map((environment) => (
             <CloudEnvironmentRow
               key={environment.environment.environmentId}
               environment={environment}
-              borderTop={props.connectedCloudEnvironments.length > 0 || index !== 0}
+              showChevron={props.onOpenEnvironment !== undefined}
               onConnect={() => handleConnectCloudEnvironment(environment)}
               errorExpanded={expandedErrorId === environment.environment.environmentId}
               onToggleError={() => handleToggleCloudError(environment.environment.environmentId)}
@@ -151,14 +156,14 @@ function CloudEnvironmentRowsContent(
           ))}
         </View>
       ) : controller.relayDiscovery.isRefreshing ? (
-        <View collapsable={false} className="items-center gap-3 rounded-[24px] bg-card p-6">
+        <View collapsable={false} className="items-center gap-3 rounded-[24px] bg-grouped-card p-6">
           <ActivityIndicator colorClassName={"accent-icon"} />
           <Text className="text-center text-sm leading-normal text-foreground-muted">
             Loading linked cloud environments.
           </Text>
         </View>
       ) : controller.relayDiscovery.error ? null : (
-        <View collapsable={false} className="rounded-[24px] bg-card p-5">
+        <View collapsable={false} className="rounded-[24px] bg-grouped-card p-5">
           <Text className="text-sm leading-normal text-foreground-muted">
             No additional linked cloud environments.
           </Text>
@@ -170,7 +175,7 @@ function CloudEnvironmentRowsContent(
       {discoveryAvailable &&
       controller.relayDiscovery.error &&
       !controller.relayDiscovery.isRefreshing ? (
-        <View collapsable={false} className="gap-3 rounded-[24px] bg-card p-5">
+        <View collapsable={false} className="gap-3 rounded-[24px] bg-grouped-card p-5">
           <Text className="text-base font-t3-bold text-foreground">
             Could not load T3 Connect environments
           </Text>
@@ -202,10 +207,10 @@ function ConnectedCloudEnvironmentRow(props: {
   readonly environment: ConnectedEnvironmentSummary;
   /** Discovery's view of the server, for the glyph before the first connection. */
   readonly descriptor: ExecutionEnvironmentDescriptor | undefined;
-  readonly borderTop: boolean;
   readonly errorExpanded: boolean;
   readonly onSetEnabled: (enabled: boolean) => void;
   readonly onRemove: () => void;
+  readonly onOpen?: (() => void) | undefined;
   readonly onToggleError: () => void;
 }) {
   const serverConfig = useAtomValue(
@@ -222,10 +227,13 @@ function ConnectedCloudEnvironmentRow(props: {
   return (
     <Pressable
       accessibilityHint="Long press to remove from this device"
+      accessibilityRole={props.onOpen ? "button" : undefined}
+      accessibilityLabel={props.onOpen ? `Manage ${props.environment.environmentLabel}` : undefined}
+      onPress={props.onOpen}
       onLongPress={props.onRemove}
     >
       <CloudEnvironmentRowShell
-        borderTop={props.borderTop}
+        opensDetails={props.onOpen !== undefined}
         connectionError={enabled || unsupported ? props.environment.connectionError : null}
         connectionErrorTraceId={enabled ? props.environment.connectionErrorTraceId : null}
         connectionState={enabled || unsupported ? props.environment.connectionState : "available"}
@@ -246,7 +254,7 @@ function ConnectedCloudEnvironmentRow(props: {
 
 function CloudEnvironmentRow(props: {
   readonly environment: RelayEnvironmentView;
-  readonly borderTop: boolean;
+  readonly showChevron: boolean;
   readonly errorExpanded: boolean;
   readonly onConnect: () => void;
   readonly onToggleError: () => void;
@@ -260,7 +268,7 @@ function CloudEnvironmentRow(props: {
 
   return (
     <CloudEnvironmentRowShell
-      borderTop={props.borderTop}
+      showChevron={props.showChevron}
       connectionError={presentation.connectionError}
       connectionErrorTraceId={presentation.connectionErrorTraceId}
       connectionState={presentation.connectionState}
@@ -285,7 +293,8 @@ function CloudEnvironmentRow(props: {
 }
 
 function CloudEnvironmentRowShell(props: {
-  readonly borderTop: boolean;
+  readonly showChevron?: boolean;
+  readonly opensDetails?: boolean;
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
   readonly connectionState: EnvironmentConnectionPhase;
@@ -340,13 +349,7 @@ function CloudEnvironmentRowShell(props: {
     [measuredErrorText, props.connectionError],
   );
   return (
-    <View
-      collapsable={false}
-      className={cn(
-        "flex-row items-center gap-3 bg-card px-4 py-3.5",
-        props.borderTop && "border-t border-border",
-      )}
-    >
+    <View collapsable={false} className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5">
       <View className="min-w-0 flex-1 gap-0.5">
         <View className="min-w-0 flex-row items-center gap-2">
           <ConnectionStatusDot state={props.connectionState} pulse={shouldPulse} size={7} />
@@ -409,10 +412,16 @@ function CloudEnvironmentRowShell(props: {
         </StatusContainer>
       </View>
       <ThemedSwitch
+        style={{ alignSelf: "center" }}
         disabled={props.disabled}
         onValueChange={props.onValueChange}
         value={props.value}
       />
+      {props.opensDetails || props.showChevron ? (
+        <View style={{ opacity: props.opensDetails ? 1 : 0.4 }}>
+          <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />
+        </View>
+      ) : null}
     </View>
   );
 }

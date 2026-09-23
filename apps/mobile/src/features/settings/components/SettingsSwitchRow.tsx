@@ -17,6 +17,7 @@ export function SettingsSwitchRow(
       subtitle={props.subtitle}
     >
       <ThemedSwitch
+        style={{ alignSelf: "center" }}
         accessibilityLabel={props.label}
         disabled={props.disabled}
         onValueChange={props.onValueChange}
