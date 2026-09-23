@@ -913,6 +913,25 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it("navigates history with mod+[ and mod+] outside the terminal", () => {
+    const back = event({ key: "[", code: "BracketLeft", metaKey: true });
+    const forward = event({ key: "]", code: "BracketRight", ctrlKey: true });
+    assert.strictEqual(
+      resolveShortcutCommand(back, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "MacIntel" }),
+      "navigation.back",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(forward, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "Linux" }),
+      "navigation.forward",
+    );
+    assert.isNull(
+      resolveShortcutCommand(back, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
   it("matches bracket shortcuts using the physical key code", () => {
     assert.strictEqual(
       resolveShortcutCommand(
