@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import {
   isProviderDriverKind,
   resolveProviderInstanceEnabled,
@@ -58,6 +58,22 @@ import {
 } from "./providerStatus";
 
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+function ProviderStatusDiagnostic({
+  detail,
+  children,
+}: {
+  detail: string | null;
+  children: ReactElement;
+}) {
+  if (!detail) return children;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={children} />
+      <TooltipPopup side="top">{detail}</TooltipPopup>
+    </Tooltip>
+  );
+}
 
 let environmentVariableDraftId = 0;
 const nextEnvironmentVariableDraftId = () => `provider-env-${environmentVariableDraftId++}`;
@@ -583,6 +599,7 @@ export function ProviderInstanceCard({
       <span className={cn("size-1.5 shrink-0 rounded-full", statusStyle.dot)} aria-hidden />
     ) : null;
   const needsAttention = statusKey === "warning" || statusKey === "error";
+  const statusDiagnostic = hasCompatibilityWarning && needsAttention ? summary.detail : null;
   // Keep compatibility copy compact; the version popover carries the explanation.
   const inlineStatusDetail = hasCompatibilityWarning
     ? compatibility?.status === "broken"
@@ -695,10 +712,15 @@ export function ProviderInstanceCard({
               {statusDotNode ? (
                 <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
               ) : null}
-              <span className="line-clamp-2 [overflow-wrap:anywhere]">
-                {summary.headline}
-                {needsAttention && inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
-              </span>
+              <ProviderStatusDiagnostic detail={statusDiagnostic}>
+                <span
+                  tabIndex={statusDiagnostic ? 0 : undefined}
+                  className="pointer-events-auto line-clamp-2 [overflow-wrap:anywhere]"
+                >
+                  {summary.headline}
+                  {needsAttention && inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
+                </span>
+              </ProviderStatusDiagnostic>
             </span>
           </span>
         </div>
@@ -844,7 +866,14 @@ export function ProviderInstanceCard({
         <SettingsRow
           title="Display name"
           status={
-            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5">{editorStatusNode}</div>
+            <ProviderStatusDiagnostic detail={statusDiagnostic}>
+              <div
+                tabIndex={statusDiagnostic ? 0 : undefined}
+                className="flex min-w-0 flex-wrap items-center gap-x-1.5"
+              >
+                {editorStatusNode}
+              </div>
+            </ProviderStatusDiagnostic>
           }
           control={
             <div
