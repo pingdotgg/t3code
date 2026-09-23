@@ -2,10 +2,12 @@ import { getSchemaByResolvedExtensions, Node, resolveExtensions } from "@tiptap/
 import StarterKit from "@tiptap/starter-kit";
 import { TaskList } from "@tiptap/extension-task-list";
 import { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { EditorState, TextSelection } from "@tiptap/pm/state";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildDocJson,
+  caretTakesMarksBefore,
   collapsedToFlat,
   ComposerCodeExtension,
   ComposerTaskItemExtension,
@@ -14,6 +16,7 @@ import {
   flatToPm,
   pmToFlat,
   serializeEditorDoc,
+  stepCaretAcrossStyledEdge,
 } from "./composer-rich-text-doc";
 
 function stubAtom(name: string, attrs: Record<string, { default: unknown }>) {
@@ -359,5 +362,62 @@ describe("composer rich text document model", () => {
     expect(flatToMarkdown(map, 6)).toBe(10);
     expect(collapsedToFlat(map, 3)).toBe(2);
     expect(collapsedToFlat(map, 9)).toBe(6);
+  });
+});
+
+describe("caret stops at styled edges", () => {
+  function stateAt(value: string, pmPos: number) {
+    const doc = ProseMirrorNode.fromJSON(
+      schema,
+      buildDocJson(value, (name) => ({ label: name, description: null })),
+    );
+    return EditorState.create({ doc, selection: TextSelection.create(doc, pmPos) });
+  }
+
+  function typed(state: EditorState, text: string) {
+    return serializeEditorDoc(state.apply(state.tr.insertText(text)).doc).value;
+  }
+
+  it("lets the caret step out in front of bold that starts the line", () => {
+    const inside = stateAt("**bold** tail", 1);
+    expect(caretTakesMarksBefore(inside)).toBe(false);
+    expect(typed(inside, "x")).toBe("**xbold** tail");
+
+    const step = stepCaretAcrossStyledEdge(inside, -1);
+    expect(step).not.toBeNull();
+    const outside = inside.apply(step!);
+    expect(caretTakesMarksBefore(outside)).toBe(true);
+    expect(typed(outside, "x")).toBe("x**bold** tail");
+    // Already outside: the next ArrowLeft moves the caret as usual.
+    expect(stepCaretAcrossStyledEdge(outside, -1)).toBeNull();
+
+    const back = outside.apply(stepCaretAcrossStyledEdge(outside, 1)!);
+    expect(typed(back, "x")).toBe("**xbold** tail");
+  });
+
+  it("lets the caret step out after bold that ends the line", () => {
+    const inside = stateAt("head **bold**", 10);
+    expect(caretTakesMarksBefore(inside)).toBe(true);
+    expect(typed(inside, "x")).toBe("head **boldx**");
+    expect(stepCaretAcrossStyledEdge(inside, -1)).toBeNull();
+
+    const outside = inside.apply(stepCaretAcrossStyledEdge(inside, 1)!);
+    expect(caretTakesMarksBefore(outside)).toBe(false);
+    expect(typed(outside, "x")).toBe("head **bold**x");
+  });
+
+  it("offers both stops where styled text meets plain text mid-line", () => {
+    // Caret after "a ": types plain until ArrowRight steps into the bold.
+    const plain = stateAt("a **b** c", 3);
+    expect(caretTakesMarksBefore(plain)).toBe(true);
+    expect(typed(plain, "x")).toBe("a x**b** c");
+    const bold = plain.apply(stepCaretAcrossStyledEdge(plain, 1)!);
+    expect(typed(bold, "x")).toBe("a **xb** c");
+  });
+
+  it("leaves arrow keys alone away from styled edges", () => {
+    expect(stepCaretAcrossStyledEdge(stateAt("**bold** tail", 3), -1)).toBeNull();
+    expect(stepCaretAcrossStyledEdge(stateAt("plain text", 1), -1)).toBeNull();
+    expect(caretTakesMarksBefore(stateAt("plain text", 1))).toBe(false);
   });
 });

@@ -1,4 +1,5 @@
-import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { Mark, type Node as ProseMirrorNode } from "@tiptap/pm/model";
+import type { EditorState, Transaction } from "@tiptap/pm/state";
 import { Code } from "@tiptap/extension-code";
 import { TaskItem } from "@tiptap/extension-task-item";
 
@@ -649,4 +650,46 @@ export function pmToFlat(map: RichDocMap, pmPos: number): number {
     if (run.pmPos <= pmPos) best = run.flatStart + run.docLen;
   }
   return Math.max(0, Math.min(best, map.docLength));
+}
+
+// ── Caret stops at styled edges ────────────────────────────────────────────
+//
+// Markers are decorations, not text, so the position where styled text meets
+// unstyled text (or a paragraph edge) is a single document position. The
+// caret gets two stops there: one that types with the marks before the edge
+// and one that types with the marks after it. Stored marks pick the stop, and
+// the revealed markers render on the matching side of the caret, so a pasted
+// `**bold**` at the start of a line can still be typed in front of.
+
+function styledEdge(state: EditorState) {
+  const { selection } = state;
+  if (!selection.empty) return null;
+  const { $from } = selection;
+  if (!$from.parent.inlineContent) return null;
+  const before = $from.nodeBefore?.marks ?? Mark.none;
+  const after = $from.nodeAfter?.marks ?? Mark.none;
+  if (Mark.sameSet(before, after)) return null;
+  return { before, after, current: state.storedMarks ?? $from.marks() };
+}
+
+/** True when the caret sits on a styled edge and types with the marks before it. */
+export function caretTakesMarksBefore(state: EditorState): boolean {
+  const edge = styledEdge(state);
+  return edge !== null && Mark.sameSet(edge.current, edge.before);
+}
+
+/**
+ * Moves the caret to the other stop of the styled edge it sits on, toward
+ * `direction`. Returns null when there is no stop to take, so the arrow key
+ * moves the caret as usual.
+ */
+export function stepCaretAcrossStyledEdge(
+  state: EditorState,
+  direction: -1 | 1,
+): Transaction | null {
+  const edge = styledEdge(state);
+  if (!edge) return null;
+  const target = direction === -1 ? edge.before : edge.after;
+  if (Mark.sameSet(edge.current, target)) return null;
+  return state.tr.setStoredMarks(target);
 }
