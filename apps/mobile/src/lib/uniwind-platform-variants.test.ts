@@ -52,36 +52,42 @@ const ANDROID_CLASSES = ["android:shrink", "android:grow-0", "android:font-mono"
 const SHARED_CLASSES = ["flex-1", "pt-12"];
 const RESPONSIVE_CLASSES = ["sm:p-6", "sm:text-lg"];
 
+const runFixture = (globalCss: string, probeSource: string): FixtureOutput => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "uniwind-platform-"));
+  try {
+    // So `@import "tailwindcss"` and `@import "uniwind"` resolve like in the app.
+    NodeFS.symlinkSync(
+      NodeFS.realpathSync(new URL("../../node_modules", import.meta.url)),
+      NodePath.join(tempDir, "node_modules"),
+      "dir",
+    );
+    NodeFS.writeFileSync(NodePath.join(tempDir, "global.css"), globalCss);
+    NodeFS.writeFileSync(NodePath.join(tempDir, "Probe.tsx"), probeSource);
+
+    const fixture = NodeURL.fileURLToPath(
+      new URL("./uniwind-platform-variants.fixture.cjs", import.meta.url),
+    );
+    const stdout = NodeChildProcess.execFileSync(process.execPath, [fixture, tempDir], {
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024,
+      timeout: 60_000,
+    });
+    // The fixture's compiler may log warnings to stdout before the JSON payload.
+    const start = stdout.indexOf('{"tailwindChecks"');
+    if (start === -1) {
+      throw new Error(`Fixture produced no JSON:\n${stdout}`);
+    }
+    return JSON.parse(stdout.slice(start)) as FixtureOutput;
+  } finally {
+    NodeFS.rmSync(tempDir, { recursive: true, force: true });
+  }
+};
+
 describe("uniwind platform variants compile per platform", () => {
   let output: FixtureOutput;
 
   beforeAll(() => {
-    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "uniwind-platform-"));
-    try {
-      // So `@import "tailwindcss"` and `@import "uniwind"` resolve like in the app.
-      NodeFS.symlinkSync(
-        NodeFS.realpathSync(new URL("../../node_modules", import.meta.url)),
-        NodePath.join(tempDir, "node_modules"),
-        "dir",
-      );
-      NodeFS.writeFileSync(
-        NodePath.join(tempDir, "global.css"),
-        '@import "tailwindcss";\n@import "uniwind";\n',
-      );
-      NodeFS.writeFileSync(NodePath.join(tempDir, "Probe.tsx"), FIXTURE_SOURCE);
-
-      const fixture = NodeURL.fileURLToPath(
-        new URL("./uniwind-platform-variants.fixture.cjs", import.meta.url),
-      );
-      const stdout = NodeChildProcess.execFileSync(process.execPath, [fixture, tempDir], {
-        encoding: "utf8",
-        maxBuffer: 32 * 1024 * 1024,
-        timeout: 60_000,
-      });
-      output = JSON.parse(stdout) as FixtureOutput;
-    } finally {
-      NodeFS.rmSync(tempDir, { recursive: true, force: true });
-    }
+    output = runFixture('@import "tailwindcss";\n@import "uniwind";\n', FIXTURE_SOURCE);
   }, 60_000);
 
   it("compiles the fixture utilities into shared platform blocks", () => {
@@ -144,5 +150,58 @@ describe("uniwind platform variants compile per platform", () => {
       // survive anywhere in the payload this platform bundles.
       expect(output.platforms[platform]?.payloadLeaks, `${platform} payload leaks`).toEqual([]);
     }
+  });
+});
+
+// The media-query fix must not lose the surrounding rule context: Tailwind
+// also emits media rules *nested inside a class rule* (`@utility` bodies with
+// `@variant`, nested breakpoints), and those declarations belong to the
+// enclosing class. These expectations match the pre-fix compiler output for
+// the same inputs, captured against the unpatched package.
+describe("uniwind keeps media rules nested inside class rules attached to the class", () => {
+  let nested: FixtureOutput;
+
+  beforeAll(() => {
+    nested = runFixture(
+      [
+        '@import "tailwindcss";',
+        '@import "uniwind";',
+        "",
+        ".container-x {",
+        "  width: 100%;",
+        "  @media (width >= 40rem) {",
+        "    max-width: 40rem;",
+        "  }",
+        "}",
+        "",
+        "@utility foo-x {",
+        "  padding: 2px;",
+        "  @variant ios {",
+        "    padding: 3px;",
+        "  }",
+        "}",
+        "",
+      ].join("\n"),
+      'export const Probe = () => <div className="container-x foo-x" />;\n',
+    );
+  }, 60_000);
+
+  it("keeps the nested breakpoint entry of a nested media rule", () => {
+    for (const platform of ["ios", "android"]) {
+      const entries = nested.platforms[platform]?.styles["container-x"];
+      expect(entries, `${platform} lacks container-x`).toBeDefined();
+      expect(entries?.some((style) => !style.native && style.minWidth === 0)).toBe(true);
+      expect(entries?.some((style) => !style.native && style.minWidth > 0)).toBe(true);
+    }
+  });
+
+  it("keeps @variant declarations inside @utility on their platform", () => {
+    const iosEntries = nested.platforms.ios?.styles["foo-x"];
+    expect(iosEntries?.some((style) => !style.native)).toBe(true);
+    expect(iosEntries?.some((style) => style.native)).toBe(true);
+
+    const androidEntries = nested.platforms.android?.styles["foo-x"];
+    expect(androidEntries?.some((style) => !style.native)).toBe(true);
+    expect(androidEntries?.some((style) => style.native)).toBe(false);
   });
 });
