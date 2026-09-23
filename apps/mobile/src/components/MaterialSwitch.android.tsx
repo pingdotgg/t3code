@@ -1,6 +1,6 @@
 import { Host, Switch as ComposeSwitch } from "@expo/ui/jetpack-compose";
 import { View } from "react-native";
-import type { ThemedSwitchProps } from "./ThemedSwitch";
+import type { ThemedSwitchProps } from "./MaterialSwitch.types";
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 

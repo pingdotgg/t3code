@@ -32,7 +32,7 @@ vi.mock("../state/atom-registry", () => ({
 }));
 
 // The real read lease and cleanup are covered by the composer ownership suite.
-vi.mock("../state/use-composer-drafts", () => ({
+vi.mock("./composerAttachmentPreviewRetention", () => ({
   retainComposerAttachmentFileForPreview: () => () => {},
 }));
 

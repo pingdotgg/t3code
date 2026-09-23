@@ -3,7 +3,7 @@ import { MaterialSegmentedButtons } from "./MaterialSegmentedButtons.android";
 import { View } from "react-native";
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
-import type { SegmentedControlProps } from "./SegmentedControl";
+import type { SegmentedControlProps } from "./SegmentedControl.types";
 
 export function MaterialSegmentedControl<Value extends number | string>(
   props: SegmentedControlProps<Value>,

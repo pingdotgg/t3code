@@ -3,7 +3,7 @@ import { videoMimeType } from "@t3tools/shared/video";
 import type { FileBackedComposerAttachment } from "./composerImages";
 import { resolveOwnedComposerAttachmentFileUri } from "./composerAttachmentFiles";
 import { shareLocalAttachment, type AttachmentPreviewFile } from "./attachmentDownload";
-import { retainComposerAttachmentFileForPreview } from "../state/use-composer-drafts";
+import { retainComposerAttachmentFileForPreview } from "./composerAttachmentPreviewRetention";
 
 /** Retains the draft original for preview and gives each outgoing share its own lease. */
 export async function loadLocalAttachmentPreview(

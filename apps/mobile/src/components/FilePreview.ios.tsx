@@ -2,7 +2,7 @@ import { requireNativeModule } from "expo";
 import { useEffect, useEffectEvent, useId } from "react";
 import { Alert } from "react-native";
 
-import type { ResolvedFilePreviewSource } from "./FilePreviewModal";
+import type { ResolvedFilePreviewSource } from "./FilePreviewModal.types";
 
 const NativeControls = requireNativeModule<{
   presentFile(

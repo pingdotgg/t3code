@@ -4,25 +4,9 @@ import { Platform, Modal, Pressable, TextInput, View } from "react-native";
 import { cn } from "../lib/cn";
 import { AppText } from "./AppText";
 import { MaterialConfirmDialog } from "./MaterialConfirmDialog";
+import type { ConfirmDialogRequest, TextInputDialogRequest } from "./ConfirmDialog.types";
 
-export type ConfirmDialogRequest = {
-  readonly title: string;
-  readonly message?: string;
-  readonly cancelText?: string;
-  readonly confirmText: string;
-  readonly destructive?: boolean;
-  readonly onConfirm: () => void;
-  readonly onCancel?: () => void;
-};
-
-export type TextInputDialogRequest = {
-  readonly title: string;
-  readonly initialValue: string;
-  readonly cancelText?: string;
-  readonly confirmText: string;
-  readonly onConfirm: (value: string) => void;
-  readonly onCancel?: () => void;
-};
+export type { ConfirmDialogRequest, TextInputDialogRequest } from "./ConfirmDialog.types";
 
 type DialogRequest =
   | { readonly kind: "confirm"; readonly request: ConfirmDialogRequest }

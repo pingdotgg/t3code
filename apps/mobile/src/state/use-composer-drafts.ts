@@ -35,8 +35,11 @@ import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
 import {
   composerAttachmentFileReferenceKey,
   isComposerAttachmentFileRetained,
-  retainComposerAttachmentFile,
 } from "../lib/composerAttachmentFiles";
+import {
+  registerComposerAttachmentUnusedHandler,
+  retainComposerAttachmentFileForPreview,
+} from "../lib/composerAttachmentPreviewRetention";
 import type { DraftComposerAttachment, FileBackedComposerAttachment } from "../lib/composerImages";
 import { SerializedAsyncQueue } from "../lib/serialized-async-queue";
 import { appAtomRegistry } from "./atom-registry";
@@ -957,14 +960,14 @@ export function scheduleUnusedComposerAttachmentCleanup(
   });
 }
 
-/** Keeps a native preview or upload readable until it finishes, then retries ownership cleanup. */
-export function retainComposerAttachmentFileForPreview(
-  attachment: FileBackedComposerAttachment,
-): () => void {
-  return retainComposerAttachmentFile(attachment.fileUri, () => {
-    scheduleUnusedComposerAttachmentCleanup([attachment]);
-  });
-}
+/**
+ * Owner-side cleanup hook for the shared preview-retention helper: releasing
+ * the last preview/upload lease retries the unused-file sweep. Registered here
+ * because this module owns the draft and outbox references the sweep reads.
+ */
+registerComposerAttachmentUnusedHandler((attachment) => {
+  scheduleUnusedComposerAttachmentCleanup([attachment]);
+});
 
 function schedulePersistComposerState(): void {
   if (persistTimer !== null) {
