@@ -27,7 +27,7 @@ describe("speech model catalog", () => {
 it("checks readiness without reading the model contents", async () => {
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "speech-status-"));
   try {
-    const speechModel = SPEECH_MODELS[0];
+    const speechModel = SPEECH_MODELS[0]!;
     const path = NodePath.join(directory, speechModel.filename);
     expect(await isSpeechModelReady(directory, speechModel)).toBe(false);
     await NodeFSP.writeFile(path, "");
