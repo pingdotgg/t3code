@@ -90,12 +90,7 @@ function ProviderCustomColorPicker(props: {
           </button>
         }
       />
-      <PopoverPopup
-        side="bottom"
-        align="start"
-        sideOffset={6}
-        className="overflow-hidden rounded-md p-0 [--viewport-inline-padding:0px] [&_[data-slot=popover-viewport]]:p-0"
-      >
+      <PopoverPopup side="bottom" align="start" sideOffset={6} padding="none">
         <ProviderCustomColorPanel value={normalized} onCommit={props.onCommit} />
         <PopoverClose
           render={

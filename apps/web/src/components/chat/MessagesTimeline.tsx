@@ -2562,13 +2562,7 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
         <Spinner size="xs" className="shrink-0" />
         <span className="truncate">{scriptName}</span>
       </PopoverTrigger>
-      <PopoverPopup
-        side="bottom"
-        align="end"
-        width="lg"
-        className="surface-glass!"
-        padding="compact"
-      >
+      <PopoverPopup side="bottom" align="end" width="lg" padding="compact">
         <WorktreeSetupCard
           snapshot={snapshot}
           embedded

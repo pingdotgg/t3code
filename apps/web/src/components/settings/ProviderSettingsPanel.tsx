@@ -353,7 +353,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
               <Tooltip key={environment.environmentId}>
                 <TooltipTrigger
                   render={
-                    <Toggle value={environment.environmentId} className="gap-2 text-left">
+                    <Toggle value={environment.environmentId}>
                       <EnvironmentMachineIcon
                         kind={machine}
                         className="size-3.5 shrink-0"

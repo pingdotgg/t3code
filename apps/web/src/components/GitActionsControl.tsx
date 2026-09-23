@@ -627,7 +627,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                 setPublishRepositoryOverride(null);
               }}
               aria-labelledby="publish-provider-cards-label"
-              className="grid grid-cols-2 gap-2.5"
+              className="grid grid-cols-2"
             >
               {sortedPublishProviderOptions.map((option) => {
                 const readiness = publishProviderReadiness[option.value];
@@ -737,7 +737,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                 }
                 aria-labelledby="publish-visibility-cards-label"
                 disabled={publishRepositoryAction.isPending}
-                className="grid grid-cols-2 gap-2.5"
+                className="grid grid-cols-2"
               >
                 {[
                   {
@@ -1915,57 +1915,63 @@ export default function GitActionsControl({
                   <p className="font-medium">none</p>
                 ) : (
                   <div className="space-y-2">
-                    <ScrollArea className="h-44 rounded-lg bg-card ring-1 ring-black/5 dark:bg-white/[0.025] dark:ring-white/5">
-                      <div className="space-y-1 p-1">
-                        {allFiles.map((file) => {
-                          const isExcluded = excludedFiles.has(file.path);
-                          return (
-                            <div
-                              key={file.path}
-                              className="flex w-full items-center gap-2 rounded-md px-2 py-1 font-mono hover:bg-accent/50"
-                            >
-                              {isEditingFiles && (
-                                <Checkbox
-                                  checked={!excludedFiles.has(file.path)}
-                                  onCheckedChange={() => {
-                                    setExcludedFiles((prev) => {
-                                      const next = new Set(prev);
-                                      if (next.has(file.path)) {
-                                        next.delete(file.path);
-                                      } else {
-                                        next.add(file.path);
-                                      }
-                                      return next;
-                                    });
-                                  }}
-                                />
-                              )}
-                              <button
-                                type="button"
-                                className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
-                                onClick={() => openChangedFileInEditor(file.path)}
+                    <div className="h-44 rounded-lg bg-card ring-1 ring-black/5 dark:bg-white/[0.025] dark:ring-white/5">
+                      <ScrollArea>
+                        <div className="space-y-1 p-1">
+                          {allFiles.map((file) => {
+                            const isExcluded = excludedFiles.has(file.path);
+                            return (
+                              <div
+                                key={file.path}
+                                className="flex w-full items-center gap-2 rounded-md px-2 py-1 font-mono hover:bg-accent/50"
                               >
-                                <StartTruncatedPath
-                                  path={file.path}
-                                  className={`flex-1${isExcluded ? " text-muted-foreground" : ""}`}
-                                />
-                                <span className="shrink-0">
-                                  {isExcluded ? (
-                                    <span className="text-muted-foreground">Excluded</span>
-                                  ) : (
-                                    <>
-                                      <span className="text-diff-addition">+{file.insertions}</span>
-                                      <span className="text-muted-foreground"> / </span>
-                                      <span className="text-diff-deletion">-{file.deletions}</span>
-                                    </>
-                                  )}
-                                </span>
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </ScrollArea>
+                                {isEditingFiles && (
+                                  <Checkbox
+                                    checked={!excludedFiles.has(file.path)}
+                                    onCheckedChange={() => {
+                                      setExcludedFiles((prev) => {
+                                        const next = new Set(prev);
+                                        if (next.has(file.path)) {
+                                          next.delete(file.path);
+                                        } else {
+                                          next.add(file.path);
+                                        }
+                                        return next;
+                                      });
+                                    }}
+                                  />
+                                )}
+                                <button
+                                  type="button"
+                                  className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+                                  onClick={() => openChangedFileInEditor(file.path)}
+                                >
+                                  <StartTruncatedPath
+                                    path={file.path}
+                                    className={`flex-1${isExcluded ? " text-muted-foreground" : ""}`}
+                                  />
+                                  <span className="shrink-0">
+                                    {isExcluded ? (
+                                      <span className="text-muted-foreground">Excluded</span>
+                                    ) : (
+                                      <>
+                                        <span className="text-diff-addition">
+                                          +{file.insertions}
+                                        </span>
+                                        <span className="text-muted-foreground"> / </span>
+                                        <span className="text-diff-deletion">
+                                          -{file.deletions}
+                                        </span>
+                                      </>
+                                    )}
+                                  </span>
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </ScrollArea>
+                    </div>
                     <div className="flex justify-end font-mono">
                       <span className="text-diff-addition">
                         +{selectedFiles.reduce((sum, f) => sum + f.insertions, 0)}
@@ -2040,7 +2046,7 @@ export default function GitActionsControl({
             </DialogTitle>
             <DialogDescription>{pendingDefaultBranchActionCopy?.description}</DialogDescription>
           </DialogHeader>
-          <DialogFooter className="dark:border-transparent dark:bg-transparent sm:flex-wrap sm:items-center">
+          <DialogFooter variant="bare" className="sm:flex-wrap sm:items-center">
             <Button
               className="w-full sm:mr-auto sm:w-auto"
               variant="outline"

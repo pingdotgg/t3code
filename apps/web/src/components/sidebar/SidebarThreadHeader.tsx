@@ -187,10 +187,7 @@ export function SidebarHeaderIconButton({
             type="button"
             aria-label={label}
             {...rest}
-            className={cn(
-              "relative size-7 shrink-0 focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar",
-              className,
-            )}
+            className={cn("relative size-7 shrink-0", className)}
           />
         }
       >
