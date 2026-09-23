@@ -1277,6 +1277,23 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         });
       }
       const events = yield* Fiber.join(next);
+      const completedGeneration = events.find(
+        (event) => event.type === "item.completed" && event.payload.title === "Generated image",
+      );
+      NodeAssert.ok(completedGeneration?.type === "item.completed");
+      NodeAssert.deepStrictEqual(completedGeneration.payload.data, {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        startedAtMs: 1_778_000_000_000,
+        completedAtMs: 1_778_000_000_100,
+        item: {
+          type: "imageGeneration",
+          id: "generated",
+          result: "image-bytes",
+          status: "completed",
+          savedPath: "/home/user/.codex/generated_images/orca.png",
+        },
+      });
       NodeAssert.deepEqual(
         events.map((event) =>
           event.type === "item.started" || event.type === "item.completed"
