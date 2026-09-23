@@ -156,7 +156,11 @@ export function applyCursorAcpModelSelection<E>(input: {
       ),
     );
 
-    const configUpdates = resolveCursorAcpConfigUpdates(configOptions, input.selections);
+    // setModel refreshes model-specific options; use the post-switch snapshot.
+    const configUpdates = resolveCursorAcpConfigUpdates(
+      yield* input.runtime.getConfigOptions,
+      input.selections,
+    );
     for (const update of configUpdates) {
       yield* input.runtime.setConfigOption(update.configId, update.value).pipe(
         Effect.mapError((cause) =>

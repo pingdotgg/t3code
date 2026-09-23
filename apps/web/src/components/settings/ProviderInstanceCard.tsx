@@ -500,10 +500,11 @@ export function ProviderInstanceCard({
   const driverKind: ProviderDriverKind | null = isProviderDriverKind(instance.driver)
     ? instance.driver
     : null;
+  // Antigravity has no custom-model surface. Cursor still shows persisted
+  // customModels so users can inspect/remove them; Add is blocked in
+  // ProviderModelsSection via providerSupportsCustomModels.
   const customModels =
-    instance.driver === "antigravity" || instance.driver === "cursor"
-      ? []
-      : readConfigCustomModels(instance.config);
+    instance.driver === "antigravity" ? [] : readConfigCustomModels(instance.config);
   // Server-returned models may lag behind settings writes. Treat probe
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.
