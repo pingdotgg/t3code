@@ -2,6 +2,8 @@ import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildPullRequestSummariesGraphQlQuery,
+  decodePullRequestSummariesJson,
   buildReviewSubmissionJson,
   buildPullRequestStackMembershipsGraphQlQuery,
   decodePullRequestStackMembershipsJson,
@@ -1881,5 +1883,56 @@ describe("pull request stack membership batches", () => {
     expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [7, 8])).toContain(
       "pullRequest(number: 8)",
     );
+  });
+});
+
+describe("batched pull request summaries", () => {
+  it("refuses a repository GraphQL cannot address, rather than writing it into the document", () => {
+    expect(
+      buildPullRequestSummariesGraphQlQuery([{ repository: 'acme/web") { x } #', number: 1 }]),
+    ).toBeNull();
+    expect(
+      buildPullRequestSummariesGraphQlQuery([{ repository: "acme/web", number: 0 }]),
+    ).toBeNull();
+    expect(buildPullRequestSummariesGraphQlQuery([])).toBeNull();
+  });
+
+  it("files each answer by its alias and skips what GitHub or the decoder could not give", () => {
+    const decoded = decodePullRequestSummariesJson(
+      JSON.stringify({
+        data: {
+          s0: {
+            pullRequest: {
+              number: 7,
+              title: "Merged",
+              url: "https://github.com/acme/web/pull/7",
+              author: { __typename: "Bot", login: "renovate", avatarUrl: "https://a/r.png" },
+              headRefName: "feat/seven",
+              baseRefName: "main",
+              state: "MERGED",
+              mergedAt: "2026-08-24T00:00:00Z",
+              closedAt: "2026-08-24T00:00:00Z",
+              updatedAt: "2026-08-24T00:00:00Z",
+              commits: { nodes: [{ commit: { statusCheckRollup: { state: "FAILURE" } } }] },
+            },
+          },
+          s1: { pullRequest: null },
+          s2: { pullRequest: { number: 9 } },
+          rateLimit: { cost: 1 },
+        },
+      }),
+    );
+    expect(Result.isSuccess(decoded)).toBe(true);
+    if (!Result.isSuccess(decoded)) return;
+    expect([...decoded.success.keys()]).toEqual([0]);
+    expect(decoded.success.get(0)).toMatchObject({
+      number: 7,
+      state: "merged",
+      mergedAt: "2026-08-24T00:00:00Z",
+      author: { login: "renovate", isBot: true },
+      checksState: "failing",
+      mergeability: "unknown",
+      additions: 0,
+    });
   });
 });

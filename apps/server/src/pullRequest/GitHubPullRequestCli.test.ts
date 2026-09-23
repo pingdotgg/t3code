@@ -452,77 +452,137 @@ layer("GitHubPullRequestCli.layer", (it) => {
       }),
   );
 
-  it.effect("reads linked pull request status with the overview fields in one request", () =>
+  it.effect("reads linked pull requests on one host together, filed back by position", () =>
     Effect.gen(function* () {
+      const node = (number: number) => ({
+        number,
+        title: `Pull request ${number}`,
+        url: `https://github.com/acme/web/pull/${number}`,
+        author: { __typename: "User", login: "octocat", name: "Octo Cat", avatarUrl: null },
+        baseRefName: "main",
+        headRefName: `feat/${number}`,
+        state: "OPEN",
+        isDraft: false,
+        mergeable: "MERGEABLE",
+        reviewDecision: null,
+        latestReviews: { nodes: [{ state: "APPROVED", author: { login: "reviewer" } }] },
+        additions: 12,
+        deletions: 3,
+        changedFiles: 2,
+        updatedAt: "2026-08-24T12:34:56.000Z",
+        mergedAt: null,
+        closedAt: null,
+        commits: { nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS" } } }] },
+      });
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
           output(
             // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
-              number: 7,
-              title: "Reuse the summary",
-              url: "https://github.com/acme/web/pull/7",
-              author: { login: "octocat", name: "Octo Cat" },
-              baseRefName: "main",
-              headRefName: "feat/summary",
-              state: "OPEN",
-              isDraft: false,
-              mergeable: "MERGEABLE",
-              reviewDecision: "APPROVED",
-              additions: 12,
-              deletions: 3,
-              changedFiles: 2,
-              createdAt: "2026-08-20T00:00:00.000Z",
-              updatedAt: "2026-08-24T12:34:56.000Z",
-              reviewRequests: [],
-              labels: [],
-              statusCheckRollup: [
-                { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS", name: "ci" },
-              ],
-              body: "",
+              data: { s0: { pullRequest: node(7) }, s1: { pullRequest: node(8) } },
             }),
           ),
         ),
       );
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
-      const summary = yield* cli.getPullRequestSummary({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      });
+      const reads = yield* Effect.forEach(
+        [7, 8],
+        (number) =>
+          cli.getPullRequestSummary({
+            cwd: "/w",
+            repository: "acme/web",
+            host: "github.com",
+            number,
+          }),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      const [seven, eight] = yield* Fiber.join(reads);
 
       assert.deepStrictEqual(
         {
-          number: summary.number,
-          state: summary.state,
-          headBranch: summary.headBranch,
-          isDraft: summary.isDraft,
-          author: summary.author?.login,
-          additions: summary.additions,
-          deletions: summary.deletions,
-          changedFiles: summary.changedFiles,
-          reviewDecision: summary.reviewDecision,
-          checksState: summary.checksState,
-          mergeability: summary.mergeability,
+          number: seven?.number,
+          state: seven?.state,
+          headBranch: seven?.headBranch,
+          author: seven?.author?.login,
+          changedFiles: seven?.changedFiles,
+          reviewDecision: seven?.reviewDecision,
+          checksState: seven?.checksState,
+          mergeability: seven?.mergeability,
         },
         {
           number: 7,
           state: "open",
-          headBranch: "feat/summary",
-          isDraft: false,
+          headBranch: "feat/7",
           author: "octocat",
-          additions: 12,
-          deletions: 3,
           changedFiles: 2,
           reviewDecision: "approved",
           checksState: "passing",
           mergeability: "mergeable",
         },
       );
+      assert.strictEqual(eight?.headBranch, "feat/8");
       expect(mockedExecute).toHaveBeenCalledOnce();
-      expect(mockedExecute.mock.calls[0]?.[0]?.args).toEqual([
+      const document = callAt(0).args.at(-1) ?? "";
+      expect(document).toContain(
+        's0: repository(owner: "acme", name: "web") { pullRequest(number: 7)',
+      );
+      expect(document).toContain("pullRequest(number: 8)");
+    }),
+  );
+
+  it.effect("reads a pull request the batch said nothing about on its own", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output('{"data":{"s0":{"pullRequest":null}}}')))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify({
+                number: 7,
+                title: "Reuse the summary",
+                url: "https://github.com/acme/web/pull/7",
+                author: { login: "octocat", name: "Octo Cat" },
+                baseRefName: "main",
+                headRefName: "feat/summary",
+                state: "OPEN",
+                isDraft: false,
+                mergeable: "MERGEABLE",
+                reviewDecision: "APPROVED",
+                additions: 12,
+                deletions: 3,
+                changedFiles: 2,
+                createdAt: "2026-08-20T00:00:00.000Z",
+                updatedAt: "2026-08-24T12:34:56.000Z",
+                reviewRequests: [],
+                labels: [],
+                statusCheckRollup: [
+                  {
+                    __typename: "CheckRun",
+                    status: "COMPLETED",
+                    conclusion: "SUCCESS",
+                    name: "ci",
+                  },
+                ],
+                body: "",
+              }),
+            ),
+          ),
+        );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const read = yield* cli
+        .getPullRequestSummary({ cwd: "/w", repository: "acme/web", host: "github.com", number: 7 })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      const summary = yield* Fiber.join(read);
+
+      assert.strictEqual(summary.headBranch, "feat/summary");
+      assert.strictEqual(summary.checksState, "passing");
+      assert.strictEqual(mockedExecute.mock.calls.length, 2);
+      expect(callAt(1).args).toEqual([
         "pr",
         "view",
         "7",
@@ -531,7 +591,6 @@ layer("GitHubPullRequestCli.layer", (it) => {
         "--json",
         expect.stringContaining("statusCheckRollup"),
       ]);
-      expect(mockedGetPullRequest).not.toHaveBeenCalled();
     }),
   );
 
