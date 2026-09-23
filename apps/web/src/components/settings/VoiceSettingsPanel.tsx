@@ -585,7 +585,7 @@ export function VoiceSettingsPanel() {
         {currentStatus?.supported && prepared ? (
           <div className="flex h-80 min-h-0 flex-col border-t border-border/50 sm:flex-row">
             <div className="flex min-h-0 shrink-0 flex-col border-b border-border/50 bg-muted/20 sm:w-44 sm:border-r sm:border-b-0">
-              <div className="flex items-center gap-1 border-b border-border/50 p-2 sm:flex-col sm:items-stretch sm:gap-2 sm:p-3">
+              <div className="flex items-center gap-1 p-2 sm:flex-col sm:items-stretch sm:gap-2 sm:p-3">
                 <span className="hidden text-xs text-muted-foreground sm:block">Language</span>
                 <div className="flex min-w-0 flex-1 items-center gap-1 sm:flex-none">
                   <Input
@@ -631,7 +631,7 @@ export function VoiceSettingsPanel() {
               </div>
             </div>
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-              <div className="space-y-2 border-b border-border/50 p-3">
+              <div className="space-y-2 p-3">
                 <p className="text-xs text-muted-foreground">
                   Models for {language ? languageLabel(language) : "this environment"}
                 </p>
