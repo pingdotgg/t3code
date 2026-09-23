@@ -910,14 +910,14 @@ function ThreadNavigationSidebarPane(
         case "v2-thread": {
           const thread = item.item.thread;
           const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
-          // Intentional difference from Home: the sidebar never passed
-          // `showTrailingDivider` even before this list was recycled, so its
-          // hairline draws under every row. Home consumes the per-item divider
-          // stamp to suppress dividers at section boundaries; changing the
-          // sidebar's long-standing look is out of scope here. The stamp still
-          // rides on the shared items (Home needs it), which costs this pane
-          // the occasional divider-only invalidation that re-renders
-          // identically.
+          // Intentional difference from Home: the sidebar never passes
+          // `showTrailingDivider` because its rows render no Home-style row
+          // hairline at all — card rows carry tonal containers in this pane
+          // (the hairline branch is !sidebarPane-only) and slim rows have no
+          // hairline branch. The stamp still rides the shared list items
+          // because Home's boundary suppression consumes it; the sidebar's
+          // only cost is the occasional divider-only equality invalidation,
+          // which re-renders identically.
           return (
             <ThreadListV2Row
               onNewThreadOnBranch={props.onNewThreadOnBranch}
