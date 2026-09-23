@@ -869,7 +869,7 @@ export function ProviderInstanceCard({
             <ProviderStatusDiagnostic detail={statusDiagnostic}>
               <div
                 tabIndex={statusDiagnostic ? 0 : undefined}
-                className="flex min-w-0 flex-wrap items-center gap-x-1.5"
+                className="flex min-w-0 flex-wrap items-baseline gap-x-1.5"
               >
                 {editorStatusNode}
               </div>
