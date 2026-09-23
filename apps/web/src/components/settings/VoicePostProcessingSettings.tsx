@@ -171,14 +171,18 @@ export function VoicePostProcessingSettings() {
       >
         {selectedSpeechPrompt ? (
           <div className="w-full max-w-xl space-y-2 pt-3 pb-2">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
               <Select
                 value={selectedSpeechPrompt.id}
                 onValueChange={(id) =>
                   id && updateSettings({ speechPostProcessingSelectedPromptId: id })
                 }
               >
-                <SelectTrigger size="sm" aria-label="Voice post-processing prompt preset">
+                <SelectTrigger
+                  size="sm"
+                  className="min-w-0"
+                  aria-label="Voice post-processing prompt preset"
+                >
                   <SelectValue>{selectedSpeechPrompt.name}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
