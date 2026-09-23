@@ -306,7 +306,6 @@ export function AddProviderInstanceDialog({
           <label className={cn("grid gap-2", wizardStep !== 1 && "hidden")}>
             <span className="text-xs font-medium text-foreground">Label</span>
             <Input
-              className="bg-background"
               placeholder="e.g. Work"
               value={label}
               onChange={(event) => setLabel(event.target.value)}
@@ -319,7 +318,6 @@ export function AddProviderInstanceDialog({
           <label className={cn("grid gap-2", wizardStep !== 1 && "hidden")}>
             <span className="text-xs font-medium text-foreground">Instance ID</span>
             <Input
-              className="bg-background"
               placeholder={`${driver}_work`}
               value={instanceId}
               onChange={(event) => {

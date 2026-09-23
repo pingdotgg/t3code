@@ -162,7 +162,6 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       value={props.item.id}
       data-composer-item-id={props.item.id}
       active={props.isActive}
-      className="gap-3 rounded-lg px-3 py-2!"
       onMouseMove={() => {
         if (!props.isActive) props.onHighlight(props.item.id);
       }}

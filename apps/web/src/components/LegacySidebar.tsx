@@ -2784,7 +2784,7 @@ function ProjectSortMenu({
           <div className="px-2 py-1">
             <NumberField
               aria-label="Visible thread count"
-              className="w-28 gap-0"
+              className="w-28"
               max={MAX_SIDEBAR_THREAD_PREVIEW_COUNT}
               min={MIN_SIDEBAR_THREAD_PREVIEW_COUNT}
               onValueChange={handleThreadPreviewCountChange}
@@ -2792,14 +2792,13 @@ function ProjectSortMenu({
               step={1}
               value={threadPreviewCount}
             >
-              <NumberFieldGroup className="h-7 rounded-md sm:h-6.5">
+              <NumberFieldGroup>
                 <NumberFieldDecrement
                   aria-label="Decrease visible thread count"
-                  className="px-2 sm:px-2 [&_svg]:size-3.5"
+                  className="[&_svg]:size-3.5"
                 />
                 <NumberFieldInput
                   aria-label="Visible thread count"
-                  className="h-7 w-9 grow-0 px-0 text-xs leading-7 sm:h-6.5 sm:leading-6.5"
                   inputMode="numeric"
                   onKeyDownCapture={(event) => {
                     event.stopPropagation();
@@ -2807,7 +2806,7 @@ function ProjectSortMenu({
                 />
                 <NumberFieldIncrement
                   aria-label="Increase visible thread count"
-                  className="px-2 sm:px-2 [&_svg]:size-3.5"
+                  className="[&_svg]:size-3.5"
                 />
               </NumberFieldGroup>
             </NumberField>

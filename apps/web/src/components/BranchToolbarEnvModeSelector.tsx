@@ -110,7 +110,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
             <SelectTrigger
               variant="ghost"
               size="xs"
-              className="min-w-0 shrink font-normal text-xs!"
+              className="min-w-0 shrink"
               aria-label="Workspace"
               data-composer-shortcut="composer.workspace"
               data-composer-context-control

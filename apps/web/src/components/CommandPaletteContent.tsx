@@ -50,7 +50,7 @@ export function CommandPaletteContent({
           {inputAccessory}
         </div>
         <CommandPanel className={panelClassName}>{children}</CommandPanel>
-        <CommandFooter className="gap-3 max-sm:flex-col max-sm:items-start">
+        <CommandFooter className="max-sm:flex-col max-sm:items-start">
           <div className="flex items-center gap-3">
             <KbdGroup>
               <Kbd>

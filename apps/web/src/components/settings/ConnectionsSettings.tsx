@@ -833,7 +833,6 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                   readOnly
                   value={revealValue}
                   rows={isRevealValueUrl ? 4 : 3}
-                  className="text-xs leading-relaxed"
                   onFocus={(event) => event.currentTarget.select()}
                   onClick={(event) => event.currentTarget.select()}
                 />
@@ -2734,7 +2733,7 @@ export function ConnectionsSettings() {
                         <AutocompleteItem
                           key={`${target.alias}:${target.hostname}:${target.port ?? ""}`}
                           value={target}
-                          className="h-8 min-h-8 gap-2 whitespace-nowrap"
+                          className="h-8 min-h-8 whitespace-nowrap"
                         >
                           <span className="min-w-0 truncate text-sm font-medium">
                             {target.alias}
@@ -2754,7 +2753,7 @@ export function ConnectionsSettings() {
                     })}
                   </AutocompleteList>
                 ) : (
-                  <AutocompleteEmpty className="break-all px-3 py-2 text-xs">
+                  <AutocompleteEmpty className="break-all">
                     No hosts match "{savedBackendSshHost.trim()}".
                   </AutocompleteEmpty>
                 )}
