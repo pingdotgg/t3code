@@ -1,11 +1,11 @@
 apply plugin: 'com.android.library'
 apply plugin: 'org.jetbrains.kotlin.android'
 
-group = 'com.t3tools.subscriptionwidget'
+group = 'com.t3tools.widgetexpiry'
 version = '0.0.0'
 
 android {
-  namespace 'expo.modules.t3subscriptionwidget'
+  namespace 'expo.modules.t3widgetexpiry'
   compileSdk rootProject.ext.compileSdkVersion
   defaultConfig {
     minSdkVersion rootProject.ext.minSdkVersion
