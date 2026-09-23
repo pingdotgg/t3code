@@ -18,7 +18,9 @@ export const postProcessTranscript = Effect.fn("speech.postProcessTranscript")(f
   );
   if (!selectedPrompt) return input.transcript;
   const { prompt } = buildTranscriptionPostProcessingPrompt(
-    selectedPrompt.prompt,
+    input.settings.speechCorrectionWord.trim()
+      ? `${selectedPrompt.prompt}\n\nCorrection cue: ${JSON.stringify(input.settings.speechCorrectionWord.trim())}. Only when this cue clearly marks a spoken self-correction, apply the correction the speaker made and omit the cue from the result. The correction may revise, add to, or retract earlier speech. Preserve everything else. If the cue is an intended part of the sentence, keep it. Use the surrounding context to decide; do not assume every occurrence is a correction.`
+      : selectedPrompt.prompt,
     input.transcript,
   );
   const generated = yield* input.textGeneration.generateTranscriptionPostProcessing({

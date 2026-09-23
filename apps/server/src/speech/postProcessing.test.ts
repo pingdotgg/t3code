@@ -55,6 +55,38 @@ describe("postProcessTranscript", () => {
     }),
   );
 
+  it.effect("adds context-sensitive correction instructions to the selected prompt", () =>
+    Effect.gen(function* () {
+      const generate = vi.fn(() => Effect.succeed({ transcription: "I want yellow." }));
+      const settings = { ...DEFAULT_SERVER_SETTINGS, speechCorrectionWord: "err" };
+      yield* postProcessTranscript({
+        transcript: "I want orange, err, yellow.",
+        cwd: "C:/neutral",
+        settings,
+        textGeneration: textGeneration(generate),
+      });
+      expect(generate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: expect.stringContaining('Correction cue: "err"'),
+        }),
+      );
+      expect(generate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: expect.stringContaining(
+            "If the cue is an intended part of the sentence, keep it",
+          ),
+        }),
+      );
+      expect(generate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: expect.stringContaining(
+            "<transcript>\nI want orange, err, yellow.\n</transcript>",
+          ),
+        }),
+      );
+    }),
+  );
+
   it.effect("preserves the original when the provider returns blank output", () =>
     Effect.gen(function* () {
       expect(

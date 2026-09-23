@@ -485,7 +485,11 @@ export const make = Effect.gen(function* () {
           const startedAt = performance.now();
           const corrected = applySpeechCustomWords(await streamModel.finish(), customWords);
           const text = removeFillerWords
-            ? removeSpeechFillerWords(corrected, fillerWordLanguage)
+            ? removeSpeechFillerWords(
+                corrected,
+                fillerWordLanguage,
+                settings.speechPostProcessingEnabled ? settings.speechCorrectionWord : undefined,
+              )
             : corrected;
           finished = true;
           return { text: text.trim(), durationMs: performance.now() - startedAt };
@@ -597,7 +601,13 @@ export const make = Effect.gen(function* () {
                 : applySpeechCustomWords(result.text, customWords);
               return {
                 text: (removeFillerWords
-                  ? removeSpeechFillerWords(corrected, fillerWordLanguage)
+                  ? removeSpeechFillerWords(
+                      corrected,
+                      fillerWordLanguage,
+                      settings.speechPostProcessingEnabled
+                        ? settings.speechCorrectionWord
+                        : undefined,
+                    )
                   : corrected
                 ).trim(),
                 backend: inferenceModel.backend,

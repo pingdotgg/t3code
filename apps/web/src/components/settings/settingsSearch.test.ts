@@ -219,6 +219,7 @@ describe("searchSettings", () => {
     for (const id of [
       "speech-post-processing",
       "speech-post-processing-model",
+      "speech-correction-word",
       "speech-post-processing-prompt",
     ]) {
       expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === id)?.to).toBe("/settings/voice");

@@ -17,4 +17,8 @@ describe("removeSpeechFillerWords", () => {
   it("does not remove fillers inside words", () => {
     expect(removeSpeechFillerWords("humming thumbnail")).toBe("humming thumbnail");
   });
+
+  it("preserves a configured correction cue", () => {
+    expect(removeSpeechFillerWords("Orange, um, yellow", "en", "um")).toBe("Orange, um, yellow");
+  });
 });

@@ -1222,6 +1222,9 @@ export const ServerSettings = Schema.Struct({
   speechPostProcessingEnabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
+  speechCorrectionWord: Schema.String.check(Schema.isMaxLength(50)).pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
   speechPostProcessingModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -1659,6 +1662,7 @@ export const ServerSettingsPatch = Schema.Struct({
   speechCustomWords: Schema.optionalKey(SpeechCustomWords),
   speechRemoveFillerWords: Schema.optionalKey(Schema.Boolean),
   speechPostProcessingEnabled: Schema.optionalKey(Schema.Boolean),
+  speechCorrectionWord: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(50))),
   speechPostProcessingModelSelection: Schema.optionalKey(ModelSelectionPatch),
   speechPostProcessingPrompts: Schema.optionalKey(SpeechPostProcessingPrompts),
   speechPostProcessingSelectedPromptId: Schema.optionalKey(Schema.String),

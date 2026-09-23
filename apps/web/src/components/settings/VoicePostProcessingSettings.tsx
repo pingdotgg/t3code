@@ -145,6 +145,26 @@ export function VoicePostProcessingSettings() {
       />
       <SettingsRow
         serverScoped
+        settingKeys={["speechCorrectionWord"]}
+        {...searchableSetting("speech-correction-word")}
+        description="A spoken cue for revising what you just said. Applied only when the sentence clearly contains a correction and post-processing is enabled."
+        control={
+          <div className="w-40">
+            <Input
+              key={settings.speechCorrectionWord}
+              defaultValue={settings.speechCorrectionWord}
+              maxLength={50}
+              placeholder="err"
+              aria-label="Correction word"
+              onBlur={(event) =>
+                updateSettings({ speechCorrectionWord: event.target.value.trim() })
+              }
+            />
+          </div>
+        }
+      />
+      <SettingsRow
+        serverScoped
         settingKeys={["speechPostProcessingPrompts", "speechPostProcessingSelectedPromptId"]}
         {...searchableSetting("speech-post-processing-prompt")}
         description="Instructions used to clean the transcript. The transcript is supplied separately as untrusted text."

@@ -783,6 +783,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "speech-correction-word",
+    title: "Correction word",
+    to: "/settings/voice",
+    searchTerms: ["speech voice self correction revise err"],
+    desktopOnly: true,
+  },
+  {
     id: "speech-post-processing-prompt",
     title: "Voice post-processing prompt",
     to: "/settings/voice",
