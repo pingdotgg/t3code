@@ -21,6 +21,7 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import { ProviderRegistry, type ProviderRegistryShape } from "./Services/ProviderRegistry.ts";
+import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import {
   makeProviderMaintenanceCapabilities,
@@ -208,13 +209,22 @@ function makeRegistry(
   });
 }
 
-const makeTestRunner = (registry: ProviderRegistryShape) =>
+const makeTestRunner = (
+  registry: ProviderRegistryShape,
+  manifest = ModelManifest.BUNDLED_MODEL_MANIFEST,
+) =>
   Effect.service(ProviderMaintenanceRunner.ProviderMaintenanceRunner).pipe(
     Effect.provide(
       ProviderMaintenanceRunner.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             Layer.succeed(ProviderRegistry, registry),
+            Layer.succeed(ModelManifest.ModelManifest, {
+              current: Effect.succeed(manifest),
+              refresh: Effect.succeed(manifest),
+              forceRefresh: Effect.succeed(manifest),
+              refreshInBackground: Effect.void,
+            }),
             // Fresh per runner so a version cached by one test cannot leak into another.
             Layer.sync(ProviderVersionCache, () => new Map()),
           ),
@@ -743,7 +753,7 @@ describe("providerMaintenanceRunner", () => {
       Effect.provide(
         Layer.mergeAll(
           NonWindowsPlatform,
-          latestVersionHttpClient("0.0.0"),
+          latestVersionHttpClient("2.0.0"),
           mockSpawnerLayer((_command, args) => {
             calls.push(args.join(" "));
             if (calls.length === 1) {
@@ -910,4 +920,93 @@ describe("providerMaintenanceRunner", () => {
       ),
     );
   });
+});
+
+it.effect("refuses incompatible latest versions and unapproved or unpinnable targets", () => {
+  const calls: string[] = [];
+  const manifest: ModelManifest.ModelManifestData = {
+    version: 1,
+    currentModels: {},
+    compatibility: [
+      {
+        driver: "codex",
+        t3CodeRange: ">=0.0.42",
+        recommendedVersion: "2.0.0",
+        ranges: [
+          { range: "=2.0.0", status: "supported" },
+          { range: ">2.0.0", status: "broken" },
+        ],
+      },
+    ],
+  };
+  return Effect.gen(function* () {
+    const { registry, providersRef } = yield* makeRegistry();
+    const pinnedCapabilities = makeProviderMaintenanceCapabilities({
+      provider: CODEX_DRIVER,
+      packageName: "@openai/codex",
+      updateExecutable: "npm",
+      updateArgs: ["install", "-g", "@openai/codex@latest"],
+      updateLockKey: "npm-global:/fixture",
+    });
+    const updater = yield* makeTestRunner(
+      {
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(pinnedCapabilities),
+      },
+      manifest,
+    );
+    for (const targetVersion of [undefined, "", "1.0.0", "2.0.0; echo unsafe"]) {
+      const result = yield* updater.updateProvider({
+        provider: CODEX_DRIVER,
+        ...(targetVersion !== undefined ? { targetVersion } : {}),
+      });
+      assert.strictEqual(result.providers[0]?.updateState?.status, "failed");
+    }
+    assert.deepStrictEqual(calls, []);
+    yield* Ref.update(providersRef, (providers) =>
+      providers.map((entry) => ({ ...entry, version: "2.0.0" })),
+    );
+    const installed = yield* updater.updateProvider({
+      provider: CODEX_DRIVER,
+      targetVersion: "2.0.0",
+    });
+    assert.deepStrictEqual(calls, ["install -g @openai/codex@2.0.0"]);
+    assert.strictEqual(installed.providers[0]?.updateState?.status, "succeeded");
+    yield* Ref.update(providersRef, (providers) =>
+      providers.map((entry) => ({ ...entry, version: "1.0.0" })),
+    );
+    const unchanged = yield* updater.updateProvider({
+      provider: CODEX_DRIVER,
+      targetVersion: "2.0.0",
+    });
+    assert.strictEqual(unchanged.providers[0]?.updateState?.status, "unchanged");
+    const nativeUpdater = yield* makeTestRunner(
+      {
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed({
+            ...pinnedCapabilities,
+            update: { ...pinnedCapabilities.update!, lockKey: "codex-native" },
+          }),
+      },
+      manifest,
+    );
+    const refused = yield* nativeUpdater.updateProvider({
+      provider: CODEX_DRIVER,
+      targetVersion: "2.0.0",
+    });
+    assert.strictEqual(refused.providers[0]?.updateState?.status, "failed");
+    assert.strictEqual(calls.length, 2);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NonWindowsPlatform,
+        latestVersionHttpClient("3.0.0"),
+        mockSpawnerLayer((_command, args) => {
+          calls.push(args.join(" "));
+          return { stdout: "installed" };
+        }),
+      ),
+    ),
+  );
 });

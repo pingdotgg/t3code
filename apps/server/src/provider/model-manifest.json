@@ -1,6 +1,14 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-22T19:42:55Z",
+  "updatedAt": "2026-09-22T21:40:00Z",
+  "compatibility": [
+    {
+      "driver": "opencode",
+      "t3CodeRange": ">=0.0.42",
+      "recommendedRange": ">=1.14.19",
+      "ranges": [{ "range": "<1.14.19", "status": "broken" }]
+    }
+  ],
   "currentModels": {
     "codex": [
       "gpt-6-astra",
