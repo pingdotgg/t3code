@@ -1710,6 +1710,9 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         context.coordinator.currentOpenURL = openURL
         context.coordinator.canEditMessage = canEditMessage
         context.coordinator.onEditMessage = onEditMessage
+        context.coordinator.messageActions.editableIDs = Set(messages.lazy.filter {
+            $0.role == .user && canEditMessage($0.id)
+        }.map(\.id))
         context.coordinator.update(
             threadID: threadID,
             messages: messages,
@@ -1769,6 +1772,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var orderedIDs: [String] = []
         private var currentThreadID: String?
         var currentOpenURL: OpenURLAction?
+        let messageActions = FeatureMessageActions()
         var canEditMessage: ((String) -> Bool)?
         var onEditMessage: ((String) -> Void)?
         private var currentImageContext: MarkdownImageContext?
@@ -1798,15 +1802,24 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             point: CGPoint
         ) -> UIContextMenuConfiguration? {
             guard let messageID = dataSource?.itemIdentifier(for: indexPath),
-                  messagesByID[messageID]?.role == .user,
-                  canEditMessage?(messageID) == true else { return nil }
+                  let message = messagesByID[messageID],
+                  message.role == .user || message.role == .assistant else { return nil }
             return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-                UIMenu(children: [UIAction(
-                    title: "Edit from here", image: UIImage(systemName: "arrow.uturn.backward")
-                ) { [weak self] _ in
-                    guard self?.canEditMessage?(messageID) == true else { return }
-                    self?.onEditMessage?(messageID)
-                }])
+                guard let self, let message = self.messagesByID[messageID] else { return nil }
+                var actions: [UIAction] = []
+                if !message.text.isEmpty {
+                    actions.append(UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { _ in
+                        UIPasteboard.general.string = message.text
+                        UIAccessibility.post(notification: .announcement, argument: "Message copied")
+                    })
+                }
+                if message.role == .user, self.canEditMessage?(messageID) == true {
+                    actions.append(UIAction(title: "Edit from here", image: UIImage(systemName: "arrow.uturn.backward")) { [weak self] _ in
+                        guard self?.canEditMessage?(messageID) == true else { return }
+                        self?.onEditMessage?(messageID)
+                    })
+                }
+                return actions.isEmpty ? nil : UIMenu(children: actions)
             }
         }
 
@@ -1849,7 +1862,12 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                         message: message,
                         imageContext: self?.currentImageContext,
                         attachmentContext: self?.currentAttachmentContext,
-                        skills: self?.currentSkills ?? []
+                        skills: self?.currentSkills ?? [],
+                        messageActions: self?.messageActions,
+                        onEditMessage: { [weak self] in
+                            guard self?.canEditMessage?(messageID) == true else { return }
+                            self?.onEditMessage?(messageID)
+                        }
                     )
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .environment(\.t3CodeSizeSteps, self?.currentCodeSizeSteps ?? 0)
@@ -2921,11 +2939,18 @@ private enum FeatureAttachmentThumbnailError: Error {
     case decodingFailed
 }
 
+@MainActor @Observable
+final class FeatureMessageActions {
+    var editableIDs: Set<String> = []
+}
+
 struct FeatureMessageView: View {
     let message: FeatureMessage
     var imageContext: MarkdownImageContext? = nil
     var attachmentContext: FeatureAttachmentContext? = nil
     var skills: [FeatureProviderSkill] = []
+    var messageActions: FeatureMessageActions? = nil
+    var onEditMessage: (() -> Void)? = nil
     @SwiftUI.Environment(\.openURL) private var openURL
     @State private var previewedContext: ComposerContextRecord?
     @State private var contextUnavailable = false
@@ -3006,45 +3031,70 @@ struct FeatureMessageView: View {
         case .user:
             HStack {
                 Spacer(minLength: 44)
-                VStack(alignment: .leading, spacing: 10) {
-                    FeatureMessageAttachmentsView(attachments: message.attachments, context: attachmentContext)
-                    if !message.text.isEmpty {
-                        MarkdownMessageView(
-                            renderedText,
-                            isStreaming: message.state == .streaming,
-                            imageContext: imageContext,
-                            skills: skills,
-                            clipboardSource: clipboardSource,
-                            messageContext: message.context,
-                            copyText: message.text
-                        )
+                VStack(alignment: .trailing, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        FeatureMessageAttachmentsView(attachments: message.attachments, context: attachmentContext)
+                        if !message.text.isEmpty {
+                            MarkdownMessageView(
+                                renderedText,
+                                isStreaming: message.state == .streaming,
+                                imageContext: imageContext,
+                                skills: skills,
+                                clipboardSource: clipboardSource,
+                                messageContext: message.context,
+                                copyText: message.text
+                            )
+                        }
+                        if message.state == .queued {
+                            Label("Queued. Sends when connected.", systemImage: "clock")
+                                .font(T3Typography.supporting)
+                                .foregroundStyle(T3Colors.textTertiary)
+                        } else if message.state == .failed {
+                            Label("Not sent", systemImage: "exclamationmark.circle")
+                                .font(T3Typography.supporting)
+                                .foregroundStyle(T3Colors.danger)
+                        }
                     }
-                    if message.state == .queued {
-                        Label("Queued. Sends when connected.", systemImage: "clock")
-                            .font(T3Typography.supporting)
-                            .foregroundStyle(T3Colors.textTertiary)
-                    } else if message.state == .failed {
-                        Label("Not sent", systemImage: "exclamationmark.circle")
-                            .font(T3Typography.supporting)
-                            .foregroundStyle(T3Colors.danger)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 11)
+                    .frame(maxWidth: T3Metrics.readingWidth * 0.88, alignment: .leading)
+                    .background(
+                        T3Colors.subtleStrong,
+                        in: UnevenRoundedRectangle(
+                            topLeadingRadius: 16,
+                            bottomLeadingRadius: 16,
+                            bottomTrailingRadius: 4,
+                            topTrailingRadius: 16
+                        )
+                    )
+                    .accessibilityLabel("You")
+                    .accessibilityValue(accessibilityValue)
+                    .accessibilityIdentifier("message-\(message.id)")
+                    if !message.text.isEmpty, message.state == .complete {
+                        HStack(spacing: 4) {
+                            Text(message.updatedAt ?? message.createdAt, format: .dateTime.hour().minute())
+                                .monospacedDigit()
+                                .font(T3Typography.supporting)
+                                .foregroundStyle(T3Colors.textTertiary)
+                            if messageActions?.editableIDs.contains(message.id) == true {
+                                Button { onEditMessage?() } label: {
+                                    Image(systemName: "arrow.uturn.backward")
+                                        .font(T3Typography.supporting)
+                                        .foregroundStyle(T3Colors.textTertiary)
+                                        .frame(minWidth: T3Metrics.minimumTapTarget, minHeight: T3Metrics.minimumTapTarget)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Edit from here")
+                                .accessibilityIdentifier("edit-message-\(message.id)")
+                            }
+                            FeatureMessageCopyButton(text: message.text, isUserMessage: true)
+                                .id(message.id)
+                                .accessibilityIdentifier("copy-message-\(message.id)")
+                        }
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 11)
-                .frame(maxWidth: T3Metrics.readingWidth * 0.88, alignment: .leading)
-                .background(
-                    T3Colors.subtleStrong,
-                    in: UnevenRoundedRectangle(
-                        topLeadingRadius: 16,
-                        bottomLeadingRadius: 16,
-                        bottomTrailingRadius: 4,
-                        topTrailingRadius: 16
-                    )
-                )
             }
-            .accessibilityLabel("You")
-            .accessibilityValue(accessibilityValue)
-            .accessibilityIdentifier("message-\(message.id)")
         case .assistant:
             VStack(alignment: .leading, spacing: 10) {
                 FeatureMessageAttachmentsView(attachments: message.attachments, context: attachmentContext)
@@ -3059,6 +3109,17 @@ struct FeatureMessageView: View {
                         copyText: message.text
                     )
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    if message.state != .streaming {
+                        HStack(spacing: 4) {
+                            FeatureMessageCopyButton(text: message.text)
+                                .id(message.id)
+                                .accessibilityIdentifier("copy-response-\(message.id)")
+                            Text(message.updatedAt ?? message.createdAt, format: .dateTime.hour().minute())
+                                .monospacedDigit()
+                                .font(T3Typography.supporting)
+                                .foregroundStyle(T3Colors.textTertiary)
+                        }
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -3111,6 +3172,38 @@ struct FeatureMessageView: View {
         return [message.text, attachmentSummary]
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
+    }
+}
+
+private struct FeatureMessageCopyButton: View {
+    let text: String
+    var isUserMessage = false
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            UIPasteboard.general.string = text
+            copied = true
+            UIAccessibility.post(notification: .announcement, argument: isUserMessage ? "Message copied" : "Response copied")
+        } label: {
+            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                .labelStyle(.iconOnly)
+                .font(T3Typography.supporting)
+                .foregroundStyle(T3Colors.textTertiary)
+                .frame(minWidth: T3Metrics.minimumTapTarget, minHeight: T3Metrics.minimumTapTarget)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isUserMessage ? "Copy message" : "Copy response")
+        .accessibilityHint(isUserMessage ? "Copies the full message text" : "Copies the full response as Markdown")
+        .sensoryFeedback(.success, trigger: copied) { _, isCopied in isCopied }
+        .task(id: copied) {
+            guard copied else { return }
+            do {
+                try await Task.sleep(for: .seconds(2))
+                copied = false
+            } catch {}
+        }
     }
 }
 
