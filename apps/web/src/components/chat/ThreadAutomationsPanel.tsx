@@ -131,7 +131,9 @@ export function ThreadAutomationsPanel(props: {
           Could not load automations: {tasksQuery.error}
         </p>
       ) : boundTasks.length === 0 ? (
-        <p className="px-2.5 py-1.5 text-[11px] text-muted-foreground">No automations.</p>
+        <p className="px-2.5 py-1.5 text-[11px] text-muted-foreground">
+          {tasksQuery.data === null ? "Loading automations…" : "No automations."}
+        </p>
       ) : null}
 
       <ul className="m-0 list-none p-0">
