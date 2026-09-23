@@ -32,6 +32,7 @@ uncertain. The setting is stored on the selected transcription environment.
 On web and desktop, **Voice post-processing** can polish a completed transcript
 with a provider configured on the current project environment. Its model and
 prompt are independent from the environment's general text generation model.
+Enable it and choose its model and prompt under Settings, then Voice.
 While it runs, the composer shows a post-processing state. Select **Skip** to
 stop processing and insert the original transcript instead. If processing fails,
 T3 Code preserves the original transcript.

@@ -59,6 +59,7 @@ vi.mock("../ui/select", () => ({
 vi.mock("../ui/button", () => ({ Button: "button" }));
 vi.mock("../ui/badge", () => ({ Badge: "span" }));
 vi.mock("./settingsSearch", () => ({ searchableSetting: () => ({}) }));
+vi.mock("./VoicePostProcessingSettings", () => ({ VoicePostProcessingSettings: () => null }));
 vi.mock("./settingsLayout", () => ({
   SettingsPageContainer: "div",
   SettingsSection: "section",

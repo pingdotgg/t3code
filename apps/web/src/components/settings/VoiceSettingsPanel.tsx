@@ -34,6 +34,7 @@ import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import { VoicePostProcessingSettings } from "./VoicePostProcessingSettings";
 
 const SYSTEM_DEFAULT = "system-default";
 const PRIMARY_ENVIRONMENT = "primary-environment";
@@ -492,6 +493,7 @@ export function VoiceSettingsPanel() {
           }
         />
       </SettingsSection>
+      <VoicePostProcessingSettings />
       <SettingsSection
         title="Transcription Models"
         id={searchableSetting("local-voice-input").id}

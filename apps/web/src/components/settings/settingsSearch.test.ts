@@ -216,6 +216,13 @@ describe("searchSettings", () => {
     expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "microphone")?.to).toBe(
       "/settings/voice",
     );
+    for (const id of [
+      "speech-post-processing",
+      "speech-post-processing-model",
+      "speech-post-processing-prompt",
+    ]) {
+      expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === id)?.to).toBe("/settings/voice");
+    }
   });
 
 });
