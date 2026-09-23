@@ -89,10 +89,10 @@ index 8dd50e8f04022d183884a57e4d61a7e1711b9e49..481cdb4bc64ea5ae49919071f686324f
      }
    }
 diff --git a/build/Sharing.types.d.ts b/build/Sharing.types.d.ts
-index e9820b061bddce91657ab7144fde98d0543a3b8e..364d63273cb3e209c6490de6dd869a01c8728fcc 100644
+index 74544e0728d5f845351693d8d90596abae42eaea..92bd2f53108ac717f1ef7292fe89aea05c676c5e 100644
 --- a/build/Sharing.types.d.ts
 +++ b/build/Sharing.types.d.ts
-@@ -77,6 +77,11 @@ export type SharePayload = {
+@@ -100,6 +100,11 @@ export type SharePayload = {
       * @default 'text/plain'
       */
      mimeType?: string;
@@ -105,10 +105,10 @@ index e9820b061bddce91657ab7144fde98d0543a3b8e..364d63273cb3e209c6490de6dd869a01
  export type BaseResolvedSharePayload = SharePayload & {
      /**
 diff --git a/src/Sharing.types.ts b/src/Sharing.types.ts
-index d9a5ad38f5fe2856b365eb91b71abd640314a5cc..21ea45f04b88cce272e2e02de24c5e4eb8157e82 100644
+index 18af320420e7c01a8ffbd7fa5347320409f905d8..3a52b70a20efbc588ad5ca974c38c951e5757c97 100644
 --- a/src/Sharing.types.ts
 +++ b/src/Sharing.types.ts
-@@ -85,6 +85,12 @@ export type SharePayload = {
+@@ -108,6 +108,12 @@ export type SharePayload = {
     * @default 'text/plain'
     */
    mimeType?: string;

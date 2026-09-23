@@ -2,6 +2,14 @@ diff --git a/ios/MenuViewManager.mm b/ios/MenuViewManager.mm
 index 3d149b3e7426b8f7c999603ddf1e15e12331c33a..e80fe2caae86e339fcb03408419a7d64b3e5b04f 100644
 --- a/ios/MenuViewManager.mm
 +++ b/ios/MenuViewManager.mm
+@@ -1,6 +1,6 @@
+ #import <React/RCTViewManager.h>
+ #import <React/RCTUIManager.h>
+-#import "RCTBridge.h"
++#import <React/RCTBridge.h>
+ 
+ #ifdef RCT_NEW_ARCH_ENABLED
+ // NEW ARCH
 @@ -65,6 +65,10 @@ - (UIView *)view
   * onOpenMenu: callback to be called when the menu is opened
   */

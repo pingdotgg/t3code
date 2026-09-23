@@ -75,15 +75,40 @@ minimumReleaseAgeExclude:
   - alchemy@2.0.0-beta.79
   - effect@4.0.0-rc.115
   - "@legendapp/list@3.3.5"
-  - "@expo/cli@57.0.20"
+  - "@expo/cli@58.0.3"
   - "@expo/env@2.4.3"
-  - "@expo/fingerprint@0.20.11"
-  - "@expo/metro-config@57.0.12"
-  - expo-constants@57.0.16
-  - expo-font@57.0.2
-  - expo-updates@57.0.19
-  - expo@57.0.18
-  - expo-widgets@57.0.15
+  - "@expo/fingerprint@0.21.1"
+  - "@expo/metro-config@58.0.3"
+  - expo-constants@58.0.3
+  - expo-font@58.0.1
+  - expo-updates@58.0.5
+  - expo@58.0.0-preview.3
+  - expo-widgets@58.0.3
+  - "@expo/config-plugins@58.0.1"
+  - "@expo/log-box@58.0.3"
+  - "@expo/metro-file-map@58.0.1"
+  - "@expo/metro-runtime@58.0.3"
+  - "@expo/metro@58.0.0-rc.0"
+  - "@expo/prebuild-config@58.0.3"
+  - "@expo/router-server@58.0.3"
+  - "@expo/ui@58.0.3"
+  - babel-preset-expo@58.0.2
+  - expo-asset@58.0.3
+  - expo-build-properties@58.0.3
+  - expo-dev-client@58.0.3
+  - expo-dev-launcher@58.0.3
+  - expo-dev-menu@58.0.3
+  - expo-image-manipulator@58.0.4
+  - expo-image-picker@58.0.3
+  - expo-image@58.0.2
+  - expo-linking@58.0.3
+  - expo-modules-autolinking@58.0.2
+  - expo-modules-core@58.0.3
+  - expo-modules-jsi@58.0.2
+  - expo-notifications@58.0.3
+  - expo-sharing@58.0.6
+  - expo-sqlite@58.0.3
+  - expo-symbols@58.0.1
   - electron@44.4.2
   - "@anthropic-ai/claude-agent-sdk@0.3.276"
   - "@alchemy.run/cloudflare-runtime@2.0.0-beta.79"
@@ -141,11 +166,12 @@ overrides:
   "@effect/sql-pg": "catalog:"
   "@effect/vitest": "catalog:"
   "@effect/vitest>vitest": "-"
-  "@expo/dom-webview": 57.0.1
-  "@expo/metro-config": 57.0.12
-  expo-constants: 57.0.16
-  # Keep fresh resolution on the version carrying the permissions registry fix.
-  expo-modules-core: 57.0.14
+  "@expo/dom-webview": 58.0.0
+  "@expo/metro-config": 58.0.3
+  expo-constants: 58.0.3
+  expo-router: 58.0.3
+  "expo-sharing>@expo/config-plugins": 58.0.1
+  "expo-sharing>@expo/config-types": 58.0.0
   "@pierre/diffs>@shikijs/transformers": ^4.2.0
   # Keep one copy of these native-binary packages. lightningcss ships 11 platform binaries per
   # version, and the workspaces' tailwindcss ^4 ranges drift into two 4.3.x copies of the family.
@@ -154,9 +180,6 @@ overrides:
   "@tailwindcss/vite": "catalog:"
   "@types/node": "catalog:"
   effect: "catalog:"
-  expo-router: 57.0.17
-  "expo-sharing>@expo/config-plugins": 57.0.9
-  "expo-sharing>@expo/config-types": 57.0.2
   node-abi: 4.33.0
   lightningcss: "catalog:"
   tailwindcss: "catalog:"
@@ -166,7 +189,7 @@ overrides:
 packageExtensions:
   "@clerk/expo@*":
     dependencies:
-      "@expo/config-plugins": 57.0.9
+      "@expo/config-plugins": 58.0.1
   "@effect/vitest@*":
     dependencies:
       vite-plus: "catalog:"
@@ -180,7 +203,12 @@ packageExtensions:
 patchedDependencies:
   "@clerk/expo@4.6.8": patches/@clerk__expo@4.6.8.patch
   "@effect/vitest@4.0.0-rc.115": patches/@effect__vitest@4.0.0-rc.115.patch
-  "@expo/metro-config@57.0.12": patches/@expo__metro-config@57.0.12.patch
+  "@expo/metro-config@58.0.3": patches/@expo__metro-config@58.0.3.patch
+  expo-audio@58.0.0: patches/expo-audio@58.0.0.patch
+  expo-blur@58.0.0: patches/expo-blur@58.0.0.patch
+  expo-glass-effect@58.0.0: patches/expo-glass-effect@58.0.0.patch
+  expo-sharing@58.0.6: patches/expo-sharing@58.0.6.patch
+  expo-widgets@58.0.3: patches/expo-widgets@58.0.3.patch
   "@ff-labs/fff-node@0.9.4": patches/@ff-labs__fff-node@0.9.4.patch
   "@legendapp/list@3.3.5": patches/@legendapp__list@3.3.5.patch
   "@pierre/diffs@1.3.0-beta.10": patches/@pierre%2Fdiffs@1.3.0-beta.10.patch
@@ -189,17 +217,10 @@ patchedDependencies:
   "@react-navigation/native-stack@7.17.6": patches/@react-navigation%2Fnative-stack@7.17.6.patch
   dbus-next@0.10.2: patches/dbus-next@0.10.2.patch
   effect@4.0.0-rc.115: patches/effect@4.0.0-rc.115.patch
-  expo-audio@57.0.4: patches/expo-audio@57.0.4.patch
-  expo-modules-core@57.0.14: patches/expo-modules-core@57.0.14.patch
-  expo-notifications@57.0.15: patches/expo-notifications@57.0.15.patch
-  expo-sharing@57.0.17: patches/expo-sharing@57.0.17.patch
-  expo-widgets@57.0.15: patches/expo-widgets@57.0.15.patch
-  react-native-gesture-handler@2.32.0: patches/react-native-gesture-handler@2.32.0.patch
+  react-native-gesture-handler@3.2.1: patches/react-native-gesture-handler@3.2.1.patch
   react-native-keyboard-controller@1.21.13: patches/react-native-keyboard-controller@1.21.13.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
-  # Preserve the final layout frame. Backport of [#10171](https://github.com/software-mansion/react-native-reanimated/pull/10171).
-  react-native-reanimated@4.5.5: patches/react-native-reanimated@4.5.5.patch
-  react-native-screens@4.26.2: patches/react-native-screens@4.26.2.patch
+  react-native-screens@4.27.0: patches/react-native-screens@4.27.0.patch
   uniwind@1.11.0: patches/uniwind@1.11.0.patch
 
 peerDependencyRules:
