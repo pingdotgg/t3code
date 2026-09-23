@@ -47,7 +47,7 @@ describe("postProcessTranscript", () => {
         yield* postProcessTranscript({
           transcript: "raw text",
           cwd: "C:/neutral",
-          settings: DEFAULT_SERVER_SETTINGS,
+          settings: { ...DEFAULT_SERVER_SETTINGS, speechPostProcessingEnabled: false },
           textGeneration: textGeneration(generate),
         }),
       ).toBe("raw text");
