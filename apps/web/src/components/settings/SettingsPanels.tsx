@@ -84,6 +84,7 @@ import {
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
+import { WorktreeCommandsSettings } from "./WorktreeCommandsSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
@@ -637,6 +638,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
         ? ["New worktrees start from origin"]
         : []),
+      ...(settings.worktreeCommands.create !== DEFAULT_UNIFIED_SETTINGS.worktreeCommands.create ||
+      settings.worktreeCommands.remove !== DEFAULT_UNIFIED_SETTINGS.worktreeCommands.remove
+        ? ["Worktree commands"]
+        : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
@@ -682,6 +687,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
+      settings.worktreeCommands.create,
+      settings.worktreeCommands.remove,
       settings.diffFilesCollapsed,
       settings.diffIgnoreWhitespace,
       settings.diffLayout,
@@ -822,6 +829,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
+      worktreeCommands: DEFAULT_UNIFIED_SETTINGS.worktreeCommands,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
@@ -3064,6 +3072,7 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+        <WorktreeCommandsSettings />
         <SettingsRow
           serverScoped
           settingKeys={["addProjectBaseDirectory"]}

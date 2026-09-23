@@ -27,6 +27,7 @@ import { BranchNamingSettings } from "./components/BranchNamingSettings";
 import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import { WorktreeCommandField } from "./components/WorktreeCommandField";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import {
@@ -52,6 +53,7 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "defaultAutoPull",
     "removeAgentCreditsOnMerge",
     "newWorktreesStartFromOrigin",
+    "worktreeCommands",
     "branchNamingMode",
     "branchNamePrefix",
     "branchNameInstructions",
@@ -79,6 +81,21 @@ const SUBMODULE_CHOICES: ReadonlyArray<{
   },
   { mode: "none", label: "Skip", description: "Leave submodules empty for a setup script." },
 ];
+
+const WORKTREE_COMMAND_FIELDS = [
+  {
+    kind: "create",
+    label: "Create command",
+    subtitle:
+      "Runs instead of the built-in worktree creation. It must check out $T3CODE_BRANCH at $T3CODE_WORKTREE_PATH, or print the path it used.",
+  },
+  {
+    kind: "remove",
+    label: "Remove command",
+    subtitle:
+      "Runs instead of the built-in worktree removal. It must delete $T3CODE_WORKTREE_PATH.",
+  },
+] as const;
 
 const WORKSPACE_CHOICES: ReadonlyArray<{
   readonly mode: ThreadEnvMode | null;
@@ -208,6 +225,21 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     (target) =>
       target.environment.serverConfig.environment.capabilities.threadRestartContinuation === true,
   );
+  const uniformWorktreeCommand = (kind: "create" | "remove") => {
+    const value = displayTargets[0]?.settings.worktreeCommands[kind] ?? null;
+    return displayTargets.every((target) => target.settings.worktreeCommands[kind] === value)
+      ? value
+      : null;
+  };
+  // An environment patch merges, but a project write replaces the whole override value, so
+  // it carries the other command along.
+  const writeWorktreeCommand = (kind: "create" | "remove", value: string) => {
+    const current = displayTargets[0]?.settings.worktreeCommands ?? { create: "", remove: "" };
+    write({
+      worktreeCommands: projectSelected ? { ...current, [kind]: value } : { [kind]: value },
+    });
+  };
+
   const disabledFor = (key: string) =>
     disabled ||
     (projectSelected &&
@@ -364,6 +396,16 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       disabled={disabledFor("newWorktreesStartFromOrigin")}
                       onValueChange={(value) => write({ newWorktreesStartFromOrigin: value })}
                     />
+                    {WORKTREE_COMMAND_FIELDS.map((field) => (
+                      <WorktreeCommandField
+                        key={field.kind}
+                        label={field.label}
+                        subtitle={field.subtitle}
+                        value={uniformWorktreeCommand(field.kind)}
+                        disabled={disabledFor("worktreeCommands")}
+                        onCommit={(value) => writeWorktreeCommand(field.kind, value)}
+                      />
+                    ))}
                   </SettingsSection>
                 </>
               ) : null}

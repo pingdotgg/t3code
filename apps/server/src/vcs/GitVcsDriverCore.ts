@@ -3368,35 +3368,75 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
       worktreePath = path.join(parentDir, repoName, sanitizedBranch);
     }
+    const requestedPath = worktreePath;
     const args = input.newRefName
-      ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
-      : ["worktree", "add", worktreePath, input.refName];
+      ? ["worktree", "add", "-b", input.newRefName, requestedPath, input.refName]
+      : ["worktree", "add", requestedPath, input.refName];
     const progress = options?.progress;
     const onCheckoutProgress = progress?.onCheckoutProgress;
 
-    const checkoutWorkers = (yield* readConfigValue(input.cwd, "checkout.workers")) ?? "0";
-    yield* executeGit(
-      "GitVcsDriver.createWorktree",
-      input.cwd,
-      ["-c", `checkout.workers=${checkoutWorkers}`, ...args],
-      {
-        fallbackErrorDetail: "git worktree add failed",
-        timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
-        ...(onCheckoutProgress
-          ? {
-              // Git only prints checkout progress when stderr is a tty or the
-              // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
-              env: { GIT_PROGRESS_DELAY: "0", LC_ALL: "C" },
-              progress: {
-                onStderrLine: (line) => {
-                  const parsed = parseGitCheckoutProgressLine(line);
-                  return parsed ? onCheckoutProgress(parsed) : Effect.void;
+    if (options?.customCheckout) {
+      // `git worktree add` creates missing parents; a custom command may not.
+      yield* fileSystem
+        .makeDirectory(path.dirname(requestedPath), { recursive: true })
+        .pipe(Effect.ignore);
+      const reportedPath = yield* options.customCheckout({
+        worktreePath: requestedPath,
+        branch: targetBranch,
+        startRef: input.refName,
+        createBranch: input.newRefName !== undefined,
+      });
+      worktreePath = reportedPath ?? requestedPath;
+      // T3 records the branch on the thread, so a command that checked out
+      // something else would leave every later git action lying.
+      const [topLevel = "", checkedOut = null] = yield* runGitStdout(
+        "GitVcsDriver.createWorktree.verifyCustomCheckout",
+        worktreePath,
+        ["rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD"],
+      ).pipe(
+        Effect.map((stdout) => stdout.trim().split("\n")),
+        Effect.orElseSucceed(() => []),
+      );
+      const realPath = (value: string) =>
+        fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
+      const isWorktreeRoot =
+        topLevel !== "" && (yield* realPath(topLevel)) === (yield* realPath(worktreePath));
+      if (!isWorktreeRoot || checkedOut !== targetBranch) {
+        return yield* new GitCommandError({
+          operation: "GitVcsDriver.createWorktree",
+          command: "custom worktree create command",
+          cwd: input.cwd,
+          detail:
+            !isWorktreeRoot || checkedOut === null
+              ? `The custom worktree create command did not create a git worktree at ${worktreePath}.`
+              : `The custom worktree create command checked out ${checkedOut} at ${worktreePath}, expected ${targetBranch}.`,
+        });
+      }
+    } else {
+      const checkoutWorkers = (yield* readConfigValue(input.cwd, "checkout.workers")) ?? "0";
+      yield* executeGit(
+        "GitVcsDriver.createWorktree",
+        input.cwd,
+        ["-c", `checkout.workers=${checkoutWorkers}`, ...args],
+        {
+          fallbackErrorDetail: "git worktree add failed",
+          timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
+          ...(onCheckoutProgress
+            ? {
+                // Git only prints checkout progress when stderr is a tty or the
+                // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
+                env: { GIT_PROGRESS_DELAY: "0", LC_ALL: "C" },
+                progress: {
+                  onStderrLine: (line) => {
+                    const parsed = parseGitCheckoutProgressLine(line);
+                    return parsed ? onCheckoutProgress(parsed) : Effect.void;
+                  },
                 },
-              },
-            }
-          : {}),
-      },
-    );
+              }
+            : {}),
+        },
+      );
+    }
 
     if (progress?.onWorktreeClaimed) {
       yield* progress.onWorktreeClaimed(worktreePath);

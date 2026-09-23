@@ -148,6 +148,18 @@ export interface CreateWorktreeProgress {
   }) => Effect.Effect<void, never>;
 }
 
+/** What a custom checkout command must produce; exposed to it as `T3CODE_*` env vars. */
+export interface CustomWorktreeCheckoutInput {
+  /** Directory T3 Code picked for the checkout. */
+  readonly worktreePath: string;
+  /** Branch the checkout must have checked out. */
+  readonly branch: string;
+  /** Ref the new branch starts from; equals `branch` when the branch already exists. */
+  readonly startRef: string;
+  /** True when the command itself must create `branch` from `startRef`. */
+  readonly createBranch: boolean;
+}
+
 export interface CreateWorktreeOptions {
   readonly progress?: CreateWorktreeProgress;
   /**
@@ -158,6 +170,15 @@ export interface CreateWorktreeOptions {
   readonly submodules?: WorktreeSubmodules | null;
   /** The `worktreesDirectory` setting, used when the input has no explicit path. */
   readonly worktreesDirectory?: string;
+  /**
+   * Replaces the built-in `git worktree add` step with a user-configured
+   * command. The steps around the checkout (submodules, base-ref config)
+   * still run. Resolves to the checkout's path
+   * when the command placed it somewhere other than `worktreePath`.
+   */
+  readonly customCheckout?: (
+    input: CustomWorktreeCheckoutInput,
+  ) => Effect.Effect<string | null, GitCommandError>;
 }
 
 export interface GitCommitProgress {

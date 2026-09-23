@@ -3161,6 +3161,105 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("uses a custom checkout in place of git worktree add", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        // The parent is missing: the driver creates it, as `git worktree add` would.
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-worktrees-"),
+          "nested",
+          "custom-worktree",
+        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const created = yield* driver.createWorktree(
+          { cwd, path: worktreePath, refName: initialBranch, newRefName: "feature/custom" },
+          {
+            customCheckout: (checkout) =>
+              git(cwd, [
+                "worktree",
+                "add",
+                "-b",
+                checkout.branch,
+                checkout.worktreePath,
+                checkout.startRef,
+              ]).pipe(
+                Effect.as(null),
+                Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+                Effect.orDie,
+              ),
+          },
+        );
+
+        assert.deepEqual(created.worktree, { path: worktreePath, refName: "feature/custom" });
+      }),
+    );
+
+    it.effect("adopts the checkout a custom command reports at its own path", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const worktreesRoot = yield* makeTmpDir("git-worktrees-");
+        const ownPath = pathService.join(worktreesRoot, "tool-chosen");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const created = yield* driver.createWorktree(
+          {
+            cwd,
+            path: pathService.join(worktreesRoot, "t3-chosen"),
+            refName: initialBranch,
+            newRefName: "feature/own-path",
+          },
+          {
+            customCheckout: (checkout) =>
+              git(cwd, ["worktree", "add", "-b", checkout.branch, ownPath, checkout.startRef]).pipe(
+                Effect.as(ownPath),
+                Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+                Effect.orDie,
+              ),
+          },
+        );
+
+        assert.deepEqual(created.worktree, { path: ownPath, refName: "feature/own-path" });
+      }),
+    );
+
+    it.effect("rejects a custom checkout that left a different branch checked out", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "wrong-branch");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const error = yield* Effect.flip(
+          driver.createWorktree(
+            { cwd, path: worktreePath, refName: initialBranch, newRefName: "feature/expected" },
+            {
+              customCheckout: (checkout) =>
+                git(cwd, [
+                  "worktree",
+                  "add",
+                  "-b",
+                  "feature/other",
+                  checkout.worktreePath,
+                  checkout.startRef,
+                ]).pipe(
+                  Effect.as(null),
+                  Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+                  Effect.orDie,
+                ),
+            },
+          ),
+        );
+
+        assert.include(error.detail, "checked out feature/other");
+      }),
+    );
+
     it.effect("creates and removes a worktree and its new local branch", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
