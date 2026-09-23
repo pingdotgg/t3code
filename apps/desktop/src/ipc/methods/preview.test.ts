@@ -38,6 +38,11 @@ describe("preview IPC methods", () => {
     fromPartition.mockClear();
   });
 
+  it("does not access the Electron session while the module loads", async () => {
+    await expect(import("./preview.ts")).resolves.toBeDefined();
+    expect(fromPartition).not.toHaveBeenCalled();
+  });
+
   it("derives distinct partition scopes when identifiers contain the delimiter", () => {
     const first = PreviewIpc.resolvePartitionScope("a", "b::c");
     const second = PreviewIpc.resolvePartitionScope("a::b", "c");
