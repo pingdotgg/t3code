@@ -30,7 +30,7 @@ struct LocalNetworkAccessChecker: ConnectionReadinessChecking {
 
         return await withCheckedContinuation { continuation in
             let connection = NWConnection(
-                host: NWEndpoint.Host(hostname),
+                host: NWEndpoint.Host(hostname.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))),
                 port: port,
                 using: .tcp
             )
