@@ -917,6 +917,11 @@ function textFromClaudeContent(content: SDKAssistantMessage["message"]["content"
   return content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
 }
 
+/** Compares a subagent result with its routed text regardless of block joins. */
+function normalizeClaudeResultText(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
 function assistantTextFromSdkMessage(
   message: SDKMessage,
 ): { readonly nativeItemId: string; readonly text: string } | null {
@@ -2382,6 +2387,11 @@ interface ActiveClaudeSubagent {
   progressItemOrdinal: number | null;
   progressStartedAt: DateTime.Utc | null;
   resultItemOrdinal: number | null;
+  // The subagent's latest assistant message routed into its child thread,
+  // accumulated across the per-content-block snapshots that share one native
+  // message id. A completion result equal to it is already on screen.
+  lastAssistantText: string | null;
+  lastAssistantMessageId: string | null;
 }
 
 interface ClaudeLiveQueryContext {
@@ -2406,6 +2416,8 @@ interface ActiveClaudeToolCall {
 }
 
 const PENDING_CLAUDE_SUBAGENT_MODEL_CAP = 64;
+// Per-subagent bound on frames held while waiting for task_started.
+const PENDING_CLAUDE_SUBAGENT_FRAME_CAP = 256;
 
 function rememberPendingClaudeSubagentModel(
   pending: Map<string, string>,
@@ -2680,6 +2692,16 @@ export function makeClaudeAdapterV2(
         // ended, and its task_notification must both count as wake evidence
         // and hydrate the original subagent node instead of being dropped.
         const sessionSubagentsByTaskId = yield* Ref.make(new Map<string, ActiveClaudeSubagent>());
+        // Subagent frames carry only parent_tool_use_id. Frames that outlive
+        // the turn that launched the subagent (wake drain, later turns) resolve
+        // their subagent through this index into sessionSubagentsByTaskId.
+        const sessionSubagentTaskIdsByToolUseId = yield* Ref.make(new Map<string, string>());
+        // Subagent frames can precede the task_started that registers their
+        // subagent (the same race rememberPendingClaudeSubagentModel covers).
+        // They wait here and replay once task_started registers the owner.
+        const pendingSubagentFramesByToolUseId = yield* Ref.make(
+          new Map<string, ReadonlyArray<SDKMessage>>(),
+        );
         const wakeBuffers = yield* Ref.make(
           new Map<
             string,
@@ -3430,10 +3452,23 @@ export function makeClaudeAdapterV2(
             progressItemOrdinal: existingSubagent?.progressItemOrdinal ?? null,
             progressStartedAt: existingSubagent?.progressStartedAt ?? null,
             resultItemOrdinal: existingSubagent?.resultItemOrdinal ?? null,
+            // Every task_started begins a new run of the subagent (including a
+            // resume that bufferWakeMessage already pre-opened), so text from
+            // an earlier run can no longer stand in for the next result.
+            lastAssistantText:
+              input.reopen === true ? null : (existingSubagent?.lastAssistantText ?? null),
+            lastAssistantMessageId:
+              input.reopen === true ? null : (existingSubagent?.lastAssistantMessageId ?? null),
           } satisfies ActiveClaudeSubagent;
           input.context.subagentsByTaskId.set(input.taskId, subagent);
           if (input.toolUseId !== undefined) {
             input.context.subagentsByToolUseId.set(input.toolUseId, subagent);
+            const toolUseId = input.toolUseId;
+            yield* Ref.update(sessionSubagentTaskIdsByToolUseId, (current) =>
+              current.get(toolUseId) === input.taskId
+                ? current
+                : new Map(current).set(toolUseId, input.taskId),
+            );
           }
           // The same terminal protection, applied atomically: a concurrent
           // fiber (live stream vs continuation drain) may have terminalized
@@ -3650,10 +3685,19 @@ export function makeClaudeAdapterV2(
             });
           }
 
+          // A completed subagent's result is normally its final assistant
+          // message, which is already in the child thread when its text was
+          // routed there. Failures and cancellations always get the message.
+          const resultAlreadyShown =
+            input.status === "completed" &&
+            input.result !== undefined &&
+            normalizeClaudeResultText(subagent.lastAssistantText ?? "") ===
+              normalizeClaudeResultText(input.result);
           if (
             input.result !== undefined &&
             input.result.trim().length > 0 &&
-            input.status !== "running"
+            input.status !== "running" &&
+            !resultAlreadyShown
           ) {
             const resultNativeItemId = `${nativeItemId}:result`;
             const resultItemOrdinal = subagent.resultItemOrdinal ?? ++subagent.nextChildItemOrdinal;
@@ -3827,6 +3871,23 @@ export function makeClaudeAdapterV2(
           });
         });
 
+        // Resolves the subagent that owns a parent_tool_use_id. The session
+        // registry is authoritative: every update replaces the subagent
+        // object, and per-turn tool-use aliases can lag behind (updates
+        // without a toolUseId) or be empty (a turn other than the one that
+        // launched the subagent). Mutations must land on the current object.
+        const resolveSubagentByToolUseId = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          toolUseId: string,
+        ) {
+          const taskId = (yield* Ref.get(sessionSubagentTaskIdsByToolUseId)).get(toolUseId);
+          const registered =
+            taskId === undefined
+              ? undefined
+              : (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
+          return registered ?? context.subagentsByToolUseId.get(toolUseId);
+        });
+
         const ensureToolCallStarted = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly nativeItemId: string;
@@ -3843,7 +3904,7 @@ export function makeClaudeAdapterV2(
           const subagent =
             input.parentToolUseId === null
               ? undefined
-              : input.context.subagentsByToolUseId.get(input.parentToolUseId);
+              : yield* resolveSubagentByToolUseId(input.context, input.parentToolUseId);
           const threadId = subagent?.childThreadId ?? input.context.input.threadId;
           const runId = subagent === undefined ? input.context.input.runId : null;
           const rootNodeId = subagent?.childRootNodeId ?? input.context.input.rootNodeId;
@@ -4359,11 +4420,26 @@ export function makeClaudeAdapterV2(
               wakeInput.nativeThreadId,
               message.task_id,
             ));
+          const bufferedMessages =
+            (yield* Ref.get(wakeBuffers)).get(wakeInput.nativeThreadId)?.messages ?? [];
           const isPendingSubagentNotification =
             isNotification &&
             !isPendingTaskNotification &&
-            (yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id)?.task.status ===
-              "running";
+            ((yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id)?.task.status ===
+              "running" ||
+              bufferedMessages.some(
+                (entry) =>
+                  entry.type === "system" &&
+                  entry.subtype === "task_started" &&
+                  entry.task_id === message.task_id,
+              ));
+          // A subagent launched while the root is idle (inside a native wake
+          // turn) must reach the continuation drain with its task_started, or
+          // its frames have no registered owner and are held indefinitely.
+          const isNewSubagentTaskStarted =
+            message.type === "system" &&
+            message.subtype === "task_started" &&
+            !isClaudeNonSubagentTask(message);
           // A task_started for a session-registered subagent that races past
           // settle is a resume (SendMessage to a completed subagent re-emits
           // task_started with the same task id). Re-open the registry entry
@@ -4404,6 +4480,7 @@ export function makeClaudeAdapterV2(
             isPendingTaskNotification ||
             isPendingSubagentNotification ||
             isKnownSubagentTaskStarted ||
+            isNewSubagentTaskStarted ||
             message.type === "assistant" ||
             message.type === "user" ||
             message.type === "result";
@@ -4570,9 +4647,12 @@ export function makeClaudeAdapterV2(
           return true;
         });
 
-        const handleSdkMessage = Effect.fnUntraced(function* (input: {
+        const handleSdkMessageFrame = Effect.fnUntraced(function* (input: {
           readonly query: ClaudeAgentSdkQuerySession;
           readonly message: SDKMessage;
+          // A held subagent frame replayed after its owner registered. Its
+          // turn-level assistant bookkeeping already ran when it arrived.
+          readonly replayed?: boolean;
         }) {
           const liveQuery = yield* Ref.get(queryContext);
           if (liveQuery?.query !== input.query) {
@@ -4759,7 +4839,7 @@ export function makeClaudeAdapterV2(
             }
           }
 
-          if (message.type === "assistant") {
+          if (message.type === "assistant" && input.replayed !== true) {
             context.nativeMessageCursor = message.uuid;
             if (message.parent_tool_use_id === null) {
               context.latestAssistantRateLimited = message.error === "rate_limit";
@@ -4923,7 +5003,7 @@ export function makeClaudeAdapterV2(
             return;
           }
 
-          if (message.type === "assistant") {
+          if (message.type === "assistant" && input.replayed !== true) {
             const now = yield* DateTime.now;
             yield* completeProviderRetry(context, now);
             if (message.parent_tool_use_id === null && message.message.usage !== undefined) {
@@ -4958,7 +5038,7 @@ export function makeClaudeAdapterV2(
               typeof message.message.model === "string" ? message.message.model.trim() : "";
             const model = snapshotModel.length === 0 ? undefined : snapshotModel;
             if (parentToolUseId !== null && model !== undefined) {
-              const subagent = context.subagentsByToolUseId.get(parentToolUseId);
+              const subagent = yield* resolveSubagentByToolUseId(context, parentToolUseId);
               if (subagent === undefined) {
                 rememberPendingClaudeSubagentModel(
                   context.pendingSubagentModelsByToolUseId,
@@ -4975,6 +5055,38 @@ export function makeClaudeAdapterV2(
                 });
               }
             }
+          }
+
+          const frameParentToolUseId = parentToolUseIdFromSdkMessage(message);
+          if (
+            frameParentToolUseId !== null &&
+            (yield* resolveSubagentByToolUseId(context, frameParentToolUseId)) === undefined
+          ) {
+            // Owner not registered yet: hold the frame rather than letting its
+            // text and tools fall back to the parent thread.
+            const droppedToolUseId = yield* Ref.modify(
+              pendingSubagentFramesByToolUseId,
+              (current) => {
+                const frames = current.get(frameParentToolUseId) ?? [];
+                if (frames.length >= PENDING_CLAUDE_SUBAGENT_FRAME_CAP) {
+                  return [frameParentToolUseId, current] as const;
+                }
+                const next = new Map(current).set(frameParentToolUseId, [...frames, message]);
+                const oldest = next.keys().next();
+                if (next.size > PENDING_CLAUDE_SUBAGENT_MODEL_CAP && !oldest.done) {
+                  next.delete(oldest.value);
+                  return [oldest.value, next] as const;
+                }
+                return [null, next] as const;
+              },
+            );
+            if (droppedToolUseId !== null) {
+              yield* Effect.logWarning("orchestration-v2.claude-subagent-frames-dropped", {
+                providerTurnId: context.providerTurnId,
+                parentToolUseId: droppedToolUseId,
+              });
+            }
+            return;
           }
 
           if (isClaudeBackgroundTasksChangedMessage(message)) {
@@ -5153,6 +5265,64 @@ export function makeClaudeAdapterV2(
           }
 
           const assistantText = assistantTextFromSdkMessage(message);
+          const assistantParentToolUseId = parentToolUseIdFromSdkMessage(message);
+          if (
+            assistantText !== null &&
+            assistantText.text.length > 0 &&
+            assistantParentToolUseId !== null
+          ) {
+            // Subagent text belongs to the subagent's child thread, never the
+            // parent transcript. Unowned frames were already held above.
+            const subagent = yield* resolveSubagentByToolUseId(context, assistantParentToolUseId);
+            if (subagent === undefined) {
+              return;
+            }
+            const now = yield* DateTime.now;
+            // One native message arrives as one snapshot per content block.
+            const nativeMessageId =
+              message.type === "assistant" && typeof message.message.id === "string"
+                ? message.message.id
+                : null;
+            subagent.lastAssistantText =
+              nativeMessageId !== null && nativeMessageId === subagent.lastAssistantMessageId
+                ? `${subagent.lastAssistantText ?? ""}\n${assistantText.text}`
+                : assistantText.text;
+            subagent.lastAssistantMessageId = nativeMessageId;
+            const artifacts = makeSubagentConversationArtifacts({
+              messageId: idAllocator.derive.messageFromProviderItem({
+                driver: CLAUDE_PROVIDER,
+                nativeItemId: assistantText.nativeItemId,
+              }),
+              turnItemId: idAllocator.derive.turnItemFromProviderItem({
+                driver: CLAUDE_PROVIDER,
+                nativeItemId: assistantText.nativeItemId,
+              }),
+              threadId: subagent.childThreadId,
+              rootNodeId: subagent.childRootNodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: {
+                driver: CLAUDE_PROVIDER,
+                nativeId: assistantText.nativeItemId,
+                strength: "strong",
+              },
+              role: "assistant",
+              text: assistantText.text,
+              ordinal: ++subagent.nextChildItemOrdinal,
+              now,
+            });
+            yield* emitProviderEvent({
+              type: "message.updated",
+              driver: CLAUDE_PROVIDER,
+              message: artifacts.message,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem: artifacts.turnItem,
+            });
+            return;
+          }
           if (assistantText !== null && assistantText.text.length > 0) {
             yield* emitAssistantTextArtifacts({
               context,
@@ -5278,6 +5448,54 @@ export function makeClaudeAdapterV2(
               result: message,
               ...(terminalFailure === null ? {} : { failure: terminalFailure }),
             });
+          }
+        });
+
+        // Held subagent frames whose owner this lifecycle frame resolves. The
+        // frame's (task_id, tool_use_id) pair is authoritative, so it also
+        // fills the tool-use index when task_started lacked a tool_use_id.
+        const takeReleasableSubagentFrames = Effect.fnUntraced(function* (message: SDKMessage) {
+          if (
+            message.type !== "system" ||
+            (message.subtype !== "task_started" &&
+              message.subtype !== "task_progress" &&
+              message.subtype !== "task_notification") ||
+            message.tool_use_id === undefined ||
+            !(yield* Ref.get(sessionSubagentsByTaskId)).has(message.task_id)
+          ) {
+            return [];
+          }
+          const toolUseId = message.tool_use_id;
+          const taskId = message.task_id;
+          yield* Ref.update(sessionSubagentTaskIdsByToolUseId, (current) =>
+            current.get(toolUseId) === taskId ? current : new Map(current).set(toolUseId, taskId),
+          );
+          return yield* Ref.modify(pendingSubagentFramesByToolUseId, (current) => {
+            const frames = current.get(toolUseId);
+            if (frames === undefined) {
+              return [[] as ReadonlyArray<SDKMessage>, current] as const;
+            }
+            const next = new Map(current);
+            next.delete(toolUseId);
+            return [frames, next] as const;
+          });
+        });
+
+        const handleSdkMessage = Effect.fnUntraced(function* (input: {
+          readonly query: ClaudeAgentSdkQuerySession;
+          readonly message: SDKMessage;
+        }) {
+          // Progress or a notification can be the first frame naming a known
+          // subagent's tool_use_id; its held frames must precede the result.
+          if (input.message.type !== "system" || input.message.subtype !== "task_started") {
+            for (const message of yield* takeReleasableSubagentFrames(input.message)) {
+              yield* handleSdkMessageFrame({ query: input.query, message, replayed: true });
+            }
+          }
+          yield* handleSdkMessageFrame(input);
+          // task_started registers its subagent while being handled.
+          for (const message of yield* takeReleasableSubagentFrames(input.message)) {
+            yield* handleSdkMessageFrame({ query: input.query, message, replayed: true });
           }
         });
 
