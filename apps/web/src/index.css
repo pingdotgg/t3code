@@ -101,6 +101,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --command-shell-inset: 0.5rem;
   --command-content-inset: 1rem;
   --floating-content-inset: 0.75rem;
+  /* App layer order: docked sheets, then the floating preview player (47–49, see
+     previewMiniPlayerLayout.ts), then dialogs and popovers (50 and up). */
+  --z-sheet: 46;
   --glass-blur: 12px;
   --glass-opacity: 80%;
   --glass-saturation: 1.14;
@@ -1347,8 +1350,7 @@ html[data-theme-id] .chat-markdown .chat-markdown-codeblock pre {
   background-color: transparent;
 }
 
-html[data-theme-id] .chat-markdown .chat-markdown-codeblock-header,
-html[data-theme-id] .chat-markdown .chat-markdown-chrome-action {
+html[data-theme-id] .chat-markdown .chat-markdown-codeblock-header {
   color: color-mix(in srgb, var(--code-foreground) 72%, transparent);
 }
 
@@ -1372,11 +1374,6 @@ html[data-theme-id="t3-chat"] {
       color: var(--contrast-message-foreground);
     }
   }
-}
-
-html[data-theme-id] .chat-markdown .chat-markdown-chrome-action:hover,
-html[data-theme-id] .chat-markdown .chat-markdown-chrome-action[aria-pressed="true"] {
-  color: var(--code-foreground);
 }
 
 html[data-theme-id] [data-app-sidebar] {
@@ -1770,8 +1767,12 @@ code {
 }
 
 .chat-markdown a {
-  color: var(--info-foreground);
   text-decoration: none;
+}
+
+/* File links are Chips and own their color and focus ring. */
+.chat-markdown a:not(.chat-markdown-file-link) {
+  color: var(--info-foreground);
 }
 
 .chat-markdown a:not(.chat-markdown-file-link):hover,
@@ -1825,17 +1826,6 @@ code {
   font-size: 0.75rem;
 }
 
-.chat-markdown .chat-markdown-file-link,
-.chat-markdown .chat-markdown-file-link:hover {
-  color: var(--contrast-foreground);
-  text-decoration: none;
-}
-
-.chat-markdown .chat-markdown-file-link:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 70%, transparent);
-}
-
 .chat-markdown pre {
   max-width: 100%;
   overflow-x: auto;
@@ -1862,18 +1852,8 @@ code {
   background: color-mix(in srgb, var(--contrast-border) 78%, transparent);
 }
 
-.chat-markdown .chat-markdown-codeblock-header,
-.chat-markdown .chat-markdown-chrome-action {
+.chat-markdown .chat-markdown-codeblock-header {
   color: color-mix(in srgb, var(--contrast-foreground) 72%, transparent);
-}
-
-.chat-markdown .chat-markdown-chrome-action:hover {
-  color: var(--contrast-foreground);
-}
-
-.chat-markdown .chat-markdown-chrome-action[aria-pressed="true"] {
-  color: var(--contrast-foreground);
-  background: color-mix(in srgb, var(--contrast-foreground) 8%, transparent);
 }
 
 .chat-markdown .chat-markdown-codeblock pre {

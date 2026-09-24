@@ -4,7 +4,7 @@ import { ChevronDownIcon, XIcon } from "lucide-react";
 import type { ComponentProps } from "react";
 
 import { cn } from "~/lib/utils";
-import { Button, buttonVariants } from "../ui/button";
+import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 
 export type ComposerBannerVariant = "default" | "error" | "info" | "success" | "warning";
@@ -279,17 +279,17 @@ function Children({ className, render, ...props }: useRender.ComponentProps<"div
 }
 
 /** Bounded banner content uses the app's scroll area and fades only overflowing edges. */
-function Scroll({ className, ...props }: ComponentProps<typeof ScrollArea>) {
+function Scroll({ className, children, ...props }: ComponentProps<typeof ScrollArea>) {
   return (
     <ScrollArea
       radius="none"
       scrollFade
-      className={cn(
-        "h-auto max-h-[min(24rem,40dvh)] [&>[data-slot=scroll-area-viewport][data-has-overflow-y]]:pe-2",
-        className,
-      )}
+      className={cn("h-auto max-h-[min(24rem,40dvh)]", className)}
       {...props}
-    />
+    >
+      {/* Clears the overlay scrollbar only once there is something to scroll. */}
+      <div className="[[data-has-overflow-y]>&]:pe-2">{children}</div>
+    </ScrollArea>
   );
 }
 
@@ -323,18 +323,18 @@ function Dot({ className, ...props }: ComponentProps<"span">) {
   );
 }
 
-function ToggleIcon({ expanded, className }: { expanded: boolean; className?: string }) {
+// Decorative: the row itself is the control, so this only matches Dismiss's box.
+function ToggleIcon({ expanded }: { expanded: boolean }) {
   return (
-    <span
-      aria-hidden
-      className={cn(
-        buttonVariants({ size: "icon-xs", variant: "ghost" }),
-        "pointer-events-none",
-        className,
-      )}
+    <Button
+      render={<span aria-hidden />}
+      size="icon-xs"
+      variant="ghost"
+      tabIndex={-1}
+      className="pointer-events-none"
     >
       <ChevronDownIcon className={cn("size-3.5", !expanded && "rotate-180")} />
-    </span>
+    </Button>
   );
 }
 

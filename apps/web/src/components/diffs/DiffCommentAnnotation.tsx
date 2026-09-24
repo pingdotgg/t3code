@@ -67,15 +67,16 @@ export function DiffCommentAnnotation({
         <MessageCircle className="mt-0.5 size-3.5 shrink-0 text-primary/70" aria-hidden="true" />
         <p className="min-w-0 flex-1 whitespace-pre-wrap text-[13px] leading-5">{displayedText}</p>
         {onDelete ? (
-          <Button
-            className="-my-1 -mr-1 shrink-0 opacity-0 transition-opacity group-hover/comment:opacity-100 focus-visible:opacity-100 max-sm:opacity-100"
-            variant="ghost-muted"
-            size="icon-xs"
-            aria-label="Delete comment"
-            onClick={onDelete}
-          >
-            <Trash2 className="size-3" />
-          </Button>
+          <span className="-my-1 -mr-1 flex shrink-0 opacity-0 transition-opacity group-hover/comment:opacity-100 focus-within:opacity-100 max-sm:opacity-100">
+            <Button
+              variant="ghost-muted"
+              size="icon-xs"
+              aria-label="Delete comment"
+              onClick={onDelete}
+            >
+              <Trash2 className="size-3" />
+            </Button>
+          </span>
         ) : null}
       </div>
     );

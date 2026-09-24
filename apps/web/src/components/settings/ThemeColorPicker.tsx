@@ -284,7 +284,7 @@ function ThemeColorPicker({
       </Tooltip>
       <PopoverPopup
         align="end"
-        className="overflow-hidden rounded-2xl border border-border/70 p-0 shadow-2xl [--viewport-inline-padding:0px] [&_[data-slot=popover-viewport]]:p-0"
+        padding="none"
         data-theme-editor-panel=""
         side="bottom"
         sideOffset={10}
@@ -353,15 +353,14 @@ export const ThemeColorField = memo(function ThemeColorField({
         <Input
           aria-invalid={!isColorValue}
           aria-label={`${label} hex value`}
-          className="w-28 shrink-0 rounded-md border-0 bg-black/10 text-xs text-foreground shadow-none focus-within:bg-black/15 focus-within:ring-0 dark:bg-black/20 dark:focus-within:bg-black/25 [&_[data-slot=input]]:text-right"
+          className="w-28 shrink-0"
           font="mono"
           id={`${role}-hex`}
           nativeInput
           onChange={(event) => onChange(role, event.currentTarget.value)}
           onFocus={() => onSelect?.(role)}
           onPointerDown={() => onSelect?.(role)}
-          size="sm"
-          unstyled
+          size="compact"
           value={editorValue}
         />
       </div>

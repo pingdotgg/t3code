@@ -16,6 +16,20 @@ const RESTRICTED_IMPORT_PATHS = [
   },
 ];
 
+/**
+ * The cva functions behind components/ui exports. They style a foreign element to look
+ * like a Button or Toggle, which bypasses the component's variants; render the component
+ * instead (`render={<Button …/>}`, or `SelectButton` for a picker trigger).
+ */
+const RESTRICTED_UI_VARIANT_PATTERNS = [
+  {
+    group: ["**/components/ui/*", "**/ui/*", "./ui/*"],
+    importNames: ["buttonVariants", "toggleVariants", "badgeVariants", "selectTriggerVariants"],
+    message:
+      "Render the components/ui export instead of borrowing its class recipe (render={<Button …/>}, SelectButton, ToggleGroup).",
+  },
+];
+
 /** Lucide's pull-request glyphs, which only `pullRequestIcons.tsx` may name. */
 const RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS = {
   name: "lucide-react",
@@ -161,6 +175,19 @@ export default defineConfig({
         rules: { "t3code/no-global-process-runtime": "off" },
       },
       {
+        files: ["apps/web/src/**"],
+        excludeFiles: ["apps/web/src/components/ui/**"],
+        rules: {
+          "eslint/no-restricted-imports": [
+            "error",
+            {
+              paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS],
+              patterns: RESTRICTED_UI_VARIANT_PATTERNS,
+            },
+          ],
+        },
+      },
+      {
         // The one module allowed to name lucide's pull-request glyphs; everything else picks
         // from its vocabulary. The other import restrictions still apply here.
         files: ["apps/web/src/components/pullRequest/pullRequestIcons.tsx"],
@@ -173,13 +200,13 @@ export default defineConfig({
       {
         // components/ui exports own their look. App code picks a variant or size instead
         // of restyling with className; layout classes (width, flex, margin, position) stay
-        // allowed because placement belongs to the parent. Warn-only until the existing
-        // overrides are migrated to variants; the ceiling below stops the count growing.
+        // allowed because placement belongs to the parent. components/ui is for generic
+        // primitives: a look that belongs to one feature stays in that feature's component.
         files: ["apps/web/src/**"],
         excludeFiles: ["apps/web/src/components/ui/**"],
         rules: {
           "shadcn/no-restyle": [
-            "warn",
+            "error",
             {
               allow: ["layout"],
               contracts: [
@@ -215,7 +242,6 @@ export default defineConfig({
           "apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx",
           "apps/mobile/src/features/files/FileMarkdownPreview.tsx",
           "apps/mobile/src/features/files/SourceFileSurface.tsx",
-          "apps/mobile/src/features/terminal/ThreadTerminalRouteScreen.tsx",
           "apps/mobile/src/features/files/AttachmentFileScreen.tsx",
           "apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx",
           "apps/mobile/src/features/files/thread-file-navigator-pane.tsx",
@@ -223,7 +249,6 @@ export default defineConfig({
           "apps/mobile/src/features/review/ReviewSheet.tsx",
           "apps/mobile/src/features/review/useNativeReviewDiffBridge.ts",
           "apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx",
-          "apps/mobile/src/features/settings/appearance/components/AppearancePreviews.tsx",
           "apps/mobile/src/features/threads/GitActionProgressOverlay.tsx",
           "apps/mobile/src/features/threads/NewTaskDraftScreen.tsx",
           "apps/mobile/src/features/threads/ThreadComposer.tsx",

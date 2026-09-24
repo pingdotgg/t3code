@@ -16,9 +16,7 @@ import {
   normalizeModelSlug,
 } from "@t3tools/shared/model";
 import { memo, useCallback } from "react";
-import type { VariantProps } from "class-variance-authority";
-import { GaugeIcon, ZapIcon } from "lucide-react";
-import { buttonVariants } from "../ui/button";
+import { BrainIcon, ZapIcon } from "lucide-react";
 import {
   Menu,
   MenuGroup,
@@ -277,7 +275,6 @@ export interface TraitsMenuContentProps {
   modelOptions?: ProviderOptions | null | undefined;
   allowPromptInjectedEffort?: boolean;
   planModeEnabled: boolean;
-  triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
   isComposerOwned?: boolean;
 }
@@ -544,7 +541,6 @@ export const TraitsPicker = memo(function TraitsPicker({
   modelOptions,
   allowPromptInjectedEffort = true,
   planModeEnabled,
-  triggerVariant,
   triggerClassName,
   isComposerOwned,
   size = "sm",
@@ -623,7 +619,6 @@ export const TraitsPicker = memo(function TraitsPicker({
                 <ComposerControl
                   aria-label={accessibleLabel}
                   data-composer-shortcut={isComposerOwned ? "composer.effort" : undefined}
-                  variant={triggerVariant ?? "ghost"}
                   size={size}
                   className={cn(
                     isCodexStyle
@@ -650,7 +645,7 @@ export const TraitsPicker = memo(function TraitsPicker({
                   data-composer-control-compact-icon
                   className="pointer-events-none invisible absolute"
                 >
-                  <ComposerControlIcon icon={GaugeIcon} size={size} />
+                  <ComposerControlIcon icon={BrainIcon} size={size} />
                 </span>
               )}
               <span data-composer-control-label className="min-w-0 truncate">
@@ -665,7 +660,7 @@ export const TraitsPicker = memo(function TraitsPicker({
                   data-composer-control-compact-icon
                   className="pointer-events-none invisible absolute"
                 >
-                  <ComposerControlIcon icon={GaugeIcon} size={size} />
+                  <ComposerControlIcon icon={BrainIcon} size={size} />
                 </span>
               )}
               <span data-composer-control-label>{triggerLabel}</span>

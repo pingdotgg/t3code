@@ -323,12 +323,12 @@ export function UsagePriceOverrides({
                     <col className="w-10" />
                   </colgroup>
                   <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead className="pl-3">Model ID</TableHead>
+                    <TableRow>
+                      <TableHead>Model ID</TableHead>
                       {USAGE_PRICE_FIELDS.map((field) => (
                         <TableHead key={field.key}>{field.label}</TableHead>
                       ))}
-                      <TableHead className="px-1">
+                      <TableHead>
                         <Button
                           size="icon-xs"
                           variant="ghost"
@@ -347,24 +347,19 @@ export function UsagePriceOverrides({
                   </TableHeader>
                   <TableBody>
                     {rows.length === 0 ? (
-                      <TableRow className="hover:bg-transparent">
-                        <TableCell
-                          colSpan={6}
-                          className="py-8 text-center whitespace-normal text-muted-foreground"
-                        >
-                          {selected.some((environment) => environment.prices === null)
-                            ? "Some environment prices are unavailable."
-                            : "No custom prices. Add a row to override automatic pricing."}
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center whitespace-normal">
+                          <p className="py-6 text-muted-foreground">
+                            {selected.some((environment) => environment.prices === null)
+                              ? "Some environment prices are unavailable."
+                              : "No custom prices. Add a row to override automatic pricing."}
+                          </p>
                         </TableCell>
                       </TableRow>
                     ) : (
                       rows.map((row) => (
-                        <TableRow
-                          key={row.id}
-                          data-row-id={row.id}
-                          className="hover:bg-transparent"
-                        >
-                          <TableCell className="pl-3 whitespace-normal">
+                        <TableRow key={row.id} data-row-id={row.id}>
+                          <TableCell className="whitespace-normal">
                             {row.isNew ? (
                               <Input
                                 size="compact"
@@ -407,14 +402,16 @@ export function UsagePriceOverrides({
                             ) : null}
                           </TableCell>
                           {row.removed ? (
-                            <TableCell colSpan={4} className="text-muted-foreground">
-                              Automatic pricing after saving
+                            <TableCell colSpan={4}>
+                              <span className="text-muted-foreground">
+                                Automatic pricing after saving
+                              </span>
                             </TableCell>
                           ) : (
                             USAGE_PRICE_FIELDS.map((field) => {
                               const cell = usagePriceCell(selected, row.model, field.key);
                               return (
-                                <TableCell key={field.key} className="px-1">
+                                <TableCell key={field.key}>
                                   <Input
                                     size="compact"
                                     inputMode="decimal"
@@ -438,7 +435,7 @@ export function UsagePriceOverrides({
                               );
                             })
                           )}
-                          <TableCell className="px-1">
+                          <TableCell>
                             <Tooltip>
                               <TooltipTrigger
                                 render={<Button size="icon-xs" variant="ghost" />}

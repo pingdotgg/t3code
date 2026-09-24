@@ -153,7 +153,7 @@ export function SnapShotContentsButton({
                   className={className}
                   onClick={(event) => event.stopPropagation()}
                   size="icon-micro"
-                  variant="ghost-muted"
+                  variant="overlay"
                 />
               }
             />
@@ -163,13 +163,8 @@ export function SnapShotContentsButton({
         </TooltipTrigger>
         <TooltipPopup side={side}>{tooltip}</TooltipPopup>
       </Tooltip>
-      <PopoverPopup
-        side={side}
-        align="center"
-        width="md"
-        viewportClassName="max-h-[min(28rem,70vh)]"
-      >
-        <div className="space-y-2">
+      <PopoverPopup side={side} align="center" width="md">
+        <div className="max-h-[min(28rem,70vh)] space-y-2 overflow-y-auto">
           <PopoverTitle>Accessibility data</PopoverTitle>
           {accessibilityDetails ? (
             <SnapShotAccessibilityData
@@ -216,10 +211,7 @@ export function SnapShotAttachmentDetails({
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium leading-3.5 text-white">
           <span className="truncate">{source.appName}</span>
-          <SnapShotContentsButton
-            source={source}
-            className="pointer-events-auto text-white/60 hover:bg-white/10 hover:text-white focus-visible:ring-white/70"
-          />
+          <SnapShotContentsButton source={source} className="pointer-events-auto" />
         </div>
         <div className="truncate text-[9px] leading-3.5 text-white/70">
           {source.windowTitle || "Captured window"}
