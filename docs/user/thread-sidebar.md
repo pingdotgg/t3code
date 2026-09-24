@@ -143,3 +143,9 @@ Choose **Snooze → Custom…** from a thread's menu to pick a date and time in 
 local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. On web and desktop, you can also snooze
 several selected threads together. Choose **Wake thread** to bring a thread back early.
+
+## Environment artwork
+
+Dev and Nightly environments can identify themselves with artwork at the top of the sidebar and in
+the send button. Choose **Artwork**, **Version pill**, or **None** in Settings under environment
+identification. Artwork is recolored to match the active theme, including custom and imported ones.
