@@ -912,6 +912,9 @@ export const OrchestrationThreadShell = Schema.Struct({
   titleState: Schema.optional(Schema.NullOr(ThreadTitleState)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
+  // Latest completed turn across the whole thread, retained while a newer turn runs.
+  // Optional so older servers remain compatible with newer clients.
+  lastFinishedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,

@@ -98,6 +98,7 @@ import { previewEnvironment } from "../state/preview";
 import {
   legacyProjectCwdPreferenceKey,
   resolveProjectExpanded,
+  type SidebarThreadStatusFilter,
   useUiStateStore,
 } from "../uiStateStore";
 import {
@@ -113,6 +114,7 @@ import { useShortcutModifierState } from "../shortcutModifierState";
 import { ensureLocalApi, readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useNowMinute } from "../hooks/useNowMinute";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
 
 import { useThreadActions } from "../hooks/useThreadActions";
@@ -214,14 +216,21 @@ import {
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { legacySidebarThreadMatchesFilters } from "./LegacySidebar.logic";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
-  updated_at: "Last user message",
+  updated_at: "Last finished",
   created_at: "Created at",
   manual: "Manual",
 };
 const SIDEBAR_THREAD_SORT_LABELS: Record<SidebarThreadSortOrder, string> = {
-  updated_at: "Last user message",
+  updated_at: "Last finished",
   created_at: "Created at",
+};
+const SIDEBAR_THREAD_STATUS_LABELS: Record<SidebarThreadStatusFilter, string> = {
+  all: "All statuses",
+  active: "Active",
+  snoozed: "Snoozed",
+  settled: "Settled",
 };
 const SIDEBAR_LIST_ANIMATION_OPTIONS = {
   duration: 180,
@@ -1147,6 +1156,9 @@ interface SidebarProjectItemProps {
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
   isManualProjectSorting: boolean;
   dragHandleProps: SortableProjectHandleProps | null;
+  environmentScopeId: string | null;
+  threadStatusFilter: SidebarThreadStatusFilter;
+  filterNow: string;
 }
 
 const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjectItemProps) {
@@ -1168,6 +1180,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     suppressProjectClickForContextMenuRef,
     isManualProjectSorting,
     dragHandleProps,
+    environmentScopeId,
+    threadStatusFilter,
+    filterNow,
   } = props;
   const environmentMachine = project.allRemoteMembersAreWsl
     ? "linux"
@@ -1249,7 +1264,18 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     },
   });
   const openPrLink = useOpenPrLink();
-  const sidebarThreads = useThreadShellsForProjectRefs(project.memberProjectRefs);
+  const unfilteredSidebarThreads = useThreadShellsForProjectRefs(project.memberProjectRefs);
+  const sidebarThreads = useMemo(
+    () =>
+      unfilteredSidebarThreads.filter((thread) =>
+        legacySidebarThreadMatchesFilters(thread, {
+          environmentId: environmentScopeId,
+          status: threadStatusFilter,
+          now: filterNow,
+        }),
+      ),
+    [environmentScopeId, filterNow, threadStatusFilter, unfilteredSidebarThreads],
+  );
   const sidebarThreadByKey = useMemo(
     () =>
       new Map(
@@ -1339,10 +1365,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         },
       });
     };
-    const visibleProjectThreads = sortThreads(
-      projectThreads.filter((thread) => thread.archivedAt === null),
-      threadSortOrder,
-    );
+    const visibleProjectThreads = sortThreads(projectThreads, threadSortOrder);
     const projectStatus = resolveProjectStatusIndicator(
       visibleProjectThreads.map((thread) => resolveProjectThreadStatus(thread)),
     );
@@ -2710,19 +2733,29 @@ type SortableProjectHandleProps = Pick<
 >;
 
 function ProjectSortMenu({
+  environmentOptions,
+  environmentScopeId,
+  threadStatusFilter,
   projectSortOrder,
   threadSortOrder,
   threadPreviewCount,
   onProjectSortOrderChange,
   onThreadSortOrderChange,
   onThreadPreviewCountChange,
+  onEnvironmentScopeChange,
+  onThreadStatusFilterChange,
 }: {
+  environmentOptions: ReadonlyArray<{ readonly value: string; readonly label: string }>;
+  environmentScopeId: string | null;
+  threadStatusFilter: SidebarThreadStatusFilter;
   projectSortOrder: SidebarProjectSortOrder;
   threadSortOrder: SidebarThreadSortOrder;
   threadPreviewCount: SidebarThreadPreviewCount;
   onProjectSortOrderChange: (sortOrder: SidebarProjectSortOrder) => void;
   onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
   onThreadPreviewCountChange: (count: SidebarThreadPreviewCount) => void;
+  onEnvironmentScopeChange: (environmentId: string | null) => void;
+  onThreadStatusFilterChange: (filter: SidebarThreadStatusFilter) => void;
 }) {
   const handleThreadPreviewCountChange = useCallback(
     (nextValue: number | null) => {
@@ -2744,11 +2777,53 @@ function ProjectSortMenu({
         <TooltipTrigger
           render={<MenuTrigger render={<Button size="icon-xs" variant="ghost-muted" />} />}
         >
-          <ArrowUpDownIcon className="size-3.5" />
+          <span className="relative inline-flex">
+            <ArrowUpDownIcon className="size-3.5" />
+            {environmentScopeId !== null || threadStatusFilter !== "all" ? (
+              <span
+                aria-hidden
+                className="absolute -right-0.5 -top-0.5 size-[5px] rounded-full bg-primary ring-1 ring-sidebar"
+              />
+            ) : null}
+          </span>
         </TooltipTrigger>
         <TooltipPopup side="right">Sidebar options</TooltipPopup>
       </Tooltip>
       <MenuPopup align="end" side="bottom">
+        <MenuGroup>
+          <div className="px-2 py-1 sm:text-xs font-medium text-muted-foreground">Environment</div>
+          <MenuRadioGroup
+            value={environmentScopeId ?? "all"}
+            onValueChange={(value) => onEnvironmentScopeChange(value === "all" ? null : value)}
+          >
+            {environmentOptions.map((option) => (
+              <MenuRadioItem key={option.value} value={option.value}>
+                {option.label}
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        </MenuGroup>
+        <MenuGroup>
+          <div className="px-2 pt-2 pb-1 sm:text-xs font-medium text-muted-foreground">
+            Thread status
+          </div>
+          <MenuRadioGroup
+            value={threadStatusFilter}
+            onValueChange={(value) =>
+              onThreadStatusFilterChange(value as SidebarThreadStatusFilter)
+            }
+          >
+            {(
+              Object.entries(SIDEBAR_THREAD_STATUS_LABELS) as Array<
+                [SidebarThreadStatusFilter, string]
+              >
+            ).map(([value, label]) => (
+              <MenuRadioItem key={value} value={value}>
+                {label}
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        </MenuGroup>
         <MenuGroup>
           <div className="px-2 py-1 sm:text-xs font-medium text-muted-foreground">
             Sort projects
@@ -2874,6 +2949,12 @@ interface SidebarProjectsContentProps {
   projectSortOrder: SidebarProjectSortOrder;
   threadSortOrder: SidebarThreadSortOrder;
   threadPreviewCount: SidebarThreadPreviewCount;
+  environmentOptions: ReadonlyArray<{ readonly value: string; readonly label: string }>;
+  environmentScopeId: string | null;
+  threadStatusFilter: SidebarThreadStatusFilter;
+  filterNow: string;
+  onEnvironmentScopeChange: (environmentId: string | null) => void;
+  onThreadStatusFilterChange: (filter: SidebarThreadStatusFilter) => void;
   updateSettings: ReturnType<typeof useUpdateClientSettings>;
   openAddProject: () => void;
   isManualProjectSorting: boolean;
@@ -2916,6 +2997,12 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     projectSortOrder,
     threadSortOrder,
     threadPreviewCount,
+    environmentOptions,
+    environmentScopeId,
+    threadStatusFilter,
+    filterNow,
+    onEnvironmentScopeChange,
+    onThreadStatusFilterChange,
     updateSettings,
     openAddProject,
     isManualProjectSorting,
@@ -3013,12 +3100,17 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           <span className="text-xs font-medium text-sidebar-muted-foreground/80">Projects</span>
           <div className="flex items-center gap-1">
             <ProjectSortMenu
+              environmentOptions={environmentOptions}
+              environmentScopeId={environmentScopeId}
+              threadStatusFilter={threadStatusFilter}
               projectSortOrder={projectSortOrder}
               threadSortOrder={threadSortOrder}
               threadPreviewCount={threadPreviewCount}
               onProjectSortOrderChange={handleProjectSortOrderChange}
               onThreadSortOrderChange={handleThreadSortOrderChange}
               onThreadPreviewCountChange={handleThreadPreviewCountChange}
+              onEnvironmentScopeChange={onEnvironmentScopeChange}
+              onThreadStatusFilterChange={onThreadStatusFilterChange}
             />
             <Tooltip>
               <TooltipTrigger
@@ -3078,6 +3170,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         }
                         isManualProjectSorting={isManualProjectSorting}
                         dragHandleProps={dragHandleProps}
+                        environmentScopeId={environmentScopeId}
+                        threadStatusFilter={threadStatusFilter}
+                        filterNow={filterNow}
                       />
                     )}
                   </SortableProjectItem>
@@ -3109,13 +3204,20 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
                 isManualProjectSorting={isManualProjectSorting}
                 dragHandleProps={null}
+                environmentScopeId={environmentScopeId}
+                threadStatusFilter={threadStatusFilter}
+                filterNow={filterNow}
               />
             ))}
           </SidebarMenu>
         )}
 
         {projectsLength === 0 && (
-          <div className="px-2 pt-4 text-center text-secondary-label text-xs">No projects yet</div>
+          <div className="px-2 pt-4 text-center text-secondary-label text-xs">
+            {environmentScopeId !== null || threadStatusFilter !== "all"
+              ? "No matching projects or threads"
+              : "No projects yet"}
+          </div>
         )}
       </SidebarGroup>
     </SidebarContent>
@@ -3133,6 +3235,11 @@ export default function LegacySidebar() {
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const sidebarThreadPreviewCount = useClientSettings((s) => s.sidebarThreadPreviewCount);
+  const environmentScopeId = useUiStateStore((store) => store.sidebarEnvironmentScopeId);
+  const setEnvironmentScopeId = useUiStateStore((store) => store.setSidebarEnvironmentScopeId);
+  const threadStatusFilter = useUiStateStore((store) => store.sidebarThreadStatusFilter);
+  const setThreadStatusFilter = useUiStateStore((store) => store.setSidebarThreadStatusFilter);
+  const filterNow = `${useNowMinute()}:00.000Z`;
   const updateSettings = useUpdateClientSettings();
   const handleNewThread = useNewThreadHandler();
   const { archiveThread, deleteThread } = useThreadActions();
@@ -3182,6 +3289,24 @@ export default function LegacySidebar() {
       ),
     [environments],
   );
+  const environmentOptions = useMemo(
+    () => [
+      { value: "all", label: "All environments" },
+      ...environments.map((environment) => ({
+        value: environment.environmentId,
+        label: environment.label,
+      })),
+    ],
+    [environments],
+  );
+  useEffect(() => {
+    if (
+      environmentScopeId !== null &&
+      !environments.some((environment) => environment.environmentId === environmentScopeId)
+    ) {
+      setEnvironmentScopeId(null);
+    }
+  }, [environmentScopeId, environments, setEnvironmentScopeId]);
   const desktopLocalEnvironmentIds = useMemo(
     () =>
       new Set(
@@ -3211,31 +3336,38 @@ export default function LegacySidebar() {
       ],
     });
   }, [projectOrder, projects]);
+  const scopedOrderedProjects = useMemo(
+    () =>
+      environmentScopeId === null
+        ? orderedProjects
+        : orderedProjects.filter((project) => project.environmentId === environmentScopeId),
+    [environmentScopeId, orderedProjects],
+  );
 
   // Build a mapping from physical project key → logical project key for
   // cross-environment grouping.  Projects that share a repositoryIdentity
   // canonicalKey are treated as one logical project in the sidebar.
   const physicalToLogicalKey = useMemo(() => {
     return buildPhysicalToLogicalProjectKeyMap({
-      projects: orderedProjects,
+      projects: scopedOrderedProjects,
       settings: projectGroupingSettings,
       primaryEnvironmentId,
     });
-  }, [orderedProjects, projectGroupingSettings, primaryEnvironmentId]);
+  }, [projectGroupingSettings, primaryEnvironmentId, scopedOrderedProjects]);
   const projectPhysicalKeyByScopedRef = useMemo(
     () =>
       new Map(
-        orderedProjects.map((project) => [
+        scopedOrderedProjects.map((project) => [
           scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
           derivePhysicalProjectKey(project),
         ]),
       ),
-    [orderedProjects],
+    [scopedOrderedProjects],
   );
 
   const sidebarProjects = useMemo<SidebarProjectSnapshot[]>(() => {
     return buildSidebarProjectSnapshots({
-      projects: orderedProjects,
+      projects: scopedOrderedProjects,
       settings: projectGroupingSettings,
       primaryEnvironmentId,
       resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
@@ -3246,7 +3378,7 @@ export default function LegacySidebar() {
     environmentLabelById,
     desktopLocalEnvironmentIds,
     wslEnvironmentIds,
-    orderedProjects,
+    scopedOrderedProjects,
     projectGroupingSettings,
     primaryEnvironmentId,
   ]);
@@ -3255,15 +3387,26 @@ export default function LegacySidebar() {
     () => new Map(sidebarProjects.map((project) => [project.projectKey, project] as const)),
     [sidebarProjects],
   );
+  const filteredSidebarThreads = useMemo(
+    () =>
+      sidebarThreads.filter((thread) =>
+        legacySidebarThreadMatchesFilters(thread, {
+          environmentId: environmentScopeId,
+          status: threadStatusFilter,
+          now: filterNow,
+        }),
+      ),
+    [environmentScopeId, filterNow, sidebarThreads, threadStatusFilter],
+  );
   const sidebarThreadByKey = useMemo(
     () =>
       new Map(
-        sidebarThreads.map(
+        filteredSidebarThreads.map(
           (thread) =>
             [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
         ),
       ),
-    [sidebarThreads],
+    [filteredSidebarThreads],
   );
   // Resolve the active route's project key to a logical key so it matches the
   // sidebar's grouped project entries.
@@ -3284,7 +3427,7 @@ export default function LegacySidebar() {
   // are displayed together.
   const threadsByProjectKey = useMemo(() => {
     const next = new Map<string, SidebarThreadSummary[]>();
-    for (const thread of sidebarThreads) {
+    for (const thread of filteredSidebarThreads) {
       const physicalKey =
         projectPhysicalKeyByScopedRef.get(
           scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
@@ -3298,7 +3441,7 @@ export default function LegacySidebar() {
       }
     }
     return next;
-  }, [sidebarThreads, physicalToLogicalKey, projectPhysicalKeyByScopedRef]);
+  }, [filteredSidebarThreads, physicalToLogicalKey, projectPhysicalKeyByScopedRef]);
   const getCurrentSidebarShortcutContext = useCallback(
     () => ({
       terminalFocus: isTerminalFocused(),
@@ -3406,15 +3549,18 @@ export default function LegacySidebar() {
     animatedThreadListsRef.current.add(node);
   }, []);
 
-  const visibleThreads = useMemo(
-    () => sidebarThreads.filter((thread) => thread.archivedAt === null),
-    [sidebarThreads],
-  );
+  const visibleThreads = filteredSidebarThreads;
   const sortedProjects = useMemo(() => {
-    const sortableProjects = sidebarProjects.map((project) => ({
-      ...project,
-      id: project.projectKey,
-    }));
+    const sortableProjects = sidebarProjects
+      .filter(
+        (project) =>
+          threadStatusFilter === "all" ||
+          (threadsByProjectKey.get(project.projectKey)?.length ?? 0) > 0,
+      )
+      .map((project) => ({
+        ...project,
+        id: project.projectKey,
+      }));
     const sortableThreads = visibleThreads.map((thread) => {
       const physicalKey =
         projectPhysicalKeyByScopedRef.get(
@@ -3439,6 +3585,8 @@ export default function LegacySidebar() {
     projectPhysicalKeyByScopedRef,
     sidebarProjectByKey,
     sidebarProjects,
+    threadStatusFilter,
+    threadsByProjectKey,
     visibleThreads,
   ]);
   const isManualProjectSorting = sidebarProjectSortOrder === "manual";
@@ -3775,8 +3923,14 @@ export default function LegacySidebar() {
         handleDesktopUpdateButtonClick={handleDesktopUpdateButtonClick}
         projectSortOrder={sidebarProjectSortOrder}
         threadSortOrder={sidebarThreadSortOrder}
+        environmentOptions={environmentOptions}
+        environmentScopeId={environmentScopeId}
+        threadStatusFilter={threadStatusFilter}
+        filterNow={filterNow}
         threadPreviewCount={sidebarThreadPreviewCount}
         updateSettings={updateSettings}
+        onEnvironmentScopeChange={setEnvironmentScopeId}
+        onThreadStatusFilterChange={setThreadStatusFilter}
         openAddProject={openAddProjectCommandPalette}
         isManualProjectSorting={isManualProjectSorting}
         projectDnDSensors={projectDnDSensors}
@@ -3802,7 +3956,7 @@ export default function LegacySidebar() {
         suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
         suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
         attachProjectListAutoAnimateRef={attachProjectListAutoAnimateRef}
-        projectsLength={projects.length}
+        projectsLength={sortedProjects.length}
       />
       <SidebarChromeFooter />
     </>

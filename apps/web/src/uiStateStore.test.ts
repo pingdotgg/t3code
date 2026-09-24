@@ -16,6 +16,7 @@ import {
   setSidebarEnvironmentScopeId,
   setSidebarProjectScopeKey,
   setSidebarThreadSortOrder,
+  setSidebarThreadStatusFilter,
   setThreadChangedFilesExpanded,
   type UiState,
 } from "./uiStateStore";
@@ -27,6 +28,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     sidebarEnvironmentScopeId: null,
     sidebarProjectScopeKey: null,
     sidebarThreadSortOrder: "created_at",
+    sidebarThreadStatusFilter: "all",
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -179,6 +181,16 @@ describe("uiStateStore pure functions", () => {
       "created_at",
     );
   });
+
+  it("stores the legacy sidebar thread status filter", () => {
+    const snoozed = setSidebarThreadStatusFilter(makeUiState(), "snoozed");
+
+    expect(snoozed.sidebarThreadStatusFilter).toBe("snoozed");
+    expect(setSidebarThreadStatusFilter(snoozed, "snoozed")).toBe(snoozed);
+    expect(setSidebarThreadStatusFilter(snoozed, "active").sidebarThreadStatusFilter).toBe(
+      "active",
+    );
+  });
 });
 
 describe("parsePersistedState", () => {
@@ -186,6 +198,12 @@ describe("parsePersistedState", () => {
     expect(parsePersistedState({ sidebarThreadSortOrder: "unknown" }).sidebarThreadSortOrder).toBe(
       "created_at",
     );
+  });
+
+  it("defaults invalid legacy-sidebar status filters to all", () => {
+    expect(
+      parsePersistedState({ sidebarThreadStatusFilter: "unknown" }).sidebarThreadStatusFilter,
+    ).toBe("all");
   });
 
   it("hydrates the last selected pull request merge method", () => {
@@ -233,6 +251,7 @@ describe("parsePersistedState", () => {
       sidebarEnvironmentScopeId: null,
       sidebarProjectScopeKey: null,
       sidebarThreadSortOrder: "created_at",
+      sidebarThreadStatusFilter: "all",
       pullRequestMergeMethod: "merge",
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -357,6 +376,7 @@ describe("uiStateStore persistence", () => {
       sidebarEnvironmentScopeId: null,
       sidebarProjectScopeKey: null,
       sidebarThreadSortOrder: "created_at",
+      sidebarThreadStatusFilter: "all",
       threadChangedFilesExpansionVersion: 2,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -401,6 +421,16 @@ describe("uiStateStore persistence", () => {
     ) as PersistedUiState;
 
     expect(parsePersistedState(persisted).sidebarThreadSortOrder).toBe("updated_at");
+  });
+
+  it("restores the legacy sidebar status filter across reloads", () => {
+    persistState(makeUiState({ sidebarThreadStatusFilter: "settled" }));
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+
+    expect(parsePersistedState(persisted).sidebarThreadStatusFilter).toBe("settled");
   });
 
   it("drops the temporary expanded-only migration fallback when rewriting state", () => {

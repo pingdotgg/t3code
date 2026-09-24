@@ -5,6 +5,8 @@ export interface ThreadSortInput {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly latestUserMessageAt?: string | null;
+  /** Latest completed turn across the thread; null means no run has finished yet. */
+  readonly lastFinishedAt?: string | null | undefined;
   readonly messages?: ReadonlyArray<{
     readonly createdAt: string;
     readonly role: string;
@@ -92,6 +94,19 @@ export function getThreadSortTimestamp(
   if (sortOrder === "created_at") {
     return (
       getFirstSortableTimestamp(thread.createdAt, thread.updatedAt) ?? Number.NEGATIVE_INFINITY
+    );
+  }
+  // New servers retain this stamp while the next turn is running, so tool
+  // activity cannot reshuffle the list. Undefined means an older server;
+  // preserve its latest-user-message behavior until it upgrades.
+  if (thread.lastFinishedAt !== undefined) {
+    return (
+      getFirstSortableTimestamp(
+        thread.lastFinishedAt,
+        thread.createdAt,
+        thread.latestUserMessageAt,
+        thread.updatedAt,
+      ) ?? Number.NEGATIVE_INFINITY
     );
   }
   return getLatestUserMessageTimestamp(thread);

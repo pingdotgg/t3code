@@ -5,6 +5,7 @@ import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
+export type SidebarThreadStatusFilter = "all" | "active" | "snoozed" | "settled";
 // Version 1 stored card visibility, not folder expansion.
 const THREAD_CHANGED_FILES_EXPANSION_VERSION = 2;
 const LEGACY_PERSISTED_STATE_KEYS = [
@@ -31,6 +32,7 @@ export interface PersistedUiState {
   sidebarEnvironmentScopeId?: string | null;
   sidebarProjectScopeKey?: string | null;
   sidebarThreadSortOrder?: string;
+  sidebarThreadStatusFilter?: string;
   threadChangedFilesExpansionVersion?: number;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
   pullRequestMergeMethod?: string;
@@ -46,6 +48,7 @@ export interface UiProjectState {
   // cannot reset the filter.
   sidebarProjectScopeKey: string | null;
   sidebarThreadSortOrder: SidebarThreadSortOrder;
+  sidebarThreadStatusFilter: SidebarThreadStatusFilter;
 }
 
 export interface UiThreadState {
@@ -70,6 +73,7 @@ const initialState: UiState = {
   sidebarEnvironmentScopeId: null,
   sidebarProjectScopeKey: null,
   sidebarThreadSortOrder: "created_at",
+  sidebarThreadStatusFilter: "all",
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -112,6 +116,10 @@ function sanitizeOptionalKey(value: unknown): string | null {
 
 function sanitizeSidebarThreadSortOrder(value: unknown): SidebarThreadSortOrder {
   return value === "updated_at" || value === "created_at" ? value : "created_at";
+}
+
+function sanitizeSidebarThreadStatusFilter(value: unknown): SidebarThreadStatusFilter {
+  return value === "active" || value === "snoozed" || value === "settled" ? value : "all";
 }
 
 function sanitizeTimestampRecord(value: unknown): Record<string, string> {
@@ -169,6 +177,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     sidebarEnvironmentScopeId: sanitizeOptionalKey(parsed.sidebarEnvironmentScopeId),
     sidebarProjectScopeKey: sanitizeOptionalKey(parsed.sidebarProjectScopeKey),
     sidebarThreadSortOrder: sanitizeSidebarThreadSortOrder(parsed.sidebarThreadSortOrder),
+    sidebarThreadStatusFilter: sanitizeSidebarThreadStatusFilter(parsed.sidebarThreadStatusFilter),
     pullRequestMergeMethod: isPullRequestMergeMethod(parsed.pullRequestMergeMethod)
       ? parsed.pullRequestMergeMethod
       : initialState.pullRequestMergeMethod,
@@ -245,6 +254,7 @@ export function persistState(state: UiState): void {
         sidebarEnvironmentScopeId: state.sidebarEnvironmentScopeId,
         sidebarProjectScopeKey: state.sidebarProjectScopeKey,
         sidebarThreadSortOrder: state.sidebarThreadSortOrder,
+        sidebarThreadStatusFilter: state.sidebarThreadStatusFilter,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
         pullRequestMergeMethod: state.pullRequestMergeMethod,
@@ -383,6 +393,16 @@ export function setSidebarThreadSortOrder(
   };
 }
 
+export function setSidebarThreadStatusFilter(
+  state: UiState,
+  filter: SidebarThreadStatusFilter,
+): UiState {
+  if (state.sidebarThreadStatusFilter === filter) {
+    return state;
+  }
+  return { ...state, sidebarThreadStatusFilter: filter };
+}
+
 function setPullRequestMergeMethod(state: UiState, method: PullRequestMergeMethod): UiState {
   return state.pullRequestMergeMethod === method
     ? state
@@ -474,6 +494,7 @@ interface UiStateStore extends UiState {
   setSidebarEnvironmentScopeId: (environmentId: string | null) => void;
   setSidebarProjectScopeKey: (projectKey: string | null) => void;
   setSidebarThreadSortOrder: (sortOrder: SidebarThreadSortOrder) => void;
+  setSidebarThreadStatusFilter: (filter: SidebarThreadStatusFilter) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
@@ -499,6 +520,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setSidebarProjectScopeKey(state, projectKey)),
   setSidebarThreadSortOrder: (sortOrder) =>
     set((state) => setSidebarThreadSortOrder(state, sortOrder)),
+  setSidebarThreadStatusFilter: (filter) =>
+    set((state) => setSidebarThreadStatusFilter(state, filter)),
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),

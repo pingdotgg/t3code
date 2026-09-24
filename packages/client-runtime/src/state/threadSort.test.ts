@@ -128,6 +128,70 @@ describe("sortThreads", () => {
 
     expect(sorted.map((thread) => thread.id)).toEqual(["thread-1", "thread-2"]);
   });
+
+  it("sorts new-server thread shells by the latest finished turn", () => {
+    const sorted = sortThreads(
+      [
+        makeThread({
+          id: "newer-tool-activity",
+          lastFinishedAt: "2026-03-09T10:00:00.000Z",
+          updatedAt: "2026-03-09T12:00:00.000Z",
+        }),
+        makeThread({
+          id: "newer-finished-run",
+          lastFinishedAt: "2026-03-09T11:00:00.000Z",
+          updatedAt: "2026-03-09T11:00:00.000Z",
+        }),
+      ],
+      "updated_at",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual([
+      "newer-finished-run",
+      "newer-tool-activity",
+    ]);
+  });
+
+  it("keeps the previous finish anchor while the next run updates the thread", () => {
+    const beforeRun = makeThread({
+      id: "running",
+      lastFinishedAt: "2026-03-09T10:00:00.000Z",
+      updatedAt: "2026-03-09T10:00:00.000Z",
+    });
+    const duringRun = { ...beforeRun, updatedAt: "2026-03-09T13:00:00.000Z" };
+    const waiting = makeThread({
+      id: "waiting",
+      lastFinishedAt: "2026-03-09T11:00:00.000Z",
+      updatedAt: "2026-03-09T11:00:00.000Z",
+    });
+
+    expect(sortThreads([duringRun, waiting], "updated_at").map((thread) => thread.id)).toEqual([
+      "waiting",
+      "running",
+    ]);
+  });
+
+  it("uses creation time until a thread has a finished run", () => {
+    const sorted = sortThreads(
+      [
+        makeThread({
+          id: "older-created",
+          createdAt: "2026-03-09T10:00:00.000Z",
+          lastFinishedAt: null,
+          updatedAt: "2026-03-09T13:00:00.000Z",
+        }),
+        makeThread({
+          id: "newer-created",
+          createdAt: "2026-03-09T11:00:00.000Z",
+          lastFinishedAt: null,
+          updatedAt: "2026-03-09T11:00:00.000Z",
+        }),
+      ],
+      "updated_at",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["newer-created", "older-created"]);
+  });
 });
 
 describe("getLatestThreadForProject", () => {

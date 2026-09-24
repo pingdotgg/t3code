@@ -132,6 +132,7 @@ const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
     titleState: Schema.NullOr(Schema.fromJsonString(ThreadTitleState)),
     linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
     branchPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
+    lastFinishedAt: Schema.NullOr(IsoDateTime),
   }),
 );
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
@@ -590,6 +591,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
+          (SELECT MAX(completed_at) FROM projection_turns AS completed_turns
+            WHERE completed_turns.thread_id = projection_threads.thread_id
+              AND completed_turns.state IN ('completed', 'interrupted', 'error')
+              AND completed_turns.completed_at IS NOT NULL) AS "lastFinishedAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
@@ -631,6 +636,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
+          (SELECT MAX(completed_at) FROM projection_turns AS completed_turns
+            WHERE completed_turns.thread_id = projection_threads.thread_id
+              AND completed_turns.state IN ('completed', 'interrupted', 'error')
+              AND completed_turns.completed_at IS NOT NULL) AS "lastFinishedAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
@@ -704,6 +713,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
+          (SELECT MAX(completed_at) FROM projection_turns AS completed_turns
+            WHERE completed_turns.thread_id = projection_threads.thread_id
+              AND completed_turns.state IN ('completed', 'interrupted', 'error')
+              AND completed_turns.completed_at IS NOT NULL) AS "lastFinishedAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
@@ -1269,6 +1282,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
+          (SELECT MAX(completed_at) FROM projection_turns AS completed_turns
+            WHERE completed_turns.thread_id = projection_threads.thread_id
+              AND completed_turns.state IN ('completed', 'interrupted', 'error')
+              AND completed_turns.completed_at IS NOT NULL) AS "lastFinishedAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
@@ -2746,6 +2763,7 @@ pending_approval_requests AS (
                         titleState: row.titleState,
                         session: sessionByThread.get(row.threadId) ?? null,
                         latestUserMessageAt: row.latestUserMessageAt,
+                        lastFinishedAt: row.lastFinishedAt,
                         hasPendingApprovals: row.pendingApprovalCount > 0,
                         hasPendingUserInput: row.pendingUserInputCount > 0,
                         hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
@@ -2909,6 +2927,7 @@ pending_approval_requests AS (
                   titleState: row.titleState,
                   session: sessionByThread.get(row.threadId) ?? null,
                   latestUserMessageAt: row.latestUserMessageAt,
+                  lastFinishedAt: row.lastFinishedAt,
                   hasPendingApprovals: row.pendingApprovalCount > 0,
                   hasPendingUserInput: row.pendingUserInputCount > 0,
                   hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
@@ -3265,6 +3284,7 @@ pending_approval_requests AS (
         titleState: threadRow.value.titleState,
         session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
         latestUserMessageAt: threadRow.value.latestUserMessageAt,
+        lastFinishedAt: threadRow.value.lastFinishedAt,
         hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
         hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
         hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,
