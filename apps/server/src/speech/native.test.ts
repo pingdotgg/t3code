@@ -1,3 +1,4 @@
+import * as NodeModule from "node:module";
 import { expect, it } from "vite-plus/test";
 import { listNativeSpeechGpuDevices, loadNativeSpeechModel } from "./native.ts";
 
@@ -16,6 +17,27 @@ it("ignores unrelated device probe messages and returns GPU devices", async () =
 
 const fixture = (transcribe: string) =>
   `data:text/javascript,${encodeURIComponent(`export const TranscribeModel = { load: async () => ({ capabilities: { supportsStreaming: false }, supports: () => false, transcribe: ${transcribe} }) };`)}`;
+
+it("raises the speech worker's Koffi stack before loading the binding", async () => {
+  const koffiPath = NodeModule.createRequire(import.meta.resolve("transcribe-cpp")).resolve(
+    "koffi",
+  );
+  const moduleUrl = `data:text/javascript,${encodeURIComponent(`
+    import { createRequire } from "node:module";
+    const koffi = createRequire(${JSON.stringify(koffiPath)})(${JSON.stringify(koffiPath)});
+    export const TranscribeModel = { load: async () => ({
+      backend: String(koffi.config().async_stack_size),
+      capabilities: { supportsStreaming: false },
+      supports: () => false,
+    }) };
+  `)}`;
+  const model = await loadNativeSpeechModel("unused.gguf", new AbortController().signal, moduleUrl);
+  try {
+    expect(Number(model.backend)).toBeGreaterThanOrEqual(2 * 1024 * 1024);
+  } finally {
+    await model.dispose();
+  }
+});
 
 const fixtureWithUnrelatedIpcMessage = () =>
   `data:text/javascript,${encodeURIComponent(`
