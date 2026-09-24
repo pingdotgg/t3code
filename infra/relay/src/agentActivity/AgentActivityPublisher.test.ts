@@ -58,6 +58,7 @@ function makeLiveActivities(
   return {
     register: () => Effect.void,
     listTargets: () => Effect.succeed([]),
+    listIdleArmedTargets: () => Effect.succeed([]),
     markDelivery: () => Effect.void,
     markStartQueued: () => Effect.void,
     clearStartQueued: () => Effect.void,
@@ -262,6 +263,81 @@ describe("AgentActivityPublisher", () => {
             status: "Working",
           },
         ],
+      });
+    });
+  });
+
+  it.effect("ends armed cards left showing finished work once the display window passes", () => {
+    const idleTarget: LiveActivities.TargetRow = {
+      ...target("device-1"),
+      activity_push_token: "activity-token",
+      remote_started_at: "1970-01-01T00:00:01.000Z",
+      last_live_activity_delivery_at: "1970-01-01T00:30:00.000Z",
+    };
+    const listedBefore: Array<string> = [];
+    const sent: Array<Parameters<ApnsDeliveries.ApnsDeliveries["Service"]["sendForTarget"]>[0]> =
+      [];
+    const nowMs = 60 * 60 * 1_000;
+    let activeStates: ReadonlyArray<RelayAgentActivityState> = [state];
+
+    const endIdle = Effect.gen(function* () {
+      const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+      yield* publisher.endIdleLiveActivities({ nowMs });
+    }).pipe(
+      Effect.provide(
+        publisherLayer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(
+                AgentActivityRows.AgentActivityRows,
+                makeAgentActivityRows({ listForUser: () => Effect.sync(() => activeStates) }),
+              ),
+              Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
+              Layer.succeed(
+                LiveActivities.LiveActivities,
+                makeLiveActivities({
+                  listIdleArmedTargets: (input) =>
+                    Effect.sync(() => {
+                      listedBefore.push(input.deliveredBefore);
+                      return [{ user_id: "dev:julius", device_id: "device-1" }];
+                    }),
+                  listTargets: () => Effect.succeed([idleTarget, target("device-2")]),
+                }),
+              ),
+              Layer.succeed(
+                ApnsDeliveries.ApnsDeliveries,
+                makeApnsDeliveries({
+                  sendForTarget: (input) =>
+                    Effect.sync(() => {
+                      sent.push(input);
+                      return null;
+                    }),
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      // Work that started between the scan and the replay is left to its own
+      // publish: a silent repaint here would make that publish look unchanged
+      // and swallow its alert.
+      yield* endIdle;
+      expect(listedBefore).toEqual(["1970-01-01T00:45:00.000Z"]);
+      expect(sent).toEqual([]);
+
+      // The finished rows have aged out (or been pruned), so the aggregate is
+      // empty and the delivery layer ends the card. The replay is silent so
+      // ending cannot buzz the phone.
+      activeStates = [];
+      yield* endIdle;
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({
+        target: { device_id: "device-1" },
+        aggregate: null,
+        replay: true,
       });
     });
   });

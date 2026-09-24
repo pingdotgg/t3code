@@ -1,4 +1,7 @@
-import { makeAggregateState } from "./agentActivityAggregate.ts";
+import {
+  makeAggregateState,
+  TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS,
+} from "./agentActivityAggregate.ts";
 export {
   makeAggregateState,
   TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS,
@@ -29,6 +32,7 @@ export type AgentActivityPublishError =
   | AgentActivityRows.AgentActivityRowListPersistenceError
   | EnvironmentLinks.EnvironmentLinkUserListPersistenceError
   | LiveActivities.LiveActivityTargetListPersistenceError
+  | LiveActivities.LiveActivityIdleTargetListPersistenceError
   | ApnsDeliveries.ApnsDeliveryError;
 
 export class AgentActivityPublisher extends Context.Service<
@@ -44,6 +48,9 @@ export class AgentActivityPublisher extends Context.Service<
       readonly userId: string;
       readonly deviceId: string;
     }) => Effect.Effect<RelayDeliveryResult | null, AgentActivityPublishError>;
+    readonly endIdleLiveActivities: (input: {
+      readonly nowMs: number;
+    }) => Effect.Effect<void, AgentActivityPublishError>;
   }
 >()("t3code-relay/agentActivity/AgentActivityPublisher") {}
 
@@ -108,6 +115,48 @@ export const make = Effect.gen(function* () {
     return deliveriesByTarget.flat();
   });
 
+  // Silently re-delivers the current aggregate to one device: repaints drifted
+  // content, or ends the card when nothing is left to show. With `endOnly`
+  // the content is never repainted: a silent repaint would make the real
+  // publish for that same state look unchanged and swallow its alert.
+  const replayForTarget = Effect.fnUntraced(function* (input: {
+    readonly userId: string;
+    readonly deviceId: string;
+    readonly endOnly?: boolean;
+  }) {
+    const { activeStates, targets } = yield* Effect.all(
+      {
+        activeStates: rows.listForUser({ userId: input.userId }),
+        targets: liveActivities.listTargets({ userId: input.userId }),
+      },
+      { concurrency: 2 },
+    );
+    const target = targets.find((row) => row.device_id === input.deviceId) ?? null;
+    if (target === null) {
+      return null;
+    }
+    if (target.platform === "android") {
+      return input.endOnly
+        ? null
+        : yield* fcmDeliveries.enqueue({ target, state: null, replay: true });
+    }
+    const now = yield* DateTime.now;
+    const aggregate = makeAggregateState({
+      activeStates,
+      terminalState: null,
+      nowMs: now.epochMilliseconds,
+    });
+    if (input.endOnly && aggregate !== null) {
+      return null;
+    }
+    return yield* apnsDeliveries.sendForTarget({
+      target,
+      aggregate,
+      nowMs: now.epochMilliseconds,
+      replay: true,
+    });
+  });
+
   return AgentActivityPublisher.of({
     replayForLiveActivityRegistration: Effect.fn(
       "relay.agent_activity_publisher.replay_for_live_activity_registration",
@@ -116,33 +165,39 @@ export const make = Effect.gen(function* () {
         "relay.mobile.device_id": input.deviceId,
         "relay.operation": "replayForLiveActivityRegistration",
       });
-      const { activeStates, targets } = yield* Effect.all(
-        {
-          activeStates: rows.listForUser({ userId: input.userId }),
-          targets: liveActivities.listTargets({ userId: input.userId }),
-        },
-        { concurrency: 2 },
-      );
-      const target = targets.find((row) => row.device_id === input.deviceId) ?? null;
-      if (target === null) {
-        return null;
-      }
-      if (target.platform === "android") {
-        return yield* fcmDeliveries.enqueue({ target, state: null, replay: true });
-      }
-      const now = yield* DateTime.now;
-      const aggregate = makeAggregateState({
-        activeStates,
-        terminalState: null,
-        nowMs: now.epochMilliseconds,
-      });
-      return yield* apnsDeliveries.sendForTarget({
-        target,
-        aggregate,
-        nowMs: now.epochMilliseconds,
-        replay: true,
-      });
+      return yield* replayForTarget({ userId: input.userId, deviceId: input.deviceId });
     }),
+    // Deliveries only happen when an environment publishes or the app
+    // re-registers, so a card left showing finished work would otherwise keep
+    // its Done rows past the display window until one of those happens.
+    // Replaying the aggregate once the window has passed ends it.
+    endIdleLiveActivities: Effect.fn("relay.agent_activity_publisher.end_idle_live_activities")(
+      function* (input) {
+        const deliveredBefore = DateTime.formatIso(
+          DateTime.makeUnsafe(input.nowMs - TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS),
+        );
+        const targets = yield* liveActivities.listIdleArmedTargets({ deliveredBefore });
+        yield* Effect.annotateCurrentSpan({ "relay.live_activities.idle_count": targets.length });
+        yield* Effect.forEach(
+          targets,
+          (target) =>
+            replayForTarget({
+              userId: target.user_id,
+              deviceId: target.device_id,
+              endOnly: true,
+            }).pipe(
+              Effect.tapError((error) =>
+                Effect.logWarning("idle live activity replay failed", {
+                  deviceId: target.device_id,
+                  errorTag: error._tag,
+                }),
+              ),
+              Effect.ignore,
+            ),
+          { concurrency: 4, discard: true },
+        );
+      },
+    ),
     publish: Effect.fn("relay.agent_activity_publisher.publish")(function* (input) {
       yield* Effect.annotateCurrentSpan({
         "relay.environment_id": input.environmentId,
