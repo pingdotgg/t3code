@@ -1,3 +1,4 @@
+import { useActiveThreadSort } from "../threads/use-active-thread-sort";
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
@@ -228,6 +229,8 @@ function useConfirmDeleteThread(
   );
 }
 
+/** Shared actions for Home, the sidebar, and the arrangement sheet. Rechecks
+ * server support and the current sort mode before writing manual order keys. */
 export function useThreadListActions(): {
   readonly archiveThread: (thread: EnvironmentThreadShell) => void;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
@@ -245,6 +248,7 @@ export function useThreadListActions(): {
   readonly regenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
 } {
   const executeAction = useThreadActionExecutor();
+  const { order: activeThreadSortOrder } = useActiveThreadSort();
   const snoozeMutation = useAtomCommand(threadEnvironment.snooze, { reportFailure: false });
   const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const pinMutation = useAtomCommand(threadEnvironment.pin, { reportFailure: false });
@@ -553,6 +557,7 @@ export function useThreadListActions(): {
         }
       }
       const configs = appAtomRegistry.get(environmentServerConfigsAtom);
+      if (section === "active" && activeThreadSortOrder !== "manual") return false;
       const supportsReorder = (environmentId: EnvironmentThreadShell["environmentId"]) => {
         const capabilities = configs.get(environmentId)?.environment.capabilities;
         return section === "pinned"
@@ -677,6 +682,7 @@ export function useThreadListActions(): {
       }
     },
     [
+      activeThreadSortOrder,
       settleThread,
       reorderActiveMutation,
       reorderPinnedMutation,

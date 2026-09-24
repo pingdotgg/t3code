@@ -1463,6 +1463,46 @@ describe("cross-section thread drops", () => {
   });
 });
 
+describe("shared active-thread sorting", () => {
+  it("uses message order in the list and arrangement sheet, then restores saved keys", () => {
+    const threads = [
+      makeThread({
+        id: ThreadId.make("first"),
+        title: "First",
+        activeOrderKey: "b",
+        latestUserMessageAt: "2026-06-01T09:00:00Z",
+      }),
+      makeThread({
+        id: ThreadId.make("second"),
+        title: "Second",
+        activeOrderKey: "c",
+        latestUserMessageAt: "2026-06-01T12:00:00Z",
+      }),
+      makeThread({ id: ThreadId.make("pin"), title: "Pinned", pinnedAt: NOW }),
+    ];
+    const input = { threads, environmentId: null, searchQuery: "", now: NOW };
+    expect(
+      buildThreadListV2Items({ ...input, activeThreadSortOrder: "last_message" }).items.map(
+        (row) => row.thread.id,
+      ),
+    ).toEqual(["pin", "second", "first"]);
+    expect(
+      getThreadListV2OrderedSection({
+        threads,
+        section: "active",
+        now: NOW,
+        activeThreadSortOrder: "last_message",
+      }).map((row) => row.id),
+    ).toEqual(["second", "first"]);
+    expect(
+      buildThreadListV2Items({ ...input, activeThreadSortOrder: "manual" }).items.map(
+        (row) => row.thread.id,
+      ),
+    ).toEqual(["pin", "first", "second"]);
+    expect(threads.map((row) => row.activeOrderKey)).toEqual(["b", "c", undefined]);
+  });
+});
+
 /* ─── Recycled-list equality + per-row clock scoping ─────────────────── */
 
 const BASE_MS = Date.parse(NOW);

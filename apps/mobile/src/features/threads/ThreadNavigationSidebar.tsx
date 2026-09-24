@@ -1,3 +1,5 @@
+import { ACTIVE_THREAD_SORT_OPTIONS } from "@t3tools/client-runtime/state/shared-settings";
+import { useActiveThreadSort } from "./use-active-thread-sort";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { computeThreadMoveAvailability } from "./threadOrder";
 import type {
@@ -126,6 +128,8 @@ function NativeSidebarContainer(props: ThreadNavigationSidebarProps) {
   );
 }
 
+/** Sidebar list and controls for split-view navigation. Shares the active sort
+ * preference with Home while retaining its own project scope and search query. */
 function ThreadNavigationSidebarPane(
   props: ThreadNavigationSidebarProps & { readonly nativeChrome: boolean },
 ) {
@@ -371,6 +375,11 @@ function ThreadNavigationSidebarPane(
       ),
     [serverConfigs],
   );
+  const {
+    order: activeThreadSortOrder,
+    setOrder: setActiveThreadSortOrder,
+    available: sortAvailable,
+  } = useActiveThreadSort();
   // Reference-stable provider glyphs: a fresh object per render would break
   // the memoized rows' props comparison on every parent render.
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(serverConfigs);
@@ -388,12 +397,14 @@ function ThreadNavigationSidebarPane(
           [...serverConfigs].flatMap(([id, config]) =>
             (section === "pinned"
               ? config.environment.capabilities.threadPinReorder
-              : config.environment.capabilities.threadActiveReorder) === true
+              : activeThreadSortOrder === "manual" &&
+                config.environment.capabilities.threadActiveReorder) === true
               ? [id]
               : [],
           ),
         ),
         ordered: getThreadListV2OrderedSection({
+          activeThreadSortOrder,
           threads,
           section,
           pendingOrder,
@@ -405,6 +416,7 @@ function ThreadNavigationSidebarPane(
       });
     return new Map([...sectionAvailability("pinned"), ...sectionAvailability("active")]);
   }, [
+    activeThreadSortOrder,
     serverConfigs,
     threads,
     pendingOrder,
@@ -416,6 +428,7 @@ function ThreadNavigationSidebarPane(
   ]);
   const threadListV2Layout = useMemo(() => {
     return buildThreadListV2Items({
+      activeThreadSortOrder,
       pendingOrder,
       threads: threads.filter((thread) => thread.archivedAt === null),
       environmentId: options.selectedEnvironmentId,
@@ -432,6 +445,7 @@ function ThreadNavigationSidebarPane(
       selectedThreadKey: props.selectedThreadKey ?? null,
     });
   }, [
+    activeThreadSortOrder,
     pendingOrder,
     queuedThreadKeys,
     nowMinute,
@@ -519,6 +533,19 @@ function ThreadNavigationSidebarPane(
   ]);
   const listMenuActions = useMemo<MenuAction[]>(
     () => [
+      ...(sortAvailable
+        ? [
+            {
+              id: "active-sort",
+              title: "Sort active threads",
+              subactions: ACTIVE_THREAD_SORT_OPTIONS.map((option) => ({
+                id: `active-sort:${option.value}`,
+                title: option.label,
+                state: activeThreadSortOrder === option.value ? ("on" as const) : ("off" as const),
+              })),
+            },
+          ]
+        : []),
       {
         id: "environment",
         title: "Environment",
@@ -561,11 +588,25 @@ function ThreadNavigationSidebarPane(
             },
           ] satisfies MenuAction[])),
     ],
-    [environments, options, projectFilterOptions, selectedProjectKey],
+    [
+      activeThreadSortOrder,
+      sortAvailable,
+      environments,
+      options,
+      projectFilterOptions,
+      selectedProjectKey,
+    ],
   );
   const handleListMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       const event = nativeEvent.event;
+      const activeSort = ACTIVE_THREAD_SORT_OPTIONS.find(
+        (option) => event === `active-sort:${option.value}`,
+      );
+      if (sortAvailable && activeSort) {
+        setActiveThreadSortOrder(activeSort.value);
+        return;
+      }
       if (event === "environment:all") {
         setSelectedEnvironmentId(null);
         return;
@@ -589,7 +630,13 @@ function ThreadNavigationSidebarPane(
         return;
       }
     },
-    [environments, projectFilterOptions, setSelectedEnvironmentId],
+    [
+      sortAvailable,
+      setActiveThreadSortOrder,
+      environments,
+      projectFilterOptions,
+      setSelectedEnvironmentId,
+    ],
   );
 
   const [measuredHeaderHeight, setMeasuredHeaderHeight] = useState<number | null>(null);
@@ -855,9 +902,10 @@ function ThreadNavigationSidebarPane(
       unsnoozeThread,
     ],
   );
-  // The list ignores sort/group options, so only the environment and project
-  // filters can light the "customized" state.
-  const filterCustomized = options.selectedEnvironmentId !== null || selectedProjectKey !== null;
+  const filterCustomized =
+    options.selectedEnvironmentId !== null ||
+    selectedProjectKey !== null ||
+    activeThreadSortOrder !== "manual";
   const filterIcon = filterCustomized
     ? "line.3.horizontal.decrease.circle.fill"
     : "line.3.horizontal.decrease.circle";
@@ -870,8 +918,25 @@ function ThreadNavigationSidebarPane(
         selectedProjectKey,
         onEnvironmentChange: setSelectedEnvironmentId,
         onProjectChange: setSelectedProjectKey,
+        ...(sortAvailable
+          ? {
+              activeThreadSort: {
+                order: activeThreadSortOrder,
+                onChange: setActiveThreadSortOrder,
+              },
+            }
+          : {}),
       }),
-    [environments, options, projectFilterOptions, selectedProjectKey, setSelectedEnvironmentId],
+    [
+      activeThreadSortOrder,
+      setActiveThreadSortOrder,
+      sortAvailable,
+      environments,
+      options,
+      projectFilterOptions,
+      selectedProjectKey,
+      setSelectedEnvironmentId,
+    ],
   );
   const nativeHeaderItems = useMemo(
     () =>

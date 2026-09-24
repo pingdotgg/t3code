@@ -1,3 +1,4 @@
+import { useActiveThreadSort } from "../hooks/useActiveThreadSort";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
@@ -42,6 +43,7 @@ import {
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
+  ArrowUpDownIcon,
   AlarmClockIcon,
   AlarmClockOffIcon,
   CheckIcon,
@@ -235,7 +237,16 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuShortcut,
+  MenuTrigger,
+  MenuRadioGroup,
+  MenuRadioItem,
+} from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import {
@@ -2132,6 +2143,8 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   );
 });
 
+/** Thread navigation across connected environments. Active sorting is shared
+ * with native clients; pinned, snoozed, and settled sections keep their own order. */
 export default function Sidebar() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
@@ -2141,6 +2154,11 @@ export default function Sidebar() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
+  const {
+    order: activeThreadSortOrder,
+    setOrder: setActiveThreadSortOrder,
+    available: sortAvailable,
+  } = useActiveThreadSort();
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -2550,7 +2568,9 @@ export default function Sidebar() {
       const supportsSettlement = capabilities?.threadSettlement === true;
       const supportsSnooze = capabilities?.threadSnooze === true;
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-      if (capabilities?.threadActiveReorder === true) activeReorderable.add(threadKey);
+      if (activeThreadSortOrder === "manual" && capabilities?.threadActiveReorder === true) {
+        activeReorderable.add(threadKey);
+      }
       // Older servers retain their existing drag actions. Active placement
       // additionally requires its own ordering capability at the drop target.
       if (capabilities?.threadPinning === true && capabilities.threadPinReorder === true) {
@@ -2590,7 +2610,7 @@ export default function Sidebar() {
     // sort, or mixed-version fleets would render different pinned orders on
     // web and mobile from the same data.
     const sortedPinned = sortPinnedThreadsForSidebar(pinned);
-    const sortedActive = sortThreadsForSidebar(active);
+    const sortedActive = sortThreadsForSidebar(active, activeThreadSortOrder);
     return {
       pinnedThreads:
         optimisticDrop?.section !== "pinned" || optimisticDrop.order === null
@@ -2603,7 +2623,9 @@ export default function Sidebar() {
       draggableThreadKeys: draggable,
       activeReorderableThreadKeys: activeReorderable,
       activeThreads:
-        optimisticDrop?.section !== "active" || optimisticDrop.order === null
+        activeThreadSortOrder === "last_message" ||
+        optimisticDrop?.section !== "active" ||
+        optimisticDrop.order === null
           ? sortedActive
           : orderItemsByPreferredIds({
               items: sortedActive,
@@ -2619,7 +2641,15 @@ export default function Sidebar() {
       settledThreads: sortSettledThreadsForSidebar(settled),
       snoozeNow: preciseNow,
     };
-  }, [nowMinute, optimisticDrop, scopedProjectKeys, serverConfigs, snoozeWakeTick, threads]);
+  }, [
+    activeThreadSortOrder,
+    nowMinute,
+    optimisticDrop,
+    scopedProjectKeys,
+    serverConfigs,
+    snoozeWakeTick,
+    threads,
+  ]);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -4515,6 +4545,33 @@ export default function Sidebar() {
                     </ComboboxList>
                   </ComboboxPopup>
                 </Combobox>
+              }
+              sortControl={
+                <Menu>
+                  <MenuTrigger
+                    disabled={!sortAvailable}
+                    render={<SidebarHeaderIconButton label="Sort threads" />}
+                  >
+                    <ArrowUpDownIcon />
+                  </MenuTrigger>
+                  <MenuPopup align="end" side="bottom" className="min-w-48">
+                    <div className="px-2 py-1 text-xs font-medium text-muted-foreground">
+                      Sort active threads
+                    </div>
+                    <MenuRadioGroup
+                      value={activeThreadSortOrder}
+                      onValueChange={(value) => {
+                        if (value === "manual" || value === "last_message") {
+                          setOptimisticDrop(null);
+                          setActiveThreadSortOrder(value);
+                        }
+                      }}
+                    >
+                      <MenuRadioItem value="manual">Configured order</MenuRadioItem>
+                      <MenuRadioItem value="last_message">Last message</MenuRadioItem>
+                    </MenuRadioGroup>
+                  </MenuPopup>
+                </Menu>
               }
               onNewProject={openAddProjectCommandPalette}
               onNewThread={handleNewThreadClick}

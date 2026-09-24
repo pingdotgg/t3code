@@ -1,3 +1,4 @@
+import { useActiveThreadSort } from "../threads/use-active-thread-sort";
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import { computeThreadMoveAvailability } from "../threads/threadOrder";
 import { LegendList } from "@legendapp/list/react-native";
@@ -206,6 +207,8 @@ function HomeTopContentSpacer() {
 
 /* ─── Main screen ────────────────────────────────────────────────────── */
 
+/** Home thread list, including scoped search and parked-thread shelves.
+ * Message sorting changes only active rows and suppresses manual move plans. */
 export function HomeScreen(props: HomeScreenProps) {
   const queuedThreadKeys = useQueuedThreadKeys();
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
@@ -493,6 +496,7 @@ export function HomeScreen(props: HomeScreenProps) {
       ),
     [serverConfigs],
   );
+  const { order: activeThreadSortOrder } = useActiveThreadSort();
   // Reference-stable provider glyphs: a fresh object per render would break
   // the memoized rows' props comparison on every parent render.
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(serverConfigs);
@@ -510,12 +514,14 @@ export function HomeScreen(props: HomeScreenProps) {
           [...serverConfigs].flatMap(([id, config]) =>
             (section === "pinned"
               ? config.environment.capabilities.threadPinReorder
-              : config.environment.capabilities.threadActiveReorder) === true
+              : activeThreadSortOrder === "manual" &&
+                config.environment.capabilities.threadActiveReorder) === true
               ? [id]
               : [],
           ),
         ),
         ordered: getThreadListV2OrderedSection({
+          activeThreadSortOrder,
           threads: props.threads,
           section,
           pendingOrder,
@@ -527,6 +533,7 @@ export function HomeScreen(props: HomeScreenProps) {
       });
     return new Map([...sectionAvailability("pinned"), ...sectionAvailability("active")]);
   }, [
+    activeThreadSortOrder,
     serverConfigs,
     props.threads,
     pendingOrder,
@@ -540,6 +547,7 @@ export function HomeScreen(props: HomeScreenProps) {
     // Settled threads are live shells; archived threads keep their original
     // "hidden from lists" meaning.
     return buildThreadListV2Items({
+      activeThreadSortOrder,
       pendingOrder,
       threads: props.threads.filter((thread) => thread.archivedAt === null),
       environmentId: props.selectedEnvironmentId,
@@ -556,6 +564,7 @@ export function HomeScreen(props: HomeScreenProps) {
       selectedThreadKey: null,
     });
   }, [
+    activeThreadSortOrder,
     pendingOrder,
     queuedThreadKeys,
     nowMinute,

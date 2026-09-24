@@ -930,6 +930,50 @@ describe("reduceSidebarProjectScopeMenuState", () => {
 });
 
 describe("sortThreadsForSidebar", () => {
+  it("switches to last message and restores the saved arrangement without changing keys", () => {
+    const threads = [
+      {
+        id: "first",
+        createdAt: "2026-03-09T08:00:00Z",
+        activeOrderKey: "b",
+        latestUserMessageAt: "2026-03-09T09:00:00Z",
+      },
+      {
+        id: "second",
+        createdAt: "2026-03-09T07:00:00Z",
+        activeOrderKey: "c",
+        latestUserMessageAt: "2026-03-09T12:00:00Z",
+      },
+      { id: "new", createdAt: "2026-03-09T10:00:00Z", activeOrderKey: null },
+    ];
+    expect(sortThreadsForSidebar(threads, "last_message").map((thread) => thread.id)).toEqual([
+      "second",
+      "new",
+      "first",
+    ]);
+    expect(sortThreadsForSidebar(threads, "manual").map((thread) => thread.id)).toEqual([
+      "new",
+      "first",
+      "second",
+    ]);
+    expect(threads.map((thread) => thread.activeOrderKey)).toEqual(["b", "c", null]);
+  });
+
+  it("uses creation for invalid message dates and preserves configured order for ties", () => {
+    const threads = [
+      {
+        id: "same",
+        environmentId: "b",
+        createdAt: "2026-03-09T10:00:00Z",
+        latestUserMessageAt: "invalid",
+      },
+      { id: "same", environmentId: "a", createdAt: "2026-03-09T10:00:00Z" },
+    ];
+    expect(
+      sortThreadsForSidebar(threads, "last_message").map((thread) => thread.environmentId),
+    ).toEqual(["a", "b"]);
+  });
+
   const sortable = (input: { id: string; createdAt: string }) => ({
     id: input.id,
     createdAt: input.createdAt,

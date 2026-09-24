@@ -1,5 +1,9 @@
 import type { OrchestrationThreadShell, ProjectId } from "@t3tools/contracts";
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import type {
+  ActiveThreadSortOrder,
+  SidebarProjectSortOrder,
+  SidebarThreadSortOrder,
+} from "@t3tools/contracts/settings";
 
 export interface ThreadSortInput {
   readonly createdAt: string;
@@ -376,4 +380,28 @@ export function planPinnedMove(input: {
   newOrder.splice(from, 1);
   newOrder.splice(to, 0, movedId);
   return planPinnedReorder({ orderedIds: newOrder, keysById, movedId });
+}
+
+/** Last-message sorting is a view preference; saved arrangement keys stay intact. */
+export function sortActiveThreads<
+  T extends {
+    readonly id: string;
+    readonly createdAt: string;
+    readonly unsettledAt?: string | null | undefined;
+    readonly activeOrderKey?: string | null | undefined;
+    readonly environmentId?: string | undefined;
+    readonly latestUserMessageAt?: string | null | undefined;
+  },
+>(threads: readonly T[], order: ActiveThreadSortOrder = "manual"): T[] {
+  const arranged = sortActiveThreadsByOrderKey(threads);
+  if (order === "manual") return arranged;
+  const timestamps = new Map(
+    arranged.map((thread) => [
+      thread,
+      toSortableTimestamp(thread.latestUserMessageAt ?? undefined) ??
+        toSortableTimestamp(thread.createdAt) ??
+        0,
+    ]),
+  );
+  return arranged.sort((left, right) => timestamps.get(right)! - timestamps.get(left)!);
 }

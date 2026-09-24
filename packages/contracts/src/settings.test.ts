@@ -20,6 +20,23 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("active thread sort preference", () => {
+  it("keeps configured ordering for existing servers", () => {
+    expect(decodeServerSettings({}).activeThreadSortOrder).toBe("manual");
+    expect(decodeServerSettings({ sidebarAutoSettleOnMerge: false }).activeThreadSortOrder).toBe(
+      "manual",
+    );
+  });
+  it.each(["manual", "last_message"])(
+    "persists %s as a shared server preference",
+    (activeThreadSortOrder) => {
+      const patch = { activeThreadSortOrder };
+      expect(decodeServerSettingsPatch(patch)).toEqual(patch);
+      expect(encodeServerSettings(decodeServerSettings(patch))).toMatchObject(patch);
+    },
+  );
+});
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();

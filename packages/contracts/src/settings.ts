@@ -62,6 +62,9 @@ export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 // wire field keeps its decoding default below.
 const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
+export const ActiveThreadSortOrder = Schema.Literals(["manual", "last_message"]);
+export type ActiveThreadSortOrder = typeof ActiveThreadSortOrder.Type;
+
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
   "repository_path",
@@ -1080,6 +1083,10 @@ export const StorageCleanupSettings = Schema.Struct({
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
 export const ServerSettings = Schema.Struct({
+  activeThreadSortOrder: ActiveThreadSortOrder.pipe(
+    Schema.withDecodingDefault(Effect.succeed("manual" as const)),
+  ),
+
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
     Schema.withDecodingDefault(
@@ -1438,6 +1445,7 @@ const OpenCodeSettingsPatch = Schema.Struct({
 });
 
 export const ServerSettingsPatch = Schema.Struct({
+  activeThreadSortOrder: Schema.optionalKey(ActiveThreadSortOrder),
   worktreeCleanup: Schema.optionalKey(
     Schema.NullOr(
       Schema.Union([

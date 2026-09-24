@@ -8,6 +8,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 
 import {
+  resolveActiveThreadSortOrder,
   filterSharedServerPatch,
   findSharedSettingsMismatches,
   pickSharedServerSettings,
@@ -398,5 +399,36 @@ describe("findSharedSettingsMismatches", () => {
       ],
     });
     expect(mismatches).toEqual([]);
+  });
+});
+
+describe("active thread sort across clients", () => {
+  it("fans out supported sort settings and excludes servers that cannot persist them", () => {
+    const patch = { activeThreadSortOrder: "last_message" as const };
+    expect(splitSharedServerPatch(patch)).toEqual({ sharedPatch: patch, localPatch: {} });
+    expect(filterSharedServerPatch(patch, {})).toEqual({});
+    expect(filterSharedServerPatch(patch, { threadSortOrder: true })).toEqual(patch);
+  });
+
+  const config = (order: "manual" | "last_message", supported = true) => ({
+    settings: { activeThreadSortOrder: order },
+    environment: { capabilities: { threadSortOrder: supported } },
+  });
+  it("reads a returning client's preference from the server and ignores older servers", () => {
+    expect(resolveActiveThreadSortOrder(new Map([[primaryId, config("last_message")]]))).toBe(
+      "last_message",
+    );
+    expect(
+      resolveActiveThreadSortOrder(new Map([[primaryId, config("last_message", false)]])),
+    ).toBe("manual");
+    expect(resolveActiveThreadSortOrder(new Map())).toBe("manual");
+  });
+  it("resolves differing servers independently of their connection arrival order", () => {
+    const entries = [
+      [boxId, config("last_message")],
+      [laptopId, config("manual")],
+    ] as const;
+    expect(resolveActiveThreadSortOrder(new Map(entries))).toBe("last_message");
+    expect(resolveActiveThreadSortOrder(new Map(entries.toReversed()))).toBe("last_message");
   });
 });
