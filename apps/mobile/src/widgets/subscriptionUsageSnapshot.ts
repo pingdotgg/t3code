@@ -1,3 +1,4 @@
+import { isProviderAvailable } from "@t3tools/contracts";
 import {
   collectLimitAccounts,
   collectLimitPools,
@@ -43,17 +44,47 @@ export function createWidgetRefresher<Id>(refresh: (id: Id) => Promise<unknown>)
   };
 }
 
+/** Drivers the widget knows how to draw, in column order. Anything else never gets a column. */
+const WIDGET_DRIVERS = ["codex", "claudeAgent"] as const;
+type WidgetDriver = (typeof WIDGET_DRIVERS)[number];
+
+/**
+ * Drivers with a column: enabled and installed somewhere, or reported by a hub.
+ * A provider turned off in settings has no column rather than an empty row.
+ */
+function visibleDrivers(
+  presentations: LimitPresentations,
+  accounts: readonly LimitAccount[],
+): readonly WidgetDriver[] {
+  const visible = new Set<string>(accounts.map((account) => account.driver));
+  for (const presentation of presentations.values()) {
+    for (const provider of presentation.serverConfig?.providers ?? []) {
+      if (provider.enabled && provider.installed && isProviderAvailable(provider)) {
+        visible.add(provider.driver);
+      }
+    }
+  }
+  return WIDGET_DRIVERS.filter((driver) => visible.has(driver));
+}
+
+/**
+ * Shape pooled limits into one column per visible driver, in the order given.
+ * A visible driver with no pool keeps its column as "No limits available", and
+ * freshness comes only from accounts that still have a column.
+ */
 function subscriptionUsageProps(
   accounts: readonly LimitAccount[],
+  drivers: readonly WidgetDriver[],
   now: number,
 ): SubscriptionUsageSnapshot {
   const pools = collectLimitPools(accounts, now);
+  const shown = new Set<string>(drivers);
   const checked = accounts
-    .filter((account) => account.driver === "codex" || account.driver === "claudeAgent")
+    .filter((account) => shown.has(account.driver))
     .map((account) => Date.parse(account.limits.checkedAt));
   return {
     checkedAt: checked.length > 0 && checked.every(Number.isFinite) ? Math.min(...checked) : 0,
-    providers: (["codex", "claudeAgent"] as const).map((driver) => {
+    providers: drivers.map((driver) => {
       const pool = pools.find((candidate) => candidate.driver === driver);
       const name = driver === "codex" ? "Codex" : "Claude";
       if (!pool)
@@ -112,8 +143,12 @@ export function buildSubscriptionUsageSnapshot(
   presentations: LimitPresentations,
   url: string,
 ): SubscriptionUsageSnapshot {
+  const accounts = collectLimitAccounts(presentations);
   // Freshness is evaluated at publication/render time, not on unrelated config emissions.
-  return { ...subscriptionUsageProps(collectLimitAccounts(presentations), 0), url };
+  return {
+    ...subscriptionUsageProps(accounts, visibleDrivers(presentations, accounts), 0),
+    url,
+  };
 }
 
 export function subscriptionUsageTimeline(snapshot: SubscriptionUsageSnapshot, now: number) {

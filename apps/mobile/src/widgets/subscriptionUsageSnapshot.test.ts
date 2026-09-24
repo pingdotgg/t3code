@@ -65,18 +65,30 @@ describe("subscription widget snapshots", () => {
     expect(snapshot.url).toBe(deepLink);
     expect(JSON.stringify(snapshot)).not.toContain("private@example.com");
   });
-  it("clears data after removing environments and hides disabled providers", () => {
+  it("clears data after removing environments and drops providers turned off in settings", () => {
+    expect(buildSubscriptionUsageSnapshot(new Map(), deepLink).providers).toEqual([]);
     expect(
-      buildSubscriptionUsageSnapshot(new Map(), deepLink).providers.every(
-        (p) => p.windows.length === 0,
-      ),
-    ).toBe(true);
+      buildSubscriptionUsageSnapshot(presentations([provider({ enabled: false })]), deepLink)
+        .providers,
+    ).toEqual([]);
     expect(
-      buildSubscriptionUsageSnapshot(
-        presentations([provider({ enabled: false })]),
-        deepLink,
-      ).providers.every((p) => p.windows.length === 0),
-    ).toBe(true);
+      buildSubscriptionUsageSnapshot(presentations([provider({ installed: false })]), deepLink)
+        .providers,
+    ).toEqual([]);
+  });
+  it("drops a disabled provider while keeping one that has not reported limits yet", () => {
+    const claude = provider({
+      instanceId: ProviderInstanceId.make("claude"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      usageLimits: undefined,
+    });
+    const snapshot = buildSubscriptionUsageSnapshot(
+      presentations([provider({ enabled: false }), claude]),
+      deepLink,
+    );
+    expect(snapshot.providers).toEqual([
+      { name: "Claude", detail: "No limits available", windows: [], expiresAt: 0, totalWindows: 0 },
+    ]);
   });
   it("uses upstream deduplication for a native account also present in a proxy hub", () => {
     const input = new Map([
