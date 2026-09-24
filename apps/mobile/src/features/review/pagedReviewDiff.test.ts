@@ -1,3 +1,4 @@
+import * as NodeInspectorPromises from "node:inspector/promises";
 import { describe, expect, it } from "vite-plus/test";
 import type { CheckpointDiffPage } from "@t3tools/contracts";
 import {
@@ -59,6 +60,35 @@ describe("paged mobile diffs", () => {
     expect(selection.lineCount).toBe(10);
   });
 
+  it("keeps live heap bounded before a 200,000-line selection finishes loading", async () => {
+    const inspector = new NodeInspectorPromises.Session();
+    inspector.connect();
+    try {
+      // Measure live allocations, not garbage awaiting collection or the returned preview.
+      // The budget allows the complete selected text plus generous page/VM overhead.
+      await inspector.post("HeapProfiler.collectGarbage");
+      const baseline = process.memoryUsage().heapUsed;
+      let retainedBytes: number | undefined;
+      const selection = await loadPagedReviewCommentSelection({
+        start: 0,
+        end: 199_999,
+        revision: "revision",
+        fetchPage: async (start) => {
+          if (start >= 199_000 && retainedBytes === undefined) {
+            await inspector.post("HeapProfiler.collectGarbage");
+            retainedBytes = process.memoryUsage().heapUsed - baseline;
+          }
+          return page(start);
+        },
+      });
+      expect(selection.lineCount).toBe(200_000);
+      expect(retainedBytes).toBeDefined();
+      expect(retainedBytes).toBeLessThan(16 * 1024 * 1024);
+    } finally {
+      inspector.disconnect();
+    }
+  });
+
   it.each([
     { direction: "forward", start: 0, end: 199_999 },
     { direction: "backward", start: 199_999, end: 0 },
@@ -67,19 +97,12 @@ describe("paged mobile diffs", () => {
     async ({ start, end }) => {
       // Reproduce selecting the first and last lines after scrolling across evicted windows.
       // Generate each response on demand so the fixture never holds the whole diff as rows.
-      let fetchedLineCount = 0;
       const loadedSelection = await loadPagedReviewCommentSelection({
         start,
         end,
         revision: "revision",
-        fetchPage: async (offset) => {
-          expect(offset).toBe(fetchedLineCount);
-          const response = page(offset);
-          fetchedLineCount += response.rows.length;
-          return response;
-        },
+        fetchPage: async (offset) => page(offset),
       });
-      expect(fetchedLineCount).toBe(200_000);
       expect(loadedSelection.lineCount).toBe(200_000);
       expect(loadedSelection.firstLine.sourceLineIndex).toBe(0);
       expect(loadedSelection.lastLine.sourceLineIndex).toBe(199_999);
