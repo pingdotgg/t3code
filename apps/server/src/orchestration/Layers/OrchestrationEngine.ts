@@ -61,10 +61,15 @@ interface CommandEnvelope {
   startedAtMs: number;
 }
 
-function commandToAggregateRef(command: OrchestrationCommand): {
-  readonly aggregateKind: "project" | "thread";
-  readonly aggregateId: ProjectId | ThreadId;
-} {
+function commandToAggregateRef(command: OrchestrationCommand):
+  | {
+      readonly aggregateKind: "project";
+      readonly aggregateId: ProjectId;
+    }
+  | {
+      readonly aggregateKind: "thread";
+      readonly aggregateId: ThreadId;
+    } {
   switch (command.type) {
     case "project.create":
     case "project.meta.update":
@@ -169,6 +174,30 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             commandId: envelope.command.commandId,
             detail: existingReceipt.value.error ?? "Previously rejected.",
           });
+        }
+
+        // Multiple server processes can share one T3 home. Projection tables make a
+        // thread created by a sibling process visible to clients, but that creation
+        // event is absent from this process's command model. Hydrate only on a miss
+        // so commands for the projected thread do not fail until this server restarts.
+        if (
+          aggregateRef.aggregateKind === "thread" &&
+          envelope.command.type !== "thread.create" &&
+          !commandReadModel.threads.some((thread) => thread.id === aggregateRef.aggregateId)
+        ) {
+          const projectedCommandModel = yield* projectionSnapshotQuery.getCommandReadModel({
+            threadId: aggregateRef.aggregateId,
+          });
+          const projectedThread = projectedCommandModel.threads[0];
+          if (projectedThread !== undefined) {
+            commandReadModel = {
+              ...commandReadModel,
+              threads: [...commandReadModel.threads, projectedThread],
+            };
+            yield* Effect.logDebug("hydrated missing orchestration command thread").pipe(
+              Effect.annotateLogs({ threadId: aggregateRef.aggregateId }),
+            );
+          }
         }
 
         if (

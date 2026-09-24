@@ -130,6 +130,172 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
+  it("hydrates a thread projected by another server before dispatching to it", async () => {
+    const directory = await NodeFSP.mkdtemp(
+      NodePath.join(NodeOS.tmpdir(), "t3-shared-orchestration-"),
+    );
+    const databasePath = NodePath.join(directory, "state.sqlite");
+    const staleSystem = await createOrchestrationSystem(databasePath);
+    const writerSystem = await createOrchestrationSystem(databasePath);
+    const projectId = asProjectId("shared-project");
+    const threadId = ThreadId.make("shared-thread");
+
+    try {
+      await writerSystem.run(
+        writerSystem.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("cmd-shared-project-create"),
+          projectId,
+          title: "Shared project",
+          workspaceRoot: "/tmp/shared-project",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt: now(),
+        }),
+      );
+      await writerSystem.run(
+        writerSystem.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-shared-thread-create"),
+          threadId,
+          projectId,
+          title: "Shared thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: now(),
+        }),
+      );
+
+      // Advance this process past the sibling's events without projecting them
+      // onto its command model, matching two live servers sharing one database.
+      await staleSystem.run(
+        staleSystem.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("cmd-stale-project-create"),
+          projectId: asProjectId("stale-project"),
+          title: "Stale process project",
+          workspaceRoot: "/tmp/stale-project",
+          createdAt: now(),
+        }),
+      );
+
+      const result = await staleSystem.run(
+        staleSystem.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-shared-turn-start"),
+          threadId,
+          message: {
+            messageId: asMessageId("msg-shared-turn-start"),
+            role: "user",
+            text: "sent through the other server",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now(),
+        }),
+      );
+
+      expect(result.sequence).toBe(5);
+      const thread = await staleSystem.readThread(threadId);
+      expect(Option.getOrThrow(thread).messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: asMessageId("msg-shared-turn-start"),
+            text: "sent through the other server",
+          }),
+        ]),
+      );
+    } finally {
+      await writerSystem.dispose();
+      await staleSystem.dispose();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("hydrates an archived thread projected by another server before unarchiving it", async () => {
+    const directory = await NodeFSP.mkdtemp(
+      NodePath.join(NodeOS.tmpdir(), "t3-shared-orchestration-archive-"),
+    );
+    const databasePath = NodePath.join(directory, "state.sqlite");
+    const staleSystem = await createOrchestrationSystem(databasePath);
+    const writerSystem = await createOrchestrationSystem(databasePath);
+    const projectId = asProjectId("shared-archive-project");
+    const threadId = ThreadId.make("shared-archive-thread");
+
+    try {
+      await writerSystem.run(
+        writerSystem.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("cmd-shared-archive-project-create"),
+          projectId,
+          title: "Shared archive project",
+          workspaceRoot: "/tmp/shared-archive-project",
+          createdAt: now(),
+        }),
+      );
+      await writerSystem.run(
+        writerSystem.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-shared-archive-thread-create"),
+          threadId,
+          projectId,
+          title: "Shared archived thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: now(),
+        }),
+      );
+      await writerSystem.run(
+        writerSystem.engine.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("cmd-shared-archive-thread-archive"),
+          threadId,
+        }),
+      );
+
+      await staleSystem.run(
+        staleSystem.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("cmd-stale-archive-project-create"),
+          projectId: asProjectId("stale-archive-project"),
+          title: "Stale archive process project",
+          workspaceRoot: "/tmp/stale-archive-project",
+          createdAt: now(),
+        }),
+      );
+
+      const result = await staleSystem.run(
+        staleSystem.engine.dispatch({
+          type: "thread.unarchive",
+          commandId: CommandId.make("cmd-shared-thread-unarchive"),
+          threadId,
+        }),
+      );
+
+      expect(result.sequence).toBe(5);
+      expect(Option.getOrThrow(await staleSystem.readThread(threadId)).archivedAt).toBeNull();
+    } finally {
+      await writerSystem.dispose();
+      await staleSystem.dispose();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each(["running", "stopped"] as const)(
     "sends async answers with a %s session and rejects old duplicate replies",
     async (status) => {
