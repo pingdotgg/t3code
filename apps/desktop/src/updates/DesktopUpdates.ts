@@ -519,8 +519,18 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // A failed or interrupted install brings no updated backend, so a later
+  // quit must release the tunnel.
+  const removeUpdateRestartMarker = fileSystem
+    .remove(updateRestartMarkerPath, { force: true })
+    .pipe(Effect.ignore);
+
   const resetInstallAction = Effect.all(
-    [finishUpdateAction("install"), Ref.set(desktopState.quitting, false)],
+    [
+      finishUpdateAction("install"),
+      Ref.set(desktopState.quitting, false),
+      removeUpdateRestartMarker,
+    ],
     { discard: true },
   );
 
@@ -535,8 +545,7 @@ export const make = Effect.gen(function* () {
     if (!ownsRecovery) return;
 
     yield* Ref.set(desktopState.quitting, false);
-    // No updated backend is coming, so a later quit must release the tunnel.
-    yield* fileSystem.remove(updateRestartMarkerPath, { force: true }).pipe(Effect.ignore);
+    yield* removeUpdateRestartMarker;
     yield* Effect.gen(function* () {
       const instances = yield* pool.list;
       const restartExit = yield* Effect.forEach(instances, (instance) => instance.start, {

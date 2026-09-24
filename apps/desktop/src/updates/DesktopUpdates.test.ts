@@ -585,6 +585,31 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("drops the update restart marker when an install is interrupted", () =>
+    Effect.gen(function* () {
+      const stopping = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        stopBackend: Deferred.succeed(stopping, undefined).pipe(Effect.andThen(Effect.never)),
+      });
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+
+          const installFiber = yield* updates.install.pipe(Effect.forkScoped);
+          yield* Deferred.await(stopping);
+          assert.equal(harness.updateRestartMarkers.size, 1);
+
+          yield* Fiber.interrupt(installFiber);
+          assert.equal(harness.updateRestartMarkers.size, 0);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
   it.effect("keeps windows and restarts backends when quitAndInstall fails", () => {
     const harness = makeHarness({
       quitAndInstall: Effect.fail(

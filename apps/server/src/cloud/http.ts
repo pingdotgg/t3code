@@ -669,8 +669,9 @@ const pendingUpdateHandoffExists = Effect.gen(function* () {
 
 // The desktop app writes its marker right before it stops this server to
 // install an update, whether a remote client or the local app started it.
-// Reading consumes it, and only a fresh marker counts, so a marker the server
-// never read (a hard kill) cannot keep the tunnel on a later quit.
+// Reading consumes it, so shutdown checks it first. Only a fresh marker counts,
+// so a marker the server never read (a hard kill) cannot keep the tunnel on a
+// later quit.
 const desktopUpdateRestartPending = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
@@ -720,7 +721,7 @@ export const releaseManagedTunnelOnShutdown = Effect.fn(
   // boot respawns the connector from the stored config and is reachable as
   // soon as it connects, and the reconcile confirms the still-live tunnel
   // without replacing it.
-  if ((yield* pendingUpdateHandoffExists) || (yield* desktopUpdateRestartPending)) {
+  if ((yield* desktopUpdateRestartPending) || (yield* pendingUpdateHandoffExists)) {
     yield* Effect.logInfo("Keeping the managed tunnel across the update restart");
     return false;
   }
