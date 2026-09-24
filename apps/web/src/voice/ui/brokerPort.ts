@@ -117,7 +117,7 @@ export interface FetchVoiceBrokerPortInput {
     kind: primary connections authenticate by cookie (credentialed fetch),
     bearer connections by token header, relay/DPoP connections by an access
     token plus a freshly signed proof bound to this request. */
-export async function buildBrokerAuthHeaders(
+async function buildBrokerAuthHeaders(
   prepared: PreparedConnection,
   signer: VoiceDpopSigner,
   method: "POST",

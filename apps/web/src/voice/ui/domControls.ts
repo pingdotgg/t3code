@@ -36,8 +36,8 @@ import type { VoiceUiControlHost } from "../tools";
 // Constants
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_LIST_CONTROLS_LIMIT = 60;
-export const MAX_LIST_CONTROLS_LIMIT = 200;
+const DEFAULT_LIST_CONTROLS_LIMIT = 60;
+const MAX_LIST_CONTROLS_LIMIT = 200;
 
 const DOM_ROLE_TO_CONTROL_ROLE: Readonly<Record<string, VoiceUiControlRole>> = {
   button: "button",

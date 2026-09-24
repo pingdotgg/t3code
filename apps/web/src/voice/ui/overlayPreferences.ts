@@ -71,7 +71,7 @@ export function sanitizeVoiceOverlayPreferences(raw: unknown): VoiceOverlayPrefe
   };
 }
 
-export function readVoiceOverlayPreferences(): VoiceOverlayPreferences {
+function readVoiceOverlayPreferences(): VoiceOverlayPreferences {
   try {
     const raw = localStorage.getItem(KEY);
     return raw === null
