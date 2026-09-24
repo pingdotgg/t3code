@@ -625,6 +625,10 @@ export class GhosttyTerminalSurface {
   private theme: GhosttyTheme;
   private readonly suppressedKeyCodes = new Set<string>();
   private pasteShortcutToken = 0;
+  /** Whether the paste shortcut is still held, so its native paste can still follow. */
+  private pasteShortcutHeld = false;
+  /** Text the held paste shortcut's clipboard read already sent. */
+  private shortcutPasteReadText: string | null = null;
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
   private primedCopySelection = "";
@@ -1053,6 +1057,8 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onKeyDown = (event: KeyboardEvent) => {
+    this.pasteShortcutHeld = false;
+    this.shortcutPasteReadText = null;
     // Presses handled outside the terminal must also swallow their release:
     // beforeKey runs side effects (keybindings, navigation sends), so it cannot
     // be consulted again on keyup, and Kitty report-event-types sessions would
@@ -1118,19 +1124,24 @@ export class GhosttyTerminalSurface {
     }
     if (isTerminalPasteShortcut(event)) {
       this.suppressedKeyCodes.add(event.code);
+      this.pasteShortcutHeld = true;
       const clipboard = navigator.clipboard;
       if (typeof clipboard?.readText === "function") {
-        // Race the async clipboard read against the browser's own paste event:
-        // the native event (dispatched synchronously with the default action)
-        // always claims the token first when it fires, and the read covers
-        // browsers whose paste shortcut produces no paste event. Not preventing
-        // the default keeps the native path alive when the read is denied.
+        // Race the async clipboard read against the browser's own paste event;
+        // the read covers browsers whose paste shortcut produces no paste
+        // event. Not preventing the default keeps the native path alive when
+        // the read is denied. Either side can land first: a native paste
+        // claims the token, and a read delivered while the shortcut is held
+        // records its text so the native paste that follows it is dropped in
+        // onPaste. The keyboard paste fires before keyup, which ends the window.
         const token = ++this.pasteShortcutToken;
         void clipboard.readText().then(
           (text) => {
             if (this.disposed || this.pasteShortcutToken !== token) return;
             this.pasteShortcutToken += 1;
-            if (text.length > 0) this.options.onData(this.core.encodePaste(text));
+            if (text.length === 0) return;
+            if (this.pasteShortcutHeld) this.shortcutPasteReadText = text;
+            this.options.onData(this.core.encodePaste(text));
           },
           () => {
             // Clipboard read denied; the native paste event remains the path.
@@ -1155,6 +1166,10 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
+    // Any release ends the paste gesture: macOS never delivers V's keyup while
+    // Cmd is held, so the Cmd release is often the only one.
+    this.pasteShortcutHeld = false;
+    this.shortcutPasteReadText = null;
     if (this.suppressedKeyCodes.delete(event.code)) return;
     if (isTerminalCompositionKey(event, this.composing)) {
       return;
@@ -1235,6 +1250,10 @@ export class GhosttyTerminalSurface {
     event.preventDefault();
     const data = event.clipboardData?.getData("text/plain") ?? "";
     if (data.length === 0) return;
+    if (data === this.shortcutPasteReadText) {
+      this.shortcutPasteReadText = null;
+      return;
+    }
     // The native paste won the race with actual text; a pending clipboard read
     // must not double. An empty native paste leaves the read as the only path.
     this.pasteShortcutToken += 1;

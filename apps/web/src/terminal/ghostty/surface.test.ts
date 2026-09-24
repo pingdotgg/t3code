@@ -97,6 +97,7 @@ describe("GhosttyTerminalSurface visibility", () => {
 
     const canvas = new TerminalTestElement();
     const mount = new TerminalTestElement();
+    let input: TerminalTestElement | undefined;
     const context = {
       canvas,
       beginPath() {},
@@ -116,7 +117,12 @@ describe("GhosttyTerminalSurface visibility", () => {
       }),
     };
     vi.stubGlobal("document", {
-      createElement: (tag: string) => (tag === "canvas" ? canvas : new TerminalTestElement()),
+      createElement: (tag: string) => {
+        if (tag === "canvas") return canvas;
+        const element = new TerminalTestElement();
+        if (tag === "textarea") input = element;
+        return element;
+      },
       fonts: Object.assign(new EventTarget(), { load: async () => [], add() {} }),
     });
     vi.stubGlobal(
@@ -176,6 +182,31 @@ describe("GhosttyTerminalSurface visibility", () => {
             button,
             buttons,
             shiftKey,
+          }),
+        );
+      },
+      key(
+        key: string,
+        modifiers: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean },
+        type: "keydown" | "keyup" = "keydown",
+      ) {
+        input?.dispatchEvent(
+          Object.assign(new Event(type, { cancelable: true }), {
+            key,
+            code: `Key${key.toUpperCase()}`,
+            altKey: false,
+            ctrlKey: false,
+            metaKey: false,
+            shiftKey: false,
+            ...modifiers,
+            getModifierState: () => false,
+          }),
+        );
+      },
+      paste(text: string) {
+        input?.dispatchEvent(
+          Object.assign(new Event("paste", { cancelable: true }), {
+            clipboardData: { getData: () => text },
           }),
         );
       },
@@ -303,6 +334,49 @@ describe("GhosttyTerminalSurface visibility", () => {
     surface.clearSelection();
     harness.pointer("pointerdown", 5, 4, false, 1);
     expect(readText).not.toHaveBeenCalled();
+  });
+
+  it("pastes once when the shortcut's clipboard read lands before the native paste", async () => {
+    const harness = createHarness();
+    const readText = vi.fn(async () => "echo hi");
+    vi.stubGlobal("navigator", { platform: "MacIntel", clipboard: { readText } });
+    await harness.create({ beforeKey: () => true });
+
+    harness.key("v", { metaKey: true });
+    await readText.mock.results[0]?.value;
+    expect(harness.onData).toHaveBeenCalledTimes(1);
+    harness.paste("echo hi");
+    harness.key("v", { metaKey: true }, "keyup");
+    expect(harness.onData).toHaveBeenCalledTimes(1);
+
+    // The next paste gesture is a new paste, not the tail of the last one, and
+    // its read must not land on top of the native paste that won.
+    harness.key("v", { metaKey: true });
+    harness.paste("echo hi");
+    await readText.mock.results[1]?.value;
+    expect(harness.onData).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a later menu paste once the shortcut that only the read served ends", async () => {
+    const harness = createHarness();
+    const readText = vi.fn(async () => "echo hi");
+    vi.stubGlobal("navigator", { platform: "MacIntel", clipboard: { readText } });
+    await harness.create({ beforeKey: () => true });
+
+    // No native paste for the shortcut: the read is the only delivery. An
+    // Edit → Paste of the same text afterwards has no keydown of its own.
+    harness.key("v", { metaKey: true });
+    await readText.mock.results[0]?.value;
+    harness.key("v", { metaKey: true }, "keyup");
+    harness.paste("echo hi");
+    expect(harness.onData).toHaveBeenCalledTimes(2);
+
+    // Same when the read only settles after the shortcut was released.
+    harness.key("v", { metaKey: true });
+    harness.key("v", { metaKey: true }, "keyup");
+    await readText.mock.results[1]?.value;
+    harness.paste("echo hi");
+    expect(harness.onData).toHaveBeenCalledTimes(4);
   });
 
   it("starts a selection when dragging from a link", async () => {
