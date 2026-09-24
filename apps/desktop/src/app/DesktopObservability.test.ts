@@ -1,6 +1,7 @@
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -427,6 +428,36 @@ describe("DesktopObservability", () => {
     );
   });
 
+  it.effect("exports kill switch warnings through the configured logger", () => {
+    const requests: Array<ExportedRequest> = [];
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-observability-test-",
+      });
+      const environmentLayer = makeEnvironmentLayer(baseDir, true, {
+        T3CODE_OTLP_LOGS_URL: "https://collector.example.com/v1/logs",
+      });
+
+      yield* Effect.scoped(
+        Effect.void.pipe(
+          Effect.provide(DesktopObservability.layer.pipe(Layer.provideMerge(environmentLayer))),
+        ),
+      );
+
+      assert.include(requests[0]?.body ?? "", "OTEL_SDK_DISABLED=1 was read as false");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          collectorLayer(requests),
+          ConfigProvider.layer(ConfigProvider.fromEnv({ env: { OTEL_SDK_DISABLED: "1" } })),
+        ),
+      ),
+    );
+  });
+
   it.effect("reads every signal endpoint from Settings when the environment names none", () => {
     const requests: Array<ExportedRequest> = [];
     return Effect.gen(function* () {
@@ -489,6 +520,39 @@ describe("DesktopObservability", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(Layer.mergeAll(NodeServices.layer, collectorLayer(requests))),
+    );
+  });
+
+  it.effect("stops every export when the OpenTelemetry SDK is disabled", () => {
+    const requests: Array<ExportedRequest> = [];
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-observability-test-",
+      });
+      const environmentLayer = makeEnvironmentLayer(baseDir);
+      yield* writeObservabilitySettings(environmentLayer, {
+        otlpTracesUrl: "https://settings.example.com/v1/traces",
+        otlpLogsUrl: "https://settings.example.com/v1/logs",
+      });
+
+      yield* Effect.scoped(
+        Effect.logInfo("desktop log stays local when disabled").pipe(
+          Effect.withSpan("desktop-disabled-test"),
+          Effect.provide(DesktopObservability.layer.pipe(Layer.provideMerge(environmentLayer))),
+        ),
+      );
+
+      assert.lengthOf(requests, 0);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          collectorLayer(requests),
+          ConfigProvider.layer(ConfigProvider.fromEnv({ env: { OTEL_SDK_DISABLED: "true" } })),
+        ),
+      ),
     );
   });
 });

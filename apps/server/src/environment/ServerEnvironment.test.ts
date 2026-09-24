@@ -11,6 +11,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
+import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
@@ -60,6 +61,7 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
     otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
     otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
     otlpServiceName: "t3-server",
+    otelEnvironment: OtelEnvironment.none,
     cwd: process.cwd(),
     baseDir,
     mode: "web",

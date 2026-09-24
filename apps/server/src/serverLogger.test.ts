@@ -9,6 +9,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
+import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 
 import * as ServerConfig from "./config.ts";
 import { ServerLoggerLive } from "./serverLogger.ts";
@@ -57,6 +58,7 @@ const configLayer = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =
         otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
         otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
         otlpServiceName: "t3-server",
+        otelEnvironment: OtelEnvironment.none,
         cwd: baseDir,
         baseDir,
         ...derivedPaths,

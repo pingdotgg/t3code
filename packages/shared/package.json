@@ -59,6 +59,10 @@
       "types": "./src/observability.ts",
       "import": "./src/observability.ts"
     },
+    "./otelEnvironment": {
+      "types": "./src/otelEnvironment.ts",
+      "import": "./src/otelEnvironment.ts"
+    },
     "./httpObservability": {
       "types": "./src/httpObservability.ts",
       "import": "./src/httpObservability.ts"

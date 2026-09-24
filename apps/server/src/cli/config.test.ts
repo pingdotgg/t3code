@@ -18,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
+import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "../config.ts";
 import { resolveServerConfig } from "./config.ts";
@@ -56,6 +57,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
     otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
     otlpServiceName: "t3-server",
+    otelEnvironment: OtelEnvironment.none,
     devAllowedOrigins: [],
   } as const;
 
@@ -663,6 +665,109 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
+    }),
+  );
+
+  it.effect("zeroes an endpoint stored in Settings when the SDK is disabled", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-config-otel-off-" });
+      const derivedPaths = yield* deriveExplicitServerPaths(baseDir, undefined);
+      yield* fs.makeDirectory(path.dirname(derivedPaths.settingsPath), { recursive: true });
+      yield* fs.writeFileString(
+        derivedPaths.settingsPath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        `${JSON.stringify({
+          observability: {
+            otlpTracesUrl: "http://localhost:4318/v1/traces",
+            otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+            otlpLogsUrl: "http://localhost:4318/v1/logs",
+          },
+        })}\n`,
+      );
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("desktop"),
+          port: Option.some(4888),
+          host: Option.none(),
+          baseDir: Option.some(baseDir),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: { OTEL_SDK_DISABLED: "true" } })),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      // The switch beats every source, including an endpoint stored in Settings.
+      expect(resolved.otlpTracesUrl).toBeUndefined();
+      expect(resolved.otlpMetricsUrl).toBeUndefined();
+      expect(resolved.otlpLogsUrl).toBeUndefined();
+      expect(resolved.otelEnvironment.disabled).toBe(true);
+    }),
+  );
+
+  it.effect("lets T3CODE_OTEL_SDK_DISABLED=false override an ambient OTEL_SDK_DISABLED=true", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-config-otel-on-" });
+      const derivedPaths = yield* deriveExplicitServerPaths(baseDir, undefined);
+      yield* fs.makeDirectory(path.dirname(derivedPaths.settingsPath), { recursive: true });
+      yield* fs.writeFileString(
+        derivedPaths.settingsPath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        `${JSON.stringify({
+          observability: {
+            otlpTracesUrl: "http://localhost:4318/v1/traces",
+          },
+        })}\n`,
+      );
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("desktop"),
+          port: Option.some(4888),
+          host: Option.none(),
+          baseDir: Option.some(baseDir),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: { T3CODE_OTEL_SDK_DISABLED: "false", OTEL_SDK_DISABLED: "true" },
+              }),
+            ),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved.otelEnvironment.disabled).toBe(false);
+      expect(resolved.otlpTracesUrl).toBe("http://localhost:4318/v1/traces");
     }),
   );
 
