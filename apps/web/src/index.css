@@ -1915,23 +1915,33 @@ code {
   white-space: nowrap;
 }
 
+/* Long cell content wraps at 24rem so one verbose cell cannot blow a column
+   out to the full pane width. */
 .chat-markdown tbody td {
+  max-width: 24rem;
   border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
-}
-
-/* Collapsed (default): single-line cells truncate so arbitrary chat content
-   cannot blow the column out; the footer toggle expands cells to wrap. */
-.chat-markdown .chat-markdown-table-container[data-expanded="false"] th,
-.chat-markdown .chat-markdown-table-container[data-expanded="false"] td {
-  overflow: hidden;
-  max-width: 24rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chat-markdown .chat-markdown-table-container[data-expanded="true"] td {
-  max-width: 24rem;
   overflow-wrap: anywhere;
+}
+
+/* Assistant replies in the timeline: a top-level table wider than the reading
+   column grows into the pane's side gutters instead of scrolling. The flex
+   parent centers the frame so it overflows the column evenly on both sides;
+   width is capped at 64rem (the column is 48rem) and to the timeline
+   container (`@container/chat-timeline`) minus the minimap gutter; the
+   ScrollArea scrolls past that. */
+.chat-markdown-wide-tables > .chat-markdown-table-container {
+  display: flex;
+  /* Not stretch: a stretched item gets a definite height, which makes the
+     ScrollArea's `size-full` swallow the footer. */
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.chat-markdown-wide-tables > .chat-markdown-table-container > .chat-markdown-table-frame {
+  flex: none;
+  width: max-content;
+  min-width: 100%;
+  max-width: max(100%, min(64rem, calc(100cqw - 6.5rem)));
 }
 
 /* Prompt-stash save acknowledgement: the new count fades up from just below
