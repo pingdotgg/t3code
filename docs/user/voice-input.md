@@ -8,8 +8,8 @@ into the composer for editing and is never sent automatically.
 On web and desktop, the first microphone click opens voice setup if the selected
 environment has no transcription model. Download the recommended English model,
 or open Voice settings to choose another language or model. After the download,
-you can review the dictionary, correction word, and post-processing options or
-start recording immediately.
+you can choose a microphone, review the dictionary, correction word, and
+post-processing options, or start recording immediately.
 
 On web and desktop, T3 Code transcribes every recording on the environment selected
 under Settings, then Voice. The primary environment is used by default, regardless

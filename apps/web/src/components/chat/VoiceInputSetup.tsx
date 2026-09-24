@@ -1,9 +1,12 @@
 import type { EnvironmentSpeechModel, EnvironmentSpeechStatus } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { BookOpenIcon, MicIcon, SparklesIcon } from "lucide-react";
+import { BookOpenIcon, MicIcon, RefreshCwIcon, SparklesIcon } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 
+import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import { Dialog, DialogClose } from "../ui/dialog";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
 
@@ -20,6 +23,38 @@ export function VoiceInputSetup(props: {
   onStartRecording(): void;
 }) {
   const navigate = useNavigate();
+  const selectedMicrophone = useClientSettings((settings) => settings.voiceMicrophone);
+  const updateClientSettings = useUpdateClientSettings();
+  const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
+  const [loadingMicrophones, setLoadingMicrophones] = useState(false);
+  const [microphoneError, setMicrophoneError] = useState<string | null>(null);
+  const refreshMicrophones = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    setLoadingMicrophones(true);
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      setMicrophones(devices.filter((device) => device.kind === "audioinput"));
+      setMicrophoneError(null);
+    } catch {
+      setMicrophoneError("Could not list microphones. You can still use the system default.");
+    } finally {
+      setLoadingMicrophones(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (!props.open || props.step !== 1) return;
+    queueMicrotask(() => void refreshMicrophones());
+    const mediaDevices = navigator.mediaDevices;
+    mediaDevices?.addEventListener?.("devicechange", refreshMicrophones);
+    return () => mediaDevices?.removeEventListener?.("devicechange", refreshMicrophones);
+  }, [props.open, props.step, refreshMicrophones]);
+  const selectedIsUnavailable = Boolean(
+    selectedMicrophone && !microphones.some((device) => device.deviceId === selectedMicrophone),
+  );
+  const selectedMicrophoneLabel = selectedMicrophone
+    ? (microphones.find((device) => device.deviceId === selectedMicrophone)?.label ??
+      "Selected microphone (Unavailable)")
+    : "System default";
   const status = props.status?.supported ? props.status : null;
   const model = props.model;
   const progress =
@@ -81,6 +116,67 @@ export function VoiceInputSetup(props: {
             </section>
           ) : (
             <section className="space-y-4 text-sm">
+              <div className="space-y-2">
+                <label className="font-medium" htmlFor="voice-setup-microphone">
+                  Microphone
+                </label>
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={selectedMicrophone ? `device:${selectedMicrophone}` : "system-default"}
+                    disabled={loadingMicrophones}
+                    onValueChange={(value) => {
+                      if (value)
+                        void updateClientSettings({
+                          voiceMicrophone:
+                            value === "system-default" ? "" : value.slice("device:".length),
+                        });
+                    }}
+                  >
+                    <SelectTrigger
+                      id="voice-setup-microphone"
+                      size="sm"
+                      aria-label="Microphone"
+                      className="min-w-0 flex-1"
+                    >
+                      <SelectValue>{selectedMicrophoneLabel}</SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup align="end" alignItemWithTrigger={false}>
+                      <SelectItem value="system-default">System default</SelectItem>
+                      {selectedIsUnavailable ? (
+                        <SelectItem value={`device:${selectedMicrophone}`}>
+                          Selected microphone (Unavailable)
+                        </SelectItem>
+                      ) : null}
+                      {microphones.map((device, index) => (
+                        <SelectItem key={device.deviceId} value={`device:${device.deviceId}`}>
+                          {device.label || `Microphone ${index + 1}`}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    disabled={loadingMicrophones}
+                    aria-label="Refresh microphones"
+                    onClick={() => void refreshMicrophones()}
+                  >
+                    <RefreshCwIcon className="size-3.5" />
+                  </Button>
+                </div>
+                {selectedIsUnavailable ? (
+                  <p className="text-xs text-destructive">
+                    The selected microphone is unavailable. Choose another or use the system
+                    default.
+                  </p>
+                ) : null}
+                {microphoneError ? (
+                  <p role="alert" className="text-xs text-muted-foreground">
+                    {microphoneError}
+                  </p>
+                ) : null}
+              </div>
               <p className="text-muted-foreground">
                 Voice input is ready. You can personalize it now or start recording and come back
                 later.
