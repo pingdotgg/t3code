@@ -1,3 +1,4 @@
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import type { InteractionUpdate, RunResult } from "@cursor/sdk";
@@ -621,6 +622,16 @@ export function makeCursorProviderAdapterRegistryReplayLayer(
     ServerConfig,
     makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
+  // Skill discovery also scans user roots under HOME; an empty HOME keeps
+  // replays from picking up the host's own skills.
+  const hostEnvironmentLayer = Layer.effect(
+    HostProcessEnvironment,
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cursor-replay-home-" });
+      return { HOME: home };
+    }).pipe(Effect.orDie),
+  ).pipe(Layer.provide(NodeServices.layer));
   return makeProviderAdapterRegistryDriverLayer({
     drivers: [CursorAdapterV2Driver],
     configMap: {
@@ -633,6 +644,7 @@ export function makeCursorProviderAdapterRegistryReplayLayer(
       Layer.mergeAll(
         makeCursorAgentSdkReplayLayer(transcript, options),
         serverConfigLayer,
+        hostEnvironmentLayer,
         NodeServices.layer,
         idAllocatorLayer,
       ),
@@ -976,9 +988,10 @@ export async function recordCursorAgentSdkReplayTranscript(input: {
           toolStarted.promise,
           "Cursor SDK tool-call-started before interrupt",
         );
-        // Cancelling in the same tick as the SDK's tool-call-started callback
-        // leaves an unhandled AbortError inside @cursor/sdk (1.0.22 to 1.0.32)
-        // that kills the process. One timer tick later the cancel is clean.
+        // Cancelling synchronously from the SDK's tool-call-started callback
+        // leaves an unhandled AbortError inside @cursor/sdk that kills the
+        // process (reproduced on 1.0.22, 1.0.31, and 1.0.32). Cancelling from a
+        // later timer was clean in the same probes; 10 ms is that deferral.
         await Effect.runPromise(Effect.sleep("10 millis"));
         entries.push({
           type: "expect_outbound",
