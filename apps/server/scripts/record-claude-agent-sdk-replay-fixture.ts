@@ -60,6 +60,7 @@ import {
   WORKSPACE_NEVER_POLICY,
   WEB_SEARCH_PROMPT,
 } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
+import { CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_background_subagent_after_root/input.ts";
 import {
   DENIED_WRITE_POLICY,
   TOOL_CALL_DENIED_WRITE_PROMPT,
@@ -163,6 +164,14 @@ const CLAUDE_RECORDINGS = {
     defaultTranscriptFile: "fixtures/web_search/claude_transcript.ndjson",
     queryMode: "streaming",
     enableTools: true,
+  },
+  claude_background_subagent_after_root: {
+    prompts: [CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT],
+    defaultTranscriptFile:
+      "fixtures/claude_background_subagent_after_root/claude_transcript.ndjson",
+    queryMode: "streaming",
+    enableTools: true,
+    awaitBackgroundWake: true,
   },
   subagent: {
     prompts: [SUBAGENT_PROMPT],
@@ -466,6 +475,9 @@ try {
       ? { permissionDecision: recording.permissionDecision }
       : {}),
     ...("interruptAfter" in recording ? { interruptAfter: recording.interruptAfter } : {}),
+    ...("awaitBackgroundWake" in recording && recording.awaitBackgroundWake
+      ? { awaitBackgroundWake: true }
+      : {}),
   });
   await assertWorkspacePathsAbsent("after");
   const transcriptWithEvidence =

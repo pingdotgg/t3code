@@ -1,5 +1,7 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 
+import { claudeBackgroundSubagentAfterRootInput } from "./claude_background_subagent_after_root/input.ts";
+import { assertClaudeBackgroundSubagentAfterRootOutput } from "./claude_background_subagent_after_root/output.ts";
 import { claudeBackgroundTaskAfterRootInput } from "./claude_background_task_after_root/input.ts";
 import { assertClaudeBackgroundTaskAfterRootOutput } from "./claude_background_task_after_root/output.ts";
 import { claudeIdleResumeInput } from "./claude_idle_resume/input.ts";
@@ -96,6 +98,22 @@ import {
 } from "./shared.ts";
 
 export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixture> = [
+  {
+    name: "claude_background_subagent_after_root",
+    buildInput: claudeBackgroundSubagentAfterRootInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_background_subagent_after_root/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertClaudeBackgroundSubagentAfterRootOutput,
+      },
+    ],
+  },
   {
     name: "claude_background_task_after_root",
     buildInput: claudeBackgroundTaskAfterRootInput,
