@@ -11,10 +11,10 @@ import {
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   deleteSelectedThreadEntries,
-  filterSidebarProjectScopeItems,
+  filterSidebarScopeItems,
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
-  reduceSidebarProjectScopeMenuState,
+  reduceSidebarScopeMenuState,
   getFallbackThreadIdAfterDelete,
   getProjectSortTimestamp,
   hasUnseenCompletion,
@@ -28,6 +28,7 @@ import {
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreads,
+  sidebarItemMatchesScope,
   formatWorkingDurationLabel,
   shouldClearThreadSelectionOnMouseDown,
   shouldRecedeSidebarThread,
@@ -870,14 +871,14 @@ describe("searchSidebarThreads", () => {
   });
 });
 
-describe("filterSidebarProjectScopeItems", () => {
+describe("filterSidebarScopeItems", () => {
   const items = [
     { value: "all", label: "All projects" },
     { value: "alpha", label: "Alpha workspace" },
     { value: "beta", label: "Beta tools" },
   ] as const;
   const filter = (query: string) =>
-    filterSidebarProjectScopeItems({
+    filterSidebarScopeItems({
       items,
       query,
       matches: (item, candidate) =>
@@ -899,12 +900,27 @@ describe("filterSidebarProjectScopeItems", () => {
   });
 });
 
-describe("reduceSidebarProjectScopeMenuState", () => {
+describe("sidebarItemMatchesScope", () => {
+  const item = { environmentId: "environment-a", projectId: "project-a" };
+
+  it("intersects environment and project scopes", () => {
+    expect(sidebarItemMatchesScope(item, null, null)).toBe(true);
+    expect(sidebarItemMatchesScope(item, "environment-a", null)).toBe(true);
+    expect(sidebarItemMatchesScope(item, "environment-b", null)).toBe(false);
+    expect(sidebarItemMatchesScope(item, null, new Set(["environment-a:project-a"]))).toBe(true);
+    expect(sidebarItemMatchesScope(item, null, new Set(["environment-a:project-b"]))).toBe(false);
+    expect(
+      sidebarItemMatchesScope(item, "environment-b", new Set(["environment-a:project-a"])),
+    ).toBe(false);
+  });
+});
+
+describe("reduceSidebarScopeMenuState", () => {
   const queriedOpenState = { open: true, query: "alpha" };
 
   it("clears the query when the combobox closes through onOpenChange", () => {
     expect(
-      reduceSidebarProjectScopeMenuState(queriedOpenState, {
+      reduceSidebarScopeMenuState(queriedOpenState, {
         type: "open-changed",
         open: false,
       }),
@@ -913,15 +929,15 @@ describe("reduceSidebarProjectScopeMenuState", () => {
 
   it("clears the query when project settings closes the combobox", () => {
     expect(
-      reduceSidebarProjectScopeMenuState(queriedOpenState, {
-        type: "project-settings-opened",
+      reduceSidebarScopeMenuState(queriedOpenState, {
+        type: "close",
       }),
     ).toEqual({ open: false, query: "" });
   });
 
   it("keeps the popup open while the query changes", () => {
     expect(
-      reduceSidebarProjectScopeMenuState(
+      reduceSidebarScopeMenuState(
         { open: true, query: "" },
         { type: "query-changed", query: "beta" },
       ),
@@ -933,6 +949,7 @@ describe("sortThreadsForSidebar", () => {
   const sortable = (input: { id: string; createdAt: string }) => ({
     id: input.id,
     createdAt: input.createdAt,
+    updatedAt: input.createdAt,
   });
 
   it("orders by creation time, newest first, ignoring activity", () => {
@@ -959,6 +976,7 @@ describe("sortThreadsForSidebar", () => {
       {
         id: "old-unsettled",
         createdAt: "2026-03-09T08:00:00.000Z",
+        updatedAt: "2026-03-09T08:00:00.000Z",
         unsettledAt: "2026-03-09T13:00:00.000Z",
       },
       sortable({ id: "newest", createdAt: "2026-03-09T12:00:00.000Z" }),
@@ -973,12 +991,31 @@ describe("sortThreadsForSidebar", () => {
       {
         id: "stale-stamp",
         createdAt: "2026-03-09T10:00:00.000Z",
+        updatedAt: "2026-03-09T10:00:00.000Z",
         unsettledAt: "2026-03-09T09:00:00.000Z",
       },
       sortable({ id: "newest", createdAt: "2026-03-09T12:00:00.000Z" }),
     ]);
 
     expect(sorted.map((thread) => thread.id)).toEqual(["newest", "stale-stamp"]);
+  });
+
+  it("can order by last activity instead of creation time", () => {
+    const sorted = sortThreadsForSidebar(
+      [
+        {
+          ...sortable({ id: "older-active", createdAt: "2026-03-09T08:00:00.000Z" }),
+          updatedAt: "2026-03-09T13:00:00.000Z",
+        },
+        {
+          ...sortable({ id: "newer-idle", createdAt: "2026-03-09T12:00:00.000Z" }),
+          updatedAt: "2026-03-09T12:30:00.000Z",
+        },
+      ],
+      "updated_at",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["older-active", "newer-idle"]);
   });
 });
 
@@ -1361,6 +1398,7 @@ describe("planSidebarThreadDrop", () => {
     const rows = ["a1", "a2", "a3"].map((id, index) => ({
       id,
       createdAt: new Date(Date.UTC(2026, 8, 4, 12 - index)).toISOString(),
+      updatedAt: new Date(Date.UTC(2026, 8, 4, 12 - index)).toISOString(),
       activeOrderKey: null as string | null,
     }));
     const firstOrder = ["a2", "a3", "a1"];

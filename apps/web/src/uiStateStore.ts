@@ -1,5 +1,6 @@
 import { Debouncer } from "@tanstack/react-pacer";
 import type { PullRequestMergeMethod } from "@t3tools/contracts";
+import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 
@@ -27,7 +28,9 @@ export interface PersistedUiState {
   expandedProjectCwds?: string[];
   projectOrderCwds?: string[];
   defaultAdvertisedEndpointKey?: string | null;
+  sidebarEnvironmentScopeId?: string | null;
   sidebarProjectScopeKey?: string | null;
+  sidebarThreadSortOrder?: string;
   threadChangedFilesExpansionVersion?: number;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
   pullRequestMergeMethod?: string;
@@ -36,10 +39,13 @@ export interface PersistedUiState {
 export interface UiProjectState {
   projectExpandedById: Record<string, boolean>;
   projectOrder: string[];
+  // Environment the sidebar list is scoped to, or null for all environments.
+  sidebarEnvironmentScopeId: string | null;
   // Logical project key the sidebar list is scoped to, or null for "all
   // projects". Lives here so routes that unmount the sidebar (Settings)
   // cannot reset the filter.
   sidebarProjectScopeKey: string | null;
+  sidebarThreadSortOrder: SidebarThreadSortOrder;
 }
 
 export interface UiThreadState {
@@ -61,7 +67,9 @@ export interface UiState
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
+  sidebarEnvironmentScopeId: null,
   sidebarProjectScopeKey: null,
+  sidebarThreadSortOrder: "created_at",
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -100,6 +108,10 @@ function sanitizeBooleanRecord(value: unknown): Record<string, boolean> {
 
 function sanitizeOptionalKey(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function sanitizeSidebarThreadSortOrder(value: unknown): SidebarThreadSortOrder {
+  return value === "updated_at" || value === "created_at" ? value : "created_at";
 }
 
 function sanitizeTimestampRecord(value: unknown): Record<string, string> {
@@ -154,7 +166,9 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
         ? sanitizePersistedThreadChangedFilesExpanded(parsed.threadChangedFilesExpandedById)
         : {},
     defaultAdvertisedEndpointKey: sanitizeOptionalKey(parsed.defaultAdvertisedEndpointKey),
+    sidebarEnvironmentScopeId: sanitizeOptionalKey(parsed.sidebarEnvironmentScopeId),
     sidebarProjectScopeKey: sanitizeOptionalKey(parsed.sidebarProjectScopeKey),
+    sidebarThreadSortOrder: sanitizeSidebarThreadSortOrder(parsed.sidebarThreadSortOrder),
     pullRequestMergeMethod: isPullRequestMergeMethod(parsed.pullRequestMergeMethod)
       ? parsed.pullRequestMergeMethod
       : initialState.pullRequestMergeMethod,
@@ -228,7 +242,9 @@ export function persistState(state: UiState): void {
         projectOrder: state.projectOrder,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
+        sidebarEnvironmentScopeId: state.sidebarEnvironmentScopeId,
         sidebarProjectScopeKey: state.sidebarProjectScopeKey,
+        sidebarThreadSortOrder: state.sidebarThreadSortOrder,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
         pullRequestMergeMethod: state.pullRequestMergeMethod,
@@ -340,6 +356,33 @@ export function setSidebarProjectScopeKey(state: UiState, projectKey: string | n
   };
 }
 
+export function setSidebarEnvironmentScopeId(
+  state: UiState,
+  environmentId: string | null,
+): UiState {
+  const nextId = sanitizeOptionalKey(environmentId);
+  if (state.sidebarEnvironmentScopeId === nextId) {
+    return state;
+  }
+  return {
+    ...state,
+    sidebarEnvironmentScopeId: nextId,
+  };
+}
+
+export function setSidebarThreadSortOrder(
+  state: UiState,
+  sortOrder: SidebarThreadSortOrder,
+): UiState {
+  if (state.sidebarThreadSortOrder === sortOrder) {
+    return state;
+  }
+  return {
+    ...state,
+    sidebarThreadSortOrder: sortOrder,
+  };
+}
+
 function setPullRequestMergeMethod(state: UiState, method: PullRequestMergeMethod): UiState {
   return state.pullRequestMergeMethod === method
     ? state
@@ -428,7 +471,9 @@ interface UiStateStore extends UiState {
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
+  setSidebarEnvironmentScopeId: (environmentId: string | null) => void;
   setSidebarProjectScopeKey: (projectKey: string | null) => void;
+  setSidebarThreadSortOrder: (sortOrder: SidebarThreadSortOrder) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
@@ -448,8 +493,12 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
+  setSidebarEnvironmentScopeId: (environmentId) =>
+    set((state) => setSidebarEnvironmentScopeId(state, environmentId)),
   setSidebarProjectScopeKey: (projectKey) =>
     set((state) => setSidebarProjectScopeKey(state, projectKey)),
+  setSidebarThreadSortOrder: (sortOrder) =>
+    set((state) => setSidebarThreadSortOrder(state, sortOrder)),
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),

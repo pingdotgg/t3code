@@ -13,7 +13,9 @@ import {
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
+  setSidebarEnvironmentScopeId,
   setSidebarProjectScopeKey,
+  setSidebarThreadSortOrder,
   setThreadChangedFilesExpanded,
   type UiState,
 } from "./uiStateStore";
@@ -22,7 +24,9 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
+    sidebarEnvironmentScopeId: null,
     sidebarProjectScopeKey: null,
+    sidebarThreadSortOrder: "created_at",
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -156,9 +160,34 @@ describe("uiStateStore pure functions", () => {
     expect(setSidebarProjectScopeKey(scoped, null).sidebarProjectScopeKey).toBeNull();
     expect(setSidebarProjectScopeKey(scoped, "").sidebarProjectScopeKey).toBeNull();
   });
+
+  it("stores the sidebar environment scope and resets it to all environments", () => {
+    const scoped = setSidebarEnvironmentScopeId(makeUiState(), "environment-a");
+
+    expect(scoped.sidebarEnvironmentScopeId).toBe("environment-a");
+    expect(setSidebarEnvironmentScopeId(scoped, "environment-a")).toBe(scoped);
+    expect(setSidebarEnvironmentScopeId(scoped, null).sidebarEnvironmentScopeId).toBeNull();
+    expect(setSidebarEnvironmentScopeId(scoped, "").sidebarEnvironmentScopeId).toBeNull();
+  });
+
+  it("stores the current sidebar thread sort order", () => {
+    const lastActive = setSidebarThreadSortOrder(makeUiState(), "updated_at");
+
+    expect(lastActive.sidebarThreadSortOrder).toBe("updated_at");
+    expect(setSidebarThreadSortOrder(lastActive, "updated_at")).toBe(lastActive);
+    expect(setSidebarThreadSortOrder(lastActive, "created_at").sidebarThreadSortOrder).toBe(
+      "created_at",
+    );
+  });
 });
 
 describe("parsePersistedState", () => {
+  it("defaults invalid current-sidebar sort orders to creation time", () => {
+    expect(parsePersistedState({ sidebarThreadSortOrder: "unknown" }).sidebarThreadSortOrder).toBe(
+      "created_at",
+    );
+  });
+
   it("hydrates the last selected pull request merge method", () => {
     const parsed = parsePersistedState({
       pullRequestMergeMethod: "squash",
@@ -201,7 +230,9 @@ describe("parsePersistedState", () => {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
+      sidebarEnvironmentScopeId: null,
       sidebarProjectScopeKey: null,
+      sidebarThreadSortOrder: "created_at",
       pullRequestMergeMethod: "merge",
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -323,7 +354,9 @@ describe("uiStateStore persistence", () => {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
+      sidebarEnvironmentScopeId: null,
       sidebarProjectScopeKey: null,
+      sidebarThreadSortOrder: "created_at",
       threadChangedFilesExpansionVersion: 2,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -348,6 +381,26 @@ describe("uiStateStore persistence", () => {
     expect(parsePersistedState(persisted).sidebarProjectScopeKey).toBe(
       "github.com/pingdotgg/t3code",
     );
+  });
+
+  it("restores the sidebar environment scope across reloads", () => {
+    persistState(makeUiState({ sidebarEnvironmentScopeId: "environment-a" }));
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+
+    expect(parsePersistedState(persisted).sidebarEnvironmentScopeId).toBe("environment-a");
+  });
+
+  it("restores the current sidebar thread sort order across reloads", () => {
+    persistState(makeUiState({ sidebarThreadSortOrder: "updated_at" }));
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+
+    expect(parsePersistedState(persisted).sidebarThreadSortOrder).toBe("updated_at");
   });
 
   it("drops the temporary expanded-only migration fallback when rewriting state", () => {

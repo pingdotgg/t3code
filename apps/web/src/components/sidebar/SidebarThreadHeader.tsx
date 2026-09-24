@@ -1,10 +1,10 @@
 /**
- * The sidebar header: one row holding search, project scope and new thread.
+ * The sidebar header: one row holding search, environment/project scopes and new thread.
  *
- * Search owns the row's text and spans it. Project scope collapses to an icon
+ * Search owns the row's text and spans it. Each scope collapses to an icon
  * that sits with new-project and new-thread as a segmented group at the end.
- * The scope icon swaps to the project favicon while a project is selected,
- * so the header still names the scope after the row that showed it is gone.
+ * Selected scopes keep their project or machine icon and gain a small badge,
+ * so the header still communicates the active filter after its popup closes.
  *
  * The scope picker itself is passed in: its combobox state lives with the rest
  * of the sidebar's scope logic. `searchFieldRef` lands on the search field so
@@ -20,6 +20,7 @@ import {
 } from "react";
 
 import { cn } from "~/lib/utils";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { SidebarMenuButton } from "../ui/sidebar";
@@ -30,8 +31,14 @@ export interface SidebarThreadHeaderProps {
   searchFieldRef?: RefObject<HTMLDivElement | null>;
   /** Without projects there is nothing to scope, so those controls stay out. */
   hasProjects: boolean;
+  /** A single environment needs no filter control. */
+  hasMultipleEnvironments: boolean;
+  /** The environment scope combobox, rendered before the project scope. */
+  environmentScope: ReactNode;
   /** The project scope combobox, rendered as the first icon of the group. */
   projectScope: ReactNode;
+  /** Thread ordering control, rendered after the scope controls. */
+  sortOrder: ReactNode;
   onNewProject: () => void;
   /** Receives the click so Shift+click can skip the project picker. */
   onNewThread: (event: ReactMouseEvent) => void;
@@ -53,7 +60,10 @@ export interface SidebarThreadHeaderProps {
 export function SidebarThreadHeader({
   searchFieldRef,
   hasProjects,
+  hasMultipleEnvironments,
+  environmentScope,
   projectScope,
+  sortOrder,
   onNewProject,
   onNewThread,
   newThreadDisabled,
@@ -126,13 +136,13 @@ export function SidebarThreadHeader({
           hover states, and a background well reads far louder on themed
           palettes than on the base light and dark ones. */}
       <div className="flex shrink-0 items-center">
+        {hasMultipleEnvironments ? environmentScope : null}
+        {hasProjects ? projectScope : null}
+        {sortOrder}
         {hasProjects ? (
-          <>
-            {projectScope}
-            <SidebarHeaderIconButton label="New project" onClick={onNewProject}>
-              <FolderPlusIcon />
-            </SidebarHeaderIconButton>
-          </>
+          <SidebarHeaderIconButton label="New project" onClick={onNewProject}>
+            <FolderPlusIcon />
+          </SidebarHeaderIconButton>
         ) : null}
         <SidebarHeaderIconButton
           label="New thread"
@@ -167,6 +177,7 @@ export function SidebarThreadHeader({
 export function SidebarHeaderIconButton({
   label,
   tooltip = label,
+  badge = false,
   className,
   children,
   ...rest
@@ -174,6 +185,8 @@ export function SidebarHeaderIconButton({
   /** Accessible name; also the tooltip unless `tooltip` says more. */
   label: string;
   tooltip?: ReactNode;
+  /** Small status badge for a non-default filter or option. */
+  badge?: boolean;
   className?: string | undefined;
   children?: ReactNode;
 } & Omit<
@@ -197,6 +210,12 @@ export function SidebarHeaderIconButton({
         }
       >
         {children}
+        {badge ? (
+          <Badge
+            aria-hidden
+            className="absolute right-0.5 top-0.5 size-1.5 min-w-0 rounded-full p-0 ring-1 ring-sidebar-control-surface"
+          />
+        ) : null}
         {/* Coarse-pointer hit area, matching the rest of the sidebar chrome. */}
         <span
           aria-hidden

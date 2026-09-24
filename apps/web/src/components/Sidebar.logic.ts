@@ -9,7 +9,10 @@ import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-searc
 import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/unstable/reactivity";
-import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
+import {
+  planPinnedReorder,
+  sortActiveThreadsByOrderKey,
+} from "@t3tools/client-runtime/state/thread-sort";
 import {
   effectiveSnoozed,
   type ThreadSnoozeShell,
@@ -889,7 +892,34 @@ function firstValidTimestamp(
   return null;
 }
 
-export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
+/** Active threads keep their explicit/creation order by default. The optional
+ * last-active view deliberately ignores saved drag keys until creation order
+ * is restored, so two ordering models never compete. */
+export function sortThreadsForSidebar<
+  T extends ThreadSortInput & {
+    readonly id: string;
+    readonly environmentId?: string | undefined;
+    readonly unsettledAt?: string | null | undefined;
+    readonly activeOrderKey?: string | null | undefined;
+  },
+>(threads: readonly T[], sortOrder: SidebarThreadSortOrder = "created_at"): T[] {
+  if (sortOrder === "created_at") return sortActiveThreadsByOrderKey(threads);
+  const lastActiveAt = new Map(
+    threads.map((thread) => [
+      thread,
+      toSortableTimestamp(thread.updatedAt) ??
+        toSortableTimestamp(thread.latestUserMessageAt ?? undefined) ??
+        toSortableTimestamp(thread.createdAt) ??
+        0,
+    ]),
+  );
+  return [...threads].sort(
+    (left, right) =>
+      lastActiveAt.get(right)! - lastActiveAt.get(left)! ||
+      left.id.localeCompare(right.id) ||
+      (left.environmentId ?? "").localeCompare(right.environmentId ?? ""),
+  );
+}
 
 // Pinned-reorder key math and the keyed sort live in client-runtime
 // (state/thread-sort) so web and mobile compute identical pinned orders.
@@ -937,7 +967,7 @@ export function searchSidebarThreads<
   return [...titleMatches, ...contentMatches];
 }
 
-export function filterSidebarProjectScopeItems<TItem extends { readonly value: string }>(input: {
+export function filterSidebarScopeItems<TItem extends { readonly value: string }>(input: {
   items: readonly TItem[];
   query: string;
   matches: (item: TItem, query: string) => boolean;
@@ -947,26 +977,37 @@ export function filterSidebarProjectScopeItems<TItem extends { readonly value: s
   return input.items.filter((item) => item.value !== "all" && input.matches(item, query));
 }
 
-export interface SidebarProjectScopeMenuState {
+export function sidebarItemMatchesScope(
+  item: { readonly environmentId: string; readonly projectId: string },
+  environmentScopeId: string | null,
+  scopedProjectKeys: ReadonlySet<string> | null,
+): boolean {
+  return (
+    (environmentScopeId === null || item.environmentId === environmentScopeId) &&
+    (scopedProjectKeys === null || scopedProjectKeys.has(`${item.environmentId}:${item.projectId}`))
+  );
+}
+
+export interface SidebarScopeMenuState {
   readonly open: boolean;
   readonly query: string;
 }
 
-export type SidebarProjectScopeMenuAction =
+export type SidebarScopeMenuAction =
   | { readonly type: "query-changed"; readonly query: string }
   | { readonly type: "open-changed"; readonly open: boolean }
-  | { readonly type: "project-settings-opened" };
+  | { readonly type: "close" };
 
-export function reduceSidebarProjectScopeMenuState(
-  state: SidebarProjectScopeMenuState,
-  action: SidebarProjectScopeMenuAction,
-): SidebarProjectScopeMenuState {
+export function reduceSidebarScopeMenuState(
+  state: SidebarScopeMenuState,
+  action: SidebarScopeMenuAction,
+): SidebarScopeMenuState {
   switch (action.type) {
     case "query-changed":
       return { ...state, query: action.query };
     case "open-changed":
       return { open: action.open, query: "" };
-    case "project-settings-opened":
+    case "close":
       return { open: false, query: "" };
   }
 }
