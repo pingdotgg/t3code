@@ -318,6 +318,38 @@ interface EnsureActiveAssistantSegmentResult {
 interface AcpActivePrompt {
   readonly fiber: Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
   readonly completed: Deferred.Deferred<void>;
+  readonly cancelled: Ref.Ref<boolean>;
+}
+
+/**
+ * Determines whether a given error represents an intentional cancellation or abort
+ * from the ACP provider or transport, ensuring other -32000 errors (such as authRequired)
+ * are not falsely classified as cancellation.
+ */
+export function isPromptCancellationError(error: unknown): boolean {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    error._tag === "AcpRequestError"
+  ) {
+    const reqErr = error as EffectAcpErrors.AcpRequestError;
+    const msg = (reqErr.errorMessage ?? "").toLowerCase();
+    // Require a cancellation/abort keyword so other -32000 errors (e.g. authRequired) are not masked
+    return msg.includes("cancel") || msg.includes("abort");
+  }
+  return false;
+}
+
+/**
+ * Checks whether an Effect failure cause represents an interrupt or an
+ * underlying ACP prompt cancellation error.
+ */
+function isPromptCancellationCause(cause: Cause.Cause<unknown>): boolean {
+  if (Cause.hasInterrupts(cause)) {
+    return true;
+  }
+  return isPromptCancellationError(Cause.squash(cause));
 }
 
 export const make = (
@@ -966,6 +998,9 @@ export const make = (
     const cancel = Effect.gen(function* () {
       const started = yield* getStartedState;
       const activePrompt = yield* Ref.get(activePromptRef);
+      if (Option.isSome(activePrompt)) {
+        yield* Ref.set(activePrompt.value.cancelled, true);
+      }
       if (options.cancelBehavior !== "wait-for-prompt") {
         if (Option.isSome(activePrompt)) {
           yield* Fiber.interrupt(activePrompt.value.fiber).pipe(Effect.ignore);
@@ -975,7 +1010,7 @@ export const make = (
         return;
       }
 
-      yield* acp.agent.cancel({ sessionId: started.sessionId });
+      yield* acp.agent.cancel({ sessionId: started.sessionId }).pipe(Effect.ignore);
       if (Option.isNone(activePrompt)) {
         return;
       }
@@ -998,7 +1033,9 @@ export const make = (
         return yield* error;
       }
       if (Exit.isFailure(completed.value)) {
-        return yield* Effect.failCause(completed.value.cause);
+        if (!isPromptCancellationCause(completed.value.cause)) {
+          return yield* Effect.failCause(completed.value.cause);
+        }
       }
     });
 
@@ -1037,12 +1074,13 @@ export const make = (
                   ...payload,
                 } satisfies EffectAcpSchema.PromptRequest;
                 const completed = yield* Deferred.make<void>();
+                const cancelled = yield* Ref.make(false);
                 const fiber = yield* runLoggedRequest(
                   "session/prompt",
                   requestPayload,
                   acp.agent.prompt(requestPayload),
                 ).pipe(Effect.forkIn(runtimeScope));
-                const active = { fiber, completed } satisfies AcpActivePrompt;
+                const active = { fiber, completed, cancelled } satisfies AcpActivePrompt;
                 yield* Ref.set(activePromptRef, Option.some(active));
                 if (promptOptions?.dispatched) {
                   yield* Deferred.succeed(promptOptions.dispatched, undefined);
@@ -1053,11 +1091,23 @@ export const make = (
             (activePrompt) =>
               Fiber.join(activePrompt.fiber).pipe(
                 Effect.catchCause((cause) =>
-                  options.cancelBehavior !== "wait-for-prompt" && Cause.hasInterruptsOnly(cause)
-                    ? Effect.succeed({
+                  Effect.gen(function* () {
+                    const isCancelled = yield* Ref.get(activePrompt.cancelled);
+                    if (
+                      (options.cancelBehavior !== "wait-for-prompt" &&
+                        Cause.hasInterruptsOnly(cause)) ||
+                      (isCancelled && isPromptCancellationCause(cause))
+                    ) {
+                      yield* finalizeActiveToolCallsOnCancellation({
+                        queue: eventQueue,
+                        toolCallsRef,
+                      });
+                      return {
                         stopReason: "cancelled",
-                      } satisfies EffectAcpSchema.PromptResponse)
-                    : Effect.failCause(cause),
+                      } satisfies EffectAcpSchema.PromptResponse;
+                    }
+                    return yield* Effect.failCause(cause);
+                  }),
                 ),
                 Effect.tap(() =>
                   closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef }),
@@ -1318,6 +1368,35 @@ const ensureActiveAssistantSegment = ({
         : Effect.succeed(result.itemId),
     ),
   );
+
+/**
+ * Finalizes any active in-flight tool calls with a failed terminal cancellation status
+ * when an ACP prompt turn is cancelled.
+ */
+const finalizeActiveToolCallsOnCancellation = ({
+  queue,
+  toolCallsRef,
+}: {
+  readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
+  readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallTrackedState>>;
+}) =>
+  Effect.gen(function* () {
+    const activeToolCalls = yield* Ref.modify(toolCallsRef, (current) => {
+      const active = Array.from(current.values()).map((tracked) => tracked.state);
+      return [active, new Map<string, AcpToolCallTrackedState>()] as const;
+    });
+    for (const toolCall of activeToolCalls) {
+      yield* Queue.offer(queue, {
+        _tag: "ToolCallUpdated",
+        toolCall: {
+          ...toolCall,
+          status: "failed",
+          detail: toolCall.detail ?? "Cancelled.",
+        },
+        rawPayload: undefined,
+      });
+    }
+  });
 
 const closeActiveAssistantSegment = ({
   queue,
