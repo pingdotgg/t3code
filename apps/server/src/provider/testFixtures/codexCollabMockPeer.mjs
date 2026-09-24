@@ -84,7 +84,18 @@ rl.on("line", (line) => {
     return;
   }
   if (method === "account/read") {
-    write({ id, result: { account: { type: "apiKey" }, requiresOpenaiAuth: false } });
+    write({
+      id,
+      result: { account: script.account ?? { type: "apiKey" }, requiresOpenaiAuth: false },
+    });
+    return;
+  }
+  if (method === "account/rateLimits/read" && script.failRateLimitsRead) {
+    write({ id, error: { code: -32000, message: "usage unavailable" } });
+    return;
+  }
+  if (method === "account/rateLimitResetCredit/consume" && script.resetCreditOutcome) {
+    write({ id, result: { outcome: script.resetCreditOutcome } });
     return;
   }
   if (method === "skills/list" || method === "model/list") {

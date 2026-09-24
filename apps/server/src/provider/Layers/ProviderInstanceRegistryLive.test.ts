@@ -338,6 +338,44 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.live("reports Codex's answer when a redemption changed nothing", () =>
+    Effect.gen(function* () {
+      if (yield* isHostWindows) return;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const fixtures = yield* makeTildeProviderFixtures();
+      yield* fileSystem.writeFileString(
+        fixtures.codexScriptPath,
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed script document read by the external Codex mock peer.
+        JSON.stringify({
+          rootThreadId: "probe-thread",
+          notifications: [],
+          account: { type: "chatgpt", email: "test@example.com", planType: "plus" },
+          failRateLimitsRead: true,
+          resetCreditOutcome: "alreadyRedeemed",
+        }),
+      );
+      const codexId = ProviderInstanceId.make("codex_reset");
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [CodexDriver],
+        configMap: {
+          [codexId]: {
+            driver: ProviderDriverKind.make("codex"),
+            enabled: true,
+            environment: [
+              { name: "T3_CODEX_COLLAB_SCRIPT", value: fixtures.codexScriptPath, sensitive: false },
+            ],
+            config: makeCodexConfig({ enabled: true, binaryPath: fixtures.codexBinaryPath }),
+          },
+        },
+      });
+      const codex = yield* registry.getInstance(codexId);
+      expect(codex).toBeDefined();
+      // The usage read fails, so the re-probe cannot confirm new limits.
+      yield* codex!.snapshot.refresh;
+      expect(yield* codex!.consumeResetCredit!()).toBe("alreadyRedeemed");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.live("runs Codex and Claude readiness probes from configured tilde paths", () =>
     Effect.gen(function* () {
       if (yield* isHostWindows) return;
