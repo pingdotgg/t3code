@@ -597,6 +597,10 @@ function SidebarContent({
         hideScrollbars
         scrollFade
         scrollFadePadding={false}
+        // Thread rows provide keyboard access to this scroll region. Keeping
+        // Base UI's viewport out of the tab order lets its presentational role
+        // flatten in WebKit instead of becoming a VoiceOver interaction group.
+        viewportTabIndex={-1}
         className="h-auto min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:[--fade-size:0.75rem]"
       >
         <div
