@@ -708,11 +708,17 @@ private class DiffCanvasView(context: Context) : View(context) {
         value.asSequence().filter { it.kind == "file" }.map { it.resolvedFileId }.toSet(),
       )
       rebuildOffsets()
-      anchor?.let { (source, offset) ->
-        val index = rows.indexOfFirst { row ->
-          row.kind != "file" && row.sourceRow?.let { start ->
-            source >= start && source < start + (if (row.kind == "placeholder") row.rowCount else 1)
-          } == true
+      anchor?.let { (id, source, offset) ->
+        val exactIndex = rows.indexOfFirst { it.id == id }
+        val index = if (exactIndex >= 0) {
+          exactIndex
+        } else {
+          rows.indexOfFirst { row ->
+            row.kind != "file" && row.sourceRow?.let { start ->
+              source >= start &&
+                source < start + (if (row.kind == "placeholder") row.rowCount else 1)
+            } == true
+          }
         }
         if (index >= 0) {
           val row = rows[index]
@@ -943,7 +949,7 @@ private class DiffCanvasView(context: Context) : View(context) {
   private fun firstVisibleRow(): Int = rowIndexAt(verticalOffset)
 
   // Preserve the source line when wrapped rows above it enter or leave the window.
-  private fun visibleSourceAnchor(): Pair<Int, Int>? {
+  private fun visibleSourceAnchor(): Triple<String, Int, Int>? {
     if (rows.isEmpty()) return null
     val index = firstVisibleRow()
     val row = rows[index]
@@ -952,22 +958,30 @@ private class DiffCanvasView(context: Context) : View(context) {
     val offset = verticalOffset - rowOffsets[index]
     val rowHeight = style.rowHeightPx.toInt().coerceAtLeast(1)
     return if (row.kind == "placeholder") {
-      Pair(source + offset / rowHeight, offset % rowHeight)
-    } else Pair(source, offset)
+      Triple(row.id, source + offset / rowHeight, offset % rowHeight)
+    } else {
+      Triple(row.id, source, offset)
+    }
   }
 
   fun firstVisibleSourceRow(): Int? {
     if (rows.isEmpty()) return null
     val visible = firstVisibleRow()..rowIndexAt(verticalOffset + max(1, height))
-    val index = visible.firstOrNull { rows[it].kind == "placeholder" && rowOffsets[it + 1] > rowOffsets[it] }
-      ?: visible.firstOrNull { rows[it].kind != "file" && rows[it].sourceRow != null && rowOffsets[it + 1] > rowOffsets[it] }
-      ?: firstVisibleRow()
+    val index =
+      visible.firstOrNull { rows[it].kind == "placeholder" && rowOffsets[it + 1] > rowOffsets[it] }
+        ?: visible.firstOrNull {
+          rows[it].kind != "file" && rows[it].sourceRow != null &&
+            rowOffsets[it + 1] > rowOffsets[it]
+        }
+        ?: firstVisibleRow()
     val row = rows.getOrNull(index) ?: return null
     val source = row.sourceRow ?: return null
     return source + if (row.kind == "placeholder") {
       ((verticalOffset - rowOffsets[index]) / style.rowHeightPx.toInt().coerceAtLeast(1))
         .coerceIn(0, row.rowCount - 1)
-    } else 0
+    } else {
+      0
+    }
   }
 
   private fun emitVisibleRange() {
@@ -982,7 +996,12 @@ private class DiffCanvasView(context: Context) : View(context) {
 
   private fun drawRow(canvas: Canvas, row: DiffRow, top: Int, bottom: Int) {
     when (row.kind) {
-      "placeholder" -> drawHunkRow(canvas, row, max(0, top), max(0, top) + style.rowHeightPx.toInt())
+      "placeholder" -> drawHunkRow(
+        canvas,
+        row,
+        max(0, top),
+        max(0, top) + style.rowHeightPx.toInt()
+      )
       "file" -> drawFileRow(canvas, row, top, bottom)
       "hunk" -> drawHunkRow(canvas, row, top, bottom)
       "notice" -> drawNoticeRow(canvas, row, top, bottom)
