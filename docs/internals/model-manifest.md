@@ -16,9 +16,11 @@ built-in catalog. Adding a model with an existing capability profile is a JSON
 edit; a new profile is needed only for a new capability combination. Codex still
 gets its model list from its app server.
 
-`currentModels.claudeAgent` is frozen for releases that predate catalog discovery.
-Do not extend it when adding Claude models. Codex uses `currentModels.codex` as a
-legacy-classification overlay for discovered models.
+`currentModels.claudeAgent` is the current-model classification overlay for
+releases that predate catalog discovery; it does not add models to their catalogs.
+Catalog-aware releases use `providers.claudeAgent.models[].status` instead.
+Codex uses `currentModels.codex` as a legacy-classification overlay for discovered
+models.
 
 Claude provider refreshes deliberately do not run the CLI's version command. Until
 the existing SDK initialization exposes the installed version, provider snapshots

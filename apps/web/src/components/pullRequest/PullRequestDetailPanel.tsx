@@ -130,7 +130,7 @@ import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
-import { PullRequestCommentComposer } from "./PullRequestCommentComposer";
+import { PullRequestComposer } from "./PullRequestComposer";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
 import {
@@ -379,7 +379,7 @@ function PullRequestBaseFreshnessWarning({
             type="button"
             aria-label={summary}
             className={cn(
-              "inline-flex min-w-0 shrink-0 cursor-help items-center gap-1 rounded-sm text-amber-600 outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-amber-400/90",
+              "inline-flex min-w-0 shrink-0 cursor-help items-center gap-1 rounded-sm text-warning-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring",
               className,
             )}
           />
@@ -388,12 +388,7 @@ function PullRequestBaseFreshnessWarning({
         {children}
         <TriangleAlertIcon aria-hidden className={cn("size-3.5 shrink-0", iconClassName)} />
       </PopoverTrigger>
-      <PopoverPopup
-        align="start"
-        side="bottom"
-        className="max-w-80"
-        viewportClassName="py-2.5 [--viewport-inline-padding:--spacing(3)]"
-      >
+      <PopoverPopup align="start" side="bottom" className="max-w-80" padding="compact">
         <p className="text-xs text-foreground">{summary}</p>
         <p className="mt-0.5 text-xs text-muted-foreground">Changes can be cleanly merged.</p>
         {/* Each way the host offers and this reader may take, as its own button: a split button
@@ -1569,7 +1564,7 @@ export function PullRequestDetailPanel({
           />
           <TooltipPopup>Check out this pull request</TooltipPopup>
         </Tooltip>
-        <MenuPopup align="end" side="bottom" className="min-w-72">
+        <MenuPopup align="end" side="bottom">
           <MenuItem onClick={() => startCheckout("worktree")}>
             <GitBranchIcon className="mt-1 size-3.5 shrink-0 self-start" />
             <span className="flex min-w-0 flex-col">
@@ -1985,9 +1980,11 @@ export function PullRequestDetailPanel({
                 </Tooltip>
               ) : (primaryAction === "merged" || primaryAction === "closed") &&
                 statePresentation !== null ? (
-                <Badge size="control" variant="outline" className={statePresentation.toneClassName}>
-                  <statePresentation.Icon className="size-3.5" />
-                  {statePresentation.label}
+                <Badge size="control" variant="outline">
+                  <span className={cn("flex items-center gap-1", statePresentation.toneClassName)}>
+                    <statePresentation.Icon className="size-3.5" />
+                    {statePresentation.label}
+                  </span>
                 </Badge>
               ) : null}
               <Menu>
@@ -2000,7 +1997,6 @@ export function PullRequestDetailPanel({
                             aria-label={
                               refreshing ? "Refreshing pull request" : "More pull request actions"
                             }
-                            className="size-6"
                             size="icon-xs"
                             variant="ghost-muted"
                           />
@@ -2010,7 +2006,7 @@ export function PullRequestDetailPanel({
                             the spinning glyph in place of the dots: the reader sees the panel
                             is fetching without a control appearing or the row shifting. */}
                         {refreshing ? (
-                          <RefreshIcon refreshing className="size-4" />
+                          <RefreshIcon refreshing size="md" />
                         ) : (
                           <MoreHorizontalIcon className="size-4" />
                         )}
@@ -2021,7 +2017,7 @@ export function PullRequestDetailPanel({
                     {refreshing ? "Refreshing pull request" : "More pull request actions"}
                   </TooltipPopup>
                 </Tooltip>
-                <MenuPopup align="end" side="bottom" className="min-w-72">
+                <MenuPopup align="end" side="bottom">
                   <PullRequestThreadLinks
                     display="menu-item"
                     environmentId={environmentId}
@@ -2034,7 +2030,7 @@ export function PullRequestDetailPanel({
                     onPickerOpenChange={setThreadPickerOpen}
                   />
                   <MenuItem disabled={refreshing} onClick={() => void refreshFromHost()}>
-                    <RefreshIcon className="size-3.5" refreshing={refreshing} />
+                    <RefreshIcon size="sm" refreshing={refreshing} />
                     Refresh
                   </MenuItem>
                   <MenuItem disabled={handoff !== null} onClick={askAboutPullRequest}>
@@ -2258,13 +2254,13 @@ export function PullRequestDetailPanel({
                     <PullRequestActorLabel
                       actor={detail.author}
                       profileUrl={authorProfileUrl}
-                      className="shrink-0 rounded-full"
-                      labelClassName="sr-only"
+                      variant="avatar"
+                      className="shrink-0"
                     />
                     <span className="shrink-0">{formatRelativeTimeLabel(detail.updatedAt)}</span>
                   </span>
                   <span aria-hidden className="h-3 w-px shrink-0 bg-border/70" />
-                  <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-[11px] text-muted-foreground/65">
+                  <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-2xs text-muted-foreground/65">
                     {/* An out-of-date base wears the warning on the branch name itself, so the
                         name is amber and pointing at either the name or the mark opens the way
                         out. Up to date, the name keeps its plain tooltip. */}
@@ -2326,7 +2322,7 @@ export function PullRequestDetailPanel({
                       <TooltipPopup side="top">{detail.headBranch}</TooltipPopup>
                     </Tooltip>
                   </span>
-                  <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2 text-[11px]">
+                  <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2 text-2xs">
                     <span
                       className="inline-flex items-center gap-1 tabular-nums"
                       aria-label={`${detail.changedFiles.toLocaleString()} changed ${
@@ -2339,7 +2335,7 @@ export function PullRequestDetailPanel({
                     <PullRequestDiffStat
                       additions={detail.additions}
                       deletions={detail.deletions}
-                      className="shrink-0 font-mono text-[11px]"
+                      className="shrink-0 font-mono text-2xs"
                     />
                   </span>
                 </div>
@@ -2434,11 +2430,7 @@ export function PullRequestDetailPanel({
                 )}
                 <div className="mt-2 flex min-h-5 min-w-0 items-center gap-2 text-xs text-muted-foreground">
                   <PullRequestMetaLine className="min-w-0 whitespace-nowrap">
-                    <PullRequestActorLabel
-                      actor={detail.author}
-                      profileUrl={authorProfileUrl}
-                      className="font-medium"
-                    />
+                    <PullRequestActorLabel actor={detail.author} profileUrl={authorProfileUrl} />
                     <span>updated {formatRelativeTimeLabel(detail.updatedAt)}</span>
                   </PullRequestMetaLine>
                   {checkoutCommand ? (
@@ -2617,7 +2609,7 @@ export function PullRequestDetailPanel({
               <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
                 <PullRequestMetaLine
                   className={cn(
-                    "whitespace-nowrap text-[11px] transition-opacity",
+                    "whitespace-nowrap text-2xs transition-opacity",
                     (activityPending || activityError) && "opacity-35",
                   )}
                 >
@@ -2672,8 +2664,7 @@ export function PullRequestDetailPanel({
                 </PullRequestMetaLine>
                 <Button
                   size="xs"
-                  variant="ghost"
-                  className="h-7 px-2 text-[10px] text-muted-foreground"
+                  variant="ghost-muted"
                   aria-label={
                     timelineOrder === "newest"
                       ? "Show oldest activity first"
@@ -2793,9 +2784,9 @@ export function PullRequestDetailPanel({
       </div>
 
       {/* Float over the content; do not reserve a footer or padding in the PR tabs. */}
-      {detail?.capabilities.comment && detail.viewerPermissions.comment ? (
+      {detail ? (
         <div className="absolute right-4 bottom-3 z-20">
-          <PullRequestCommentComposer
+          <PullRequestComposer
             key={JSON.stringify([
               environmentId,
               reference.projectId,
@@ -2809,6 +2800,7 @@ export function PullRequestDetailPanel({
             actionPending={actionPending}
             onCommentAction={performCommentAction}
             onCommented={refreshDetail}
+            onReviewSubmitted={refreshDetail}
           />
         </div>
       ) : null}

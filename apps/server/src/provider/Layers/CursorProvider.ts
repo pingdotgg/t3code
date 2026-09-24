@@ -678,8 +678,11 @@ export const makeCursorModelDiscovery = Effect.fn("makeCursorModelDiscovery")(fu
         Exit.isSuccess(exit) && exit.value.length > 0 ? Duration.minutes(30) : Duration.zero,
     },
   );
-  return (about: Pick<CursorAboutResult, "version" | "auth">) =>
-    Cache.get(cache, JSON.stringify([about.version, about.auth]));
+  return {
+    discover: (about: Pick<CursorAboutResult, "version" | "auth">) =>
+      Cache.get(cache, JSON.stringify([about.version, about.auth])),
+    invalidate: Cache.invalidateAll(cache),
+  };
 });
 
 function getCursorFallbackModels(

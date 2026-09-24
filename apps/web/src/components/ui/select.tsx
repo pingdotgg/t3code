@@ -1,5 +1,7 @@
 "use client";
+import { mergeProps } from "@base-ui/react/merge-props";
 import { Select as SelectPrimitive } from "@base-ui/react/select";
+import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import type * as React from "react";
@@ -57,6 +59,37 @@ function SelectTrigger({
   );
 }
 
+/**
+ * The select-field look for a picker that is not a Select, such as a Menu or
+ * Combobox trigger. Render it as that trigger: `<MenuTrigger render={<SelectButton />}>`.
+ */
+function SelectButton({
+  className,
+  size = "default",
+  children,
+  render,
+  ...props
+}: useRender.ComponentProps<"button"> & Pick<VariantProps<typeof selectTriggerVariants>, "size">) {
+  const defaultProps = {
+    className: cn(selectTriggerVariants({ size }), className),
+    "data-slot": "select-trigger",
+    type: render ? undefined : ("button" as const),
+  };
+  return useRender({
+    defaultTagName: "button",
+    props: {
+      ...mergeProps<"button">(defaultProps, props),
+      children: (
+        <>
+          <span className="min-w-0 flex-1 truncate text-left">{children}</span>
+          <ChevronDownIcon aria-hidden className="-me-1 size-3 shrink-0 opacity-50" />
+        </>
+      ),
+    },
+    render,
+  });
+}
+
 function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
   return (
     <SelectPrimitive.Value
@@ -69,7 +102,6 @@ function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
 
 function SelectPopup({
   className,
-  popupClassName,
   children,
   side = "bottom",
   sideOffset = 4,
@@ -80,7 +112,6 @@ function SelectPopup({
   anchor,
   ...props
 }: SelectPrimitive.Popup.Props & {
-  popupClassName?: string;
   side?: SelectPrimitive.Positioner.Props["side"];
   sideOffset?: SelectPrimitive.Positioner.Props["sideOffset"];
   align?: SelectPrimitive.Positioner.Props["align"];
@@ -116,7 +147,6 @@ function SelectPopup({
             className={cn(
               "dropdown-glass relative h-full rounded-lg shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]",
               matchTriggerWidth && "min-w-(--anchor-width)",
-              popupClassName,
             )}
           >
             <SelectPrimitive.List
@@ -182,7 +212,7 @@ function SelectGroupLabel(props: SelectPrimitive.GroupLabel.Props) {
 export {
   Select,
   SelectTrigger,
-  selectTriggerVariants,
+  SelectButton,
   SelectValue,
   SelectPopup,
   SelectPopup as SelectContent,

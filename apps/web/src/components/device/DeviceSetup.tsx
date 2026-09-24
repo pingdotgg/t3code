@@ -203,7 +203,7 @@ export function DeviceHubSetupStatus({
   if (!pending && state.hostStatus !== "ready") return null;
   return (
     <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
-      {pending ? <Spinner className="size-3" /> : <Check className="size-3 text-success" />}
+      {pending ? <Spinner size="xs" /> : <Check className="size-3 text-success" />}
       {pending
         ? state.hostStatus === "installing"
           ? compact
@@ -235,7 +235,7 @@ function DevicePlatformSetup(props: {
         You can use either platform. Fixing a missing platform does not block the other one.
       </p>
       <Button size="compact" variant="outline" disabled={props.disabled} onClick={props.onCheck}>
-        {props.checking ? <Spinner className="size-3" /> : null}
+        {props.checking ? <Spinner size="xs" /> : null}
         {props.checking ? "Checking…" : "Check again"}
       </Button>
     </div>
@@ -262,7 +262,7 @@ export function AgentDeviceSetupStatus(props: {
             : "Updating agent access…";
     return (
       <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Spinner className="size-3" />
+        <Spinner size="xs" />
         {label}
       </p>
     );

@@ -163,9 +163,7 @@ export function ServerUpdateProgress({
         <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
         <Tooltip>
           <TooltipTrigger render={<span className="min-w-0 truncate">{state.message}</span>} />
-          <TooltipPopup side="top" className="max-w-80">
-            {state.message}
-          </TooltipPopup>
+          <TooltipPopup side="top">{state.message}</TooltipPopup>
         </Tooltip>
       </div>
     );
@@ -272,8 +270,8 @@ export function ServerUpdateAction({
           render={
             <Button
               size="icon-xs"
-              variant="ghost"
-              className={className ?? "text-muted-foreground hover:text-foreground"}
+              variant="ghost-muted"
+              className={className}
               aria-label={`${actionLabel} for ${serverLabel}`}
               onClick={onClick}
             />

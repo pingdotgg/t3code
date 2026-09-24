@@ -147,7 +147,7 @@ export function PullRequestChecksPopover({
       >
         <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
       </PopoverTrigger>
-      <PopoverPopup align="start" className="w-80 max-w-full" side="bottom">
+      <PopoverPopup align="start" width="md" side="bottom">
         <p className="mb-2 font-medium text-sm">{presentation.label}</p>
         {summary === null ? null : <p className="mb-2 text-muted-foreground text-xs">{summary}</p>}
         {stale ? (

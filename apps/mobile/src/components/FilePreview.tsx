@@ -3,7 +3,7 @@ import { Alert, Modal, Pressable, View } from "react-native";
 import ImageViewing from "react-native-image-viewing";
 
 import { openAttachmentInViewer } from "../lib/attachmentDownload";
-import type { ResolvedFilePreviewSource } from "./FilePreviewModal";
+import type { ResolvedFilePreviewSource } from "./FilePreviewModal.types";
 import { MediaImagePreview } from "./MediaImagePreview";
 import { AppText as Text } from "./AppText";
 

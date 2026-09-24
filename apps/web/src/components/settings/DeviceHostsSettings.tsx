@@ -267,7 +267,7 @@ function DeviceHostList({
                 role="status"
                 className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
               >
-                <Spinner className="size-3" />
+                <Spinner size="xs" />
                 {progress}
               </span>
             ) : null}
