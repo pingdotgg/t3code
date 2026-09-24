@@ -1368,6 +1368,8 @@ function codexReplayPreamble(input: {
   readonly nativeThreadId: string;
   readonly nativeTurnId: string;
   readonly prompt: string;
+  /** Text the adapter should send, when it differs from what the user typed. */
+  readonly sentPrompt?: string;
 }): Array<CodexReplay.CodexAppServerReplayEntry> {
   return [
     {
@@ -1451,7 +1453,7 @@ function codexReplayPreamble(input: {
         method: "turn/start",
         params: {
           threadId: input.nativeThreadId,
-          input: [{ type: "text", text: input.prompt }],
+          input: [{ type: "text", text: input.sentPrompt ?? input.prompt }],
           cwd: "/workspace",
           model: "gpt-5.4",
           approvalPolicy: "never",
@@ -1957,6 +1959,65 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.lengthOf(harness.terminalEvents(), 1);
       assert.isFalse(interruptSent, "An unstarted native turn must not receive turn/interrupt");
       assert.isFalse(yield* harness.hasPendingBackgroundWork);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+  );
+
+  it.effect("sends currency-sigil skill mentions to Codex as $ mentions", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "skill-sigil-thread";
+      const nativeTurnId = "skill-sigil-turn";
+      const transcript = makeCodexReplayTranscript({
+        scenario: "skill-sigil-canonicalized",
+        entries: [
+          ...codexReplayPreamble({
+            nativeThreadId,
+            nativeTurnId,
+            prompt: "€review do it",
+            sentPrompt: "$review do it",
+          }),
+          {
+            type: "expect_outbound",
+            label: "turn/steer",
+            frame: {
+              id: 4,
+              method: "turn/steer",
+              params: {
+                expectedTurnId: nativeTurnId,
+                input: [{ type: "text", text: "then $ship it" }],
+                threadId: nativeThreadId,
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "turn/steer",
+            frame: { id: 4, result: { turnId: nativeTurnId } },
+          },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      const turnInput = makeCodexTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("skill-sigil-attempt"),
+        text: "€review do it",
+      });
+      yield* harness.runtime.startTurn(turnInput);
+      yield* harness.runtime.steerTurn({
+        threadId: harness.threadId,
+        runId: turnInput.runId,
+        providerThread: harness.providerThread,
+        providerTurnId: (yield* IdAllocatorV2).derive.providerTurn({
+          driver: CODEX_DRIVER_KIND,
+          nativeTurnId,
+        }),
+        message: {
+          ...turnInput.message,
+          messageId: MessageId.make("message-skill-sigil-steer"),
+          text: "then £ship it",
+        },
+      });
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
   );
 
