@@ -11,6 +11,7 @@ import {
   EnvironmentHttpConflictError,
   EnvironmentHttpInternalServerError,
   EnvironmentHttpUnauthorizedError,
+  DESKTOP_UPDATE_RESTART_MARKER_FILE,
 } from "@t3tools/contracts";
 import {
   RelayCloudEnvironmentHealthProofPayload,
@@ -42,6 +43,7 @@ import {
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
 import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
@@ -93,6 +95,8 @@ const CLOUD_HEALTH_NONCE_PREFIX = "cloud-health-nonce-";
 const CLOUD_HEALTH_JTI_PREFIX = "cloud-health-jti-";
 const CLOUD_PROOF_MAX_LIFETIME_SECONDS = 5 * 60;
 const CLOUD_PROOF_CLOCK_SKEW_SECONDS = 60;
+// The desktop app stops its backends within seconds of writing the marker.
+const DESKTOP_UPDATE_RESTART_MARKER_TTL = Duration.minutes(1);
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const CLOUD_CREDENTIAL_RESPONSE_HEADERS = {
   "cache-control": "no-store",
@@ -663,6 +667,29 @@ const pendingUpdateHandoffExists = Effect.gen(function* () {
   return !stopping;
 });
 
+// The desktop app writes its marker right before it stops this server to
+// install an update, whether a remote client or the local app started it.
+// Reading consumes it, so shutdown checks it first. Only a fresh marker counts,
+// so a marker the server never read (a hard kill) cannot keep the tunnel on a
+// later quit.
+const desktopUpdateRestartPending = Effect.gen(function* () {
+  const config = yield* ServerConfig.ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const markerPath = path.join(config.baseDir, "runtime", DESKTOP_UPDATE_RESTART_MARKER_FILE);
+  const marker = yield* fs.stat(markerPath).pipe(Effect.option);
+  if (Option.isNone(marker)) {
+    return false;
+  }
+  yield* fs.remove(markerPath).pipe(Effect.ignore);
+  const now = yield* Clock.currentTimeMillis;
+  return Option.match(marker.value.mtime, {
+    onNone: () => false,
+    onSome: (writtenAt) =>
+      now - writtenAt.getTime() < Duration.toMillis(DESKTOP_UPDATE_RESTART_MARKER_TTL),
+  });
+});
+
 // Cloudflare bills per provisioned tunnel, so an environment that goes offline
 // must not leave its tunnel behind. Releasing deletes only the tunnel — the
 // relay keeps the link and its hostname reservation, and the next startup's
@@ -685,16 +712,16 @@ export const releaseManagedTunnelOnShutdown = Effect.fn(
   if (!(yield* readCliDesiredCloudLink) || (yield* readCliDesiredLinkMode) !== "managed") {
     return false;
   }
-  // A shutdown that hands off to a pending remote update is not the
-  // environment going offline: the launcher immediately brings a server back
-  // (the new version, or the old one after a rollback). Deleting the tunnel
-  // here forces that server to provision a replacement UUID, and the public
-  // hostname's route to the new tunnel takes 1-2 minutes to propagate — the
-  // dominant cost of an update restart. Keep the tunnel instead: the next
+  // A shutdown that hands off to a pending update is not the environment
+  // going offline: the service launcher or the desktop app immediately brings
+  // a server back (the new version, or the old one after a rollback). Deleting
+  // the tunnel here forces that server to provision a replacement UUID, and the
+  // public hostname's route to the new tunnel takes 1-2 minutes to propagate —
+  // the dominant cost of an update restart. Keep the tunnel instead: the next
   // boot respawns the connector from the stored config and is reachable as
   // soon as it connects, and the reconcile confirms the still-live tunnel
   // without replacing it.
-  if (yield* pendingUpdateHandoffExists) {
+  if ((yield* desktopUpdateRestartPending) || (yield* pendingUpdateHandoffExists)) {
     yield* Effect.logInfo("Keeping the managed tunnel across the update restart");
     return false;
   }
