@@ -1,6 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as OtlpResource from "effect/unstable/observability/OtlpResource";
 
 import * as OtelEnvironment from "./otelEnvironment.ts";
 
@@ -79,4 +81,51 @@ describe("OtelEnvironment", () => {
       assert.deepStrictEqual(resolved.warnings, warnings);
     }),
   );
+
+  it.effect.each([
+    { name: "unset", env: {}, resourceAttributes: {}, warnings: [] },
+    {
+      name: "a percent-encoded list",
+      env: { OTEL_RESOURCE_ATTRIBUTES: "team=core,message=hello%20world" },
+      resourceAttributes: { team: "core", message: "hello world" },
+      warnings: [],
+    },
+    {
+      name: "a list that does not decode",
+      env: { OTEL_RESOURCE_ATTRIBUTES: "team=core,broken=%zz" },
+      resourceAttributes: {},
+      warnings: [
+        "OTEL_RESOURCE_ATTRIBUTES is not a list of percent-encoded key=value pairs and was ignored",
+      ],
+    },
+  ])("resource attributes: $name", ({ env, resourceAttributes, warnings }) =>
+    Effect.gen(function* () {
+      const resolved = yield* load(env);
+      assert.deepStrictEqual(resolved.resourceAttributes, resourceAttributes);
+      assert.deepStrictEqual(resolved.warnings, warnings);
+    }),
+  );
+
+  describe("layerResourceAttributes", () => {
+    it.effect.each([
+      { name: "a list that does not decode", raw: "team=%zz", attributes: [] },
+      { name: "encoded separators", raw: "a%2Cb=x%3Dy", attributes: ["a,b"] },
+    ])("lets the exporters' own read succeed with $name", ({ raw, attributes }) =>
+      Effect.gen(function* () {
+        const env = ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { OTEL_RESOURCE_ATTRIBUTES: raw } }),
+        );
+        const otel = yield* OtelEnvironment.load.pipe(Effect.provide(env));
+        const resource = yield* OtlpResource.fromConfig({ serviceName: "t3" }).pipe(
+          Effect.provide(
+            Layer.provide(OtelEnvironment.layerResourceAttributes(otel.resourceAttributes), env),
+          ),
+        );
+        assert.deepStrictEqual(
+          resource.attributes.map((attribute) => attribute.key),
+          [...attributes, "service.name"],
+        );
+      }),
+    );
+  });
 });
