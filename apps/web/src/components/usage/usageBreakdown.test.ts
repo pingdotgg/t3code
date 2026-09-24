@@ -8,6 +8,8 @@ const model = (name: string, totalTokens: number, costUsd: number): ModelTotals 
   provider: "codex",
   costUsd,
   totalTokens,
+  cacheWriteTokens: 0,
+  cacheWriteUsd: 0,
   records: 1,
   unpricedRecords: 0,
   costShare: 0,

@@ -37,6 +37,8 @@ export interface ModelTotals {
   readonly provider: UsageProviderKind;
   readonly costUsd: number;
   readonly totalTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly cacheWriteUsd: number | null;
   readonly records: number;
   /**
    * Records whose tokens are counted here but which contributed nothing to
@@ -54,6 +56,8 @@ export interface ProjectTotals {
   readonly project: string | null;
   readonly costUsd: number;
   readonly totalTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly cacheWriteUsd: number | null;
   readonly records: number;
   readonly unpricedRecords: number;
   readonly costShare: number;
@@ -89,6 +93,8 @@ export interface CostQuality {
   readonly modelPricedShare: number;
   readonly unpricedShare: number;
   readonly cacheSavingsUsd: number;
+  /** Estimated cost of reported cache-creation tokens at cache-write rates. */
+  readonly cacheWriteUsd: number | null;
 }
 
 export interface EnvironmentProviderContribution {
@@ -243,6 +249,7 @@ const EMPTY_MERGED: MergedUsage = {
     modelPricedShare: 0,
     unpricedShare: 0,
     cacheSavingsUsd: 0,
+    cacheWriteUsd: 0,
   },
   duplicateSources: [],
   contributingEnvironments: [],
@@ -341,6 +348,8 @@ export function mergeUsage(
   let records = 0;
   let sessions = 0;
   let cacheSavingsUsd = 0;
+  let cacheWriteUsd = 0;
+  let cacheWriteComplete = true;
   let providerReportedRecords = 0;
   let unpricedRecords = 0;
 
@@ -354,6 +363,9 @@ export function mergeUsage(
       provider: UsageProviderKind;
       costUsd: number;
       totalTokens: number;
+      cacheWriteTokens: number;
+      cacheWriteUsd: number;
+      cacheWriteComplete: boolean;
       records: number;
       unpricedRecords: number;
     }
@@ -367,6 +379,9 @@ export function mergeUsage(
       project: string | null;
       costUsd: number;
       totalTokens: number;
+      cacheWriteTokens: number;
+      cacheWriteUsd: number;
+      cacheWriteComplete: boolean;
       records: number;
       unpricedRecords: number;
     }
@@ -423,6 +438,8 @@ export function mergeUsage(
 
     for (const bucket of buckets) {
       const tokens = bucketTokens(bucket);
+      const bucketCacheWriteComplete =
+        bucket.totals.cacheCreationTokens === 0 || bucket.cacheWriteUsd !== undefined;
 
       unfilteredCostUsd += bucket.costUsd;
       const projectKey = bucketProjectKey(environment.environmentId, bucket);
@@ -437,11 +454,17 @@ export function mergeUsage(
           project: bucket.project ?? null,
           costUsd: 0,
           totalTokens: 0,
+          cacheWriteTokens: 0,
+          cacheWriteUsd: 0,
+          cacheWriteComplete: true,
           records: 0,
           unpricedRecords: 0,
         };
         project.costUsd += bucket.costUsd;
         project.totalTokens += tokens;
+        project.cacheWriteTokens += bucket.totals.cacheCreationTokens;
+        project.cacheWriteUsd += bucket.cacheWriteUsd ?? 0;
+        project.cacheWriteComplete &&= bucketCacheWriteComplete;
         project.records += bucket.records;
         project.unpricedRecords += bucket.unpricedRecords;
         projectAccumulator.set(projectKey, project);
@@ -451,6 +474,8 @@ export function mergeUsage(
 
       costUsd += bucket.costUsd;
       cacheSavingsUsd += bucket.cacheSavingsUsd;
+      cacheWriteUsd += bucket.cacheWriteUsd ?? 0;
+      cacheWriteComplete &&= bucketCacheWriteComplete;
       uncachedInputTokens += bucket.totals.uncachedInputTokens;
       cachedInputTokens += bucket.totals.cachedInputTokens;
       cacheCreationTokens += bucket.totals.cacheCreationTokens;
@@ -476,11 +501,17 @@ export function mergeUsage(
         provider: bucket.provider,
         costUsd: 0,
         totalTokens: 0,
+        cacheWriteTokens: 0,
+        cacheWriteUsd: 0,
+        cacheWriteComplete: true,
         records: 0,
         unpricedRecords: 0,
       };
       model.costUsd += bucket.costUsd;
       model.totalTokens += tokens;
+      model.cacheWriteTokens += bucket.totals.cacheCreationTokens;
+      model.cacheWriteUsd += bucket.cacheWriteUsd ?? 0;
+      model.cacheWriteComplete &&= bucketCacheWriteComplete;
       model.records += bucket.records;
       model.unpricedRecords += bucket.unpricedRecords;
       modelAccumulator.set(modelKey, model);
@@ -540,6 +571,8 @@ export function mergeUsage(
       provider: totals.provider,
       costUsd: totals.costUsd,
       totalTokens: totals.totalTokens,
+      cacheWriteTokens: totals.cacheWriteTokens,
+      cacheWriteUsd: totals.cacheWriteComplete ? totals.cacheWriteUsd : null,
       records: totals.records,
       unpricedRecords: totals.unpricedRecords,
       costShare: costUsd === 0 ? 0 : totals.costUsd / costUsd,
@@ -553,6 +586,8 @@ export function mergeUsage(
       project: totals.project,
       costUsd: totals.costUsd,
       totalTokens: totals.totalTokens,
+      cacheWriteTokens: totals.cacheWriteTokens,
+      cacheWriteUsd: totals.cacheWriteComplete ? totals.cacheWriteUsd : null,
       records: totals.records,
       unpricedRecords: totals.unpricedRecords,
       costShare: unfilteredCostUsd === 0 ? 0 : totals.costUsd / unfilteredCostUsd,
@@ -593,6 +628,7 @@ export function mergeUsage(
       modelPricedShare:
         records === 0 ? 0 : (records - providerReportedRecords - unpricedRecords) / records,
       cacheSavingsUsd,
+      cacheWriteUsd: cacheWriteComplete ? cacheWriteUsd : null,
     },
     duplicateSources: duplicates,
     contributingEnvironments,

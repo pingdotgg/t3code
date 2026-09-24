@@ -3,7 +3,6 @@ import type {
   UsageThreadBreakdownInput,
   UsageThreadDayCost,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowUpRightIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -18,7 +17,6 @@ import {
 import type { EnvironmentProviderContribution } from "@t3tools/shared/usageMerge";
 
 import { useUsageThreads, type UsageThreadRowWithEnvironment } from "../../state/usage";
-import { buildThreadRouteParams } from "../../threadRoutes";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
@@ -68,15 +66,17 @@ export function UsageThreadTable({
   return (
     <table className="w-full table-fixed text-sm">
       <colgroup>
-        <col className="w-[40%]" />
-        <col className="w-[20%]" />
-        <col className="w-[20%]" />
-        <col className="w-[20%]" />
+        <col className="w-[32%]" />
+        <col className="w-[17%]" />
+        <col className="w-[17%]" />
+        <col className="w-[17%]" />
+        <col className="w-[17%]" />
       </colgroup>
       <thead>
         <tr className="border-b border-border text-left text-xs text-muted-foreground">
           <th className="py-2 font-normal">Thread</th>
           <th className="py-2 text-right font-normal">Cost</th>
+          <th className="py-2 text-right font-normal">Cache writes</th>
           <th className="py-2 text-right font-normal">Share</th>
           <th className="py-2 text-right font-normal">Tokens</th>
         </tr>
@@ -84,7 +84,7 @@ export function UsageThreadTable({
       <tbody>
         {rows.length === 0 ? (
           <tr>
-            <td colSpan={4} className="py-6 text-center text-muted-foreground">
+            <td colSpan={5} className="py-6 text-center text-muted-foreground">
               {unavailableEnvironments > 0
                 ? "Thread activity could not be loaded for this window."
                 : "No activity in this window."}
@@ -115,7 +115,7 @@ export function UsageThreadTable({
         )}
         {truncatedRows > 0 ? (
           <tr>
-            <td colSpan={4} className="py-2 text-xs text-muted-foreground">
+            <td colSpan={5} className="py-2 text-xs text-muted-foreground">
               {truncatedRows === 1
                 ? "1 lower-cost thread row is grouped above."
                 : `${truncatedRows} lower-cost thread rows are grouped above.`}
@@ -124,7 +124,7 @@ export function UsageThreadTable({
         ) : null}
         {unavailableEnvironments > 0 && rows.length > 0 ? (
           <tr>
-            <td colSpan={4} className="py-2 text-xs text-muted-foreground">
+            <td colSpan={5} className="py-2 text-xs text-muted-foreground">
               {unavailableEnvironments === 1
                 ? "1 environment could not report threads."
                 : `${unavailableEnvironments} environments could not report threads.`}
@@ -195,9 +195,7 @@ function ThreadRowGroup({
                       onClick={() => {
                         void navigate({
                           to: "/$environmentId/$threadId",
-                          params: buildThreadRouteParams(
-                            scopeThreadRef(row.environmentId, threadId),
-                          ),
+                          params: { environmentId: row.environmentId, threadId },
                         });
                       }}
                     />
@@ -212,6 +210,9 @@ function ThreadRowGroup({
         </td>
         <td className="py-2 text-right text-foreground tabular-nums">{formatUsd(row.costUsd)}</td>
         <td className="py-2 text-right text-muted-foreground tabular-nums">
+          {formatCacheWriteCost(row.totals.cacheCreationTokens, row.cacheWriteUsd)}
+        </td>
+        <td className="py-2 text-right text-muted-foreground tabular-nums">
           {formatPercent(share)}
         </td>
         <td className="py-2 text-right text-muted-foreground tabular-nums">
@@ -220,7 +221,7 @@ function ThreadRowGroup({
       </tr>
       {open ? (
         <tr className="border-b border-border/50">
-          <td colSpan={4} className="py-3 ps-9">
+          <td colSpan={5} className="py-3 ps-9">
             <UsageThreadDailyChart daily={row.daily} sinceDay={sinceDay} untilDay={untilDay} />
             {row.agents.map((agent) => {
               const agentTokens =
@@ -250,6 +251,11 @@ function ThreadRowGroup({
       ) : null}
     </>
   );
+}
+
+function formatCacheWriteCost(cacheWriteTokens: number, cacheWriteUsd: number | null): string {
+  if (cacheWriteTokens === 0) return "-";
+  return cacheWriteUsd === null ? "Unavailable" : formatUsd(cacheWriteUsd);
 }
 
 const CHART_WIDTH = 760;
@@ -442,7 +448,6 @@ function UsageThreadDailyChart({
     </div>
   );
 }
-
 function ProviderMark({ provider }: { readonly provider: UsageProviderKind }) {
   const Mark = PROVIDER_PRESENTATION[provider].mark;
   return <Mark className="size-3.5 shrink-0" aria-hidden />;

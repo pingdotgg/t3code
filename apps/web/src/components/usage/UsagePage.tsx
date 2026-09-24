@@ -586,7 +586,7 @@ export function UsagePage() {
 
                 <section className="flex flex-col gap-2">
                   <h2 className="text-sm font-medium text-foreground">Totals</h2>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-6">
                     <Metric label="Processed tokens" value={formatTokens(merged.totalTokens)} />
                     <Metric label="Cached input" value={formatTokens(merged.cachedInputTokens)} />
                     <Metric
@@ -594,6 +594,19 @@ export function UsagePage() {
                       value={formatTokens(merged.uncachedInputTokens)}
                     />
                     <Metric label="Output" value={formatTokens(merged.outputTokens)} />
+                    <Metric
+                      label="Estimated cache writes"
+                      value={
+                        merged.costQuality.cacheWriteUsd === null
+                          ? "Unavailable"
+                          : formatUsd(merged.costQuality.cacheWriteUsd)
+                      }
+                      {...(merged.costUsd > 0 && merged.costQuality.cacheWriteUsd !== null
+                        ? {
+                            detail: `${formatPercent(merged.costQuality.cacheWriteUsd / merged.costUsd, 0)} of cost`,
+                          }
+                        : {})}
+                    />
                     <Metric
                       label="Cache savings"
                       value={formatUsd(merged.costQuality.cacheSavingsUsd)}
@@ -661,15 +674,17 @@ export function UsagePage() {
                   ) : breakdown === "project" ? (
                     <table className="w-full table-fixed text-sm">
                       <colgroup>
-                        <col className="w-2/5" />
-                        <col className="w-1/5" />
-                        <col className="w-1/5" />
-                        <col className="w-1/5" />
+                        <col className="w-[32%]" />
+                        <col className="w-[17%]" />
+                        <col className="w-[17%]" />
+                        <col className="w-[17%]" />
+                        <col className="w-[17%]" />
                       </colgroup>
                       <thead>
                         <tr className="border-b border-border text-left text-xs text-muted-foreground">
                           <th className="py-2 font-normal">Project</th>
                           <th className="py-2 text-right font-normal">Cost</th>
+                          <th className="py-2 text-right font-normal">Cache writes</th>
                           <th className="py-2 text-right font-normal">Share</th>
                           <th className="py-2 text-right font-normal">Tokens</th>
                         </tr>
@@ -677,7 +692,7 @@ export function UsagePage() {
                       <tbody>
                         {breakdownProjects.length === 0 ? (
                           <tr>
-                            <td colSpan={4} className="py-6 text-center text-muted-foreground">
+                            <td colSpan={5} className="py-6 text-center text-muted-foreground">
                               {merged.records === 0
                                 ? "No activity in this window."
                                 : "No project attribution in this window."}
@@ -705,6 +720,10 @@ export function UsagePage() {
                                   formatUsd(project.costUsd)
                                 )}
                               </td>
+                              <CacheWriteCell
+                                cacheWriteTokens={project.cacheWriteTokens}
+                                cacheWriteUsd={project.cacheWriteUsd}
+                              />
                               <td className="py-2 text-right text-muted-foreground tabular-nums">
                                 {isModelCostUnknown(project)
                                   ? "—"
@@ -726,15 +745,17 @@ export function UsagePage() {
                   ) : breakdown === "model" ? (
                     <table className="w-full table-fixed text-sm">
                       <colgroup>
-                        <col className="w-2/5" />
-                        <col className="w-1/5" />
-                        <col className="w-1/5" />
-                        <col className="w-1/5" />
+                        <col className="w-[32%]" />
+                        <col className="w-[17%]" />
+                        <col className="w-[17%]" />
+                        <col className="w-[17%]" />
+                        <col className="w-[17%]" />
                       </colgroup>
                       <thead>
                         <tr className="border-b border-border text-left text-xs text-muted-foreground">
                           <th className="py-2 font-normal">Model</th>
                           <th className="py-2 text-right font-normal">Cost</th>
+                          <th className="py-2 text-right font-normal">Cache writes</th>
                           <th className="py-2 text-right font-normal">Share</th>
                           <th className="py-2 text-right font-normal">Tokens</th>
                         </tr>
@@ -742,7 +763,7 @@ export function UsagePage() {
                       <tbody>
                         {breakdownModels.length === 0 ? (
                           <tr>
-                            <td colSpan={4} className="py-6 text-center text-muted-foreground">
+                            <td colSpan={5} className="py-6 text-center text-muted-foreground">
                               No activity in this window.
                             </td>
                           </tr>
@@ -765,6 +786,10 @@ export function UsagePage() {
                                   formatUsd(model.costUsd)
                                 )}
                               </td>
+                              <CacheWriteCell
+                                cacheWriteTokens={model.cacheWriteTokens}
+                                cacheWriteUsd={model.cacheWriteUsd}
+                              />
                               <td className="py-2 text-right text-muted-foreground tabular-nums">
                                 {isModelCostUnknown(model) ? "—" : formatPercent(model.costShare)}
                               </td>
@@ -1002,13 +1027,47 @@ function ProviderMark({
   return <Mark className={cn("shrink-0", className)} aria-hidden />;
 }
 
-function Metric({ label, value }: { readonly label: string; readonly value: string }) {
+function Metric({
+  label,
+  value,
+  detail,
+}: {
+  readonly label: string;
+  readonly value: string;
+  readonly detail?: string;
+}) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       <span className="text-xs text-muted-foreground">{label}</span>
       <span className="text-base font-medium text-foreground tabular-nums">{value}</span>
+      {detail === undefined ? null : (
+        <span className="text-xs text-muted-foreground tabular-nums">{detail}</span>
+      )}
     </div>
   );
+}
+
+/**
+ * Cache-write cost cell. Providers that bill no cache writes (Codex) show a
+ * dash rather than a misleading $0.00.
+ */
+function CacheWriteCell({
+  cacheWriteTokens,
+  cacheWriteUsd,
+}: {
+  readonly cacheWriteTokens: number;
+  readonly cacheWriteUsd: number | null;
+}) {
+  return (
+    <td className="py-2 text-right text-muted-foreground tabular-nums">
+      {formatCacheWriteCost(cacheWriteTokens, cacheWriteUsd)}
+    </td>
+  );
+}
+
+function formatCacheWriteCost(cacheWriteTokens: number, cacheWriteUsd: number | null): string {
+  if (cacheWriteTokens === 0) return "-";
+  return cacheWriteUsd === null ? "Unavailable" : formatUsd(cacheWriteUsd);
 }
 
 /**
@@ -1246,15 +1305,20 @@ function UsageSkeleton() {
 
       <section className="flex flex-col gap-2">
         <h2 className="text-sm font-medium text-foreground">Totals</h2>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
-          {["Processed tokens", "Cached input", "Uncached input", "Output", "Cache savings"].map(
-            (label) => (
-              <div key={label} className="flex flex-col gap-0.5">
-                <span className="text-xs text-muted-foreground">{label}</span>
-                <Skeleton className="h-6 w-16" />
-              </div>
-            ),
-          )}
+        <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-6">
+          {[
+            "Processed tokens",
+            "Cached input",
+            "Uncached input",
+            "Output",
+            "Estimated cache writes",
+            "Cache savings",
+          ].map((label) => (
+            <div key={label} className="flex flex-col gap-0.5">
+              <span className="text-xs text-muted-foreground">{label}</span>
+              <Skeleton className="h-6 w-16" />
+            </div>
+          ))}
         </div>
       </section>
 

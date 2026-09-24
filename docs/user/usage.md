@@ -19,11 +19,17 @@ the overall totals but not in the project breakdown or filter.
 The breakdown's **Thread** view drills into where the spend went: sessions group into the T3 Code
 thread they belong to, with sessions that never ran through T3 Code listed under the first thing
 you asked in them. Grok Build has no trusted prompt title, so its rows use a short session label.
-Expanding a row shows its daily estimated cost, along with any Claude subagents the thread spawned.
+Expanding a row splits its daily model-priced cost into cache writes, cache reads, and fresh input
+plus output, alongside any Claude subagents the thread spawned. Provider-reported totals are not
+split into estimated components.
 Each connected environment contributes at most 40 rows, reserving room to group lower-cost rows
 under **Other threads** by provider and project. Those grouped rows stay in the totals, so the
 thread view still adds up to the selected project or full summary.
 Rows that map to a thread carry a link that opens it.
+
+The **Estimated cache writes** total prices cache-creation tokens at each model's cache-write rate.
+It only applies to model-priced records that report cache-creation tokens. Rows without cache
+writes show a dash; incomplete or unavailable pricing is labeled **Unavailable** instead of zero.
 
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.

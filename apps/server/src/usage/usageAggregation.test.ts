@@ -188,6 +188,26 @@ describe("UsageAggregator", () => {
     // 100*1e-5 + 1000*1e-6 + 10*1.25e-5 + 50*5e-5
     expect(result.buckets[0]?.costUsd).toBeCloseTo(0.004625, 9);
     expect(result.buckets[0]?.costSource).toBe("modelPriced");
+    // Cache writes priced at the cache-write rate: 10 * 1.25e-5.
+    expect(result.buckets[0]?.cacheWriteUsd).toBeCloseTo(1.25e-4, 12);
+  });
+
+  it("distinguishes unavailable cache-write cost from write-free usage", () => {
+    const unpriced = aggregate([record({ model: "kimi-k3" })]);
+    expect(unpriced.buckets[0]?.cacheWriteUsd).toBeUndefined();
+
+    const writeFree = aggregate([
+      record({
+        totals: {
+          uncachedInputTokens: 100,
+          cachedInputTokens: 1000,
+          cacheCreationTokens: 0,
+          outputTokens: 50,
+          reasoningTokens: 0,
+        },
+      }),
+    ]);
+    expect(writeFree.buckets[0]?.cacheWriteUsd).toBe(0);
   });
 
   it("counts tokens but not cost for a model with no rate", () => {
@@ -204,6 +224,7 @@ describe("UsageAggregator", () => {
 
     expect(result.buckets[0]?.costUsd).toBe(1.25);
     expect(result.buckets[0]?.costSource).toBe("providerReported");
+    expect(result.buckets[0]?.cacheWriteUsd).toBeUndefined();
   });
 
   it("drops records outside the window", () => {

@@ -22,7 +22,7 @@ import type {
 
 import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
 import { normalizeUsagePath } from "./usagePaths.ts";
-import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
+import { cacheSavingsUsd, cacheWriteUsd, priceUsage, type RateTable } from "./usagePricing.ts";
 
 /**
  * Formats an instant as a `YYYY-MM-DD` day in `timeZone`.
@@ -111,6 +111,8 @@ interface MutableBucket {
   totals: UsageTokenTotals;
   costUsd: number;
   cacheSavingsUsd: number;
+  cacheWriteUsd: number;
+  cacheWriteComplete: boolean;
   records: number;
   unpricedRecords: number;
   providerReportedRecords: number;
@@ -229,6 +231,8 @@ export class UsageAggregator {
         totals: EMPTY_TOTALS,
         costUsd: 0,
         cacheSavingsUsd: 0,
+        cacheWriteUsd: 0,
+        cacheWriteComplete: true,
         records: 0,
         unpricedRecords: 0,
         providerReportedRecords: 0,
@@ -253,6 +257,16 @@ export class UsageAggregator {
       record.totals,
       this.#options.priceOverrides,
     );
+    if (priced.costSource === "modelPriced") {
+      bucket.cacheWriteUsd += cacheWriteUsd(
+        this.#options.rates,
+        record.model,
+        record.totals,
+        this.#options.priceOverrides,
+      );
+    } else if (record.totals.cacheCreationTokens > 0) {
+      bucket.cacheWriteComplete = false;
+    }
     bucket.records += 1;
     if (priced.costSource === "unpriced") bucket.unpricedRecords += 1;
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
@@ -283,6 +297,7 @@ export class UsageAggregator {
         totals: bucket.totals,
         costUsd: bucket.costUsd,
         cacheSavingsUsd: bucket.cacheSavingsUsd,
+        ...(bucket.cacheWriteComplete ? { cacheWriteUsd: bucket.cacheWriteUsd } : {}),
         costSource: resolveCostSource(bucket),
         records: bucket.records,
         unpricedRecords: bucket.unpricedRecords,

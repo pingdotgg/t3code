@@ -127,6 +127,17 @@ describe("ThreadUsageAccumulator", () => {
     expect(day?.freshUsd).toBeCloseTo(100 * 1e-5 + 50 * 5e-5, 12);
   });
 
+  it("does not invent component costs for provider-reported totals", () => {
+    const context = { sessionKey: "claude:session-a", agentId: "agent-1" };
+    const groups = accumulate([[record({ reportedCostUsd: 1.25 }), context]]);
+    const rows = foldThreadRows(groups, NO_ATTRIBUTION, { cap: 40 });
+
+    expect(rows.rows[0]?.costUsd).toBe(1.25);
+    expect(rows.rows[0]?.cacheWriteUsd).toBeNull();
+    expect(rows.rows[0]?.agents[0]?.cacheWriteUsd).toBeNull();
+    expect(rows.rows[0]?.daily).toEqual([]);
+  });
+
   it("uses custom prices for thread totals and component costs", () => {
     const customRates: RateTable = new Map([
       [
@@ -157,14 +168,6 @@ describe("ThreadUsageAccumulator", () => {
     expect(day?.cacheWriteUsd).toBeCloseTo(10 * 2.5e-5, 12);
     expect(day?.cacheReadUsd).toBeCloseTo(1000 * 2e-6, 12);
     expect(day?.freshUsd).toBeCloseTo(100 * 2e-5 + 50 * 1e-4, 12);
-  });
-
-  it("does not invent a component split for provider-reported costs", () => {
-    const context = { sessionKey: "claude:session-a", agentId: null };
-    const groups = accumulate([[record({ reportedCostUsd: 1.25 }), context]]);
-
-    expect(groups[0]?.costUsd).toBe(1.25);
-    expect(groups[0]?.daily.size).toBe(0);
   });
 
   it("drops records outside the window", () => {

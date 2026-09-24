@@ -215,6 +215,22 @@ export function cacheSavingsUsd(
   return totals.cachedInputTokens * (rate.inputCostPerToken - rate.cacheReadCostPerToken);
 }
 
+/**
+ * Estimated cost of this usage's cache-creation tokens at the model's
+ * cache-write rate. Zero when the model is unpriced or the provider reports
+ * no cache-creation tokens.
+ */
+export function cacheWriteUsd(
+  table: RateTable,
+  model: string,
+  totals: UsageTokenTotals,
+  overrides?: RateTable,
+): number {
+  const rate = overrides?.get(model.trim()) ?? lookupRate(table, model);
+  if (rate === null) return 0;
+  return totals.cacheCreationTokens * rate.cacheCreationCostPerToken;
+}
+
 export interface UsageComponentCosts {
   readonly cacheWriteUsd: number;
   readonly cacheReadUsd: number;
@@ -228,7 +244,11 @@ const ZERO_COMPONENT_COSTS: UsageComponentCosts = {
   freshUsd: 0,
 };
 
-/** Splits model-priced usage into the three components shown in usage charts. */
+/**
+ * Splits model-priced usage into cache writes, cache reads, and everything
+ * else. Unpriced models contribute nothing here; token totals still include
+ * them.
+ */
 export function usageComponentCosts(
   table: RateTable,
   model: string,

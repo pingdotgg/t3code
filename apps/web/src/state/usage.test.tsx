@@ -1,4 +1,9 @@
-import { EnvironmentId, UsageDay, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  UsageDay,
+  USAGE_CONTRACT_VERSION,
+  USAGE_THREAD_BREAKDOWN_SINCE,
+} from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { serverEnvironment } from "./server";
 import { act, useLayoutEffect } from "react";
@@ -205,22 +210,29 @@ describe("usage environment selection", () => {
 });
 
 describe("thread breakdown refresh", () => {
-  it("waits for summary publication before refreshing the mounted thread rows", async () => {
-    const summary = deferred();
-    testState.refreshUsage.mockReturnValue(summary.promise);
-    await act(() => {
-      renderer?.update(
-        <Probe selected={new Set([EnvironmentId.make("a")])} refreshThreads={true} />,
-      );
-    });
-    const refreshing = latest.refresh();
-    expect(testState.refreshAtom).not.toHaveBeenCalled();
-    await act(async () => {
-      summary.resolve();
-      await refreshing;
-    });
-    expect(testState.refreshAtom).toHaveBeenCalledOnce();
-  });
+  it.each([USAGE_THREAD_BREAKDOWN_SINCE, USAGE_CONTRACT_VERSION])(
+    "waits for summary publication before refreshing contract-%i thread rows",
+    async (contractVersion) => {
+      testState.environments = testState.environments.map((entry) => ({
+        ...entry,
+        summary: entry.summary === null ? null : { ...entry.summary, contractVersion },
+      }));
+      const summary = deferred();
+      testState.refreshUsage.mockReturnValue(summary.promise);
+      await act(() => {
+        renderer?.update(
+          <Probe selected={new Set([EnvironmentId.make("a")])} refreshThreads={true} />,
+        );
+      });
+      const refreshing = latest.refresh();
+      expect(testState.refreshAtom).not.toHaveBeenCalled();
+      await act(async () => {
+        summary.resolve();
+        await refreshing;
+      });
+      expect(testState.refreshAtom).toHaveBeenCalledOnce();
+    },
+  );
 });
 
 it("refreshes thread keys with the new window and newly published providers", async () => {

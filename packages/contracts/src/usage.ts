@@ -21,15 +21,16 @@ import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./ba
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 7 as const;
+export const USAGE_CONTRACT_VERSION = 8 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
  * v5 only adds `grok` to {@link UsageProviderKind}; v6 adds optional project
- * attribution to buckets; v7 adds the separate thread-breakdown RPC. v4
- * Claude/Codex buckets remain valid, so mixed-version environments keep those
- * totals instead of treating every older server as stale.
+ * attribution to buckets; v7 adds the separate thread-breakdown RPC; v8 adds
+ * optional cache-write costs. v4 Claude/Codex buckets remain valid, so
+ * mixed-version environments keep those totals instead of treating every older
+ * server as stale.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 /** First contract version whose buckets carry project attribution. */
@@ -122,6 +123,12 @@ export const UsageBucket = Schema.Struct({
    * rather than derived on the client.
    */
   cacheSavingsUsd: Schema.Number,
+  /**
+   * Estimated cost of the cache-creation tokens in this bucket at the model's
+   * cache-write rate. A subset of `costUsd` when the bucket is model-priced.
+   * Absent from summaries written before this field existed.
+   */
+  cacheWriteUsd: Schema.optional(Schema.Number),
   costSource: UsageCostSource,
   /** Distinct assistant responses, after de-duplication. */
   records: NonNegativeInt,
@@ -249,13 +256,16 @@ export const UsageAgentRow = Schema.Struct({
   agentId: TrimmedNonEmptyString,
   totals: UsageTokenTotals,
   costUsd: Schema.Number,
+  /** `null` when cache-creation tokens lack a model-priced estimate. */
+  cacheWriteUsd: Schema.NullOr(Schema.Number),
 });
 export type UsageAgentRow = typeof UsageAgentRow.Type;
 
 /**
  * One day of a thread's model-priced cost split by component. Days the thread
- * was idle are omitted. Unpriced and provider-reported records contribute to
- * the row totals but not this split.
+ * was idle are omitted. Unpriced records contribute tokens to the row totals
+ * but nothing here. Provider-reported totals also stay out because an
+ * estimated split could disagree with the provider's authoritative total.
  */
 export const UsageThreadDayCost = Schema.Struct({
   day: UsageDay,
@@ -284,6 +294,8 @@ export const UsageThreadRow = Schema.Struct({
   project: Schema.optional(TrimmedNonEmptyString),
   totals: UsageTokenTotals,
   costUsd: Schema.Number,
+  /** `null` when cache-creation tokens lack a model-priced estimate. */
+  cacheWriteUsd: Schema.NullOr(Schema.Number),
   /** Distinct transcript sessions folded into this row. */
   sessions: NonNegativeInt,
   /** Lower-cost thread rows represented by this grouped remainder row. */
