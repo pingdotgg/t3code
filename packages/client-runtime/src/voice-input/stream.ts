@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 
 const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechStreamEvent));
 
-/** Audio stays bounded while the environment acknowledges one chunk at a time. */
+/** Audio stays bounded while the environment acknowledges a small send window. */
 export async function openSpeechStream(input: {
   readonly url: string;
   readonly signal: AbortSignal;
@@ -35,7 +35,8 @@ export async function openSpeechStream(input: {
   void final.catch(() => undefined);
   let queue: Uint8Array<ArrayBuffer>[] = [];
   let queuedBytes = 0;
-  let inFlight = 0;
+  const inFlight: number[] = [];
+  let inFlightBytes = 0;
   let finishing = false;
   let finishSent = false;
   let closed = false;
@@ -63,14 +64,16 @@ export async function openSpeechStream(input: {
   };
   const abort = () => fail(new Error("Voice transcription was cancelled."), false);
   const pump = () => {
-    if (!isReady || closed || inFlight || finishSent) return;
-    const chunk = queue.shift();
-    if (chunk) {
-      inFlight = chunk.byteLength;
+    if (!isReady || closed || finishSent) return;
+    while (inFlight.length < 2 && queue.length) {
+      const chunk = queue.shift()!;
+      inFlight.push(chunk.byteLength);
+      inFlightBytes += chunk.byteLength;
       queuedBytes -= chunk.byteLength;
       socket.send(chunk);
       armTimeout();
-    } else if (finishing) {
+    }
+    if (finishing && !queue.length && !inFlight.length) {
       finishSent = true;
       socket.send(JSON.stringify({ type: "finish" }));
       armTimeout();
@@ -88,13 +91,14 @@ export async function openSpeechStream(input: {
           resolveReady();
           break;
         case "update":
-          if (!inFlight || message.revision < revision)
+          if (!inFlight.length || message.revision < revision)
             throw new Error("Unexpected speech stream response.");
           revision = message.revision;
-          inFlight = 0;
+          inFlightBytes -= inFlight.shift()!;
           clearTimeout(timer);
           if (message.text) input.onText(message.text);
           pump();
+          if (inFlight.length) armTimeout();
           break;
         case "finished":
           if (!finishSent) throw new Error("Unexpected speech stream response.");
@@ -124,7 +128,7 @@ export async function openSpeechStream(input: {
     feed: (pcm: Float32Array) => {
       if (closed || finishing) return;
       const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
-      if (queuedBytes + inFlight + bytes.byteLength > SPEECH_STREAM_MAX_QUEUED_BYTES) {
+      if (queuedBytes + inFlightBytes + bytes.byteLength > SPEECH_STREAM_MAX_QUEUED_BYTES) {
         fail(new Error("Voice recordings are limited to five minutes."));
         return;
       }

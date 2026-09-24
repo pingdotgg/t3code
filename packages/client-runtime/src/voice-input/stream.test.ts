@@ -40,7 +40,7 @@ it("drains ordered PCM before finishing and replaces tentative hypotheses", asyn
   stream.feed(new Float32Array([0.1]));
   stream.feed(new Float32Array([0.2]));
   const final = stream.finish();
-  expect(socket.sent).toHaveLength(1);
+  expect(socket.sent).toHaveLength(2);
   socket.receive({ type: "update", revision: 1, text: { committed: "hello ", tentative: "were" } });
   expect(socket.sent).toHaveLength(2);
   expect(new Float32Array((socket.sent[1] as Uint8Array).slice().buffer)[0]).toBeCloseTo(0.2);
@@ -64,13 +64,15 @@ it("coalesces queued audio into fewer inference frames", async () => {
   stream.feed(new Float32Array([0.1]));
   stream.feed(new Float32Array([0.2]));
   stream.feed(new Float32Array([0.3]));
+  stream.feed(new Float32Array([0.4]));
+  expect(socket.sent).toHaveLength(2);
   socket.receive({ type: "update", revision: 1, text: null });
 
-  const queued = new Float32Array((socket.sent[1] as Uint8Array).slice().buffer);
+  expect(socket.sent).toHaveLength(3);
+  const queued = new Float32Array((socket.sent[2] as Uint8Array).slice().buffer);
   expect(queued).toHaveLength(2);
-  expect(queued[0]).toBeCloseTo(0.2);
-  expect(queued[1]).toBeCloseTo(0.3);
-  expect(socket.sent).toHaveLength(2);
+  expect(queued[0]).toBeCloseTo(0.3);
+  expect(queued[1]).toBeCloseTo(0.4);
   abort.abort();
 });
 
@@ -89,7 +91,7 @@ it("cancels in-flight audio without sending queued frames or accepting late text
   stream.feed(new Float32Array([0.2]));
   abort.abort();
   socket.receive({ type: "update", revision: 1, text: { committed: "late", tentative: "" } });
-  expect(socket.sent).toHaveLength(1);
+  expect(socket.sent).toHaveLength(2);
   expect(onText).not.toHaveBeenCalled();
   await expect(stream.finish()).rejects.toThrow("cancelled");
 });
@@ -104,4 +106,15 @@ it("fails on disconnect and times out stalled inference", async () => {
   await vi.advanceTimersByTimeAsync(120_000);
   await expect(second.stream.finish()).rejects.toThrow("stopped responding");
   expect(second.socket.closed).toBe(true);
+});
+
+it("times out when the last pipelined chunk never receives an acknowledgement", async () => {
+  vi.useFakeTimers();
+  const { socket, stream } = await connect();
+  stream.feed(new Float32Array([0.1]));
+  stream.feed(new Float32Array([0.2]));
+  socket.receive({ type: "update", revision: 1, text: null });
+  const final = stream.finish();
+  await vi.advanceTimersByTimeAsync(120_000);
+  await expect(final).rejects.toThrow("stopped responding");
 });
