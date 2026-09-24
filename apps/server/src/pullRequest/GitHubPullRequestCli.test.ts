@@ -9,6 +9,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
 import * as GitHubGraphQlBudget from "../sourceControl/githubGraphQlBudget.ts";
@@ -709,28 +710,123 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads a host that refuses the stacks preview as not stacked", () =>
+  it.effect.each([
+    ["gh: Not Found (HTTP 404)", "", null],
+    ["HTTP 404: Not Found (https://github.example/api/v3/repos/acme/web/stacks)", "", null],
+    ["gh: Resource not accessible by integration (HTTP 403)", undefined, "GitHubCliCommandError"],
+    ["gh: Service Unavailable (HTTP 503)", undefined, "GitHubCliCommandError"],
+    ["dial tcp: lookup github.example: no such host", undefined, "GitHubCliCommandError"],
+    [
+      "To get started with GitHub CLI, please run: gh auth login",
+      undefined,
+      "GitHubCliAuthenticationError",
+    ],
+    ["gh: Too Many Requests (HTTP 429)", undefined, "GitHubCliRateLimitError"],
+    ["gh: Not Found (HTTP 404)", "gh: Not Found (HTTP 404)", "GitHubPullRequestNotFoundError"],
+    ["gh: Not Found (HTTP 404)", "gh: Bad credentials (HTTP 401)", "GitHubCliCommandError"],
+    [
+      "gh: Not Found (HTTP 404)",
+      "gh: Resource not accessible by integration (HTTP 403)",
+      "GitHubCliCommandError",
+    ],
+    [
+      "gh: Not Found (HTTP 404)",
+      "To get started with GitHub CLI, please run: gh auth login",
+      "GitHubCliAuthenticationError",
+    ],
+    ["gh: Not Found (HTTP 404)", "gh: Service Unavailable (HTTP 503)", "GitHubCliCommandError"],
+    ["gh: Not Found (HTTP 404)", "gh: Too Many Requests (HTTP 429)", "GitHubCliRateLimitError"],
+  ] as const)(
+    "classifies the raw stacks API failure: %s; PR access: %s",
+    ([stderr, accessStderr, expectedError]) =>
+      Effect.gen(function* () {
+        const run = vi.fn<ProcessRunner.ProcessRunner["Service"]["run"]>();
+        for (const response of accessStderr === undefined ? [stderr] : [stderr, accessStderr]) {
+          run.mockReturnValueOnce(
+            Effect.succeed({
+              stdout: "",
+              stderr: response,
+              code: ChildProcessSpawner.ExitCode(response === "" ? 0 : 1),
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            }),
+          );
+        }
+        const vcs = yield* VcsProcess.make.pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, { run }),
+        );
+        const github = yield* GitHubCli.make.pipe(
+          Effect.provideService(VcsProcess.VcsProcess, vcs),
+          Effect.provide(Layer.merge(GitHubGraphQlBudget.layer, SourceControlRateLimit.layer)),
+        );
+        const cli = yield* GitHubPullRequestCli.make.pipe(
+          Effect.provideService(GitHubCli.GitHubCli, github),
+          Effect.provide(GitHubGraphQlBudget.layer),
+        );
+        const read = cli.getPullRequestStack({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.example",
+          number: 7,
+          includeDetails: true,
+        });
+        if (expectedError === null) {
+          assert.isNull(yield* read);
+        } else {
+          const error = yield* Effect.flip(read);
+          assert.strictEqual(error._tag, expectedError);
+        }
+        expect(run).toHaveBeenCalledTimes(accessStderr === undefined ? 1 : 2);
+        if (accessStderr !== undefined) {
+          expect(run.mock.calls[1]?.[0]?.args).toEqual([
+            "api",
+            "--hostname",
+            "github.example",
+            "repos/acme/web/pulls/7/commits?per_page=1",
+            "--silent",
+          ]);
+        }
+      }),
+  );
+
+  it.effect("preserves a known stack when its detail request returns not found", () =>
     Effect.gen(function* () {
-      // The CLI classifies a missing preview endpoint as not found.
       mockedExecute.mockReturnValueOnce(
-        Effect.fail(
-          new GitHubCli.GitHubPullRequestNotFoundError({
-            command: "gh",
-            cwd: "/w",
-            cause: new Error("HTTP 404: Not Found (https://api.github.com/repos/acme/web/stacks)"),
-          }),
+        Effect.succeed(
+          output(
+            encodeJson([
+              {
+                number: 3,
+                url: "https://api.github.com/repos/acme/web/stacks/3",
+                base: { ref: "main" },
+                pull_requests: [{ number: 7, head: { ref: "feat/two" }, state: "open" }],
+              },
+            ]),
+          ),
         ),
       );
-      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
-
-      const stack = yield* cli.getPullRequestStack({
+      const failure = new GitHubCli.GitHubPullRequestNotFoundError({
+        command: "gh",
         cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
+        cause: new Error("gh: Not Found (HTTP 404)"),
       });
+      mockedExecute.mockReturnValueOnce(Effect.fail(failure));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const error = yield* Effect.flip(
+        cli.getPullRequestStack({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+          includeDetails: true,
+        }),
+      );
 
-      assert.isNull(stack);
+      assert.strictEqual(error, failure);
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
     }),
   );
 

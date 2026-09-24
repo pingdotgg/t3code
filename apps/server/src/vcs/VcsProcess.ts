@@ -93,6 +93,7 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
       (normalized.includes("could not resolve to a pullrequest") ||
         normalized.includes("repository.pullrequest") ||
         normalized.includes("no pull requests found for branch") ||
+        normalized.includes("http 404") ||
         normalized.includes("pull request not found"))) ||
     (command === "glab" &&
       (normalized.includes("merge request not found") ||

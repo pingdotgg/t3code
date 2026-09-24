@@ -2131,6 +2131,23 @@ export const make = Effect.gen(function* () {
                   }),
                 );
           }),
+          // A listing 404 can mean an unsupported stacks API or denied access. The PR
+          // commits endpoint requires the same pull-request read permission as stacks.
+          Effect.catchTags({
+            GitHubPullRequestNotFoundError: () =>
+              github
+                .execute({
+                  cwd: input.cwd,
+                  args: [
+                    "api",
+                    "--hostname",
+                    input.host,
+                    `repos/${owner}/${name}/pulls/${input.number}/commits?per_page=1`,
+                    "--silent",
+                  ],
+                })
+                .pipe(Effect.as(null)),
+          }),
           Effect.flatMap((stack) => {
             if (!input.includeDetails || stack === null) return Effect.succeed(stack);
             return github
@@ -2158,11 +2175,6 @@ export const make = Effect.gen(function* () {
                       );
                 }),
               );
-          }),
-          // Hosts without the stacks preview return 404. Other failures must preserve the
-          // previously synced stack and let the caller retry.
-          Effect.catchTags({
-            GitHubPullRequestNotFoundError: () => Effect.succeed(null),
           }),
         );
     },
