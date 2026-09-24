@@ -31,6 +31,7 @@ import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { ProviderAdapterEventStreamError } from "./ProviderAdapter.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
@@ -155,6 +156,9 @@ function makeLocalCommandHarness(input: {
   readonly previousMessages?: ReadonlyArray<string>;
   readonly logoutFailure?: string;
   readonly openFailure?: unknown;
+  /** Opens the session, then fails preparing its provider thread. */
+  readonly ensureThreadFailure?: unknown;
+  readonly advanceRunBeforeEnsureThreadFailure?: boolean;
   readonly interruptOpen?: boolean;
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
@@ -356,7 +360,33 @@ function makeLocalCommandHarness(input: {
               ),
             ),
           )
-        : Effect.die("A local command must not open a native session."),
+        : "ensureThreadFailure" in input
+          ? Effect.succeed({
+              ensureThread: () =>
+                Effect.sync(() => {
+                  if (input.advanceRunBeforeEnsureThreadFailure === true) {
+                    projection = {
+                      ...projection,
+                      runs: projection.runs.map((candidate) =>
+                        candidate.id === runId
+                          ? { ...candidate, status: "running", startedAt: now }
+                          : candidate,
+                      ),
+                    };
+                  }
+                }).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new ProviderAdapterEventStreamError({
+                        driver: ProviderDriverKind.make("pi"),
+                        providerSessionId,
+                        cause: input.ensureThreadFailure,
+                      }),
+                    ),
+                  ),
+                ),
+            } as never)
+          : Effect.die("A local command must not open a native session."),
   );
   const startRootRun = vi.fn(() => Effect.die("A local command must not start a native turn."));
   const tryHandlePromptCommand = vi.fn(() =>
@@ -518,6 +548,80 @@ effectIt.effect("keeps a session-open failure retryable when terminal persistenc
     expect(harness.writeIfRunCurrent).toHaveBeenCalledOnce();
     expect(harness.startRootRun).not.toHaveBeenCalled();
     expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+    expect(harness.events).toEqual([]);
+  }),
+);
+
+effectIt.effect("terminalizes a starting run when its final start attempt fails after open", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      ensureThreadFailure: new Error("pi process exited with code 1"),
+    });
+
+    yield* harness.start;
+
+    expect(harness.open).toHaveBeenCalledOnce();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    const projection = harness.projection();
+    expect(projection.runs.at(-1)).toMatchObject({ status: "failed", startedAt: null });
+    expect(projection.attempts[0]).toMatchObject({ status: "failed", startedAt: null });
+    expect(projection.nodes[0]).toMatchObject({ status: "failed", startedAt: null });
+    expect(projection.turnItems).toMatchObject([
+      {
+        type: "error",
+        status: "failed",
+        title: "Provider turn failed to start",
+        failure: { class: "provider_error", message: "pi process exited with code 1" },
+      },
+    ]);
+  }),
+);
+
+effectIt.effect("leaves the run starting when a post-open failure will be retried", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      ensureThreadFailure: new Error("pi process exited with code 1"),
+    });
+
+    const error = yield* harness.startWithRetry.pipe(Effect.flip);
+
+    expect(error._tag).toBe("ProviderTurnStartError");
+    expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+  }),
+);
+
+effectIt.effect("keeps a post-open failure retryable when terminal persistence fails", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      ensureThreadFailure: new Error("pi process exited with code 1"),
+      writeFailure: new Error("database unavailable"),
+    });
+
+    const error = yield* harness.start.pipe(Effect.flip);
+
+    expect(error._tag).toBe("ProviderTurnStartError");
+    expect(harness.writeIfRunCurrent).toHaveBeenCalledOnce();
+    expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+    expect(harness.events).toEqual([]);
+  }),
+);
+
+effectIt.effect("keeps a final post-open failure when the run already left starting", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      ensureThreadFailure: new Error("pi process exited with code 1"),
+      advanceRunBeforeEnsureThreadFailure: true,
+    });
+
+    const error = yield* harness.start.pipe(Effect.flip);
+
+    expect(error._tag).toBe("ProviderTurnStartError");
+    expect(harness.projection().runs.at(-1)?.status).toBe("running");
     expect(harness.events).toEqual([]);
   }),
 );
