@@ -119,6 +119,9 @@ export function VoiceInputSetup(props: {
                   {props.error}
                 </p>
               ) : null}
+              <Button variant="link" size="sm" onClick={() => openSettings("local-voice-input")}>
+                Choose another model or language in Voice settings
+              </Button>
             </section>
           ) : (
             <section className="space-y-4 text-sm">
@@ -208,31 +211,22 @@ export function VoiceInputSetup(props: {
                   </span>
                 </p>
               </div>
+              <Button variant="link" size="sm" onClick={() => openSettings("dictionary")}>
+                Explore these features in Voice settings
+              </Button>
             </section>
           )}
         </WizardPanel>
-        <WizardFooter
-          leading={
-            props.step === 0 ? (
-              props.downloading ? (
+        <WizardFooter>
+          {props.step === 0 ? (
+            <>
+              {props.downloading ? (
                 <Button variant="outline" onClick={props.onCancelDownload}>
                   Cancel download
                 </Button>
               ) : (
                 <DialogClose render={<Button variant="outline" />}>Not now</DialogClose>
-              )
-            ) : undefined
-          }
-        >
-          {props.step === 0 ? (
-            <>
-              <Button
-                variant="outline"
-                disabled={props.downloading}
-                onClick={() => openSettings("local-voice-input")}
-              >
-                Models & languages
-              </Button>
+              )}
               <Button disabled={props.downloading || !status} onClick={props.onDownload}>
                 {props.downloading
                   ? "Downloading…"
@@ -242,12 +236,7 @@ export function VoiceInputSetup(props: {
               </Button>
             </>
           ) : (
-            <>
-              <Button variant="outline" onClick={() => openSettings("dictionary")}>
-                Voice settings
-              </Button>
-              <Button onClick={props.onStartRecording}>Start recording</Button>
-            </>
+            <Button onClick={props.onStartRecording}>Start recording</Button>
           )}
         </WizardFooter>
       </WizardPopup>
