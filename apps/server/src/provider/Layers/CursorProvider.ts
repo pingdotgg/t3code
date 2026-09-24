@@ -692,7 +692,7 @@ function getCursorFallbackModels(
 }
 
 /** Timeout for `agent about` — it's slower than a simple `--version` probe. */
-const ABOUT_TIMEOUT_MS = 8_000;
+const ABOUT_TIMEOUT_MS = 10_000;
 
 /** Strip ANSI escape sequences so we can parse plain key-value lines. */
 function stripAnsi(text: string): string {

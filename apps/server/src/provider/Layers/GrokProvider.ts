@@ -54,9 +54,9 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
 
-const VERSION_PROBE_TIMEOUT_MS = 4_000;
+const VERSION_PROBE_TIMEOUT_MS = 10_000;
 // `initialize` is a single local round trip, so this is generous even on slow machines.
-const GROK_ACP_INITIALIZE_TIMEOUT_MS = 8_000;
+const GROK_ACP_INITIALIZE_TIMEOUT_MS = 10_000;
 const GROK_API_KEY_ENV = "XAI_API_KEY";
 
 const GROK_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [

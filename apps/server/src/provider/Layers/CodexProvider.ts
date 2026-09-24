@@ -48,7 +48,7 @@ import {
 } from "./codexUsageLimits.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
-const RATE_LIMITS_PROBE_TIMEOUT_MS = 3_000;
+const RATE_LIMITS_PROBE_TIMEOUT_MS = 10_000;
 
 type CodexRateLimitsProbe =
   | {

@@ -33,7 +33,10 @@ const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",
   showInteractionModeToggle: false,
 } as const;
-const OPENCODE_VERSION_PROBE_TIMEOUT = "4 seconds";
+// `opencode --version` takes 2-4s on Windows (Node shim + Defender cold start),
+// so the old 4s cap flapped to Unavailable under any load. Match the 10s auth-probe
+// budget used for Codex/Grok (see AUTH_PROBE_TIMEOUT_MS).
+const OPENCODE_VERSION_PROBE_TIMEOUT = "10 seconds";
 
 class OpenCodeProbeError extends Data.TaggedError("OpenCodeProbeError")<{
   readonly cause?: unknown;
