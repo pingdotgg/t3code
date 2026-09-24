@@ -1,4 +1,6 @@
-# Welcome wizard
+---
+title: Welcome wizard
+---
 
 T3 Code shows a setup flow when you open a new installation or connect to the
 hosted app for the first time. Existing workspaces skip this flow.

@@ -1,0 +1,31 @@
+/* Starlight theme overrides so /docs matches the rest of t3.codes. */
+:root {
+  --sl-font: "DM Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --sl-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  --sl-color-accent-low: oklch(0.28 0.08 250);
+  --sl-color-accent: oklch(0.68 0.17 250);
+  --sl-color-accent-high: oklch(0.88 0.07 250);
+  --sl-color-white: #fafafa;
+  --sl-color-gray-1: #e4e4e7;
+  --sl-color-gray-2: #d4d4d8;
+  --sl-color-gray-3: #a1a1aa;
+  --sl-color-gray-4: #71717a;
+  --sl-color-gray-5: #3f3f46;
+  --sl-color-gray-6: #18181b;
+  --sl-color-black: #09090b;
+}
+
+:root[data-theme="light"] {
+  --sl-color-accent-low: oklch(0.92 0.04 250);
+  --sl-color-accent: oklch(0.52 0.19 250);
+  --sl-color-accent-high: oklch(0.34 0.13 250);
+  --sl-color-white: #09090b;
+  --sl-color-gray-1: #18181b;
+  --sl-color-gray-2: #3f3f46;
+  --sl-color-gray-3: #52525b;
+  --sl-color-gray-4: #71717a;
+  --sl-color-gray-5: #d4d4d8;
+  --sl-color-gray-6: #f4f4f5;
+  --sl-color-gray-7: #fafafa;
+  --sl-color-black: #ffffff;
+}

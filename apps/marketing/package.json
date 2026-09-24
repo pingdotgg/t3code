@@ -11,8 +11,10 @@
     "typecheck": "astro check"
   },
   "dependencies": {
+    "@astrojs/markdown-satteri": "^0.4.2",
+    "@astrojs/starlight": "^0.42.3",
     "@t3tools/shared": "workspace:*",
-    "astro": "^7.2.8",
+    "astro": "^7.3.4",
     "sharp": "0.35.4"
   },
   "devDependencies": {

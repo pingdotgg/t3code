@@ -1,4 +1,6 @@
-# Install T3 Code
+---
+title: Install T3 Code
+---
 
 T3 Code runs coding agents on your computer and lets you control them from its
 desktop, web, or mobile app. Set up the machine where the agents will work first.

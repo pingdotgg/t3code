@@ -1,4 +1,6 @@
-# Settings and project overrides
+---
+title: Settings and project overrides
+---
 
 On web and desktop, the "Applying settings for …" sentence at the top of Settings pages picks
 the project and environment a change applies to. Pages that only hold device preferences, such as

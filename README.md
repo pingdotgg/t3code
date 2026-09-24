@@ -78,7 +78,7 @@ We are (mostly) not accepting contributions yet. Small fixes may be considered. 
 
 ## Documentation
 
-Full docs live in [docs/](./docs). There's no docs site yet.
+User guides are published at [t3.codes/docs](https://t3.codes/docs). Their sources and the maintainer docs live in [docs/](./docs).
 
 - [Install and first run](./docs/user/install.md)
 - [Permission modes](./docs/user/permission-modes.md)

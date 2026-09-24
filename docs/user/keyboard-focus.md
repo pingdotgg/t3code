@@ -1,4 +1,6 @@
-# Keyboard focus
+---
+title: Keyboard focus
+---
 
 The command palette keeps focus while open. Closing it returns focus to the composer.
 While the palette or model picker is open, number shortcuts select its entries instead of

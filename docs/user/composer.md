@@ -1,4 +1,6 @@
-# Messages and context
+---
+title: Messages and context
+---
 
 Give the agent a task in the composer. Add files, quote a previous response, or
 include a skill when the task needs more context.

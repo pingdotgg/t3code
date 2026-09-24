@@ -1,4 +1,6 @@
-# SnapShots
+---
+title: SnapShots
+---
 
 A SnapShot captures the window you are working in and attaches it to your current draft. The
 attachment carries the app name and window title, and when available the app icon and the window's

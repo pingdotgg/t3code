@@ -1,4 +1,6 @@
-# Import browser sessions
+---
+title: Import browser sessions
+---
 
 The desktop app can import cookies from another browser so you can reuse its signed-in sessions
 in the preview browser.

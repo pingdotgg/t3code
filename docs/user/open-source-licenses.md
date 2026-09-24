@@ -1,4 +1,6 @@
-# Open source licenses
+---
+title: Open source licenses
+---
 
 T3 Code includes third-party software and adapted assets. To read their license and attribution
 notices:

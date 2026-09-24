@@ -1,4 +1,6 @@
-# Updating T3 Code
+---
+title: Updating T3 Code
+---
 
 The app you use and the server running your agents can be on different machines.
 When a server is behind your web or desktop app, an update notice appears in the

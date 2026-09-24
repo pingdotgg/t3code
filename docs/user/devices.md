@@ -1,4 +1,6 @@
-# Devices
+---
+title: Devices
+---
 
 The Device panel shows a live iOS Simulator or Android Emulator next to a
 thread, so you can watch an agent verify mobile work and tap the device

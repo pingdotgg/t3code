@@ -1,4 +1,6 @@
-# Codex
+---
+title: Codex
+---
 
 For one account, use the default Codex provider with your normal Codex login.
 [Provider setup](./install.md#providers) covers installation, Settings > Providers,
