@@ -23,6 +23,7 @@ export {
   getEnvironmentSpeechModels,
   getEnvironmentSpeechStatus,
   postProcessEnvironmentTranscript,
+  prepareEnvironmentSpeechModel,
   updateEnvironmentSpeechCustomWords,
   updateEnvironmentSpeechFillerWordRemoval,
   updateEnvironmentSpeechAcceleration,

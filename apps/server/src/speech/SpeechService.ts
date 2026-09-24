@@ -147,6 +147,7 @@ export class SpeechService extends Context.Service<
       modelId: string,
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly transcribe: (pcmBytes: Uint8Array) => Effect.Effect<string, SpeechError>;
+    readonly prepareModel: Effect.Effect<void, SpeechError>;
     readonly updateCustomWords: (
       words: readonly string[],
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
@@ -390,6 +391,15 @@ export const make = Effect.gen(function* () {
   );
 
   return SpeechService.of({
+    prepareModel: readSettings("model preparation").pipe(
+      Effect.flatMap((settings) =>
+        exclusive("model preparation", async () => {
+          if (unsupportedReason)
+            throw new SpeechUnsupportedPlatformError({ platform, architecture });
+          await loadModel(selectedModel(settings), lifetime.signal, settings.speechAcceleration);
+        }),
+      ),
+    ),
     startStream: Effect.gen(function* () {
       const operation = "streaming transcription";
       if (closing || activeOperation) return yield* new SpeechBusyError({ operation });

@@ -779,6 +779,13 @@ export class EnvironmentVoiceBodyLimit extends HttpApiMiddleware.Service<Environ
 
 export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
   .add(
+    HttpApiEndpoint.post("prepareModel", "/api/voice/models/prepare", {
+      headers: OptionalBearerHeaders,
+      success: Schema.Void,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.get("status", "/api/voice/status", {
       headers: OptionalBearerHeaders,
       success: EnvironmentSpeechStatus,

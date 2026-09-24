@@ -119,6 +119,18 @@ const correctionWordLayer = SpeechService.layer.pipe(
   Layer.provide(NodeServices.layer),
 );
 
+it.effect("prepares a batch model before audio arrives and reuses it for transcription", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    yield* speech.selectModel("fallback-model");
+    yield* speech.prepareModel;
+    expect(loadNative).toHaveBeenCalledTimes(1);
+    expect(native.transcribe).not.toHaveBeenCalled();
+    expect(yield* speech.transcribe(pcm())).toBe("hello");
+    expect(loadNative).toHaveBeenCalledTimes(1);
+  }).pipe(Effect.provide(layer)),
+);
+
 it.effect("recognizes the correction word without showing it in the dictionary", () =>
   Effect.gen(function* () {
     native.transcribe.mockResolvedValueOnce({ text: "I want orange, er, yellow." });

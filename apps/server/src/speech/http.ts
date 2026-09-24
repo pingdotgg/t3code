@@ -42,6 +42,24 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
     const speech = yield* SpeechService.SpeechService;
     return handlers
       .handle(
+        "prepareModel",
+        Effect.fn("environment.voice.prepareModel")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          yield* speech.prepareModel.pipe(
+            Effect.catchTags({
+              SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),
+              SpeechUnsupportedPlatformError: () =>
+                failEnvironmentInvalidRequest("speech_unavailable"),
+              SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechDownloadCancelledError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
+              SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
+            }),
+          );
+        }),
+      )
+      .handle(
         "status",
         Effect.fn("environment.voice.status")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);

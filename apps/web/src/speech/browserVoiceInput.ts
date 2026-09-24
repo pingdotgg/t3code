@@ -2,6 +2,7 @@ import {
   getEnvironmentSpeechStatus,
   getEnvironmentSpeechStreamUrl,
   openSpeechStream,
+  prepareEnvironmentSpeechModel,
   throwIfVoiceTranscriptionAborted,
   transcribeEnvironmentPcm,
   VoiceTranscriptionError,
@@ -216,9 +217,18 @@ export function createBrowserVoiceInputPlatform(input: {
             streaming: { finish: async () => (await session).finish() },
           };
         }
+        const preparedModel = runtime.runPromise(
+          prepareEnvironmentSpeechModel(input.prepared),
+          options,
+        );
+        // A failed warmup should still allow the normal transcription path to retry.
+        void preparedModel.catch(() => undefined);
         return {
           locale: "en",
-          transcribe: transcribeRecording,
+          transcribe: async (uri, transcriptionOptions) => {
+            await preparedModel.catch(() => undefined);
+            return transcribeRecording(uri, transcriptionOptions);
+          },
         };
       },
     },

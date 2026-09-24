@@ -103,6 +103,15 @@ export const getEnvironmentSpeechModels = (prepared: PreparedConnection) =>
     run: ({ client, headers }) => client.models({ headers }),
   });
 
+export const prepareEnvironmentSpeechModel = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.prepareModel(),
+    run: ({ client, headers }) => client.prepareModel({ headers }),
+  });
+
 export const downloadEnvironmentSpeechModel = (prepared: PreparedConnection, modelId: string) =>
   request({
     group: "voice",
