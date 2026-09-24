@@ -49,7 +49,14 @@ import {
 
 type ThreadCliDispatchCommand = Extract<
   ClientOrchestrationCommand,
-  { type: "thread.snooze" | "thread.unsnooze" | "thread.create" | "thread.turn.start" }
+  {
+    type:
+      | "thread.snooze"
+      | "thread.unsnooze"
+      | "thread.create"
+      | "thread.turn.start"
+      | "thread.turn.interrupt";
+  }
 >;
 
 export class ThreadCliUsageError extends Schema.TaggedError<ThreadCliUsageError>()(
@@ -534,6 +541,59 @@ const threadSnoozeCommand = Command.make("snooze", {
   ),
 );
 
+const threadInterruptCommand = Command.make("interrupt", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  wait: Flag.boolean("wait").pipe(
+    Flag.withDescription("Wait until the turn has actually stopped."),
+    Flag.withDefault(false),
+  ),
+}).pipe(
+  Command.withDescription("Stop a thread's running turn."),
+  Command.withHandler((flags) =>
+    runThreadCli(
+      flags,
+      Effect.fn("threadInterruptCli")(function* ({ snapshot, dispatch, refreshSnapshot }) {
+        const thread = resolveThreadCliTarget(
+          snapshot,
+          Option.getOrUndefined(flags.thread),
+          process.env,
+        );
+        if (!isThreadCliTurnActive(thread)) {
+          yield* Console.log(`${thread.id} (${thread.title}) has no running turn.`);
+          return;
+        }
+        const turnId = thread.session?.activeTurnId ?? thread.latestTurn?.turnId;
+        yield* dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make(yield* commandUuid),
+          threadId: thread.id,
+          ...(turnId ? { turnId } : {}),
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+        });
+        if (flags.wait) {
+          yield* Effect.gen(function* () {
+            while (true) {
+              yield* Effect.sleep(Duration.seconds(1));
+              const current = (yield* refreshSnapshot).threads.find((t) => t.id === thread.id);
+              if (current === undefined || !isThreadCliTurnActive(current)) return;
+            }
+          }).pipe(
+            Effect.timeoutOrElse({
+              duration: Duration.minutes(2),
+              orElse: () =>
+                Effect.fail(
+                  new ThreadCliUsageError({ message: `${thread.id} did not stop within 2m.` }),
+                ),
+            }),
+          );
+        }
+        yield* Console.log(`Interrupted ${thread.id} (${thread.title}).`);
+      }),
+    ),
+  ),
+);
+
 const threadWakeCommand = Command.make("wake", {
   ...projectLocationFlags,
   thread: threadArgument,
@@ -1003,6 +1063,7 @@ export const threadCommand = Command.make("thread").pipe(
     threadShowCommand,
     threadSendCommand,
     threadNewCommand,
+    threadInterruptCommand,
     threadSnoozeCommand,
     threadWakeCommand,
     threadStatusCommand,
