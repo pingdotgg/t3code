@@ -54,6 +54,8 @@ import {
 import type { ProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
 
 export const CLAUDE_AGENT_SDK_REPLAY_PROTOCOL = "claude-agent-sdk.query" as const;
+/** Replay label of the result that ends a recorded background wake turn. */
+export const CLAUDE_BACKGROUND_WAKE_RESULT_LABEL = "result:background-wake";
 
 const ClaudeAgentSdkReplayTranscript = Schema.Struct({
   provider: Schema.Literal(CLAUDE_PROVIDER),
@@ -1322,6 +1324,9 @@ async function recordClaudeStreamingQuery(input: {
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly enablePermissionCallback?: boolean;
   readonly permissionDecision?: ProviderApprovalDecision;
+  // Keep recording through the turn Claude starts on its own when background
+  // work launched by the last prompt finishes after that prompt settled.
+  readonly awaitBackgroundWake?: boolean;
 }): Promise<void> {
   const promptQueue = new RecordingPromptQueue();
   const canUseTool: CanUseTool | undefined =
@@ -1399,6 +1404,25 @@ async function recordClaudeStreamingQuery(input: {
       });
       if (!completed) {
         throw new Error(`Claude streaming query ended before prompt ${index + 1} completed.`);
+      }
+    }
+    if (input.awaitBackgroundWake === true) {
+      const woke = await recordMessagesUntilTurnResult({
+        iterator,
+        entries: input.entries,
+        scenario: input.scenario,
+      });
+      if (!woke) {
+        throw new Error("Claude streaming query ended before its background wake turn completed.");
+      }
+      // A distinct label lets a replay gate hold the wake result until the
+      // continuation run that ingests it has started.
+      const wakeResult = input.entries.at(-1);
+      if (wakeResult?.type === "emit_inbound") {
+        input.entries[input.entries.length - 1] = {
+          ...wakeResult,
+          label: CLAUDE_BACKGROUND_WAKE_RESULT_LABEL,
+        };
       }
     }
     promptQueue.close();
@@ -2364,6 +2388,7 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly enablePermissionCallback?: boolean;
   readonly permissionDecision?: ProviderApprovalDecision;
+  readonly awaitBackgroundWake?: boolean;
   readonly interruptAfter?: "prompt_offer" | "tool_use";
 }): Promise<ClaudeAgentSdkReplayTranscript> {
   if (input.prompts.length === 0) {
@@ -2395,6 +2420,9 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
       ...(input.enablePermissionCallback === undefined
         ? {}
         : { enablePermissionCallback: input.enablePermissionCallback }),
+      ...(input.awaitBackgroundWake === undefined
+        ? {}
+        : { awaitBackgroundWake: input.awaitBackgroundWake }),
       ...(input.permissionDecision === undefined
         ? {}
         : { permissionDecision: input.permissionDecision }),
@@ -2562,6 +2590,7 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
       ...(input.permissionDecision === undefined
         ? {}
         : { permissionDecision: input.permissionDecision }),
+      ...(input.awaitBackgroundWake === true ? { awaitBackgroundWake: true } : {}),
       ...(input.interruptAfter === undefined ? {} : { interruptAfter: input.interruptAfter }),
       generatedBy: "recordClaudeAgentSdkReplayTranscript",
       ...recordingMetadata,
