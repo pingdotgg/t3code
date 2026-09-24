@@ -1,7 +1,7 @@
 // @effect-diagnostics globalDate:off
 /**
- * Folds parsed transcript records into `(day, hourStart?, provider, model)`
- * buckets.
+ * Folds parsed transcript records into `(day, hourStart?, project, provider,
+ * model)` buckets.
  *
  * `Intl.DateTimeFormat` is the only reliable way to resolve a wall-clock day in
  * an arbitrary IANA zone, and it takes a `Date`. That is why the raw `Date`
@@ -12,9 +12,16 @@
  *
  * @module usageAggregation
  */
-import type { UsageBucket, UsageDay, UsageResolution, UsageTokenTotals } from "@t3tools/contracts";
+import type {
+  ProjectId,
+  UsageBucket,
+  UsageDay,
+  UsageResolution,
+  UsageTokenTotals,
+} from "@t3tools/contracts";
 
 import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
+import { normalizeUsagePath } from "./usagePaths.ts";
 import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
 
 /**
@@ -23,7 +30,7 @@ import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
  * `en-CA` yields ISO-ordered parts, which is why it is used here rather than
  * assembling the day from `Date` getters (those are host-local only).
  */
-function makeDayFormatter(timeZone: string): (timestampMs: number) => string {
+export function makeDayFormatter(timeZone: string): (timestampMs: number) => string {
   let format: Intl.DateTimeFormat;
   try {
     format = new Intl.DateTimeFormat("en-CA", {
@@ -46,6 +53,60 @@ function makeDayFormatter(timeZone: string): (timestampMs: number) => string {
 
 const HOUR_MS = 60 * 60 * 1000;
 
+export interface ProjectRoot {
+  readonly projectId: ProjectId;
+  readonly workspaceRoot: string;
+  readonly title: string;
+  /** Soft-deleted projects still attribute: the spend happened while they existed. */
+  readonly deleted: boolean;
+}
+
+export interface ProjectAttribution {
+  readonly projectId: ProjectId;
+  readonly title: string;
+}
+
+/**
+ * Builds the cwd → project resolver used by {@link AggregateOptions}.
+ *
+ * Deepest root wins, so a session in a project nested inside another
+ * attributes to the inner one. Live projects outrank deleted ones sharing a
+ * root, since deleting and re-creating a project leaves both rows. Results are
+ * memoised per cwd; a scan sees few distinct cwds but many records.
+ */
+export function makeProjectResolver(
+  projects: readonly ProjectRoot[],
+): (cwd: string) => ProjectAttribution | null {
+  const roots = projects
+    .map((project) => ({
+      projectId: project.projectId,
+      root: normalizeUsagePath(project.workspaceRoot),
+      title: project.title.trim(),
+      deleted: project.deleted,
+    }))
+    .filter((entry) => entry.root.length > 0 && entry.title.length > 0)
+    .sort((a, b) => b.root.length - a.root.length || Number(a.deleted) - Number(b.deleted));
+
+  const byCwd = new Map<string, ProjectAttribution | null>();
+  return (cwd) => {
+    if (cwd.length === 0) return null;
+    if (byCwd.has(cwd)) return byCwd.get(cwd) ?? null;
+    const normalizedCwd = normalizeUsagePath(cwd);
+    let resolved: ProjectAttribution | null = null;
+    for (const { projectId, root, title } of roots) {
+      if (
+        normalizedCwd === root ||
+        (root === "/" ? normalizedCwd.startsWith("/") : normalizedCwd.startsWith(`${root}/`))
+      ) {
+        resolved = { projectId, title };
+        break;
+      }
+    }
+    byCwd.set(cwd, resolved);
+    return resolved;
+  };
+}
+
 interface MutableBucket {
   totals: UsageTokenTotals;
   costUsd: number;
@@ -65,6 +126,11 @@ export interface AggregateOptions {
   readonly resolution?: UsageResolution;
   readonly sinceTimeMs?: number;
   readonly untilTimeMs?: number;
+  /**
+   * Maps a record's working directory to the project it ran in, or `null` when
+   * it ran outside every project. Omitting it leaves every bucket unattributed.
+   */
+  readonly resolveProject?: ((cwd: string) => ProjectAttribution | null) | undefined;
 }
 
 export interface AggregateResult {
@@ -146,7 +212,17 @@ export class UsageAggregator {
             this.#hourlyWindow.sinceTimeMs +
               Math.floor((record.timestampMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS) * HOUR_MS,
           ).toISOString();
-    const key = `${day}\u0000${hourStart}\u0000${record.provider}\u0000${record.model}`;
+    // The key is parsed back apart on NUL, which project fields must not carry.
+    const resolvedProject = this.#options.resolveProject?.(record.cwd) ?? null;
+    const projectAttribution =
+      resolvedProject !== null
+        ? "project"
+        : this.#options.resolveProject === undefined || record.cwd.length === 0
+          ? "unknown"
+          : "outside";
+    const projectId = resolvedProject?.projectId.replaceAll("\u0000", "") ?? "";
+    const project = resolvedProject?.title.replaceAll("\u0000", "") ?? "";
+    const key = `${day}\u0000${hourStart}\u0000${projectAttribution}\u0000${projectId}\u0000${project}\u0000${record.provider}\u0000${record.model}`;
     let bucket = this.#buckets.get(key);
     if (bucket === undefined) {
       bucket = {
@@ -187,10 +263,21 @@ export class UsageAggregator {
   finish(): AggregateResult {
     const buckets: UsageBucket[] = [];
     for (const [key, bucket] of this.#buckets) {
-      const [day = "", hourStart = "", provider = "", model = ""] = key.split("\u0000");
+      const [
+        day = "",
+        hourStart = "",
+        projectAttribution = "unknown",
+        projectId = "",
+        project = "",
+        provider = "",
+        model = "",
+      ] = key.split("\u0000");
       buckets.push({
         day: day as UsageDay,
         ...(hourStart === "" ? {} : { hourStart }),
+        ...(project === "" ? {} : { project }),
+        ...(projectId === "" ? {} : { projectId: projectId as ProjectId }),
+        projectAttribution: projectAttribution as UsageBucket["projectAttribution"],
         provider: provider as UsageBucket["provider"],
         model,
         totals: bucket.totals,
@@ -207,6 +294,8 @@ export class UsageAggregator {
       (a, b) =>
         a.day.localeCompare(b.day) ||
         (a.hourStart ?? "").localeCompare(b.hourStart ?? "") ||
+        (a.project ?? "").localeCompare(b.project ?? "") ||
+        (a.projectId ?? "").localeCompare(b.projectId ?? "") ||
         a.provider.localeCompare(b.provider) ||
         a.model.localeCompare(b.model),
     );
