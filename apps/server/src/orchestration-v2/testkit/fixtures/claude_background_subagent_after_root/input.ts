@@ -1,4 +1,4 @@
-import { CLAUDE_BACKGROUND_WAKE_RESULT_LABEL } from "../../../Adapters/ClaudeAdapterV2.testkit.ts";
+import { claudeBackgroundWakeResultLabel } from "../../../Adapters/ClaudeAdapterV2.testkit.ts";
 import type { OrchestratorFixtureInput } from "../shared.ts";
 
 export const CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT = [
@@ -24,7 +24,7 @@ export function claudeBackgroundSubagentAfterRootInput(): OrchestratorFixtureInp
         status: "running",
         waitForTurnItemType: "assistant_message",
       },
-      { type: "release_replay_gate", label: CLAUDE_BACKGROUND_WAKE_RESULT_LABEL },
+      { type: "release_replay_gate", label: claudeBackgroundWakeResultLabel(1) },
       { type: "await_run_status", targetRunIndex: 2, status: "completed" },
     ],
   };

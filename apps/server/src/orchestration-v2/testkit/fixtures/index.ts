@@ -4,6 +4,12 @@ import { claudeBackgroundSubagentAfterRootInput } from "./claude_background_suba
 import { assertClaudeBackgroundSubagentAfterRootOutput } from "./claude_background_subagent_after_root/output.ts";
 import { claudeBackgroundTaskAfterRootInput } from "./claude_background_task_after_root/input.ts";
 import { assertClaudeBackgroundTaskAfterRootOutput } from "./claude_background_task_after_root/output.ts";
+import { claudeBackgroundSubagentLifecycleInput } from "./claude_background_subagent_lifecycle/input.ts";
+import { assertClaudeBackgroundSubagentLifecycleOutput } from "./claude_background_subagent_lifecycle/output.ts";
+import { claudeBackgroundTaskInterruptInput } from "./claude_background_task_interrupt/input.ts";
+import { assertClaudeBackgroundTaskInterruptOutput } from "./claude_background_task_interrupt/output.ts";
+import { claudeBackgroundTaskWakeInput } from "./claude_background_task_wake/input.ts";
+import { assertClaudeBackgroundTaskWakeOutput } from "./claude_background_task_wake/output.ts";
 import { claudeIdleResumeInput } from "./claude_idle_resume/input.ts";
 import { assertClaudeIdleResumeOutput } from "./claude_idle_resume/output.ts";
 import { claudeLocalBashTaskInput } from "./claude_local_bash_task/input.ts";
@@ -128,6 +134,54 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         ),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertClaudeBackgroundTaskAfterRootOutput,
+      },
+    ],
+  },
+  {
+    name: "claude_background_subagent_lifecycle",
+    buildInput: claudeBackgroundSubagentLifecycleInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_background_subagent_lifecycle/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertClaudeBackgroundSubagentLifecycleOutput,
+      },
+    ],
+  },
+  {
+    name: "claude_background_task_interrupt",
+    buildInput: claudeBackgroundTaskInterruptInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_background_task_interrupt/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertClaudeBackgroundTaskInterruptOutput,
+      },
+    ],
+  },
+  {
+    name: "claude_background_task_wake",
+    buildInput: claudeBackgroundTaskWakeInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_background_task_wake/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertClaudeBackgroundTaskWakeOutput,
       },
     ],
   },

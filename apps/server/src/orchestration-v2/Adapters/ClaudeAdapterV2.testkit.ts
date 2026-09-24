@@ -54,8 +54,12 @@ import {
 import type { ProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
 
 export const CLAUDE_AGENT_SDK_REPLAY_PROTOCOL = "claude-agent-sdk.query" as const;
-/** Replay label of the result that ends a recorded background wake turn. */
-export const CLAUDE_BACKGROUND_WAKE_RESULT_LABEL = "result:background-wake";
+/**
+ * Replay label of the result that ends the Nth (1-based) background wake turn
+ * of a recording, so a replay gate can hold it.
+ */
+export const claudeBackgroundWakeResultLabel = (wakeNumber: number) =>
+  `result:background-wake:${wakeNumber}`;
 
 const ClaudeAgentSdkReplayTranscript = Schema.Struct({
   provider: Schema.Literal(CLAUDE_PROVIDER),
@@ -1044,6 +1048,37 @@ function sanitizeSdkMessageForReplay(input: {
   return message;
 }
 
+// Lets a recording wait a bounded time for the next frame without losing it
+// when the wait times out: the pending read is handed to the next reader.
+class RecordingMessageReader implements AsyncIterator<SDKMessage> {
+  private pending: Promise<IteratorResult<SDKMessage>> | undefined;
+  private readonly iterator: AsyncIterator<SDKMessage>;
+
+  constructor(iterator: AsyncIterator<SDKMessage>) {
+    this.iterator = iterator;
+  }
+
+  next(): Promise<IteratorResult<SDKMessage>> {
+    const pending = this.pending ?? this.iterator.next();
+    this.pending = undefined;
+    return pending;
+  }
+
+  // The next frame if it arrives within `ms`, left unread for next().
+  async peekWithin(ms: number): Promise<SDKMessage | undefined> {
+    const pending = this.pending ?? this.iterator.next();
+    this.pending = pending;
+    return Promise.race([
+      // A failed read stays pending for next() to surface.
+      pending.then(
+        (result) => (result.done === true ? undefined : result.value),
+        () => undefined,
+      ),
+      Effect.runPromise(Effect.sleep(Duration.millis(ms))).then(() => undefined),
+    ]);
+  }
+}
+
 class RecordingPromptQueue implements AsyncIterable<SDKUserMessage> {
   private readonly pending: Array<IteratorResult<SDKUserMessage>> = [];
   private readonly waiters: Array<(result: IteratorResult<SDKUserMessage>) => void> = [];
@@ -1229,17 +1264,41 @@ async function recordMessagesUntilIteratorDone(input: {
   }
 }
 
-function sdkMessageHasToolUse(message: SDKMessage): boolean {
+// A queued wake turn starts right after the turn before it settles.
+const CLAUDE_RECORDING_WAKE_QUIET_MS = 5_000;
+
+function isSystemInitFrame(message: SDKMessage | undefined): boolean {
+  return message?.type === "system" && message.subtype === "init";
+}
+
+function isTaskNotificationOriginResultFrame(frame: unknown): boolean {
+  if (typeof frame !== "object" || frame === null || Reflect.get(frame, "type") !== "result") {
+    return false;
+  }
+  const origin: unknown = Reflect.get(frame, "origin");
   return (
-    message.type === "assistant" && message.message.content.some((part) => part.type === "tool_use")
+    typeof origin === "object" &&
+    origin !== null &&
+    Reflect.get(origin, "kind") === "task-notification"
   );
 }
 
-async function recordMessagesUntilFirstToolUse(input: {
+function sdkMessageHasRootToolUse(message: SDKMessage): boolean {
+  return (
+    message.type === "assistant" &&
+    message.parent_tool_use_id === null &&
+    message.message.content.some((part) => part.type === "tool_use")
+  );
+}
+
+async function recordMessagesUntilToolUse(input: {
   readonly iterator: AsyncIterator<SDKMessage>;
   readonly entries: Array<ProviderReplayEntry>;
   readonly scenario: string;
+  // Returns after the assistant frame carrying this many root tool uses.
+  readonly toolUseCount: number;
 }): Promise<void> {
+  let toolUses = 0;
   while (true) {
     const next = await input.iterator.next();
     if (next.done === true) {
@@ -1257,8 +1316,11 @@ async function recordMessagesUntilFirstToolUse(input: {
     if (replayMessage.type === "result") {
       throw new Error(`Claude query completed before ${input.scenario} started a tool use.`);
     }
-    if (sdkMessageHasToolUse(replayMessage)) {
-      return;
+    if (sdkMessageHasRootToolUse(replayMessage)) {
+      toolUses += 1;
+      if (toolUses >= input.toolUseCount) {
+        return;
+      }
     }
   }
 }
@@ -1311,9 +1373,11 @@ async function recordClaudeStreamingQuery(input: {
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly enablePermissionCallback?: boolean;
   readonly permissionDecision?: ProviderApprovalDecision;
-  // Keep recording through the turn Claude starts on its own when background
-  // work launched by the last prompt finishes after that prompt settled.
-  readonly awaitBackgroundWake?: boolean;
+  // Per prompt, how many turns Claude starts on its own for background work
+  // (task-notification-origin results) to wait for before the next prompt.
+  // Setting it also records any further wake turn that starts within a short
+  // quiet window, so the next prompt is not offered while one is queued.
+  readonly backgroundWakeCounts?: ReadonlyArray<number>;
 }): Promise<void> {
   const promptQueue = new RecordingPromptQueue();
   const canUseTool: CanUseTool | undefined =
@@ -1374,7 +1438,35 @@ async function recordClaudeStreamingQuery(input: {
     prompt: promptQueue,
     options,
   });
-  const iterator = queryRuntime[Symbol.asyncIterator]();
+  const iterator = new RecordingMessageReader(queryRuntime[Symbol.asyncIterator]());
+  let wakeNumber = 0;
+  // Records one turn and labels it when Claude started it for background work.
+  const recordTurn = async (promptNumber: number): Promise<"prompt" | "wake"> => {
+    const completed = await recordMessagesUntilTurnResult({
+      iterator,
+      entries: input.entries,
+      scenario: input.scenario,
+    });
+    if (!completed) {
+      throw new Error(
+        `Claude streaming query ended before prompt ${promptNumber} and its background wakes completed.`,
+      );
+    }
+    const resultEntry = input.entries.at(-1);
+    const resultFrame = resultEntry?.type === "emit_inbound" ? resultEntry.frame : undefined;
+    if (!isTaskNotificationOriginResultFrame(resultFrame)) {
+      return "prompt";
+    }
+    wakeNumber += 1;
+    // A distinct label lets a replay gate hold the wake result until the
+    // continuation run that ingests it has started.
+    input.entries[input.entries.length - 1] = {
+      type: "emit_inbound",
+      label: claudeBackgroundWakeResultLabel(wakeNumber),
+      frame: resultFrame,
+    };
+    return "wake";
+  };
   try {
     for (const [index, prompt] of input.prompts.entries()) {
       const message = makeClaudeUserMessage({ text: prompt });
@@ -1384,32 +1476,25 @@ async function recordClaudeStreamingQuery(input: {
         frame: makeClaudePromptOfferFrame(message),
       });
       promptQueue.offer(message);
-      const completed = await recordMessagesUntilTurnResult({
-        iterator,
-        entries: input.entries,
-        scenario: input.scenario,
-      });
-      if (!completed) {
-        throw new Error(`Claude streaming query ended before prompt ${index + 1} completed.`);
+      // A task notification that lands during a turn queues a wake turn the
+      // CLI can run before this prompt's turn, so results are told apart by
+      // origin rather than by arrival order.
+      let promptSettled = false;
+      let wakes = 0;
+      const expectedWakes = input.backgroundWakeCounts?.[index] ?? 0;
+      while (!promptSettled || wakes < expectedWakes) {
+        if ((await recordTurn(index + 1)) === "prompt") {
+          promptSettled = true;
+        } else {
+          wakes += 1;
+        }
       }
-    }
-    if (input.awaitBackgroundWake === true) {
-      const woke = await recordMessagesUntilTurnResult({
-        iterator,
-        entries: input.entries,
-        scenario: input.scenario,
-      });
-      if (!woke) {
-        throw new Error("Claude streaming query ended before its background wake turn completed.");
-      }
-      // A distinct label lets a replay gate hold the wake result until the
-      // continuation run that ingests it has started.
-      const wakeResult = input.entries.at(-1);
-      if (wakeResult?.type === "emit_inbound") {
-        input.entries[input.entries.length - 1] = {
-          ...wakeResult,
-          label: CLAUDE_BACKGROUND_WAKE_RESULT_LABEL,
-        };
+      if (input.backgroundWakeCounts !== undefined) {
+        // Every turn opens with system:init; frames from still-running
+        // subagents are left for the next prompt's recording.
+        while (isSystemInitFrame(await iterator.peekWithin(CLAUDE_RECORDING_WAKE_QUIET_MS))) {
+          await recordTurn(index + 1);
+        }
       }
     }
     promptQueue.close();
@@ -2104,6 +2189,8 @@ export async function recordInterruptedClaudeQuery(input: {
   readonly promptOfferLabel: string;
   readonly interruptLabel: string;
   readonly interruptAfter?: "prompt_offer" | "tool_use";
+  // With interruptAfter "tool_use": interrupt after this many root tool uses.
+  readonly interruptAfterToolUses?: number;
   readonly enableTools?: boolean;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly permissionMode?: ClaudeAgentSdkQueryOptions["permissionMode"];
@@ -2151,10 +2238,11 @@ export async function recordInterruptedClaudeQuery(input: {
 
   try {
     if (input.interruptAfter === "tool_use") {
-      await recordMessagesUntilFirstToolUse({
+      await recordMessagesUntilToolUse({
         iterator,
         entries: input.entries,
         scenario: input.scenario,
+        toolUseCount: input.interruptAfterToolUses ?? 1,
       });
       await Effect.runPromise(Effect.sleep(Duration.millis(250)));
     }
@@ -2214,6 +2302,7 @@ async function recordClaudeInterruptQuery(input: {
   readonly disallowedTools?: ReadonlyArray<string>;
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly interruptAfter?: "prompt_offer" | "tool_use";
+  readonly interruptAfterToolUses?: number;
 }): Promise<void> {
   if (input.prompts.length !== 1) {
     throw new Error(
@@ -2233,6 +2322,9 @@ async function recordClaudeInterruptQuery(input: {
     promptOfferLabel: "prompt.offer:1",
     interruptLabel: "query.interrupt:1",
     ...(input.interruptAfter === undefined ? {} : { interruptAfter: input.interruptAfter }),
+    ...(input.interruptAfterToolUses === undefined
+      ? {}
+      : { interruptAfterToolUses: input.interruptAfterToolUses }),
     ...(input.enableTools === undefined ? {} : { enableTools: input.enableTools }),
     ...(input.tools === undefined ? {} : { tools: input.tools }),
     ...(input.permissionMode === undefined ? {} : { permissionMode: input.permissionMode }),
@@ -2375,8 +2467,9 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly enablePermissionCallback?: boolean;
   readonly permissionDecision?: ProviderApprovalDecision;
-  readonly awaitBackgroundWake?: boolean;
+  readonly backgroundWakeCounts?: ReadonlyArray<number>;
   readonly interruptAfter?: "prompt_offer" | "tool_use";
+  readonly interruptAfterToolUses?: number;
 }): Promise<ClaudeAgentSdkReplayTranscript> {
   if (input.prompts.length === 0) {
     throw new Error(
@@ -2407,9 +2500,9 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
       ...(input.enablePermissionCallback === undefined
         ? {}
         : { enablePermissionCallback: input.enablePermissionCallback }),
-      ...(input.awaitBackgroundWake === undefined
+      ...(input.backgroundWakeCounts === undefined
         ? {}
-        : { awaitBackgroundWake: input.awaitBackgroundWake }),
+        : { backgroundWakeCounts: input.backgroundWakeCounts }),
       ...(input.permissionDecision === undefined
         ? {}
         : { permissionDecision: input.permissionDecision }),
@@ -2536,6 +2629,9 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
         ? {}
         : { allowDangerouslySkipPermissions: input.allowDangerouslySkipPermissions }),
       ...(input.interruptAfter === undefined ? {} : { interruptAfter: input.interruptAfter }),
+      ...(input.interruptAfterToolUses === undefined
+        ? {}
+        : { interruptAfterToolUses: input.interruptAfterToolUses }),
     });
   } else {
     await recordClaudeInterruptRestartQuery({
@@ -2577,8 +2673,13 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
       ...(input.permissionDecision === undefined
         ? {}
         : { permissionDecision: input.permissionDecision }),
-      ...(input.awaitBackgroundWake === true ? { awaitBackgroundWake: true } : {}),
+      ...(input.backgroundWakeCounts === undefined
+        ? {}
+        : { backgroundWakeCounts: [...input.backgroundWakeCounts] }),
       ...(input.interruptAfter === undefined ? {} : { interruptAfter: input.interruptAfter }),
+      ...(input.interruptAfterToolUses === undefined
+        ? {}
+        : { interruptAfterToolUses: input.interruptAfterToolUses }),
       generatedBy: "recordClaudeAgentSdkReplayTranscript",
       ...recordingMetadata,
     },
