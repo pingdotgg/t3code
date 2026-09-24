@@ -7,7 +7,6 @@ import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSetti
 import { Button } from "../ui/button";
 import { Dialog, DialogClose } from "../ui/dialog";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { Spinner } from "../ui/spinner";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
 
 export function VoiceInputSetup(props: {
@@ -92,23 +91,34 @@ export function VoiceInputSetup(props: {
                 </p>
               </div>
               {props.downloading ? (
-                <p role="status" className="flex items-center gap-2 text-muted-foreground">
-                  <Spinner size="xs" />
-                  {model?.state === "verifying"
-                    ? "Verifying model…"
-                    : progress === null
-                      ? "Downloading model…"
-                      : `Downloading model ${progress}%`}
-                </p>
+                <div role="status" className="space-y-1 text-muted-foreground">
+                  <div
+                    role="progressbar"
+                    aria-label="Speech model download progress"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={progress ?? undefined}
+                    className="h-1 overflow-hidden rounded-full bg-muted"
+                  >
+                    <div
+                      className="h-full bg-primary transition-[width] duration-200"
+                      style={{ width: `${progress ?? 0}%` }}
+                    />
+                  </div>
+                  <p className="text-xs">
+                    {model?.state === "verifying"
+                      ? "Verifying download…"
+                      : progress === null
+                        ? "Starting download…"
+                        : `${progress}% downloaded`}
+                  </p>
+                </div>
               ) : null}
               {props.error ? (
                 <p role="alert" className="text-destructive">
                   {props.error}
                 </p>
               ) : null}
-              <Button variant="link" size="sm" onClick={() => openSettings("local-voice-input")}>
-                Choose another model or language in Voice settings
-              </Button>
             </section>
           ) : (
             <section className="space-y-4 text-sm">
@@ -198,22 +208,31 @@ export function VoiceInputSetup(props: {
                   </span>
                 </p>
               </div>
-              <Button variant="link" size="sm" onClick={() => openSettings("dictionary")}>
-                Explore these features in Voice settings
-              </Button>
             </section>
           )}
         </WizardPanel>
-        <WizardFooter>
-          {props.step === 0 ? (
-            <>
-              {props.downloading ? (
+        <WizardFooter
+          leading={
+            props.step === 0 ? (
+              props.downloading ? (
                 <Button variant="outline" onClick={props.onCancelDownload}>
                   Cancel download
                 </Button>
               ) : (
                 <DialogClose render={<Button variant="outline" />}>Not now</DialogClose>
-              )}
+              )
+            ) : undefined
+          }
+        >
+          {props.step === 0 ? (
+            <>
+              <Button
+                variant="outline"
+                disabled={props.downloading}
+                onClick={() => openSettings("local-voice-input")}
+              >
+                Models & languages
+              </Button>
               <Button disabled={props.downloading || !status} onClick={props.onDownload}>
                 {props.downloading
                   ? "Downloading…"
@@ -223,7 +242,12 @@ export function VoiceInputSetup(props: {
               </Button>
             </>
           ) : (
-            <Button onClick={props.onStartRecording}>Start recording</Button>
+            <>
+              <Button variant="outline" onClick={() => openSettings("dictionary")}>
+                Voice settings
+              </Button>
+              <Button onClick={props.onStartRecording}>Start recording</Button>
+            </>
           )}
         </WizardFooter>
       </WizardPopup>
