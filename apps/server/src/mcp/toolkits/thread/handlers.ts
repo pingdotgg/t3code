@@ -95,8 +95,11 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
           code: "invalid_request",
           message: "The task was not found in the calling project.",
         });
+      // The caller's project rides into the dispatch transaction: a task
+      // moved to another project after the snapshot check is a missing row,
+      // never a run fired under this project's authority.
       const { task } = yield* scheduler
-        .runNow({ id: input.taskId })
+        .runNow({ id: input.taskId, projectId: caller.projectId })
         .pipe(Effect.mapError(unavailable));
       return {
         taskId: task.id,

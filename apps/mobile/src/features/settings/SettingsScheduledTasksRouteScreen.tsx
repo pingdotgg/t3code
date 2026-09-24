@@ -56,6 +56,7 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import {
+  buildScheduledTaskUpdateInput,
   editDraft,
   scheduledTaskDefaultModel,
   scheduleFromDraft,
@@ -557,6 +558,10 @@ function TaskForm({
     label: "scheduled task upsert",
     reportFailure: false,
   });
+  const update = useAtomCommand(serverEnvironment.updateScheduledTask, {
+    label: "scheduled task update",
+    reportFailure: false,
+  });
   const submissionPending = useRef(false);
   const [timePickerOpen, setTimePickerOpen] = useState(false);
   const taskMissing =
@@ -601,35 +606,57 @@ function TaskForm({
       Alert.alert("Project unavailable", "Choose a project in this environment.");
       return;
     }
-    const input: ScheduledTaskUpsertInput = {
-      ...(draft.task ? { id: draft.task.id, requireExisting: true } : {}),
-      title: draft.title.trim(),
-      prompt: draft.prompt.trim(),
-      projectId: draft.projectId,
-      modelSelection: draft.modelSelection,
-      schedule,
-      enabled: draft.enabled,
-      threadId: draft.task?.threadId ?? null,
-      workspaceStrategy:
-        draft.workspace === "root"
-          ? { type: "root" }
-          : draft.workspace === "existing_worktree"
-            ? { type: "existing_worktree", worktreePath: draft.checkoutPath.trim() }
-            : {
-                type: "worktree",
-                baseRef: draft.baseRef.trim() || "main",
-                startFromOrigin: draft.startFromOrigin,
-              },
-      runtimeMode: draft.runtimeMode,
-      interactionMode: draft.task?.interactionMode ?? "default",
-      creationSource: draft.task?.creationSource ?? "mobile",
-    };
     // Lock before React renders, and keep successful creates locked until the form closes.
     submissionPending.current = true;
     setSaving(true);
-    const result = await upsert({ environmentId, input });
+    let result: AtomCommandResult<unknown, unknown> | null;
+    if (draft.task !== null) {
+      // Existing tasks save as a dirty-field patch through the atomic update
+      // path: a stale editor can never overwrite fields another client
+      // changed, and a delete racing the save is a typed not-found, not a
+      // resurrection. `taskMissing` already guarantees the task is in the
+      // live list.
+      const liveTask = tasks.data?.tasks.find((task) => task.id === draft.task?.id);
+      if (liveTask === undefined) {
+        // The live list has not returned (or the task vanished between render
+        // and save) — fail loudly instead of silently discarding the edit.
+        setSaving(false);
+        submissionPending.current = false;
+        Alert.alert(
+          "Task unavailable",
+          "The task could not be loaded. Reopen it once the list has loaded and try again.",
+        );
+        return;
+      }
+      const patch = buildScheduledTaskUpdateInput(draft, liveTask);
+      result = patch === null ? null : await update({ environmentId, input: patch });
+    } else {
+      const input: ScheduledTaskUpsertInput = {
+        title: draft.title.trim(),
+        prompt: draft.prompt.trim(),
+        projectId: draft.projectId,
+        modelSelection: draft.modelSelection,
+        schedule,
+        enabled: draft.enabled,
+        threadId: null,
+        workspaceStrategy:
+          draft.workspace === "root"
+            ? { type: "root" }
+            : draft.workspace === "existing_worktree"
+              ? { type: "existing_worktree", worktreePath: draft.checkoutPath.trim() }
+              : {
+                  type: "worktree",
+                  baseRef: draft.baseRef.trim() || "main",
+                  startFromOrigin: draft.startFromOrigin,
+                },
+        runtimeMode: draft.runtimeMode,
+        interactionMode: "default",
+        creationSource: "mobile",
+      };
+      result = await upsert({ environmentId, input });
+    }
     setSaving(false);
-    if (result._tag === "Failure") {
+    if (result !== null && result._tag === "Failure") {
       submissionPending.current = false;
       failure("Could not save task", result);
       return;
