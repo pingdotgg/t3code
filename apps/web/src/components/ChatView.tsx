@@ -10351,7 +10351,7 @@ export default function ChatView(props: ChatViewProps) {
           // instead of leaving an invisible, focusable control behind.
           inert={rightPanelMaximized || undefined}
         >
-          {!(rightPanelPresent && shouldUseRightPanelSheet && activeThreadRef) &&
+          {!(rightPanelOpen && shouldUseRightPanelSheet && activeThreadRef) &&
             terminalDrawerControls}
           {mountedTerminalThreadRefs.map(
             ({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
