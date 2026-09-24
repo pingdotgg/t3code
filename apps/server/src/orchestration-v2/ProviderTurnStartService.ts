@@ -366,17 +366,18 @@ export const layer: Layer.Layer<
               } satisfies OrchestrationV2DomainEvent;
             }),
           );
-          yield* eventSink.writeIfRunCurrent({
+          const { committed } = yield* eventSink.writeIfRunCurrent({
             threadId: projection.thread.id,
             runId,
             activeAttemptId: attempt.id,
             expectedStatus: "starting",
             events,
           });
+          return committed;
         },
       );
       if ("startFailure" in input) {
-        yield* settleRunBeforeStart({
+        return yield* settleRunBeforeStart({
           signal: "provider-turn-start-failure",
           status: "failed",
           now: yield* DateTime.now,
@@ -392,7 +393,6 @@ export const layer: Layer.Layer<
             }),
           },
         });
-        return;
       }
       if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
         const isEmptyCompaction =
@@ -1202,12 +1202,18 @@ export const layer: Layer.Layer<
           const progress = { sessionOpened: false };
           return start(input, progress).pipe(
             // A final attempt that fails after its session opened fails the run instead of
-            // leaving it `starting` until the next server restart. If that write fails, the
-            // original error keeps the effect retryable.
+            // leaving it `starting` until the next server restart. The original error is kept
+            // when the run was not settled here, e.g. it already advanced past `starting` or
+            // the write failed, so the effect still records the failure.
             Effect.catch((cause) =>
               input.willRetry === true || !progress.sessionOpened
                 ? Effect.fail(cause)
-                : start({ ...input, startFailure: cause }).pipe(Effect.mapError(() => cause)),
+                : start({ ...input, startFailure: cause }).pipe(
+                    Effect.mapError(() => cause),
+                    Effect.flatMap((settled) =>
+                      settled === true ? Effect.void : Effect.fail(cause),
+                    ),
+                  ),
             ),
           );
         }).pipe(

@@ -158,6 +158,7 @@ function makeLocalCommandHarness(input: {
   readonly openFailure?: unknown;
   /** Opens the session, then fails preparing its provider thread. */
   readonly ensureThreadFailure?: unknown;
+  readonly advanceRunBeforeEnsureThreadFailure?: boolean;
   readonly interruptOpen?: boolean;
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
@@ -362,12 +363,27 @@ function makeLocalCommandHarness(input: {
         : "ensureThreadFailure" in input
           ? Effect.succeed({
               ensureThread: () =>
-                Effect.fail(
-                  new ProviderAdapterEventStreamError({
-                    driver: ProviderDriverKind.make("pi"),
-                    providerSessionId,
-                    cause: input.ensureThreadFailure,
-                  }),
+                Effect.sync(() => {
+                  if (input.advanceRunBeforeEnsureThreadFailure === true) {
+                    projection = {
+                      ...projection,
+                      runs: projection.runs.map((candidate) =>
+                        candidate.id === runId
+                          ? { ...candidate, status: "running", startedAt: now }
+                          : candidate,
+                      ),
+                    };
+                  }
+                }).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new ProviderAdapterEventStreamError({
+                        driver: ProviderDriverKind.make("pi"),
+                        providerSessionId,
+                        cause: input.ensureThreadFailure,
+                      }),
+                    ),
+                  ),
                 ),
             } as never)
           : Effect.die("A local command must not open a native session."),
@@ -590,6 +606,22 @@ effectIt.effect("keeps a post-open failure retryable when terminal persistence f
     expect(error._tag).toBe("ProviderTurnStartError");
     expect(harness.writeIfRunCurrent).toHaveBeenCalledOnce();
     expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+    expect(harness.events).toEqual([]);
+  }),
+);
+
+effectIt.effect("keeps a final post-open failure when the run already left starting", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      ensureThreadFailure: new Error("pi process exited with code 1"),
+      advanceRunBeforeEnsureThreadFailure: true,
+    });
+
+    const error = yield* harness.start.pipe(Effect.flip);
+
+    expect(error._tag).toBe("ProviderTurnStartError");
+    expect(harness.projection().runs.at(-1)?.status).toBe("running");
     expect(harness.events).toEqual([]);
   }),
 );
