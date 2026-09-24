@@ -4,7 +4,7 @@ import { ChevronDownIcon, XIcon } from "lucide-react";
 import type { ComponentProps } from "react";
 
 import { cn } from "~/lib/utils";
-import { Button, buttonVariants } from "../ui/button";
+import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 
 export type ComposerBannerVariant = "default" | "error" | "info" | "success" | "warning";
@@ -153,7 +153,7 @@ function Root({
   width = "fill",
   ...props
 }: ComponentProps<"div"> & {
-  density?: "default" | "comfortable";
+  density?: "default" | "comfortable" | "spacious";
   placement?: "attached" | "floating";
   variant?: ComposerBannerVariant;
   width?: "fill" | "content";
@@ -163,6 +163,7 @@ function Root({
       className={cn(
         "min-w-0 px-1 pt-(--composer-banner-padding-block) pb-[calc(var(--chat-composer-attachment-overlap)+var(--composer-banner-padding-block))] text-xs/4 [--composer-banner-icon-column:--spacing(7)] [--composer-banner-padding-block:--spacing(1)] sm:[--composer-banner-icon-column:--spacing(6)]",
         density === "comfortable" && "[--composer-banner-padding-block:--spacing(1.25)]",
+        density === "spacious" && "px-3 [--composer-banner-padding-block:--spacing(3)]",
         width === "content" ? "w-fit max-w-full flex-none" : "@container",
         className,
       )}
@@ -182,7 +183,7 @@ function Row({
   layout = "inline",
   ...props
 }: useRender.ComponentProps<"div"> & {
-  layout?: "inline" | "wrap-actions" | "wrap-actions-narrow";
+  layout?: "inline" | "wrap-actions" | "wrap-actions-narrow" | "approval";
 }) {
   const rowProps = {
     className: cn(
@@ -193,6 +194,7 @@ function Row({
         "@max-[400px]:*:data-[slot=composer-banner-content]:min-h-(--composer-banner-icon-column)",
       layout === "wrap-actions-narrow" &&
         "@max-[320px]:*:data-[slot=composer-banner-content]:min-h-(--composer-banner-icon-column)",
+      layout === "approval" && "items-start gap-x-2 gap-y-3",
       className,
     ),
     "data-composer-banner-row": "true",
@@ -212,6 +214,7 @@ function Icon({ className, ...props }: ComponentProps<"span">) {
       data-slot="composer-banner-icon"
       className={cn(
         "col-start-1 row-start-1 flex w-(--composer-banner-icon-column) min-w-0 flex-none items-center justify-center text-muted-foreground [&>svg]:size-3",
+        "group-data-[composer-banner-layout=approval]/banner-row:pt-0.5 group-data-[composer-banner-layout=approval]/banner-row:text-warning group-data-[composer-banner-layout=approval]/banner-row:[&>svg]:size-4",
         className,
       )}
       {...props}
@@ -225,6 +228,7 @@ function Content({ className, ...props }: ComponentProps<"span">) {
       data-slot="composer-banner-content"
       className={cn(
         "col-start-2 row-start-1 flex min-w-0 items-center gap-1 *:data-[slot=composer-banner-separator]:mx-0",
+        "@max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4",
         "group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:col-[1/3] group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-2 sm:group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-1.5",
         "group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-2 sm:group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-1.5",
         className,
@@ -252,7 +256,8 @@ function Actions({ className, ...props }: ComponentProps<"span">) {
       data-slot="composer-banner-actions"
       className={cn(
         "col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-1",
-        "@max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:col-start-2 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:col-end-4 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:row-start-2 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:-ms-2 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:justify-start",
+        "group-data-[composer-banner-layout=approval]/banner-row:self-center group-data-[composer-banner-layout=approval]/banner-row:gap-1.5 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-start-2 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:row-start-2",
+        "@max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:col-start-2 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:col-end-4 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:row-start-2 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:justify-end",
         "@max-[320px]:group-data-[composer-banner-layout=wrap-actions-narrow]/banner-row:has-[>:nth-child(2)]:col-start-2 @max-[320px]:group-data-[composer-banner-layout=wrap-actions-narrow]/banner-row:has-[>:nth-child(2)]:col-end-4 @max-[320px]:group-data-[composer-banner-layout=wrap-actions-narrow]/banner-row:has-[>:nth-child(2)]:row-start-2 @max-[320px]:group-data-[composer-banner-layout=wrap-actions-narrow]/banner-row:has-[>:nth-child(2)]:-ms-2 @max-[320px]:group-data-[composer-banner-layout=wrap-actions-narrow]/banner-row:has-[>:nth-child(2)]:justify-start",
         className,
       )}
@@ -274,16 +279,17 @@ function Children({ className, render, ...props }: useRender.ComponentProps<"div
 }
 
 /** Bounded banner content uses the app's scroll area and fades only overflowing edges. */
-function Scroll({ className, ...props }: ComponentProps<typeof ScrollArea>) {
+function Scroll({ className, children, ...props }: ComponentProps<typeof ScrollArea>) {
   return (
     <ScrollArea
+      radius="none"
       scrollFade
-      className={cn(
-        "h-auto max-h-[min(24rem,40dvh)] rounded-none [&>[data-slot=scroll-area-viewport][data-has-overflow-y]]:pe-2",
-        className,
-      )}
+      className={cn("h-auto max-h-[min(24rem,40dvh)]", className)}
       {...props}
-    />
+    >
+      {/* Clears the overlay scrollbar only once there is something to scroll. */}
+      <div className="[[data-has-overflow-y]>&]:pe-2">{children}</div>
+    </ScrollArea>
   );
 }
 
@@ -317,18 +323,18 @@ function Dot({ className, ...props }: ComponentProps<"span">) {
   );
 }
 
-function ToggleIcon({ expanded, className }: { expanded: boolean; className?: string }) {
+// Decorative: the row itself is the control, so this only matches Dismiss's box.
+function ToggleIcon({ expanded }: { expanded: boolean }) {
   return (
-    <span
-      aria-hidden
-      className={cn(
-        buttonVariants({ size: "icon-xs", variant: "ghost" }),
-        "pointer-events-none",
-        className,
-      )}
+    <Button
+      render={<span aria-hidden />}
+      size="icon-xs"
+      variant="ghost"
+      tabIndex={-1}
+      className="pointer-events-none"
     >
       <ChevronDownIcon className={cn("size-3.5", !expanded && "rotate-180")} />
-    </span>
+    </Button>
   );
 }
 

@@ -43,6 +43,10 @@
       "types": "./src/git.ts",
       "import": "./src/git.ts"
     },
+    "./githubMedia": {
+      "types": "./src/githubMedia.ts",
+      "import": "./src/githubMedia.ts"
+    },
     "./sourceControl": {
       "types": "./src/sourceControl.ts",
       "import": "./src/sourceControl.ts"
@@ -55,9 +59,17 @@
       "types": "./src/observability.ts",
       "import": "./src/observability.ts"
     },
+    "./otelEnvironment": {
+      "types": "./src/otelEnvironment.ts",
+      "import": "./src/otelEnvironment.ts"
+    },
     "./httpObservability": {
       "types": "./src/httpObservability.ts",
       "import": "./src/httpObservability.ts"
+    },
+    "./editor": {
+      "types": "./src/editor.ts",
+      "import": "./src/editor.ts"
     },
     "./shell": {
       "types": "./src/shell.ts",
@@ -118,10 +130,6 @@
     "./projectSettings": {
       "types": "./src/projectSettings.ts",
       "import": "./src/projectSettings.ts"
-    },
-    "./threadEnvMode": {
-      "types": "./src/threadEnvMode.ts",
-      "import": "./src/threadEnvMode.ts"
     },
     "./t3ProjectFile": {
       "types": "./src/t3ProjectFile.ts",
@@ -267,6 +275,10 @@
       "types": "./src/chatList.ts",
       "import": "./src/chatList.ts"
     },
+    "./nodeRuntime": {
+      "types": "./src/nodeRuntime.ts",
+      "import": "./src/nodeRuntime.ts"
+    },
     "./hostProcess": {
       "types": "./src/hostProcess.ts",
       "import": "./src/hostProcess.ts"
@@ -330,6 +342,10 @@
     "./cliRelease": {
       "types": "./src/cliRelease.ts",
       "import": "./src/cliRelease.ts"
+    },
+    "./gitPatchPath": {
+      "types": "./src/gitPatchPath.ts",
+      "import": "./src/gitPatchPath.ts"
     }
   },
   "scripts": {

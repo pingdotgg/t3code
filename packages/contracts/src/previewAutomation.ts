@@ -590,6 +590,15 @@ export const PreviewAutomationHostFocus = Schema.Struct({
   ...PreviewAutomationHostIdentity.fields,
   connectionId: PreviewAutomationConnectionId,
   focused: Schema.Boolean,
+  liveTabs: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        threadId: ThreadId,
+        tabId: PreviewTabId,
+        visible: Schema.optional(Schema.Boolean),
+      }),
+    ),
+  ),
 });
 export type PreviewAutomationHostFocus = typeof PreviewAutomationHostFocus.Type;
 

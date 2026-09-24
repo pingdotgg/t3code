@@ -17,6 +17,6 @@
   "dependencies": {
     "@distilled.cloud/aws": "workspace:*",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect"
+    "effect": "catalog:"
   }
 }

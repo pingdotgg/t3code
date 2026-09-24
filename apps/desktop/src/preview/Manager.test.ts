@@ -1,7 +1,10 @@
 import * as NodeVM from "node:vm";
 import { it as effectIt } from "@effect/vitest";
 import { DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER } from "@t3tools/contracts";
-import type { DesktopPreviewRecordingFrame } from "@t3tools/contracts";
+import type {
+  DesktopPreviewRecordingFrame,
+  DesktopPreviewRecordingInputEvent,
+} from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -2885,6 +2888,165 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect(
+    "restores the native cursor when recording startup fails, then allows a retry",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const host = makeTestHostWebContents();
+          host.executeJavaScript.mockResolvedValueOnce(false);
+          let cursorActive = false;
+          const cursorAtCapture: boolean[] = [];
+          const contents = Object.assign(
+            makeTestPreviewWebContents(
+              async () => {
+                cursorAtCapture.push(cursorActive);
+                return {
+                  toJPEG: () => Buffer.from("frame"),
+                  getSize: () => ({ width: 800, height: 600 }),
+                };
+              },
+              42,
+              host,
+            ),
+            {
+              send: (channel: string, active: unknown) => {
+                if (channel === "preview:recording-cursor") cursorActive = active === true;
+              },
+            },
+          );
+          fromId.mockReturnValue(contents as never);
+          yield* manager.createTab("tab_cursor");
+          yield* manager.registerWebview("tab_cursor", 42);
+          const failed = yield* Effect.exit(manager.startRecording("tab_cursor"));
+          expect(Exit.isFailure(failed)).toBe(true);
+          expect(cursorAtCapture).toEqual([true]);
+          expect(cursorActive).toBe(false);
+
+          yield* manager.startRecording("tab_cursor");
+          expect(cursorAtCapture).toEqual([true, true]);
+          expect(cursorActive).toBe(true);
+          yield* manager.stopRecording("tab_cursor");
+          expect(cursorActive).toBe(false);
+        }),
+      ),
+  );
+
+  effectIt.effect("restores the recording cursor after navigation only while recording", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const listeners = new Map<string, () => void>();
+        let cursorActive = false;
+        let cursorUpdated: (() => void) | undefined;
+        let inputOptions: unknown;
+        const options = { showKeyPresses: true, showMousePresses: false };
+        const contents = Object.assign(
+          makeTestPreviewWebContents(async () => ({
+            toJPEG: () => Buffer.from("frame"),
+            getSize: () => ({ width: 800, height: 600 }),
+          })),
+          {
+            on: (event: string, listener: () => void) => listeners.set(event, listener),
+            send: (channel: string, active: unknown, recordingOptions: unknown) => {
+              if (channel !== "preview:recording-cursor") return;
+              cursorActive = active === true;
+              inputOptions = recordingOptions;
+              cursorUpdated?.();
+            },
+          },
+        );
+        fromId.mockReturnValue(contents as never);
+        yield* manager.createTab("tab_cursor_reload");
+        yield* manager.registerWebview("tab_cursor_reload", 42);
+        yield* manager.startRecording("tab_cursor_reload", options);
+        for (const recording of [true, false]) {
+          if (!recording) yield* manager.stopRecording("tab_cursor_reload");
+          // A new document has lost the previous preload's cursor overlay.
+          cursorActive = false;
+          const restored = new Promise<void>((resolve) => {
+            cursorUpdated = resolve;
+          });
+          listeners.get("dom-ready")?.();
+          yield* Effect.promise(() => restored);
+          cursorUpdated = undefined;
+          expect(cursorActive).toBe(recording);
+          expect(inputOptions).toEqual(recording ? options : undefined);
+        }
+      }),
+    ),
+  );
+
+  effectIt.effect("gates recording decorations and isolates failed subscribers", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const callbacks = new Map<
+          string,
+          (event: unknown, input: unknown) => Fiber.Fiber<void, never> | undefined
+        >();
+        const contents = Object.assign(
+          makeTestPreviewWebContents(async () => ({
+            toJPEG: () => Buffer.from("frame"),
+            getSize: () => ({ width: 800, height: 600 }),
+          })),
+          {
+            ipc: {
+              on: (
+                channel: string,
+                callback: (event: unknown, input: unknown) => Fiber.Fiber<void, never> | undefined,
+              ) => callbacks.set(channel, callback),
+              off: vi.fn(),
+            },
+          },
+        );
+        fromId.mockReturnValue(contents as never);
+        yield* manager.createTab("tab_recording_input");
+        yield* manager.registerWebview("tab_recording_input", 42);
+        const received: DesktopPreviewRecordingInputEvent[] = [];
+        yield* manager.subscribeRecordingInputs(() => Effect.die("renderer unavailable"));
+        yield* manager.subscribeRecordingInputs((event) =>
+          Effect.sync(() => {
+            received.push(event);
+          }),
+        );
+        const send = (input: unknown) =>
+          Effect.gen(function* () {
+            const fiber = callbacks.get("preview:recording-input")?.(null, input);
+            if (fiber) yield* Fiber.join(fiber);
+          });
+        const key = { type: "key", label: "⌘C", held: true, width: 800 };
+        const pointer = {
+          type: "pointer",
+          phase: "down",
+          x: 120,
+          y: 80,
+          width: 800,
+          height: 600,
+        };
+        yield* send(key);
+        expect(received).toEqual([]);
+        yield* manager.startRecording("tab_recording_input", {
+          showKeyPresses: true,
+          showMousePresses: false,
+        });
+        yield* send(key);
+        yield* send(pointer);
+        yield* send({ ...key, width: 0 });
+        expect(received).toEqual([{ tabId: "tab_recording_input", input: key }]);
+        yield* manager.stopRecording("tab_recording_input");
+        yield* send(key);
+        expect(received).toHaveLength(1);
+        yield* manager.startRecording("tab_recording_input", {
+          showKeyPresses: false,
+          showMousePresses: true,
+        });
+        yield* send(key);
+        yield* send(pointer);
+        expect(received.at(-1)).toEqual({ tabId: "tab_recording_input", input: pointer });
+        expect(received).toHaveLength(2);
+      }),
+    ),
+  );
+
   effectIt.effect("continues native recording when the source warmup fails", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -3506,7 +3668,10 @@ describe("PreviewManager", () => {
             listeners.set(event, listener);
           }),
           once: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
-            listeners.set(event, listener);
+            listeners.set(event, (...args) => {
+              listeners.delete(event);
+              listener(...args);
+            });
           }),
           off: vi.fn(),
           ipc: { on: vi.fn(), off: vi.fn(), removeListener: vi.fn() },
@@ -3528,11 +3693,23 @@ describe("PreviewManager", () => {
         const pick = yield* manager.pickElement("tab_1").pipe(Effect.forkChild);
         yield* Effect.yieldNow;
 
-        listeners.get("did-start-navigation")?.({}, "about:blank", false, false);
+        listeners.get("did-start-navigation")?.({
+          url: "about:blank",
+          isSameDocument: false,
+          isMainFrame: false,
+          frame: null,
+        });
         yield* Effect.yieldNow;
         expect(pick.pollUnsafe()).toBeUndefined();
 
-        listeners.get("did-start-navigation")?.({}, "https://example.com/next", false, true);
+        listeners.get("did-start-navigation")?.({
+          url: "https://example.com/next",
+          isSameDocument: false,
+          isMainFrame: true,
+          frame: null,
+        });
+        yield* Effect.yieldNow;
+        expect(pick.pollUnsafe()).toBeDefined();
         expect(yield* Fiber.join(pick)).toBeNull();
       }),
     ),
@@ -3838,88 +4015,108 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("emits the resolved pointer target before dispatching an automation click", () =>
-    withManager((manager) =>
-      Effect.gen(function* () {
-        let humanInput: ((_event: unknown, signal: unknown) => void) | undefined;
-        const activity: string[] = [];
-        const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-          if (method === "Runtime.evaluate") {
-            return {
-              result: {
-                value: { width: 800, height: 600 },
-              },
-            };
-          }
-          if (method === "Input.dispatchMouseEvent" && params?.type === "mousePressed") {
-            activity.push("mousePressed");
-            humanInput?.({}, { kind: "pointer", x: params.x, y: params.y, button: 0 });
-          }
-          return undefined;
-        });
-        fromId.mockReturnValue({
-          id: 42,
-          isDestroyed: () => false,
-          getType: () => "webview",
-          getURL: () => "https://example.com",
-          getTitle: () => "Example",
-          isLoading: () => false,
-          isDevToolsOpened: () => false,
-          getZoomFactor: () => 1,
-          setZoomFactor: vi.fn(),
-          setAudioMuted: vi.fn(),
-          isCurrentlyAudible: () => false,
-          on: vi.fn(),
-          off: vi.fn(),
-          ipc: {
-            on: vi.fn((channel: string, listener: typeof humanInput) => {
-              if (channel === "preview:human-input") humanInput = listener;
-            }),
-            off: vi.fn(),
-          },
-          send: webviewSend,
-          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
-          setIgnoreMenuShortcuts: vi.fn(),
-          setWindowOpenHandler: vi.fn(),
-          debugger: {
-            isAttached: () => false,
-            attach: vi.fn(),
-            sendCommand,
+  effectIt.effect(
+    "records the resolved pointer target before dispatching an automation click",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          let humanInput: ((_event: unknown, signal: unknown) => void) | undefined;
+          const activity: string[] = [];
+          const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+            if (method === "Runtime.evaluate") {
+              return {
+                result: {
+                  value: { width: 800, height: 600 },
+                },
+              };
+            }
+            if (method === "Input.dispatchMouseEvent" && params?.type === "mousePressed") {
+              activity.push("mousePressed");
+              humanInput?.({}, { kind: "pointer", x: params.x, y: params.y, button: 0 });
+            }
+            return undefined;
+          });
+          fromId.mockReturnValue({
+            id: 42,
+            hostWebContents: makeTestHostWebContents(),
+            capturePage: vi.fn(async () => ({ toPNG: () => Buffer.from("frame") })),
+            setBackgroundThrottling: vi.fn(),
+            isDestroyed: () => false,
+            getType: () => "webview",
+            getURL: () => "https://example.com",
+            getTitle: () => "Example",
+            isLoading: () => false,
+            isDevToolsOpened: () => false,
+            getZoomFactor: () => 1,
+            setZoomFactor: vi.fn(),
+            setAudioMuted: vi.fn(),
+            isCurrentlyAudible: () => false,
             on: vi.fn(),
             off: vi.fn(),
-          },
-        } as never);
+            ipc: {
+              on: vi.fn((channel: string, listener: typeof humanInput) => {
+                if (channel === "preview:human-input") humanInput = listener;
+              }),
+              off: vi.fn(),
+            },
+            send: webviewSend,
+            navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+            setIgnoreMenuShortcuts: vi.fn(),
+            setWindowOpenHandler: vi.fn(),
+            debugger: {
+              isAttached: () => false,
+              attach: vi.fn(),
+              sendCommand,
+              on: vi.fn(),
+              off: vi.fn(),
+            },
+          } as never);
 
-        yield* manager.subscribePointerEvents((event) =>
-          Effect.sync(() => {
-            activity.push(event.phase);
-          }),
-        );
-        yield* manager.createTab("tab_1");
-        yield* manager.registerWebview("tab_1", 42);
-        const click = yield* manager
-          .automationClick("tab_1", { x: 120, y: 80 })
-          .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* TestClock.adjust(200);
-        yield* Fiber.join(click);
+          yield* manager.subscribePointerEvents((event) =>
+            Effect.sync(() => {
+              activity.push(event.phase);
+            }),
+          );
+          yield* manager.createTab("tab_1");
+          yield* manager.registerWebview("tab_1", 42);
+          yield* manager.startRecording("tab_1");
+          const click = yield* manager
+            .automationClick("tab_1", { x: 120, y: 80 })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* TestClock.adjust(200);
+          yield* Fiber.join(click);
 
-        expect(activity).toEqual(["move", "click", "mousePressed"]);
-        expect(sendCommand).toHaveBeenCalledWith("Input.dispatchMouseEvent", {
-          type: "mousePressed",
-          x: 120,
-          y: 80,
-          button: "left",
-          clickCount: 1,
-        });
-        expect(sendCommand).toHaveBeenCalledWith("Input.dispatchMouseEvent", {
-          type: "mouseReleased",
-          x: 120,
-          y: 80,
-          button: "left",
-          clickCount: 1,
-        });
-      }),
-    ),
+          expect(activity).toEqual(["move", "click", "mousePressed"]);
+          expect(
+            webviewSend.mock.calls
+              .filter(([channel]) => channel === "preview:recording-controller")
+              .map(([, controller]) => controller),
+          ).toEqual(["agent", "none"]);
+
+          const recordedPointer = webviewSend.mock.calls
+            .filter(([channel]) => channel === "preview:recording-pointer")
+            .map(([, event]) => event);
+          expect(recordedPointer).toEqual([
+            expect.objectContaining({ phase: "move", x: 120, y: 80 }),
+            expect.objectContaining({ phase: "click", x: 120, y: 80 }),
+          ]);
+          expect(sendCommand).toHaveBeenCalledWith("Input.dispatchMouseEvent", {
+            type: "mousePressed",
+            x: 120,
+            y: 80,
+            button: "left",
+            clickCount: 1,
+          });
+          yield* manager.stopRecording("tab_1");
+          expect(sendCommand).toHaveBeenCalledWith("Input.dispatchMouseEvent", {
+            type: "mouseReleased",
+            x: 120,
+            y: 80,
+            button: "left",
+            clickCount: 1,
+          });
+        }),
+      ),
   );
 
   effectIt.effect("types in background webviews and enables native key input", () =>
@@ -4215,6 +4412,9 @@ describe("PreviewManager", () => {
         });
         fromId.mockReturnValue({
           id: 42,
+          hostWebContents: makeTestHostWebContents(),
+          capturePage: vi.fn(async () => ({ toPNG: () => Buffer.from("frame") })),
+          setBackgroundThrottling: vi.fn(),
           isDestroyed: () => false,
           getType: () => "webview",
           getURL: () => "https://example.com",
@@ -4248,6 +4448,7 @@ describe("PreviewManager", () => {
 
         yield* manager.createTab("tab_1");
         yield* manager.registerWebview("tab_1", 42);
+        yield* manager.startRecording("tab_1");
 
         const click = yield* manager
           .automationClick("tab_1", { x: 120, y: 80 })
@@ -4255,6 +4456,12 @@ describe("PreviewManager", () => {
         yield* TestClock.adjust(200);
         const exit = yield* Fiber.await(click);
         expect(Exit.isFailure(exit)).toBe(true);
+        expect(
+          webviewSend.mock.calls
+            .filter(([channel]) => channel === "preview:recording-controller")
+            .map(([, controller]) => controller),
+        ).toEqual(["agent", "human", "none"]);
+        yield* manager.stopRecording("tab_1");
         if (Exit.isSuccess(exit)) return;
         const error = Option.getOrThrow(Cause.findErrorOption(exit.cause));
         expect(error).toMatchObject({

@@ -1,5 +1,5 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { ChevronDownIcon, GitPullRequestIcon } from "lucide-react";
+import { ChevronDownIcon } from "lucide-react";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import { useEffect, useState, type ReactNode } from "react";
@@ -67,6 +67,7 @@ import {
   useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
   versionControlSystems: [],
@@ -439,20 +440,21 @@ function SourceControlSectionSkeleton({
             <div className="min-w-0 flex-1 space-y-2">
               <div className="flex items-center gap-2">
                 <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
-                  <Skeleton className="size-4.5 rounded-md" />
+                  <Skeleton className="size-4.5" />
                   <Skeleton
-                    className="pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background"
+                    shape="pill"
+                    className="pointer-events-none absolute -left-0.5 -top-0.5 size-2"
                     aria-hidden
                   />
                 </span>
-                <Skeleton className="h-4 w-28 rounded-full" />
-                <Skeleton className="h-5 w-14 rounded-full" />
+                <Skeleton shape="pill" className="h-4 w-28" />
+                <Skeleton shape="pill" className="h-5 w-14" />
               </div>
-              <Skeleton className="h-3 w-full max-w-xs rounded-full" />
+              <Skeleton shape="pill" className="h-3 w-full max-w-xs" />
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <Skeleton className="size-7 rounded-md" />
-              <Skeleton className="h-5 w-9 rounded-full" />
+              <Skeleton className="size-7" />
+              <Skeleton shape="pill" className="h-5 w-9" />
             </div>
           </div>
         </div>
@@ -474,9 +476,9 @@ function EmptySourceControlDiscovery({
 
   return (
     <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
-      <Empty className="min-h-88">
+      <Empty>
         <EmptyMedia variant="icon">
-          <GitPullRequestIcon />
+          <PullRequestGlyph.pullRequest />
         </EmptyMedia>
         <EmptyHeader>
           <EmptyTitle>
@@ -490,7 +492,7 @@ function EmptySourceControlDiscovery({
         </EmptyHeader>
         <EmptyContent>
           <Button size="sm" variant="outline" onClick={onScan} disabled={isPending}>
-            <RefreshIcon className="size-3.5" refreshing={isPending} />
+            <RefreshIcon size="sm" refreshing={isPending} />
             Scan
           </Button>
         </EmptyContent>

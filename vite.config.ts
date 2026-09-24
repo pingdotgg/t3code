@@ -2,6 +2,57 @@ import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
 import * as NodeURL from "node:url";
 
+/** Import restrictions every file keeps, including the one module exempt from the glyph rule. */
+const RESTRICTED_IMPORT_PATHS = [
+  {
+    name: "@t3tools/client-runtime",
+    message:
+      "Import from an explicit @t3tools/client-runtime/* subpath. The package has no root export.",
+  },
+  {
+    name: "@pierre/diffs/react",
+    importNames: ["CodeView"],
+    message: "Use StyledDiffCodeView so web diff surfaces share styling and virtualized geometry.",
+  },
+];
+
+/**
+ * The cva functions behind components/ui exports. They style a foreign element to look
+ * like a Button or Toggle, which bypasses the component's variants; render the component
+ * instead (`render={<Button …/>}`, or `SelectButton` for a picker trigger).
+ */
+const RESTRICTED_UI_VARIANT_PATTERNS = [
+  {
+    group: ["**/components/ui/*", "**/ui/*", "./ui/*"],
+    importNames: ["buttonVariants", "toggleVariants", "badgeVariants", "selectTriggerVariants"],
+    message:
+      "Render the components/ui export instead of borrowing its class recipe (render={<Button …/>}, SelectButton, ToggleGroup).",
+  },
+];
+
+/** Lucide's pull-request glyphs, which only `pullRequestIcons.tsx` may name. */
+const RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS = {
+  name: "lucide-react",
+  importNames: [
+    "GitMerge",
+    "GitMergeIcon",
+    "GitPullRequest",
+    "GitPullRequestIcon",
+    "GitPullRequestArrow",
+    "GitPullRequestArrowIcon",
+    "GitPullRequestClosed",
+    "GitPullRequestClosedIcon",
+    "GitPullRequestDraft",
+    "GitPullRequestDraftIcon",
+    "GitPullRequestCreate",
+    "GitPullRequestCreateIcon",
+    "GitPullRequestCreateArrow",
+    "GitPullRequestCreateArrowIcon",
+  ],
+  message:
+    "Pick a glyph by meaning from PullRequestGlyph in apps/web/src/components/pullRequest/pullRequestIcons.tsx so every surface draws the same pull request the same way.",
+};
+
 export default defineConfig({
   resolve: {
     alias: {
@@ -32,6 +83,9 @@ export default defineConfig({
   fmt: {
     ignorePatterns: [
       ".repos/**",
+      // Macroscope's glob-per-line ignore grammar, not Markdown: formatting
+      // it rewrites `*` as `_` and joins lines.
+      ".macroscope/ignore.md",
       ".alchemy",
       "dist",
       "dist-electron",
@@ -69,7 +123,10 @@ export default defineConfig({
       "apps/mobile/uniwind-types.d.ts",
     ],
     plugins: ["eslint", "oxc", "react", "unicorn", "typescript"],
-    jsPlugins: ["./oxlint-plugin-t3code/index.ts"],
+    jsPlugins: ["./oxlint-plugin-t3code/index.ts", "@shadcn/lint"],
+    settings: {
+      shadcn: { ui: "~/components/ui" },
+    },
     categories: {
       correctness: "warn",
       suspicious: "warn",
@@ -103,21 +160,7 @@ export default defineConfig({
       "typescript/unbound-method": "off",
       "eslint/no-restricted-imports": [
         "error",
-        {
-          paths: [
-            {
-              name: "@t3tools/client-runtime",
-              message:
-                "Import from an explicit @t3tools/client-runtime/* subpath. The package has no root export.",
-            },
-            {
-              name: "@pierre/diffs/react",
-              importNames: ["CodeView"],
-              message:
-                "Use StyledDiffCodeView so web diff surfaces share styling and virtualized geometry.",
-            },
-          ],
-        },
+        { paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS] },
       ],
       "t3code/no-global-process-runtime": "error",
       "t3code/no-inline-schema-compile": "warn",
@@ -132,12 +175,56 @@ export default defineConfig({
         rules: { "t3code/no-global-process-runtime": "off" },
       },
       {
+        files: ["apps/web/src/**"],
+        excludeFiles: ["apps/web/src/components/ui/**"],
+        rules: {
+          "eslint/no-restricted-imports": [
+            "error",
+            {
+              paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS],
+              patterns: RESTRICTED_UI_VARIANT_PATTERNS,
+            },
+          ],
+        },
+      },
+      {
+        // The one module allowed to name lucide's pull-request glyphs; everything else picks
+        // from its vocabulary. The other import restrictions still apply here.
+        files: ["apps/web/src/components/pullRequest/pullRequestIcons.tsx"],
+        rules: { "eslint/no-restricted-imports": ["error", { paths: RESTRICTED_IMPORT_PATHS }] },
+      },
+      {
         files: ["apps/mobile/src/**"],
         rules: { "t3code/no-mobile-uniwind-theme-escape-hatches": "error" },
       },
       {
-        // Code that runs on Hermes. It has no ES2023 change-array-by-copy methods, and
-        // tsconfig targets ESNext, so only lint stands between a call and a fatal launch.
+        // components/ui exports own their look. App code picks a variant or size instead
+        // of restyling with className; layout classes (width, flex, margin, position) stay
+        // allowed because placement belongs to the parent. components/ui is for generic
+        // primitives: a look that belongs to one feature stays in that feature's component.
+        files: ["apps/web/src/**"],
+        excludeFiles: ["apps/web/src/components/ui/**"],
+        rules: {
+          "shadcn/no-restyle": [
+            "error",
+            {
+              allow: ["layout"],
+              contracts: [
+                {
+                  // CollapsibleTrigger is a bare button with no styled counterpart
+                  // (a disclosure row is not a Button), so its className is the API.
+                  // Every other trigger has one: style them with render={<Button …/>}.
+                  pattern: "^CollapsibleTrigger$",
+                  allow: ["layout", "color", "typography", "spacing", "shape", "effects", "motion"],
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        // Shared client code must not call APIs missing from Hermes. Our ESNext
+        // TypeScript target accepts them even when they would crash mobile at launch.
         // Tests run on Node and are exempt.
         files: [
           "apps/mobile/src/**",
@@ -146,7 +233,7 @@ export default defineConfig({
           "packages/shared/src/**",
         ],
         excludeFiles: ["**/*.test.ts", "**/*.test.tsx"],
-        rules: { "t3code/no-hermes-unsupported-array-methods": "error" },
+        rules: { "t3code/no-hermes-unsupported-apis": "error" },
       },
       {
         // Reviewed native and third-party interop boundaries that cannot consume a className.
@@ -162,7 +249,6 @@ export default defineConfig({
           "apps/mobile/src/features/review/ReviewSheet.tsx",
           "apps/mobile/src/features/review/useNativeReviewDiffBridge.ts",
           "apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx",
-          "apps/mobile/src/features/settings/appearance/components/AppearancePreviews.tsx",
           "apps/mobile/src/features/threads/GitActionProgressOverlay.tsx",
           "apps/mobile/src/features/threads/NewTaskDraftScreen.tsx",
           "apps/mobile/src/features/threads/ThreadComposer.tsx",
@@ -175,6 +261,7 @@ export default defineConfig({
           "apps/mobile/src/lib/useMobileNavigationTheme.ts",
           "apps/mobile/src/native/T3ComposerEditor.ios.tsx",
           "apps/mobile/src/native/T3ComposerEditor.native.tsx",
+          "apps/mobile/src/native/SelectableMarkdownText.android.tsx",
         ],
         rules: {
           "t3code/no-mobile-uniwind-theme-escape-hatches": ["error", { allowUniwindTheme: true }],

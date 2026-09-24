@@ -1,5 +1,5 @@
 import { EnvironmentId, ProjectId, type PullRequestDetailView } from "@t3tools/contracts";
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
@@ -8,6 +8,11 @@ vi.mock("~/state/pullRequests", () => ({ pullRequestEnvironment: {} }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => vi.fn() }));
 vi.mock("./PullRequestMarkdown", () => ({
   PullRequestMarkdown: ({ text }: { text: string }) => <p>{text}</p>,
+}));
+vi.mock("../ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: ReactNode }) => children,
+  TooltipTrigger: ({ children }: { children: ReactNode }) => children,
+  TooltipPopup: () => null,
 }));
 
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
@@ -138,4 +143,72 @@ it("keeps an unsaved description when collapsed and reopened", () => {
   expect(heading("Description").props["aria-expanded"]).toBe(false);
   click("Description");
   expect(renderer.root.findByType("textarea").props.value).toBe("Unsaved description");
+});
+
+it("opens bot reports in pages without hiding human comments", () => {
+  const value: PullRequestDetailView = {
+    ...detail,
+    commentCount: 13,
+    comments: Array.from({ length: 13 }, (_, index) => ({
+      id: `comment-${index}`,
+      kind: "issue-comment",
+      author: {
+        login: index === 12 ? "human" : "review-app",
+        name: null,
+        avatarUrl: null,
+        isBot: index !== 12,
+      },
+      body: index === 12 ? "Human comment" : `Bot report ${index}`,
+      createdAt: `2026-09-01T00:00:${String(index).padStart(2, "0")}Z`,
+      url: null,
+      path: null,
+      reviewState: null,
+    })),
+  };
+  act(() => {
+    renderer = create(render(value));
+  });
+  expect(renderer.root.findAllByType("p").map((p) => p.children.join(""))).toContain(
+    "Human comment",
+  );
+  expect(
+    renderer.root.findAllByType("p").some((p) => p.children.join("").startsWith("Bot report")),
+  ).toBe(false);
+  const group = renderer.root
+    .findAllByType("button")
+    .find((button) => button.props["aria-label"] === "12 bot comments")!;
+  act(() => group.props.onClick({ nativeEvent: {}, preventDefault() {}, stopPropagation() {} }));
+  expect(
+    renderer.root.findAllByType("p").filter((p) => p.children.join("").startsWith("Bot report")),
+  ).toHaveLength(10);
+  expect(renderer.root.findAllByType("p").map((p) => p.children.join(""))).not.toContain(
+    "Bot report 0",
+  );
+  act(() =>
+    renderer.root
+      .findAllByType("button")
+      .find((button) => button.children.includes(" older bot comment"))!
+      .props.onClick(),
+  );
+  expect(
+    renderer.root.findAllByType("p").filter((p) => p.children.join("").startsWith("Bot report")),
+  ).toHaveLength(12);
+  act(() => group.props.onClick({ nativeEvent: {}, preventDefault() {}, stopPropagation() {} }));
+  act(() => group.props.onClick({ nativeEvent: {}, preventDefault() {}, stopPropagation() {} }));
+  expect(renderer.root.findAllByType("p").map((p) => p.children.join(""))).toContain(
+    "Bot report 0",
+  );
+  act(() =>
+    renderer.root
+      .findAllByType("button")
+      .find((button) => button.children.includes(" recent bot comments"))!
+      .props.onClick(),
+  );
+  expect(
+    renderer.root.findAllByType("p").filter((p) => p.children.join("").startsWith("Bot report")),
+  ).toHaveLength(10);
+  act(() => renderer.update(render({ ...value, url: `${value.url}0`, number: 10 })));
+  expect(
+    renderer.root.findAllByType("p").some((p) => p.children.join("").startsWith("Bot report")),
+  ).toBe(false);
 });

@@ -14,7 +14,7 @@ import {
   type Ref,
 } from "react";
 import type { NativeSyntheticEvent, ViewProps } from "react-native";
-import { Image, StyleSheet } from "react-native";
+import { Image, Platform, StyleSheet } from "react-native";
 
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import {
@@ -27,7 +27,7 @@ import { useNativePaste } from "../lib/useNativePaste";
 import { useFontFamily } from "../lib/useFontFamily";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
-import { flattenThemeColor } from "../lib/mobileTheme";
+import { createNativeComposerTheme } from "../lib/nativeComposerTheme";
 import {
   acknowledgeComposerNativeEvent,
   assumeComposerControlledState,
@@ -259,17 +259,8 @@ export function ComposerEditor({
   );
   const { systemColorsActive } = useAppearancePreferences();
   const themeJson = JSON.stringify({
-    selection: systemColorsActive ? theme["--color-primary"] : null,
-    text: theme["--color-foreground"],
-    placeholder: theme["--color-placeholder"],
-    chipBackground: theme["--color-subtle"],
-    // Native chip drawing parses opaque hex only, and this role is translucent.
-    chipBorder: flattenThemeColor(theme["--color-border"], theme["--color-user-bubble"]),
-    chipText: theme["--color-foreground"],
-    skillBackground: theme["--color-inline-skill-background"],
-    skillBorder: theme["--color-inline-skill-border"],
-    skillText: theme["--color-inline-skill-foreground"],
-    fileTint: theme["--color-icon-muted"],
+    ...createNativeComposerTheme(theme),
+    selection: Platform.OS === "android" || systemColorsActive ? theme["--color-focus"] : null,
   });
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};
   const regularFontFamily = useFontFamily("regular");

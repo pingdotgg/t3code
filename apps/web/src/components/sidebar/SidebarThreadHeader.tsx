@@ -21,8 +21,7 @@ import {
 
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
-import { SidebarMenuButton } from "../ui/sidebar";
+import { SidebarInput, SidebarMenuButton } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export interface SidebarThreadHeaderProps {
@@ -85,10 +84,9 @@ export function SidebarThreadHeader({
         className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
       >
         <SearchIcon className="size-4 shrink-0 text-[var(--sidebar-icon-color)]" />
-        <Input
+        <SidebarInput
           ref={searchInputRef}
           nativeInput
-          unstyled
           type="search"
           value={searchQuery}
           onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
@@ -104,14 +102,14 @@ export function SidebarThreadHeader({
               ? `sidebar-thread-search-result-${activeSearchResultIndex}`
               : undefined
           }
-          className="min-w-0 flex-1 [&_[data-slot=input]]:h-auto [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:text-sm [&_[data-slot=input]]:font-medium [&_[data-slot=input]]:text-sidebar-foreground [&_[data-slot=input]]:placeholder:text-[var(--sidebar-icon-color)]"
+          className="min-w-0 flex-1"
         />
         {isSearching ? (
           <Button
             type="button"
             size="icon-micro"
-            variant="ghost"
-            className="shrink-0 text-sidebar-muted-foreground hover:bg-sidebar-control-surface hover:text-sidebar-foreground"
+            variant="ghost-muted"
+            className="shrink-0"
             aria-label="Clear thread search"
             onClick={() => {
               onClearSearch();
@@ -122,9 +120,10 @@ export function SidebarThreadHeader({
           </Button>
         ) : null}
       </div>
-      {/* Segmented well: the icons read as one control instead of three loose
-          buttons competing with the search field beside them. */}
-      <div className="flex shrink-0 items-center rounded-md bg-sidebar-control-surface/60 p-px">
+      {/* Unfilled like the search field beside it: the buttons carry their own
+          hover states, and a background well reads far louder on themed
+          palettes than on the base light and dark ones. */}
+      <div className="flex shrink-0 items-center">
         {hasProjects ? (
           <>
             {projectScope}
@@ -188,10 +187,7 @@ export function SidebarHeaderIconButton({
             type="button"
             aria-label={label}
             {...rest}
-            className={cn(
-              "relative size-7 shrink-0 focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar",
-              className,
-            )}
+            className={cn("relative size-7 shrink-0", className)}
           />
         }
       >

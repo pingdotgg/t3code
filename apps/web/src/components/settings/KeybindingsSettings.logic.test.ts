@@ -37,12 +37,15 @@ describe("KeybindingsSettings.logic", () => {
       });
     }
   });
-  it("finds the existing URL shortcut in Settings", () => {
-    const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "PR URL");
-    expect(rows).toEqual([
-      expect.objectContaining({ command: "thread.copyReference", key: "mod+shift+c" }),
-    ]);
-  });
+  it.each(["pu", "pull request", "copy link", "thread id"])(
+    "finds the copy link shortcut with %s",
+    (query) => {
+      const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, query);
+      expect(rows).toContainEqual(
+        expect.objectContaining({ command: "thread.copyReference", key: "mod+shift+c" }),
+      );
+    },
+  );
   it("builds searchable rows with readable key and when values", () => {
     const rows = buildKeybindingRows(
       [
@@ -207,7 +210,15 @@ describe("KeybindingsSettings.logic", () => {
     const options = buildWhenVariableOptions();
 
     expect(options).toEqual(
-      expect.arrayContaining(["terminalFocus", "terminalOpen", "modelPickerOpen", "true", "false"]),
+      expect.arrayContaining([
+        "terminalFocus",
+        "terminalOpen",
+        "isWeb",
+        "isDesktop",
+        "modelPickerOpen",
+        "true",
+        "false",
+      ]),
     );
     expect(options).not.toContain("customModeActive");
   });

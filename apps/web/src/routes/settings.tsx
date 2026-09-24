@@ -19,9 +19,10 @@ import {
   SettingsScopeProvider,
   useSettingsScope,
 } from "../components/settings/SettingsScopeContext";
-import { useSettingsProjectGroups } from "../components/settings/useSettingsProjectGroups";
 import { useEnvironments } from "../state/environments";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
+import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScopeSentence";
+import { SettingsPageContainer } from "../components/settings/settingsLayout";
 import {
   retainSettingsScope,
   validateSettingsRouteSearch,
@@ -46,13 +47,6 @@ function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void })
     </Button>
   );
 }
-
-/** Pages whose every row is saved on this client; the scope selects are hidden there. */
-const DEVICE_ONLY_PATHS = new Set([
-  "/settings/appearance",
-  "/settings/snap-shot",
-  "/settings/connections",
-]);
 
 function SettingsScopeBoundary({ pathname, children }: { pathname: string; children: ReactNode }) {
   const { scope, connectedEnvironments } = useSettingsScope();
@@ -99,16 +93,23 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
   }
   // Device-local pages ignore the scope entirely; the project page follows
   // remembered members while a grouping change replaces its URL key.
-  if (DEVICE_ONLY_PATHS.has(pathname) || pathname === "/settings/projects") {
+  if (SETTINGS_DEVICE_ONLY_PATHS.has(pathname) || pathname === "/settings/projects") {
     return children;
   }
+  // Keep the scope sentence on screen so the selection can be changed back.
   if (scope.kind === "unavailable")
-    return <p className="p-8 text-sm text-muted-foreground">{scope.message}</p>;
+    return (
+      <SettingsPageContainer>
+        <p className="text-sm text-muted-foreground">{scope.message}</p>
+      </SettingsPageContainer>
+    );
   if (scope.kind === "environment" && connectedEnvironments.length === 0) {
     return (
-      <p className="p-8 text-sm text-muted-foreground">
-        Reconnect {scope.label} to change its settings.
-      </p>
+      <SettingsPageContainer>
+        <p className="text-sm text-muted-foreground">
+          Reconnect {scope.label} to change its settings.
+        </p>
+      </SettingsPageContainer>
     );
   }
   return children;
@@ -118,11 +119,8 @@ function SettingsContentLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const canGoBack = useCanGoBack();
-  const { search, selectScope } = useSettingsScope();
-  const groups = useSettingsProjectGroups();
-  const { environments } = useEnvironments();
+  const { search } = useSettingsScope();
   const [restoreSignal, setRestoreSignal] = useState(0);
-  const showScope = !DEVICE_ONLY_PATHS.has(location.pathname);
   const navigateBackWithinApp = useCallback(() => {
     if (canGoBack) {
       window.history.back();
@@ -153,18 +151,11 @@ function SettingsContentLayout() {
   }, [navigateBackWithinApp]);
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
         <WorkspacePageHeader electron={isElectron}>
           <div className="flex w-full items-center gap-3">
-            <SettingsBreadcrumb
-              pathname={location.pathname}
-              scope={
-                showScope
-                  ? { value: search, groups, environments, onChange: selectScope }
-                  : undefined
-              }
-            />
+            <SettingsBreadcrumb pathname={location.pathname} />
             {location.pathname === "/settings/general" ? (
               <div className="ms-auto flex shrink-0 items-center">
                 <RestoreDeviceDefaultsButton

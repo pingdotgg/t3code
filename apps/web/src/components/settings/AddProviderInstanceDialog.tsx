@@ -21,6 +21,7 @@ import { Input } from "../ui/input";
 import { RadioGroup } from "../ui/radio-group";
 import { toastManager } from "../ui/toast";
 import { DRIVER_OPTION_BY_VALUE, DRIVER_OPTIONS } from "./providerDriverMeta";
+import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { ProviderSettingsForm, deriveProviderSettingsFields } from "./ProviderSettingsForm";
 import { WizardPanel, WizardPopup, WizardHeader, WizardFooter } from "../ui/wizard";
 import {
@@ -250,7 +251,7 @@ export function AddProviderInstanceDialog({
               value={driver}
               onValueChange={(value) => setDriver(ProviderDriverKind.make(value))}
               aria-labelledby="add-instance-driver-label"
-              className="grid grid-cols-1 gap-2 sm:grid-cols-2"
+              className="grid grid-cols-1 sm:grid-cols-2"
             >
               {DRIVER_OPTIONS.map((option) => {
                 const IconComponent = option.icon;
@@ -305,7 +306,6 @@ export function AddProviderInstanceDialog({
           <label className={cn("grid gap-2", wizardStep !== 1 && "hidden")}>
             <span className="text-xs font-medium text-foreground">Label</span>
             <Input
-              className="bg-background"
               placeholder="e.g. Work"
               value={label}
               onChange={(event) => setLabel(event.target.value)}
@@ -318,7 +318,6 @@ export function AddProviderInstanceDialog({
           <label className={cn("grid gap-2", wizardStep !== 1 && "hidden")}>
             <span className="text-xs font-medium text-foreground">Instance ID</span>
             <Input
-              className="bg-background"
               placeholder={`${driver}_work`}
               value={instanceId}
               onChange={(event) => {
@@ -338,12 +337,11 @@ export function AddProviderInstanceDialog({
           <div className={cn("grid gap-2", wizardStep !== 1 && "hidden")}>
             <span className="text-xs font-medium text-foreground">Accent color</span>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <input
-                type="color"
-                value={normalizeProviderAccentColor(accentColor) ?? PROVIDER_ACCENT_SWATCHES[0]}
-                onChange={(event) => setAccentColor(event.target.value)}
-                aria-label="Provider instance accent color"
-                className="h-8 w-10 cursor-pointer rounded-xl border border-input bg-background p-0.5"
+              <ProviderAccentColorPicker
+                displayName={label || driverOption.label}
+                value={accentColor || undefined}
+                onCommit={setAccentColor}
+                layout="inline"
               />
               <div className="flex flex-wrap gap-1.5">
                 {PROVIDER_ACCENT_SWATCHES.map((swatch) => {
@@ -369,8 +367,7 @@ export function AddProviderInstanceDialog({
                 <Button
                   type="button"
                   size="xs"
-                  variant="ghost"
-                  className="text-muted-foreground"
+                  variant="ghost-muted"
                   onClick={() => setAccentColor("")}
                 >
                   Clear

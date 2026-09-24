@@ -1,3 +1,8 @@
+import {
+  WorktreeWorkingHeader,
+  WorktreeSetupCard,
+  type WorktreeSetupCardProps,
+} from "./worktree-setup-card";
 import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { useViewabilityAmount, type LegendListRef } from "@legendapp/list/react-native";
@@ -83,7 +88,7 @@ import { isPdfFile } from "../../lib/filePreview";
 import { flattenThemeColor } from "../../lib/mobileTheme";
 import { PresentationSource } from "../../components/NativePresentation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Animated, { FadeIn, LinearTransition, type SharedValue } from "react-native-reanimated";
+import Animated, { FadeIn, type SharedValue } from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { useFontFamily } from "../../lib/useFontFamily";
@@ -144,6 +149,7 @@ import {
 } from "@t3tools/mobile-markdown-text/links";
 import {
   deriveThreadFeedPresentation,
+  deriveUnsettledTurnId,
   isContextCompactionActivityGroup,
   type ThreadFeedEntry,
   type ThreadFeedLatestTurn,
@@ -158,6 +164,7 @@ import {
   collapsedWorkLogHeight,
   ThreadAgentSpawnCard,
   ThreadDisclosureChevron,
+  ThreadReasoningRow,
   ThreadWorkGroupToggle,
   ThreadThinkingRow,
   ThreadWorkLog,
@@ -193,6 +200,9 @@ import {
   ThreadMarkdownImageView,
 } from "./ThreadMarkdownImage";
 
+/** `ml-7` gutter plus the `px-3` padding of the expanded reasoning container. */
+const REASONING_CONTENT_INSET = 52;
+
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   // Native iOS blockquotes and adjacent selectable text are separate layout
   // chunks. Giving their shrink-to-fit bubble a definite width keeps both
@@ -216,8 +226,6 @@ function formatMessageTime(input: string): string {
 // Fixed heights mirror renderFeedEntry's classNames and are only used while
 // text fits at the current font settings. Larger accessibility text is measured.
 const TURN_FOLD_HEIGHT = 42; // min-h-11 (38.5) + mb-1 (3.5), with the mobile 14px rem
-const THREAD_FEED_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
-const THREAD_FEED_IMMEDIATE_TRANSITION = LinearTransition.duration(0);
 // Tailwind spacing on the mobile 14px rem: px-3.5 on the user bubble, px-1 on
 // assistant rows. Images size their frame from these before their own layout.
 const USER_BUBBLE_HORIZONTAL_PADDING = 3.5 * 3.5;
@@ -237,6 +245,8 @@ function isFreshTimestamp(input: string): boolean {
 }
 
 export interface ThreadFeedProps {
+  readonly worktreeSetup?: WorktreeSetupCardProps | null;
+  readonly setupWorkingStartedAt?: string | null;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
   readonly onEditPendingMessage: (message: QueuedThreadMessage) => void;
@@ -617,6 +627,7 @@ const markdownLinkStyles = StyleSheet.create({
     height: 14,
     marginHorizontal: 3,
     transform: [{ translateY: 2 }],
+    flexShrink: 0,
   },
   favicon: {
     borderRadius: 3,
@@ -877,6 +888,7 @@ function MarkdownCodeBlock(props: {
       >
         <NativeText
           selectable
+          selectionColorClassName={Platform.OS === "android" ? "accent-focus/32" : undefined}
           className="font-mono"
           style={{
             color: props.textColor,
@@ -1144,7 +1156,7 @@ function useMarkdownStyles(
                 >
                   {ordered ? `${start + index}.` : "•"}
                 </NativeText>
-                <View className="min-w-0 flex-1">
+                <View className="min-w-0 flex-1 shrink overflow-hidden">
                   <Renderer node={child} depth={1} inListItem parentIsText={false} />
                 </View>
               </View>
@@ -1350,14 +1362,17 @@ function renderFeedEntry(
   > & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
+    readonly expandedReasoningMessageIds: ReadonlySet<string>;
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
     readonly workGroupScrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
     readonly unsettledTurnId: TurnId | null;
+    readonly isWorking: boolean;
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
     readonly onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
     readonly onToggleWorkRow: (rowId: string, anchorKey: string) => void;
     readonly onToggleTurnFold: (turnId: TurnId) => void;
+    readonly onToggleReasoning: (messageId: string) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPressVideo: (attachment: ChatFileAttachment, sourceIdentifier: string) => void;
     readonly markdownLinkHandlers: MarkdownLinkHandlers;
@@ -1385,7 +1400,7 @@ function renderFeedEntry(
         accessibilityState={{ expanded: entry.expanded }}
         onPress={() => props.onToggleTurnFold(entry.turnId)}
         hitSlop={4}
-        className="mb-1 min-h-11 flex-row items-center gap-2 border-b border-adaptive-neutral-200-a80-white-a8 px-2"
+        className="mb-1 min-h-11 flex-row items-center gap-2 border-b border-border-subtle px-2"
         style={{
           minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, props.workRowSizing.estimatedRowHeight),
         }}
@@ -1452,7 +1467,7 @@ function renderFeedEntry(
         accessibilityLabel={label}
         className="mb-3 flex-row items-center gap-3 px-1 py-1"
       >
-        <View className="h-px flex-1 bg-adaptive-neutral-200-a80-white-a8" />
+        <View className="h-px flex-1 bg-subtle" />
         <View className="shrink-0 flex-row items-center gap-1.5">
           <SymbolView
             name="arrow.down.right.and.arrow.up.left"
@@ -1462,13 +1477,43 @@ function renderFeedEntry(
           />
           <Text className="font-t3-medium text-xs text-foreground-muted">{label}</Text>
         </View>
-        <View className="h-px flex-1 bg-adaptive-neutral-200-a80-white-a8" />
+        <View className="h-px flex-1 bg-subtle" />
       </View>
     );
   }
 
   if (entry.type === "message") {
     const { message } = entry;
+    if (message.role === "reasoning") {
+      const messages = entry.reasoningMessages ?? [message];
+      return (
+        <ThreadReasoningRow
+          rowSizing={props.workRowSizing}
+          iconSubtleColor={iconSubtleColor}
+          expanded={props.expandedReasoningMessageIds.has(entry.id)}
+          label={`Thought${messages.length > 1 ? ` (×${messages.length})` : ""}`}
+          streaming={false}
+          onToggle={() => props.onToggleReasoning(entry.id)}
+        >
+          <MarkdownImageAvailableWidthContext
+            value={props.markdownContentWidth - REASONING_CONTENT_INSET}
+          >
+            <View className="gap-3">
+              {messages.map((reasoningMessage) => (
+                <AssistantMarkdownContent
+                  key={reasoningMessage.id}
+                  markdown={reasoningMessage.text}
+                  markdownStyles={markdownStyles.assistant}
+                  linkHandlers={props.markdownLinkHandlers}
+                  renderImage={props.renderMarkdownImage}
+                  skills={props.skills}
+                />
+              ))}
+            </View>
+          </MarkdownImageAvailableWidthContext>
+        </ThreadReasoningRow>
+      );
+    }
     const isUser = message.role === "user";
     const renderedText = renderAssistantCitationsAsText(message.text);
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
@@ -1554,8 +1599,8 @@ function renderFeedEntry(
                       mimeType={attachment.mimeType}
                       className={
                         inlineAttachmentIds.size
-                          ? "h-24 w-24 rounded-[14px] bg-white/15"
-                          : "aspect-[1.3] w-full rounded-[14px] bg-white/15"
+                          ? "h-24 w-24 rounded-[14px] bg-user-bubble-foreground/15"
+                          : "aspect-[1.3] w-full rounded-[14px] bg-user-bubble-foreground/15"
                       }
                       onPressPreview={props.onPressPreview}
                     />
@@ -1591,7 +1636,7 @@ function renderFeedEntry(
             ) : null}
           </View>
           <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
-            <Text className="font-t3-medium text-xs tabular-nums text-adaptive-neutral-600-400">
+            <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
               {entry.pendingMessage && !entry.acknowledged ? "Pending" : timestampLabel}
             </Text>
             {entry.pendingMessage &&
@@ -1640,10 +1685,14 @@ function renderFeedEntry(
       return null;
     }
 
+    // Assistant messages hit the same Android unclamped-pass bug as user
+    // bubbles: wide markdown blocks cause children to be positioned at
+    // intrinsic width before the container is clamped, overlapping the
+    // timestamp/copy button row. Pinning the width removes that pass.
     const enterAnimated = isFreshTimestamp(message.createdAt);
     return (
       <Animated.View
-        className={cn(showAssistantMeta ? "mb-5 px-1" : "mb-1 px-1")}
+        className={cn(showAssistantMeta ? "mb-5 px-1" : "mb-1 px-1", hasWideBlock && "w-full")}
         {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
       >
         {renderedText.trim().length > 0 ? (
@@ -1666,7 +1715,7 @@ function renderFeedEntry(
               attachmentId={attachment.id}
               name={attachment.name}
               mimeType={attachment.mimeType}
-              className="mt-1.5 aspect-[1.3] w-full rounded-[18px] bg-adaptive-neutral-200-800"
+              className="mt-1.5 aspect-[1.3] w-full rounded-[18px] bg-subtle-strong"
               onPressPreview={props.onPressPreview}
             />
           ) : isFileAttachment(attachment) ? (
@@ -1690,7 +1739,7 @@ function renderFeedEntry(
               buttonSize={28}
               iconSize={13}
             />
-            <Text className="font-t3-medium text-xs tabular-nums text-adaptive-neutral-600-400">
+            <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
               {timestampLabel}
             </Text>
           </View>
@@ -1962,13 +2011,21 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     readonly expandedWorkGroups: Record<string, boolean>;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly expandedTurnIds: ReadonlySet<TurnId>;
+    readonly expandedReasoningMessageIds: ReadonlySet<string>;
   }>({
     copiedRowId: null,
     expandedWorkGroups: {},
     expandedWorkRows: {},
     expandedTurnIds: new Set(),
+    expandedReasoningMessageIds: new Set(),
   });
-  const { copiedRowId, expandedWorkGroups, expandedWorkRows, expandedTurnIds } = interactionState;
+  const {
+    copiedRowId,
+    expandedWorkGroups,
+    expandedWorkRows,
+    expandedTurnIds,
+    expandedReasoningMessageIds,
+  } = interactionState;
   const [expandedFile, setExpandedFile] = useState<FilePreviewSource | null>(null);
   const [expandedVideo, setExpandedVideo] = useState<VideoPreviewSource | null>(null);
   const fileShareSourceIdentifier = useId();
@@ -2220,20 +2277,21 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   );
   const markdownStyles = useMarkdownStyles(onMarkdownLinkPress, renderMarkdownImage);
   const reviewCommentColors = useReviewCommentColors();
-  const unsettledTurnId =
-    props.latestTurn &&
-    (props.latestTurn.completedAt === null || props.latestTurn.state === "running")
-      ? props.latestTurn.turnId
-      : null;
+  // One definition of "still live", shared with the fold derivation: two
+  // copies of this test are what let a row and the fold beside it disagree.
+  const unsettledTurnId = deriveUnsettledTurnId(props.latestTurn ?? null);
   // LegendList does not invalidate visible rows when only the renderItem closure changes.
   // Include turn completion so unchanged message rows reveal their footer and spacing
   // even when the final message update arrives before the turn settles.
   const listAppearanceData = useMemo(
     () => ({
+      worktreeSetup: props.worktreeSetup,
+      setupWorkingStartedAt: props.setupWorkingStartedAt,
       dispatchingMessageId: props.dispatchingMessageId,
       unsettledTurnId,
       copiedRowId,
       expandedWorkRows,
+      expandedReasoningMessageIds,
       workRowSizing,
       iconSubtleColor,
       markdownStyles,
@@ -2243,10 +2301,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       viewportWidth,
     }),
     [
+      props.worktreeSetup,
+      props.setupWorkingStartedAt,
       props.dispatchingMessageId,
       unsettledTurnId,
       copiedRowId,
       expandedWorkRows,
+      expandedReasoningMessageIds,
       workRowSizing,
       iconSubtleColor,
       markdownStyles,
@@ -2409,6 +2470,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.latestTurn,
     ],
   );
+  const setupAnchorIndex = presentedFeed.findIndex(
+    (entry) => entry.type === "message" && entry.message.role === "user",
+  );
   // The empty↔filled key below remounts the list and resets its imperative
   // content-inset override. Seed the fresh instance synchronously with the
   // current overlay height before the scroll integration's next reaction;
@@ -2519,7 +2583,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (disclosureAnchorKeyRef.current !== null) {
       settleDisclosureAfterLayout();
     }
-  }, [expandedTurnIds, expandedWorkGroups, expandedWorkRows, settleDisclosureAfterLayout]);
+  }, [
+    expandedTurnIds,
+    expandedWorkGroups,
+    expandedWorkRows,
+    expandedReasoningMessageIds,
+    settleDisclosureAfterLayout,
+  ]);
 
   const handleItemSizeChanged = useCallback(() => {
     if (disclosureAnchorKeyRef.current !== null) {
@@ -2602,6 +2672,23 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     [suspendEndScrollMaintenanceForDisclosure],
   );
 
+  const onToggleReasoning = useCallback(
+    (messageId: string) => {
+      // Reasoning details use their own row within the expanded activity history.
+      suspendEndScrollMaintenanceForDisclosure(messageId);
+      setInteractionState((current) => {
+        const next = new Set(current.expandedReasoningMessageIds);
+        if (next.has(messageId)) {
+          next.delete(messageId);
+        } else {
+          next.add(messageId);
+        }
+        return { ...current, expandedReasoningMessageIds: next };
+      });
+    },
+    [suspendEndScrollMaintenanceForDisclosure],
+  );
+
   const onPressPreview = useCallback((source: FilePreviewSource) => {
     setExpandedFile((current) => current ?? source);
   }, []);
@@ -2628,6 +2715,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         return undefined;
       }
       switch (entry.type) {
+        case "message":
+          // A collapsed reasoning row is the same chrome as a work toggle.
+          return entry.message.role === "reasoning" && !expandedReasoningMessageIds.has(entry.id)
+            ? WORK_GROUP_TOGGLE_HEIGHT
+            : undefined;
         case "turn-fold":
           return TURN_FOLD_HEIGHT;
         case "work-toggle":
@@ -2646,7 +2738,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           return undefined;
       }
     },
-    [expandedWorkRows, workRowSizing.fixedRowHeight],
+    [expandedReasoningMessageIds, expandedWorkRows, workRowSizing.fixedRowHeight],
   );
 
   // Disclosures can mount existing offscreen rows as well as new work rows.
@@ -2664,14 +2756,17 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onEditPendingMessage: props.onEditPendingMessage,
             copiedRowId,
             expandedWorkRows,
+            expandedReasoningMessageIds,
             workRowSizing,
             workGroupScrollPositions,
             terminalAssistantMessageIds,
             unsettledTurnId,
+            isWorking: props.activeWorkStartedAt !== null,
             onCopyWorkRow,
             onToggleWorkGroup,
             onToggleWorkRow,
             onToggleTurnFold,
+            onToggleReasoning,
             onPressPreview,
             onPressVideo,
             markdownLinkHandlers,
@@ -2689,19 +2784,30 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             skills: props.skills,
             onUseArtifactTemplate: props.onUseArtifactTemplate,
           })}
+          {props.worktreeSetup && info.index === setupAnchorIndex ? (
+            <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
+          ) : props.setupWorkingStartedAt && info.index === setupAnchorIndex ? (
+            <WorktreeWorkingHeader startedAt={props.setupWorkingStartedAt} />
+          ) : null}
         </ThreadMediaVisibility>
       </Animated.View>
     ),
     [
+      props.worktreeSetup,
+      props.setupWorkingStartedAt,
+      props.threadId,
+      setupAnchorIndex,
       props.dispatchingMessageId,
       props.onEditPendingMessage,
       copiedRowId,
       disclosureToggleSettling,
       expandedWorkRows,
+      expandedReasoningMessageIds,
       workRowSizing,
       workGroupScrollPositions,
       terminalAssistantMessageIds,
       unsettledTurnId,
+      props.activeWorkStartedAt,
       iconSubtleColor,
       screenColor,
       userBubbleColor,
@@ -2715,6 +2821,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       markdownLinkHandlers,
       onPressPreview,
       onPressVideo,
+      onToggleReasoning,
       onToggleTurnFold,
       onToggleWorkGroup,
       onToggleWorkRow,
@@ -2825,17 +2932,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               entry.type === "message" ? `message:${entry.message.role}` : entry.type
             }
             getFixedItemSize={getFixedItemSize}
-            // Android can retain stale native row positions when layout transitions
-            // race the measurements arriving during sync, even with duration 0.
-            // Keep its rows on LegendList's non-animated positioning path. On iOS,
-            // keep a transition installed between disclosures so containers don't remount.
-            itemLayoutAnimation={
-              Platform.OS === "android"
-                ? undefined
-                : disclosureToggleSettling
-                  ? THREAD_FEED_LAYOUT_TRANSITION
-                  : THREAD_FEED_IMMEDIATE_TRANSITION
-            }
+            // Virtualized rows must move with their measurements. Native layout
+            // transitions can retain stale positions during sync, even at duration 0.
             onItemSizeChanged={handleItemSizeChanged}
             // Measure rows well before they scroll into view so estimate→actual
             // corrections land offscreen instead of under the user's finger.
@@ -2874,6 +2972,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             ListHeaderComponent={
               <>
                 {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
+                {setupAnchorIndex < 0 && props.worktreeSetup ? (
+                  <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
+                ) : null}
                 {props.loadEarlier != null ? (
                   <Pressable
                     onPress={props.loadEarlier.onLoadEarlier}
@@ -2894,6 +2995,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           />
         </View>
         {presentedFeed.length === 0 &&
+        !props.worktreeSetup &&
         props.activeWorkStartedAt === null &&
         props.contentPresentation.kind === "ready" ? (
           <View pointerEvents="none" style={StyleSheet.absoluteFill}>

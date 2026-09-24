@@ -11,6 +11,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { projectFaviconUrlAtom } from "../state/assets";
 import { deriveProjectIdentity } from "../projectIdentity";
 import { projectIconColorClassName } from "../projectIconColors";
+import { ProjectMonogram } from "./ProjectMonogram";
 import { cn } from "~/lib/utils";
 
 const DynamicIcon = lazy(() =>
@@ -42,6 +43,15 @@ export function ProjectFavicon(input: {
       faviconPath: project.faviconPath,
     }),
   );
+  if (project.projectIcon?.kind === "monogram") {
+    return (
+      <ProjectMonogram
+        text={project.projectIcon.text}
+        color={project.projectIcon.color}
+        className={input.className}
+      />
+    );
+  }
   if (project.projectIcon?.kind === "emoji") {
     return (
       <ProjectFaviconFallback
@@ -113,43 +123,7 @@ function ProjectFaviconFallback({
   if (projectName && projectName.trim().length > 0) {
     const identity = deriveProjectIdentity(projectName);
     return (
-      <svg
-        aria-hidden="true"
-        viewBox="0 0 16 16"
-        className={cn(
-          "size-4 shrink-0 overflow-hidden rounded-[25%] font-mono select-none",
-          className,
-        )}
-        style={{
-          backgroundColor: identity.background,
-          backgroundImage: `linear-gradient(145deg, ${identity.highlight}, ${identity.background} 72%)`,
-        }}
-      >
-        <text
-          x="8"
-          y="10.8"
-          textAnchor="middle"
-          fill="white"
-          className="font-mono"
-          fontSize="8.25"
-          fontWeight="700"
-          textLength="12"
-          lengthAdjust="spacingAndGlyphs"
-          textRendering="geometricPrecision"
-        >
-          {identity.monogram}
-        </text>
-        <rect
-          x="0.25"
-          y="0.25"
-          width="15.5"
-          height="15.5"
-          rx="3.75"
-          fill="none"
-          strokeWidth="0.5"
-          className="stroke-black/10 dark:stroke-white/10"
-        />
-      </svg>
+      <ProjectMonogram text={identity.monogram} color={identity.color} className={className} />
     );
   }
 
