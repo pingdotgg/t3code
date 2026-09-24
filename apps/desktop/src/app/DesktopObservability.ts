@@ -356,7 +356,13 @@ const readPersistedObservabilitySettings: Effect.Effect<
 const resolveOtlpEndpoints = Effect.gen(function* () {
   const otel = yield* OtelEnvironment.load;
   if (otel.disabled) {
-    return { traces: undefined, metrics: undefined, logs: undefined, warnings: otel.warnings };
+    return {
+      traces: undefined,
+      metrics: undefined,
+      logs: undefined,
+      warnings: otel.warnings,
+      resourceAttributes: otel.resourceAttributes,
+    };
   }
 
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -366,6 +372,7 @@ const resolveOtlpEndpoints = Effect.gen(function* () {
     metrics: Option.getOrUndefined(environment.otlpMetricsUrl) ?? persisted.otlpMetricsUrl,
     logs: Option.getOrUndefined(environment.otlpLogsUrl) ?? persisted.otlpLogsUrl,
     warnings: otel.warnings,
+    resourceAttributes: otel.resourceAttributes,
   };
 });
 
@@ -683,7 +690,10 @@ const telemetryLayer = Layer.unwrap(
       Effect.forEach(endpoints.warnings, (warning) => Effect.logWarning(warning)),
     );
 
-    return otelWarningsLayer.pipe(Layer.provideMerge(Layer.mergeAll(loggerLayer, tracerLayer)));
+    return otelWarningsLayer.pipe(
+      Layer.provideMerge(Layer.mergeAll(loggerLayer, tracerLayer)),
+      Layer.provide(OtelEnvironment.resourceAttributesLayer(endpoints.resourceAttributes)),
+    );
   }),
 );
 
