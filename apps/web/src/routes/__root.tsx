@@ -17,6 +17,11 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
+import {
+  StandaloneSurface,
+  StandaloneSurfaceHeading,
+  StandaloneSurfacePanel,
+} from "../components/StandaloneSurface";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
@@ -35,7 +40,6 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useDefaultThemeAdoption } from "../hooks/useDefaultTheme";
 import { useEnvironmentThemeSync } from "../hooks/useEnvironmentTheme";
 import { Button } from "../components/ui/button";
-import { StandalonePage, StandalonePageHeader } from "../components/ui/standalone-page";
 import {
   AnchoredToastProvider,
   stackedThreadToast,
@@ -369,30 +373,25 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
   const report = useMemo(() => errorReport(error, pathname), [error, pathname]);
 
   return (
-    <StandalonePage tone="error">
-      <StandalonePageHeader
-        eyebrow={APP_DISPLAY_NAME}
-        title="Something went wrong."
-        description={message}
-      />
+    <StandaloneSurface>
+      <StandaloneSurfaceHeading title="Something went wrong." description={message} />
 
-      <div className="mt-5 flex flex-wrap gap-2">
-        <Button size="sm" onClick={() => void router.invalidate()}>
-          Try again
-        </Button>
-        <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
-          Reload app
-        </Button>
-        <CopyErrorButton report={report} />
-      </div>
-
-      <div className="mt-5 overflow-hidden rounded-lg border border-border/70 bg-background/55">
-        <p className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Error report</p>
-        <pre className="max-h-64 overflow-auto border-t border-border/70 bg-background/80 px-3 py-2 text-xs whitespace-pre-wrap text-foreground/85">
+      <StandaloneSurfacePanel>
+        <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+          <Button size="sm" onClick={() => void router.invalidate()}>
+            Try again
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => window.location.reload()}>
+            Reload app
+          </Button>
+          <CopyErrorButton report={report} />
+        </div>
+        <p className="px-4 py-2 text-xs font-medium text-muted-foreground">Error report</p>
+        <pre className="max-h-64 overflow-auto px-4 py-3 text-xs whitespace-pre-wrap text-foreground/85">
           {report}
         </pre>
-      </div>
-    </StandalonePage>
+      </StandaloneSurfacePanel>
+    </StandaloneSurface>
   );
 }
 
@@ -401,7 +400,7 @@ function CopyErrorButton({ report }: { report: string }) {
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "error-report" });
 
   return (
-    <Button size="sm" variant="outline" onClick={() => copyToClipboard(report)}>
+    <Button size="sm" variant="ghost" onClick={() => copyToClipboard(report)}>
       {isCopied ? <CheckIcon className="text-success" /> : <CopyIcon />}
       {isCopied ? "Copied" : "Copy error"}
     </Button>

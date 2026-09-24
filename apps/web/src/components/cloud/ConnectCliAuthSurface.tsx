@@ -7,34 +7,11 @@ import {
   connectCliSignInRedirectUrl,
 } from "../../cloud/connectCliAuth";
 import { isElectron } from "../../env";
-import { AuthSurfaceShell } from "../auth/AuthSurfaceShell";
+import { StandaloneSurface, StandaloneSurfaceHeading } from "../StandaloneSurface";
 import { resolveClerkSignInProps } from "../clerk/authRedirect";
 import { Button } from "../ui/button";
 
-function ConnectCliAuthMessage({
-  eyebrow,
-  title,
-  description,
-}: {
-  readonly eyebrow?: string;
-  readonly title: string;
-  readonly description: string;
-}) {
-  return (
-    <>
-      {eyebrow ? (
-        <p className="text-[10px] font-semibold tracking-[0.18em] text-blue-600 uppercase dark:text-blue-400">
-          {eyebrow}
-        </p>
-      ) : null}
-      <h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
-      <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{description}</p>
-    </>
-  );
-}
-
 const invalidLinkMessage = {
-  eyebrow: "Authorization request",
   title: "This connect link is incomplete",
   description:
     "The link is missing its authorization request. Re-run `t3 connect` in your terminal and open the freshly printed URL.",
@@ -86,16 +63,15 @@ export function ConnectCliAuthorizeSurface() {
 
   if (!request) {
     return (
-      <AuthSurfaceShell>
-        <ConnectCliAuthMessage {...invalidLinkMessage} />
-      </AuthSurfaceShell>
+      <StandaloneSurface>
+        <StandaloneSurfaceHeading {...invalidLinkMessage} />
+      </StandaloneSurface>
     );
   }
 
   return (
-    <AuthSurfaceShell>
-      <ConnectCliAuthMessage
-        eyebrow="Browser authorization"
+    <StandaloneSurface>
+      <StandaloneSurfaceHeading
         title="Connecting your terminal"
         description={
           isSignedIn
@@ -110,6 +86,6 @@ export function ConnectCliAuthorizeSurface() {
           </Button>
         </div>
       ) : null}
-    </AuthSurfaceShell>
+    </StandaloneSurface>
   );
 }

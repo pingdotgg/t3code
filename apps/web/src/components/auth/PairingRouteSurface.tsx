@@ -2,7 +2,6 @@ import type { AuthSessionState } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import React, { startTransition, useEffect, useRef, useState, useCallback } from "react";
 
-import { APP_DISPLAY_NAME } from "../../branding";
 import { connectPairing } from "../../connection/onboarding";
 import {
   peekPairingTokenFromUrl,
@@ -10,20 +9,23 @@ import {
   submitServerAuthCredential,
 } from "../../environments/primary";
 import { readHostedPairingRequest } from "../../hostedPairing";
+import {
+  StandaloneSurface,
+  StandaloneSurfaceHeading,
+  StandaloneSurfacePanel,
+} from "../StandaloneSurface";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 export function PairingPendingSurface() {
   return (
-    <StandalonePage tone="pairing">
-      <StandalonePageHeader
-        eyebrow={APP_DISPLAY_NAME}
+    <StandaloneSurface>
+      <StandaloneSurfaceHeading
         title="Pairing with this environment"
         description="Validating the pairing link and preparing your session."
       />
-    </StandalonePage>
+    </StandaloneSurface>
   );
 }
 
@@ -86,57 +88,54 @@ export function PairingRouteSurface({
   }, [submitCredential]);
 
   return (
-    <StandalonePage tone="pairing">
-      <StandalonePageHeader
-        eyebrow={APP_DISPLAY_NAME}
+    <StandaloneSurface>
+      <StandaloneSurfaceHeading
         title="Pair with this environment"
         description={describeAuthGate(auth.bootstrapMethods)}
       />
 
-      <form className="mt-6 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
-        <div className="space-y-2">
-          <label className="text-sm font-medium" htmlFor="pairing-token">
-            Pairing token
-          </label>
-          <Input
-            id="pairing-token"
-            autoCapitalize="none"
-            autoComplete="off"
-            autoCorrect="off"
-            disabled={isSubmitting}
-            nativeInput
-            onChange={(event) => setCredential(event.currentTarget.value)}
-            placeholder="Paste a one-time token or pairing secret"
-            spellCheck={false}
-            value={credential}
-          />
-        </div>
-
-        {errorMessage ? (
-          <div className="rounded-lg border border-destructive/30 bg-destructive/6 px-3 py-2 text-sm text-destructive">
-            {errorMessage}
+      <form onSubmit={(event) => void handleSubmit(event)}>
+        <StandaloneSurfacePanel>
+          <div className="space-y-2 p-4">
+            <label className="text-[13px] font-medium" htmlFor="pairing-token">
+              Pairing token
+            </label>
+            <Input
+              id="pairing-token"
+              autoCapitalize="none"
+              autoComplete="off"
+              autoCorrect="off"
+              disabled={isSubmitting}
+              nativeInput
+              onChange={(event) => setCredential(event.currentTarget.value)}
+              placeholder="Paste a one-time token or pairing secret"
+              spellCheck={false}
+              value={credential}
+            />
+            {errorMessage ? (
+              <p className="text-[13px] leading-relaxed text-destructive">{errorMessage}</p>
+            ) : null}
+            <div className="flex flex-wrap items-center gap-2 pt-2">
+              <Button disabled={isSubmitting} size="sm" type="submit">
+                {isSubmitting ? "Pairing..." : "Continue"}
+              </Button>
+              <Button
+                disabled={isSubmitting}
+                onClick={() => window.location.reload()}
+                size="sm"
+                variant="ghost"
+              >
+                Reload app
+              </Button>
+            </div>
           </div>
-        ) : null}
-
-        <div className="flex flex-wrap gap-2">
-          <Button disabled={isSubmitting} size="sm" type="submit">
-            {isSubmitting ? "Pairing..." : "Continue"}
-          </Button>
-          <Button
-            disabled={isSubmitting}
-            onClick={() => window.location.reload()}
-            size="sm"
-            variant="outline"
-          >
-            Reload app
-          </Button>
-        </div>
+        </StandaloneSurfacePanel>
       </form>
 
-      <div className="mt-6 rounded-lg border border-border/70 bg-background/55 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
+      <p className="mt-4 px-1 text-xs leading-relaxed text-muted-foreground">
         {describeSupportedMethods(auth.bootstrapMethods)}
-      </div>
-    </StandalonePage>
+      </p>
+    </StandaloneSurface>
   );
 }
 
@@ -210,9 +209,8 @@ export function HostedPairingRouteSurface() {
   const request = hostedPairingRequestRef.current;
 
   return (
-    <StandalonePage tone="pairing">
-      <StandalonePageHeader
-        eyebrow={APP_DISPLAY_NAME}
+    <StandaloneSurface>
+      <StandaloneSurfaceHeading
         title={
           status === "paired"
             ? "Backend paired"
@@ -223,36 +221,37 @@ export function HostedPairingRouteSurface() {
         description={message}
       />
 
-      {request ? (
-        <div className="mt-5 rounded-lg border border-border/70 bg-background/55 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
-          Host: <span className="font-mono text-foreground/80">{request.host}</span>
-        </div>
-      ) : null}
-
-      {status === "error" ? (
-        <div className="mt-5 rounded-lg border border-destructive/30 bg-destructive/6 px-3 py-2 text-sm text-destructive">
-          Verify the backend is reachable from this browser, supports CORS for hosted clients, and
-          is served over HTTPS when opening this page from HTTPS.
-        </div>
-      ) : null}
-
-      <div className="mt-6 flex flex-wrap gap-2">
-        {status === "pairing" ? (
-          <Button disabled size="sm">
-            Pairing...
-          </Button>
-        ) : canRetry ? (
-          <Button size="sm" onClick={() => void submitHostedPairingRequest()}>
-            Try again
-          </Button>
+      <StandaloneSurfacePanel>
+        {request ? (
+          <div className="flex items-center justify-between gap-4 px-4 py-3">
+            <span className="text-[13px]">Host</span>
+            <span className="truncate font-mono text-xs text-muted-foreground">{request.host}</span>
+          </div>
         ) : null}
-        {status === "paired" ? (
-          <Button size="sm" variant="outline" onClick={() => (window.location.href = "/")}>
-            Open app
-          </Button>
+        {status === "error" ? (
+          <p className="px-4 py-3 text-[13px] leading-relaxed text-destructive">
+            Verify the backend is reachable from this browser, supports CORS for hosted clients, and
+            is served over HTTPS when opening this page from HTTPS.
+          </p>
         ) : null}
-      </div>
-    </StandalonePage>
+        <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+          {status === "pairing" ? (
+            <Button disabled size="sm">
+              Pairing...
+            </Button>
+          ) : canRetry ? (
+            <Button size="sm" onClick={() => void submitHostedPairingRequest()}>
+              Try again
+            </Button>
+          ) : null}
+          {status === "paired" ? (
+            <Button size="sm" onClick={() => (window.location.href = "/")}>
+              Open app
+            </Button>
+          ) : null}
+        </div>
+      </StandaloneSurfacePanel>
+    </StandaloneSurface>
   );
 }
 
