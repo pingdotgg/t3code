@@ -17,8 +17,14 @@ import { assertMessageSteeringOutput } from "./message_steering/codex_output.ts"
 import { assertCursorMessageSteeringOutput } from "./message_steering/cursor_output.ts";
 import { assertGrokMessageSteeringOutput } from "./message_steering/grok_output.ts";
 import { messageSteeringInput } from "./message_steering/input.ts";
+import { assertPiMessageSteeringOutput } from "./message_steering/pi_output.ts";
+import { piCompactionInput } from "./pi_compaction/input.ts";
+import { assertPiCompactionOutput } from "./pi_compaction/output.ts";
+import { providerThreadResumeInput } from "./provider_thread_resume/input.ts";
+import { assertPiProviderThreadResumeOutput } from "./provider_thread_resume/pi_output.ts";
 import { assertMultiTurnClaudeOutput } from "./multi_turn/claude_output.ts";
 import { assertMultiTurnOutput } from "./multi_turn/codex_output.ts";
+import { assertPiMultiTurnOutput } from "./multi_turn/pi_output.ts";
 import { multiTurnInput } from "./multi_turn/input.ts";
 import { openCodeChildApprovalInput } from "./opencode_child_approval/input.ts";
 import { assertOpenCodeChildApprovalOutput } from "./opencode_child_approval/output.ts";
@@ -52,6 +58,7 @@ import { assertSubagentV2NestedOutput } from "./subagent_v2_nested/codex_output.
 import { assertClaudeThreadRollbackOutput } from "./thread_rollback/claude_output.ts";
 import { assertThreadRollbackOutput } from "./thread_rollback/codex_output.ts";
 import { threadRollbackInput } from "./thread_rollback/input.ts";
+import { assertPiThreadRollbackOutput } from "./thread_rollback/pi_output.ts";
 import { assertTodoListOutput } from "./todo_list/codex_output.ts";
 import { assertTodoListCursorOutput } from "./todo_list/cursor_output.ts";
 import { assertTodoListGrokOutput } from "./todo_list/grok_output.ts";
@@ -81,6 +88,7 @@ import { assertTurnInterruptMidToolClaudeOutput } from "./turn_interrupt_mid_too
 import { assertTurnInterruptMidToolCodexOutput } from "./turn_interrupt_mid_tool/codex_output.ts";
 import { assertTurnInterruptMidToolCursorOutput } from "./turn_interrupt_mid_tool/cursor_output.ts";
 import { turnInterruptMidToolInput } from "./turn_interrupt_mid_tool/input.ts";
+import { assertTurnInterruptMidToolPiOutput } from "./turn_interrupt_mid_tool/pi_output.ts";
 import { assertTurnInterruptRestartClaudeOutput } from "./turn_interrupt_restart/claude_output.ts";
 import { turnInterruptRestartInput } from "./turn_interrupt_restart/input.ts";
 import { assertClaudeWebSearchOutput } from "./web_search/claude_output.ts";
@@ -545,7 +553,31 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("pi"),
         transcriptFile: new URL("./multi_turn/pi_transcript.ndjson", import.meta.url),
         modelSelection: PI_MODEL_SELECTION,
-        assertOutput: assertMultiTurnOutput,
+        assertOutput: assertPiMultiTurnOutput,
+      },
+    ],
+  },
+  {
+    name: "pi_compaction",
+    buildInput: piCompactionInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("pi"),
+        transcriptFile: new URL("./pi_compaction/pi_transcript.ndjson", import.meta.url),
+        modelSelection: PI_MODEL_SELECTION,
+        assertOutput: assertPiCompactionOutput,
+      },
+    ],
+  },
+  {
+    name: "provider_thread_resume",
+    buildInput: providerThreadResumeInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("pi"),
+        transcriptFile: new URL("./provider_thread_resume/pi_transcript.ndjson", import.meta.url),
+        modelSelection: PI_MODEL_SELECTION,
+        assertOutput: assertPiProviderThreadResumeOutput,
       },
     ],
   },
@@ -742,6 +774,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         assertOutput: assertGrokMessageSteeringOutput,
       },
+      {
+        driver: ProviderDriverKind.make("pi"),
+        transcriptFile: new URL("./message_steering/pi_transcript.ndjson", import.meta.url),
+        modelSelection: PI_MODEL_SELECTION,
+        assertOutput: assertPiMessageSteeringOutput,
+      },
     ],
   },
   {
@@ -819,6 +857,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
         assertOutput: assertTurnInterruptMidToolCursorOutput,
       },
+      {
+        driver: ProviderDriverKind.make("pi"),
+        transcriptFile: new URL("./turn_interrupt_mid_tool/pi_transcript.ndjson", import.meta.url),
+        modelSelection: PI_MODEL_SELECTION,
+        assertOutput: assertTurnInterruptMidToolPiOutput,
+      },
     ],
   },
   {
@@ -853,6 +897,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         transcriptFile: new URL("./thread_rollback/claude_transcript.ndjson", import.meta.url),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertClaudeThreadRollbackOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("pi"),
+        transcriptFile: new URL("./thread_rollback/pi_transcript.ndjson", import.meta.url),
+        modelSelection: PI_MODEL_SELECTION,
+        assertOutput: assertPiThreadRollbackOutput,
       },
     ],
   },

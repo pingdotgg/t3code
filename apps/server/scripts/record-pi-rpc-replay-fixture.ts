@@ -5,9 +5,9 @@
  *
  *   node scripts/record-pi-rpc-replay-fixture.ts --scenario simple
  *
- * The model is pinned to the fixture's Pi model selection (a cheap OpenRouter
- * model) through launch arguments and `set_model`. Sessions go to a temporary
- * directory, never the user's Pi session store.
+ * The model is pinned to the fixture's Pi model selection through launch
+ * arguments and `set_model`. Sessions go to a temporary directory, never the
+ * user's Pi session store.
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ProviderReplayEntry, ProviderReplayTranscript } from "@t3tools/contracts";
@@ -35,8 +35,17 @@ import { materializeFixtureInput } from "../src/orchestration-v2/testkit/fixture
 import { runOrchestratorV2ProviderReplayScenario } from "../src/orchestration-v2/testkit/ProviderReplayHarness.ts";
 import { makeCheckpointWorkspace } from "../src/orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
 
-/** Keeps the user's skills, templates and context files out of the recording. */
-const HERMETIC_LAUNCH_ARGS = "--no-extensions --no-skills --no-prompt-templates --no-context-files";
+/**
+ * Keeps the user's skills, templates and context files out of the recording.
+ * `--approve` trusts the throwaway workspace so its `.pi/settings.json` loads.
+ */
+const HERMETIC_LAUNCH_ARGS =
+  "--no-extensions --no-skills --no-prompt-templates --no-context-files --approve";
+/**
+ * Pi keeps the last ~20k tokens out of a compaction, so a short fixture
+ * conversation has nothing to compact. A tiny budget makes `/compact` real.
+ */
+const WORKSPACE_PI_SETTINGS = { compaction: { keepRecentTokens: 50 } };
 const CLOCK_TICK = Duration.millis(20);
 
 function readArgValue(name: string): string | undefined {
@@ -213,6 +222,11 @@ const record = Effect.gen(function* () {
   const workspace = yield* Effect.promise(() =>
     makeCheckpointWorkspace(`pi-rpc-record-${fixture.name}`),
   );
+  yield* fs.makeDirectory(path.join(workspace, ".pi"));
+  yield* fs.writeFileString(
+    path.join(workspace, ".pi", "settings.json"),
+    JSON.stringify(WORKSPACE_PI_SETTINGS),
+  );
   const sessionDir = yield* fs.makeTempDirectory({ prefix: `t3-pi-record-sessions-` });
   yield* Effect.addFinalizer(() =>
     Effect.all([
@@ -290,8 +304,12 @@ const record = Effect.gen(function* () {
   yield* fs.makeDirectory(path.dirname(outputPath), { recursive: true });
   yield* fs.writeFileString(outputPath, encodeTranscriptNdjson(transcript));
   yield* Console.log(`Wrote ${transcript.entries.length} Pi RPC replay entries to ${outputPath}`);
-  // The live run must already satisfy the fixture's assertions; replay proves it again.
-  variant.assertOutput(result, transcript);
+  // Assertions run on replay (OrchestratorReplayFixtures.integration.test.ts),
+  // where session paths are normalized; here only the run outcome is reported.
+  const [projection] = result.projections.values();
+  yield* Console.log(
+    `Recorded runs: ${projection?.runs.map((run) => run.status).join(", ") ?? "none"}`,
+  );
 });
 
 await Effect.runPromise(record.pipe(Effect.scoped, Effect.provide(NodeServices.layer)));
