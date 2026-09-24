@@ -6,6 +6,7 @@ import {
   EventId,
   MessageId,
   type ModelSelection,
+  type OrchestrationV2ThreadProjection,
   NodeId,
   ProjectId,
   ProviderDriverKind,
@@ -36,6 +37,7 @@ import { EventSinkV2 } from "./EventSink.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { OrchestrationV2EventSinkLayerLive, OrchestrationV2LayerLive } from "./runtimeLayer.ts";
+import { makeSubagentChildThread } from "./SubagentProjection.ts";
 import { worktreeRepairDependenciesTestLayer } from "./ProviderTurnStartService.testkit.ts";
 
 const PlatformTestLayer = Layer.merge(
@@ -136,6 +138,7 @@ const seedParentWithTerminalTask = (input: {
   readonly deliveryState: "delivered" | "claimed" | "acknowledged" | "disposed";
   readonly completionWake?: "always" | "settled_only";
   readonly deliveryTaskIds?: ReadonlyArray<NodeId>;
+  readonly settledDeliveryCount?: number;
   readonly now: DateTime.Utc;
 }) =>
   Effect.gen(function* () {
@@ -231,7 +234,7 @@ const seedParentWithTerminalTask = (input: {
             delegatedCompletion: {
               disposition: "open",
               nextGeneration: 2,
-              settledDeliveryCount: 1,
+              settledDeliveryCount: input.settledDeliveryCount ?? 1,
               delivery:
                 input.deliveryTaskIds === undefined
                   ? null
@@ -378,6 +381,298 @@ it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
       });
       const duplicate = yield* orchestrator.getThreadProjection(threadId);
       assert.deepEqual(duplicate.runs.find((row) => row.id === runId)?.delegatedCompletion, cohort);
+    }),
+  );
+
+  it.effect(
+    "recovers a child that runtime recovery cancelled, deferring pending continuations",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* OrchestratorV2;
+        const sink = yield* EventSinkV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:delegated-recovery");
+        const runId = RunId.make("run:delegated-recovery");
+        const taskId = NodeId.make("node:delegated-recovery-task");
+        const childThreadId = ThreadId.make("thread:delegated-recovery-child");
+        yield* seedParentWithTerminalTask({
+          threadId,
+          runId,
+          projectId: ProjectId.make("project:delegated-recovery"),
+          rootNodeId: NodeId.make("node:delegated-recovery-root"),
+          taskId,
+          deliveryState: "claimed",
+          completionWake: "always",
+          now,
+        });
+        const parent = yield* orchestrator.getThreadProjection(threadId);
+        const parentRun = parent.runs[0]!;
+        const childRunId = RunId.make("run:delegated-recovery-child");
+        yield* sink.write({
+          commandId: CommandId.make("command:delegated-recovery:seed"),
+          events: [
+            {
+              id: EventId.make("event:delegated-recovery:child"),
+              type: "thread.created",
+              threadId: childThreadId,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: makeSubagentChildThread({
+                parentThread: parent.thread,
+                childThreadId,
+                parentNodeId: taskId,
+                activeProviderThreadId: null,
+                providerInstanceId: modelSelection.instanceId,
+                modelSelection,
+                title: "Recovered child",
+                now,
+                createdBy: "agent",
+                creationSource: "server",
+              }),
+            },
+            {
+              id: EventId.make("event:delegated-recovery:task"),
+              type: "subagent.updated",
+              threadId,
+              runId,
+              nodeId: taskId,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: {
+                ...parent.subagents[0]!,
+                childThreadId,
+                status: "running",
+                result: null,
+                completedAt: null,
+                completionDelivery: undefined,
+              },
+            },
+          ],
+        });
+        // Startup runtime recovery cancels the child's run. The live terminal
+        // reactor ignores runtime-reconcile commands, so nothing reports it yet.
+        yield* sink.write({
+          commandId: CommandId.make("command:runtime-reconcile:delegated-recovery-child"),
+          events: [
+            {
+              id: EventId.make("event:delegated-recovery:child-run"),
+              type: "run.updated",
+              threadId: childThreadId,
+              runId: childRunId,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: {
+                ...parentRun,
+                id: childRunId,
+                threadId: childThreadId,
+                userMessageId: MessageId.make("message:delegated-recovery-child"),
+                rootNodeId: null,
+                activeAttemptId: null,
+                status: "cancelled",
+                completedAt: now,
+                delegatedCompletion: undefined,
+              },
+            },
+          ],
+        });
+        const resultTransfers = (projection: {
+          readonly contextTransfers: ReadonlyArray<{
+            readonly type: string;
+            readonly sourceThreadId: ThreadId;
+          }>;
+        }) =>
+          projection.contextTransfers.filter(
+            (row) => row.type === "subagent_result" && row.sourceThreadId === childThreadId,
+          );
+
+        // Nothing reports the cancellation before the startup pass runs.
+        assert.lengthOf(resultTransfers(yield* orchestrator.getThreadProjection(threadId)), 0);
+        // A child whose restart continuation is still pending is left alone.
+        yield* orchestrator.recoverDelegatedTaskReports(() => Effect.succeed(true));
+        assert.lengthOf(resultTransfers(yield* orchestrator.getThreadProjection(threadId)), 0);
+
+        yield* orchestrator.recoverDelegatedTaskReports(() => Effect.succeed(false));
+        const recovered = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(resultTransfers(recovered), 1);
+        const task = recovered.subagents.find((row) => row.id === taskId);
+        assert.equal(task?.status, "cancelled");
+        assert.isDefined(task?.completionDelivery);
+
+        // Running the pass again publishes nothing new.
+        yield* orchestrator.recoverDelegatedTaskReports();
+        assert.lengthOf(resultTransfers(yield* orchestrator.getThreadProjection(threadId)), 1);
+      }),
+  );
+
+  it.effect("re-offers a parent wake that startup recovery cancelled with a sibling", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const sink = yield* EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:delegated-recovery-wake");
+      const runId = RunId.make("run:delegated-recovery-wake");
+      const taskId = NodeId.make("node:delegated-recovery-wake-first");
+      const siblingId = NodeId.make("node:delegated-recovery-wake-sibling");
+      const siblingThreadId = ThreadId.make("thread:delegated-recovery-wake-sibling");
+      const wakeMessageId = MessageId.make(`message:delegated-delivery:${threadId}`);
+      const wakeRunId = RunId.make("run:delegated-recovery-wake-delivery");
+      const siblingRunId = RunId.make("run:delegated-recovery-wake-sibling");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        runId,
+        projectId: ProjectId.make("project:delegated-recovery-wake"),
+        rootNodeId: NodeId.make("node:delegated-recovery-wake-root"),
+        taskId,
+        deliveryState: "claimed",
+        completionWake: "always",
+        deliveryTaskIds: [taskId],
+        settledDeliveryCount: 0,
+        now,
+      });
+      const parent = yield* orchestrator.getThreadProjection(threadId);
+      const parentRun = parent.runs[0]!;
+      const runPayload = (
+        id: RunId,
+        thread: ThreadId,
+        messageId: MessageId,
+        status: "running" | "cancelled",
+      ) => ({
+        ...parentRun,
+        id,
+        threadId: thread,
+        ordinal: 2,
+        userMessageId: messageId,
+        rootNodeId: null,
+        activeAttemptId: null,
+        status,
+        completedAt: status === "cancelled" ? now : null,
+        delegatedCompletion: undefined,
+      });
+      // Task A's wake is running in the parent while sibling B still works.
+      yield* sink.write({
+        commandId: CommandId.make("command:delegated-recovery-wake:seed"),
+        events: [
+          {
+            id: EventId.make("event:delegated-recovery-wake:message"),
+            type: "message.updated",
+            threadId,
+            runId: wakeRunId,
+            occurredAt: now,
+            payload: {
+              id: wakeMessageId,
+              threadId,
+              runId: wakeRunId,
+              nodeId: null,
+              role: "user",
+              text: "Background task finished",
+              attachments: [],
+              streaming: false,
+              createdBy: "agent",
+              creationSource: "server",
+              createdAt: now,
+              updatedAt: now,
+              delegatedCompletion: { parentRunId: runId, generation: 1, taskIds: [taskId] },
+            },
+          },
+          {
+            id: EventId.make("event:delegated-recovery-wake:wake-run"),
+            type: "run.updated",
+            threadId,
+            runId: wakeRunId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: runPayload(wakeRunId, threadId, wakeMessageId, "running"),
+          },
+          {
+            id: EventId.make("event:delegated-recovery-wake:sibling-thread"),
+            type: "thread.created",
+            threadId: siblingThreadId,
+            driver,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: makeSubagentChildThread({
+              parentThread: parent.thread,
+              childThreadId: siblingThreadId,
+              parentNodeId: siblingId,
+              activeProviderThreadId: null,
+              providerInstanceId: modelSelection.instanceId,
+              modelSelection,
+              title: "Sibling",
+              now,
+              createdBy: "agent",
+              creationSource: "server",
+            }),
+          },
+          {
+            id: EventId.make("event:delegated-recovery-wake:sibling-task"),
+            type: "subagent.updated",
+            threadId,
+            runId,
+            nodeId: siblingId,
+            driver,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              ...parent.subagents[0]!,
+              id: siblingId,
+              childThreadId: siblingThreadId,
+              status: "running",
+              result: null,
+              completedAt: null,
+              completionDelivery: undefined,
+            },
+          },
+        ],
+      });
+      // Startup runtime recovery cancels both the wake and the sibling.
+      yield* sink.write({
+        commandId: CommandId.make("command:runtime-reconcile:delegated-recovery-wake"),
+        events: [
+          {
+            id: EventId.make("event:delegated-recovery-wake:wake-cancelled"),
+            type: "run.updated",
+            threadId,
+            runId: wakeRunId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: runPayload(wakeRunId, threadId, wakeMessageId, "cancelled"),
+          },
+          {
+            id: EventId.make("event:delegated-recovery-wake:sibling-cancelled"),
+            type: "run.updated",
+            threadId: siblingThreadId,
+            runId: siblingRunId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: runPayload(
+              siblingRunId,
+              siblingThreadId,
+              MessageId.make("message:delegated-recovery-wake-sibling"),
+              "cancelled",
+            ),
+          },
+        ],
+      });
+      const cohortOf = (projection: OrchestrationV2ThreadProjection) =>
+        projection.runs.find((run) => run.id === runId)?.delegatedCompletion;
+      // Until the startup pass runs, nothing re-offers the cancelled wake.
+      assert.equal(
+        cohortOf(yield* orchestrator.getThreadProjection(threadId))?.delivery?.generation,
+        1,
+      );
+
+      yield* orchestrator.recoverDelegatedTaskReports(() => Effect.succeed(false));
+      const recovered = yield* orchestrator.getThreadProjection(threadId);
+      assert.isTrue(
+        recovered.contextTransfers.some(
+          (row) => row.type === "subagent_result" && row.sourceThreadId === siblingThreadId,
+        ),
+      );
+      const delivery = cohortOf(recovered)?.delivery;
+      assert.equal(delivery?.generation, 2);
+      assert.deepEqual([...(delivery?.taskIds ?? [])].toSorted(), [siblingId, taskId].toSorted());
     }),
   );
 

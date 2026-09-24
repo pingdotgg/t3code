@@ -22,6 +22,13 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import { CheckpointRollbackServiceV2 } from "./CheckpointRollbackService.ts";
+import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
+import { ProviderTurnControlServiceV2 } from "./ProviderTurnControlService.ts";
+import { ProviderTurnStartServiceV2 } from "./ProviderTurnStartService.ts";
+import { RunFinalizationService } from "./RunFinalizationService.ts";
+import { RuntimeRequestServiceV2 } from "./RuntimeRequestService.ts";
+import { ThreadTitleRegenerationService } from "./ThreadTitleRegenerationService.ts";
 
 const threadId = ThreadId.make("thread:restart");
 const runId = RunId.make("run:restart");
@@ -311,5 +318,65 @@ it.effect("does not cancel or resume a run that completes while shutdown intent 
       ),
     );
     assert.isFalse(dispatched);
+  }),
+);
+
+it.effect("reconciles a delegated child when its restart continuation will not run", () =>
+  Effect.gen(function* () {
+    const projection = makeProjection();
+    const cancelled = { ...projection, runs: [{ ...projection.runs[0]!, status: "cancelled" }] };
+    const reconciled: ThreadId[] = [];
+    let dispatchFails = false;
+    const execute = (settingEnabled: boolean, willRetry = false) =>
+      Effect.gen(function* () {
+        const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+        return yield* executor
+          .execute(
+            {
+              id: `effect:restart-continuation:${runId}`,
+              threadId,
+              request: { type: "provider-runtime.continue", sourceRunId: runId },
+            } as EffectOutbox.OrchestrationEffectV2,
+            { willRetry },
+          )
+          .pipe(Effect.exit);
+      }).pipe(
+        Effect.provide(
+          EffectWorker.executorLayer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.mock(ThreadManagementService)({
+                  getThreadRecords: () => Effect.succeed(cancelled as never),
+                  dispatch: () =>
+                    dispatchFails ? Effect.die("dispatch failed") : Effect.succeed({} as never),
+                  reconcileAppOwnedSubagentResult: (childThreadId) =>
+                    Effect.sync(() => void reconciled.push(childThreadId)),
+                }),
+                ServerSettings.layerTest({ continueThreadsAfterServerUpdate: settingEnabled }),
+                Layer.mock(RunFinalizationService)({}),
+                Layer.mock(CheckpointRollbackServiceV2)({}),
+                Layer.mock(ProviderSessionManagerV2)({}),
+                Layer.mock(ProviderTurnControlServiceV2)({}),
+                Layer.mock(ProviderTurnStartServiceV2)({}),
+                Layer.mock(RuntimeRequestServiceV2)({}),
+                Layer.mock(ThreadTitleRegenerationService)({}),
+              ),
+            ),
+          ),
+        ),
+      );
+
+    // A continuation that starts leaves the result to the continued run.
+    yield* execute(true);
+    assert.deepEqual(reconciled, []);
+    // A skipped continuation publishes the cancelled result now.
+    yield* execute(false);
+    assert.deepEqual(reconciled, [threadId]);
+    // A failure that will be retried waits; the final failure publishes.
+    dispatchFails = true;
+    yield* execute(true, true);
+    assert.deepEqual(reconciled, [threadId]);
+    yield* execute(true, false);
+    assert.deepEqual(reconciled, [threadId, threadId]);
   }),
 );

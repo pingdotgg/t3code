@@ -2,6 +2,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   type OrchestrationV2DomainEvent,
+  type RunId,
   type OrchestrationV2ThreadProjection,
   ThreadId,
 } from "@t3tools/contracts";
@@ -9,6 +10,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -56,6 +58,8 @@ export class ProviderRuntimeRecoveryService extends Context.Service<
     ) => Effect.Effect<ProviderRuntimeReconciliationSummary, ProviderRuntimeRecoveryError>;
     readonly prepareForShutdown: Effect.Effect<void, ProviderRuntimeRecoveryError>;
     readonly recover: Effect.Effect<ProviderRuntimeRecoverySummary, ProviderRuntimeRecoveryError>;
+    /** Whether a restart continuation for this run is still waiting to settle. */
+    readonly isRestartContinuationPending: (runId: RunId) => Effect.Effect<boolean>;
   }
 >()("t3/orchestration-v2/ProviderRuntimeRecoveryService") {}
 
@@ -623,7 +627,22 @@ export const make = Effect.gen(function* () {
     return (yield* reconcile("startup")) satisfies ProviderRuntimeRecoverySummary;
   });
 
-  return ProviderRuntimeRecoveryService.of({ reconcile, prepareForShutdown, recover });
+  const isRestartContinuationPending = (runId: RunId) =>
+    outbox.get(`effect:restart-continuation:${runId}`).pipe(
+      Effect.map(
+        (effect) =>
+          Option.isSome(effect) &&
+          (effect.value.status === "pending" || effect.value.status === "running"),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
+
+  return ProviderRuntimeRecoveryService.of({
+    reconcile,
+    prepareForShutdown,
+    recover,
+    isRestartContinuationPending,
+  });
 });
 
 export const layer = Layer.effect(ProviderRuntimeRecoveryService, make);

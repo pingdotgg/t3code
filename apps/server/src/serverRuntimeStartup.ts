@@ -507,7 +507,23 @@ const make = (options?: StartupOptions) =>
             ),
           ),
         ),
-        recover: runStartupPhase("orchestration-v2.recovery", providerRuntimeRecovery.recover),
+        recover: runStartupPhase(
+          "orchestration-v2.recovery",
+          providerRuntimeRecovery.recover.pipe(
+            // Report delegated tasks only once recovery has cancelled
+            // interrupted work, leaving a child with a pending restart
+            // continuation to that continuation.
+            Effect.tap(() =>
+              ThreadManagement.ThreadManagementService.pipe(
+                Effect.flatMap((threads) =>
+                  threads.recoverDelegatedTaskReports((run) =>
+                    providerRuntimeRecovery.isRestartContinuationPending(run.id),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
         startEffectWorker: runStartupPhase(
           "orchestration-v2.effect-worker.start",
           startEffectWorkerWithRelay({

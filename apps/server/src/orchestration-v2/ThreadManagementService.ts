@@ -285,6 +285,8 @@ export interface ThreadManagementServiceShape {
   readonly getTimelinePage: OrchestratorV2["Service"]["getTimelinePage"];
   readonly getMessageCount: OrchestratorV2["Service"]["getMessageCount"];
   readonly getThreadRecords: OrchestratorV2["Service"]["getThreadRecords"];
+  readonly recoverDelegatedTaskReports: OrchestratorV2["Service"]["recoverDelegatedTaskReports"];
+  readonly reconcileAppOwnedSubagentResult: OrchestratorV2["Service"]["reconcileAppOwnedSubagentResult"];
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
@@ -731,6 +733,8 @@ const make = Effect.gen(function* () {
       ensureProjectionTranscript(threadId).pipe(
         Effect.andThen(orchestrator.getThreadRecords(threadId, fields, filter)),
       ),
+    recoverDelegatedTaskReports: orchestrator.recoverDelegatedTaskReports,
+    reconcileAppOwnedSubagentResult: orchestrator.reconcileAppOwnedSubagentResult,
     getThreadProjection,
     getCheckpointContext,
     getThreadSnapshot,
