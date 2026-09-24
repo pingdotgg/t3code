@@ -328,6 +328,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
     const idleThreadId = "thread-idle" as ThreadId;
     const oldCompletedId = "thread-old-completed" as ThreadId;
     const newCompletedId = "thread-new-completed" as ThreadId;
+    const freshMessageId = "thread-fresh-message" as ThreadId;
 
     const baseThread = {
       projectId,
@@ -400,6 +401,20 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
               startedAt: "2026-05-25T00:00:01.000Z",
               completedAt: "2026-05-25T00:00:02.000Z",
               assistantMessageId: null,
+            },
+          },
+          {
+            ...baseThread,
+            id: freshMessageId,
+            latestUserMessageAt: "2026-05-25T00:00:01.000Z",
+            session: {
+              threadId: freshMessageId,
+              status: "ready",
+              providerName: "Codex",
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: "2026-05-25T00:00:02.000Z",
             },
           },
           {
@@ -912,6 +927,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           currentThread = {
             ...completedThread,
             latestTurn: null,
+            latestUserMessageAt: DateTime.formatIso(DateTime.add(now, { seconds: 1 })),
             session: {
               threadId,
               status: "ready",
@@ -919,7 +935,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
               runtimeMode: "full-access",
               activeTurnId: null,
               lastError: null,
-              updatedAt: old,
+              updatedAt: DateTime.formatIso(DateTime.add(now, { seconds: 2 })),
             },
           };
           expect(

@@ -268,16 +268,7 @@ export function resolveAgentAwarenessRelayPublishSnapshot(input: {
 }
 
 function terminalWorkSinceStart(thread: OrchestrationThreadShell, startedAt: number): boolean {
-  const workStartedAt =
-    Date.parse(
-      thread.latestTurn?.startedAt ??
-        thread.latestTurn?.requestedAt ??
-        thread.latestUserMessageAt ??
-        "",
-    ) || 0;
-  const turnCompletedAt = Date.parse(thread.latestTurn?.completedAt ?? "") || 0;
-  const sessionUpdatedAt = Date.parse(thread.session?.updatedAt ?? "") || 0;
-  return turnCompletedAt > startedAt || (workStartedAt > startedAt && sessionUpdatedAt > startedAt);
+  return Date.parse(thread.latestTurn?.completedAt ?? "") > startedAt;
 }
 
 export function resolveAgentAwarenessRelayActiveThreadIds(input: {
