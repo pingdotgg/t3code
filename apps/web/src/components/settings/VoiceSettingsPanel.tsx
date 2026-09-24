@@ -91,6 +91,21 @@ const compareLanguages = (a: string, b: string) => {
   if (bRank !== undefined) return 1;
   return languageLabel(a).localeCompare(languageLabel(b));
 };
+// Handy's editorial model order (catalog dated 2026-08-17). Unranked models retain catalog order.
+const modelRanks = new Map<string, number>(
+  [
+    "parakeet-unified-en-0.6b",
+    "nemotron-3.5-asr-streaming-0.6b",
+    "canary-180m-flash",
+    "cohere-transcribe-03-2026",
+    "whisper-medium",
+    "Voxtral-Mini-4B-Realtime-2602",
+    "parakeet-tdt-0.6b-v3",
+    "parakeet-tdt-0.6b-v2",
+    "Qwen3-ASR-0.6B",
+    "Fun-ASR-MLT-Nano-2512",
+  ].map((slug, index) => [`handy-computer/${slug}-gguf`, index + 1]),
+);
 const modelSortOrder = (model: EnvironmentSpeechModel) => {
   if (model.active) return 0;
   if (model.state === "installed") return 1;
@@ -418,7 +433,9 @@ export function VoiceSettingsPanel() {
     )
     .sort(
       (a, b) =>
-        modelSortOrder(a) - modelSortOrder(b) || Number(b.recommended) - Number(a.recommended),
+        modelSortOrder(a) - modelSortOrder(b) ||
+        (modelRanks.get(a.id) ?? 11) - (modelRanks.get(b.id) ?? 11) ||
+        Number(b.recommended) - Number(a.recommended),
     );
 
   return (

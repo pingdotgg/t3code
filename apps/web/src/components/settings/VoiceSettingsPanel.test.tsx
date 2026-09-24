@@ -292,6 +292,47 @@ it("puts the active model first, then installed and downloading models", async (
   );
   expect(search.props.value).toBe("");
 });
+it("uses Handy's editorial ranks within each model state", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("navigator", {});
+  vi.stubGlobal("window", { setInterval, clearInterval });
+  const model = (slug: string, name: string, state: string) => ({
+    id: `handy-computer/${slug}-gguf`,
+    name,
+    description: `${name} description`,
+    languages: ["en"],
+    state,
+    active: false,
+    recommended: false,
+    supportsStreaming: false,
+    size: 100,
+    accuracy: 90,
+    speed: 90,
+  });
+  mocks.listModels.mockResolvedValue({
+    models: [
+      model("canary-180m-flash", "Rank 3", "installed"),
+      model("Fun-ASR-MLT-Nano-2512", "Rank 10", "downloadable"),
+      model("parakeet-unified-en-0.6b", "Rank 1", "installed"),
+      model("Voxtral-Mini-4B-Realtime-2602", "Rank 6", "downloadable"),
+    ],
+  });
+  await act(async () => {
+    root = create(createElement(VoiceSettingsPanel));
+  });
+
+  expect(
+    root.root
+      .findAllByType("p")
+      .map((paragraph) => paragraph.children.join(""))
+      .filter((text) => text.endsWith(" description")),
+  ).toEqual([
+    "Rank 1 description",
+    "Rank 3 description",
+    "Rank 6 description",
+    "Rank 10 description",
+  ]);
+});
 it("shows cancellation errors without clearing the download state", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("navigator", {});
