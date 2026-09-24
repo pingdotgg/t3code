@@ -83,9 +83,10 @@ const resourceAttributes = Config.Record(
   Config.map((value): ResourceAttributes => ({ value })),
   Config.orElse(() =>
     Config.String(RESOURCE_ATTRIBUTES).pipe(
-      Config.map((raw): ResourceAttributes => ({
+      // The value is left out because attributes can carry credentials.
+      Config.map((): ResourceAttributes => ({
         value: {},
-        warning: `${RESOURCE_ATTRIBUTES}=${raw} is not a list of percent-encoded key=value pairs and was ignored`,
+        warning: `${RESOURCE_ATTRIBUTES} is not a list of percent-encoded key=value pairs and was ignored`,
       })),
     ),
   ),

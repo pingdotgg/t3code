@@ -95,7 +95,7 @@ describe("OtelEnvironment", () => {
       env: { OTEL_RESOURCE_ATTRIBUTES: "team=core,broken=%zz" },
       resourceAttributes: {},
       warnings: [
-        "OTEL_RESOURCE_ATTRIBUTES=team=core,broken=%zz is not a list of percent-encoded key=value pairs and was ignored",
+        "OTEL_RESOURCE_ATTRIBUTES is not a list of percent-encoded key=value pairs and was ignored",
       ],
     },
   ])("resource attributes: $name", ({ env, resourceAttributes, warnings }) =>
