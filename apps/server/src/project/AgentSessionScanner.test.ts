@@ -283,6 +283,134 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect(
+      "excludes Codex subagents during discovery and import while preserving top-level sessions",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+          yield* TestClock.setTime(nowMs);
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const workspace = yield* makeTempDir("t3code-workspace-");
+          const directory = path.join(codexHomePath, "sessions", "2026", "08", "24");
+          const subagentSource = {
+            subagent: {
+              thread_spawn: { parent_thread_id: "parent-session", depth: 1 },
+            },
+          };
+          const transcript = (id: string, metadata: Record<string, unknown>, prompt: string) =>
+            [
+              encodeTranscriptRecord({
+                type: "session_meta",
+                payload: { id, cwd: workspace, ...metadata },
+              }),
+              encodeTranscriptRecord({
+                type: "event_msg",
+                payload: { type: "user_message", message: prompt },
+              }),
+            ].join("\n");
+
+          yield* writeTranscript({
+            filePath: path.join(directory, "rollout-child.jsonl"),
+            contents: transcript("child-session", { source: subagentSource }, "Child task"),
+            mtimeMs: nowMs,
+          });
+          const replacedPath = path.join(directory, "rollout-replaced.jsonl");
+          yield* writeTranscript({
+            filePath: replacedPath,
+            contents: transcript("replaced-session", {}, "Top-level before import"),
+            mtimeMs: nowMs - 500,
+          });
+          yield* writeTranscript({
+            filePath: path.join(directory, "rollout-fork.jsonl"),
+            contents: transcript(
+              "fork-session",
+              { forked_from_id: "parent-session" },
+              "Continue the fork",
+            ),
+            mtimeMs: nowMs - 1_000,
+          });
+          yield* writeTranscript({
+            filePath: path.join(directory, "rollout-legacy.jsonl"),
+            contents: transcript("legacy-session", {}, "Continue legacy work"),
+            mtimeMs: nowMs - 2_000,
+          });
+
+          const outcomes = yield* Effect.gen(function* () {
+            const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+            const scan = yield* scanner.scan;
+            expect(scan.candidates).toMatchObject([{ path: workspace, threadCount: 3 }]);
+            yield* writeTranscript({
+              filePath: replacedPath,
+              contents: transcript(
+                "replaced-session",
+                { source: subagentSource },
+                "Delegated after discovery",
+              ),
+              mtimeMs: nowMs - 500,
+            });
+            return yield* scanner.recentThreads(workspace).pipe(Stream.runCollect);
+          }).pipe(Effect.provide(makeScannerTestLayer({ claudeHomePath, codexHomePath })));
+
+          expect(Array.from(outcomes)).toMatchObject([
+            { _tag: "Importable", thread: { providerSessionId: "fork-session" } },
+            { _tag: "Importable", thread: { providerSessionId: "legacy-session" } },
+          ]);
+        }),
+    );
+
+    it.effect.each(["cli", "vscode"] as const)(
+      "discovers and imports a top-level Codex %s session",
+      (source) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+          yield* TestClock.setTime(nowMs);
+          const claudeHomePath = yield* makeTempDir("t3code-string-source-claude-");
+          const codexHomePath = yield* makeTempDir("t3code-string-source-codex-");
+          const workspace = yield* makeTempDir("t3code-string-source-workspace-");
+          yield* writeTranscript({
+            filePath: path.join(
+              codexHomePath,
+              "sessions",
+              "2026",
+              "08",
+              "24",
+              `rollout-${source}.jsonl`,
+            ),
+            contents: [
+              encodeTranscriptRecord({
+                type: "session_meta",
+                payload: { id: `${source}-session`, cwd: workspace, source },
+              }),
+              encodeTranscriptRecord({
+                type: "event_msg",
+                payload: { type: "user_message", message: `Import ${source} history` },
+              }),
+            ].join("\n"),
+            mtimeMs: nowMs,
+          });
+
+          const outcomes = yield* Effect.gen(function* () {
+            const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+            const scan = yield* scanner.scan;
+            expect(scan.candidates).toMatchObject([{ path: workspace, threadCount: 1 }]);
+            return yield* scanner.recentThreads(workspace).pipe(Stream.runCollect);
+          }).pipe(Effect.provide(makeScannerTestLayer({ claudeHomePath, codexHomePath })));
+
+          expect(Array.from(outcomes)).toMatchObject([
+            {
+              _tag: "Importable",
+              thread: {
+                providerSessionId: `${source}-session`,
+                messages: [{ role: "user", text: `Import ${source} history` }],
+              },
+            },
+          ]);
+        }),
+    );
+
     it.effect.each(["claudeAgent", "codex"] as const)(
       "does not open a non-file %s transcript",
       (source) =>
@@ -1473,7 +1601,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           contents: [
             encodeTranscriptRecord({
               type: "session_meta",
-              payload: { id: "codex-recent", cwd: workspace },
+              payload: { id: "codex-recent", cwd: workspace, name: "Saved code review" },
             }),
             encodeTranscriptRecord({
               type: "event_msg",
@@ -1502,6 +1630,10 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         expect(threads.map((thread) => thread.providerSessionId)).toEqual([
           "codex-recent",
           "claude-recent",
+        ]);
+        expect(threads.map((thread) => thread.title)).toEqual([
+          "Saved code review",
+          "Fix the project",
         ]);
         expect(threads.map((thread) => thread.messages.map((message) => message.text))).toEqual([
           ["Review this code", "Looks good"],
@@ -1885,6 +2017,108 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             }),
         );
       }
+    }
+
+    for (const defaultEnabled of [true, false]) {
+      it.effect(
+        `does not spend history limits reading native-owned transcripts (default enabled: ${defaultEnabled})`,
+        () =>
+          Effect.gen(function* () {
+            const path = yield* Path.Path;
+            const fileSystem = yield* FileSystem.FileSystem;
+            const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+            yield* TestClock.setTime(nowMs);
+            const claudeHomePath = yield* makeTempDir("t3code-native-limit-claude-");
+            const codexHomePath = yield* makeTempDir("t3code-native-limit-codex-");
+            const workspace = yield* makeTempDir("t3code-native-limit-project-");
+            const otherCodexHome = yield* makeTempDir("t3code-native-limit-other-");
+            const nativeSessions = new Set(["codex-other\0session-100"]);
+            const opens = new Map<string, number>();
+            for (let index = 0; index <= 100; index += 1) {
+              const sessionId = `session-${index}`;
+              if (index < 100)
+                nativeSessions.add(
+                  `${["codex", "codex-shared", "codex-disabled"][index % 3]}\0${sessionId}`,
+                );
+              yield* writeTranscript({
+                filePath: path.join(
+                  codexHomePath,
+                  "sessions",
+                  "2026",
+                  "08",
+                  "24",
+                  `rollout-${sessionId}.jsonl`,
+                ),
+                contents: [
+                  encodeTranscriptRecord({
+                    type: "session_meta",
+                    payload: { id: sessionId, cwd: workspace, source: "cli" },
+                  }),
+                  encodeTranscriptRecord({
+                    type: "event_msg",
+                    payload: { type: "user_message", message: "External history" },
+                  }),
+                ].join("\n"),
+                mtimeMs: nowMs - index * 1_000,
+              });
+            }
+            const outcomes = yield* Effect.gen(function* () {
+              const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+              expect((yield* scanner.scan).candidates[0]?.threadCount).toBe(101);
+              opens.clear();
+              return yield* scanner
+                .recentThreads(workspace, [], nativeSessions)
+                .pipe(Stream.runCollect);
+            }).pipe(
+              Effect.provide(
+                makeScannerTestLayer({
+                  claudeHomePath,
+                  codexHomePath,
+                  providerInstances: {
+                    [ProviderInstanceId.make("codex")]: {
+                      driver: ProviderDriverKind.make("codex"),
+                      enabled: defaultEnabled,
+                      config: { homePath: codexHomePath },
+                    },
+                    [ProviderInstanceId.make("codex-shared")]: {
+                      driver: ProviderDriverKind.make("codex"),
+                      config: { homePath: codexHomePath },
+                    },
+                    [ProviderInstanceId.make("codex-disabled")]: {
+                      driver: ProviderDriverKind.make("codex"),
+                      enabled: false,
+                      config: { homePath: codexHomePath },
+                    },
+                    [ProviderInstanceId.make("codex-other")]: {
+                      driver: ProviderDriverKind.make("codex"),
+                      config: { homePath: otherCodexHome },
+                    },
+                  },
+                }),
+              ),
+              Effect.provideService(FileSystem.FileSystem, {
+                ...fileSystem,
+                open: (filePath, options) => {
+                  opens.set(filePath, (opens.get(filePath) ?? 0) + 1);
+                  return fileSystem.open(filePath, options);
+                },
+              }),
+            );
+            expect(outcomes).toMatchObject([
+              {
+                _tag: "Importable",
+                thread: {
+                  providerSessionId: "session-100",
+                  providerInstanceId: defaultEnabled ? "codex" : "codex-shared",
+                  sharedHomeInstanceIds: ["codex", "codex-shared", "codex-disabled"],
+                },
+              },
+            ]);
+            expect([...opens.keys()]).toEqual([
+              path.join(codexHomePath, "sessions", "2026", "08", "24", "rollout-session-100.jsonl"),
+            ]);
+          }),
+      );
     }
 
     it.effect("checks file identity and provider before skipping completed history", () =>
@@ -2964,7 +3198,7 @@ describe("parseAgentSessionTranscript", () => {
         }),
         encodeTranscriptRecord({
           type: "session_meta",
-          payload: { id: "parent-session" },
+          payload: { id: "parent-session", name: "Parent title" },
         }),
         encodeTranscriptRecord({
           type: "event_msg",
@@ -2978,6 +3212,7 @@ describe("parseAgentSessionTranscript", () => {
     });
 
     expect(thread?.providerSessionId).toBe("fork-session");
+    expect(thread?.title).toBe("Continue in the fork");
   });
 
   it("skips Codex transcripts without a resumable session ID", () => {
@@ -3070,6 +3305,42 @@ describe("parseAgentSessionTranscript", () => {
     ]);
   });
 
+  it("uses structured user text for the title while preserving response-only setup messages", () => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            internal_chat_message_metadata_passthrough: {
+              content_item_kinds: [
+                "plugins.recommendations",
+                "agents_md.instructions",
+                "user.text",
+              ],
+            },
+            content: [
+              { type: "input_text", text: "<recommended_plugins>setup</recommended_plugins>" },
+              { type: "input_text", text: "# AGENTS.md instructions\nInternal rules" },
+              { type: "input_text", text: "Fix the selected import\nKeep messages intact" },
+            ],
+          },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe("Fix the selected import");
+    expect(thread?.messages.map((message) => message.text)).toEqual([
+      "<recommended_plugins>setup</recommended_plugins>\n# AGENTS.md instructions\nInternal rules\nFix the selected import\nKeep messages intact",
+    ]);
+  });
+
   it("preserves context markup in response-only Codex messages", () => {
     const context = "<environment_context>\n<cwd>/tmp/project</cwd>\n</environment_context>";
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
@@ -3103,7 +3374,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("<environment_context>");
+    expect(thread?.title).toBe("Initialize Git and add a README.");
     expect(thread?.messages.map((message) => message.text)).toEqual([
       context,
       "Initialize Git and add a README.",
@@ -3130,7 +3401,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("<environment_context>");
+    expect(thread?.title).toBe("Create a useful project.");
     expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
   });
 
@@ -3153,7 +3424,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("## My request for Codex:");
+    expect(thread?.title).toBe("Fix the visible bug");
     expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
   });
 

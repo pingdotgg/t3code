@@ -67,6 +67,8 @@ export type RecordImportedTranscriptInput = typeof RecordImportedTranscriptInput
 
 export interface ProviderSessionRuntimeUpsertOptions {
   readonly onConflict?: "update" | "ignore";
+  readonly unlessNativeSessionId?: string;
+  readonly sharedHomeInstanceIds?: ReadonlyArray<ProviderInstanceId>;
 }
 
 /**
@@ -84,7 +86,7 @@ export class ProviderSessionRuntimeRepository extends Context.Service<
     readonly upsert: (
       runtime: ProviderSessionRuntime,
       options?: ProviderSessionRuntimeUpsertOptions,
-    ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
+    ) => Effect.Effect<boolean, ProviderSessionRuntimeRepositoryError>;
 
     /** Record one source file without replacing the current session state. */
     readonly recordImportedTranscript: (
@@ -234,8 +236,15 @@ export const make = Effect.gen(function* () {
       `,
   });
 
-  const insertRuntimeRow = SqlSchema.void({
-    Request: ProviderSessionRuntimeDbRowSchema,
+  // A no-op conflict update lets RETURNING report allowed reuse without changing the binding.
+  const insertRuntimeRow = SqlSchema.findOneOption({
+    Request: ProviderSessionRuntimeDbRowSchema.mapFields(
+      Struct.assign({
+        unlessNativeSessionId: Schema.NullOr(Schema.String),
+        sharedHomeInstanceIds: Schema.Array(Schema.String),
+      }),
+    ),
+    Result: Schema.Struct({ threadId: ThreadId }),
     execute: (runtime) =>
       sql`
         INSERT INTO provider_session_runtime (
@@ -249,7 +258,7 @@ export const make = Effect.gen(function* () {
           resume_cursor_json,
           runtime_payload_json
         )
-        VALUES (
+        SELECT
           ${runtime.threadId},
           ${runtime.providerName},
           ${runtime.providerInstanceId},
@@ -263,8 +272,24 @@ export const make = Effect.gen(function* () {
             THEN json_remove(${runtime.runtimePayload}, '$.importedTranscripts')
             ELSE ${runtime.runtimePayload}
           END
+        WHERE ${runtime.unlessNativeSessionId} IS NULL OR NOT EXISTS (
+          SELECT 1 FROM provider_session_runtime
+          WHERE thread_id NOT LIKE 'import:%'
+            AND provider_name = ${runtime.providerName}
+            AND COALESCE(provider_instance_id, provider_name) IN ${sql.in(runtime.sharedHomeInstanceIds)}
+            AND CASE WHEN json_valid(resume_cursor_json) THEN
+              CASE provider_name
+                WHEN 'claudeAgent' THEN CASE
+                  WHEN json_type(resume_cursor_json, '$.resume') = 'text'
+                  THEN json_extract(resume_cursor_json, '$.resume')
+                  ELSE json_extract(resume_cursor_json, '$.sessionId')
+                END
+                WHEN 'codex' THEN json_extract(resume_cursor_json, '$.threadId')
+              END
+            END = ${runtime.unlessNativeSessionId}
         )
-        ON CONFLICT (thread_id) DO NOTHING
+        ON CONFLICT (thread_id) DO UPDATE SET thread_id = provider_session_runtime.thread_id
+        RETURNING thread_id AS "threadId"
       `,
   });
 
@@ -365,7 +390,17 @@ export const make = Effect.gen(function* () {
   });
 
   const upsert: ProviderSessionRuntimeRepository["Service"]["upsert"] = (runtime, options) =>
-    (options?.onConflict === "ignore" ? insertRuntimeRow(runtime) : upsertRuntimeRow(runtime)).pipe(
+    (options?.onConflict === "ignore"
+      ? insertRuntimeRow({
+          ...runtime,
+          unlessNativeSessionId: options.unlessNativeSessionId ?? null,
+          sharedHomeInstanceIds: [
+            runtime.providerInstanceId ?? runtime.providerName,
+            ...(options.sharedHomeInstanceIds ?? []),
+          ],
+        }).pipe(Effect.map(Option.isSome))
+      : upsertRuntimeRow(runtime).pipe(Effect.as(true))
+    ).pipe(
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "ProviderSessionRuntimeRepository.upsert:query",
