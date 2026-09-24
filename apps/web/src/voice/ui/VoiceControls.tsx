@@ -32,7 +32,7 @@ const PHASE_LABELS: Record<VoiceControlsProps["phase"], string> = {
   error: "Error",
 };
 
-export function phaseLabel(
+function phaseLabel(
   phase: VoiceControlsProps["phase"],
   micMuted: boolean,
   activation: VoiceActivationMode = "manual",

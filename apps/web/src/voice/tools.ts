@@ -97,11 +97,11 @@ import { createDomVoiceControlHost } from "./ui/domControls";
 // ---------------------------------------------------------------------------
 
 /** At most four distinctive terms per query by default (frozen search contract). */
-export const MAX_SEARCH_TERMS = 4;
-export const MIN_TERM_LENGTH = 2;
-export const MAX_TERM_LENGTH = 200;
-export const MIN_QUERY_LENGTH = 2;
-export const MAX_QUERY_LENGTH = 200;
+const MAX_SEARCH_TERMS = 4;
+const MIN_TERM_LENGTH = 2;
+const MAX_TERM_LENGTH = 200;
+const MIN_QUERY_LENGTH = 2;
+const MAX_QUERY_LENGTH = 200;
 const DEFAULT_SEARCH_LIMIT_PER_ENVIRONMENT = 20;
 const MAX_SERVER_SEARCH_LIMIT = 50;
 const DEFAULT_READ_THREAD_TURNS = 10;

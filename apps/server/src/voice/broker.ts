@@ -62,16 +62,16 @@ import {
 // Public constants
 // ---------------------------------------------------------------------------
 
-export const VOICE_BROKER_SESSIONS_PATH = "/api/voice/sessions";
-export const VOICE_BROKER_CLOSE_PATH = "/api/voice/sessions/close";
-export const VOICE_BROKER_USAGE_PATH = "/api/voice/sessions/usage";
-export const VOICE_BACKEND_PATH = "/api/voice/backend";
+const VOICE_BROKER_SESSIONS_PATH = "/api/voice/sessions";
+const VOICE_BROKER_CLOSE_PATH = "/api/voice/sessions/close";
+const VOICE_BROKER_USAGE_PATH = "/api/voice/sessions/usage";
+const VOICE_BACKEND_PATH = "/api/voice/backend";
 
 /** ServerSecretStore entry holding the environment-owned OpenAI API key. */
 export const OPENAI_API_KEY_SECRET_NAME = "openai-api-key";
 /** ServerSecretStore entry holding optional broker config overrides (JSON):
     `{ liveModel?, backendModel?, instructions?, delegationInstructions? }`. */
-export const VOICE_BROKER_CONFIG_SECRET_NAME = "voice-broker-config";
+const VOICE_BROKER_CONFIG_SECRET_NAME = "voice-broker-config";
 
 const OPENAI_LIVE_SESSIONS_URL = "https://api.openai.com/v1/live/sessions";
 const encodeBackendInput = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.Unknown)));
@@ -104,7 +104,7 @@ const DESTINATION_PROJECT_POLICY =
   "clarifying question instead of defaulting to the discussed, open, " +
   "first-listed, or most recently mentioned project.";
 
-export const DEFAULT_LIVE_INSTRUCTIONS =
+const DEFAULT_LIVE_INSTRUCTIONS =
   "You are Oracle, a concise voice assistant inside T3 Code.\n" +
   "Backchannel policy: For navigation and simple UI commands, stay silent while acting and after success. The app plays a completion chime. For other tasks, acknowledge briefly without guessing results.\n" +
   "Interruption policy: Stop speaking when interrupted and listen.\n" +
@@ -220,7 +220,7 @@ const VOICE_TOOL_DESCRIPTIONS: Record<keyof typeof VoiceToolSchemas, string> = {
     "Activate one listed interface control by its id in the attached T3 window. Success only when the result state is activated; disabled, hidden, stale and ambiguous targets are reported explicitly.",
 };
 
-export const voiceBrokerToolDefinitions = () =>
+const voiceBrokerToolDefinitions = () =>
   (Object.keys(VoiceToolSchemas) as ReadonlyArray<keyof typeof VoiceToolSchemas>).map((tool) => ({
     name: voiceToolName(tool),
     description: VOICE_TOOL_DESCRIPTIONS[tool],

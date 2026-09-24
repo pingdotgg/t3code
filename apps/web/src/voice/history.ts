@@ -71,7 +71,7 @@ const sessionKey = (id: string): string => `${VOICE_HISTORY_SESSION_KEY_PREFIX}$
 
 /** Upper bound for any single recorded text field; the transcript is a
     record, not a re-implementation of the thread content. */
-export const MAX_HISTORY_TEXT = 2000;
+const MAX_HISTORY_TEXT = 2000;
 
 export type VoiceHistoryEntry =
   | {
@@ -181,7 +181,7 @@ const capText = (value: string): string =>
 // ---------------------------------------------------------------------------
 
 /** Upper bound on recorded control entries per tool outcome. */
-export const MAX_RECORDED_CONTROLS = 10;
+const MAX_RECORDED_CONTROLS = 10;
 
 export interface VoiceHistoryToolResult {
   readonly environmentStatus?: "ok" | "error";
@@ -270,7 +270,7 @@ const decodeToolResult = (value: unknown): VoiceHistoryToolResult | undefined =>
     Unknown fields are dropped: the recorded result can diagnose whether the
     action landed (dispatch identity, session state, acknowledgment, control
     state) but never carries raw thread contents or credentials. */
-export function sanitizeToolResult(output: unknown): VoiceHistoryToolResult | undefined {
+function sanitizeToolResult(output: unknown): VoiceHistoryToolResult | undefined {
   const record = asRecord(output);
   if (record === undefined) {
     return undefined;
@@ -541,7 +541,7 @@ const decodeEntries = (value: unknown): VoiceHistoryEntry[] =>
 
 /** Tolerant session decode: a malformed payload decodes to `undefined`, a
     partially malformed entry list keeps the valid entries. */
-export function decodeVoiceHistorySession(value: unknown): VoiceHistorySession | undefined {
+function decodeVoiceHistorySession(value: unknown): VoiceHistorySession | undefined {
   const record = asRecord(value);
   const id = record === undefined ? undefined : asString(record.id);
   const startedAt = record === undefined ? undefined : asNumber(record.startedAt);

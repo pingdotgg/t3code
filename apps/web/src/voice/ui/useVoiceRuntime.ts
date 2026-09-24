@@ -68,7 +68,7 @@ export const voiceBrokerSelectionAtom = Atom.make<VoiceBrokerSelection>((get) =>
 
 /** Synchronous read of the current broker selection (used at connect time,
     not just render time). */
-export function readVoiceBrokerSelection(): VoiceBrokerSelection {
+function readVoiceBrokerSelection(): VoiceBrokerSelection {
   return appAtomRegistry.get(voiceBrokerSelectionAtom);
 }
 
