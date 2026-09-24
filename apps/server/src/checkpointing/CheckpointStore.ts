@@ -19,7 +19,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import type { CheckpointStoreError } from "./Errors.ts";
-import type { VcsCheckpointOps } from "../vcs/VcsDriver.ts";
+import type { VcsCheckpointOps, VcsDeleteCheckpointRefsInput } from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
 export interface CaptureCheckpointInput {
@@ -42,10 +42,7 @@ export interface DiffCheckpointsInput {
   readonly format?: "patch" | "numstat";
 }
 
-export interface DeleteCheckpointRefsInput {
-  readonly cwd: string;
-  readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
-}
+export type DeleteCheckpointRefsInput = VcsDeleteCheckpointRefsInput;
 
 /** Service tag for checkpoint persistence and restore operations. */
 export class CheckpointStore extends Context.Service<
@@ -88,7 +85,7 @@ export class CheckpointStore extends Context.Service<
     ) => Effect.Effect<string, CheckpointStoreError>;
 
     /**
-     * Delete the provided checkpoint refs.
+     * Delete the provided checkpoint refs, or all refs belonging to a thread.
      *
      * Best-effort delete: missing refs are tolerated.
      */

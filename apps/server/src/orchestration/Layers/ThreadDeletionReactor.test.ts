@@ -25,6 +25,7 @@ import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
 } from "../Services/OrchestrationEngine.ts";
+import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
 import {
   logCleanupCauseUnlessInterrupted,
@@ -108,7 +109,18 @@ describe("ThreadDeletionReactor drain", () => {
       const terminalManager = {
         close: () => Effect.void,
       } as unknown as TerminalManager.TerminalManager["Service"];
+      const checkpointCleanup = yield* Deferred.make<void>();
+      const checkpointFences: number[] = [];
       const layer = ThreadDeletionReactorLive.pipe(
+        Layer.provide(
+          Layer.mock(CheckpointReactor)({
+            drainThrough: (sequence) =>
+              Effect.gen(function* () {
+                checkpointFences.push(sequence);
+                yield* Deferred.await(checkpointCleanup);
+              }),
+          }),
+        ),
         Layer.provide(Layer.succeed(ProviderService, providerService)),
         Layer.provide(Layer.succeed(TerminalManager.TerminalManager, terminalManager)),
         Layer.provide(Layer.succeed(OrchestrationEngineService, engine)),
@@ -130,7 +142,11 @@ describe("ThreadDeletionReactor drain", () => {
           expect(drained.pollUnsafe()).toBeUndefined();
 
           yield* Deferred.succeed(releaseSecondEvent, undefined);
+          yield* Effect.yieldNow;
+          expect(drained.pollUnsafe()).toBeUndefined();
+          yield* Deferred.succeed(checkpointCleanup, undefined);
           yield* Fiber.join(drained);
+          expect(checkpointFences).toEqual([2]);
           expect(stops).toEqual([1, 2]);
         }),
       ).pipe(Effect.provide(layer));

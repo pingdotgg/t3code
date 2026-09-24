@@ -20,6 +20,7 @@ import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 
@@ -915,6 +916,18 @@ const make = Effect.gen(function* () {
   });
 
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (event: OrchestrationEvent) {
+    if (event.type === "thread.deleted") {
+      const { threadId, workspaceRoot } = event.payload;
+      startedTurns.delete(threadId);
+      pending.delete(threadId);
+      // Use the deleted incarnation's repository even if this id has already
+      // been recreated. Linked worktree refs live in the project repository.
+      if (workspaceRoot && (yield* checkpointStore.isGitRepository(workspaceRoot))) {
+        yield* checkpointStore.deleteCheckpointRefs({ cwd: workspaceRoot, threadId });
+      }
+      return;
+    }
+
     if (event.type === "thread.turn-start-requested" || event.type === "thread.message-sent") {
       if (event.type === "thread.turn-start-requested") pending.add(event.payload.threadId);
       yield* ensurePreTurnBaselineFromDomainTurnStart(event);
@@ -1012,6 +1025,8 @@ const make = Effect.gen(function* () {
   > =>
     input.source === "domain" ? processDomainEvent(input.event) : processRuntimeEvent(input.event);
 
+  const pendingDeletions = yield* SubscriptionRef.make<ReadonlyArray<number>>([]);
+
   const processInputSafely = (input: ReactorInput) =>
     processInput(input).pipe(
       Effect.catchCause((cause) => {
@@ -1024,22 +1039,62 @@ const make = Effect.gen(function* () {
           cause: Cause.pretty(cause),
         });
       }),
+      Effect.ensuring(
+        input.source === "domain" && input.event.type === "thread.deleted"
+          ? SubscriptionRef.update(pendingDeletions, (pending) =>
+              pending.filter((sequence) => sequence !== input.event.sequence),
+            )
+          : Effect.void,
+      ),
     );
 
   const worker = yield* makeDrainableWorker(processInputSafely);
+  const seenSequence = yield* SubscriptionRef.make(0);
+  const noteSeen = (sequence: number) =>
+    SubscriptionRef.update(seenSequence, (seen) => Math.max(seen, sequence));
+
+  const drainThrough: CheckpointReactorShape["drainThrough"] = Effect.fn(
+    "CheckpointReactor.drainThrough",
+  )(function* (sequence) {
+    yield* SubscriptionRef.changes(seenSequence).pipe(
+      Stream.filter((seen) => seen >= sequence),
+      Stream.runHead,
+    );
+    yield* SubscriptionRef.changes(pendingDeletions).pipe(
+      Stream.filter((pending) => pending.every((deletion) => deletion > sequence)),
+      Stream.runHead,
+    );
+  });
 
   const start: CheckpointReactorShape["start"] = Effect.fn("start")(function* () {
+    // Runs before activation, so nothing commits between reading the head and
+    // subscribing; the parked consumer then sees every later event.
+    yield* orchestrationEngine.latestSequence.pipe(Effect.flatMap(noteSeen));
+    const events = yield* orchestrationEngine.subscribeDomainEvents;
     yield* forkParked(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
-        if (
-          event.type !== "thread.turn-start-requested" &&
-          event.type !== "thread.message-sent" &&
-          event.type !== "thread.checkpoint-revert-requested"
-        ) {
-          return Effect.void;
-        }
-        return worker.enqueue({ source: "domain", event });
-      }),
+      Stream.runForEach(
+        events,
+        Effect.fnUntraced(function* (event) {
+          // Register a deletion before it can complete, and advance the watermark
+          // only after the handoff, so drainThrough never passes a deletion it
+          // cannot see.
+          if (event.type === "thread.deleted") {
+            yield* SubscriptionRef.update(pendingDeletions, (pending) => [
+              ...pending,
+              event.sequence,
+            ]);
+          }
+          if (
+            event.type === "thread.turn-start-requested" ||
+            event.type === "thread.message-sent" ||
+            event.type === "thread.checkpoint-revert-requested" ||
+            event.type === "thread.deleted"
+          ) {
+            yield* worker.enqueue({ source: "domain", event });
+          }
+          yield* noteSeen(event.sequence);
+        }),
+      ),
     );
 
     yield* forkParked(
@@ -1059,6 +1114,7 @@ const make = Effect.gen(function* () {
 
   return {
     start,
+    drainThrough,
     drain: worker.drain.pipe(
       Effect.andThen(statusRefreshWorker.drain),
       Effect.andThen(entryRefreshWorker.drain),

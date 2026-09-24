@@ -95,6 +95,30 @@ function buildLargeText(lineCount = 5_000): string {
 }
 
 it.layer(TestLayer)("CheckpointStore.layer", (it) => {
+  it.effect("deletes all refs for only the requested thread, including packed refs", () =>
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+      const store = yield* CheckpointStore.CheckpointStore;
+      const threadId = ThreadId.make("delete-me");
+      const otherRef = checkpointRefForThreadTurn(ThreadId.make("delete-me-too"), 0);
+      for (const ref of [
+        checkpointRefForThreadTurn(threadId, 0),
+        checkpointRefForThreadTurn(threadId, 5),
+        otherRef,
+      ]) {
+        yield* store.captureCheckpoint({ cwd, checkpointRef: ref });
+      }
+      yield* git(cwd, ["pack-refs", "--all"]);
+      yield* store.deleteCheckpointRefs({ cwd, threadId });
+      yield* store.deleteCheckpointRefs({ cwd, threadId });
+      expect(yield* git(cwd, ["for-each-ref", "--format=%(refname)", "refs/t3/checkpoints/"])).toBe(
+        otherRef,
+      );
+      expect(yield* git(cwd, ["status", "--porcelain"])).toBe("");
+    }),
+  );
+
   describe("isGitRepository", () => {
     it.effect("returns false when no Git repository is detected", () =>
       Effect.gen(function* () {

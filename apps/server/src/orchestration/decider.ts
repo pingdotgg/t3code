@@ -411,11 +411,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.delete": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const project = readModel.projects.find((entry) => entry.id === thread.projectId);
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -428,6 +429,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           deletedAt: occurredAt,
+          ...(project ? { workspaceRoot: project.workspaceRoot } : {}),
         },
       };
     }

@@ -28,6 +28,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -41,6 +42,7 @@ import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
+import { ServerActivation } from "../../serverActivation.ts";
 import { CheckpointReactorLive } from "./CheckpointReactor.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
@@ -234,6 +236,10 @@ function createGitRepository() {
   return cwd;
 }
 
+function listCheckpointRefs(cwd: string): string {
+  return runGit(cwd, ["for-each-ref", "--format=%(refname)", "refs/t3/checkpoints/"]).trim();
+}
+
 function gitRefExists(cwd: string, ref: string): boolean {
   try {
     runGit(cwd, ["show-ref", "--verify", "--quiet", ref]);
@@ -292,6 +298,9 @@ describe("CheckpointReactor", () => {
   });
 
   async function createHarness(options?: {
+    readonly activation?: Effect.Effect<void>;
+    readonly onLog?: (message: unknown) => void;
+    readonly beforeCheckpointLookup?: Effect.Effect<void>;
     readonly checkpointLookupFailure?: (
       cwd: string,
     ) => VcsProcessTimeoutError | VcsProcessSpawnError | undefined;
@@ -384,7 +393,9 @@ describe("CheckpointReactor", () => {
               ...store,
               hasCheckpointRef: (input) => {
                 const failure = options?.checkpointLookupFailure?.(input.cwd);
-                return failure ? Effect.fail(failure) : store.hasCheckpointRef(input);
+                return (options?.beforeCheckpointLookup ?? Effect.void).pipe(
+                  Effect.andThen(failure ? Effect.fail(failure) : store.hasCheckpointRef(input)),
+                );
               },
             })),
           ),
@@ -402,7 +413,17 @@ describe("CheckpointReactor", () => {
       Layer.provideMerge(NodeServices.layer),
     );
 
-    runtime = ManagedRuntime.make(layer);
+    runtime = ManagedRuntime.make(
+      options?.onLog
+        ? layer.pipe(
+            Layer.provide(
+              Logger.layer([Logger.make(({ message }) => options.onLog?.(message))], {
+                mergeWithExisting: false,
+              }),
+            ),
+          )
+        : layer,
+    );
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(CheckpointReactor));
@@ -420,7 +441,12 @@ describe("CheckpointReactor", () => {
         yield* Stream.runForEach(receiptBus.streamEventsForTest, (receipt) =>
           Queue.offer(receipts, receipt),
         ).pipe(Effect.forkIn(testScope, { startImmediately: true }));
-        yield* reactor.start().pipe(Scope.provide(testScope));
+        yield* reactor
+          .start()
+          .pipe(
+            Effect.provideService(ServerActivation, options?.activation),
+            Scope.provide(testScope),
+          );
         return receipts;
       }),
     );
@@ -515,9 +541,223 @@ describe("CheckpointReactor", () => {
       cwd,
       drain,
       nextReceipt: Queue.take(receipts),
+      drainThrough: reactor.drainThrough,
       pullRequestRefreshes,
     };
   }
+
+  effectIt.effect("cleans deletions received while waiting for server activation", () =>
+    Effect.gen(function* () {
+      const activation = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({ activation: Deferred.await(activation) }),
+      );
+      const deleted = yield* harness.engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("startup-delete"),
+        threadId: ThreadId.make("thread-1"),
+      });
+      yield* Deferred.succeed(activation, undefined);
+      yield* harness.drainThrough(deleted.sequence);
+      expect(listCheckpointRefs(harness.cwd)).toBe("");
+    }),
+  );
+
+  effectIt.effect("a sequence fence does not wait for later checkpoint work or deletions", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          beforeCheckpointLookup: Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+          ),
+        }),
+      );
+      const sequence = yield* harness.engine.latestSequence;
+      yield* harness.drainThrough(sequence);
+      harness.provider.emit({
+        type: "turn.started",
+        eventId: EventId.make("later-start"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("later-turn"),
+      });
+      yield* Deferred.await(entered);
+      const deleted = yield* harness.engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("later-delete"),
+        threadId: ThreadId.make("thread-1"),
+      });
+      // This must finish while the later capture and deletion are still blocked.
+      yield* harness
+        .drainThrough(sequence)
+        .pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+      yield* harness.drainThrough(deleted.sequence);
+    }),
+  );
+
+  effectIt.effect.each([false, true])(
+    "cleans the old incarnation before a reused id starts, different project=%s",
+    (differentProject) =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            beforeCheckpointLookup: Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+            ),
+          }),
+        );
+        const threadId = ThreadId.make("thread-1");
+        // Hold baseline work in the checkpoint queue while the projection advances.
+        harness.provider.emit({
+          type: "turn.started",
+          eventId: EventId.make("old-start"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt: "2026-01-01T00:00:01.000Z",
+          threadId,
+          turnId: asTurnId("old-turn"),
+        });
+        yield* Deferred.await(entered);
+        yield* harness.engine.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make("delete-old"),
+          threadId,
+        });
+        const cwd = differentProject ? createGitRepository() : harness.cwd;
+        if (differentProject) {
+          tempDirs.push(cwd);
+          yield* harness.engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.make("create-new-project"),
+            projectId: asProjectId("project-2"),
+            title: "New Project",
+            workspaceRoot: cwd,
+            createdAt: "2026-01-01T00:00:02.000Z",
+          });
+        }
+        const created = yield* harness.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("recreate-thread"),
+          threadId,
+          projectId: asProjectId(differentProject ? "project-2" : "project-1"),
+          title: "Recreated",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: cwd,
+          createdAt: "2026-01-01T00:00:02.000Z",
+        });
+        yield* Deferred.succeed(release, undefined);
+        yield* harness.drainThrough(created.sequence);
+        expect(listCheckpointRefs(harness.cwd)).toBe("");
+        NodeFS.writeFileSync(NodePath.join(cwd, "README.md"), "new incarnation\n");
+        harness.provider.emit({
+          type: "turn.started",
+          eventId: EventId.make("new-start"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt: "2026-01-01T00:00:03.000Z",
+          threadId,
+          turnId: asTurnId("new-turn"),
+        });
+        expect(yield* harness.nextReceipt).toMatchObject({ type: "checkpoint.baseline.captured" });
+        expect(gitShowFileAtRef(cwd, checkpointRefForThreadTurn(threadId, 0), "README.md")).toBe(
+          "new incarnation\n",
+        );
+      }),
+  );
+
+  effectIt.effect(
+    "a locked checkpoint ref does not prevent thread deletion or draining cleanup",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const threadId = ThreadId.make("thread-1");
+        const checkpointRef = checkpointRefForThreadTurn(threadId, 0);
+        NodeFS.writeFileSync(NodePath.join(harness.cwd, ".git", `${checkpointRef}.lock`), "");
+        const deleted = yield* harness.engine.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make("cmd-delete-with-locked-checkpoint"),
+          threadId,
+        });
+        yield* harness.drainThrough(deleted.sequence);
+        const model = yield* Effect.promise(harness.readModel);
+        expect(
+          model.threads.some((thread) => thread.id === threadId && thread.deletedAt === null),
+        ).toBe(false);
+        expect(gitRefExists(harness.cwd, checkpointRef)).toBe(true);
+      }),
+  );
+
+  effectIt.effect("deletes a thread in a non-Git workspace without a cleanup warning", () =>
+    Effect.gen(function* () {
+      const logs: unknown[] = [];
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          initializeGit: false,
+          seedFilesystemCheckpoints: false,
+          onLog: (message) => logs.push(message),
+        }),
+      );
+      const threadId = ThreadId.make("thread-1");
+      const deleted = yield* harness.engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("delete-non-git"),
+        threadId,
+      });
+      yield* harness.drainThrough(deleted.sequence);
+      const model = yield* Effect.promise(harness.readModel);
+      expect(
+        model.threads.some((thread) => thread.id === threadId && thread.deletedAt === null),
+      ).toBe(false);
+      expect(logs.flat()).not.toContain("checkpoint reactor failed to process input");
+    }),
+  );
+
+  effectIt.effect.each([null, "/missing/deleted-worktree"])(
+    "deletes checkpoint refs from the project repository with worktree %s",
+    (threadWorktreePath) =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness({ threadWorktreePath }));
+        const otherRef = checkpointRefForThreadTurn(ThreadId.make("thread-2"), 0);
+        runGit(harness.cwd, ["update-ref", otherRef, "HEAD"]);
+        yield* harness.engine.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make("cmd-delete-checkpoints"),
+          threadId: ThreadId.make("thread-1"),
+        });
+        yield* Effect.promise(harness.drain);
+        expect(listCheckpointRefs(harness.cwd)).toBe(otherRef);
+      }),
+  );
+
+  effectIt.effect(
+    "preserves archived checkpoints and removes them when the project is deleted",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const before = listCheckpointRefs(harness.cwd);
+        yield* harness.engine.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("cmd-archive-checkpoints"),
+          threadId: ThreadId.make("thread-1"),
+        });
+        yield* Effect.promise(harness.drain);
+        expect(listCheckpointRefs(harness.cwd)).toBe(before);
+        yield* harness.engine.dispatch({
+          type: "project.delete",
+          commandId: CommandId.make("cmd-delete-project-checkpoints"),
+          projectId: asProjectId("project-1"),
+          force: true,
+        });
+        yield* Effect.promise(harness.drain);
+        expect(listCheckpointRefs(harness.cwd)).toBe("");
+      }),
+  );
 
   effectIt.effect.each([
     "active",

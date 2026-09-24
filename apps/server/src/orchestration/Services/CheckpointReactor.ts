@@ -30,6 +30,14 @@ export interface CheckpointReactorShape {
    * Intended for test use to replace timing-sensitive sleeps.
    */
   readonly drain: Effect.Effect<void>;
+
+  /**
+   * Fence for reusing a thread id: resolves once checkpoint cleanup has run,
+   * successfully or not, for every thread.deleted event whose sequence is at
+   * or before `sequence`. Unlike `drain`, later events and unrelated capture
+   * or revert work do not extend the wait.
+   */
+  readonly drainThrough: (sequence: number) => Effect.Effect<void>;
 }
 
 /**

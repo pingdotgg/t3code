@@ -11,7 +11,7 @@ import type {
   ReviewDiffPreviewResult,
   VcsRepositoryIdentity,
 } from "@t3tools/contracts";
-import { CheckpointRef } from "@t3tools/contracts";
+import { CheckpointRef, type ThreadId } from "@t3tools/contracts";
 import * as VcsProcess from "./VcsProcess.ts";
 
 export interface VcsCaptureCheckpointInput {
@@ -34,10 +34,10 @@ export interface VcsDiffCheckpointsInput {
   readonly format?: "patch" | "numstat";
 }
 
-export interface VcsDeleteCheckpointRefsInput {
-  readonly cwd: string;
-  readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
-}
+export type VcsDeleteCheckpointRefsInput = { readonly cwd: string } & (
+  | { readonly checkpointRefs: ReadonlyArray<CheckpointRef> }
+  | { readonly threadId: ThreadId }
+);
 
 export interface VcsCheckpointOps {
   readonly captureCheckpoint: (input: VcsCaptureCheckpointInput) => Effect.Effect<void, VcsError>;

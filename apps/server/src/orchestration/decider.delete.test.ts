@@ -137,6 +137,25 @@ function normalizeDeleteEvent(event: PlannedEvent | ReadonlyArray<PlannedEvent>)
 }
 
 it.layer(NodeServices.layer)("decider deletion flows", (it) => {
+  it.effect("deletes an orphaned thread without requiring its missing project", () =>
+    Effect.gen(function* () {
+      const readModel = yield* seedReadModel;
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.delete",
+          commandId: asCommandId("delete-orphan"),
+          threadId: asThreadId("thread-delete-1"),
+        },
+        readModel: { ...readModel, projects: [] },
+      });
+      expect(result).toMatchObject({
+        type: "thread.deleted",
+        payload: { threadId: asThreadId("thread-delete-1") },
+      });
+      expect(result).not.toHaveProperty("payload.workspaceRoot");
+    }),
+  );
+
   it.effect("rejects deleting a non-empty project without force", () =>
     Effect.gen(function* () {
       const readModel = yield* seedReadModel;

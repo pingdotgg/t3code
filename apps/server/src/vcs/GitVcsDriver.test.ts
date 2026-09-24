@@ -14,8 +14,9 @@ import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { assert, it } from "@effect/vitest";
 
-import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
+import { CheckpointRef, ThreadId, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
+import { checkpointRefForThreadTurn } from "../checkpointing/Utils.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
@@ -1116,3 +1117,61 @@ it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publi
     ),
   );
 });
+
+it.effect(
+  "checkpoint deletion fails before deleting refs when enumeration exceeds the output limit",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const process = yield* VcsProcess.VcsProcess;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-limit-" });
+      const { git } = yield* makeCheckpointFixture(driver, cwd);
+      const threadId = ThreadId.make("limited-thread");
+      const firstRef = checkpointRefForThreadTurn(threadId, 0);
+      const refs = [firstRef, checkpointRefForThreadTurn(threadId, 1)];
+      for (const ref of refs) yield* git(["update-ref", ref, "HEAD"]);
+      const limited = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) =>
+            process.run(
+              input.args.includes("for-each-ref")
+                ? { ...input, maxOutputBytes: firstRef.length + 1 }
+                : input,
+            ),
+        }),
+      );
+      const result = yield* limited.checkpoints
+        .deleteCheckpointRefs({ cwd, threadId })
+        .pipe(Effect.result);
+      assert.strictEqual(result._tag, "Failure");
+      for (const ref of refs)
+        assert.isTrue(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef: ref }));
+    }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
+it.effect("thread cleanup surfaces lock errors while rewind cleanup remains best-effort", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-lock-" });
+    const { git } = yield* makeCheckpointFixture(driver, cwd);
+    const threadId = ThreadId.make("locked-thread");
+    const checkpointRef = checkpointRefForThreadTurn(threadId, 0);
+    yield* git(["update-ref", checkpointRef, "HEAD"]);
+    const lock = path.join(cwd, ".git", `${checkpointRef}.lock`);
+    yield* fs.writeFileString(lock, "");
+    const result = yield* driver.checkpoints
+      .deleteCheckpointRefs({ cwd, threadId })
+      .pipe(Effect.result);
+    assert.strictEqual(result._tag, "Failure");
+    assert.isTrue(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+    yield* driver.checkpoints.deleteCheckpointRefs({ cwd, checkpointRefs: [checkpointRef] });
+    assert.isTrue(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+    yield* fs.remove(lock);
+    yield* driver.checkpoints.deleteCheckpointRefs({ cwd, threadId });
+    yield* driver.checkpoints.deleteCheckpointRefs({ cwd, checkpointRefs: [checkpointRef] });
+    assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);

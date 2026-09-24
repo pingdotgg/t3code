@@ -1778,6 +1778,9 @@ export const ThreadCreatedPayload = Schema.Struct({
 
 export const ThreadDeletedPayload = Schema.Struct({
   threadId: ThreadId,
+  // Absent on events from before checkpoint cleanup existed; consumers must not
+  // substitute the current project, which may belong to a reused thread id.
+  workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   deletedAt: IsoDateTime,
 });
 
