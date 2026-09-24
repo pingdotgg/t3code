@@ -1096,7 +1096,10 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   const focusAt = useCallback(
     (nextCursor: number) => {
       if (!editor) return;
-      editor.view.dom.focus({ preventScroll: true });
+      // view.focus() also writes the stored selection to the DOM. A bare DOM
+      // focus leaves the caret at the start when the controlled update already
+      // stored the target selection, so the setTextSelection below is a no-op.
+      editor.view.focus();
       // A newer prompt is waiting to be applied (a chip was just inserted
       // through the store). Reporting the editor's stale text now would
       // overwrite that prompt; the pending rewrite places the caret instead.
