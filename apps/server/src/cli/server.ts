@@ -14,7 +14,10 @@ export const runServerCommand = (
 ) =>
   Effect.gen(function* () {
     const logLevel = yield* GlobalFlag.LogLevel;
-    const config = yield* resolveServerConfig(flags, logLevel, options);
+    const config = yield* resolveServerConfig(flags, logLevel, {
+      ...options,
+      isServerStartup: true,
+    });
     return yield* runServer.pipe(Effect.provideService(ServerConfig, config));
   });
 

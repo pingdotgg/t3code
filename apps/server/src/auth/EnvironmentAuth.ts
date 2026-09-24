@@ -37,6 +37,7 @@ import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
+import * as AuthUtils from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 import { layerConfig as SqlitePersistenceLayer } from "../persistence/Layers/Sqlite.ts";
 
@@ -635,9 +636,19 @@ export const make = Effect.gen(function* () {
       mapSessionVerificationErrors,
     );
 
+  const unsafeNoAuthSession: AuthenticatedSession = {
+    sessionId: AuthUtils.UNSAFE_NO_AUTH_SESSION_ID,
+    subject: AuthUtils.UNSAFE_NO_AUTH_SUBJECT,
+    method: AuthUtils.UNSAFE_NO_AUTH_METHOD,
+    scopes: AuthAdministrativeScopes,
+  };
+
   const authenticateRequest = (
     request: HttpServerRequest.HttpServerRequest,
   ): Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError> => {
+    if (config.unsafeNoAuth) {
+      return Effect.succeed(unsafeNoAuthSession);
+    }
     const selectedCredential = selectRequestCredential(
       request,
       sessions.cookieName,
@@ -1074,6 +1085,11 @@ export const make = Effect.gen(function* () {
 
   const authenticateWebSocketUpgrade: EnvironmentAuth["Service"]["authenticateWebSocketUpgrade"] =
     Effect.fn("EnvironmentAuth.authenticateWebSocketUpgrade")(function* (request) {
+      // Unsafe-no-auth must not fail an upgrade just because the client sent a
+      // stale wsTicket — the mode contract is that no credential can reject.
+      if (config.unsafeNoAuth) {
+        return unsafeNoAuthSession;
+      }
       const requestUrl = HttpServerRequest.toURL(request);
       if (Option.isSome(requestUrl)) {
         const websocketTicket = requestUrl.value.searchParams.get(WEBSOCKET_TICKET_QUERY_PARAM);
@@ -1084,6 +1100,9 @@ export const make = Effect.gen(function* () {
               subject: session.subject,
               method: session.method,
               scopes: session.scopes,
+              ...(session.proofKeyThumbprint
+                ? { proofKeyThumbprint: session.proofKeyThumbprint }
+                : {}),
               ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
             })),
             mapSessionVerificationErrors,

@@ -99,6 +99,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: Option.none<boolean>(),
         tailscaleServeEnabled: Option.none<boolean>(),
         tailscaleServePort: Option.none<number>(),
+        unsafeNoAuth: Option.none<boolean>(),
       };
       const configLayer = ConfigProvider.layer(
         ConfigProvider.fromEnv({
@@ -143,6 +144,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: Option.none<boolean>(),
         tailscaleServeEnabled: Option.none<boolean>(),
         tailscaleServePort: Option.none<number>(),
+        unsafeNoAuth: Option.none<boolean>(),
       };
       const configLayer = ConfigProvider.layer(
         ConfigProvider.fromEnv({ env: { T3CODE_DEV_AUTH_TOKEN: secret } }),
@@ -190,6 +192,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          unsafeNoAuth: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -236,6 +239,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: true,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        unsafeNoAuth: false,
       });
       assert.equal(resolved.stateDir, join(baseDir, "userdata"));
     }),
@@ -263,6 +267,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.some(true),
           tailscaleServeEnabled: Option.some(true),
           tailscaleServePort: Option.some(8443),
+          unsafeNoAuth: Option.none(),
         },
         Option.some("Debug"),
       ).pipe(
@@ -306,6 +311,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: true,
         tailscaleServeEnabled: true,
         tailscaleServePort: 8443,
+        unsafeNoAuth: false,
       });
       assert.equal(resolved.dbPath, join(baseDir, "userdata", "state.sqlite"));
     }),
@@ -341,6 +347,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.some(false),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          unsafeNoAuth: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -379,6 +386,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        unsafeNoAuth: false,
       });
     }),
   );
@@ -421,6 +429,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          unsafeNoAuth: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -462,6 +471,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        unsafeNoAuth: false,
       });
       assert.equal(join(baseDir, "userdata"), resolved.stateDir);
       assert.equal(resolved.desktopTelemetryFd, 4);
@@ -490,6 +500,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          unsafeNoAuth: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -552,6 +563,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          unsafeNoAuth: Option.none(),
         },
         Option.some("Debug"),
       ).pipe(
@@ -592,6 +604,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: true,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        unsafeNoAuth: false,
       });
     }),
   );
@@ -629,6 +642,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          unsafeNoAuth: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -664,6 +678,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        unsafeNoAuth: false,
       });
     }),
   );
@@ -791,6 +806,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          unsafeNoAuth: Option.none(),
         },
         Option.none(),
         {
@@ -830,6 +846,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        unsafeNoAuth: false,
       });
     }),
   );
@@ -853,6 +870,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          unsafeNoAuth: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -896,6 +914,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          unsafeNoAuth: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -941,6 +960,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          unsafeNoAuth: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -981,6 +1001,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          unsafeNoAuth: Option.none(),
         },
         Option.none(),
       ).pipe(

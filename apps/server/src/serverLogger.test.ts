@@ -66,6 +66,7 @@ const configLayer = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
+        unsafeNoAuth: false,
         tailscaleServePort: 443,
         port: 0,
         host: undefined,

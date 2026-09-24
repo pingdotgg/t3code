@@ -7,11 +7,14 @@ import { HttpServer } from "effect/unstable/http";
 import { ServerConfig } from "./config.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 
-export interface HeadlessServeAccessInfo {
-  readonly connectionString: string;
-  readonly token: string;
-  readonly pairingUrl: string;
-}
+export type HeadlessServeAccessInfo =
+  | { readonly kind: "unsafe-no-auth"; readonly connectionString: string }
+  | {
+      readonly kind: "paired";
+      readonly connectionString: string;
+      readonly token: string;
+      readonly pairingUrl: string;
+    };
 
 type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
 
@@ -119,28 +122,39 @@ export const renderTerminalQrCode = (value: string, margin = 2): string => {
   return rows.join("\n");
 };
 
+export const UNSAFE_NO_AUTH_WARNING =
+  "Authentication is disabled (unsafe-no-auth). Anyone who can reach this server gets full administrative access.";
+
 export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): string =>
   [
     "T3 Code server is ready.",
     `Connection string: ${accessInfo.connectionString}`,
-    `Token: ${accessInfo.token}`,
-    `Pairing URL: ${accessInfo.pairingUrl}`,
+    ...(accessInfo.kind === "paired"
+      ? [`Token: ${accessInfo.token}`, `Pairing URL: ${accessInfo.pairingUrl}`]
+      : []),
     "",
-    renderTerminalQrCode(accessInfo.pairingUrl),
+    renderTerminalQrCode(
+      accessInfo.kind === "paired" ? accessInfo.pairingUrl : accessInfo.connectionString,
+    ),
     "",
+    ...(accessInfo.kind === "unsafe-no-auth" ? [`WARNING: ${UNSAFE_NO_AUTH_WARNING}`, ""] : []),
   ].join("\n");
 
 export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessInfo")(function* () {
   const serverConfig = yield* ServerConfig;
   const httpServer = yield* HttpServer.HttpServer;
-  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const connectionString = resolveHeadlessConnectionString(
     serverConfig.host,
     resolveListeningPort(httpServer.address, serverConfig.port),
   );
+  if (serverConfig.unsafeNoAuth) {
+    return { kind: "unsafe-no-auth", connectionString } satisfies HeadlessServeAccessInfo;
+  }
+  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const issued = yield* serverAuth.issueStartupPairingCredential();
 
   return {
+    kind: "paired",
     connectionString,
     token: issued.credential,
     pairingUrl: buildPairingUrl(connectionString, issued.credential),

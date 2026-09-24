@@ -54,6 +54,7 @@ import {
   formatHostForUrl,
   isWildcardHost,
   issueHeadlessServeAccessInfo,
+  UNSAFE_NO_AUTH_WARNING,
 } from "./startupAccess.ts";
 
 export class ServerRuntimeStartupError extends Schema.TaggedError<ServerRuntimeStartupError>()(
@@ -305,18 +306,17 @@ export const completeAutoBootstrapWelcome = <A extends object, E, R>(
 
 const resolveStartupBrowserTarget = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
-  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const localUrl = `http://localhost:${serverConfig.port}`;
   const bindUrl =
     serverConfig.host && !isWildcardHost(serverConfig.host)
       ? `http://${formatHostForUrl(serverConfig.host)}:${serverConfig.port}`
       : localUrl;
   const baseTarget = serverConfig.devUrl?.toString() ?? bindUrl;
-  return yield* Effect.succeed(serverConfig.mode === "desktop" ? baseTarget : undefined).pipe(
-    Effect.flatMap((target) =>
-      target ? Effect.succeed(target) : serverAuth.issueStartupPairingUrl(baseTarget),
-    ),
-  );
+  if (serverConfig.mode === "desktop" || serverConfig.unsafeNoAuth) {
+    return baseTarget;
+  }
+  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  return yield* serverAuth.issueStartupPairingUrl(baseTarget);
 });
 
 const maybeOpenBrowser = (target: string) =>
@@ -1029,7 +1029,11 @@ export const make = (options?: StartupOptions) =>
             );
           } else {
             const startupBrowserTarget = yield* resolveStartupBrowserTarget;
-            if (serverConfig.mode !== "desktop") {
+            if (serverConfig.unsafeNoAuth) {
+              yield* Effect.logWarning(UNSAFE_NO_AUTH_WARNING).pipe(
+                Effect.annotateLogs({ url: startupBrowserTarget }),
+              );
+            } else if (serverConfig.mode !== "desktop") {
               yield* Effect.logInfo(
                 "Authentication required. Open T3 Code using the pairing URL.",
               ).pipe(Effect.annotateLogs({ pairingUrl: startupBrowserTarget }));

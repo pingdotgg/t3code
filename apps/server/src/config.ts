@@ -100,6 +100,13 @@ export class ServerConfig extends Context.Service<
     readonly desktopTelemetryControlFd?: number | undefined;
     readonly resourceMonitorPath?: string | undefined;
     readonly autoBootstrapProjectFromCwd: boolean;
+    /**
+     * Explicit escape hatch for deployments that authenticate at the edge
+     * (Cloudflare Access, an SSO reverse proxy, a trusted tunnel). When true,
+     * every HTTP and WebSocket request resolves to an owner session and no
+     * pairing is required.
+     */
+    readonly unsafeNoAuth: boolean;
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
@@ -229,6 +236,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     ...derivedPaths,
     mode: "web",
     autoBootstrapProjectFromCwd: false,
+    unsafeNoAuth: false,
     logWebSocketEvents: false,
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,

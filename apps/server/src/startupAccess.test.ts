@@ -67,6 +67,7 @@ it("renders terminal QR codes as a multi-line unicode block grid", () => {
 
 it("formats headless serve output with the connection string, token, pairing url, and qr code", () => {
   const output = formatHeadlessServeOutput({
+    kind: "paired",
     connectionString: "http://192.168.1.42:3773",
     token: "PAIRCODE",
     pairingUrl: "http://192.168.1.42:3773/pair#token=PAIRCODE",
@@ -75,5 +76,18 @@ it("formats headless serve output with the connection string, token, pairing url
   expect(output).toContain("Connection string: http://192.168.1.42:3773");
   expect(output).toContain("Token: PAIRCODE");
   expect(output).toContain("Pairing URL: http://192.168.1.42:3773/pair#token=PAIRCODE");
+  assert.isTrue(output.includes("█") || output.includes("▀") || output.includes("▄"));
+});
+
+it("formats headless serve output without a pairing credential in unsafe-no-auth mode", () => {
+  const output = formatHeadlessServeOutput({
+    kind: "unsafe-no-auth",
+    connectionString: "http://192.168.1.42:3773",
+  });
+
+  expect(output).toContain("Connection string: http://192.168.1.42:3773");
+  expect(output).toContain("Authentication is disabled");
+  expect(output).not.toContain("Token:");
+  expect(output).not.toContain("Pairing URL:");
   assert.isTrue(output.includes("█") || output.includes("▀") || output.includes("▄"));
 });

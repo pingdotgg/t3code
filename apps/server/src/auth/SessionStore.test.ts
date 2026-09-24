@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId } from "@t3tools/contracts";
+import { AuthSessionId, EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -179,6 +179,44 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         expect((yield* Effect.flip(sessions.verify(token)))._tag).toBe("SessionTokenRevokedError");
       }).pipe(Effect.provide(reopenedA), Effect.scoped);
     }),
+  );
+
+  it.effect("verifies unsafe-no-auth tickets without a session row", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const ticket = yield* sessions.issueWebSocketToken(
+        AuthSessionId.make("unsafe-no-auth-session"),
+      );
+
+      const verified = yield* sessions.verifyWebSocketToken(ticket.token);
+
+      expect(verified.sessionId).toBe("unsafe-no-auth-session");
+      expect(verified.subject).toBe("unsafe-no-auth-owner");
+      expect(verified.scopes).toEqual([
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "review:write",
+        "relay:read",
+        "access:read",
+        "access:write",
+        "relay:write",
+      ]);
+    }).pipe(Effect.provide(makeSessionStoreLayer({ unsafeNoAuth: true }))),
+  );
+
+  it.effect("rejects unsafe-no-auth tickets when the mode is off", () =>
+    Effect.gen(function* () {
+      const enabled = yield* Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        return yield* sessions.issueWebSocketToken(AuthSessionId.make("unsafe-no-auth-session"));
+      }).pipe(Effect.provide(makeSessionStoreLayer({ unsafeNoAuth: true })), Effect.scoped);
+
+      const sessions = yield* SessionStore.SessionStore;
+      const error = yield* Effect.flip(sessions.verifyWebSocketToken(enabled.token));
+
+      expect(error._tag).toBe("UnknownWebSocketSessionError");
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
   );
 
   it.effect("invalidates old dev credentials and tickets after rotation or removal", () =>

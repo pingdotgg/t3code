@@ -118,6 +118,15 @@ For a plain HTTP LAN endpoint, use the direct pairing URL in a browser that can
 open it, or pair from the desktop app. On mobile, an IP address entered without a
 scheme uses HTTP, so include `https://` when your server uses HTTPS.
 
+## Serve behind an authenticating proxy
+
+If a reverse proxy already authenticates users at the edge (Cloudflare Access,
+an SSO gateway, a workspace proxy), T3 Code's pairing adds a second gate on top
+of it. Run the server with `--unsafe-no-auth` (or set `T3CODE_UNSAFE_NO_AUTH`)
+to skip pairing: every request is treated as the owner. Only use this when the
+proxy is the only public path to the server — the port itself grants full
+administrative access to anyone who can reach it.
+
 ## Desktop-managed SSH
 
 In the desktop app, open **Settings → Connections → Add environment**, choose

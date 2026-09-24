@@ -37,6 +37,9 @@ import {
   resolveSessionCookieName,
   signPayload,
   timingSafeEqualBase64Url,
+  UNSAFE_NO_AUTH_METHOD,
+  UNSAFE_NO_AUTH_SESSION_ID,
+  UNSAFE_NO_AUTH_SUBJECT,
 } from "./utils.ts";
 
 export interface IssuedSession {
@@ -898,7 +901,6 @@ export const make = Effect.gen(function* () {
     if (claims.sid.startsWith(REUSABLE_DEV_SESSION_PREFIX) && claims.sid !== devAuth?.sessionId) {
       return yield* new UnknownWebSocketSessionError({ sessionId: claims.sid });
     }
-
     const observedAt = yield* DateTime.now;
     const expiresAt = DateTime.make(claims.exp);
     if (Option.isNone(expiresAt)) {
@@ -913,6 +915,23 @@ export const make = Effect.gen(function* () {
         expiresAt: expiresAt.value,
         observedAt,
       });
+    }
+
+    // Unsafe-no-auth tickets are minted for the synthetic owner session,
+    // which has no auth_sessions row. A valid signature only proves this
+    // server minted the sid; admin scopes are granted unconditionally here.
+    // Defense in depth: authenticateWebSocketUpgrade already short-circuits
+    // unsafe-no-auth before reaching this verifier.
+    if (serverConfig.unsafeNoAuth && claims.sid === UNSAFE_NO_AUTH_SESSION_ID) {
+      return {
+        sessionId: claims.sid,
+        token,
+        method: UNSAFE_NO_AUTH_METHOD,
+        client: createDefaultClientMetadata(),
+        expiresAt: expiresAt.value,
+        subject: UNSAFE_NO_AUTH_SUBJECT,
+        scopes: AuthAdministrativeScopes,
+      } satisfies VerifiedSession;
     }
 
     const row = yield* authSessions
