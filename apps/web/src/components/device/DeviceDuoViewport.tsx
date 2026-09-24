@@ -59,6 +59,7 @@ export function DeviceDuoViewport(props: {
     if (!host || !canvas || !decoded) return;
     let disposed = false;
     let trackpad: ReturnType<typeof bindPhoneTrackpad> | null = null;
+    let stopTrackpadEnd: (() => void) | undefined;
     const resize = () => {
       const { width, height } = host.getBoundingClientRect();
       viewerRef.current?.resize(width, height, window.devicePixelRatio);
@@ -140,6 +141,7 @@ export function DeviceDuoViewport(props: {
           end: pinch.end,
         });
         trackpadRef.current = trackpad;
+        stopTrackpadEnd = window.desktopBridge?.onTrackpadScrollEnd?.(() => trackpad?.endOrbit());
         resize();
       })
       .catch(() => {
@@ -147,6 +149,7 @@ export function DeviceDuoViewport(props: {
       });
     return () => {
       disposed = true;
+      stopTrackpadEnd?.();
       trackpad?.dispose();
       trackpadRef.current = null;
       pinchRef.current = null;
