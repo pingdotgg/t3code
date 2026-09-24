@@ -51,6 +51,20 @@ export function assertClaudeBackgroundSubagentAfterRootOutput(
   const subagent = projection.subagents[0];
   assert.equal(subagent?.status, "completed");
   assert.equal(subagent?.origin, "provider_native");
+  // The continuation carries the subagent's notification summary. The
+  // subagent's own foreground Bash steps are not background work, so they
+  // never reach the roster or take over that summary.
+  const wakeMessage = projection.messages.find(
+    (message) => message.id === projection.runs[1]?.userMessageId,
+  );
+  assert.equal(wakeMessage?.text, "SUB_FINAL_REPORT");
+  assert.isFalse(
+    result.domainEvents.some(
+      (event) =>
+        event.type === "provider-thread.updated" &&
+        (event.payload.pendingBackgroundTasks?.length ?? 0) > 0,
+    ),
+  );
   if (subagent?.childThreadId == null) {
     throw new Error("The background subagent is missing its child thread.");
   }

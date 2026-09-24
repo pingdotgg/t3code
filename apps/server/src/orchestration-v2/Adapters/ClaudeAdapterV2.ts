@@ -4590,7 +4590,10 @@ export function makeClaudeAdapterV2(
             // Incremental fallback when background_tasks_changed is absent.
             // Subagent tasks project as subagent turn items; only non-subagent
             // background work (e.g. local_bash) lives on the provider-thread roster.
-            if (!isClaudeNonSubagentTask(message)) {
+            // A foreground task blocks its tool call (a subagent's own Bash
+            // steps included), so it is not background work; one moved to
+            // the background later arrives in background_tasks_changed.
+            if (!isClaudeNonSubagentTask(message) || message.is_backgrounded === false) {
               return false;
             }
             const description =
