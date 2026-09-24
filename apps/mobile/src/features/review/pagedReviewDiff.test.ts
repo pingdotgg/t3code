@@ -12,6 +12,7 @@ import { buildNativeReviewDiffData } from "./nativeReviewDiffAdapter";
 import {
   buildReviewCommentTarget,
   formatReviewCommentContext,
+  getSelectedReviewCommentLines,
   parseReviewInlineComments,
 } from "./reviewCommentSelection";
 
@@ -58,17 +59,31 @@ describe("paged mobile diffs", () => {
     expect(selection.lineCount).toBe(10);
   });
 
-  it("keeps a 200,000-line comment complete without retaining renderable rows for the whole range", async () => {
-    const loadedSelection = await loadPagedReviewCommentSelection({
-      start: 0,
-      end: 199_999,
-      revision: "revision",
-      fetchPage: async (start) => page(start),
-    });
-    expect(loadedSelection.lines).toHaveLength(5);
-    expect(loadedSelection.lineCount).toBe(200_000);
-    const context = formatReviewCommentContext(
-      {
+  it.each([
+    { direction: "forward", start: 0, end: 199_999 },
+    { direction: "backward", start: 199_999, end: 0 },
+  ])(
+    "selecting all 200,000 lines $direction keeps the composer preview bounded and saves every line",
+    async ({ start, end }) => {
+      // Reproduce selecting the first and last lines after scrolling across evicted windows.
+      // Generate each response on demand so the fixture never holds the whole diff as rows.
+      let fetchedLineCount = 0;
+      const loadedSelection = await loadPagedReviewCommentSelection({
+        start,
+        end,
+        revision: "revision",
+        fetchPage: async (offset) => {
+          expect(offset).toBe(fetchedLineCount);
+          const response = page(offset);
+          fetchedLineCount += response.rows.length;
+          return response;
+        },
+      });
+      expect(fetchedLineCount).toBe(200_000);
+      expect(loadedSelection.lineCount).toBe(200_000);
+      expect(loadedSelection.firstLine.sourceLineIndex).toBe(0);
+      expect(loadedSelection.lastLine.sourceLineIndex).toBe(199_999);
+      const target = {
         ...buildReviewCommentTarget(
           {
             sectionId: "turn:1",
@@ -80,17 +95,28 @@ describe("paged mobile diffs", () => {
           loadedSelection.lines.length - 1,
         ),
         loadedSelection,
-      },
-      "Review this range",
-    );
-    const comment = parseReviewInlineComments(context)[0]!;
-    expect(comment.startIndex).toBe(0);
-    expect(comment.endIndex).toBe(199_999);
-    expect(comment.rangeLabel).toBe("+1 to +200000");
-    expect(comment.diff.split("\n")).toHaveLength(200_001);
-    expect(comment.diff).toContain("+line 100000");
-    expect(comment.diff).toContain("+line 199999");
-  });
+      };
+      // This is the selection consumed by ReviewCommentComposerSheet for rendering/highlighting.
+      expect(target.lines).toHaveLength(5);
+      expect(getSelectedReviewCommentLines(target).map((line) => line.content)).toEqual([
+        "line 0",
+        "line 1",
+        "line 2",
+        "line 3",
+        "line 4",
+      ]);
+      const context = formatReviewCommentContext(target, "Review this entire range");
+      const comments = parseReviewInlineComments(context);
+      expect(comments).toHaveLength(1);
+      const comment = comments[0]!;
+      expect(comment.startIndex).toBe(0);
+      expect(comment.endIndex).toBe(199_999);
+      expect(comment.rangeLabel).toBe("+1 to +200000");
+      const savedLines = comment.diff.split("\n");
+      expect(savedLines.shift()).toBe("@@ -0,0 +1,200000 @@");
+      expect(savedLines).toEqual(Array.from({ length: 200_000 }, (_, index) => `+line ${index}`));
+    },
+  );
 
   it("retains separated windows with exact placeholder spacing and a bounded cache", () => {
     let windows = retainReviewDiffWindows([], page(0));
