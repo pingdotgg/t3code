@@ -173,9 +173,7 @@ export function FontFamilyPicker({
             {family}
           </span>
           <span className="flex shrink-0 items-center gap-1.5">
-            {isDefault ? (
-              <span className="text-[10px] text-muted-foreground/60">default</span>
-            ) : null}
+            {isDefault ? <span className="text-3xs text-muted-foreground/60">default</span> : null}
             {item === selectedValue ? (
               <CheckIcon className="size-3.5 text-muted-foreground" />
             ) : null}

@@ -33,7 +33,7 @@ export function WorkspaceBreadcrumbText({ children, className, ...props }: Compo
       // Center the capital letters with adjacent icons, not the font's leading.
       // Padding preserves accents and descenders when a label is truncated.
       className={cn(
-        "block min-w-0 truncate [text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:py-[0.5em]",
+        "block min-w-0 truncate [text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:py-1.5",
         className,
       )}
       {...props}

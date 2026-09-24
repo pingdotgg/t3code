@@ -123,7 +123,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
         <div
           key={frontItem.id}
           className={cn(
-            "relative z-10 transition-[translate,opacity] duration-220 ease-in",
+            "relative z-10 transition-[opacity,translate] duration-220 ease-in",
             exitingItemId === frontItem.id
               ? "pointer-events-none translate-y-16 opacity-0"
               : "opacity-100",
@@ -218,7 +218,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
                     <div
                       key={item.id}
                       className={cn(
-                        "transition-[translate,opacity] duration-220 ease-in",
+                        "transition-[opacity,translate] duration-220 ease-in",
                         exitingItemId === item.id
                           ? "pointer-events-none translate-y-28 opacity-0"
                           : "opacity-100",

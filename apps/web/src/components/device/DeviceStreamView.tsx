@@ -404,7 +404,7 @@ export function DeviceStreamView(props: {
                   }}
                 >
                   {element.label ? (
-                    <span className="absolute -top-3.5 left-0 max-w-full truncate rounded-sm bg-info px-1 text-[9px] leading-3.5 text-white">
+                    <span className="absolute -top-3.5 left-0 max-w-full truncate rounded-sm bg-info px-1 text-3xs leading-3.5 text-white">
                       {element.label}
                     </span>
                   ) : null}

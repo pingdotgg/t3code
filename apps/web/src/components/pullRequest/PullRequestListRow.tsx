@@ -68,7 +68,7 @@ export function PullRequestRowGlyph({
           />
         </span>
       </span>
-      {below ? <span className="inline-flex text-[11px]">{below}</span> : null}
+      {below ? <span className="inline-flex text-2xs">{below}</span> : null}
     </span>
   );
 }
@@ -100,15 +100,15 @@ export function PullRequestRowLines({
         {number}
         <span className="min-w-0 truncate text-sm">{title}</span>
         {signals ? (
-          <span className="flex shrink-0 items-center gap-1 text-[11px]">{signals}</span>
+          <span className="flex shrink-0 items-center gap-1 text-2xs">{signals}</span>
         ) : null}
         {status ? (
-          <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[11px]">{status}</span>
+          <span className="ml-auto flex shrink-0 items-center gap-1.5 text-2xs">{status}</span>
         ) : null}
       </span>
       <span
         className={cn(
-          "flex min-w-0 items-center gap-1.5 overflow-hidden text-[11px] text-muted-foreground",
+          "flex min-w-0 items-center gap-1.5 overflow-hidden text-2xs text-muted-foreground",
           metaClassName,
         )}
       >

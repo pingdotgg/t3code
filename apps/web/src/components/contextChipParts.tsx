@@ -208,8 +208,8 @@ export function ImageChipButton({
         <ImageIcon />
       )}
       <ContextChipLabel className="max-w-72">{middleTruncateAttachmentName(name)}</ContextChipLabel>
-      <span className="shrink-0 text-[10px] text-current">{size}</span>
-      {suffix ? <span className="text-[10px] text-current">{suffix}</span> : null}
+      <span className="shrink-0 text-3xs text-current">{size}</span>
+      {suffix ? <span className="text-3xs text-current">{suffix}</span> : null}
     </ContextChip>
   );
 }
@@ -284,8 +284,8 @@ function FileChipContent(props: {
       <ContextChipLabel className="max-w-72">
         {middleTruncateAttachmentName(props.name)}
       </ContextChipLabel>
-      <span className="shrink-0 text-[10px] text-current">{props.size}</span>
-      {props.suffix ? <span className="text-[10px] text-current">{props.suffix}</span> : null}
+      <span className="shrink-0 text-3xs text-current">{props.size}</span>
+      {props.suffix ? <span className="text-3xs text-current">{props.suffix}</span> : null}
     </>
   );
 }

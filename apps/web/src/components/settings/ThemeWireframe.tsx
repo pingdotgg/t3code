@@ -66,7 +66,7 @@ function ThemeWireframePane({
 
       {/* Composer */}
       <span
-        className="absolute bottom-[8%] left-[26%] right-[6%] flex h-[15%] items-center justify-between rounded-md px-[2.5%]"
+        className="absolute bottom-[8%] left-[26%] right-[6%] flex h-[15%] items-center justify-between rounded-md px-1"
         style={{
           backgroundColor: colors.surface,
           boxShadow: `inset 0 0 0 1px ${line}`,
@@ -92,7 +92,7 @@ function ThemeWireframePane({
       >
         {[0, 1, 2].map((row) => (
           <span
-            className="absolute left-[11%] right-[11%] flex items-center gap-[5%]"
+            className="absolute left-[11%] right-[11%] flex items-center gap-1"
             key={row}
             style={{ top: `${10 + row * 30}%`, height: "20%" }}
           >

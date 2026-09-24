@@ -41,7 +41,7 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
       className={cn("flex min-w-0 flex-1 flex-col items-start gap-1", className)}
       role="group"
     >
-      <span className="flex w-full min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
+      <span className="flex w-full min-w-0 items-center gap-2 text-2xs text-muted-foreground">
         <span className="shrink-0 font-medium text-warning">{fallbackLabel}</span>
         {approval.appName ? <span className="min-w-0 truncate">{approval.appName}</span> : null}
         {pendingCount > 1 ? (
