@@ -10,6 +10,8 @@ import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
 
 const mocks = vi.hoisted(() => ({
   busy: false,
+  missingModel: false,
+  microphoneRequests: 0,
   prepared: {} as PreparedConnection,
   preparedEnvironmentId: null as EnvironmentId | null,
   preparedEnvironmentIds: [] as Array<EnvironmentId | null>,
@@ -42,8 +44,14 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
   getEnvironmentSpeechStatus: () =>
     Effect.succeed({
       supported: true,
-      state: mocks.busy ? "transcribing" : "ready",
+      state: mocks.busy ? "transcribing" : mocks.missingModel ? "missing-model" : "ready",
       model: "test",
+      modelId: "test-model",
+      size: 731_357_568,
+    }),
+  downloadEnvironmentSpeechModel: () =>
+    Effect.sync(() => {
+      mocks.missingModel = false;
     }),
 }));
 vi.mock("./browserVoiceInput", () => ({
@@ -51,6 +59,7 @@ vi.mock("./browserVoiceInput", () => ({
     recorder: {
       uri: null,
       prepareToRecordAsync: async () => {
+        mocks.microphoneRequests += 1;
         throw new Error("no microphone");
       },
       record() {},
@@ -101,6 +110,8 @@ afterEach(async () => {
   await act(() => root?.unmount());
   root = undefined;
   mocks.busy = false;
+  mocks.missingModel = false;
+  mocks.microphoneRequests = 0;
   mocks.transcriptionEnvironmentId = null;
   mocks.preparedEnvironmentId = null;
   mocks.preparedEnvironmentIds = [];
@@ -111,6 +122,21 @@ it("does not capture audio while the environment is transcribing", async () => {
   await mountProbe();
   await act(() => voice.start());
   expect(voice.state.phase).toBe("idle");
+});
+it("opens setup before requesting microphone access for a missing model", async () => {
+  mocks.missingModel = true;
+  await mountProbe();
+  await act(() => voice.start());
+  expect(voice.setup.open).toBe(true);
+  expect(voice.setup.step).toBe(0);
+  expect(mocks.microphoneRequests).toBe(0);
+
+  await act(() => voice.setup.download());
+  expect(voice.setup.step).toBe(1);
+  expect(mocks.microphoneRequests).toBe(0);
+
+  await act(() => voice.setup.startRecording());
+  expect(mocks.microphoneRequests).toBe(1);
 });
 it("uses the primary environment for transcription by default", async () => {
   await mountProbe();

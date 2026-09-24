@@ -1,4 +1,7 @@
 import {
+  cancelEnvironmentSpeechModelDownload,
+  downloadEnvironmentSpeechModel,
+  getEnvironmentSpeechModels,
   getEnvironmentSpeechStatus,
   postProcessEnvironmentTranscript,
   VoiceInputController,
@@ -7,7 +10,12 @@ import {
   type VoiceDraftSnapshot,
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
-import type { EnvironmentId, EnvironmentSpeechStatus, SpeechStreamText } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  EnvironmentSpeechModel,
+  EnvironmentSpeechStatus,
+  SpeechStreamText,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -16,7 +24,6 @@ import {
   useClientSettingsHydrated,
   useEnvironmentSettings,
 } from "../hooks/useSettings";
-import { ensureLocalApi } from "../localApi";
 import { usePreparedConnection } from "../state/session";
 import { runtime } from "../lib/runtime";
 import { usePrimaryEnvironmentId } from "../state/environments";
@@ -69,6 +76,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     controllerState.prepared === prepared ? controllerState.value : INITIAL_STATE;
   const [level, setLevel] = useState(0);
   const [preview, setPreview] = useState<SpeechStreamText | null>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [setupStep, setSetupStep] = useState(0);
+  const [setupModel, setSetupModel] = useState<EnvironmentSpeechModel | null>(null);
+  const [setupDownloading, setSetupDownloading] = useState(false);
+  const [setupError, setSetupError] = useState<string | null>(null);
+  const setupCancelledRef = useRef(false);
   const controllerRef = useRef<VoiceInputController<true> | null>(null);
   const latestInputRef = useRef(input);
   const microphoneIdRef = useRef(microphoneId);
@@ -185,6 +198,29 @@ export function useEnvironmentSpeechInput(input: HookInput) {
 
   const currentStatus = status?.prepared === prepared ? status.value : null;
 
+  useEffect(() => {
+    if (!setupOpen || !setupDownloading || !prepared) return;
+    let disposed = false;
+    let refreshing = false;
+    const timer = window.setInterval(() => {
+      if (refreshing) return;
+      refreshing = true;
+      void runtime
+        .runPromise(getEnvironmentSpeechModels(prepared))
+        .then((result) => {
+          if (!disposed) setSetupModel(result.models.find((model) => model.active) ?? null);
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          refreshing = false;
+        });
+    }, 350);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [prepared, setupDownloading, setupOpen]);
+
   const previousOwnerRef = useRef(input.ownerKey);
   useEffect(() => {
     if (previousOwnerRef.current === input.ownerKey) return;
@@ -196,12 +232,23 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     const expectedController = controllerRef.current;
     const expectedOwner = latestInputRef.current.ownerKey;
     if (!expectedController || !prepared || !currentStatus?.supported) return;
-    if (currentStatus.state === "transcribing") return;
-    if (currentStatus.state === "missing-model") {
-      const confirmed = await ensureLocalApi().dialogs.confirm(
-        `Download ${currentStatus.model} (${Math.round(currentStatus.size / 1024 / 1024)} MB) to this T3 environment? Recordings will be sent to this environment for transcription and deleted after use.`,
-      );
-      if (!confirmed) return;
+    const latestStatus = await runtime
+      .runPromise(getEnvironmentSpeechStatus(prepared))
+      .catch((error: unknown) => {
+        toastManager.add({
+          type: "error",
+          title: "Could not start voice input",
+          description: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      });
+    if (!latestStatus?.supported) return;
+    setStatus({ prepared, value: latestStatus });
+    if (latestStatus.state === "transcribing") return;
+    if (latestStatus.state === "missing-model") {
+      setSetupStep(0);
+      setSetupOpen(true);
+      return;
     }
     const controller = controllerRef.current;
     if (controller !== expectedController || latestInputRef.current.ownerKey !== expectedOwner)
@@ -210,6 +257,47 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     await controller.start();
   }, [currentStatus, prepared]);
 
+  const downloadSetupModel = useCallback(async () => {
+    if (!prepared || !currentStatus?.supported || setupDownloading) return;
+    setupCancelledRef.current = false;
+    setSetupDownloading(true);
+    setSetupError(null);
+    try {
+      await runtime.runPromise(downloadEnvironmentSpeechModel(prepared, currentStatus.modelId));
+      if (setupCancelledRef.current) return;
+      const next = await runtime.runPromise(getEnvironmentSpeechStatus(prepared));
+      setStatus({ prepared, value: next });
+      if (!next.supported || next.state === "missing-model") {
+        setSetupError("The model is not ready. Try downloading it again.");
+        return;
+      }
+      setSetupStep(1);
+    } catch (error) {
+      if (!setupCancelledRef.current)
+        setSetupError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSetupDownloading(false);
+    }
+  }, [currentStatus, prepared, setupDownloading]);
+
+  const cancelSetupDownload = useCallback(async () => {
+    if (!prepared || !currentStatus?.supported) return;
+    setupCancelledRef.current = true;
+    setSetupOpen(false);
+    try {
+      await runtime.runPromise(
+        cancelEnvironmentSpeechModelDownload(prepared, currentStatus.modelId),
+      );
+    } catch (error) {
+      setSetupError(error instanceof Error ? error.message : String(error));
+    }
+  }, [currentStatus, prepared]);
+
+  const startAfterSetup = useCallback(async () => {
+    setSetupOpen(false);
+    await controllerRef.current?.start();
+  }, []);
+
   return {
     available:
       currentStatus?.supported === true &&
@@ -217,6 +305,17 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       Boolean(navigator.mediaDevices?.getUserMedia) &&
       typeof AudioWorkletNode !== "undefined",
     status: currentStatus,
+    setup: {
+      open: setupOpen,
+      step: setupStep,
+      model: setupModel,
+      downloading: setupDownloading,
+      error: setupError,
+      setOpen: setSetupOpen,
+      download: downloadSetupModel,
+      cancelDownload: cancelSetupDownload,
+      startRecording: startAfterSetup,
+    },
     state,
     progress: null,
     preview: state.phase === "recording" || state.phase === "transcribing" ? preview : null,
