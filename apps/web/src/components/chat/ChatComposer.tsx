@@ -6833,10 +6833,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     {/* Shared Button, styled from the shadcn Button baseline:
                         https://ui.shadcn.com/docs/components/base/button */}
                     <Button
-                      variant="ghost-muted"
-                      size="icon-sm"
+                      variant="glass-muted"
+                      size="chip"
                       aria-label="Stash this draft"
-                      className="group/stash h-8 min-w-8 w-auto gap-0 bg-(--chat-composer-glass-surface) px-2 text-xs sm:h-8 sm:w-auto sm:text-xs [&_svg]:mx-0"
+                      className="group/stash"
                       onPointerDown={(event) => event.preventDefault()}
                       onClick={() => {
                         void stashCurrentPrompt();
