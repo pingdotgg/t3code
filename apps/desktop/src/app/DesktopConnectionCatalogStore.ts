@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
@@ -51,6 +52,7 @@ const DesktopConnectionCatalogStoreWriteOperation = Schema.Literals([
   "encode-document",
   "create-directory",
   "write-temporary-file",
+  "sync-temporary-file",
   "replace-catalog-file",
 ]);
 
@@ -133,6 +135,19 @@ export class DesktopConnectionCatalogStoreMigrationError extends Schema.TaggedEr
   }
 }
 
+export class DesktopConnectionCatalogStoreRecoveryError extends Schema.TaggedError<DesktopConnectionCatalogStoreRecoveryError>()(
+  "DesktopConnectionCatalogStoreRecoveryError",
+  {
+    operation: Schema.Literals(["create-quarantine-file-name", "quarantine-catalog-file"]),
+    catalogPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Desktop connection catalog recovery failed during ${this.operation} at ${this.catalogPath}.`;
+  }
+}
+
 export class DesktopConnectionCatalogStoreProtectionError extends Schema.TaggedError<DesktopConnectionCatalogStoreProtectionError>()(
   "DesktopConnectionCatalogStoreProtectionError",
   {
@@ -152,7 +167,7 @@ export class DesktopConnectionCatalogStore extends Context.Service<
     readonly get: Effect.Effect<
       Option.Option<string>,
       | DesktopConnectionCatalogStoreReadError
-      | DesktopConnectionCatalogStoreDocumentDecodeError
+      | DesktopConnectionCatalogStoreRecoveryError
       | DesktopConnectionCatalogStoreDecodeError
       | DesktopConnectionCatalogStoreMigrationError
       | DesktopConnectionCatalogStoreProtectionError
@@ -252,6 +267,20 @@ const writeDocument = Effect.fn("desktop.connectionCatalogStore.writeDocument")(
         (cause) =>
           new DesktopConnectionCatalogStoreWriteError({
             operation: "write-temporary-file",
+            path: tempPath,
+            cause,
+          }),
+      ),
+    );
+    // Flush the new contents before replacing the last catalog. Windows requires
+    // a writable handle for sync; close it before renaming the file.
+    yield* input.fileSystem.open(tempPath, { flag: "r+" }).pipe(
+      Effect.flatMap((file) => file.sync),
+      Effect.scoped,
+      Effect.mapError(
+        (cause) =>
+          new DesktopConnectionCatalogStoreWriteError({
+            operation: "sync-temporary-file",
             path: tempPath,
             cause,
           }),
@@ -385,6 +414,8 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
   const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
+  // Recovery moves the file, so reads must serialize with writes and clears.
+  const mutex = yield* Semaphore.make(1);
   const encryptionAvailable = safeStorage.isEncryptionAvailable.pipe(
     Effect.mapError(
       (cause) =>
@@ -471,9 +502,45 @@ export const make = Effect.gen(function* () {
     return Option.some(encoded);
   });
 
+  const quarantineDocument = Effect.fn("desktop.connectionCatalogStore.quarantineDocument")(
+    function* (error: DesktopConnectionCatalogStoreDocumentDecodeError) {
+      const suffix = yield* crypto.randomUUIDv4.pipe(
+        Effect.mapError(
+          (cause) =>
+            new DesktopConnectionCatalogStoreRecoveryError({
+              operation: "create-quarantine-file-name",
+              catalogPath,
+              cause,
+            }),
+        ),
+      );
+      const quarantinePath = `${catalogPath}.corrupt.${process.pid}.${suffix}`;
+      // Only recover after preserving the original bytes. A failed rename must
+      // not turn into an empty catalog that the renderer could overwrite.
+      yield* fileSystem.rename(catalogPath, quarantinePath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DesktopConnectionCatalogStoreRecoveryError({
+              operation: "quarantine-catalog-file",
+              catalogPath,
+              cause,
+            }),
+        ),
+      );
+      yield* Effect.logWarning("Quarantined a malformed desktop connection catalog.", {
+        catalogPath,
+        quarantinePath,
+        reason: error.message,
+      });
+      return Option.none<EncryptedConnectionCatalogDocument>();
+    },
+  );
+
   return DesktopConnectionCatalogStore.of({
     get: Effect.gen(function* () {
-      const document = yield* readDocument(fileSystem, catalogPath);
+      const document = yield* readDocument(fileSystem, catalogPath).pipe(
+        Effect.catchTags({ DesktopConnectionCatalogStoreDocumentDecodeError: quarantineDocument }),
+      );
       if (Option.isNone(document)) {
         return yield* migrateLegacyCatalog;
       }
@@ -495,14 +562,14 @@ export const make = Effect.gen(function* () {
         ),
       );
       return Option.some(decrypted);
-    }).pipe(Effect.withSpan("desktop.connectionCatalogStore.get")),
+    }).pipe(mutex.withPermits(1), Effect.withSpan("desktop.connectionCatalogStore.get")),
     set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog) {
       if (!(yield* encryptionAvailable)) {
         return false;
       }
       yield* writeCatalog(catalog);
       return true;
-    }),
+    }, mutex.withPermits(1)),
     clear: fileSystem.remove(catalogPath, { force: true }).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Could not clear the desktop connection catalog.", {
@@ -510,6 +577,7 @@ export const make = Effect.gen(function* () {
           error,
         }),
       ),
+      mutex.withPermits(1),
       Effect.withSpan("desktop.connectionCatalogStore.clear"),
     ),
   });
