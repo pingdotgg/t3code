@@ -8,6 +8,7 @@ import {
   type ScheduledTask,
 } from "@t3tools/contracts";
 import {
+  buildScheduledTaskUpdateInput,
   scheduledTaskDefaultModel,
   createDraft,
   editDraft,
@@ -307,5 +308,127 @@ describe("scheduled task model defaults", () => {
         null,
       ),
     ).toBeNull();
+  });
+});
+
+describe("buildScheduledTaskUpdateInput", () => {
+  const projectId = ProjectId.make("project:one");
+  const task: ScheduledTask = {
+    id: ScheduledTaskId.make("scheduled-task:mobile-fixture"),
+    title: "Original title",
+    prompt: "Original prompt",
+    enabled: true,
+    schedule: { type: "interval", everyMs: 15 * 60_000 },
+    projectId,
+    threadId: null,
+    workspaceStrategy: { type: "worktree", baseRef: "main", startFromOrigin: true },
+    modelSelection: {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.4",
+    },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    createdBy: "user",
+    creationSource: "mobile",
+    createdAt: "2026-09-01T00:00:00.000Z",
+    updatedAt: "2026-09-01T00:00:00.000Z",
+    nextRunAt: "2026-09-02T00:00:00.000Z",
+    lastRunAt: null,
+    lastRunStatus: "never",
+    lastRunError: null,
+    runCount: 0,
+  };
+
+  it("returns null when the draft matches the task it opened with", () => {
+    expect(buildScheduledTaskUpdateInput(editDraft(task), task)).toBeNull();
+    expect(buildScheduledTaskUpdateInput(createDraft(null, null), task)).toBeNull();
+  });
+
+  it("sends only the fields a stale editor changed, preserving concurrent edits", () => {
+    // Another client rewrote the prompt and paused the task while this
+    // editor was open; the mobile save carries only the rename the user
+    // actually made instead of restoring the stale prompt and enabled flag.
+    const draft = { ...editDraft(task), title: "Renamed" };
+    const live: ScheduledTask = {
+      ...task,
+      prompt: "Rewritten elsewhere",
+      enabled: false,
+    };
+    expect(buildScheduledTaskUpdateInput(draft, live)).toEqual({
+      id: task.id,
+      projectId: task.projectId,
+      title: "Renamed",
+    });
+  });
+
+  it("patches the editable runtime mode", () => {
+    const draft = { ...editDraft(task), runtimeMode: "auto" as const };
+    expect(buildScheduledTaskUpdateInput(draft, task)).toEqual({
+      id: task.id,
+      projectId: task.projectId,
+      runtimeMode: "auto",
+    });
+  });
+
+  it("detaches the live binding only when the patch itself re-homes the task", () => {
+    const other = ProjectId.make("project:other");
+    const bound: ScheduledTask = { ...task, threadId: "thread:bound" as ScheduledTask["threadId"] };
+    // A real move away from the binding's project must detach it.
+    const moving = { ...editDraft(bound), projectId: other };
+    expect(buildScheduledTaskUpdateInput(moving, bound)).toEqual({
+      id: bound.id,
+      projectId: bound.projectId,
+      nextProjectId: other,
+      threadId: null,
+    });
+    // A stale save landing where the task already lives keeps a concurrent
+    // rebind instead of erasing it.
+    const liveMoved: ScheduledTask = { ...bound, projectId: other };
+    expect(buildScheduledTaskUpdateInput(moving, liveMoved)).toEqual({
+      id: bound.id,
+      projectId: other,
+      nextProjectId: other,
+    });
+  });
+
+  it("emits the normalized schedule for a legacy sub-minute interval", () => {
+    const legacy: ScheduledTask = {
+      ...task,
+      schedule: { type: "interval", everyMs: 30_000 },
+    };
+    // The draft is untouched — editDraft clamped the baseline to "1" — but
+    // the stored 30s interval must still be rewritten to the displayed 60s.
+    expect(buildScheduledTaskUpdateInput(editDraft(legacy), legacy)).toEqual({
+      id: legacy.id,
+      projectId: legacy.projectId,
+      schedule: { type: "interval", everyMs: 60_000 },
+    });
+  });
+
+  it("does not overwrite a concurrent fix to a legacy sub-minute interval", () => {
+    const legacy: ScheduledTask = {
+      ...task,
+      schedule: { type: "interval", everyMs: 30_000 },
+    };
+    // Another client already normalized the schedule — an untouched save
+    // leaves their interval alone instead of forcing the editor's 60s.
+    const live: ScheduledTask = { ...legacy, schedule: { type: "interval", everyMs: 90_000 } };
+    expect(buildScheduledTaskUpdateInput(editDraft(legacy), live)).toBeNull();
+  });
+
+  it("sends only the workspace controls the user changed as a sparse patch", () => {
+    // Another client flipped startFromOrigin while this editor was open;
+    // the save sends just the edited key and the server merges it into the
+    // live strategy, so the concurrent toggle survives on both sides.
+    const draft = { ...editDraft(task), baseRef: "develop" };
+    const live: ScheduledTask = {
+      ...task,
+      workspaceStrategy: { type: "worktree", baseRef: "main", startFromOrigin: false },
+    };
+    expect(buildScheduledTaskUpdateInput(draft, live)).toEqual({
+      id: task.id,
+      projectId: task.projectId,
+      workspaceStrategyPatch: { baseRef: "develop" },
+    });
   });
 });

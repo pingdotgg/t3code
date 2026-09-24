@@ -21,6 +21,7 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   RunId,
+  ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -2322,6 +2323,78 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
 
       const afterPromotion = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(afterPromotion.runs.find((run) => run.id === queuedRun.id)?.status, "cancelled");
+    }),
+  );
+
+  it.effect("rejects a message dispatch that was serialized behind an archive", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const threadManagement = yield* ThreadManagementService;
+      const projectId = ProjectId.make("runtime-layer-dispatch-gate-project");
+      const threadId = ThreadId.make("runtime-layer-dispatch-gate-thread");
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-dispatch-gate-create"),
+        threadId,
+        projectId,
+        title: "Dispatch gate",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("runtime-layer-dispatch-gate-archive"),
+        threadId,
+      });
+
+      // Archive-before-acceptance: sendToThread's own check rejects the send
+      // before a dispatch command is ever queued.
+      const rejectedSend = yield* threadManagement
+        .sendToThread({
+          projectId,
+          threadId,
+          commandId: CommandId.make("runtime-layer-dispatch-gate-send"),
+          messageId: MessageId.make("runtime-layer-dispatch-gate-send-message"),
+          text: "sent after archive",
+          attachments: [],
+          modelSelection,
+          mode: "auto",
+          createdBy: "agent",
+          creationSource: "mcp",
+        })
+        .pipe(Effect.flip);
+      assert.equal(rejectedSend._tag, "ThreadManagementThreadArchivedError");
+
+      // Acceptance-before-archive: a scheduled send that passed sendToThread
+      // validation while the thread was live, then waited behind the archive
+      // on the serialized command queue. The in-decision guard is the
+      // backstop that keeps it from starting work on the archived thread.
+      const raced = yield* orchestrator
+        .dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId: CommandId.make("runtime-layer-dispatch-gate-raced"),
+          threadId,
+          messageId: MessageId.make("runtime-layer-dispatch-gate-raced-message"),
+          scheduledTaskId: ScheduledTaskId.make("scheduled-task:dispatch-gate"),
+          text: "accepted before archive",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        })
+        .pipe(Effect.flip);
+      assert.equal(raced._tag, "OrchestratorDispatchError");
+      assert.include(raced.cause, "archived or deleted");
+
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.lengthOf(projection.runs, 0);
     }),
   );
 

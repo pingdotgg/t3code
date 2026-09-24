@@ -4053,6 +4053,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
 
+      // Commands serialize per thread, so an archive or delete accepted ahead
+      // of this dispatch is already committed here: rejecting keeps a stale
+      // sendToThread validation from starting work on a thread that no longer
+      // accepts runs. Restart continuations take the preserve path above
+      // instead — they are stale deliveries, not new work.
+      if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is archived or deleted.`,
+        });
+      }
+
       if (projection.thread.settledOverride !== null) {
         const now = yield* DateTime.now;
         const thread: OrchestrationV2AppThread = {
