@@ -69,7 +69,10 @@ T3 Code remembers your provider, model, and model options for new threads. A
 project's configured model takes precedence; resetting that project setting
 returns to the remembered selection.
 
-Leaving reasoning level or service tier unset uses the provider's own configuration.
+For Codex, set reasoning effort and context length in `~/.codex/config.toml`. For
+Claude Code, use `~/.claude/settings.json` for effort and its `env` settings for
+1M context support. T3 Code shows the context window reported by the provider.
+Leaving service tier unset uses the provider's configuration.
 
 ## Quote an assistant response
 

@@ -280,17 +280,15 @@ describe("buildTurnStartParams", () => {
         mode: "default",
         settings: {
           model: "gpt-5.3-codex",
-          reasoning_effort: "medium",
           developer_instructions: buildCodexDeveloperInstructions("default", {
             model: "gpt-5.3-codex",
-            reasoningEffort: "medium",
           }),
         },
       },
     });
   });
 
-  it("reports the same fallback model and effort in settings and instructions", () => {
+  it("leaves effort to Codex config when no override is given", () => {
     const params = Effect.runSync(
       buildTurnStartParams({
         threadId: "provider-thread-1",
@@ -302,8 +300,9 @@ describe("buildTurnStartParams", () => {
 
     const settings = params.collaborationMode?.settings;
     NodeAssert.equal(settings?.model, DEFAULT_MODEL);
-    NodeAssert.equal(settings?.reasoning_effort, "medium");
-    NodeAssert.ok(settings?.developer_instructions?.includes(`as ${DEFAULT_MODEL} with medium`));
+    NodeAssert.equal(settings?.reasoning_effort, undefined);
+    NodeAssert.ok(settings?.developer_instructions?.includes(`as ${DEFAULT_MODEL}`));
+    NodeAssert.ok(!settings?.developer_instructions?.includes("reasoning effort"));
   });
 
   it.effect("routes approvals to the auto reviewer in auto mode", () =>

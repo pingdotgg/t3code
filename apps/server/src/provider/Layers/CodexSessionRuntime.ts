@@ -589,15 +589,14 @@ function buildCodexCollaborationMode(input: {
     return undefined;
   }
   const model = normalizeCodexModelSlug(input.model) ?? DEFAULT_MODEL;
-  const reasoningEffort = input.effort ?? "medium";
   return {
     mode: input.interactionMode,
     settings: {
       model,
-      reasoning_effort: reasoningEffort,
+      ...(input.effort ? { reasoning_effort: input.effort } : {}),
       developer_instructions: buildCodexDeveloperInstructions(
         input.interactionMode,
-        { model, reasoningEffort },
+        { model, ...(input.effort ? { reasoningEffort: input.effort } : {}) },
         input.browserToolsAvailable ?? true,
       ),
     },
@@ -2588,7 +2587,7 @@ export const makeCodexSessionRuntime = (
                 .pipe(Effect.timeoutOption("3 seconds"), Effect.ignore),
             { concurrency: 8, discard: true },
           ).pipe(Effect.timeoutOption("10 seconds"), Effect.ignore);
-          const effectiveTurnId = turnId ?? session.activeTurnId;
+          const effectiveTurnId = session.activeTurnId ?? turnId;
           if (!effectiveTurnId) {
             return;
           }

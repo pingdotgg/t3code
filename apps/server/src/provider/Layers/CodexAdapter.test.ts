@@ -415,7 +415,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
     }),
   );
 
-  it.effect("maps codex model options before sending a turn", () =>
+  it.effect("keeps Codex effort in config while mapping service tier", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
       yield* adapter.startSession({
@@ -442,7 +442,6 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       NodeAssert.deepStrictEqual(runtime.sendTurnImpl.mock.calls[0]?.[0], {
         input: "hello",
         model: "gpt-5.3-codex",
-        effort: "high",
         serviceTier: "priority",
       });
     }),
@@ -608,7 +607,6 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       NodeAssert.deepStrictEqual(runtime.sendTurnImpl.mock.calls[0]?.[0], {
         input: "hello",
         model: "gpt-5.3-codex",
-        effort: "high",
         serviceTier: "flex",
       });
     }).pipe(Effect.provide(customLayer));

@@ -14,7 +14,12 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { type ProviderApprovalDecision, type ProviderEvent, ThreadId } from "@t3tools/contracts";
+import {
+  type ProviderApprovalDecision,
+  type ProviderEvent,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -741,7 +746,7 @@ describe("CodexSessionRuntime collab integration", () => {
       yield* runtime.start();
       yield* runtime.sendTurn({ input: "keep working" });
       yield* runtime.sendTurn({ input: "queued follow-up" });
-      yield* runtime.interruptTurn();
+      yield* runtime.interruptTurn(TurnId.make(queuedTurnId));
 
       const interrupts = NodeFS.readFileSync(interruptsPath, "utf8")
         .trim()

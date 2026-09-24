@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 
 import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
 
-it("maps current Codex model capability fields", () => {
+it("exposes service tiers while leaving reasoning effort to Codex config", () => {
   const capabilities = mapCodexModelCapabilities({
     additionalSpeedTiers: [],
     defaultReasoningEffort: "super-high",
@@ -34,13 +34,6 @@ it("maps current Codex model capability fields", () => {
   });
 
   assert.deepStrictEqual(capabilities.optionDescriptors, [
-    {
-      id: "reasoningEffort",
-      label: "Reasoning",
-      type: "select",
-      options: [{ id: "super-high", label: "super-high", isDefault: true }],
-      currentValue: "super-high",
-    },
     {
       id: "serviceTier",
       label: "Service Tier",

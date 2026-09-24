@@ -9,7 +9,6 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   type CodexSettings,
-  DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
   type ModelSelection,
   type ServerProviderModel,
   TextGenerationError,
@@ -35,7 +34,7 @@ import {
   sanitizeThreadTitle,
   toJsonSchemaObject,
 } from "./TextGenerationUtils.ts";
-import { codexModelFamily, getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { codexModelFamily } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 
 const CODEX_TIMEOUT_MS = 180_000;
@@ -189,9 +188,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         )?.slug ??
         requestedModel;
       const launchArgs = resolveCodexLaunchArgs(codexConfig.launchArgs, resolvedEnvironment);
-      const reasoningEffort =
-        getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
-        DEFAULT_TEXT_GENERATION_REASONING_EFFORT;
       const serviceTier = getCodexServiceTierOptionValue(modelSelection);
       const spawnCommand = yield* resolveSpawnCommand(
         codexConfig.binaryPath || "codex",
@@ -204,8 +200,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           "read-only",
           "--model",
           model,
-          "--config",
-          `model_reasoning_effort="${reasoningEffort}"`,
           ...(serviceTier ? ["--config", `service_tier="${serviceTier}"`] : []),
           "--output-schema",
           schemaPath,

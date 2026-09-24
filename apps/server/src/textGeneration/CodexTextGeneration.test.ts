@@ -32,7 +32,6 @@ interface FakeCodexInput {
   stderr?: string;
   requireImage?: boolean;
   requireServiceTier?: string;
-  requireReasoningEffort?: string;
   forbidReasoningEffort?: boolean;
   requireArg?: string;
   forbidArg?: string;
@@ -48,7 +47,6 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
   const check = JSON.stringify({
     requireImage: input.requireImage ?? false,
     requireServiceTier: input.requireServiceTier ?? null,
-    requireReasoningEffort: input.requireReasoningEffort ?? null,
     forbidReasoningEffort: input.forbidReasoningEffort ?? false,
     requireArg: input.requireArg ?? null,
     forbidArg: input.forbidArg ?? null,
@@ -105,12 +103,6 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         '  seenServiceTier !== `service_tier="${check.requireServiceTier}"`',
         ") {",
         '  fail("unexpected service tier config: " + seenServiceTier, 5);',
-        "}",
-        "if (",
-        "  check.requireReasoningEffort !== null &&",
-        '  seenReasoningEffort !== `model_reasoning_effort="${check.requireReasoningEffort}"`',
-        ") {",
-        '  fail("unexpected reasoning effort config: " + seenReasoningEffort, 6);',
         "}",
         "if (check.forbidReasoningEffort && seenReasoningEffort.length > 0) {",
         '  fail("reasoning effort config should be omitted: " + seenReasoningEffort, 7);',
@@ -209,31 +201,29 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect(
-    "forwards codex service tier and non-default reasoning effort into codex exec config",
-    () =>
-      withFakeCodexEnv(
-        {
-          output: JSON.stringify({
-            subject: "Add important change",
-            body: "",
-          }),
-          requireServiceTier: "priority",
-          requireReasoningEffort: "xhigh",
-          stdinMustNotContain: "branch must be a short semantic git branch fragment",
-        },
-        (textGeneration) =>
-          textGeneration.generateCommitMessage({
-            cwd: process.cwd(),
-            branch: "feature/codex-effect",
-            stagedSummary: "M README.md",
-            stagedPatch: "diff --git a/README.md b/README.md",
-            modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
-              { id: "reasoningEffort", value: "xhigh" },
-              { id: "serviceTier", value: "priority" },
-            ]),
-          }),
-      ),
+  it.effect("forwards Codex service tier but leaves effort to config", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          subject: "Add important change",
+          body: "",
+        }),
+        requireServiceTier: "priority",
+        forbidReasoningEffort: true,
+        stdinMustNotContain: "branch must be a short semantic git branch fragment",
+      },
+      (textGeneration) =>
+        textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/codex-effect",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
+            { id: "reasoningEffort", value: "xhigh" },
+            { id: "serviceTier", value: "priority" },
+          ]),
+        }),
+    ),
   );
 
   it.effect("passes exec-safe launch args into codex exec", () =>
@@ -281,14 +271,14 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("defaults git text generation codex effort to low", () =>
+  it.effect("leaves Git text generation effort to Codex config", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
           subject: "Add important change",
           body: "",
         }),
-        requireReasoningEffort: "low",
+        forbidReasoningEffort: true,
       },
       (textGeneration) =>
         textGeneration.generateCommitMessage({
