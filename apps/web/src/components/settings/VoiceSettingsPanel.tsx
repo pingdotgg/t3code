@@ -101,6 +101,7 @@ const modelSortOrder = (model: EnvironmentSpeechModel) => {
 function ModelCard(props: {
   readonly model: EnvironmentSpeechModel;
   readonly busy: boolean;
+  readonly failedDownload: boolean;
   readonly onDownload: () => void;
   readonly onSelect: () => void;
   readonly onCancel: () => void;
@@ -152,7 +153,7 @@ function ModelCard(props: {
           ) : model.state === "downloadable" ? (
             <Button size="sm" disabled={props.busy} onClick={props.onDownload}>
               <DownloadIcon className="mr-1.5 size-3.5" />
-              Download
+              {props.failedDownload ? "Retry download" : "Download"}
             </Button>
           ) : !model.active ? (
             <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onSelect}>
@@ -186,6 +187,10 @@ function ModelCard(props: {
               : `${Math.round(progress)}% downloaded`}
           </div>
         </div>
+      ) : props.failedDownload && model.state === "downloadable" ? (
+        <p role="status" className="mt-2 text-xs text-destructive">
+          Download failed. Try again.
+        </p>
       ) : null}
     </div>
   );
@@ -212,6 +217,10 @@ export function VoiceSettingsPanel() {
   const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
   const [loadingMicrophones, setLoadingMicrophones] = useState(false);
   const [operation, setOperation] = useState<string | null>(null);
+  const [failedDownloads, setFailedDownloads] = useState<{
+    prepared: NonNullable<typeof prepared>;
+    modelIds: ReadonlySet<string>;
+  } | null>(null);
   const [customWordDraft, setCustomWordDraft] = useState("");
   const [languageSearch, setLanguageSearch] = useState("");
   const [modelSearch, setModelSearch] = useState("");
@@ -300,11 +309,24 @@ export function VoiceSettingsPanel() {
       description: error instanceof Error ? error.message : String(error),
     });
   };
-  const runModelOperation = (modelId: string, run: () => Promise<unknown>) => {
+  const markDownloadFailed = (modelId: string, failed: boolean) => {
+    if (!prepared) return;
+    setFailedDownloads((current) => {
+      const modelIds = new Set(current?.prepared === prepared ? current.modelIds : []);
+      if (failed) modelIds.add(modelId);
+      else modelIds.delete(modelId);
+      return { prepared, modelIds };
+    });
+  };
+  const runModelOperation = (modelId: string, run: () => Promise<unknown>, kind?: "download") => {
+    if (kind === "download") markDownloadFailed(modelId, false);
     setOperation(modelId);
     void run()
       .then(refreshModels)
-      .catch(reportModelError)
+      .catch((error) => {
+        if (kind === "download") markDownloadFailed(modelId, true);
+        reportModelError(error);
+      })
       .finally(() => setOperation(null));
   };
   const selectedIsUnavailable = Boolean(
@@ -668,22 +690,30 @@ export function VoiceSettingsPanel() {
                     key={model.id}
                     model={model}
                     busy={operation !== null}
+                    failedDownload={
+                      failedDownloads?.prepared === prepared &&
+                      failedDownloads.modelIds.has(model.id)
+                    }
                     onDownload={() =>
-                      runModelOperation(model.id, async () => {
-                        const result = await runtime.runPromise(
-                          downloadEnvironmentSpeechModel(prepared, model.id),
-                        );
-                        if (
-                          result.models.some(
-                            (candidate) =>
-                              candidate.id === model.id && candidate.state === "installed",
-                          )
-                        ) {
-                          await runtime.runPromise(
-                            selectEnvironmentSpeechModel(prepared, model.id),
+                      runModelOperation(
+                        model.id,
+                        async () => {
+                          const result = await runtime.runPromise(
+                            downloadEnvironmentSpeechModel(prepared, model.id),
                           );
-                        }
-                      })
+                          if (
+                            result.models.some(
+                              (candidate) =>
+                                candidate.id === model.id && candidate.state === "installed",
+                            )
+                          ) {
+                            await runtime.runPromise(
+                              selectEnvironmentSpeechModel(prepared, model.id),
+                            );
+                          }
+                        },
+                        "download",
+                      )
                     }
                     onSelect={() =>
                       runModelOperation(model.id, () =>
