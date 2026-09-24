@@ -1365,6 +1365,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   isEditingQueuedMessage: boolean;
   onSubmitMessage: React.MouseEventHandler<HTMLButtonElement>;
   onPreviousPendingQuestion: () => void;
+  canInterrupt: boolean;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onCompactContext?: (() => void) | undefined;
@@ -1402,6 +1403,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         isEditingQueuedMessage={props.isEditingQueuedMessage}
         onSubmitMessage={props.onSubmitMessage}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
+        canInterrupt={props.canInterrupt}
         onInterrupt={props.onInterrupt}
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
       />
@@ -1622,6 +1624,8 @@ export interface ChatComposerProps {
     dispatchMode?: ComposerDispatchMode,
     submissionIntent?: ComposerSubmissionIntent,
   ) => void;
+  /** Whether the active run accepts Stop, including before its provider turn starts. */
+  canInterrupt: boolean;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
@@ -1738,6 +1742,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPageScrollRelease,
     onCompactContext,
     onSend,
+    canInterrupt,
     onInterrupt,
     onImplementPlanInNewThread,
     onRespondToApproval,
@@ -7409,6 +7414,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     </>
                   ) : null}
                   <ComposerFooterPrimaryActions
+                    canInterrupt={canInterrupt}
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
                     activeContextWindow={
                       settings.contextWindowMeterEnabled ? activeContextWindow : null
