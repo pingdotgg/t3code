@@ -4,10 +4,22 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
+
+// This suite exercises markdown controls. Browser verification covers Pierre's DOM renderer.
+vi.mock("./DiffWorkerPoolProvider", () => ({
+  DiffWorkerPoolProvider: ({ fallback }: { fallback: ReactNode }) => <>{fallback}</>,
+}));
+
+const highlightMock = vi.hoisted(() => ({ fail: false }));
+vi.mock("./MarkdownCodeHighlight", () => ({
+  MarkdownCodeHighlight: ({ code }: { code: string }) => {
+    if (highlightMock.fail) throw new Error("Temporary highlighter failure");
+    return <div className="chat-markdown-shiki">{code}</div>;
+  },
+}));
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
@@ -179,37 +191,8 @@ describe("ChatMarkdown favicon privacy", () => {
 });
 
 describe("ChatMarkdown streaming", () => {
-  it("does not retokenize completed lines when streaming finishes", async () => {
-    const highlighter = await getSyntaxHighlighterPromise("typescript");
-    const highlight = vi.spyOn(highlighter, "codeToHast");
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    let renderer: ReactTestRenderer | undefined;
-    const text = "```typescript\nconst completed = 1;\nconst current = 2;";
-    try {
-      await act(async () => {
-        renderer = create(<ChatMarkdown cwd="/tmp/project" text={text} isStreaming />);
-      });
-      expect(highlight).toHaveBeenCalled();
-      highlight.mockClear();
-      await act(async () => {
-        renderer!.update(<ChatMarkdown cwd="/tmp/project" text={text + "\n```"} />);
-      });
-      expect(highlight.mock.calls.every(([code]) => !code.includes("const completed"))).toBe(true);
-    } finally {
-      await act(async () => renderer?.unmount());
-      vi.unstubAllGlobals();
-      vi.restoreAllMocks();
-    }
-  });
-
   it("recovers highlighting after a failed fence changes without resetting its controls", async () => {
-    const highlighter = await getSyntaxHighlighterPromise("text");
-    const codeToHast = highlighter.codeToHast.bind(highlighter);
-    let fail = true;
-    vi.spyOn(highlighter, "codeToHast").mockImplementation((...args) => {
-      if (fail) throw new Error("Temporary highlighter failure");
-      return codeToHast(...args);
-    });
+    highlightMock.fail = true;
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -230,7 +213,7 @@ describe("ChatMarkdown streaming", () => {
       });
       expect(mounted.root.findAllByProps({ className: "chat-markdown-shiki" })).toHaveLength(0);
 
-      fail = false;
+      highlightMock.fail = false;
       await act(async () => {
         mounted.update(
           <ChatMarkdown cwd="/tmp/project" text={"```text\nrecovered\n```"} isStreaming />,
@@ -246,9 +229,7 @@ describe("ChatMarkdown streaming", () => {
     }
   });
 
-  it("preserves code controls and details without highlighting an unchanged fence again", async () => {
-    const highlighter = await getSyntaxHighlighterPromise("text");
-    const highlight = vi.spyOn(highlighter, "codeToHast");
+  it("preserves code controls and details while the response streams", async () => {
     const writeText = vi.fn(async (_text: string) => {});
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -292,7 +273,6 @@ describe("ChatMarkdown streaming", () => {
       const details = mounted.root.findByProps({ "data-markdown-details": "" });
       expect(details.props["data-markdown-details-open"]).toBe("true");
       expect(writeText).toHaveBeenCalledWith("First code block\n");
-      expect(highlight).toHaveBeenCalledTimes(1);
 
       for (let index = 0; index < 10; index += 1) {
         await act(async () => {
@@ -300,7 +280,6 @@ describe("ChatMarkdown streaming", () => {
         });
       }
 
-      expect(highlight).toHaveBeenCalledTimes(1);
       expect(mounted.root.findByProps({ "data-language": "text" })).toBe(codeBlock);
       expect(codeBlock.props["data-wrap"]).toBe(String(!initialWrap));
       expect(mounted.root.findByProps({ "data-markdown-details": "" })).toBe(details);
@@ -319,7 +298,6 @@ describe("ChatMarkdown streaming", () => {
         copyUpdated.onClick?.({} as Parameters<NonNullable<typeof copyUpdated.onClick>>[0]);
       });
       expect(writeText).toHaveBeenLastCalledWith("Updated code block\n");
-      expect(highlight).toHaveBeenCalledTimes(2);
     } finally {
       await act(async () => renderer?.unmount());
       vi.useRealTimers();

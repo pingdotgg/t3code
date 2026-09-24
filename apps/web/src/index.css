@@ -1597,7 +1597,6 @@ code {
    inherited sizes on unrelated pre surfaces (terminal previews, approvals).
    Inline code stays relative to its sentence so it never towers over prose;
    diffs and file previews take the size through --diffs-font-size. */
-.chat-markdown .chat-markdown-shiki .shiki,
 .chat-markdown pre code {
   font-size: var(--font-size-code, inherit);
 }
@@ -1868,10 +1867,6 @@ code {
   overflow-wrap: anywhere;
 }
 
-.chat-markdown .chat-markdown-shiki .shiki {
-  background: transparent !important;
-}
-
 /* Paragraphs and code blocks arrive in chunks while a response streams. Fade
    each new block in so the chunk does not pop. @starting-style only applies
    when an element is first inserted, and the rule is gated on data-streaming,
@@ -1879,7 +1874,7 @@ code {
    shot, no layout change. */
 @media (prefers-reduced-motion: no-preference) {
   .chat-markdown[data-streaming] > *,
-  .chat-markdown[data-streaming] .chat-markdown-shiki {
+  .chat-markdown[data-streaming] [data-markdown-code] {
     transition: opacity 600ms ease-out;
 
     @starting-style {

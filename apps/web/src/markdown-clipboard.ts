@@ -73,14 +73,19 @@ function codeFenceFor(code: string): string {
 
 function resolveCodeBlockLanguage(pre: Element): string | null {
   const declared =
+    pre.getAttribute("data-language") ??
     pre.closest("[data-language]")?.getAttribute("data-language") ??
     /(?:^|\s)language-(\S+)/.exec(pre.querySelector("code")?.className ?? "")?.[1] ??
     null;
   return declared && declared !== "text" ? declared : null;
 }
 
+function codeBlockText(pre: Element): string {
+  return (pre.getAttribute("data-markdown-code") ?? pre.textContent ?? "").replace(/\n$/, "");
+}
+
 function serializeCodeBlock(pre: Element): string {
-  const code = (pre.textContent ?? "").replace(/\n$/, "");
+  const code = codeBlockText(pre);
   const fence = codeFenceFor(code);
   return `${fence}${resolveCodeBlockLanguage(pre) ?? ""}\n${code}\n${fence}\n\n`;
 }
@@ -203,6 +208,8 @@ function serializeNode(node: Node): string {
   if (markdownCopy !== null) return markdownCopy;
   if (isSkippedElement(element)) return "";
 
+  if (element.hasAttribute("data-markdown-code")) return serializeCodeBlock(element);
+
   const headingLevel = /^H([1-6])$/.exec(element.tagName)?.[1];
   if (headingLevel) {
     return `${"#".repeat(Number(headingLevel))} ${serializeChildren(element).trim()}\n\n`;
@@ -287,7 +294,7 @@ function scanForSoleCodeBlock(node: Node, scan: SoleCodeBlockScan): void {
       continue;
     }
     if (isSkippedElement(element)) continue;
-    if (element.tagName === "PRE") {
+    if (element.tagName === "PRE" || element.hasAttribute("data-markdown-code")) {
       if (scan.pre) scan.other = true;
       else scan.pre = element;
       continue;
@@ -336,7 +343,7 @@ function tidyMarkdown(markdown: string): string {
 
 export function serializeRenderedMarkdownFragment(container: Node): string {
   const codeBlock = soleCodeBlock(container);
-  if (codeBlock) return (codeBlock.textContent ?? "").replace(/\n$/, "");
+  if (codeBlock) return codeBlockText(codeBlock);
   return tidyMarkdown(serializeChildren(container));
 }
 
@@ -363,6 +370,14 @@ export function serializeTableElementToCsv(table: Element): string {
 }
 
 function sanitizedHtmlFrom(container: Element): string {
+  // cloneContents omits shadow roots. Restore code for rich-paste targets too.
+  for (const block of container.querySelectorAll("[data-markdown-code]")) {
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    code.textContent = block.getAttribute("data-markdown-code");
+    pre.append(code);
+    block.replaceWith(pre);
+  }
   for (const node of container.querySelectorAll(SANITIZED_HTML_SELECTOR)) {
     if (
       node.classList.contains("chat-markdown-file-link") ||
@@ -381,6 +396,12 @@ function sanitizedHtmlFrom(container: Element): string {
 export function chatMarkdownClipboardPayload(
   selection: Selection,
 ): MarkdownClipboardPayload | null {
+  // Let the browser copy selections within Pierre's shadow DOM, including
+  // the visual line breaks between its line divs.
+  const anchorRoot = selection.anchorNode?.getRootNode();
+  if (anchorRoot instanceof ShadowRoot && anchorRoot === selection.focusNode?.getRootNode()) {
+    return null;
+  }
   const texts: string[] = [];
   const htmls: string[] = [];
   for (let index = 0; index < selection.rangeCount; index += 1) {
