@@ -199,7 +199,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const currentStatus = status?.prepared === prepared ? status.value : null;
 
   useEffect(() => {
-    if (!setupOpen || !setupDownloading || !prepared) return;
+    if (!setupOpen || !setupDownloading || !prepared || !currentStatus?.supported) return;
     let disposed = false;
     let refreshing = false;
     const timer = window.setInterval(() => {
@@ -208,7 +208,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       void runtime
         .runPromise(getEnvironmentSpeechModels(prepared))
         .then((result) => {
-          if (!disposed) setSetupModel(result.models.find((model) => model.active) ?? null);
+          if (!disposed)
+            setSetupModel(
+              result.models.find((model) => model.id === currentStatus.modelId) ?? null,
+            );
         })
         .catch(() => undefined)
         .finally(() => {
@@ -219,7 +222,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [prepared, setupDownloading, setupOpen]);
+  }, [currentStatus, prepared, setupDownloading, setupOpen]);
 
   const previousOwnerRef = useRef(input.ownerKey);
   useEffect(() => {
@@ -272,9 +275,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         return;
       }
       setSetupStep(1);
-    } catch (error) {
+    } catch {
       if (!setupCancelledRef.current)
-        setSetupError(error instanceof Error ? error.message : String(error));
+        setSetupError(
+          "Could not download the model. Check this environment's connection and try again.",
+        );
     } finally {
       setSetupDownloading(false);
     }

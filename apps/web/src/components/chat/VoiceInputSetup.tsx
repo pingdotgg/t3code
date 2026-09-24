@@ -106,13 +106,9 @@ export function VoiceInputSetup(props: {
                   {props.error}
                 </p>
               ) : null}
-              <button
-                type="button"
-                className="text-sm text-primary hover:underline"
-                onClick={() => openSettings("local-voice-input")}
-              >
+              <Button variant="link" size="sm" onClick={() => openSettings("local-voice-input")}>
                 Choose another model or language in Voice settings
-              </button>
+              </Button>
             </section>
           ) : (
             <section className="space-y-4 text-sm">
@@ -202,13 +198,9 @@ export function VoiceInputSetup(props: {
                   </span>
                 </p>
               </div>
-              <button
-                type="button"
-                className="text-sm text-primary hover:underline"
-                onClick={() => openSettings("dictionary")}
-              >
+              <Button variant="link" size="sm" onClick={() => openSettings("dictionary")}>
                 Explore these features in Voice settings
-              </button>
+              </Button>
             </section>
           )}
         </WizardPanel>
@@ -223,7 +215,11 @@ export function VoiceInputSetup(props: {
                 <DialogClose render={<Button variant="outline" />}>Not now</DialogClose>
               )}
               <Button disabled={props.downloading || !status} onClick={props.onDownload}>
-                {props.downloading ? "Downloading…" : "Download model"}
+                {props.downloading
+                  ? "Downloading…"
+                  : props.error
+                    ? "Retry download"
+                    : "Download model"}
               </Button>
             </>
           ) : (

@@ -1,9 +1,17 @@
 // @effect-diagnostics nodeBuiltinImport:off - exercises sparse native model files without downloading a model.
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { effectiveSpeechLanguage, isSpeechModelReady, SPEECH_MODELS } from "./model.ts";
+import {
+  downloadSpeechModel,
+  effectiveSpeechLanguage,
+  isSpeechModelReady,
+  SPEECH_MODELS,
+} from "./model.ts";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("speech model catalog", () => {
   it("contains unique ids and filenames", () => {
@@ -44,6 +52,67 @@ it("checks readiness without reading the model contents", async () => {
     expect(await isSpeechModelReady(directory, speechModel)).toBe(true);
     await NodeFSP.truncate(path, 1);
     expect(await isSpeechModelReady(directory, speechModel)).toBe(false);
+  } finally {
+    await NodeFSP.rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("resumes a model download after the response ends early", async () => {
+  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "speech-download-"));
+  const bytes = Buffer.from("a verified speech model");
+  const model = {
+    ...SPEECH_MODELS[0]!,
+    filename: "test.gguf",
+    size: bytes.length,
+    sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
+  };
+  let requests = 0;
+  const fetchModel = vi.fn(async (_url: string, options?: RequestInit) => {
+    requests += 1;
+    if (requests === 1) {
+      return new Response(bytes.subarray(0, 8), {
+        headers: { "content-length": String(bytes.length) },
+      });
+    }
+    expect(options?.headers).toEqual({ Range: "bytes=8-" });
+    return new Response(bytes.subarray(8), {
+      status: 206,
+      headers: {
+        "content-length": String(bytes.length - 8),
+        "content-range": `bytes 8-${bytes.length - 1}/${bytes.length}`,
+      },
+    });
+  });
+  vi.stubGlobal("fetch", fetchModel);
+  try {
+    const path = await downloadSpeechModel(directory, model);
+    expect(await NodeFSP.readFile(path)).toEqual(bytes);
+    expect(fetchModel).toHaveBeenCalledTimes(2);
+    expect(await NodeFSP.readdir(directory)).toEqual([model.filename]);
+  } finally {
+    await NodeFSP.rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("retries a terminated model connection", async () => {
+  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "speech-retry-"));
+  const bytes = Buffer.from("speech model");
+  const model = {
+    ...SPEECH_MODELS[0]!,
+    filename: "retry.gguf",
+    size: bytes.length,
+    sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
+  };
+  const fetchModel = vi
+    .fn()
+    .mockRejectedValueOnce(new TypeError("terminated"))
+    .mockResolvedValueOnce(
+      new Response(bytes, { headers: { "content-length": String(bytes.length) } }),
+    );
+  vi.stubGlobal("fetch", fetchModel);
+  try {
+    expect(await NodeFSP.readFile(await downloadSpeechModel(directory, model))).toEqual(bytes);
+    expect(fetchModel).toHaveBeenCalledTimes(2);
   } finally {
     await NodeFSP.rm(directory, { recursive: true, force: true });
   }

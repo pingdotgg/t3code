@@ -248,8 +248,7 @@ export const effectiveSpeechLanguage = (model: SpeechModel, intent: string): str
 const speechModelPath = (directory: string, model: SpeechModel): string =>
   NodePath.join(directory, model.filename);
 
-async function hasExpectedModel(directory: string, model: SpeechModel): Promise<boolean> {
-  const path = speechModelPath(directory, model);
+async function hasExpectedFile(path: string, model: SpeechModel): Promise<boolean> {
   const stat = await NodeFSP.stat(path).catch(() => null);
   if (stat?.size !== model.size) return false;
   const digest = NodeCrypto.createHash("sha256");
@@ -275,38 +274,75 @@ export async function downloadSpeechModel(
   const finalPath = speechModelPath(directory, model);
   signal?.throwIfAborted();
   await NodeFSP.mkdir(directory, { recursive: true });
-  if (await hasExpectedModel(directory, model)) return finalPath;
+  if (await hasExpectedFile(finalPath, model)) return finalPath;
   const partialPath = `${finalPath}.${NodeCrypto.randomUUID()}.part`;
   const url = `https://huggingface.co/${model.id}/resolve/${model.revision}/${model.filename}`;
   try {
-    const response = await fetch(url, signal ? { signal } : undefined);
-    if (!response.ok || !response.body)
-      throw new Error(`speech model download failed with status ${response.status}`);
-    const contentLengthHeader = response.headers.get("content-length");
-    const contentLength = contentLengthHeader === null ? null : Number(contentLengthHeader);
-    if (contentLength !== null && Number.isFinite(contentLength) && contentLength !== model.size)
-      throw new Error(
-        `speech model download size mismatch: expected ${model.size}, got ${contentLength}`,
-      );
-    const digest = NodeCrypto.createHash("sha256");
-    let downloaded = 0;
-    const verify = new NodeStream.Transform({
-      transform(chunk: Buffer, _encoding, callback) {
-        downloaded += chunk.length;
-        if (downloaded > model.size)
-          return callback(new Error("speech model download exceeded expected size"));
-        digest.update(chunk);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      signal?.throwIfAborted();
+      const offset = (await NodeFSP.stat(partialPath).catch(() => null))?.size ?? 0;
+      if (offset === model.size) break;
+      let retryable = true;
+      try {
+        const response = await fetch(url, {
+          ...(signal ? { signal } : {}),
+          ...(offset ? { headers: { Range: `bytes=${offset}-` } } : {}),
+        });
+        retryable = false;
+        if (!response.ok || !response.body)
+          throw new Error(`speech model download failed with status ${response.status}`);
+        const resumed = offset > 0 && response.status === 206;
+        if (resumed) {
+          const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(
+            response.headers.get("content-range") ?? "",
+          );
+          if (
+            !range ||
+            Number(range[1]) !== offset ||
+            Number(range[2]) !== model.size - 1 ||
+            Number(range[3]) !== model.size
+          )
+            throw new Error("speech model download returned an invalid range");
+        }
+        if (offset > 0 && !resumed && response.status !== 200)
+          throw new Error(`speech model download cannot resume with status ${response.status}`);
+        const startingSize = resumed ? offset : 0;
+        const contentLengthHeader = response.headers.get("content-length");
+        const contentLength = contentLengthHeader === null ? null : Number(contentLengthHeader);
+        if (
+          contentLength !== null &&
+          Number.isFinite(contentLength) &&
+          contentLength !== model.size - startingSize
+        )
+          throw new Error(
+            `speech model download size mismatch: expected ${model.size - startingSize}, got ${contentLength}`,
+          );
+        let downloaded = startingSize;
         onProgress?.(downloaded);
-        callback(null, chunk);
-      },
-    });
-    await NodeStreamPromises.pipeline(
-      NodeStream.Readable.fromWeb(response.body),
-      verify,
-      NodeFS.createWriteStream(partialPath, { mode: 0o600 }),
-      { signal },
-    );
-    if (downloaded !== model.size || digest.digest("hex") !== model.sha256)
+        const track = new NodeStream.Transform({
+          transform(chunk: Buffer, _encoding, callback) {
+            downloaded += chunk.length;
+            if (downloaded > model.size) {
+              retryable = false;
+              return callback(new Error("speech model download exceeded expected size"));
+            }
+            onProgress?.(downloaded);
+            callback(null, chunk);
+          },
+        });
+        retryable = true;
+        await NodeStreamPromises.pipeline(
+          NodeStream.Readable.fromWeb(response.body),
+          track,
+          NodeFS.createWriteStream(partialPath, { mode: 0o600, flags: resumed ? "a" : "w" }),
+          { signal },
+        );
+        if (downloaded === model.size) break;
+      } catch (error) {
+        if (signal?.aborted || !retryable || attempt === 2) throw error;
+      }
+    }
+    if (!(await hasExpectedFile(partialPath, model)))
       throw new Error("speech model verification failed");
     await NodeFSP.rm(finalPath, { force: true });
     await NodeFSP.rename(partialPath, finalPath);
