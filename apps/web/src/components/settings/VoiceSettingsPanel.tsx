@@ -91,7 +91,7 @@ const compareLanguages = (a: string, b: string) => {
   if (bRank !== undefined) return 1;
   return languageLabel(a).localeCompare(languageLabel(b));
 };
-// Handy's editorial model order (catalog dated 2026-08-17). Unranked models retain catalog order.
+// Handy's editorial model order (catalog dated 2026-08-17).
 const modelRanks = new Map<string, number>(
   [
     "parakeet-unified-en-0.6b",
@@ -435,7 +435,10 @@ export function VoiceSettingsPanel() {
       (a, b) =>
         modelSortOrder(a) - modelSortOrder(b) ||
         (modelRanks.get(a.id) ?? 11) - (modelRanks.get(b.id) ?? 11) ||
-        Number(b.recommended) - Number(a.recommended),
+        Number(b.recommended) - Number(a.recommended) ||
+        b.accuracy - a.accuracy ||
+        b.speed - a.speed ||
+        a.name.localeCompare(b.name),
     );
 
   return (

@@ -333,6 +333,49 @@ it("uses Handy's editorial ranks within each model state", async () => {
     "Rank 10 description",
   ]);
 });
+it("sorts unranked models by recommendation, accuracy, speed, then name", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("navigator", {});
+  vi.stubGlobal("window", { setInterval, clearInterval });
+  const model = (name: string, accuracy: number, speed: number, recommended = false) => ({
+    id: name,
+    name,
+    description: `${name} description`,
+    languages: ["en"],
+    state: "downloadable",
+    active: false,
+    recommended,
+    supportsStreaming: false,
+    size: 100,
+    accuracy,
+    speed,
+  });
+  mocks.listModels.mockResolvedValue({
+    models: [
+      model("Zulu", 80, 70),
+      model("Alpha", 80, 70),
+      model("Faster", 80, 90),
+      model("Accurate", 90, 50),
+      model("Recommended", 70, 50, true),
+    ],
+  });
+  await act(async () => {
+    root = create(createElement(VoiceSettingsPanel));
+  });
+
+  expect(
+    root.root
+      .findAllByType("p")
+      .map((paragraph) => paragraph.children.join(""))
+      .filter((text) => text.endsWith(" description")),
+  ).toEqual([
+    "Recommended description",
+    "Accurate description",
+    "Faster description",
+    "Alpha description",
+    "Zulu description",
+  ]);
+});
 it("shows cancellation errors without clearing the download state", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("navigator", {});
