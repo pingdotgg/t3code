@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
+import { parseGitRemote } from "@t3tools/shared/sourceControl";
 
 import * as GitLabCli from "./GitLabCli.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
@@ -79,20 +80,37 @@ function parseGitLabAuth(input: SourceControlAuthProbeInput) {
   });
 }
 
+/**
+ * Recognises a self-hosted GitLab whose hostname does not name it, when glab is signed in to it.
+ * glab lists the web host. A web remote names that host exactly; an SSH remote's port is the SSH
+ * daemon's, so only its hostname can match: a signed-in host without a port, or else the one
+ * signed-in host on that hostname.
+ */
 function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementInput) {
-  const host = input.context.provider.name.toLowerCase();
-  const authenticated = parseGitLabAuthStatusHosts(combinedAuthOutput(input.auth)).some(
-    (entry) => entry.account !== null && entry.host === host,
-  );
-
-  if (!authenticated) {
+  const remote = parseGitRemote(input.context.remoteUrl);
+  // Only SSH and web remotes name a host glab can be signed in to; `git://` is read-only.
+  if (remote === null || (!remote.ssh && !/^https?:\/\//iu.test(input.context.remoteUrl.trim()))) {
     return null;
   }
+  const signedIn = parseGitLabAuthStatusHosts(combinedAuthOutput(input.auth)).filter(
+    (entry) => entry.account !== null,
+  );
+  const portQualified = signedIn.filter(
+    (candidate) => parseGitRemote(`https://${candidate.host}`)?.hostname === remote.hostname,
+  );
+  // Two web ports on the SSH remote's hostname are two installs; guessing one is worse than none.
+  const entry = remote.ssh
+    ? (signedIn.find((candidate) => candidate.host === remote.hostname) ??
+      (portQualified.length === 1 ? portQualified[0] : undefined))
+    : signedIn.find((candidate) => candidate.host === remote.host);
+  if (entry === undefined) return null;
 
   return {
     kind: "gitlab",
     name: "GitLab Self-Hosted",
-    baseUrl: input.context.provider.baseUrl,
+    baseUrl: remote.ssh
+      ? `${entry.apiProtocol ?? "https"}://${entry.host}`
+      : new URL(input.context.remoteUrl.trim()).origin,
   } as const;
 }
 

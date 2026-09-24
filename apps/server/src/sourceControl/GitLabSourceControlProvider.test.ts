@@ -209,8 +209,103 @@ it("refines unknown GitLab remotes with mixed-case provider hosts", () => {
   assert.deepStrictEqual(provider, {
     kind: "gitlab",
     name: "GitLab Self-Hosted",
-    baseUrl: "https://Self-Hosted.Example.Test",
+    baseUrl: "https://self-hosted.example.test",
   });
+});
+
+const authOutput = (stdout: string) => ({
+  exitCode: ChildProcessSpawner.ExitCode(0),
+  stdout,
+  stderr: "",
+});
+
+const selfHostedAuth = authOutput(`gitlab.com
+  x No token found
+git.example.test
+  ✓ Logged in to git.example.test as gitlab-user
+  ✓ API calls for git.example.test are made over https protocol.
+`);
+
+// What the provider registry and the repository identity refinement pass in before a remote is
+// recognised: the remote alone, with nothing reliable in the provider fields.
+const refineRemote = (remoteUrl: string, auth = selfHostedAuth) =>
+  GitLabSourceControlProvider.discovery.refineUnknownRemote?.({
+    cwd: "/repo",
+    context: {
+      provider: { kind: "unknown", name: "Unknown", baseUrl: "" },
+      remoteName: "origin",
+      remoteUrl,
+    },
+    auth,
+  });
+
+it("refines SSH remotes on a custom port against glab's web host", () => {
+  for (const remoteUrl of [
+    "ssh://git@git.example.test:8888/group/project.git",
+    "git@git.example.test:group/project.git",
+  ]) {
+    assert.deepStrictEqual(refineRemote(remoteUrl), {
+      kind: "gitlab",
+      name: "GitLab Self-Hosted",
+      baseUrl: "https://git.example.test",
+    });
+  }
+});
+
+it("keeps the port and scheme of a web remote as its GitLab origin", () => {
+  assert.deepStrictEqual(
+    refineRemote(
+      "http://git.example.test:8080/group/project.git",
+      authOutput(`git.example.test:8080
+  ✓ Logged in to git.example.test:8080 as gitlab-user
+`),
+    ),
+    { kind: "gitlab", name: "GitLab Self-Hosted", baseUrl: "http://git.example.test:8080" },
+  );
+  // The port is part of a web remote's host, so a sign-in to the bare hostname is another host.
+  assert.strictEqual(refineRemote("https://git.example.test:8443/group/project.git"), null);
+});
+
+it("reaches an SSH remote's GitLab over the scheme and web port glab uses", () => {
+  assert.deepStrictEqual(
+    refineRemote(
+      "ssh://git@git.example.test:2222/group/project.git",
+      authOutput(`git.example.test:8080
+  ✓ Logged in to git.example.test:8080 as gitlab-user
+  ✓ API calls for git.example.test:8080 are made over http protocol.
+`),
+    ),
+    { kind: "gitlab", name: "GitLab Self-Hosted", baseUrl: "http://git.example.test:8080" },
+  );
+});
+
+it("prefers glab's portless host for an SSH remote when it lists both", () => {
+  assert.strictEqual(
+    refineRemote(
+      "git@git.example.test:group/project.git",
+      authOutput(`git.example.test:8080
+  ✓ Logged in to git.example.test:8080 as other-user
+git.example.test
+  ✓ Logged in to git.example.test as gitlab-user
+`),
+    )?.baseUrl,
+    "https://git.example.test",
+  );
+});
+
+it("does not guess between two web ports on an SSH remote's hostname", () => {
+  const twoPorts = authOutput(`git.example.test:8080
+  ✓ Logged in to git.example.test:8080 as first-user
+git.example.test:9090
+  ✓ Logged in to git.example.test:9090 as second-user
+`);
+  assert.strictEqual(refineRemote("git@git.example.test:group/project.git", twoPorts), null);
+});
+
+it("does not refine a remote on a host glab is not signed in to", () => {
+  assert.strictEqual(refineRemote("ssh://git@other.example.test:8888/group/project.git"), null);
+  assert.strictEqual(refineRemote("git@gitlab.com:group/project.git"), null);
+  assert.strictEqual(refineRemote("git://git.example.test/group/project.git"), null);
 });
 
 it("parses authenticated GitLab auth status hosts with ports and single-label names", () => {

@@ -45,6 +45,10 @@ Install [GitLab CLI](https://gitlab.com/gitlab-org/cli), then sign in:
 glab auth login
 ```
 
+For a self-hosted GitLab whose hostname does not contain `gitlab`, sign in to its web host with
+`glab auth login --hostname <host>`. T3 Code recognises the repository from that sign-in,
+including SSH remotes on a custom port.
+
 ### Bitbucket
 
 Set an access token in the server's environment:

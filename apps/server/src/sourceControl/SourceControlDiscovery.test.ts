@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { VcsProcessSpawnError } from "@t3tools/contracts";
+import { parseGitRemote } from "@t3tools/shared/sourceControl";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -716,19 +717,16 @@ it.effect("does not choose a default Forgejo login across ambiguous SSH server p
         },
       ]),
     );
-    const remote = ForgejoCli.parseForgejoRemote("git@forgejo.local:maria/project.git");
+    const remote = parseGitRemote("git@forgejo.local:maria/project.git");
     assert.isNotNull(remote);
-    assert.deepStrictEqual(
-      ForgejoCli.parseForgejoRemote("forgejo.local:maria/project.git"),
-      remote,
-    );
+    assert.deepStrictEqual(parseGitRemote("forgejo.local:maria/project.git"), remote);
     assert.isUndefined(ForgejoCli.matchForgejoLogin(logins, remote!));
     assert.strictEqual(
       ForgejoCli.matchForgejoLogin(logins, remote!, "forgejo.local:4000")?.name,
       "two",
     );
     assert.isUndefined(ForgejoCli.matchForgejoLogin(logins, remote!, "other.local:4000"));
-    const alias = ForgejoCli.parseForgejoRemote("git@ssh.forgejo.local:maria/project.git");
+    const alias = parseGitRemote("git@ssh.forgejo.local:maria/project.git");
     assert.isNotNull(alias);
     assert.isUndefined(ForgejoCli.matchForgejoLogin(logins, alias!, "forgejo.local:4000"));
     const refined = ForgejoSourceControlProvider.discovery.refineUnknownRemote({
@@ -742,10 +740,10 @@ it.effect("does not choose a default Forgejo login across ambiguous SSH server p
       auth: processOutput(yield* encodeJsonEffect(logins)),
     });
     assert.strictEqual(refined?.baseUrl, "http://forgejo.local:4000");
-    const https = ForgejoCli.parseForgejoRemote("http://forgejo.local:4000/maria/project.git");
+    const https = parseGitRemote("http://forgejo.local:4000/maria/project.git");
     assert.isNotNull(https);
     assert.strictEqual(ForgejoCli.matchForgejoLogin(logins, https!)?.name, "two");
-    const hostOnly = ForgejoCli.parseForgejoRemote("http://forgejo.local:4000");
+    const hostOnly = parseGitRemote("http://forgejo.local:4000");
     assert.strictEqual(
       ForgejoCli.matchForgejoLogin(logins, hostOnly!, undefined, true)?.name,
       "two",

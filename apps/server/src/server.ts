@@ -3,11 +3,7 @@ import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import {
-  EnvironmentHttpApi,
-  ProviderDriverKind,
-  type RepositoryIdentity,
-} from "@t3tools/contracts";
+import { EnvironmentHttpApi, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
@@ -63,6 +59,7 @@ import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
+import { refineRepositoryIdentity } from "./sourceControl/refineRepositoryIdentity.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
@@ -297,33 +294,7 @@ const RepositoryIdentityResolverLayerLive = Layer.effect(
   Effect.gen(function* () {
     const registry = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
     return yield* RepositoryIdentityResolver.make({
-      refine: Effect.fn(function* (identity: RepositoryIdentity) {
-        const remote = ForgejoCli.parseForgejoRemote(identity.locator.remoteUrl);
-        if (
-          !remote ||
-          !identity.rootPath ||
-          (identity.provider !== undefined &&
-            identity.provider !== "unknown" &&
-            identity.provider !== "forgejo")
-        )
-          return identity;
-        const handle = yield* registry.resolveHandle({
-          cwd: identity.rootPath,
-          context: {
-            provider: { kind: "unknown", name: "Unknown", baseUrl: "" },
-            remoteName: identity.locator.remoteName,
-            remoteUrl: identity.locator.remoteUrl,
-          },
-        });
-        if (handle.context?.provider.kind !== "forgejo") return identity;
-        const baseUrl = handle.context.provider.baseUrl.replace(/\/+$/, "");
-        const basePath = new URL(baseUrl).pathname.replace(/^\/+|\/+$/g, "");
-        const path =
-          !remote.ssh && basePath && remote.path.startsWith(`${basePath}/`)
-            ? remote.path.slice(basePath.length + 1)
-            : remote.path;
-        return { ...identity, provider: "forgejo", webUrl: `${baseUrl}/${path}` };
-      }),
+      refine: (identity) => refineRepositoryIdentity(registry.resolveHandle, identity),
     });
   }),
 ).pipe(Layer.provide(SourceControlProviderRegistryLayerLive), Layer.provide(ProcessRunner.layer));

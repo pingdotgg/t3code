@@ -21,6 +21,24 @@ describe("parsePullRequestReference", () => {
     );
   });
 
+  it("accepts self-hosted GitLab merge request URLs whose hostname does not name GitLab", () => {
+    expect(
+      parsePullRequestReference("https://git.example.test/group/sub/project/-/merge_requests/7"),
+    ).toBe("https://git.example.test/group/sub/project/-/merge_requests/7");
+  });
+
+  it("rejects a merge request marker outside the URL path", () => {
+    expect(
+      parsePullRequestReference("https://code.example.test/group/project?next=/-/merge_requests/7"),
+    ).toBeNull();
+  });
+
+  it("accepts GitLab merge request URLs served over plain HTTP", () => {
+    expect(
+      parsePullRequestReference("http://git.example.test/group/project/-/merge_requests/7"),
+    ).toBe("http://git.example.test/group/project/-/merge_requests/7");
+  });
+
   it("accepts legacy Azure DevOps pull request URLs", () => {
     expect(
       parsePullRequestReference("https://acme.visualstudio.com/project/_git/t3code/pullrequest/42"),

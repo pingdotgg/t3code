@@ -3,6 +3,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import { SourceControlProviderError } from "@t3tools/contracts";
+import { parseGitRemote } from "@t3tools/shared/sourceControl";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
@@ -31,7 +32,7 @@ export const discovery = {
       ? providerAuth({
           status: login.valid === "true" ? "authenticated" : "unauthenticated",
           account: login.user,
-          host: ForgejoCli.parseForgejoRemote(login.url)?.host,
+          host: parseGitRemote(login.url)?.host,
         })
       : providerAuth({
           status: "unauthenticated",
@@ -39,7 +40,7 @@ export const discovery = {
         });
   },
   refineUnknownRemote: (input) => {
-    const remote = ForgejoCli.parseForgejoRemote(input.context.remoteUrl);
+    const remote = parseGitRemote(input.context.remoteUrl);
     const login =
       remote &&
       ForgejoCli.matchForgejoLogin(
@@ -80,7 +81,7 @@ export const makeDiscovery = Effect.gen(function* () {
         );
       const credentials = yield* Effect.result(listLogins({ cwd, command: "fj", remoteUrl }));
       const logins = Result.isSuccess(credentials) ? credentials.success : [];
-      const remote = ForgejoCli.parseForgejoRemote(remoteUrl);
+      const remote = parseGitRemote(remoteUrl);
       const login =
         (remote && ForgejoCli.matchForgejoLogin(logins, remote)) ||
         logins.find((entry) => entry.default === "true") ||
@@ -103,7 +104,7 @@ export const makeDiscovery = Effect.gen(function* () {
                 ? providerAuth({
                     status: "authenticated",
                     account: login.user,
-                    host: ForgejoCli.parseForgejoRemote(login.url)?.host,
+                    host: parseGitRemote(login.url)?.host,
                   })
                 : providerAuth({
                     status: "unauthenticated",
@@ -122,12 +123,12 @@ export const makeDiscovery = Effect.gen(function* () {
               ? providerAuth({
                   status: "authenticated",
                   account: account.success,
-                  host: ForgejoCli.parseForgejoRemote(login.url)?.host,
+                  host: parseGitRemote(login.url)?.host,
                 })
               : providerAuth({
                   status: "unknown",
                   detail: account.failure.detail,
-                  host: ForgejoCli.parseForgejoRemote(login.url)?.host,
+                  host: parseGitRemote(login.url)?.host,
                 }),
           };
         }
@@ -141,7 +142,7 @@ export const makeDiscovery = Effect.gen(function* () {
         readonly cwd: string;
         readonly context: SourceControlProvider.SourceControlProviderContext;
       }) {
-        const remote = ForgejoCli.parseForgejoRemote(input.context.remoteUrl);
+        const remote = parseGitRemote(input.context.remoteUrl);
         if (!remote) return null;
         for (const command of ["fj", "tea"] as const) {
           const logins = yield* listLogins({
@@ -329,7 +330,7 @@ export const make = Effect.gen(function* () {
             RepositorySchema,
           );
           const remote = input.context?.remoteUrl;
-          const useSsh = remote && ForgejoCli.parseForgejoRemote(remote)?.ssh;
+          const useSsh = remote && parseGitRemote(remote)?.ssh;
           yield* process.run({
             operation: "ForgejoSourceControlProvider.checkoutChangeRequest",
             command: "git",

@@ -3,8 +3,9 @@ const FORGEJO_PULL_REQUEST_URL_PATTERN =
 const FORGEJO_CLI_PR_CHECKOUT_PATTERN = /^tea\s+(?:pr|pulls)\s+checkout\s+(.+)$/i;
 const GITHUB_PULL_REQUEST_URL_PATTERN =
   /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/(\d+)(?:[/?#].*)?$/i;
+// `/-/merge_requests/` is GitLab's own path marker, so self-hosted installs on any hostname match.
 const GITLAB_MERGE_REQUEST_URL_PATTERN =
-  /^https:\/\/[^/\s]*gitlab[^/\s]*\/.+\/-\/merge_requests\/(\d+)(?:[/?#].*)?$/i;
+  /^https?:\/\/[^/\s]+\/[^?#\s]+\/-\/merge_requests\/(\d+)(?:[/?#].*)?$/i;
 const AZURE_DEVOPS_PULL_REQUEST_URL_PATTERN =
   /^https:\/\/(?:dev\.azure\.com\/[^/\s]+\/[^/\s]+|[^/\s]+\.visualstudio\.com\/[^/\s]+)\/_git\/[^/\s]+\/pullrequest\/(\d+)(?:[/?#].*)?$/i;
 const PULL_REQUEST_NUMBER_PATTERN = /^#?(\d+)$/;

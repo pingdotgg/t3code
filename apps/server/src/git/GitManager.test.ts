@@ -3900,6 +3900,14 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           "gitlab",
         ),
       ).toBe("group/maria/project");
+      // Git reads a userless SCP remote as SSH too; without its owner the branch lookup could
+      // accept another repository's pull request on the same branch name.
+      expect(
+        GitManager.parseRepositoryNameWithOwnerFromRemoteUrl(
+          "gitlab.example:group/maria/project.git",
+        ),
+      ).toBe("group/maria/project");
+      expect(GitManager.parseRepositoryNameWithOwnerFromRemoteUrl("C:group/project")).toBeNull();
     }),
   );
 

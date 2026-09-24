@@ -13,6 +13,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { type GitRemote, parseGitRemote } from "@t3tools/shared/sourceControl";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import type { SourceControlProviderContext } from "./SourceControlProvider.ts";
@@ -152,35 +153,9 @@ export class ForgejoCli extends Context.Service<
   }
 >()("t3/sourceControl/ForgejoCli") {}
 
-export function parseForgejoRemote(value: string) {
-  if (/^(?:https?|ssh):\/\//i.test(value)) {
-    try {
-      const url = new URL(value);
-      return {
-        host: url.host.toLowerCase(),
-        hostname: url.hostname.toLowerCase(),
-        ssh: url.protocol === "ssh:",
-        path: url.pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/, ""),
-      };
-    } catch {
-      return null;
-    }
-  }
-  // SCP remotes may omit the username; URL treats these as a custom scheme.
-  const ssh = /^(?:[^@/]+@)?([^:/]+):([^/].*)$/.exec(value);
-  return ssh?.[1] && ssh[2]
-    ? {
-        host: ssh[1].toLowerCase(),
-        hostname: ssh[1].toLowerCase(),
-        ssh: true,
-        path: ssh[2].replace(/\.git$/, ""),
-      }
-    : null;
-}
-
 export function matchForgejoLogin(
   logins: ReturnType<typeof parseForgejoLogins>,
-  remote: NonNullable<ReturnType<typeof parseForgejoRemote>>,
+  remote: GitRemote,
   requestedHost?: string,
   hostOnly = false,
 ) {
@@ -188,7 +163,7 @@ export function matchForgejoLogin(
     ...new Map(
       logins
         .filter((login) => {
-          const url = parseForgejoRemote(login.url);
+          const url = parseGitRemote(login.url);
           if (!url) return false;
           if (requestedHost !== undefined && url.host !== requestedHost.toLowerCase()) return false;
           return remote.ssh
@@ -297,9 +272,9 @@ export const make = Effect.gen(function* () {
     keys: typeof ForgejoKeysSchema.Type,
     remoteUrl?: string,
   ): ReturnType<typeof parseForgejoLogins> => {
-    const remote = remoteUrl ? parseForgejoRemote(remoteUrl) : null;
+    const remote = remoteUrl ? parseGitRemote(remoteUrl) : null;
     return Object.keys(keys.hosts).flatMap((host) => {
-      const url = parseForgejoRemote(`https://${host}`);
+      const url = parseGitRemote(`https://${host}`);
       // fj 0.6 drops URL mounts during whoami and OAuth renewal; tea supports them.
       if (!url || url.path) return [];
       // fj omits the scheme in storage. Only an explicit matching HTTP remote opts into HTTP.
@@ -485,14 +460,14 @@ export const make = Effect.gen(function* () {
     input: ForgejoRepositoryInput,
     hostOnly = false,
   ) {
-    const referenceRemote = input.reference ? parseForgejoRemote(input.reference) : null;
+    const referenceRemote = input.reference ? parseGitRemote(input.reference) : null;
     let remoteUrl = [input.reference, input.repository, input.context?.remoteUrl].find(
-      (value) => value && parseForgejoRemote(value),
+      (value) => value && parseGitRemote(value),
     );
     let remote =
       referenceRemote ??
-      (input.repository ? parseForgejoRemote(input.repository) : null) ??
-      (input.context ? parseForgejoRemote(input.context.remoteUrl) : null);
+      (input.repository ? parseGitRemote(input.repository) : null) ??
+      (input.context ? parseGitRemote(input.context.remoteUrl) : null);
     if (!remote && (!input.repository || input.host)) {
       const result = yield* process
         .run({
@@ -518,9 +493,7 @@ export const make = Effect.gen(function* () {
           ...new Set(
             result.stdout.split("\n").flatMap((line) => {
               const url = /^\S+\s+(https?:\/\/\S+)\s+\(fetch\)$/.exec(line.trim())?.[1];
-              return url && parseForgejoRemote(url)?.host === input.host?.toLowerCase()
-                ? [url]
-                : [];
+              return url && parseGitRemote(url)?.host === input.host?.toLowerCase() ? [url] : [];
             }),
           ),
         ];
@@ -534,7 +507,7 @@ export const make = Effect.gen(function* () {
       } else {
         remoteUrl = result.stdout.trim();
       }
-      remote = remoteUrl ? parseForgejoRemote(remoteUrl) : null;
+      remote = remoteUrl ? parseGitRemote(remoteUrl) : null;
     }
     if (
       input.host &&
@@ -606,9 +579,7 @@ export const make = Effect.gen(function* () {
       return { command, login: login.name, repository: "", baseUrl: login.url.replace(/\/+$/, "") };
     const path =
       referenceRemote?.path ??
-      (input.repository && !parseForgejoRemote(input.repository)
-        ? input.repository
-        : remote?.path) ??
+      (input.repository && !parseGitRemote(input.repository) ? input.repository : remote?.path) ??
       "";
     const basePath = new URL(login.url).pathname.replace(/^\/+|\/+$/g, "");
     const relativePath =
