@@ -243,12 +243,16 @@ describe("KeybindingsSettings.logic", () => {
         "chat.new",
         "rightPanel.toggleMaximized",
         "thread.stop",
+        "thread.markUnread",
         "script.setup-db.run",
       ]),
     );
     expect(DEFAULT_RESOLVED_KEYBINDINGS.some((binding) => binding.command === "thread.stop")).toBe(
       false,
     );
+    expect(
+      DEFAULT_RESOLVED_KEYBINDINGS.some((binding) => binding.command === "thread.markUnread"),
+    ).toBe(false);
   });
 
   it("reports unknown when variables without rejecting parseable expressions", () => {
