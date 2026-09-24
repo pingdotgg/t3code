@@ -204,14 +204,18 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         } satisfies DesktopAppSettings.DesktopAppSettings["Service"])
       : DesktopAppSettings.layer;
 
-  // Records the restart markers installs write, so installs stay free of real
+  // Tracks the restart markers installs leave, so installs stay free of real
   // disk I/O that would outrun the tests' settle loops.
-  const updateRestartMarkers: string[] = [];
+  const updateRestartMarkers = new Set<string>();
   const fileSystemLayer = FileSystem.layerNoop({
     makeDirectory: () => Effect.void,
     writeFileString: (path) =>
       Effect.sync(() => {
-        updateRestartMarkers.push(path);
+        updateRestartMarkers.add(path);
+      }),
+    remove: (path) =>
+      Effect.sync(() => {
+        updateRestartMarkers.delete(path);
       }),
   });
 

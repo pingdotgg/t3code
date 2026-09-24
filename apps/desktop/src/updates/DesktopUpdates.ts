@@ -502,6 +502,23 @@ export const make = Effect.gen(function* () {
     );
   }).pipe(Effect.withSpan("desktop.updates.downloadAvailableUpdate"));
 
+  // Tells the primary backend that the coming stop is an update restart, so it
+  // keeps its managed tunnel for the backend the updated app starts. Best
+  // effort: without the marker the backend only re-provisions its tunnel.
+  const updateRestartMarkerDir = environment.path.join(environment.baseDir, "runtime");
+  const updateRestartMarkerPath = environment.path.join(
+    updateRestartMarkerDir,
+    DESKTOP_UPDATE_RESTART_MARKER_FILE,
+  );
+  const writeUpdateRestartMarker = fileSystem
+    .makeDirectory(updateRestartMarkerDir, { recursive: true })
+    .pipe(
+      Effect.andThen(fileSystem.writeFileString(updateRestartMarkerPath, "")),
+      Effect.catch((error) =>
+        logUpdaterWarning("Could not write the update restart marker.", { errorTag: error._tag }),
+      ),
+    );
+
   const resetInstallAction = Effect.all(
     [finishUpdateAction("install"), Ref.set(desktopState.quitting, false)],
     { discard: true },
@@ -518,6 +535,8 @@ export const make = Effect.gen(function* () {
     if (!ownsRecovery) return;
 
     yield* Ref.set(desktopState.quitting, false);
+    // No updated backend is coming, so a later quit must release the tunnel.
+    yield* fileSystem.remove(updateRestartMarkerPath, { force: true }).pipe(Effect.ignore);
     yield* Effect.gen(function* () {
       const instances = yield* pool.list;
       const restartExit = yield* Effect.forEach(instances, (instance) => instance.start, {
@@ -535,22 +554,6 @@ export const make = Effect.gen(function* () {
       Effect.ensuring(finishUpdateAction("install-recovery")),
     );
   });
-
-  // Tells the primary backend that the coming stop is an update restart, so it
-  // keeps its managed tunnel for the backend the updated app starts. Best
-  // effort: without the marker the backend only re-provisions its tunnel.
-  const writeUpdateRestartMarker = Effect.gen(function* () {
-    const runtimeDir = environment.path.join(environment.baseDir, "runtime");
-    yield* fileSystem.makeDirectory(runtimeDir, { recursive: true });
-    yield* fileSystem.writeFileString(
-      environment.path.join(runtimeDir, DESKTOP_UPDATE_RESTART_MARKER_FILE),
-      "",
-    );
-  }).pipe(
-    Effect.catch((error) =>
-      logUpdaterWarning("Could not write the update restart marker.", { error: error.message }),
-    ),
-  );
 
   const installDownloadedUpdate = (expectedVersion?: string) =>
     Effect.scoped(
