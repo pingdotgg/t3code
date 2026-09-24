@@ -1,7 +1,6 @@
 /**
- * otelEnvironment: the OpenTelemetry kill switch and resource attributes,
- * shared by the server and the desktop main process so both agree on what
- * turns export off and what it is exported as.
+ * otelEnvironment: the OpenTelemetry kill switch, shared by the server and the
+ * desktop main process so both agree on what turns export off.
  *
  * `T3CODE_OTEL_SDK_DISABLED` is read first, so a machine that sets
  * `OTEL_SDK_DISABLED` for everything else can still opt T3 Code back in.
@@ -11,7 +10,6 @@
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
@@ -20,11 +18,7 @@ export interface OtelEnvironment {
   readonly disabled: boolean;
   /** Messages for the caller to log once at startup. */
   readonly warnings: ReadonlyArray<string>;
-  /**
-   * Valid entries from `OTEL_RESOURCE_ATTRIBUTES`. A malformed entry is
-   * dropped and reported in `warnings` instead of failing startup, which is
-   * what the exporters this variable also feeds do today.
-   */
+  /** `OTEL_RESOURCE_ATTRIBUTES`, or nothing when it could not be read. */
   readonly resourceAttributes: Readonly<Record<string, string>>;
 }
 
@@ -73,52 +67,29 @@ const flag = (
 const T3CODE_TRUE = ["true", "yes", "on", "1", "y"];
 const T3CODE_FALSE = ["false", "no", "off", "0", "n"];
 
-/** One side of a pair in `OTEL_RESOURCE_ATTRIBUTES`, the exporters' own schema. */
-const PairComponent = Schema.String.pipe(
-  Schema.decodeTo(Schema.StringFromUriComponent, SchemaTransformation.trim()),
-);
-const decodePairComponent = Schema.decodeUnknownOption(PairComponent);
+const RESOURCE_ATTRIBUTES = "OTEL_RESOURCE_ATTRIBUTES";
 
 interface ResourceAttributes {
   readonly value: Readonly<Record<string, string>>;
-  readonly warnings: ReadonlyArray<string>;
+  readonly warning?: string;
 }
 
-/**
- * Reads `OTEL_RESOURCE_ATTRIBUTES` the way the specification describes it: a
- * comma-separated list of `key=value` pairs, percent-decoded. Effect's
- * exporters read the same variable with `Config.Record`, which dies on the
- * first pair it cannot decode; here, a pair that has no `=` or fails to
- * percent-decode is dropped with a warning, and every other pair still
- * applies, since one bad attribute should not be why the process would not
- * start.
- */
-const parseResourceAttributes = (raw: string): ResourceAttributes => {
-  const value: Record<string, string> = {};
-  const warnings: string[] = [];
-  for (const pair of raw.split(",")) {
-    const trimmed = pair.trim();
-    if (trimmed === "") {
-      continue;
-    }
-    const separator = trimmed.indexOf("=");
-    const key = separator === -1 ? Option.none() : decodePairComponent(trimmed.slice(0, separator));
-    const attributeValue =
-      separator === -1 ? Option.none() : decodePairComponent(trimmed.slice(separator + 1));
-    if (Option.isNone(key) || Option.isNone(attributeValue)) {
-      warnings.push(
-        `OTEL_RESOURCE_ATTRIBUTES entry "${trimmed}" is not a percent-decoded key=value pair and was ignored`,
-      );
-      continue;
-    }
-    value[key.value] = attributeValue.value;
-  }
-  return { value, warnings };
-};
-
-const resourceAttributesConfig = Config.String("OTEL_RESOURCE_ATTRIBUTES").pipe(
-  Config.withDefault(""),
-  Config.map(parseResourceAttributes),
+// The schema Effect's OTLP exporters read this variable with.
+const resourceAttributes = Config.Record(
+  Schema.StringFromUriComponent,
+  Schema.StringFromUriComponent,
+  RESOURCE_ATTRIBUTES,
+).pipe(
+  Config.map((value): ResourceAttributes => ({ value })),
+  Config.orElse(() =>
+    Config.String(RESOURCE_ATTRIBUTES).pipe(
+      Config.map((raw): ResourceAttributes => ({
+        value: {},
+        warning: `${RESOURCE_ATTRIBUTES}=${raw} is not a list of percent-encoded key=value pairs and was ignored`,
+      })),
+    ),
+  ),
+  Config.withDefault<ResourceAttributes>({ value: {} }),
 );
 
 export const load: Effect.Effect<OtelEnvironment> = Config.all({
@@ -138,13 +109,13 @@ export const load: Effect.Effect<OtelEnvironment> = Config.all({
     (value) =>
       `OTEL_SDK_DISABLED=${value} was read as false; the OpenTelemetry specification recognizes only the string true, so use OTEL_SDK_DISABLED=true or T3CODE_OTEL_SDK_DISABLED to say it any other way`,
   ),
-  resourceAttributes: resourceAttributesConfig,
+  resource: resourceAttributes,
 }).pipe(
-  Effect.map(({ t3, spec, resourceAttributes }) => {
+  Effect.map(({ t3, spec, resource }) => {
     const disabled = t3.value ?? spec.value ?? false;
-    const warnings = [t3.warning, spec.warning]
-      .filter((warning) => warning !== undefined)
-      .concat(resourceAttributes.warnings);
+    const warnings = [t3.warning, spec.warning, resource.warning].filter(
+      (warning) => warning !== undefined,
+    );
     if (disabled) {
       warnings.push(
         t3.value
@@ -152,27 +123,26 @@ export const load: Effect.Effect<OtelEnvironment> = Config.all({
           : "OTEL_SDK_DISABLED is set, so no telemetry is exported, whatever configured it; set T3CODE_OTEL_SDK_DISABLED=false to export anyway",
       );
     }
-    return { disabled, warnings, resourceAttributes: resourceAttributes.value };
+    return { disabled, warnings, resourceAttributes: resource.value };
   }),
   // Every read above falls back instead of failing, so this cannot happen.
   Effect.orDie,
 );
 
 /**
- * Effect's OTLP exporters read `OTEL_RESOURCE_ATTRIBUTES` for themselves and
- * die on an entry they cannot decode. Provide this around them so that read
- * sees only the entries `load` kept; every other variable still comes from the
- * environment. Empty strings are preserved so an emptied list stays empty
- * instead of falling through to the raw value.
+ * Provide this around Effect's OTLP exporters, which read
+ * `OTEL_RESOURCE_ATTRIBUTES` for themselves and die when it does not decode,
+ * so they see what `load` accepted instead.
  */
 export const resourceAttributesLayer = (attributes: Readonly<Record<string, string>>) =>
   ConfigProvider.layerAdd(
     ConfigProvider.fromEnv({
       env: {
-        OTEL_RESOURCE_ATTRIBUTES: Object.entries(attributes)
+        [RESOURCE_ATTRIBUTES]: Object.entries(attributes)
           .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
           .join(","),
       },
+      // Keeps an emptied list from falling through to the raw value.
       preserveEmptyStrings: true,
     }),
     { asPrimary: true },

@@ -82,49 +82,33 @@ describe("OtelEnvironment", () => {
     }),
   );
 
-  describe("resourceAttributes", () => {
-    it.effect.each([
-      { name: "unset", env: {}, resourceAttributes: {}, warnings: [] },
-      {
-        name: "a valid list",
-        env: { OTEL_RESOURCE_ATTRIBUTES: "service.name=my-service,team=core" },
-        resourceAttributes: { "service.name": "my-service", team: "core" },
-        warnings: [],
-      },
-      {
-        name: "percent-encoded values",
-        env: { OTEL_RESOURCE_ATTRIBUTES: "message=hello%20world" },
-        resourceAttributes: { message: "hello world" },
-        warnings: [],
-      },
-      {
-        name: "a malformed entry is dropped, the rest is kept",
-        env: { OTEL_RESOURCE_ATTRIBUTES: "team=core,broken=%zz,region=us" },
-        resourceAttributes: { team: "core", region: "us" },
-        warnings: [
-          'OTEL_RESOURCE_ATTRIBUTES entry "broken=%zz" is not a percent-decoded key=value pair and was ignored',
-        ],
-      },
-      {
-        name: "an entry with no = is dropped",
-        env: { OTEL_RESOURCE_ATTRIBUTES: "team=core,noequals" },
-        resourceAttributes: { team: "core" },
-        warnings: [
-          'OTEL_RESOURCE_ATTRIBUTES entry "noequals" is not a percent-decoded key=value pair and was ignored',
-        ],
-      },
-    ])("$name", ({ env, resourceAttributes, warnings }) =>
-      Effect.gen(function* () {
-        const resolved = yield* load(env);
-        assert.deepStrictEqual(resolved.resourceAttributes, resourceAttributes);
-        assert.deepStrictEqual(resolved.warnings, warnings);
-      }),
-    );
-  });
+  it.effect.each([
+    { name: "unset", env: {}, resourceAttributes: {}, warnings: [] },
+    {
+      name: "a percent-encoded list",
+      env: { OTEL_RESOURCE_ATTRIBUTES: "team=core,message=hello%20world" },
+      resourceAttributes: { team: "core", message: "hello world" },
+      warnings: [],
+    },
+    {
+      name: "a list that does not decode",
+      env: { OTEL_RESOURCE_ATTRIBUTES: "team=core,broken=%zz" },
+      resourceAttributes: {},
+      warnings: [
+        "OTEL_RESOURCE_ATTRIBUTES=team=core,broken=%zz is not a list of percent-encoded key=value pairs and was ignored",
+      ],
+    },
+  ])("resource attributes: $name", ({ env, resourceAttributes, warnings }) =>
+    Effect.gen(function* () {
+      const resolved = yield* load(env);
+      assert.deepStrictEqual(resolved.resourceAttributes, resourceAttributes);
+      assert.deepStrictEqual(resolved.warnings, warnings);
+    }),
+  );
+
   describe("resourceAttributesLayer", () => {
     it.effect.each([
-      { name: "every entry malformed", raw: "team=%zz", attributes: [] },
-      { name: "one entry malformed", raw: "team=core,broken=%zz", attributes: ["team"] },
+      { name: "a list that does not decode", raw: "team=%zz", attributes: [] },
       { name: "encoded separators", raw: "a%2Cb=x%3Dy", attributes: ["a,b"] },
     ])("lets the exporters' own read succeed with $name", ({ raw, attributes }) =>
       Effect.gen(function* () {
