@@ -26,6 +26,7 @@ import {
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadShellSnapshot,
   type OrchestrationV2StoredEvent,
@@ -1758,6 +1759,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: updatedTask,
       });
+      // The parent has the outcome or dropped the task, so a queued notice
+      // that it is blocked is stale.
+      yield* cancelQueuedBlockedTaskNotices({
+        command,
+        events,
+        projection,
+        now,
+        taskIds: [task.id],
+      });
 
       const parentRun =
         task.runId === null
@@ -1839,6 +1849,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     });
 
+  /**
+   * Cancels queued notices that a delegated task is blocked on a request.
+   * They are server-owned like completion deliveries, so the same Stop and
+   * disposal barriers must keep them from starting a parent turn.
+   */
+  const cancelQueuedBlockedTaskNotices = (input: {
+    readonly command: OrchestrationV2Command;
+    readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+    readonly projection: Pick<
+      OrchestrationV2ThreadProjection,
+      "runs" | "messages" | "nodes" | "attempts"
+    >;
+    readonly now: DateTime.Utc;
+    readonly taskIds?: ReadonlyArray<OrchestrationV2Subagent["id"]>;
+  }) =>
+    Effect.forEach(
+      input.projection.runs.filter((run) => {
+        if (run.status !== "queued") return false;
+        const message = input.projection.messages.find(
+          (candidate) => candidate.id === run.userMessageId,
+        );
+        const source = message?.notification?.source;
+        return (
+          message?.delegatedCompletion === undefined &&
+          source?.kind === "delegated_task" &&
+          (input.taskIds === undefined ||
+            source.taskIds.some((taskId) => input.taskIds!.includes(taskId)))
+        );
+      }),
+      (run) => emitQueuedRunCancellation({ ...input, run }),
+      { discard: true },
+    );
+
   const disposeDelegatedCompletionCohort = (input: {
     readonly command: OrchestrationV2Command;
     readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
@@ -1919,6 +1962,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection: input.projection,
           run: deliveryRun,
           now: input.now,
+        });
+      }
+      if (input.cancelQueuedDelivery !== false) {
+        yield* cancelQueuedBlockedTaskNotices({
+          command: input.command,
+          events: input.events,
+          projection: input.projection,
+          now: input.now,
+          taskIds: tasks.map((task) => task.id),
         });
       }
     });
@@ -7481,6 +7533,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             disposition: "stopped",
             now,
           });
+          // Stop means nothing new starts, whichever cohort a notice belongs to.
+          yield* cancelQueuedBlockedTaskNotices({
+            command,
+            events,
+            projection: yield* getProjectionWithPendingEvents(command.threadId, events),
+            now,
+          });
         });
 
       const emitEvent = emit(events, command);
@@ -9067,6 +9126,88 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
     );
 
+  /**
+   * Tells the parent when its app-owned delegated child blocks on a request.
+   * The child keeps running and its eventual result is still delivered; this
+   * only queues a notice so the parent can answer a question or ask the user.
+   * The command id is per request, so replays and repeated updates are no-ops.
+   */
+  const notifyParentOfBlockedChild = (
+    childThreadId: ThreadId,
+    request: OrchestrationV2RuntimeRequest,
+  ) =>
+    Effect.gen(function* () {
+      const parentThreadId = yield* appOwnedSubagentParentThreadId(childThreadId);
+      if (parentThreadId === undefined) return;
+      // Hold the parent lock from the eligibility check through dispatch so a
+      // concurrent Stop, disposal, or archive cannot slip in between.
+      yield* threadDispatch.withLock(
+        parentThreadId,
+        dispatchBlockedChildNotice(parentThreadId, childThreadId, request),
+      );
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to notify parent of blocked delegated task", {
+          childThreadId,
+          requestId: request.id,
+          cause,
+        }),
+      ),
+    );
+
+  const dispatchBlockedChildNotice = (
+    parentThreadId: ThreadId,
+    childThreadId: ThreadId,
+    request: OrchestrationV2RuntimeRequest,
+  ) =>
+    Effect.gen(function* () {
+      const parent = yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"]);
+      const task = parent.subagents.find(
+        (candidate) =>
+          candidate.origin === "app_owned" && candidate.childThreadId === childThreadId,
+      );
+      if (
+        task === undefined ||
+        isTerminalDelegatedTaskStatus(task.status) ||
+        task.completionDelivery?.state === "disposed" ||
+        parent.thread.archivedAt !== null ||
+        parent.thread.deletedAt !== null
+      ) {
+        return;
+      }
+      const label = task.title?.trim() || "Delegated task";
+      const need =
+        request.kind === "user_input"
+          ? "is waiting for an answer to a question"
+          : request.kind === "auth_refresh"
+            ? "is waiting for the user to sign in again"
+            : `is waiting for approval (${request.kind})`;
+      const action =
+        request.kind === "user_input"
+          ? `Read it with t3_pending_request_read (threadId ${childThreadId}, requestId ${request.id}) and answer with t3_pending_request_respond, or ask the user.`
+          : "Only the user can resolve this. Ask them to open the delegated task's thread.";
+      const messageId = yield* idAllocator.allocate.message({
+        threadId: parentThreadId,
+        ordinal: (yield* projectionStore.getMessageCount(parentThreadId)) + 1,
+      });
+      yield* dispatchWithReceiptEffect({
+        type: "message.dispatch",
+        commandId: CommandId.make(`command:delegated-task-blocked:${request.id}`),
+        threadId: parentThreadId,
+        messageId,
+        text: `Delegated task ${task.id} ${need}. ${action} It may already be resolved; its result still arrives when it finishes.`,
+        notification: {
+          source: { kind: "delegated_task", taskIds: [task.id] },
+          outcome: "updated",
+          summary: `${label} ${need}`,
+        },
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+      });
+    });
+
   // Historical terminal events are already represented by the projections
   // below. Replaying the full event table on every server start delays live
   // queue promotion in proportion to the lifetime size of the database.
@@ -9087,6 +9228,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             stored.event.payload.status === "rolled_back"),
       ),
       Stream.runForEach(handleTerminalRun),
+      Effect.forkDetach,
+    );
+
+  yield* eventSink
+    .stream({ afterSequence: terminalEventsAfterSequence, eventType: "runtime-request.updated" })
+    .pipe(
+      Stream.runForEach((stored) =>
+        stored.event.type === "runtime-request.updated" &&
+        stored.event.threadId !== undefined &&
+        stored.event.payload.status === "pending" &&
+        stored.event.payload.kind !== "dynamic_tool_call"
+          ? notifyParentOfBlockedChild(stored.event.threadId, stored.event.payload)
+          : Effect.void,
+      ),
       Effect.forkDetach,
     );
 
