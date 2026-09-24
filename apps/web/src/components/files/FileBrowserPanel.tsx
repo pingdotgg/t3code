@@ -228,6 +228,7 @@ export default function FileBrowserPanel({
             description: "The chat isn't ready to accept input right now.",
           });
         }
+        return;
       }
     } finally {
       context.close();

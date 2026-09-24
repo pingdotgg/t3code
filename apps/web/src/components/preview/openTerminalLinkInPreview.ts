@@ -38,6 +38,43 @@ interface OpenTerminalLinkInPreviewInput<E> {
   readonly forceBrowser: boolean;
 }
 
+export function canOpenTerminalLinkInPreview(url: string, threadRef: ScopedThreadRef): boolean {
+  return isWebUrl(url) && isPreviewSupportedInRuntime() && threadRef.threadId.length > 0;
+}
+
+export async function openTerminalLinkInIntegratedBrowser<E>(
+  input: Omit<OpenTerminalLinkInPreviewInput<E>, "forceBrowser">,
+): Promise<void> {
+  if (!canOpenTerminalLinkInPreview(input.url, input.threadRef)) {
+    input.fallbackToBrowser();
+    return;
+  }
+  const errorContext = {
+    environmentId: input.threadRef.environmentId,
+    threadId: input.threadRef.threadId,
+    targetOrigin: new URL(input.url).origin,
+  };
+  const defaults = await resolveBrowserDefaults();
+  const result = await input.openPreview({
+    environmentId: input.threadRef.environmentId,
+    input: {
+      threadId: input.threadRef.threadId,
+      url: input.url,
+      viewport: browserDefaultOpenViewport(defaults),
+      profileId: browserDefaultOpenProfileId(defaults),
+    },
+  });
+  if (result._tag === "Failure") {
+    if (isAtomCommandInterrupted(result)) return;
+    console.error(new TerminalLinkPreviewOpenError({ ...errorContext, cause: result.cause }));
+    input.fallbackToBrowser();
+    return;
+  }
+  recordVisitForThread(input.threadRef, input.url);
+  applyPreviewServerSnapshot(input.threadRef, result.value);
+  useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
+}
+
 /**
  * Opens a terminal hyperlink where the "Open links in" setting says, unless a
  * Cmd/Ctrl-click explicitly requests the system browser.
@@ -47,48 +84,12 @@ export async function openTerminalLinkInPreview<E>(
 ): Promise<void> {
   const supportsPreview =
     !input.forceBrowser &&
-    isWebUrl(input.url) &&
-    isPreviewSupportedInRuntime() &&
-    input.threadRef.threadId.length > 0 &&
+    canOpenTerminalLinkInPreview(input.url, input.threadRef) &&
     (await resolveBrowserLinkTargetPreference()) === "app";
 
   if (!supportsPreview) {
     input.fallbackToBrowser();
     return;
   }
-
-  const errorContext = {
-    environmentId: input.threadRef.environmentId,
-    threadId: input.threadRef.threadId,
-    targetOrigin: new URL(input.url).origin,
-  };
-
-  const defaults = await resolveBrowserDefaults();
-  const result = await input.openPreview({
-    environmentId: input.threadRef.environmentId,
-    input: {
-      threadId: input.threadRef.threadId,
-      url: input.url,
-      // Same reason as `openUrlInPreview`: this path handles its own result
-      // mapping, so the configured defaults are applied explicitly.
-      viewport: browserDefaultOpenViewport(defaults),
-      profileId: browserDefaultOpenProfileId(defaults),
-    },
-  });
-  if (result._tag === "Failure") {
-    if (isAtomCommandInterrupted(result)) {
-      return;
-    }
-    console.error(
-      new TerminalLinkPreviewOpenError({
-        ...errorContext,
-        cause: result.cause,
-      }),
-    );
-    input.fallbackToBrowser();
-    return;
-  }
-  recordVisitForThread(input.threadRef, input.url);
-  applyPreviewServerSnapshot(input.threadRef, result.value);
-  useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
+  await openTerminalLinkInIntegratedBrowser(input);
 }
