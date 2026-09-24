@@ -3,6 +3,7 @@ import {
   EventId,
   MessageId,
   ORCHESTRATION_WS_METHODS,
+  OrchestrationThreadNotFoundError,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -97,6 +98,8 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
   readonly httpNone?: boolean;
   readonly initialLoad?: Effect.Effect<Option.Option<OrchestrationThreadDetailSnapshot>>;
   readonly stream?: Stream.Stream<OrchestrationThreadStreamItem, Error>;
+  readonly saveThread?: EnvironmentCacheStore["Service"]["saveThread"];
+  readonly removeThread?: EnvironmentCacheStore["Service"]["removeThread"];
 }) {
   const clock = yield* Clock.Clock;
   const wakeups = yield* Queue.unbounded<ConnectionWakeup>();
@@ -207,8 +210,8 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
               diskLoads += 1;
               return Option.none();
             }),
-          saveThread: () => Effect.void,
-          removeThread: () => Effect.void,
+          saveThread: options?.saveThread ?? (() => Effect.void),
+          removeThread: options?.removeThread ?? (() => Effect.void),
           loadServerConfig: () => Effect.succeed(Option.none()),
           saveServerConfig: () => Effect.void,
           loadVcsRefs: () => Effect.succeed(Option.none()),
@@ -298,6 +301,65 @@ describe("createEnvironmentThreadStateAtoms", () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
+
+  for (const disposeSuccessor of [false, true]) {
+    it.effect(
+      `keeps deletion authoritative while the previous owner's finalizer saves (${disposeSuccessor ? "disposed" : "mounted"} successor)`,
+      () =>
+        Effect.gen(function* () {
+          const saveStarted = yield* Deferred.make<void>();
+          const releaseSave = yield* Deferred.make<void>();
+          const saved = yield* Deferred.make<void>();
+          const removed = yield* Deferred.make<void>();
+          let diskSnapshot = Option.none<OrchestrationThreadDetailSnapshot>();
+          const h = yield* makeHarness({
+            connected: true,
+            saveThread: (_environmentId, snapshot) =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(saveStarted, undefined);
+                yield* Deferred.await(releaseSave);
+                diskSnapshot = Option.some(snapshot);
+                yield* Deferred.succeed(saved, undefined);
+              }),
+            removeThread: () =>
+              Effect.sync(() => {
+                diskSnapshot = Option.none();
+              }).pipe(Effect.andThen(Deferred.succeed(removed, undefined))),
+          });
+          yield* Effect.addFinalizer(() => Deferred.succeed(releaseSave, undefined));
+          const unmount = h.registry.mount(h.stateAtom);
+          const first = yield* Queue.take(h.subscriptions);
+          yield* Queue.offer(first.events, { kind: "synchronized" });
+          yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+
+          // The debounce clock has not advanced. This save belongs to disposal.
+          unmount();
+          yield* Deferred.await(saveStarted);
+          const unmountSuccessor = h.registry.mount(h.stateAtom);
+          const next = yield* Queue.take(h.subscriptions);
+          yield* Queue.failCause(
+            next.events,
+            Cause.fail(new OrchestrationThreadNotFoundError({ threadId: THREAD_ID })),
+          );
+          yield* observeState(h.registry, h.stateAtom, (state) => state.status === "deleted");
+          if (disposeSuccessor) {
+            unmountSuccessor();
+            yield* TestClock.adjust("0 millis");
+          }
+          yield* Deferred.succeed(releaseSave, undefined);
+          yield* Deferred.await(saved);
+          yield* TestClock.adjust("0 millis");
+          expect(diskSnapshot).toEqual(Option.none());
+          expect(yield* Deferred.isDone(removed)).toBe(true);
+          expect(h.registry.get(h.stateAtom).status).toBe("deleted");
+          if (!disposeSuccessor) {
+            unmountSuccessor();
+          }
+          yield* Deferred.await(first.closed);
+          yield* Deferred.await(next.closed);
+        }),
+    );
+  }
 
   it.effect("exposes snapshot loader defects before the RPC subscription starts", () =>
     Effect.gen(function* () {

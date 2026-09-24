@@ -1,4 +1,5 @@
 import {
+  EnvironmentResourceNotFoundError,
   EnvironmentId,
   EventId,
   ORCHESTRATION_WS_METHODS,
@@ -135,6 +136,7 @@ const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (opt
   readonly paginationCapability?: boolean;
   readonly reasoningCapability?: boolean;
   readonly initialResponse?: LoaderResponse;
+  readonly olderResponseError?: EnvironmentResourceNotFoundError;
   /** Cached snapshot returned by the cache store (simulates a warm cache). */
   readonly cached?: OrchestrationThreadDetailSnapshot;
 }) {
@@ -144,6 +146,7 @@ const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (opt
   const loaderReasoning = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const lastSubscribeInput = yield* Ref.make<Record<string, unknown> | undefined>(undefined);
   const savedThreads = yield* Ref.make<ReadonlyArray<OrchestrationThreadDetailSnapshot>>([]);
+  const removedThreads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
   // Older-page responses resolve through deferreds so tests can interleave
   // live events with an in-flight page fetch.
   const pendingPageResponses = yield* Queue.unbounded<Deferred.Deferred<LoaderResponse>>();
@@ -180,10 +183,12 @@ const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (opt
             ? Effect.succeed(
                 options?.initialResponse ?? Option.none<OrchestrationThreadDetailSnapshot>(),
               )
-            : Deferred.make<LoaderResponse>().pipe(
-                Effect.tap((deferred) => Queue.offer(pendingPageResponses, deferred)),
-                Effect.flatMap(Deferred.await),
-              ),
+            : options?.olderResponseError !== undefined
+              ? Effect.fail(options.olderResponseError)
+              : Deferred.make<LoaderResponse>().pipe(
+                  Effect.tap((deferred) => Queue.offer(pendingPageResponses, deferred)),
+                  Effect.flatMap(Deferred.await),
+                ),
         ),
       ),
   });
@@ -203,7 +208,8 @@ const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (opt
       Effect.succeed(options?.cached !== undefined ? Option.some(options.cached) : Option.none()),
     saveThread: (_environmentId, thread) =>
       Ref.update(savedThreads, (current) => [...current, thread]),
-    removeThread: () => Effect.void,
+    removeThread: (_environmentId, threadId) =>
+      Ref.update(removedThreads, (current) => [...current, threadId]),
     loadServerConfig: () => Effect.succeed(Option.none()),
     saveServerConfig: () => Effect.void,
     loadVcsRefs: () => Effect.succeed(Option.none()),
@@ -238,6 +244,7 @@ const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (opt
     loaderReasoning,
     lastSubscribeInput,
     savedThreads,
+    removedThreads,
     threadState,
   };
 });
@@ -370,6 +377,29 @@ describe("thread pagination state", () => {
         loadingOlder: false,
       });
     }),
+  );
+
+  it.effect(
+    "keeps an authoritative missing-thread response terminal while loading older turns",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          initialResponse: Option.some(WINDOWED_SNAPSHOT),
+          olderResponseError: new EnvironmentResourceNotFoundError({
+            code: "not_found",
+            reason: "thread_not_found",
+            traceId: "trace-older-thread-not-found",
+          }),
+        });
+        yield* harness.awaitState((value) => Option.isSome(value.page));
+
+        expect(requestOlderThreadTurns(TARGET.environmentId, THREAD_ID)).toBe(true);
+        const state = yield* harness.awaitState((value) => value.status === "deleted");
+
+        expect(Option.isNone(state.data)).toBe(true);
+        expect(Option.isNone(state.page)).toBe(true);
+        expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+      }),
   );
 
   it.effect("discards an in-flight older page when a revert rewrites history", () =>

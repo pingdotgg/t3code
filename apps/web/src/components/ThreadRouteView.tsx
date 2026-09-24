@@ -17,10 +17,11 @@ import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import {
   useEnvironmentThreadRefs,
   useThread,
-  useThreadDetail,
+  classifyThreadDetail,
+  useThreadDetailWhenReady,
   useThreadRefs,
   useThreadShell,
-  useThreadStatus,
+  useThreadStatusWhenReady,
 } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { environmentShell } from "../state/shell";
@@ -79,13 +80,17 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
     serverThreadRef === null ? null : environmentShell.stateAtom(serverThreadRef.environmentId),
   );
   const serverThreadShell = useThreadShell(serverThreadRef);
-  const serverThreadDetail = useThreadDetail(serverThreadRef);
-  const serverThreadStatus = useThreadStatus(serverThreadRef);
   const environmentThreadRefs = useEnvironmentThreadRefs(serverThreadRef?.environmentId ?? null);
   const bootstrapComplete = shell.data?.snapshot._tag === "Some";
   const draftThread = useComposerDraftStore((store) =>
     serverThreadRef ? store.getDraftThreadByRef(serverThreadRef) : null,
   );
+  const threadClassification = classifyThreadDetail({
+    hasLocalDraft: draftThread !== null,
+    hasServerShell: serverThreadShell !== null,
+  });
+  const serverThreadDetail = useThreadDetailWhenReady(serverThreadRef, threadClassification);
+  const serverThreadStatus = useThreadStatusWhenReady(serverThreadRef, threadClassification);
   const promotedDraftId = useComposerDraftStore((store) =>
     target.kind === "server" ? store.getDraftIdByRef(target.threadRef) : null,
   );

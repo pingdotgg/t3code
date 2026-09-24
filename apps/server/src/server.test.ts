@@ -22,6 +22,7 @@ import {
   OrchestrationShellSnapshot,
   type OrchestrationShellStreamItem,
   OrchestrationThreadDetailSnapshot,
+  ORCHESTRATION_THREAD_NOT_FOUND_ERROR_CAPABILITY,
   type OrchestrationThreadStreamItem,
   type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
@@ -9520,6 +9521,185 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         Effect.provide(withFirstWsAckHeld(wsUrl, ackHeld, releaseAck)),
       );
     }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("subscribeThread identifies a missing large-gap fallback for capable clients", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(100_000),
+            getThreadReplayStats: () =>
+              Effect.succeed({ eventCount: 100_000, payloadBytes: 0, hasCreateEvent: false }),
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+            capabilities: [ORCHESTRATION_THREAD_NOT_FOUND_ERROR_CAPABILITY],
+            afterSequence: 5,
+          }).pipe(Stream.runCollect),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "OrchestrationThreadNotFoundError");
+      assert.equal(result.failure.threadId, defaultThreadId);
+      assert.equal(result.failure.message, `Thread ${defaultThreadId} was not found`);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("keeps a buffered live event behind the terminal missing-thread error", () =>
+    Effect.gen(function* () {
+      const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+      let emittedItems = 0;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(100_000),
+            getThreadReplayStats: () =>
+              Effect.succeed({ eventCount: 100_000, payloadBytes: 0, hasCreateEvent: false }),
+            streamDomainEvents: Stream.fromPubSub(liveEvents),
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshot: () =>
+              Effect.gen(function* () {
+                yield* PubSub.publish(liveEvents, makeLiveToolActivityEvent(100_001));
+                return Option.none();
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+            capabilities: [ORCHESTRATION_THREAD_NOT_FOUND_ERROR_CAPABILITY],
+            afterSequence: 5,
+            requestCompletionMarker: true,
+          }).pipe(
+            Stream.tap(() =>
+              Effect.sync(() => {
+                emittedItems += 1;
+              }),
+            ),
+            Stream.runCollect,
+          ),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "OrchestrationThreadNotFoundError");
+      assert.equal(result.failure.threadId, defaultThreadId);
+      assert.equal(emittedItems, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("subscribeThread accepts the legacy missing-thread boolean opt-in", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(100_000),
+            getThreadReplayStats: () =>
+              Effect.succeed({ eventCount: 100_000, payloadBytes: 0, hasCreateEvent: false }),
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+            threadNotFoundError: true,
+            afterSequence: 5,
+          }).pipe(Stream.runCollect),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "OrchestrationThreadNotFoundError");
+      assert.equal(result.failure.threadId, defaultThreadId);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("subscribeThread ignores unknown missing-thread capability versions", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(100_000),
+            getThreadReplayStats: () =>
+              Effect.succeed({ eventCount: 100_000, payloadBytes: 0, hasCreateEvent: false }),
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+            capabilities: ["orchestration.thread-not-found-error.v2"],
+            afterSequence: 5,
+          }).pipe(Stream.runCollect),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "OrchestrationGetSnapshotError");
+      assert.equal(result.failure.message, `Thread ${defaultThreadId} was not found`);
+      assert.equal(result.failure.cause, defaultThreadId);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("subscribeThread preserves the legacy missing snapshot error without opt-in", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(100_000),
+            getThreadReplayStats: () =>
+              Effect.succeed({ eventCount: 100_000, payloadBytes: 0, hasCreateEvent: false }),
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+            afterSequence: 5,
+          }).pipe(Stream.runCollect),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "OrchestrationGetSnapshotError");
+      assert.equal(result.failure.message, `Thread ${defaultThreadId} was not found`);
+      assert.equal(result.failure.cause, defaultThreadId);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("subscribeThread replaces a cursor ahead of the authoritative head", () =>

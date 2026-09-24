@@ -1000,10 +1000,29 @@ export const OrchestrationSubscribeShellInput = Schema.Struct({
 });
 export type OrchestrationSubscribeShellInput = typeof OrchestrationSubscribeShellInput.Type;
 
+export const ORCHESTRATION_THREAD_NOT_FOUND_ERROR_CAPABILITY =
+  "orchestration.thread-not-found-error.v1" as const;
+
 export const OrchestrationSubscribeThreadInput = Schema.Struct({
   threadId: ThreadId,
   /** Opt in to reasoning roles; older clients receive system messages instead. */
   reasoningMessages: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Named and versioned streamed-subscription capabilities understood by this
+   * client. Older servers ignore this field. Unknown names remain decodable by
+   * current servers, so a future client can advertise newer capabilities while
+   * retaining any older capability it still supports.
+   */
+  capabilities: Schema.optionalKey(Schema.Array(Schema.String)),
+  /**
+   * Legacy opt-in for `OrchestrationThreadNotFoundError`. Current clients send
+   * it alongside `capabilities` while servers from the first protocol revision
+   * remain supported. Remove it after every supported server understands the
+   * versioned capability.
+   *
+   * @deprecated Use `ORCHESTRATION_THREAD_NOT_FOUND_ERROR_CAPABILITY`.
+   */
+  threadNotFoundError: Schema.optionalKey(Schema.Boolean),
   /**
    * When provided, the server skips the initial snapshot frame and instead
    * replays events after this sequence before streaming live events. Clients
@@ -2378,6 +2397,17 @@ export class OrchestrationGetSnapshotError extends Schema.TaggedError<Orchestrat
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+export class OrchestrationThreadNotFoundError extends Schema.TaggedError<OrchestrationThreadNotFoundError>()(
+  "OrchestrationThreadNotFoundError",
+  {
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return `Thread ${this.threadId} was not found`;
+  }
+}
 
 export class OrchestrationDispatchCommandError extends Schema.TaggedError<OrchestrationDispatchCommandError>()(
   "OrchestrationDispatchCommandError",
