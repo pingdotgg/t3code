@@ -1,6 +1,7 @@
 "use client";
 
 import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   FILL_PREVIEW_VIEWPORT,
@@ -22,12 +23,14 @@ import {
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Atom } from "effect/unstable/reactivity";
+import { useShallow } from "zustand/react/shallow";
 
 import {
   applyPreviewServerSnapshot,
   readThreadPreviewState,
   reconcilePreviewServerSessions,
   updatePreviewServerSnapshot,
+  useActivePreviewSessions,
 } from "~/previewStateStore";
 import {
   browserMiniPlayerSource,
@@ -250,7 +253,7 @@ const currentStatus = async (
   }
   const navStatus = snapshot?.navStatus;
   return {
-    available: Boolean(previewBridge?.automation),
+    available: false,
     visible,
     tabId,
     url: navStatus && navStatus._tag !== "Idle" ? navStatus.url : null,
@@ -292,6 +295,30 @@ export function PreviewAutomationHosts() {
 
 function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId }) {
   const { environmentId } = props;
+  const previewSessions = useActivePreviewSessions();
+  const visibleRuntimeTabIds = useBrowserSurfaceStore(
+    useShallow((state) =>
+      Object.keys(state.byTabId).filter((tabId) => state.byTabId[tabId]?.visible),
+    ),
+  );
+  const liveTabs = useMemo(
+    () =>
+      Object.entries(previewSessions).flatMap(([key, state]) => {
+        const ref = parseScopedThreadKey(key);
+        if (ref?.environmentId !== environmentId) return [];
+        return Object.values(state.sessions)
+          .filter((tab) => state.desktopByTabId[tab.tabId]?.hasWebContents)
+          .map((tab) => ({
+            threadId: ref.threadId,
+            tabId: tab.tabId,
+            visible: visibleRuntimeTabIds.includes(
+              previewRuntimeTabId(ref, state.serverEpoch, tab.tabId),
+            ),
+          }));
+      }),
+    [environmentId, previewSessions, visibleRuntimeTabIds],
+  );
+  const lastFocusReportRef = useRef<string | null>(null);
   const registry = useContext(RegistryContext);
   const [automationClientId] = useState(createPreviewAutomationClientId);
   const initialAutomationHost = useMemo<PreviewAutomationHostState>(
@@ -804,24 +831,35 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
   useEffect(() => {
     const report = () => {
       if (!automationConnectionId) return;
-      void focusAutomationHost({
+      const input = {
+        clientId: automationClientId,
         environmentId,
-        input: {
-          clientId: automationClientId,
-          environmentId,
-          connectionId: automationConnectionId,
-          focused: document.hasFocus(),
-        },
+        connectionId: automationConnectionId,
+        focused: document.hasFocus() && document.visibilityState === "visible",
+        liveTabs: liveTabs.map((tab) => ({
+          ...tab,
+          visible: tab.visible && document.visibilityState === "visible",
+        })),
+      };
+      const reportKey = JSON.stringify(input);
+      if (lastFocusReportRef.current === reportKey) return;
+      lastFocusReportRef.current = reportKey;
+      void focusAutomationHost({ environmentId, input }).then((result) => {
+        if (result._tag === "Failure" && lastFocusReportRef.current === reportKey) {
+          lastFocusReportRef.current = null;
+        }
       });
     };
     report();
     window.addEventListener("focus", report);
     window.addEventListener("blur", report);
+    document.addEventListener("visibilitychange", report);
     return () => {
       window.removeEventListener("focus", report);
       window.removeEventListener("blur", report);
+      document.removeEventListener("visibilitychange", report);
     };
-  }, [automationClientId, automationConnectionId, environmentId, focusAutomationHost]);
+  }, [automationClientId, automationConnectionId, environmentId, focusAutomationHost, liveTabs]);
 
   return null;
 }
