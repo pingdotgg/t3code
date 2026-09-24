@@ -395,7 +395,7 @@ export function DeviceStreamView(props: {
               {axElements.map((element) => (
                 <div
                   key={element.id}
-                  className="absolute border border-sky-400/80 bg-sky-400/10"
+                  className="absolute border border-info/80 bg-info/10"
                   style={{
                     left: `${element.x * 100}%`,
                     top: `${element.y * 100}%`,
@@ -404,7 +404,7 @@ export function DeviceStreamView(props: {
                   }}
                 >
                   {element.label ? (
-                    <span className="absolute -top-3.5 left-0 max-w-full truncate rounded-sm bg-sky-500 px-1 text-[9px] leading-3.5 text-white">
+                    <span className="absolute -top-3.5 left-0 max-w-full truncate rounded-sm bg-info px-1 text-3xs leading-3.5 text-white">
                       {element.label}
                     </span>
                   ) : null}
