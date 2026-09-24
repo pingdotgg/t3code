@@ -303,10 +303,12 @@ export function DeviceStreamView(props: {
 
   const keyboardSource = deviceKeyboard(props.platform, props.deviceName ?? "");
   const resetView = useCallback(() => {
-    const orientation = keyboardAttached ? "landscape_right" : "portrait";
-    if (screen?.orientation !== orientation) clientRef.current?.setOrientation(orientation);
+    if (!isDuo) {
+      const orientation = keyboardAttached ? "landscape_right" : "portrait";
+      if (screen?.orientation !== orientation) clientRef.current?.setOrientation(orientation);
+    }
     resetViewRef.current?.();
-  }, [keyboardAttached, screen?.orientation]);
+  }, [isDuo, keyboardAttached, screen?.orientation]);
   const profile = resolveDeviceShape({
     platform: props.platform,
     name: props.deviceName ?? "",
