@@ -46,6 +46,8 @@ export function createWidgetRefresher<Id>(refresh: (id: Id) => Promise<unknown>)
 function subscriptionUsageProps(
   accounts: readonly LimitAccount[],
   now: number,
+  configuredDrivers: ReadonlySet<string>,
+  maxWindowsPerProvider: number,
 ): SubscriptionUsageSnapshot {
   const pools = collectLimitPools(accounts, now);
   const checked = accounts
@@ -53,57 +55,68 @@ function subscriptionUsageProps(
     .map((account) => Date.parse(account.limits.checkedAt));
   return {
     checkedAt: checked.length > 0 && checked.every(Number.isFinite) ? Math.min(...checked) : 0,
-    providers: (["codex", "claudeAgent"] as const).map((driver) => {
-      const pool = pools.find((candidate) => candidate.driver === driver);
-      const name = driver === "codex" ? "Codex" : "Claude";
-      if (!pool)
-        return { name, detail: "No limits available", windows: [], expiresAt: 0, totalWindows: 0 };
-      const checkedAt = Math.min(...pool.accounts.map((a) => Date.parse(a.limits.checkedAt)));
-      const expiresAt = Math.min(
-        checkedAt + SNAPSHOT_MAX_AGE,
-        ...pool.windows.flatMap((window) => window.resets.map((reset) => reset.at)),
-      );
-      const fresh = Number.isFinite(expiresAt) && expiresAt > now;
-      const sortedWindows = [...pool.windows].sort(
-        (a, b) => a.remainingPercent - b.remainingPercent,
-      );
-      // Keep a session and weekly limit when scoped limits fill the storage budget.
-      const selectedWindows = [
-        ...new Set([
-          sortedWindows.find((window) => window.kind === "session"),
-          sortedWindows.find((window) => window.kind === "weekly"),
-          ...sortedWindows,
-        ]),
-      ]
-        .filter((window) => window !== undefined)
-        .slice(0, 6)
-        .sort((a, b) => a.remainingPercent - b.remainingPercent);
-      return {
-        name,
-        detail: !fresh
-          ? "Open T3 to refresh"
-          : pool.accounts.length > 1
-            ? `${pool.accounts.length} accounts · pooled`
-            : "Subscription remaining",
-        expiresAt: fresh ? expiresAt : 0,
-        totalWindows: fresh ? pool.windows.length : 0,
-        windows: fresh
-          ? selectedWindows.map((window) => ({
-              kind: window.kind,
-              label: window.label,
-              remaining: Math.round(window.remainingPercent),
-              reset: window.resets[0]
-                ? `Next reset ${new Date(window.resets[0].at).toLocaleString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })}`
-                : "Reset time unavailable",
-            }))
-          : [],
-      };
-    }),
+    providers: (["codex", "claudeAgent"] as const)
+      .filter(
+        (driver) =>
+          configuredDrivers.has(driver) || accounts.some((account) => account.driver === driver),
+      )
+      .map((driver) => {
+        const pool = pools.find((candidate) => candidate.driver === driver);
+        const name = driver === "codex" ? "Codex" : "Claude";
+        if (!pool)
+          return {
+            name,
+            detail: "No limits available",
+            windows: [],
+            expiresAt: 0,
+            totalWindows: 0,
+          };
+        const checkedAt = Math.min(...pool.accounts.map((a) => Date.parse(a.limits.checkedAt)));
+        const expiresAt = Math.min(
+          checkedAt + SNAPSHOT_MAX_AGE,
+          ...pool.windows.flatMap((window) => window.resets.map((reset) => reset.at)),
+        );
+        const fresh = Number.isFinite(expiresAt) && expiresAt > now;
+        const sortedWindows = [...pool.windows].sort(
+          (a, b) => a.remainingPercent - b.remainingPercent,
+        );
+        // Keep a session and weekly limit when scoped limits fill the storage budget.
+        const selectedWindows = [
+          ...new Set([
+            sortedWindows.find((window) => window.kind === "session"),
+            sortedWindows.find((window) => window.kind === "weekly"),
+            ...sortedWindows,
+          ]),
+        ]
+          .filter((window) => window !== undefined)
+          .slice(0, maxWindowsPerProvider)
+          .sort((a, b) => a.remainingPercent - b.remainingPercent);
+        return {
+          name,
+          detail: !fresh
+            ? "Open T3 to refresh"
+            : pool.accounts.length > 1
+              ? `${pool.accounts.length} accounts · pooled`
+              : "Subscription remaining",
+          expiresAt: fresh ? expiresAt : 0,
+          totalWindows: fresh ? pool.windows.length : 0,
+          windows: fresh
+            ? selectedWindows.map((window) => ({
+                kind: window.kind,
+                label: window.label,
+                remaining: Math.round(window.remainingPercent),
+                reset: window.resets[0]
+                  ? `Next reset ${new Date(window.resets[0].at).toLocaleString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}`
+                  : "Reset time unavailable",
+              }))
+            : [],
+        };
+      }),
   };
 }
 
@@ -111,9 +124,25 @@ function subscriptionUsageProps(
 export function buildSubscriptionUsageSnapshot(
   presentations: LimitPresentations,
   url: string,
+  maxWindowsPerProvider = 6,
 ): SubscriptionUsageSnapshot {
   // Freshness is evaluated at publication/render time, not on unrelated config emissions.
-  return { ...subscriptionUsageProps(collectLimitAccounts(presentations), 0), url };
+  const configuredDrivers = new Set(
+    [...presentations.values()].flatMap((presentation) =>
+      (presentation.serverConfig?.providers ?? [])
+        .filter((provider) => provider.enabled)
+        .map((provider) => provider.driver),
+    ),
+  );
+  return {
+    ...subscriptionUsageProps(
+      collectLimitAccounts(presentations),
+      0,
+      configuredDrivers,
+      maxWindowsPerProvider,
+    ),
+    url,
+  };
 }
 
 export function subscriptionUsageTimeline(snapshot: SubscriptionUsageSnapshot, now: number) {

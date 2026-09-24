@@ -66,17 +66,49 @@ describe("subscription widget snapshots", () => {
     expect(JSON.stringify(snapshot)).not.toContain("private@example.com");
   });
   it("clears data after removing environments and hides disabled providers", () => {
+    expect(buildSubscriptionUsageSnapshot(new Map(), deepLink).providers).toEqual([]);
     expect(
-      buildSubscriptionUsageSnapshot(new Map(), deepLink).providers.every(
-        (p) => p.windows.length === 0,
-      ),
-    ).toBe(true);
-    expect(
-      buildSubscriptionUsageSnapshot(
-        presentations([provider({ enabled: false })]),
-        deepLink,
-      ).providers.every((p) => p.windows.length === 0),
-    ).toBe(true);
+      buildSubscriptionUsageSnapshot(presentations([provider({ enabled: false })]), deepLink)
+        .providers,
+    ).toEqual([]);
+  });
+  it.each([
+    { name: "Codex", driver: "codex" },
+    { name: "Claude", driver: "claudeAgent" },
+  ])("only shows $name when $name and OpenCode are configured", ({ name, driver }) => {
+    const snapshot = buildSubscriptionUsageSnapshot(
+      presentations([
+        provider({
+          instanceId: ProviderInstanceId.make(driver),
+          driver: ProviderDriverKind.make(driver),
+        }),
+        provider({
+          instanceId: ProviderInstanceId.make("opencode"),
+          driver: ProviderDriverKind.make("opencode"),
+          usageLimits: undefined,
+        }),
+      ]),
+      deepLink,
+    );
+    expect(snapshot.providers).toHaveLength(1);
+    expect(snapshot.providers[0]).toMatchObject({
+      name,
+      totalWindows: 1,
+      windows: [{ remaining: 60 }],
+    });
+    expect(subscriptionUsageTimeline(snapshot, now + 15 * 60_000)[0]?.props.providers).toEqual([
+      expect.objectContaining({ name, totalWindows: 0, windows: [] }),
+    ]);
+  });
+  it("keeps an enabled provider visible before its first usage read", () => {
+    const snapshot = buildSubscriptionUsageSnapshot(
+      presentations([provider({ usageLimits: undefined })]),
+      deepLink,
+    );
+    expect(snapshot.checkedAt).toBe(0);
+    expect(snapshot.providers).toEqual([
+      { name: "Codex", detail: "No limits available", windows: [], expiresAt: 0, totalWindows: 0 },
+    ]);
   });
   it("uses upstream deduplication for a native account also present in a proxy hub", () => {
     const input = new Map([
@@ -150,6 +182,21 @@ describe("subscription widget snapshots", () => {
     expect(snapshot.providers[0]?.windows).toHaveLength(6);
     expect(snapshot.providers[0]?.totalWindows).toBe(20);
     expect(snapshot.providers[0]?.windows[0]?.remaining).toBe(5);
+  });
+  it("includes every limit for the scrollable Android widget", () => {
+    const windows = Array.from({ length: 20 }, (_, index) => ({
+      ...window,
+      id: `${index}`,
+      usedPercent: index * 5,
+    }));
+    const snapshot = buildSubscriptionUsageSnapshot(
+      presentations([provider({ usageLimits: { checkedAt, windows } })]),
+      deepLink,
+      Infinity,
+    );
+    expect(snapshot.providers[0]?.windows.map((window) => window.remaining)).toEqual(
+      Array.from({ length: 20 }, (_, index) => 5 + index * 5),
+    );
   });
   it("marks unknown or distant reset times stale after fifteen minutes", () => {
     const snapshot = buildSubscriptionUsageSnapshot(
