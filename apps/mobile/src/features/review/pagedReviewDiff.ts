@@ -70,6 +70,8 @@ export async function loadPagedReviewCommentSelection(input: {
             firstLine ??= row;
             lastLine = row;
             consistentChange &&= row.change === firstLine.change;
+            // Bound row retention during loading: trimming only the final preview still
+            // holds the entire selected range. The live-heap regression covers that case.
             if (lines.length < CHECKPOINT_DIFF_WINDOW_ROWS) lines.push(row);
             if (row.oldLineNumber !== null) {
               if (oldCount === 0) oldStart = row.oldLineNumber;
