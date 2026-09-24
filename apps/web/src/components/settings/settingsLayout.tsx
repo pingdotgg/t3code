@@ -1,3 +1,4 @@
+import { SettingsGroup } from "./SettingsGroup";
 import { InfoIcon, Undo2Icon } from "lucide-react";
 import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
@@ -22,6 +23,7 @@ import { WorkspacePageContainer, type WorkspacePageWidth } from "../WorkspacePag
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
+import { SettingsScopeSentence } from "./SettingsScopeSentence";
 import {
   isProjectScopedSettingKey,
   listProjectOverrides,
@@ -56,7 +58,7 @@ const SettingsSearchTargetContext = createContext<SettingsSearchTargetContextVal
   onTargetHandled: noop,
 });
 
-export function SettingsSearchTargetProvider({
+function SettingsSearchTargetProvider({
   targetId,
   highlightTarget = true,
   onTargetHandled = noop,
@@ -135,13 +137,8 @@ export function SettingsSearchTarget({
   );
 }
 
-/**
- * Trigger classes for the composer model/traits pickers when they sit in a
- * settings row: match the `sm` control box (the composer pins them to 28px at
- * every breakpoint) and drop the composer's max-width.
- */
-export const SETTINGS_PICKER_TRIGGER_CLASSNAME =
-  "h-8 min-h-8 min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground sm:h-7 sm:min-h-7";
+/** Layout for the composer model/traits pickers in a settings row: drop the composer's max-width. */
+export const SETTINGS_PICKER_TRIGGER_CLASSNAME = "min-w-0 max-w-none shrink-0";
 
 /** Info affordance explaining how a setting interacts with the shared background policy. */
 export function PolicyTooltip({ children }: { readonly children: string }) {
@@ -155,9 +152,7 @@ export function PolicyTooltip({ children }: { readonly children: string }) {
           </Button>
         }
       />
-      <TooltipPopup side="top" className="max-w-72">
-        {children}
-      </TooltipPopup>
+      <TooltipPopup side="top">{children}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -215,17 +210,9 @@ export function SettingsSection({
           <div className="flex min-h-7 min-w-7 items-center justify-end">{headerAction}</div>
         </div>
       )}
-      <div
-        data-settings-scroll-target={hideTitle ? "" : undefined}
-        className={cn(
-          "relative overflow-visible text-foreground",
-          variant === "grouped"
-            ? "rounded-xl border border-border/60 bg-card/40 shadow-xs/5 [&>*+*]:border-t [&>*+*]:border-border/50 [&>[data-slot=settings-row]]:rounded-none"
-            : "space-y-1",
-        )}
-      >
+      <SettingsGroup data-settings-scroll-target={hideTitle ? "" : undefined} variant={variant}>
         {children}
-      </div>
+      </SettingsGroup>
     </section>
   );
 }
@@ -379,9 +366,7 @@ export function SettingsRow({
           {control}
         </div>
       </TooltipTrigger>
-      <TooltipPopup side="top" className="max-w-72">
-        {message}
-      </TooltipPopup>
+      <TooltipPopup side="top">{message}</TooltipPopup>
     </Tooltip>
   );
   // A mixed selection keeps the real control with "Mixed" as its placeholder
@@ -414,11 +399,13 @@ export function SettingsRow({
     ? { state: "mixed", summary: "Mixed across selected environments" }
     : source === "project"
       ? { state: "overridden", summary: "Overridden for this project" }
-      : source === "environment" && scopedKeys.length > 0
-        ? { state: "inherited", summary: `Inherited from ${inheritedFrom}` }
-        : customized
-          ? { state: "environment", summary: "Set on the environment" }
-          : { state: "default", summary: "Built-in default" };
+      : source === "t3.json"
+        ? { state: "inherited", summary: "Inherited from the repository's t3.json" }
+        : source === "environment" && scopedKeys.length > 0
+          ? { state: "inherited", summary: `Inherited from ${inheritedFrom}` }
+          : customized
+            ? { state: "environment", summary: "Set on the environment" }
+            : { state: "default", summary: "Built-in default" };
   const renderedInheritance =
     context && serverScoped && settingKeys.length > 0 ? (
       <SettingInheritance
@@ -554,6 +541,7 @@ export function SettingsPageContainer({
         data-settings-page-scroll
       >
         <WorkspacePageContainer width={width} className={cn("gap-8", className)}>
+          <SettingsScopeSentence />
           {children}
         </WorkspacePageContainer>
       </div>

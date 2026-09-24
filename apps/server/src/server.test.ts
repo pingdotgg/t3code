@@ -86,6 +86,7 @@ import {
 } from "effect/unstable/http";
 import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
+import * as NetAddress from "effect/unstable/net/NetAddress";
 import * as Socket from "effect/unstable/socket/Socket";
 import { vi } from "vite-plus/test";
 
@@ -122,10 +123,7 @@ import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
-import {
-  OrchestrationListenerCallbackError,
-  OrchestrationThreadSettleBlockedError,
-} from "./orchestration/Errors.ts";
+import { OrchestrationThreadSettleBlockedError } from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
@@ -134,6 +132,7 @@ import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationE
 import { OrchestrationEventStore } from "./persistence/Services/OrchestrationEventStore.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
 import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts";
 import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
@@ -144,7 +143,10 @@ import {
 import type { ProviderInstance } from "./provider/ProviderDriver.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import { ProviderAdapterRequestError } from "./provider/Errors.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
+import {
+  makeManualOnlyProviderMaintenanceCapabilities,
+  ProviderVersionCache,
+} from "./provider/providerMaintenance.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
@@ -220,7 +222,8 @@ import {
   transferBudgetViolations,
 } from "../integration/TransferBudgetReport.integration.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
-import { otlpSerializationLayer } from "@t3tools/shared/observability";
+import { DEFAULT_SIGNAL_EXPORT, otlpSerializationLayer } from "@t3tools/shared/observability";
+import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 
 const defaultProjectId = ProjectId.make("project-default");
 const defaultThreadId = ThreadId.make("thread-default");
@@ -518,6 +521,7 @@ const buildAppUnderTest = (options?: {
     keybindings?: Partial<Keybindings.Keybindings["Service"]>;
     environmentTheme?: Partial<EnvironmentTheme.EnvironmentThemeService["Service"]>;
     providerRegistry?: Partial<ProviderRegistry.ProviderRegistry["Service"]>;
+    modelManifest?: Partial<ModelManifest.ModelManifest["Service"]>;
     usageLimitSources?: Partial<UsageLimitSources.UsageLimitSources["Service"]>;
     providerService?: Partial<ProviderService.ProviderService["Service"]>;
     providerAuth?: Partial<ProviderAuthService["Service"]>;
@@ -579,10 +583,12 @@ const buildAppUnderTest = (options?: {
       traceMaxFiles: 10,
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
-      otlpExportIntervalMs: 10_000,
+      otlpLogsUrl: undefined,
+      otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
+      otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
+      otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
       otlpServiceName: "t3-server",
-      otlpHeaders: undefined,
-      otlpProtocol: "http/json",
+      otelEnvironment: OtelEnvironment.none,
       mode: "desktop",
       port: 0,
       host: "127.0.0.1",
@@ -791,6 +797,10 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mergeAll(
+          Layer.mock(ModelManifest.ModelManifest)({
+            forceRefresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+            ...options?.layers?.modelManifest,
+          }),
           Layer.mock(ProviderRegistry.ProviderRegistry)({
             getProviders: Effect.succeed([]),
             refresh: () => Effect.succeed([]),
@@ -1077,7 +1087,7 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.browserTraceCollector,
         }),
       ),
-      Layer.provide(otlpSerializationLayer(config.otlpProtocol)),
+      Layer.provide(otlpSerializationLayer(config.otlpTracesExport.protocol)),
       Layer.provide(
         Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({
           publish: (event) => Effect.succeed({ ...(event as any), sequence: 1 }),
@@ -1242,9 +1252,10 @@ const wsRpcProtocolLayer = (wsUrl: string, onMessage?: (message: string) => void
   const webSocketConstructorLayer = Layer.succeed(
     Socket.WebSocketConstructor,
     (socketUrl, protocols) => {
+      // Socket.makeWebSocket only ever passes its `protocols` option here.
       const socket = new NodeSocket.NodeWS.WebSocket(
         socketUrl,
-        protocols,
+        protocols as string | string[] | undefined,
         cookie ? { headers: { cookie } } : undefined,
       );
       if (onMessage) socket.on("message", (data) => onMessage(data.toString()));
@@ -1304,7 +1315,7 @@ const appendSessionCookieToWsUrl = (url: string, sessionCookieHeader: string) =>
 const getHttpServerUrl = (pathname = "") =>
   Effect.gen(function* () {
     const server = yield* HttpServer.HttpServer;
-    const address = server.address as HttpServer.TcpAddress;
+    const address = server.address as NetAddress.InetAddress;
     return `http://127.0.0.1:${address.port}${pathname}`;
   });
 
@@ -1664,7 +1675,7 @@ const getWsServerUrl = (
 ) =>
   Effect.gen(function* () {
     const server = yield* HttpServer.HttpServer;
-    const address = server.address as HttpServer.TcpAddress;
+    const address = server.address as NetAddress.InetAddress;
     const baseUrl = `ws://127.0.0.1:${address.port}${pathname}`;
     if (options?.authenticated === false) {
       return baseUrl;
@@ -2065,7 +2076,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             return new Proxy(file, {
               get(target, key) {
                 if (key === "readAlloc") {
-                  return (size: FileSystem.SizeInput) => {
+                  return (size: number) => {
                     bodyReads += 1;
                     return target.readAlloc(size);
                   };
@@ -5299,7 +5310,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         config: {
           otlpTracesUrl: collector.url,
-          otlpProtocol: "http/protobuf",
+          otlpTracesExport: { ...DEFAULT_SIGNAL_EXPORT, protocol: "http/protobuf" },
         },
         layers: {
           browserTraceCollector: {
@@ -6289,6 +6300,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         config: {
           otlpTracesUrl: "http://localhost:4318/v1/traces",
           otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+          otlpLogsUrl: "http://localhost:4318/v1/logs",
         },
         layers: {
           keybindings: {
@@ -6324,6 +6336,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(first.config.observability.otlpTracesEnabled, true);
         assert.equal(first.config.observability.otlpMetricsUrl, "http://localhost:4318/v1/metrics");
         assert.equal(first.config.observability.otlpMetricsEnabled, true);
+        assert.equal(first.config.observability.otlpLogsUrl, "http://localhost:4318/v1/logs");
+        assert.equal(first.config.observability.otlpLogsEnabled, true);
         assert.deepEqual(first.config.settings, DEFAULT_SERVER_SETTINGS);
       }
       assert.deepEqual(second, {
@@ -6333,6 +6347,99 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
+
+  for (const mode of ["all", "targeted", "background"] as const) {
+    it.effect(`provider refresh invalidates T3 caches before probing (${mode})`, () => {
+      const driver = ProviderDriverKind.make("codex");
+      const instanceIds = [ProviderInstanceId.make("codex"), ProviderInstanceId.make("codex_work")];
+      const packageNames = ["@example/personal", "@example/work"];
+      const versionCache = new Map(
+        packageNames.map((name) => [
+          name,
+          {
+            expiresAt: Number.MAX_SAFE_INTEGER,
+            version: "1.0.0",
+          },
+        ]),
+      );
+      const invalidated: string[] = [];
+      const freshMaintenance: string[] = [];
+      let manifestRefreshed = false;
+      let probed = false;
+      const instances = instanceIds.map(
+        (instanceId, index) =>
+          ({
+            instanceId,
+            driverKind: driver,
+            continuationIdentity: { driverKind: driver, continuationKey: instanceId },
+            displayName: undefined,
+            enabled: true,
+            invalidateCaches: Effect.sync(() => {
+              invalidated.push(instanceId);
+            }),
+            snapshot: {
+              resolveMaintenance: (options) =>
+                Effect.sync(() => {
+                  assert.isTrue(options?.fresh);
+                  freshMaintenance.push(instanceId);
+                  return makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: driver,
+                    packageName: packageNames[index]!,
+                  });
+                }),
+              getSnapshot: Effect.never,
+              refresh: Effect.never,
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+            },
+            adapter: {} as ProviderInstance["adapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          }) satisfies ProviderInstance,
+      );
+      const expected =
+        mode === "background" ? [] : mode === "targeted" ? [instanceIds[1]!] : instanceIds;
+      const probe = Effect.sync(() => {
+        probed = true;
+        assert.equal(manifestRefreshed, mode !== "background");
+        assert.deepEqual(invalidated.toSorted(), expected.toSorted());
+        assert.deepEqual(freshMaintenance.toSorted(), expected.toSorted());
+        for (let index = 0; index < instanceIds.length; index++) {
+          assert.equal(
+            versionCache.has(packageNames[index]!),
+            !expected.includes(instanceIds[index]!),
+          );
+        }
+        return [];
+      });
+      return Effect.gen(function* () {
+        yield* buildAppUnderTest({
+          layers: {
+            modelManifest: {
+              forceRefresh: Effect.sync(() => {
+                manifestRefreshed = true;
+                return ModelManifest.BUNDLED_MODEL_MANIFEST;
+              }),
+            },
+            providerInstanceRegistry: { listInstances: Effect.succeed(instances) },
+            providerRegistry: { refresh: () => probe, refreshInstance: () => probe },
+          },
+        });
+        const wsUrl = yield* getWsServerUrl("/ws");
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.serverRefreshProviders]({
+              ...(mode === "targeted" ? { instanceId: instanceIds[1]! } : {}),
+              ...(mode !== "background" ? { refreshModels: true } : {}),
+            }),
+          ),
+        );
+        assert.isTrue(probed);
+      }).pipe(
+        Effect.provideService(ProviderVersionCache, versionCache),
+        Effect.provide(NodeHttpServer.layerTest),
+      );
+    });
+  }
 
   it.effect("serves config on reconnect without starting provider probes", () =>
     Effect.gen(function* () {
@@ -7352,8 +7459,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 Effect.flatMap(() =>
                   command.commandId === failedCommandId
                     ? Effect.fail(
-                        new OrchestrationListenerCallbackError({
-                          listener: "domain-event",
+                        new PersistenceSqlError({
+                          operation: "OrchestrationEventStore.append:query",
                           detail: "thread creation failed",
                         }),
                       )
@@ -10676,8 +10783,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               effects.push(`dispatch:${command.type}`);
               if (command.type === "thread.session.stop") {
                 return Effect.fail(
-                  new OrchestrationListenerCallbackError({
-                    listener: "domain-event",
+                  new PersistenceSqlError({
+                    operation: "OrchestrationEventStore.append:query",
                     detail: "simulated archive stop failure",
                   }),
                 );
@@ -11623,8 +11730,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 setupActivityAppendAttempt += 1;
                 if (setupActivityAppendAttempt === 2) {
                   return Effect.fail(
-                    new OrchestrationListenerCallbackError({
-                      listener: "domain-event",
+                    new PersistenceSqlError({
+                      operation: "OrchestrationEventStore.append:query",
                       detail: "failed to append setup-script.started activity",
                     }),
                   );
@@ -12149,8 +12256,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               dispatchedCommands.push(command);
               if (command.type === "thread.delete") {
                 return Effect.fail(
-                  new OrchestrationListenerCallbackError({
-                    listener: "domain-event",
+                  new PersistenceSqlError({
+                    operation: "OrchestrationEventStore.append:query",
                     detail: "thread cleanup exploded",
                   }),
                 );
@@ -12629,14 +12736,14 @@ it.live(
 
       const report = formatTransferBudgetReport(runs);
       yield* Effect.logInfo(`\n${report}`);
-      const reportPath = yield* Config.string("T3CODE_TRANSFER_BUDGET_REPORT_PATH").pipe(
+      const reportPath = yield* Config.String("T3CODE_TRANSFER_BUDGET_REPORT_PATH").pipe(
         Config.option,
       );
       if (Option.isSome(reportPath)) {
         const fileSystem = yield* FileSystem.FileSystem;
         yield* fileSystem.writeFileString(reportPath.value, report);
       }
-      const resultPath = yield* Config.string("T3CODE_TRANSFER_BUDGET_RESULT_PATH").pipe(
+      const resultPath = yield* Config.String("T3CODE_TRANSFER_BUDGET_RESULT_PATH").pipe(
         Config.option,
       );
       if (Option.isSome(resultPath)) {

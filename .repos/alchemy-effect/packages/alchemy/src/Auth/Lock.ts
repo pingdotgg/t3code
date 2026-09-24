@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
-import { rootDir } from "./Profile.ts";
+import { rootDir } from "./Paths.ts";
 
 const semaphores = new Map<string, Semaphore.Semaphore>();
 
@@ -74,18 +74,29 @@ const acquireFileLock = Effect.fn(function* (
 
   // A non-recursive mkdir is the atomic test-and-set; the owner marker lets
   // release and refresh verify the lock wasn't reaped and re-taken.
-  yield* fs.makeDirectory(lockPath).pipe(
-    Effect.andThen(
-      fs
-        .writeFileString(ownerPath, owner)
-        .pipe(
-          Effect.onError(() =>
-            fs
-              .remove(lockPath, { recursive: true, force: true })
-              .pipe(Effect.ignore),
-          ),
+  yield* Effect.acquireRelease(
+    fs
+      .makeDirectory(lockPath)
+      .pipe(
+        Effect.andThen(
+          fs
+            .writeFileString(ownerPath, owner)
+            .pipe(
+              Effect.onError(() =>
+                fs
+                  .remove(lockPath, { recursive: true, force: true })
+                  .pipe(Effect.ignore),
+              ),
+            ),
         ),
-    ),
+      ),
+    () =>
+      fs.readFileString(ownerPath).pipe(
+        Effect.filterOrFail((current) => current === owner),
+        Effect.andThen(fs.remove(lockPath, { recursive: true, force: true })),
+        Effect.ignore,
+      ),
+  ).pipe(
     Effect.catchReason("PlatformError", "AlreadyExists", () =>
       reapStale.pipe(Effect.andThen(Effect.fail(new LockHeld()))),
     ),
@@ -106,14 +117,6 @@ const acquireFileLock = Effect.fn(function* (
             `alchemy process is running, delete the lock directory and retry.`,
         }),
       ),
-    ),
-  );
-
-  yield* Effect.addFinalizer(() =>
-    fs.readFileString(ownerPath).pipe(
-      Effect.filterOrFail((current) => current === owner),
-      Effect.andThen(fs.remove(lockPath, { recursive: true, force: true })),
-      Effect.ignore,
     ),
   );
 
@@ -153,18 +156,26 @@ const stallNotice = (
   phase: Phase,
   interval: Duration.Input,
 ) =>
-  Effect.suspend(() => {
-    let seconds = 0;
-    return Effect.suspend(() => {
-      seconds += Duration.toSeconds(interval);
-      return Console.error(
+  Effect.gen(function* () {
+    const start = yield* Clock.currentTimeMillis;
+    const notice = Effect.gen(function* () {
+      // Report real elapsed time, not an accumulated interval count — the
+      // notice cadence and the reported wait must not drift apart.
+      const now = yield* Clock.currentTimeMillis;
+      const seconds = Math.round((now - start) / 1000);
+      yield* Console.error(
         phase.current === "waiting"
           ? `alchemy: ${seconds}s waiting for the auth lock '${lockPath}' (${label}). ` +
               `Another alchemy process holds it; if none is running, delete that directory.`
           : `alchemy: ${label} has been running for ${seconds}s while holding the auth lock ` +
               `'${lockPath}'. Re-run with --log-level debug for detail.`,
       );
-    }).pipe(Effect.delay(interval), Effect.repeat(Schedule.spaced(interval)));
+    });
+    // `Effect.schedule` (unlike `Effect.repeat`) consults the schedule
+    // before the first run, and `Schedule.fixed`'s first recurrence comes
+    // after one full interval — so notices fire at interval, 2*interval, …
+    // on true wall-clock boundaries.
+    yield* Effect.schedule(notice, Schedule.fixed(interval));
   });
 
 /**
@@ -215,10 +226,7 @@ export const withLock = <A, E, R>(
   return semaphore.withPermit(
     Effect.gen(function* () {
       const path = yield* Path.Path;
-      // Read `rootDir` here, not at module eval, so the
-      // `Profile -> AuthProvider -> Lock -> Profile` import cycle never
-      // sees it uninitialised.
-      const lockPath = path.join(rootDir, "lock", `${safeKey}.lock`);
+      const lockPath = path.join(rootDir(), "lock", `${safeKey}.lock`);
       const phase: Phase = { current: "waiting" };
       if (options?.watchdog !== false) {
         yield* Effect.forkScoped(
@@ -245,3 +253,13 @@ export const withLock = <A, E, R>(
     }).pipe(Effect.scoped),
   );
 };
+
+/**
+ * Serialize an operation with every credential mutation for a profile. The
+ * lock key is shared by every credential operation for the profile,
+ * including profile-wide rename and delete operations.
+ */
+export const withProfileCredentialsLock = <A, E, R>(
+  profileName: string,
+  effect: Effect.Effect<A, E, R>,
+) => withLock(`profile-credentials-${profileName}`, effect);

@@ -71,6 +71,7 @@ const setup = async (): Promise<Harness> => {
   const removeListener = handleWebSocket(
     clientServer,
     `http://127.0.0.1:${upstreamPort}`,
+    "websocket-secret",
   );
   const clientPort = await listen(clientServer);
 
@@ -101,6 +102,7 @@ const makeFakeRequest = (overrides: {
   return Object.assign(readable, {
     url: overrides.url ?? "/",
     method: "GET",
+    socket: {},
     headers: {
       host: overrides.host,
       upgrade: "websocket",
@@ -305,6 +307,7 @@ describe("handleWebSocket", () => {
     const remove = handleWebSocket(
       server,
       `http://127.0.0.1:${harness.upstreamPort}`,
+      "websocket-secret",
     );
     expect(server.listenerCount("upgrade")).toBe(1);
     remove();

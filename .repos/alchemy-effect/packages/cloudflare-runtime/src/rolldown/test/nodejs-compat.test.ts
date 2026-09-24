@@ -1,9 +1,26 @@
 import { createMiniflareFromRolldown } from "../../../../cloudflare-test-tools/src/miniflare/miniflare.ts";
 import { assert, describe, expect, it } from "vitest";
+import { fileURLToPath } from "node:url";
+import { toPosixPath } from "../utils.ts";
 import cloudflare from "../plugin.ts";
 import { buildFixture } from "./utils/build-fixture.ts";
 
 describe("nodejs_compat", () => {
+  it("rewrites external CommonJS requires when compatibility enables Node by date", () => {
+    const plugins = cloudflare({ compatibilityDate: "2026-08-31" });
+
+    expect(plugins[0]?.name).toBe("builtin:esm-external-require");
+  });
+
+  it("can omit the external require rewrite for single-module internal workers", () => {
+    const plugins = cloudflare({
+      compatibilityDate: "2026-08-31",
+      externalRequire: false,
+    });
+
+    expect(plugins[0]?.name).not.toBe("builtin:esm-external-require");
+  });
+
   it("runs node builtin imports with nodejs_compat enabled", async () => {
     const built = await buildFixture({
       fixture: "node-compat/index.ts",
@@ -56,7 +73,7 @@ describe("nodejs_compat", () => {
     );
 
     expect(transformed).toContain(
-      'import "@cloudflare/unenv-preset/polyfill/performance";',
+      `import "${toPosixPath(fileURLToPath(import.meta.resolve("@cloudflare/unenv-preset/polyfill/performance")))}";`,
     );
     expect(transformed).toContain('import "\0distilled:inject:process";');
   });

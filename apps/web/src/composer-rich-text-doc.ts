@@ -1,4 +1,5 @@
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { Code } from "@tiptap/extension-code";
 import { TaskItem } from "@tiptap/extension-task-item";
 
 import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
@@ -40,6 +41,13 @@ const TIPTAP_TO_MARK: Record<string, RichTextMark> = {
   strike: "strike",
   code: "code",
 };
+
+/**
+ * Tiptap's code mark excludes every other mark, which rejects the `bold+code`
+ * spans markdown like `**\`x\`**` parses into and drops the whole insert.
+ * Code nests inside emphasis here, so it only excludes itself like the rest.
+ */
+export const ComposerCodeExtension = Code.extend({ excludes: "code" });
 
 /**
  * Task list items keep their exact source indent in an attribute so nesting

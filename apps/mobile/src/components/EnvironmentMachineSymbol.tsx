@@ -1,9 +1,7 @@
 import type { EnvironmentMachineKind } from "@t3tools/contracts";
-import type { SFSymbol } from "expo-symbols";
+import { SymbolView, type AppSymbolName } from "./AppSymbol";
 
-import { SymbolView } from "./AppSymbol";
-
-const SYMBOL_BY_KIND: Record<EnvironmentMachineKind, SFSymbol> = {
+const SYMBOL_BY_KIND: Record<EnvironmentMachineKind, AppSymbolName> = {
   server: "server.rack",
   cloud: "cloud",
   linux: "terminal",

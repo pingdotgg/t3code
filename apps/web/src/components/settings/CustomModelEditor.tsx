@@ -154,7 +154,8 @@ export function CustomModelEditor({
         value={choice.id}
         onChange={(event) => updateChoice(descriptor.key, choice.key, { id: event.target.value })}
         placeholder="value"
-        className="w-28 font-mono"
+        font="mono"
+        className="w-28"
         spellCheck={false}
         aria-label="Choice value"
       />
@@ -230,7 +231,8 @@ export function CustomModelEditor({
             value={descriptor.id}
             onChange={(event) => updateDescriptor(descriptor.key, { id: event.target.value })}
             placeholder="optionId"
-            className="w-36 font-mono"
+            font="mono"
+            className="w-36"
             spellCheck={false}
             aria-label="Option id"
           />

@@ -12,7 +12,6 @@ import {
   FileCode2Icon,
   GitCommitHorizontalIcon,
   MessageSquareIcon,
-  PencilIcon,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -23,6 +22,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Button } from "../ui/button";
+import { PullRequestEditButton } from "./PullRequestEditButton";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -166,8 +166,8 @@ function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: (url: s
   return url === null ? null : (
     <Button
       size="icon-xs"
-      variant="ghost"
-      className="-mr-1 -mt-1 shrink-0 text-muted-foreground"
+      variant="ghost-muted"
+      className="-mr-1 -mt-1 shrink-0"
       aria-label="Open activity on host"
       onClick={() => onOpen(url)}
     >
@@ -235,15 +235,11 @@ function ConversationCard({
             </PullRequestMetaLine>
           </div>
           {editable !== null && !editing ? (
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              className="-mt-1 shrink-0 text-muted-foreground opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
+            <PullRequestEditButton
+              className="-mt-1"
               aria-label="Edit comment"
               onClick={() => setEditing(true)}
-            >
-              <PencilIcon className="size-3" />
-            </Button>
+            />
           ) : null}
           {reactions.canReact || event.reactions.length > 0 ? (
             <PullRequestReactionBar

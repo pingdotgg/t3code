@@ -12,6 +12,8 @@ import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import LimitsWorkflowWorker from "./fixtures/workflow-limits/limits-worker.ts";
 import { STEP_LIMIT } from "./fixtures/workflow-limits/limits-workflow.ts";
+import ScheduledWorkflowWorker from "./fixtures/workflow-schedules/scheduled-worker.ts";
+import { YEARLY_CRON } from "./fixtures/workflow-schedules/scheduled-workflow.ts";
 import Stack from "./fixtures/workflow/stack.ts";
 import WorkflowTestWorker from "./fixtures/workflow/workflow-worker.ts";
 
@@ -343,6 +345,57 @@ test.provider(
       const workflowName = yield* readWorkflowName(deployed.worker.workerName);
       const applied = yield* waitForAppliedStepLimit(workflowName, STEP_LIMIT);
       expect(applied).toBe(STEP_LIMIT);
+
+      yield* scratch.destroy();
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
+// ---------------------------------------------------------------------------
+// #1473 regression: native Workflow schedules on the Effect-native form,
+// driven by the file-based `fixtures/workflow-schedules` worker. Deploy a
+// workflow declared with `schedules`, then read it back out-of-band from
+// getWorkflow (the read that surfaces `schedules`) to confirm it was
+// applied. The cron is yearly so the test does not wait for a fire.
+// ---------------------------------------------------------------------------
+
+const waitForAppliedSchedules = (workflowName: string, expected: string[]) =>
+  Effect.gen(function* () {
+    const { accountId } = yield* yield* CloudflareEnvironment;
+    const workflow = yield* workflows.getWorkflow({
+      accountId,
+      workflowName,
+    });
+    return (workflow.schedules ?? []).map((s) => s.cron);
+  }).pipe(
+    Effect.flatMap((crons) =>
+      crons.length === expected.length &&
+      crons.every((cron, index) => cron === expected[index])
+        ? Effect.succeed(crons)
+        : Effect.fail(
+            new Error(`schedules not applied yet: ${JSON.stringify(crons)}`),
+          ),
+    ),
+    Effect.retry({ schedule: Schedule.spaced("2 seconds"), times: 15 }),
+  );
+
+test.provider(
+  "effect-native workflow applies native cron schedules",
+  (scratch) =>
+    Effect.gen(function* () {
+      yield* scratch.destroy();
+
+      const deployed = yield* scratch.deploy(
+        Effect.gen(function* () {
+          return { worker: yield* ScheduledWorkflowWorker };
+        }),
+      );
+
+      const workflowName = yield* readWorkflowName(deployed.worker.workerName);
+      const applied = yield* waitForAppliedSchedules(workflowName, [
+        YEARLY_CRON,
+      ]);
+      expect(applied).toEqual([YEARLY_CRON]);
 
       yield* scratch.destroy();
     }).pipe(logLevel),
