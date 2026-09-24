@@ -68,6 +68,15 @@ describe("toolActivity", () => {
     expect(classifyToolActivity({ title: "Find", data: {} })).toBe("other");
   });
 
+  it("classifies Claude search tools ahead of their broad file-read request kind", () => {
+    for (const toolName of ["Glob", "Grep", "LS"]) {
+      expect(classifyToolActivity({ requestKind: "file-read", data: { toolName } })).toBe("search");
+    }
+    expect(classifyToolActivity({ requestKind: "file-read", data: { toolName: "Read" } })).toBe(
+      "read",
+    );
+  });
+
   it("formats read and search labels from structured input", () => {
     expect(formatReadToolLabel("src/env.ts")).toBe("Read src/env.ts");
     expect(formatReadToolLabel("src/env.ts", 2)).toBe("Read src/env.ts +2 more");

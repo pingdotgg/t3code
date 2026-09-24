@@ -242,9 +242,6 @@ export function classifyToolActivity(input: {
   if (requestKind === "command" || kind === "execute") {
     return "command";
   }
-  if (requestKind === "file-read" || kind === "read") {
-    return "read";
-  }
   if (
     requestKind === "file-change" ||
     kind === "edit" ||
@@ -254,16 +251,8 @@ export function classifyToolActivity(input: {
   ) {
     return "file_change";
   }
-  if (kind === "search") {
-    return "search";
-  }
-  if (toolName === "terminal" || toolName === "bash" || toolName === "shell") {
-    return "command";
-  }
-  if (toolName === "read" || toolName === "readfile") {
-    return "read";
-  }
   if (
+    kind === "search" ||
     toolName === "find" ||
     toolName === "grep" ||
     toolName === "glob" ||
@@ -271,6 +260,15 @@ export function classifyToolActivity(input: {
     toolName === "ls"
   ) {
     return "search";
+  }
+  if (requestKind === "file-read" || kind === "read") {
+    return "read";
+  }
+  if (toolName === "terminal" || toolName === "bash" || toolName === "shell") {
+    return "command";
+  }
+  if (toolName === "read" || toolName === "readfile") {
+    return "read";
   }
   return "other";
 }
