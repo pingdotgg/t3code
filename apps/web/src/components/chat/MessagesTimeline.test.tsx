@@ -1095,6 +1095,69 @@ describe("MessagesTimeline", () => {
     }
   });
 
+  it("keeps falling back immediately after the deadline instead of restarting the wait", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const savedPosition = {
+      rowId: "entry-anchor",
+      offsetWithinRow: 12,
+      scrollOffset: 420,
+      atEnd: false,
+    };
+    const staleEntries = [buildUserTimelineEntry("Another thread's rows")];
+    // A later row not carrying the anchor either: a streamed update that
+    // arrives after the deadline expires, before the fallback scroll settles.
+    const stillStaleEntries = [...staleEntries, buildUserTimelineEntry("More streamed content")];
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      rememberTimelinePosition("environment-local:thread-restore-no-restart", savedPosition);
+      // The fallback scroll never resolves in this test, so a second rerender
+      // observes the effect before setPositionedThreadKey ever runs.
+      const calls = {
+        scrollToIndex: vi.fn(() => Promise.resolve()),
+        scrollToOffset: vi.fn(() => new Promise<void>(() => {})),
+        scrollToEnd: vi.fn(() => Promise.resolve()),
+      };
+      const ref = createRef<LegendListRef | null>();
+      ref.current = {
+        getState: () => ({ indexByKey: () => undefined }),
+        getScrollableNode: () => null,
+        scrollToIndex: calls.scrollToIndex,
+        scrollToOffset: calls.scrollToOffset,
+        scrollToEnd: calls.scrollToEnd,
+      } as unknown as LegendListRef;
+      const props = {
+        ...buildProps(),
+        routeThreadKey: "environment-local:thread-restore-no-restart",
+        listRef: ref,
+      };
+
+      act(() => {
+        renderer = create(<MessagesTimeline {...props} timelineEntries={staleEntries} />);
+      });
+      expect(calls.scrollToOffset).not.toHaveBeenCalled();
+
+      // The bounded wait expires and the effect falls back once.
+      await act(() => vi.advanceTimersByTimeAsync(2_100));
+      expect(calls.scrollToOffset).toHaveBeenCalledTimes(1);
+
+      // A streamed update changes the rows again while the fallback scroll
+      // is still pending. Since the anchor is still missing, the effect
+      // reruns; it must fall back again immediately rather than starting
+      // another 2s wait.
+      act(() => {
+        renderer!.update(<MessagesTimeline {...props} timelineEntries={stillStaleEntries} />);
+      });
+      expect(calls.scrollToOffset).toHaveBeenCalledTimes(2);
+    } finally {
+      act(() => renderer?.unmount());
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("keeps reserved end space when tool work starts while reading history", () => {
     const turnId = TurnId.make("turn-with-active-tool");
     const firstEntry = buildUserTimelineEntry("Run the command.");

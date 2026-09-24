@@ -903,7 +903,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         );
         return detach;
       }
-      restoreDeadlineRef.current = null;
+      // Leave the deadline set: the fallback below is async (scrollToOffset
+      // resolves before setPositionedThreadKey runs), so a rows change that
+      // reruns this effect before that completes must see the deadline as
+      // already expired, not start a fresh 2s wait.
     }
     const scrolling =
       position?.atEnd === false
