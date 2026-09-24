@@ -2370,7 +2370,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       prefix: `t3code-review-index-${process.pid}-`,
     });
     const indexExists = yield* fileSystem.exists(indexPath);
-    if (indexExists) yield* fileSystem.copyFile(indexPath, tempIndexPath);
+    if (indexExists) {
+      // Git re-reads entries modified no earlier than the index file itself
+      // ("racily clean"). Keep the source timestamp on the copy, or same-size
+      // edits made right after the index was written would look unchanged.
+      const { atime, mtime } = yield* fileSystem.stat(indexPath);
+      yield* fileSystem.copyFile(indexPath, tempIndexPath);
+      if (Option.isSome(mtime)) {
+        yield* fileSystem.utimes(
+          tempIndexPath,
+          Option.getOrElse(atime, () => mtime.value),
+          mtime.value,
+        );
+      }
+    }
     const env = { GIT_INDEX_FILE: tempIndexPath } satisfies NodeJS.ProcessEnv;
     const tempIndexConfig = [
       "-c",

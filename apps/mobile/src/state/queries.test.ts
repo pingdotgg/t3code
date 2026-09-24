@@ -35,6 +35,32 @@ describe("appQueries", () => {
     });
   });
 
+  it("routes a single-turn first range through the turn diff query", () => {
+    const environmentId = EnvironmentId.make("environment-a");
+    const threadId = ThreadId.make("thread-a");
+
+    expect(
+      buildCheckpointDiffTargets({
+        environmentId,
+        threadId,
+        fromTurnCount: 0,
+        toTurnCount: 1,
+        ignoreWhitespace: false,
+      }),
+    ).toEqual({
+      fullThread: null,
+      turn: {
+        environmentId,
+        input: {
+          threadId,
+          fromTurnCount: 0,
+          toTurnCount: 1,
+          ignoreWhitespace: false,
+        },
+      },
+    });
+  });
+
   it("routes later ranges through the incremental turn diff query", () => {
     const environmentId = EnvironmentId.make("environment-a");
     const threadId = ThreadId.make("thread-a");

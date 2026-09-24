@@ -20,6 +20,7 @@ import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
 import { CheckpointRollbackServiceV2 } from "./CheckpointRollbackService.ts";
+import { CheckpointCaptureServiceV2 } from "./CheckpointCaptureService.ts";
 import { EffectOutboxError, EffectOutboxV2, type OrchestrationEffectV2 } from "./EffectOutbox.ts";
 import {
   executorLayer,
@@ -155,6 +156,7 @@ function makeExecutorLayer(input: {
     Layer.provide(
       Layer.mergeAll(
         dependencies,
+        Layer.mock(CheckpointCaptureServiceV2)({}),
         Layer.mock(ThreadManagementService)({}),
         ServerSettings.layerTest(),
       ),

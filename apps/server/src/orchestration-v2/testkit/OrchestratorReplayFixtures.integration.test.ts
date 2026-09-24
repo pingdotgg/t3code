@@ -96,6 +96,9 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
     fixtureInput: input.buildInput(),
     driver: input.driver.driver,
     modelSelection: input.driver.modelSelection,
+    // Each fixture workspace is a private temp checkout — declare it as the
+    // thread's worktree so checkpoint file-restore sees an isolated worktree.
+    worktreePath: workspace,
   }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
   const scenario = {
     name: `${input.fixtureName}/${input.driver.driver}`,

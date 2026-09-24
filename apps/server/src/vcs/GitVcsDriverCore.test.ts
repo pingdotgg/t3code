@@ -1449,6 +1449,36 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("keeps racily clean same-size edits visible alongside untracked files", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const tracked = `${cwd}/same-size.txt`;
+        const stamp = 1_704_067_200; // 2024-01-01T00:00:00Z in seconds
+        // Pin the edit and the index to one second, the window where only
+        // Git's racy-clean content check can notice a same-size rewrite.
+        yield* git(cwd, ["config", "core.trustctime", "false"]);
+        yield* writeTextFile(cwd, "same-size.txt", "changed\n");
+        yield* fileSystem.utimes(tracked, stamp, stamp);
+        yield* git(cwd, ["add", "same-size.txt"]);
+        yield* git(cwd, ["commit", "-m", "track same-size file"]);
+        yield* writeTextFile(cwd, "same-size.txt", "updated\n");
+        yield* fileSystem.utimes(tracked, stamp, stamp);
+        yield* fileSystem.utimes(`${cwd}/.git/index`, stamp, stamp);
+        yield* writeTextFile(cwd, "untracked.txt", "new\n");
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const dirty = preview.sources.find((source) => source.kind === "working-tree")!;
+
+        assert.deepStrictEqual(dirty.files, [
+          { path: "same-size.txt", previousPath: null, additions: 1, deletions: 1 },
+          { path: "untracked.txt", previousPath: null, additions: 1, deletions: 0 },
+        ]);
+      }),
+    );
+
     it.effect("keeps complete stats for files beyond the combined patch limit", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

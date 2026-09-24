@@ -1226,3 +1226,309 @@ it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publi
     ),
   );
 });
+
+it.effect(
+  "detectRepository distinguishes a confirmed absent repository from detection failures",
+  () => {
+    let revParseResult = { exitCode: 0, stdout: "", stderr: "" };
+    const observedEnvs: NodeJS.ProcessEnv[] = [];
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      // Ambient Git bindings must not leak into detection: seeding them
+      // before the driver captures its environment means a missing scrub
+      // surfaces as the seeded value, not an omission.
+      const seededGitEnv = {
+        GIT_DIR: "/foreign/.git",
+        GIT_WORK_TREE: "/foreign",
+        GIT_COMMON_DIR: "/foreign/.git",
+        GIT_INDEX_FILE: "/foreign/index",
+        GIT_OBJECT_DIRECTORY: "/foreign/objects",
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: "/foreign/alternates",
+        GIT_CEILING_DIRECTORIES: "/foreign",
+        GIT_DISCOVERY_ACROSS_FILESYSTEM: "1",
+      };
+      const previousGitEnv = {
+        GIT_DIR: process.env.GIT_DIR,
+        GIT_WORK_TREE: process.env.GIT_WORK_TREE,
+        GIT_COMMON_DIR: process.env.GIT_COMMON_DIR,
+        GIT_INDEX_FILE: process.env.GIT_INDEX_FILE,
+        GIT_OBJECT_DIRECTORY: process.env.GIT_OBJECT_DIRECTORY,
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: process.env.GIT_ALTERNATE_OBJECT_DIRECTORIES,
+        GIT_CEILING_DIRECTORIES: process.env.GIT_CEILING_DIRECTORIES,
+        GIT_DISCOVERY_ACROSS_FILESYSTEM: process.env.GIT_DISCOVERY_ACROSS_FILESYSTEM,
+      };
+      Object.assign(process.env, seededGitEnv);
+      try {
+        const driver = yield* GitVcsDriver.makeVcsDriverShape();
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-detect-" });
+        // Git's "not a git repository" fatal is the nonzero signature that
+        // confirms the workspace has no usable repository.
+        revParseResult = {
+          exitCode: 128,
+          stdout: "",
+          stderr: "fatal: not a git repository (or any of the parent directories): .git\n",
+        };
+        assert.isNull(yield* driver.detectRepository(cwd));
+        // The diagnostic locale is pinned so translated fatals cannot evade
+        // the signature match, and ambient Git bindings are scrubbed so
+        // discovery always reflects the workspace itself.
+        assert.equal(observedEnvs.at(-1)?.LC_ALL, "C");
+        for (const key of Object.keys(seededGitEnv) as (keyof typeof seededGitEnv)[]) {
+          assert.isUndefined(observedEnvs.at(-1)?.[key], key);
+        }
+        // A successful detection runs the root and common-dir probes — the
+        // scrub applies to every detection subprocess, not just the first.
+        observedEnvs.length = 0;
+        revParseResult = { exitCode: 0, stdout: "true\n", stderr: "" };
+        const detected = yield* driver.detectRepository(cwd);
+        assert.isNotNull(detected);
+        assert.equal(observedEnvs.length, 3);
+        for (const env of observedEnvs) {
+          assert.equal(env.LC_ALL, "C");
+          for (const key of Object.keys(seededGitEnv) as (keyof typeof seededGitEnv)[]) {
+            assert.isUndefined(env[key], key);
+          }
+        }
+        revParseResult = {
+          exitCode: 128,
+          stdout: "",
+          stderr: "fatal: not a git repository (or any of the parent directories): .git\n",
+        };
+        // The same fatal with .git metadata present means the repository is
+        // broken (unreadable HEAD, broken worktree pointer), not absent.
+        yield* fileSystem.makeDirectory(`${cwd}/.git`, { recursive: true });
+        const brokenError = yield* driver.detectRepository(cwd).pipe(Effect.flip);
+        assert.equal(brokenError._tag, "VcsProcessExitError");
+        yield* fileSystem.remove(`${cwd}/.git`, { recursive: true });
+        // A dangling .git symlink is still metadata: exists() resolves its
+        // missing target, but the entry itself must count as evidence.
+        yield* fileSystem.symlink(`${cwd}/missing-target`, `${cwd}/.git`);
+        const danglingError = yield* driver.detectRepository(cwd).pipe(Effect.flip);
+        assert.equal(danglingError._tag, "VcsProcessExitError");
+        yield* fileSystem.remove(`${cwd}/.git`);
+        // Git resolves discovery from the physical path, so metadata on the
+        // resolved ancestry — not the lexical one — counts. The link points
+        // at a child beneath the metadata-bearing ancestor: lexically
+        // `link/.git` resolves to `real/subdir/.git` (absent) and the lexical
+        // parents never see `real/.git`.
+        const real = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-detect-real-" });
+        yield* fileSystem.makeDirectory(`${real}/.git`, { recursive: true });
+        yield* fileSystem.makeDirectory(`${real}/subdir`);
+        const link = `${cwd}/linked-workspace`;
+        yield* fileSystem.symlink(`${real}/subdir`, link);
+        const linkedError = yield* driver.detectRepository(link).pipe(Effect.flip);
+        assert.equal(linkedError._tag, "VcsProcessExitError");
+        yield* fileSystem.remove(`${real}/.git`, { recursive: true });
+        // A workspace that cannot be resolved — it vanished between the Git
+        // probe and the metadata walk — cannot prove absence, so the lookup
+        // failure must surface as a detection failure instead.
+        const goneError = yield* driver.detectRepository(`${cwd}/removed`).pipe(Effect.flip);
+        assert.equal(goneError._tag, "VcsProcessExitError");
+        // Other fatals (unreadable config, permission denied, I/O) mean
+        // detection itself failed — they must propagate rather than report
+        // the workspace as non-Git, which callers rely on to decide that no
+        // repo state exists.
+        revParseResult = {
+          exitCode: 128,
+          stdout: "",
+          stderr: "fatal: unable to access '.git/config': Permission denied\n",
+        };
+        const error = yield* driver.detectRepository(cwd).pipe(Effect.flip);
+        assert.equal(error._tag, "VcsProcessExitError");
+      } finally {
+        for (const key of Object.keys(seededGitEnv) as (keyof typeof seededGitEnv)[]) {
+          const previous = previousGitEnv[key];
+          if (previous === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = previous;
+          }
+        }
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(VcsProcess.VcsProcess)({
+            run: (input) =>
+              Effect.sync(() => {
+                // The real subprocess inherits this merged environment, so
+                // a probe that forgets its env leaks the ambient bindings.
+                observedEnvs.push({ ...process.env, ...input.env });
+                const result = input.args.includes("--is-inside-work-tree")
+                  ? revParseResult
+                  : input.args.includes("--show-toplevel")
+                    ? { exitCode: 0, stdout: "/resolved-root\n", stderr: "" }
+                    : { exitCode: 0, stdout: "/resolved-root/.git\n", stderr: "" };
+                return {
+                  exitCode: ChildProcessSpawner.ExitCode(result.exitCode),
+                  stdout: result.stdout,
+                  stderr: result.stderr,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                };
+              }),
+          }),
+        ),
+      ),
+    );
+  },
+);
+
+it.effect(
+  "detectRepository propagates a workspace resolution failure instead of falling back",
+  () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      // The directory exists and is stat-able but cannot be resolved: the
+      // physical ancestry was never inspected, so absence is unproven and
+      // the resolution error must surface — a lexical fallback would read
+      // this as confirmed non-Git.
+      const error = yield* driver.detectRepository("/repo/workspace").pipe(Effect.flip);
+      assert.equal(error._tag, "VcsProcessExitError");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          FileSystem.layerNoop({
+            realPath: (path) =>
+              Effect.fail(
+                PlatformError.systemError({
+                  _tag: "Unknown",
+                  module: "FileSystem",
+                  method: "realPath",
+                  pathOrDescriptor: path,
+                }),
+              ),
+            stat: () => Effect.succeed({ dev: 1 } as FileSystem.File.Info),
+            exists: () => Effect.succeed(false),
+            readLink: (path) =>
+              Effect.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "FileSystem",
+                  method: "readLink",
+                  pathOrDescriptor: path,
+                }),
+              ),
+          }),
+          Layer.mock(VcsProcess.VcsProcess)({
+            run: () =>
+              Effect.succeed({
+                exitCode: ChildProcessSpawner.ExitCode(128),
+                stdout: "",
+                stderr: "fatal: not a git repository (or any of the parent directories): .git\n",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              }),
+          }),
+        ),
+      ),
+    ),
+);
+
+it.effect("detectRepository does not cross filesystem boundaries Git discovery respects", () =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    // /repo/mnt/usb sits on a filesystem mounted beneath a repository: Git's
+    // default discovery stops at the mount and reports "not a git
+    // repository", so /repo/.git on the other device must not turn this
+    // legitimately non-Git workspace into a detection failure.
+    assert.isNull(yield* driver.detectRepository("/repo/mnt/usb"));
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        FileSystem.layerNoop({
+          realPath: (path) => Effect.succeed(path),
+          stat: (path) =>
+            Effect.succeed({
+              dev: path === "/repo" || path === "/" ? 1 : 2,
+            } as FileSystem.File.Info),
+          exists: (path) => Effect.succeed(path === "/repo/.git"),
+          readLink: (path) =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "NotFound",
+                module: "FileSystem",
+                method: "readLink",
+                pathOrDescriptor: path,
+              }),
+            ),
+        }),
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: () =>
+            Effect.succeed({
+              exitCode: ChildProcessSpawner.ExitCode(128),
+              stdout: "",
+              stderr: "fatal: not a git repository (or any of the parent directories): .git\n",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            }),
+        }),
+      ),
+    ),
+  ),
+);
+
+it.effect("deleteCheckpointRefs propagates update-ref failures instead of swallowing them", () => {
+  let observedEnv: NodeJS.ProcessEnv | undefined;
+  const previousGitDir = process.env.GIT_DIR;
+  // Checkpoint operations share detection's scrubbed bindings so ambient
+  // Git variables cannot redirect them to a different repository.
+  process.env.GIT_DIR = "/foreign/.git";
+  return Effect.gen(function* () {
+    try {
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const error = yield* driver.checkpoints
+        .deleteCheckpointRefs({
+          cwd: "/repo",
+          checkpointRefs: [CheckpointRef.make("refs/t3/checkpoints/test/1-start")],
+        })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "VcsProcessExitError");
+      assert.isUndefined(observedEnv?.GIT_DIR);
+    } finally {
+      if (previousGitDir === undefined) {
+        delete process.env.GIT_DIR;
+      } else {
+        process.env.GIT_DIR = previousGitDir;
+      }
+    }
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: (input) => {
+            // The real subprocess inherits this merged environment, so an
+            // operation that forgets its env leaks the ambient bindings.
+            observedEnv = { ...process.env, ...input.env };
+            // Mirror the real VcsProcess contract: a nonzero exit fails the
+            // effect unless the caller opted into allowNonZeroExit.
+            return input.allowNonZeroExit === true
+              ? Effect.succeed({
+                  exitCode: ChildProcessSpawner.ExitCode(1),
+                  stdout: "",
+                  stderr:
+                    "fatal: cannot lock ref 'refs/t3/checkpoints/test/1-start': unable to lock",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                })
+              : Effect.fail(
+                  new VcsProcessExitError({
+                    operation: input.operation,
+                    command: "git",
+                    cwd: input.cwd,
+                    exitCode: 1,
+                    detail:
+                      "fatal: cannot lock ref 'refs/t3/checkpoints/test/1-start': unable to lock",
+                  }),
+                );
+          },
+        }),
+      ),
+    ),
+  );
+});

@@ -8,6 +8,7 @@ import {
   NodeId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
+  type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -40,6 +41,58 @@ const projectId = ProjectId.make("project:checkpoint-capture-delegated");
 const runId = RunId.make("run:checkpoint-capture-delegated");
 const scopeId = CheckpointScopeId.make("scope:checkpoint-capture-delegated");
 const rootNodeId = NodeId.make("node:checkpoint-capture-delegated-root");
+
+it.effect.each([
+  { status: "failed", checkpoint: null, removed: true },
+  { status: "interrupted", checkpoint: null, removed: true },
+  { status: "cancelled", checkpoint: null, removed: true },
+  // A completed run reclaims its baseline only once capture recorded a failure.
+  { status: "completed", checkpoint: "error", removed: true },
+  { status: "completed", checkpoint: "ready", removed: false },
+  // A "missing" row means capture found no usable VCS, so no start ref exists.
+  { status: "completed", checkpoint: "missing", removed: false },
+  { status: "cancelled", checkpoint: "missing", removed: false },
+  // Capture is still queued behind this cleanup and needs the baseline.
+  { status: "completed", checkpoint: null, removed: false },
+  { status: "running", checkpoint: null, removed: false },
+  { status: "waiting", checkpoint: null, removed: false },
+] as const)(
+  "cleans abandoned baselines for $status (checkpoint: $checkpoint)",
+  ({ status, checkpoint, removed }) =>
+    Effect.gen(function* () {
+      const discarded: number[] = [];
+      const projection = {
+        runs: [{ id: runId, ordinal: 3, status }],
+        checkpointScopes: [{ id: scopeId }],
+        checkpoints:
+          checkpoint === null
+            ? []
+            : [{ scopeId, runId, ordinalWithinScope: 3, status: checkpoint }],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const layer = CheckpointCaptureService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getThreadProjection: () => Effect.succeed(projection),
+            }),
+            Layer.mock(CheckpointServiceV2)({
+              discardBaseline: (input) =>
+                Effect.sync(() => {
+                  discarded.push(input.ordinalWithinScope);
+                }),
+            }),
+            Layer.mock(EventSinkV2)({}),
+            IdAllocator.layer,
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* CheckpointCaptureService.CheckpointCaptureServiceV2;
+        yield* service.cleanupBaseline({ threadId, runId, scopeId });
+      }).pipe(Effect.provide(layer));
+      assert.deepEqual(discarded, removed ? [3] : []);
+    }),
+);
 const taskId = NodeId.make("node:checkpoint-capture-task");
 const deliveryMessageId = MessageId.make("message:checkpoint-capture-delivery");
 const providerThreadId = ProviderThreadId.make("provider-thread:checkpoint-capture-delegated");
@@ -321,6 +374,16 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
             .execute({ threadId, runId, scopeId: CheckpointScopeId.make("missing-scope") })
             .pipe(Effect.flip);
           assert.instanceOf(incomplete, CheckpointCaptureService.CheckpointCaptureExecutionError);
+          if (refLookupFails) {
+            // A failed turn-start ref lookup must propagate rather than fall
+            // back to the legacy baseline: diffing it would fold pre-turn
+            // edits into the summary, so capture fails for outbox retry and
+            // nothing is committed.
+            const error = yield* service.execute({ threadId, runId, scopeId }).pipe(Effect.flip);
+            assert.equal(error._tag, "CheckpointCaptureExecutionError");
+            assert.deepEqual(yield* Ref.get(committed), []);
+            return;
+          }
           // Capture reads the waiting run while the projection still holds the stale cohort.
           yield* service.execute({ threadId, runId, scopeId });
 
@@ -331,15 +394,7 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
             return;
           }
           assert.equal(runUpdated.payload.status, "completed");
-          const capturedEvent = events.find((event) => event.type === "checkpoint.captured");
-          assert.equal(
-            runUpdated.payload.checkpointId,
-            refLookupFails ? capturedEvent?.payload.id : captured.id,
-          );
-          if (refLookupFails && capturedEvent?.type === "checkpoint.captured") {
-            assert.equal(capturedEvent.payload.status, "ready");
-            assert.deepEqual(capturedEvent.payload.files, []);
-          }
+          assert.equal(runUpdated.payload.checkpointId, captured.id);
           assert.isUndefined(
             runUpdated.payload.delegatedCompletion,
             "checkpoint capture must omit delegatedCompletion so ProjectionStore can keep a newer cohort",
@@ -379,6 +434,240 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
           yield* service.execute({ threadId, runId, scopeId });
           assert.deepEqual(yield* Ref.get(committed), []);
         }).pipe(Effect.provide(captureLayer));
+      }),
+  );
+
+  it.effect.each([
+    { captureStatus: "error", enqueued: true },
+    { captureStatus: "missing", enqueued: false },
+  ] as const)(
+    "enqueues baseline cleanup only for capture status %s",
+    ({ captureStatus, enqueued }) =>
+      Effect.gen(function* () {
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+
+        const waitingRun: OrchestrationV2Run = {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId,
+          userMessageId: MessageId.make("message:checkpoint-capture-user"),
+          rootNodeId,
+          activeAttemptId: null,
+          status: "waiting",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+          delegatedCompletion: undefined,
+        };
+        const rootNode = {
+          id: rootNodeId,
+          threadId,
+          runId,
+          parentNodeId: null,
+          rootNodeId,
+          kind: "root_turn" as const,
+          status: "waiting" as const,
+          countsForRun: true,
+          providerThreadId,
+          providerTurnId: null,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: scopeId,
+          startedAt: now,
+          completedAt: null,
+        };
+        const scope = {
+          id: scopeId,
+          threadId,
+          runId,
+          nodeId: rootNodeId,
+          parentScopeId: null,
+          providerThreadId,
+          kind: "root_run" as const,
+          ordinalWithinParent: 0,
+          advancesAppRunCount: true,
+          cwd: "/repo",
+          createdAt: now,
+        };
+        const providerThread = {
+          id: providerThreadId,
+          driver,
+          providerInstanceId,
+          providerSessionId: null,
+          appThreadId: threadId,
+          ownerNodeId: rootNodeId,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle" as const,
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        const readyBaseline = {
+          id: CheckpointId.make("checkpoint:baseline-0"),
+          threadId,
+          scopeId,
+          runId: null,
+          nodeId: rootNodeId,
+          parentCheckpointId: null,
+          ordinalWithinScope: 0,
+          appRunOrdinal: null,
+          ref: CheckpointRef.make("checkpoint-ref:baseline-0"),
+          status: "ready" as const,
+          files: [],
+          capturedAt: now,
+        };
+        const failedCapture = {
+          ...readyBaseline,
+          id: CheckpointId.make(`checkpoint:captured-1-${captureStatus}`),
+          runId,
+          parentCheckpointId: readyBaseline.id,
+          ordinalWithinScope: 1,
+          appRunOrdinal: 1,
+          ref: CheckpointRef.make(`checkpoint-ref:captured-1-${captureStatus}`),
+          status: captureStatus,
+        };
+
+        yield* projectionStore.apply({
+          id: EventId.make("event:checkpoint-capture:thread"),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId,
+            title: "Checkpoint capture baseline cleanup",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: {
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: threadId,
+            },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+        yield* projectionStore.apply({
+          id: EventId.make("event:checkpoint-capture:run"),
+          type: "run.updated",
+          threadId,
+          runId,
+          nodeId: rootNodeId,
+          providerInstanceId,
+          occurredAt: now,
+          payload: waitingRun,
+        });
+        yield* projectionStore.apply({
+          id: EventId.make("event:checkpoint-capture:node"),
+          type: "node.updated",
+          threadId,
+          runId,
+          nodeId: rootNodeId,
+          providerInstanceId,
+          occurredAt: now,
+          payload: rootNode,
+        });
+        yield* projectionStore.apply({
+          id: EventId.make("event:checkpoint-capture:provider-thread"),
+          type: "provider-thread.updated",
+          threadId,
+          nodeId: rootNodeId,
+          driver,
+          providerInstanceId,
+          occurredAt: now,
+          payload: providerThread,
+        });
+        yield* projectionStore.apply({
+          id: EventId.make("event:checkpoint-capture:scope"),
+          type: "checkpoint-scope.created",
+          threadId,
+          runId,
+          nodeId: rootNodeId,
+          occurredAt: now,
+          payload: scope,
+        });
+        yield* projectionStore.apply({
+          id: EventId.make("event:checkpoint-capture:baseline"),
+          type: "checkpoint.captured",
+          threadId,
+          nodeId: rootNodeId,
+          driver,
+          providerInstanceId,
+          occurredAt: now,
+          payload: readyBaseline,
+        });
+
+        const committedEffects = yield* Ref.make<
+          ReadonlyArray<{ readonly type: string; readonly runId: string; readonly scopeId: string }>
+        >([]);
+        const captureLayer = CheckpointCaptureService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              Layer.mock(CheckpointServiceV2)({
+                materializeBaselineCheckpoint: () =>
+                  Effect.die("baseline materialization must be skipped when ordinal 0 is ready"),
+                capture: () => Effect.succeed(failedCapture),
+              }),
+              Layer.mock(EventSinkV2)({
+                commitCommand: (input) =>
+                  Ref.set(
+                    committedEffects,
+                    input.effects.map((effect) =>
+                      effect.request.type === "checkpoint.baseline.cleanup"
+                        ? {
+                            type: effect.request.type,
+                            runId: effect.request.runId,
+                            scopeId: effect.request.scopeId,
+                          }
+                        : { type: effect.request.type, runId: "", scopeId: "" },
+                    ),
+                  ).pipe(
+                    Effect.as({
+                      commandId: input.commandId,
+                      committed: true,
+                      sequence: 1,
+                      events: input.events,
+                      effects: input.effects,
+                    } as never),
+                  ),
+              }),
+            ),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const service = yield* CheckpointCaptureService.CheckpointCaptureServiceV2;
+          yield* service.execute({ threadId, runId, scopeId });
+        }).pipe(Effect.provide(captureLayer));
+
+        assert.deepEqual(
+          yield* Ref.get(committedEffects),
+          enqueued ? [{ type: "checkpoint.baseline.cleanup", runId, scopeId }] : [],
+        );
       }),
   );
 });
