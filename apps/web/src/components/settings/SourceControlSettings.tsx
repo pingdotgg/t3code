@@ -242,8 +242,8 @@ function itemSummary({
       return (
         <span>
           {item.label} is not authenticated on this server. Sign in or configure credentials using
-          the <code className="rounded bg-muted px-1 py-px text-[11px]">{item.executable}</code>{" "}
-          tool on the server host to enable change request features.
+          the <code className="rounded bg-muted px-1 py-px text-2xs">{item.executable}</code> tool
+          on the server host to enable change request features.
         </span>
       );
     }
@@ -294,9 +294,7 @@ function DiscoveryItemRow({
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <SourceControlItemMark item={item} />
-              <span className="truncate text-sm font-medium tracking-[-0.005em] text-foreground">
-                {item.label}
-              </span>
+              <span className="truncate text-sm font-medium text-foreground">{item.label}</span>
               {version ? <code className="text-xs text-muted-foreground">{version}</code> : null}
               {isVcsNotReady(item) ? (
                 <Badge variant="warning" size="sm">
@@ -309,7 +307,7 @@ function DiscoveryItemRow({
                 </Badge>
               ) : null}
             </div>
-            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-[13px] leading-[1.45] text-muted-foreground/80">
+            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs leading-normal text-muted-foreground/80">
               {itemSummary({ item, auth, authAccount })}
             </p>
           </div>
@@ -440,20 +438,21 @@ function SourceControlSectionSkeleton({
             <div className="min-w-0 flex-1 space-y-2">
               <div className="flex items-center gap-2">
                 <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
-                  <Skeleton className="size-4.5 rounded-md" />
+                  <Skeleton className="size-4.5" />
                   <Skeleton
-                    className="pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background"
+                    shape="pill"
+                    className="pointer-events-none absolute -left-0.5 -top-0.5 size-2"
                     aria-hidden
                   />
                 </span>
-                <Skeleton className="h-4 w-28 rounded-full" />
-                <Skeleton className="h-5 w-14 rounded-full" />
+                <Skeleton shape="pill" className="h-4 w-28" />
+                <Skeleton shape="pill" className="h-5 w-14" />
               </div>
-              <Skeleton className="h-3 w-full max-w-xs rounded-full" />
+              <Skeleton shape="pill" className="h-3 w-full max-w-xs" />
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <Skeleton className="size-7 rounded-md" />
-              <Skeleton className="h-5 w-9 rounded-full" />
+              <Skeleton className="size-7" />
+              <Skeleton shape="pill" className="h-5 w-9" />
             </div>
           </div>
         </div>
@@ -475,7 +474,7 @@ function EmptySourceControlDiscovery({
 
   return (
     <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
-      <Empty className="min-h-88">
+      <Empty>
         <EmptyMedia variant="icon">
           <PullRequestGlyph.pullRequest />
         </EmptyMedia>
@@ -491,7 +490,7 @@ function EmptySourceControlDiscovery({
         </EmptyHeader>
         <EmptyContent>
           <Button size="sm" variant="outline" onClick={onScan} disabled={isPending}>
-            <RefreshIcon className="size-3.5" refreshing={isPending} />
+            <RefreshIcon size="sm" refreshing={isPending} />
             Scan
           </Button>
         </EmptyContent>

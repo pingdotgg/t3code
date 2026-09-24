@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMediaActions } from "../lib/mediaActions";
 import { AppText } from "./AppText";
 import { SymbolView } from "./AppSymbol";
-import type { ResolvedFilePreviewSource } from "./FilePreviewModal";
+import type { ResolvedFilePreviewSource } from "./FilePreviewModal.types";
 import { MediaActionsMenu } from "./MediaActionsMenu";
 import { MediaSourceCaption } from "./MediaSourceCaption";
 

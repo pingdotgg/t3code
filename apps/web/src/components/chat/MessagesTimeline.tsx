@@ -63,7 +63,6 @@ import {
   use,
   useCallback,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -214,6 +213,7 @@ import {
   ContextChipShell,
   FileChip,
   ImageChipButton,
+  PULL_REQUEST_CHIP_KINDS,
   PullRequestChip,
   UnresolvedChip,
 } from "../contextChipParts";
@@ -236,15 +236,7 @@ import {
   encodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
 import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
-import {
-  CHAT_INLINE_CHIP_CLASS_NAME,
-  CHAT_INLINE_CHIP_LABEL_CLASS_NAME,
-  COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-  SKILL_CHIP_ICON_SVG,
-  CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES,
-  CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES,
-  PULL_REQUEST_INLINE_CHIP_TONE_CLASS_NAMES,
-} from "../composerInlineChip";
+import { ContextChip, ContextChipLabel, type ContextChipKind } from "../ContextChip";
 import { createContextPresentationRegistry } from "../contextPresentationRegistry";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
@@ -254,7 +246,7 @@ import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 
-import { SkillInlineText } from "./SkillInlineText";
+import { SkillChipIcon, SkillInlineText } from "./SkillInlineText";
 import { deriveAgentSpawnSummary } from "./agentSpawnSummary";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
@@ -263,6 +255,7 @@ import {
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { ComputerUseAppIcon } from "~/components/Icons";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via Context.
@@ -284,6 +277,7 @@ interface TimelineRowSharedState {
   activeThreadEnvironmentId: EnvironmentId;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
+  onRunShellCommand: ((command: string) => void) | undefined;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
   onFileDownload: (attachment: ChatFileAttachment) => void;
@@ -351,7 +345,7 @@ function TimelineLoadEarlierHeader({
   fade: boolean;
 }) {
   return (
-    <div className={fade ? "pt-[var(--workspace-titlebar-scroll-fade-height)]" : "pt-3 sm:pt-4"}>
+    <div className={fade ? "pt-(--workspace-titlebar-scroll-fade-height)" : "pt-3 sm:pt-4"}>
       <div className="mx-auto w-full max-w-3xl pb-2">
         <button
           type="button"
@@ -432,6 +426,7 @@ interface MessagesTimelineProps {
   supportsConversationRollback: boolean;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
+  onRunShellCommand?: (command: string) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen?: (attachment: ChatFileAttachment) => void;
@@ -501,6 +496,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   supportsConversationRollback,
   onRevertToTurnCount,
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
+  onRunShellCommand,
   isRevertingCheckpoint,
   onImageExpand,
   onFileOpen = NOOP_OPEN_ATTACHMENT,
@@ -1145,6 +1141,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertToTurnCount,
       onUseArtifactTemplate,
+      onRunShellCommand,
       onImageExpand,
       onFileOpen,
       onFileDownload,
@@ -1180,6 +1177,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertToTurnCount,
       onUseArtifactTemplate,
+      onRunShellCommand,
       onImageExpand,
       onFileOpen,
       onFileDownload,
@@ -1546,7 +1544,7 @@ function TimelineMinimap({
                 <span
                   aria-hidden="true"
                   className={cn(
-                    "pointer-events-none absolute left-0 h-0.5 -translate-y-1/2 rounded-full bg-muted-foreground/35 transition-[background-color,width] duration-150 data-[in-view=true]:bg-foreground/90",
+                    "pointer-events-none absolute left-0 h-0.5 -translate-y-1/2 rounded-full bg-muted-foreground/35 transition-[width,background-color] duration-150 data-[in-view=true]:bg-foreground/90",
                     activeDistance === 0
                       ? "w-6 bg-muted-foreground/75"
                       : activeDistance === 1
@@ -1778,7 +1776,7 @@ function QueuedMessageTimelineRow({
     <div className="flex flex-col items-end" data-queued-message-id={queuedMessage.id}>
       <div className="max-w-[80%] rounded-2xl border border-dashed border-border p-3 text-message-foreground/80">
         {text.length > 0 ? (
-          <div className="whitespace-pre-wrap break-words text-sm">{text}</div>
+          <UserMessageBody text={text} skills={ctx.skills} markdownCwd={ctx.markdownCwd} />
         ) : null}
         {attachmentCount > 0 || contextCount > 0 ? (
           <div className={cn("text-secondary-label text-xs", text.length > 0 && "mt-1.5")}>
@@ -1814,9 +1812,8 @@ function QueuedMessageTimelineRow({
                 render={
                   <Button
                     type="button"
-                    size="icon-micro"
+                    size="icon-xs"
                     variant="ghost-muted"
-                    className="size-6"
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={() => ctx.onSteerQueuedMessage(queuedMessage.id)}
                     aria-label="Send now"
@@ -1837,9 +1834,8 @@ function QueuedMessageTimelineRow({
                 render={
                   <Button
                     type="button"
-                    size="icon-micro"
+                    size="icon-xs"
                     variant="ghost-muted"
-                    className="size-6"
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={() => ctx.onRemoveQueuedMessage(queuedMessage.id)}
                     aria-label="Cancel and return to the composer"
@@ -1894,7 +1890,7 @@ function UserVideoAttachment({ file }: { readonly file: ChatFileAttachment }) {
 
   if (asset === null && src === null) {
     return (
-      <div className="flex aspect-[4/3] w-full items-center justify-center rounded-lg border border-border/80 bg-black px-2 py-3 text-center text-[11px] text-white/70">
+      <div className="flex aspect-[4/3] w-full items-center justify-center rounded-lg border border-border/80 bg-black px-2 py-3 text-center text-2xs text-white/70">
         {file.name}
       </div>
     );
@@ -2121,7 +2117,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                     />
                   </button>
                 ) : (
-                  <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-secondary-label text-[11px]">
+                  <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-secondary-label text-2xs">
                     {image.name}
                   </div>
                 )}
@@ -2381,6 +2377,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             skills={ctx.skills}
             headingLevelOffset={MESSAGE_HEADING_LEVEL}
             onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+            onRunShellCommand={ctx.onRunShellCommand}
             onImageExpand={ctx.onImageExpand}
           />
         </AssistantCitationSource>
@@ -2561,16 +2558,17 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
       <PopoverTrigger
         render={
           <Button
-            variant="chip"
-            className="ml-auto inline-flex h-5 min-w-0 shrink-0 items-center gap-1 rounded-full border border-border/70 px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            variant="ghost-muted"
+            size="micro"
+            className="ml-auto min-w-0 shrink-0"
             aria-label={`${scriptName} is still running. Show setup progress.`}
           />
         }
       >
-        <Spinner className="size-3 shrink-0" />
+        <Spinner size="xs" className="shrink-0" />
         <span className="truncate">{scriptName}</span>
       </PopoverTrigger>
-      <PopoverPopup side="bottom" align="end" className="w-[32rem] max-w-[calc(100vw-2rem)] p-3">
+      <PopoverPopup side="bottom" align="end" width="lg" padding="compact">
         <WorktreeSetupCard
           snapshot={snapshot}
           embedded
@@ -2764,7 +2762,7 @@ function ReasoningTraceBlock({
           className="flex min-h-6 cursor-pointer select-none items-center gap-1.5 rounded-md px-0.5 text-start text-sm leading-relaxed transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
         >
           <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
-            <BrainIcon aria-hidden className="block size-4 shrink-0 stroke-[1.8] opacity-70" />
+            <BrainIcon aria-hidden className="block size-4 shrink-0 stroke-2 opacity-70" />
           </span>
           <span
             ref={streaming ? observeVisibleAnimation : undefined}
@@ -2837,7 +2835,7 @@ const ReasoningTimelineRow = memo(function ReasoningTimelineRow({
         className="flex cursor-pointer select-none items-center gap-1.5 rounded-md px-0.5 py-0.5 text-start transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
-          <BrainIcon aria-hidden className="block size-4 shrink-0 stroke-[1.8] opacity-70" />
+          <BrainIcon aria-hidden className="block size-4 shrink-0 stroke-2 opacity-70" />
         </span>
         <span className="flex min-w-0 flex-1 items-center gap-1.5">
           <span className="relative min-w-0 flex-1 truncate text-secondary-label text-sm leading-relaxed">
@@ -3216,7 +3214,7 @@ function LiveActivityContent({
           <ToolActivityIconView
             icon={toolIcon}
             fallbackName={iconName}
-            className="block size-4 shrink-0 stroke-[1.8]"
+            className="block size-4 shrink-0 stroke-2"
             muted={!highlighted}
           />
         </span>
@@ -3337,7 +3335,7 @@ function WorkGroupToggleTimelineRow({
           fallbackName={
             row.summaryToolIcon ?? row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)
           }
-          className="size-4 shrink-0 stroke-[1.8]"
+          className="size-4 shrink-0 stroke-2"
           muted
         />
       </span>
@@ -3449,14 +3447,10 @@ function UserMessageMentionChip(props: {
     <Tooltip>
       <TooltipTrigger
         render={
-          <button
-            type="button"
+          <ContextChip
+            kind="mention"
+            render={<button type="button" />}
             aria-label={`Preview ${props.record.path}`}
-            className={cn(
-              CHAT_INLINE_CHIP_CLASS_NAME,
-              CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.mention,
-              "cursor-pointer focus-visible:outline-2",
-            )}
             data-markdown-copy={props.copyMarkdown}
             onClick={() => {
               if (ctx.threadRef)
@@ -3467,10 +3461,9 @@ function UserMessageMentionChip(props: {
               pathValue={props.record.path}
               kind={inferEntryKindFromPath(props.record.path)}
               theme={ctx.resolvedTheme}
-              className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
             />
-            <span className={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}>{props.record.label}</span>
-          </button>
+            <ContextChipLabel>{props.record.label}</ContextChipLabel>
+          </ContextChip>
         }
       />
       <TooltipPopup>{props.record.path}</TooltipPopup>
@@ -3484,21 +3477,16 @@ function UserMessageContextChip(props: {
   kindLabel?: string;
   copyMarkdown: string;
   tooltip?: string;
-  toneClassName?: string;
-  interactive?: boolean;
-  unresolved?: boolean;
+  kind: ContextChipKind;
 }) {
   return (
     <ContextChipShell
+      kind={props.kind}
       icon={props.icon}
       label={props.label}
-      className={cn(CHAT_INLINE_CHIP_CLASS_NAME, props.toneClassName)}
-      labelClassName={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}
       aria-label={props.kindLabel ? `${props.kindLabel}, ${props.label}` : undefined}
       data-markdown-copy={props.copyMarkdown}
       tooltip={props.tooltip}
-      interactive={props.interactive === true}
-      unresolved={props.unresolved === true}
     />
   );
 }
@@ -3506,18 +3494,18 @@ function UserMessageContextChip(props: {
 function UserMessagePullRequestContextChip(props: {
   record: Extract<KnownComposerContextRecord, { kind: "review-comment" }>;
   copyMarkdown: string;
-  toneClassName: string;
+  kind: ContextChipKind;
 }) {
-  const { openPullRequest } = use(TimelineRowCtx);
+  const { activeThreadEnvironmentId, openPullRequest } = use(TimelineRowCtx);
   const metadata = props.record.pullRequest;
   if (metadata === undefined) return null;
   return (
     <PullRequestChip
       metadata={metadata}
+      environmentId={activeThreadEnvironmentId}
       label={reviewCommentContextLabel(props.record)}
       kindLabel={pullRequestContextKindLabel(props.record)}
-      className={cn(CHAT_INLINE_CHIP_CLASS_NAME, props.toneClassName)}
-      labelClassName={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}
+      kind={props.kind}
       copyMarkdown={props.copyMarkdown}
       onOpen={openPullRequest}
     />
@@ -3563,7 +3551,7 @@ function UserMessagePreviewAnnotationDetails(props: {
             {props.record.comment}
           </div>
         ) : null}
-        <div className="mt-1 flex items-center gap-2 text-secondary-label text-[10px]">
+        <div className="mt-1 flex items-center gap-2 text-secondary-label text-3xs">
           {props.record.targetSummary ? (
             <span className="truncate">{props.record.targetSummary}</span>
           ) : null}
@@ -3595,7 +3583,7 @@ function UserMessagePreviewAnnotationDetails(props: {
                     ) : null}
                   </div>
                   {element.htmlPreview?.trim() ? (
-                    <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap rounded bg-muted/60 px-2 py-1.5 text-[10px] leading-relaxed">
+                    <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap rounded bg-muted/60 px-2 py-1.5 text-3xs leading-relaxed">
                       {element.htmlPreview.trim()}
                     </pre>
                   ) : null}
@@ -3603,7 +3591,7 @@ function UserMessagePreviewAnnotationDetails(props: {
               );
             })}
             {(props.record.elements?.length ?? 0) > visibleElements.length ? (
-              <div className="text-secondary-label text-[10px]">
+              <div className="text-secondary-label text-3xs">
                 {(props.record.elements?.length ?? 0) - visibleElements.length} more selected
                 elements
               </div>
@@ -3629,7 +3617,7 @@ function UserMessageElementDetails({
         <div className="truncate text-message-foreground text-xs font-medium">
           {record.pageTitle?.trim() || record.pageUrl}
         </div>
-        <div className="mt-0.5 truncate text-secondary-label text-[10px]">{record.pageUrl}</div>
+        <div className="mt-0.5 truncate text-secondary-label text-3xs">{record.pageUrl}</div>
       </div>
       <div className="space-y-2 px-3 py-2.5">
         <div className="flex min-w-0 items-center gap-2 text-xs">
@@ -3670,11 +3658,8 @@ function UnavailableUserMessageContextChip(props: UserMessageContextRenderContex
   return (
     <UnresolvedChip
       label={props.reference.label}
-      className={CHAT_INLINE_CHIP_CLASS_NAME}
-      labelClassName={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}
       copyMarkdown={props.copyMarkdown}
       tooltip="This context is no longer available."
-      tooltipClassName="max-w-96 whitespace-pre-wrap leading-tight"
     />
   );
 }
@@ -3702,18 +3687,12 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
       render: (record, context) =>
         record.kind === "skill" ? (
           <UserMessageContextChip
-            icon={
-              <span
-                aria-hidden="true"
-                className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
-                dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
-              />
-            }
+            icon={<SkillChipIcon />}
             label={record.label || record.name}
             kindLabel="Skill"
             tooltip={`$${record.name}`}
             copyMarkdown={context.copyMarkdown}
-            toneClassName={CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.skill}
+            kind="skill"
           />
         ) : (
           <UnavailableUserMessageContextChip {...context} />
@@ -3738,8 +3717,6 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
           <ImageChipButton
             name={record.name}
             previewUrl={attachment.previewUrl}
-            className={CHAT_INLINE_CHIP_CLASS_NAME}
-            labelClassName={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}
             size={formatAttachmentSize(record.sizeBytes)}
             data-markdown-copy={context.copyMarkdown}
             onClick={() => context.onExpandImage(attachment)}
@@ -3772,8 +3749,6 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
             size={size}
             isVideo={isVideo}
             theme={context.resolvedTheme}
-            className={CHAT_INLINE_CHIP_CLASS_NAME}
-            labelClassName={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}
             disabled={disabled}
             accessibleLabel={`${isVideo ? "Video" : "File"} attachment, ${record.name}, ${size}`}
             copyMarkdown={context.copyMarkdown}
@@ -3792,7 +3767,6 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         record.kind === "terminal" ? (
           <span data-markdown-copy={context.copyMarkdown}>
             <TerminalContextInlineChip
-              surface="transcript"
               label={record.label}
               terminalLabel={record.terminalLabel}
               lineStart={record.lineStart}
@@ -3813,24 +3787,9 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
           <UserMessageContextPopover
             copyMarkdown={context.copyMarkdown}
             accessibleLabel={`Browser element, ${record.label}`}
-            chip={
-              <UserMessageContextChip
-                icon={
-                  <MousePointerClickIcon
-                    className={cn(
-                      COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-                      CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES.element,
-                      "size-3.5",
-                    )}
-                  />
-                }
-                label={record.label}
-                kindLabel="Browser element"
-                copyMarkdown={context.copyMarkdown}
-                interactive
-                toneClassName={CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.element}
-              />
-            }
+            kind="element"
+            icon={<MousePointerClickIcon />}
+            label={record.label}
           >
             <UserMessageElementDetails record={record} />
           </UserMessageContextPopover>
@@ -3854,7 +3813,7 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
             <UserMessagePullRequestContextChip
               record={record}
               copyMarkdown={context.copyMarkdown}
-              toneClassName={PULL_REQUEST_INLINE_CHIP_TONE_CLASS_NAMES[pullRequestState]}
+              kind={PULL_REQUEST_CHIP_KINDS[pullRequestState]}
             />
           );
         }
@@ -3862,38 +3821,9 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
           <UserMessageContextPopover
             copyMarkdown={context.copyMarkdown}
             accessibleLabel={`${kindLabel}, ${label}${record.pullRequest ? `, ${record.pullRequest.title}` : ""}`}
-            chip={
-              <UserMessageContextChip
-                icon={
-                  isPullRequest ? (
-                    <PullRequestGlyph.pullRequest
-                      className={cn(
-                        COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-                        CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES["pull-request"],
-                        "size-3.5",
-                      )}
-                    />
-                  ) : (
-                    <MessageCircleIcon
-                      className={cn(
-                        COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-                        CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES["review-comment"],
-                        "size-3.5",
-                      )}
-                    />
-                  )
-                }
-                label={label}
-                kindLabel={kindLabel}
-                copyMarkdown={context.copyMarkdown}
-                interactive
-                toneClassName={
-                  isPullRequest
-                    ? PULL_REQUEST_INLINE_CHIP_TONE_CLASS_NAMES[pullRequestState]
-                    : CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES["review-comment"]
-                }
-              />
-            }
+            kind={isPullRequest ? PULL_REQUEST_CHIP_KINDS[pullRequestState] : "review-comment"}
+            icon={isPullRequest ? <PullRequestGlyph.pullRequest /> : <MessageCircleIcon />}
+            label={label}
           >
             <UserMessageReviewCommentCard
               comment={{
@@ -3924,24 +3854,9 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
           <UserMessageContextPopover
             copyMarkdown={context.copyMarkdown}
             accessibleLabel={`Preview annotation, ${record.label}`}
-            chip={
-              <UserMessageContextChip
-                icon={
-                  <MousePointerClickIcon
-                    className={cn(
-                      COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-                      CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES["preview-annotation"],
-                      "size-3.5",
-                    )}
-                  />
-                }
-                label={record.label}
-                kindLabel="Preview annotation"
-                copyMarkdown={context.copyMarkdown}
-                interactive
-                toneClassName={CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES["preview-annotation"]}
-              />
-            }
+            kind="preview-annotation"
+            icon={<MousePointerClickIcon />}
+            label={record.label}
           >
             <UserMessagePreviewAnnotationDetails record={record} image={context.annotationImage} />
           </UserMessageContextPopover>
@@ -4047,11 +3962,11 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
             <Button
               type="button"
               size="xs"
-              variant="ghost"
+              variant="ghost-muted"
               aria-expanded={expanded}
               data-scroll-anchor-ignore
               onClick={() => setExpanded((value) => !value)}
-              className="-ml-1 h-6 rounded-md px-1.5 text-secondary-label text-xs hover:bg-muted/55 hover:text-message-foreground"
+              className="-ml-1"
             >
               {expanded ? "Show less" : "Show full message"}
             </Button>
@@ -4067,7 +3982,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
 
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
-  renderContextReference: (reference: ChatMarkdownContextReference) => ReactNode;
+  renderContextReference?: (reference: ChatMarkdownContextReference) => ReactNode;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   markdownCwd: string | undefined;
 }) {
@@ -4104,7 +4019,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
         <div className="text-message-foreground text-xs font-medium">
           {formatWorkspaceRelativePath(comment.filePath, ctx.workspaceRoot)}
         </div>
-        <div className="text-secondary-label text-[11px]">
+        <div className="text-secondary-label text-2xs">
           {comment.sectionTitle} · {comment.rangeLabel}
         </div>
       </div>
@@ -4237,30 +4152,6 @@ function BrowserAppIcon({ className }: { className: string }) {
   );
 }
 
-function ComputerUseAppIcon({ className }: { className: string }) {
-  const gradientId = `${useId().replaceAll(":", "")}-computer-use-app-gradient`;
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden>
-      <defs>
-        <linearGradient id={gradientId} x1="2" y1="2" x2="22" y2="22">
-          <stop offset="0" stopColor="#00dff0" />
-          <stop offset="0.42" stopColor="#3b9cff" />
-          <stop offset="0.72" stopColor="#b044f5" />
-          <stop offset="1" stopColor="#ff78b6" />
-        </linearGradient>
-      </defs>
-      <rect x="1" y="1" width="22" height="22" rx="5" fill={`url(#${gradientId})`} />
-      <path
-        d="m7.2 6.2 10.5 4.1-4.2 2.1-2 4.7z"
-        fill="white"
-        stroke="#315cff"
-        strokeWidth="1.1"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
 function ToolActivityIconView(props: {
   icon: ToolActivityIcon | undefined;
   fallbackName: WorkEntryIconName;
@@ -4268,7 +4159,7 @@ function ToolActivityIconView(props: {
   muted: boolean;
 }) {
   const { resolvedTheme } = use(TimelineRowCtx);
-  const fallbackClassName = cn(props.className, props.muted && "opacity-70 light:brightness-[.6]");
+  const fallbackClassName = cn(props.className, props.muted && "opacity-70 light:brightness-60");
   if (!props.icon) {
     return <WorkEntryIcon name={props.fallbackName} className={fallbackClassName} />;
   }
@@ -4328,7 +4219,7 @@ function NativeAppToolActivityIcon(props: {
     return (
       <WorkEntryIcon
         name={props.fallbackName}
-        className={cn(props.className, props.muted && "opacity-70 light:brightness-[.6]")}
+        className={cn(props.className, props.muted && "opacity-70 light:brightness-60")}
       />
     );
   }
@@ -4373,14 +4264,14 @@ function ToolActivityImageIcon(props: {
       {displayedSrc === null ? (
         <WorkEntryIcon
           name={props.fallbackName}
-          className={cn(props.className, props.muted && "opacity-70 light:brightness-[.6]")}
+          className={cn(props.className, props.muted && "opacity-70 light:brightness-60")}
         />
       ) : null}
       {displayedSrc ? (
         <span
           className={cn(
             props.className,
-            "inline-block overflow-hidden rounded-[3px] bg-background",
+            "inline-block overflow-hidden rounded-xs bg-background",
             props.muted && "opacity-70",
           )}
         >
@@ -4390,7 +4281,7 @@ function ToolActivityImageIcon(props: {
             aria-hidden
             decoding="async"
             referrerPolicy="no-referrer"
-            className={cn("block size-full object-contain", props.muted && "light:brightness-[.6]")}
+            className={cn("block size-full object-contain", props.muted && "light:brightness-60")}
             onError={() => handleLoadError(displayedSrc)}
           />
         </span>
@@ -4470,7 +4361,7 @@ function workToneIcon(tone: TimelineWorkEntry["tone"]): {
   if (tone === "thinking") {
     return {
       iconName: "brain",
-      className: "text-foreground",
+      className: "text-icon-muted",
     };
   }
   if (tone === "info") {
@@ -4544,7 +4435,7 @@ function buildToolCallExpandedBody(
 }
 
 const toolCallExpandedBodyClassName =
-  "max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-secondary-label text-[length:var(--font-size-code,0.6875rem)] leading-relaxed select-text";
+  "max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-secondary-label text-(length:--font-size-code,var(--text-2xs)) leading-relaxed select-text";
 
 function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   if (
@@ -4755,12 +4646,12 @@ function AgentSpawnMemberRow({
             {agent.title}
           </span>
           {role ? (
-            <span className="max-w-28 shrink-0 truncate rounded-sm border border-border/60 px-1 font-mono text-[.65rem] text-muted-foreground">
+            <span className="max-w-28 shrink-0 truncate rounded-sm border border-border/60 px-1 font-mono text-3xs text-muted-foreground">
               {role}
             </span>
           ) : null}
         </p>
-        <span className="shrink-0 font-mono text-[.7rem] tabular-nums text-muted-foreground">
+        <span className="shrink-0 font-mono text-2xs tabular-nums text-muted-foreground">
           {statusLabel}
         </span>
       </div>
@@ -4936,7 +4827,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           <ToolActivityIconView
             icon={entryToolIcon}
             fallbackName={entryIconName}
-            className="block size-4 shrink-0 stroke-[1.8]"
+            className="block size-4 shrink-0 stroke-2"
             muted
           />
         </span>

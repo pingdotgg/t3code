@@ -1,5 +1,10 @@
 import * as NetService from "@t3tools/shared/Net";
-import { OtlpHeadersFromString, OtlpProtocol } from "@t3tools/shared/observability";
+import {
+  OtlpHeadersFromString,
+  OtlpProtocol,
+  type SignalExport,
+} from "@t3tools/shared/observability";
+import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
 import * as Config from "effect/Config";
@@ -382,6 +387,16 @@ export const resolveServerConfig = (
     );
     const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 
+    const otel = yield* OtelEnvironment.load;
+
+    // T3 Code's own OTLP variables name no signal, so the one answer they give
+    // is the answer for all three.
+    const signalExport: SignalExport = {
+      protocol: env.otlpProtocol,
+      headers: env.otlpHeaders,
+      exportIntervalMs: env.otlpExportIntervalMs,
+    };
+
     const config: ServerConfig.ServerConfig["Service"] = {
       logLevel,
       traceMinLevel: env.traceMinLevel,
@@ -389,20 +404,24 @@ export const resolveServerConfig = (
       traceBatchWindowMs: env.traceBatchWindowMs,
       traceMaxBytes: env.traceMaxBytes,
       traceMaxFiles: env.traceMaxFiles,
-      otlpTracesUrl:
-        env.otlpTracesUrl ??
-        bootstrap?.otlpTracesUrl ??
-        persistedObservabilitySettings.otlpTracesUrl,
-      otlpMetricsUrl:
-        env.otlpMetricsUrl ??
-        bootstrap?.otlpMetricsUrl ??
-        persistedObservabilitySettings.otlpMetricsUrl,
-      otlpLogsUrl:
-        env.otlpLogsUrl ?? bootstrap?.otlpLogsUrl ?? persistedObservabilitySettings.otlpLogsUrl,
-      otlpExportIntervalMs: env.otlpExportIntervalMs,
+      otlpTracesUrl: otel.disabled
+        ? undefined
+        : (env.otlpTracesUrl ??
+          bootstrap?.otlpTracesUrl ??
+          persistedObservabilitySettings.otlpTracesUrl),
+      otlpMetricsUrl: otel.disabled
+        ? undefined
+        : (env.otlpMetricsUrl ??
+          bootstrap?.otlpMetricsUrl ??
+          persistedObservabilitySettings.otlpMetricsUrl),
+      otlpLogsUrl: otel.disabled
+        ? undefined
+        : (env.otlpLogsUrl ?? bootstrap?.otlpLogsUrl ?? persistedObservabilitySettings.otlpLogsUrl),
+      otlpTracesExport: signalExport,
+      otlpMetricsExport: signalExport,
+      otlpLogsExport: signalExport,
       otlpServiceName: env.otlpServiceName,
-      otlpHeaders: env.otlpHeaders,
-      otlpProtocol: env.otlpProtocol,
+      otelEnvironment: otel,
       mode,
       port,
       cwd,

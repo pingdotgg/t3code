@@ -60,4 +60,10 @@ describe("T3ProjectFile", () => {
     expect(decode({ defaultThreadEnvMode: "local" }).defaultThreadEnvMode).toBe("local");
     expect(() => decode({ defaultThreadEnvMode: "remote" })).toThrow();
   });
+
+  it("decodes worktreeSubmodules and rejects unknown modes", () => {
+    expect(decode({ worktreeSubmodules: "none" }).worktreeSubmodules).toBe("none");
+    expect(decode({ worktreeSubmodules: "top-level" }).worktreeSubmodules).toBe("top-level");
+    expect(() => decode({ worktreeSubmodules: "shallow" })).toThrow();
+  });
 });
