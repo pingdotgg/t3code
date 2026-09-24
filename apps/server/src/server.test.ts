@@ -3706,13 +3706,17 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         layers: {
           cloudManagedEndpointRuntime: {
-            applyConfig: () =>
-              Effect.succeed({
-                status: "failed",
-                providerKind: "cloudflare_tunnel",
-                reason: "cloudflared missing",
-                tunnelId: "tunnel-1",
-              }),
+            applyConfig: (config) =>
+              Effect.succeed(
+                config
+                  ? {
+                      status: "failed",
+                      providerKind: "cloudflare_tunnel",
+                      reason: "cloudflared missing",
+                      tunnelId: "tunnel-1",
+                    }
+                  : { status: "disabled" },
+              ),
           },
         },
       });
