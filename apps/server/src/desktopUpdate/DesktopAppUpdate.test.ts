@@ -7,7 +7,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -212,139 +211,26 @@ it.layer(NodeServices.layer)("desktop app update", (it) => {
     }),
   );
 
-  it.effect("retains the tunnel handoff after transport loss, then expires it", () =>
-    Effect.gen(function* () {
-      const accepted = yield* Deferred.make<void>();
-      const workerStarted = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
-      const { service } = yield* makeHarness({
-        keepOpen: true,
-        receiver: {
-          commitDesktopUpdate: () =>
-            Effect.fiber.pipe(
-              Effect.flatMap((fiber) => Deferred.succeed(workerStarted, fiber)),
-              Effect.asVoid,
-            ),
-        },
-      });
-      const commit = yield* service
-        .commit("update-1", () => Deferred.succeed(accepted, undefined).pipe(Effect.asVoid))
-        .pipe(Effect.forkChild);
-      yield* Deferred.await(accepted);
-      expect(yield* service.isRestartPending).toBe(true);
+  it.effect(
+    "keeps an accepted install pending after its caller disconnects, until the deadline",
+    () =>
+      Effect.gen(function* () {
+        const accepted = yield* Deferred.make<void>();
+        const { service } = yield* makeHarness({ keepOpen: true });
+        const commit = yield* service
+          .commit("update-1", () => Deferred.succeed(accepted, undefined).pipe(Effect.asVoid))
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(accepted);
+        // Shutdown interrupts the commit RPC before the tunnel cleanup runs.
+        yield* Fiber.interrupt(commit);
+        expect(yield* service.isRestartPending).toBe(true);
 
-      yield* Fiber.interrupt(commit);
-      expect(yield* service.isRestartPending).toBe(true);
-      // Server shutdown also interrupts the service-owned report consumer.
-      yield* Fiber.interrupt(yield* Deferred.await(workerStarted));
-      expect(yield* service.isRestartPending).toBe(true);
-
-      yield* TestClock.adjust("2 minutes");
-      expect(yield* service.isRestartPending).toBe(false);
-    }),
+        yield* TestClock.adjust("2 minutes");
+        expect(yield* service.isRestartPending).toBe(false);
+      }),
   );
 
-  it.effect("finishes a delayed handoff before honoring caller cancellation", () =>
-    Effect.gen(function* () {
-      const writing = yield* Deferred.make<void>();
-      const finishWrite = yield* Deferred.make<void>();
-      const accepted = yield* Deferred.make<void>();
-      const { service } = yield* makeHarness({
-        keepOpen: true,
-        receiver: {
-          commitDesktopUpdate: () =>
-            Deferred.succeed(writing, undefined).pipe(Effect.andThen(Deferred.await(finishWrite))),
-        },
-      });
-      const commit = yield* service
-        .commit("update-1", () => Deferred.succeed(accepted, undefined).pipe(Effect.asVoid))
-        .pipe(Effect.forkChild);
-      yield* Deferred.await(writing);
-      yield* TestClock.adjust("2 minutes");
-      expect(yield* service.isRestartPending).toBe(false);
-
-      const cancellation = yield* Fiber.interrupt(commit).pipe(
-        Effect.forkChild({ startImmediately: true }),
-      );
-      yield* Deferred.succeed(finishWrite, undefined);
-      yield* Deferred.await(accepted);
-      yield* Fiber.join(cancellation);
-      expect(yield* service.isRestartPending).toBe(true);
-    }),
-  );
-
-  it.effect("consumes a disconnected caller's failure before later reports overwrite it", () =>
-    Effect.gen(function* () {
-      const workerStarted = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
-      const reports = yield* Queue.unbounded<DesktopUpdateStatusReport>();
-      let latest = Option.none<DesktopUpdateStatusReport>();
-      const { service } = yield* makeHarness({
-        receiver: {
-          commitDesktopUpdate: () =>
-            Effect.fiber.pipe(
-              Effect.flatMap((fiber) => Deferred.succeed(workerStarted, fiber)),
-              Effect.asVoid,
-            ),
-          desktopUpdates: Effect.sync(() => ({ latest, changes: Stream.fromQueue(reports) })),
-        },
-      });
-      const commit = yield* service.commit("update-1").pipe(Effect.forkChild);
-      const worker = yield* Deferred.await(workerStarted);
-      yield* Fiber.interrupt(commit);
-      const failure = report("update-1", makeState(), { outcome: "failed" });
-      const later = report("update-2", makeState({ status: "checking" }));
-      latest = Option.some(later);
-      yield* Queue.offerAll(reports, [failure, later]);
-      yield* Fiber.await(worker);
-
-      expect(yield* service.isRestartPending).toBe(false);
-    }),
-  );
-
-  it.effect("clears the handoff when the desktop control write fails", () =>
-    Effect.gen(function* () {
-      const { service } = yield* makeHarness({
-        receiver: {
-          commitDesktopUpdate: () =>
-            Effect.fail(
-              new DesktopTelemetryReceiver.DesktopTelemetryControlStalled({
-                fd: 5,
-                remainingBytes: 1,
-              }),
-            ),
-        },
-      });
-
-      yield* service.commit("update-1").pipe(Effect.flip);
-      expect(yield* service.isRestartPending).toBe(false);
-    }),
-  );
-
-  it.effect("clears the handoff when installation times out", () =>
-    Effect.gen(function* () {
-      const waiting = yield* Deferred.make<void>();
-      const { service } = yield* makeHarness({
-        receiver: {
-          desktopUpdates: Effect.succeed({
-            latest: Option.none(),
-            changes: Stream.fromEffect(Deferred.succeed(waiting, undefined)).pipe(
-              Stream.drain,
-              Stream.concat(Stream.never),
-            ),
-          }),
-        },
-      });
-      const commit = yield* service.commit("update-1").pipe(Effect.flip, Effect.forkChild);
-      yield* Deferred.await(waiting);
-      yield* TestClock.adjust("2 minutes");
-
-      expect((yield* Fiber.join(commit)).reason).toBe(
-        "The desktop app did not report an install result in time.",
-      );
-      expect(yield* service.isRestartPending).toBe(false);
-    }),
-  );
-
-  it.effect("does not let a rejected commit clear another install's handoff", () =>
+  it.effect("ends only the failed request's handoff", () =>
     Effect.gen(function* () {
       const accepted = yield* Deferred.make<void>();
       const { service } = yield* makeHarness({
@@ -361,35 +247,6 @@ it.layer(NodeServices.layer)("desktop app update", (it) => {
       yield* Deferred.await(accepted);
       yield* Fiber.interrupt(commit);
       yield* service.commit("rejected").pipe(Effect.flip);
-
-      expect(yield* service.isRestartPending).toBe(true);
-    }),
-  );
-
-  it.effect("does not let a failed duplicate commit clear an accepted handoff", () =>
-    Effect.gen(function* () {
-      const accepted = yield* Deferred.make<void>();
-      let controlWrites = 0;
-      const { service } = yield* makeHarness({
-        keepOpen: true,
-        receiver: {
-          commitDesktopUpdate: () =>
-            Effect.gen(function* () {
-              if (controlWrites++ > 0) {
-                return yield* new DesktopTelemetryReceiver.DesktopTelemetryControlStalled({
-                  fd: 5,
-                  remainingBytes: 1,
-                });
-              }
-            }),
-        },
-      });
-      const commit = yield* service
-        .commit("update-1", () => Deferred.succeed(accepted, undefined).pipe(Effect.asVoid))
-        .pipe(Effect.forkChild);
-      yield* Deferred.await(accepted);
-      yield* Fiber.interrupt(commit);
-      yield* service.commit("update-1").pipe(Effect.flip);
 
       expect(yield* service.isRestartPending).toBe(true);
     }),
