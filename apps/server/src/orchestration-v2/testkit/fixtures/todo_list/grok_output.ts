@@ -28,7 +28,7 @@ export function assertTodoListGrokOutput(
   assertTurnItemTypes(projection, [
     "user_message",
     "todo_list",
-    "file_search",
+    "dynamic_tool",
     "assistant_message",
   ]);
   assertUserMessagesInclude(projection, [TODO_LIST_PROMPT]);

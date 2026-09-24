@@ -599,6 +599,9 @@ function locationsFromToolCallInput(input: {
   readonly rawInput?: unknown;
   readonly rawOutput?: unknown;
 }): ReadonlyArray<EffectAcpSchema.ToolCallLocation> | undefined {
+  if (input.locations === null || input.locations?.length === 0) {
+    return [];
+  }
   const locations: EffectAcpSchema.ToolCallLocation[] = [];
   const seen = new Set<string>();
   const pushLocation = (location: EffectAcpSchema.ToolCallLocation) => {

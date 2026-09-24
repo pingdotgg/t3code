@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   classifyToolActivity,
+  collectToolFilePaths,
   deriveToolActivityPresentation,
   formatReadToolLabel,
   formatSearchToolLabel,
@@ -87,6 +88,13 @@ describe("toolActivity", () => {
     expect(formatSearchToolLabel({ input: { globPattern: "*.tsx", path: "apps/web" } })).toBe(
       "Searched files *.tsx in web",
     );
+    expect(
+      formatSearchToolLabel({ input: { pattern: "TODO", glob: "*.ts", path: "apps/web" } }),
+    ).toBe("Searched TODO in web");
+  });
+
+  it("keeps bare filenames from explicit path fields", () => {
+    expect(collectToolFilePaths({ input: { file_path: "README" } })).toEqual(["README"]);
   });
 
   it("keeps the first non-empty rawInput when a later update is empty", () => {

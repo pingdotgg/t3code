@@ -92,21 +92,6 @@ function extractToolCommand(data: Record<string, unknown> | undefined, title: st
   return extractCommandFromTitle(title);
 }
 
-function maybePathLike(value: string | undefined): string | undefined {
-  if (!value) {
-    return undefined;
-  }
-  if (
-    value.includes("/") ||
-    value.includes("\\") ||
-    value.startsWith(".") ||
-    /\.(?:[a-z0-9]{1,12})$/iu.test(value)
-  ) {
-    return value;
-  }
-  return undefined;
-}
-
 const PATH_KEYS = [
   "path",
   "filePath",
@@ -136,7 +121,7 @@ function collectPaths(value: unknown, paths: string[], seen: Set<string>, depth:
     return;
   }
   for (const key of PATH_KEYS) {
-    const candidate = maybePathLike(asTrimmedString(record[key]));
+    const candidate = asTrimmedString(record[key]);
     if (!candidate || seen.has(candidate)) {
       continue;
     }
@@ -371,11 +356,11 @@ export function formatSearchToolLabel(
   const query = firstInputString(input, SEARCH_QUERY_KEYS);
   const glob = firstInputString(input, SEARCH_GLOB_KEYS);
   const target = searchTargetName(firstInputString(input, SEARCH_TARGET_KEYS));
-  if (glob && target) {
-    return `Searched files ${glob} in ${target}`;
-  }
   if (query && target) {
     return `Searched ${query} in ${target}`;
+  }
+  if (glob && target) {
+    return `Searched files ${glob} in ${target}`;
   }
   if (glob) {
     return `Searched files ${glob}`;
