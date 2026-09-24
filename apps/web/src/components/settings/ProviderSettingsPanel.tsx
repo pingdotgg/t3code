@@ -47,7 +47,7 @@ import {
 } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useEnvironmentSessionState } from "../../state/session";
-import { useAtomCommand } from "../../state/use-atom-command";
+import { useAtomCommand, useAtomReader } from "../../state/use-atom-command";
 import { getRelativeTimeState } from "../../timestampFormat";
 import {
   ConnectionStatusDot,
@@ -572,6 +572,10 @@ export function EnvironmentProviderSettings({
   // Provider instances hold per-machine credentials and binaries, so this
   // page always edits exactly the environment it displays.
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const saveProviderSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    reportFailure: false,
+  });
+  const readAtom = useAtomReader();
   const updateClientSettings = useUpdateClientSettings();
   const serverProviders =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
@@ -906,7 +910,7 @@ export function EnvironmentProviderSettings({
 
     return (
       <ProviderInstanceCard
-        key={row.instanceId}
+        key={`${environmentId}:${row.instanceId}`}
         instanceId={row.instanceId}
         instance={row.instance}
         driverOption={driverOption}
@@ -930,6 +934,26 @@ export function EnvironmentProviderSettings({
             />
           ) : null
         }
+        onSaveCustomModels={async (next) => {
+          // Read settings at dispatch time so the replacement map includes every provider
+          // write the environment has already confirmed. Without loaded settings, a map built
+          // from defaults would erase this environment's other instances, so fail the save.
+          const latestSettings = readAtom(serverEnvironment.settingsValueAtom(environmentId));
+          if (latestSettings === null) return false;
+          const result = await saveProviderSettings({
+            environmentId,
+            input: {
+              patch: buildProviderInstanceUpdatePatch({
+                settings: latestSettings,
+                instanceId: row.instanceId,
+                instance: next,
+                driver: row.driver,
+                isDefault: row.isDefault,
+              }),
+            },
+          });
+          return result._tag === "Success";
+        }}
         onUpdate={(next) => {
           const wasEnabled = resolveProviderInstanceEnabled(row.instance);
           const isDisabling = next.enabled === false && wasEnabled;
