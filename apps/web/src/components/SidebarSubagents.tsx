@@ -61,30 +61,32 @@ function SubagentToggle({
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") event.stopPropagation();
       }}
-      className="gap-1 text-[11px] tabular-nums text-muted-foreground hover:text-foreground"
+      tone="muted"
     >
-      {disclosureOnly ? null : (
-        <>
-          <BotIcon aria-hidden className="size-3" />
-          {compact ? (
-            <>
-              <CircleDotIcon aria-hidden className="size-2.5 text-info" />
-              <span>{counts.running}</span>
-              <CheckIcon aria-hidden className="size-2.5" />
-              <span>{counts.finished}</span>
-            </>
-          ) : (
-            <>
-              <span className={counts.running > 0 ? "text-info" : undefined}>
-                {counts.running} running
-              </span>
-              <span aria-hidden>·</span>
-              <span>{counts.finished} finished</span>
-            </>
-          )}
-        </>
-      )}
-      <ChevronDownIcon aria-hidden className={cn("size-3", expanded && "rotate-180")} />
+      <span className="inline-flex items-center gap-1 text-[11px] tabular-nums">
+        {disclosureOnly ? null : (
+          <>
+            <BotIcon aria-hidden className="size-3" />
+            {compact ? (
+              <>
+                <CircleDotIcon aria-hidden className="size-2.5 text-info" />
+                <span>{counts.running}</span>
+                <CheckIcon aria-hidden className="size-2.5" />
+                <span>{counts.finished}</span>
+              </>
+            ) : (
+              <>
+                <span className={counts.running > 0 ? "text-info" : undefined}>
+                  {counts.running} running
+                </span>
+                <span aria-hidden>·</span>
+                <span>{counts.finished} finished</span>
+              </>
+            )}
+          </>
+        )}
+        <ChevronDownIcon aria-hidden className={cn("size-3", expanded && "rotate-180")} />
+      </span>
     </InlineButton>
   );
 }
