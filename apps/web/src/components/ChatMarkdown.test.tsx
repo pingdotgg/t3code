@@ -639,7 +639,7 @@ describe("ChatMarkdown artifact-template cards", () => {
     );
 
     expect(html).not.toContain("::artifact-template");
-    expect(html).toContain("chat-markdown-artifact-template");
+    expect(html).toContain("data-chat-markdown-artifact-template");
     expect(html).toContain('data-artifact-kind="document"');
     expect(html).toContain('data-markdown-copy="Hello World (Document template)\n\n"');
     expect(html).toContain('data-skill-name="artifact-template-hello-world"');
@@ -654,7 +654,7 @@ describe("ChatMarkdown artifact-template cards", () => {
       <ChatMarkdown cwd="/tmp/project" text={ARTIFACT_TEMPLATE_DIRECTIVE} />,
     );
 
-    expect(html).toContain("chat-markdown-artifact-template");
+    expect(html).toContain("data-chat-markdown-artifact-template");
     expect(html).not.toContain("Use template");
   });
 
@@ -666,7 +666,7 @@ describe("ChatMarkdown artifact-template cards", () => {
     for (const text of [malformed, unfinished]) {
       const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={text} />);
       expect(html).toContain("::artifact-template");
-      expect(html).not.toContain("chat-markdown-artifact-template");
+      expect(html).not.toContain("data-chat-markdown-artifact-template");
     }
   });
 
@@ -678,7 +678,7 @@ describe("ChatMarkdown artifact-template cards", () => {
       const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={text} />);
 
       expect(html).toContain("::artifact-template");
-      expect(html).not.toContain("chat-markdown-artifact-template");
+      expect(html).not.toContain("data-chat-markdown-artifact-template");
     }
   });
 
@@ -691,7 +691,7 @@ describe("ChatMarkdown artifact-template cards", () => {
     );
 
     expect(html.match(/::artifact-template/g)).toHaveLength(2);
-    expect(html).not.toContain("chat-markdown-artifact-template");
+    expect(html).not.toContain("data-chat-markdown-artifact-template");
   });
 });
 

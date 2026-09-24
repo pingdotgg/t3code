@@ -130,7 +130,7 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
         setHighlightedItemValue(null);
         setQuery(value);
       }}
-      panelClassName="max-h-[min(34rem,76vh)]"
+      panelSize="tall-list"
       testId="project-file-picker"
       value={query}
     >

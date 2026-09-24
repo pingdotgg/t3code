@@ -7,7 +7,6 @@ import {
   useState,
 } from "react";
 
-import { isElectron } from "~/env";
 import { useResizableWidth } from "~/hooks/useResizableWidth";
 import { cn } from "~/lib/utils";
 
@@ -64,7 +63,6 @@ export function PreviewPanelShell(props: {
   defaultWidth?: number;
   children: ReactNode;
 }) {
-  const useDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";
   const isInline = props.mode === "inline";
   const collapsible = isInline && props.open !== undefined;
   const open = props.open ?? true;
@@ -149,7 +147,6 @@ export function PreviewPanelShell(props: {
           className="flex h-full min-h-0 min-w-0 flex-col"
           style={collapsible && !maximized ? { width: `calc(${width}px - 1px)` } : undefined}
         >
-          {useDragRegion ? <div className="electron-drag-region h-0 w-full" aria-hidden /> : null}
           {props.children}
         </div>
       </div>

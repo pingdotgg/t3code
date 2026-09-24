@@ -198,6 +198,12 @@ export default defineConfig({
         rules: { "t3code/no-mobile-uniwind-theme-escape-hatches": "error" },
       },
       {
+        // Every class in web code must be one Tailwind generates: a typo or a class nothing
+        // declares ships silently unstyled. JS hooks use data attributes, not class names.
+        files: ["apps/web/src/**"],
+        rules: { "shadcn/no-unknown-classes": "error" },
+      },
+      {
         // components/ui exports own their look. App code picks a variant or size instead
         // of restyling with className; layout classes (width, flex, margin, position) stay
         // allowed because placement belongs to the parent. components/ui is for generic
@@ -205,6 +211,8 @@ export default defineConfig({
         files: ["apps/web/src/**"],
         excludeFiles: ["apps/web/src/components/ui/**"],
         rules: {
+          // A className built at runtime on a ui component is one no-restyle cannot read.
+          "shadcn/require-static-classes": "error",
           "shadcn/no-restyle": [
             "error",
             {

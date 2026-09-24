@@ -115,7 +115,7 @@ export function ProjectFaviconPickerDialog(props: {
               setHighlightedItemValue(null);
               setQuery(value);
             }}
-            panelClassName="max-h-[min(34rem,76vh)]"
+            panelSize="tall-list"
             testId="project-favicon-picker"
             value={query}
           >
