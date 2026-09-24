@@ -125,18 +125,9 @@ function getOpenCodePromptFailure(error: unknown): OpenCodePromptFailure | null 
     return null;
   }
 
-  const name =
-    "name" in error && typeof error.name === "string" && error.name.trim().length > 0
-      ? error.name.trim()
-      : undefined;
+  const name = "type" in error && typeof error.type === "string" ? error.type : undefined;
   const message =
-    "data" in error &&
-    error.data &&
-    typeof error.data === "object" &&
-    "message" in error.data &&
-    typeof error.data.message === "string"
-      ? error.data.message.trim()
-      : "";
+    "message" in error && typeof error.message === "string" ? error.message.trim() : "";
   if (message.length > 0) {
     return {
       ...(name ? { name } : {}),
@@ -208,14 +199,22 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       ) {
         const client = openCodeRuntime.createOpenCodeSdkClient({
           baseUrl: server.url,
-          directory: input.cwd,
           ...(server.serverPassword !== undefined ? { serverPassword: server.serverPassword } : {}),
         });
+        const selectedAgent = getModelSelectionStringOptionValue(input.modelSelection, "agent");
+        const selectedVariant = getModelSelectionStringOptionValue(input.modelSelection, "variant");
         const session = yield* Effect.tryPromise({
           try: () =>
             client.session.create({
               title: `T3 Code ${input.operation}`,
-              permission: [{ permission: "*", pattern: "*", action: "deny" }],
+              location: { directory: input.cwd },
+              permissions: [{ action: "*", resource: "*", effect: "deny" }],
+              model: {
+                providerID: parsedModel.providerID,
+                id: parsedModel.modelID,
+                ...(selectedVariant ? { variant: selectedVariant } : {}),
+              },
+              ...(selectedAgent ? { agent: selectedAgent } : {}),
             }),
           catch: (cause) =>
             new OpenCodeTextGenerationSessionRequestError({
@@ -224,38 +223,41 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
               cause,
             }),
         });
-        if (!session.data) {
+        if (!session?.id) {
           return yield* new OpenCodeTextGenerationSessionPayloadError({
             operation: input.operation,
             cwd: input.cwd,
           });
         }
-        const selectedAgent = getModelSelectionStringOptionValue(input.modelSelection, "agent");
-        const selectedVariant = getModelSelectionStringOptionValue(input.modelSelection, "variant");
         const promptContext = {
           operation: input.operation,
           cwd: input.cwd,
-          sessionId: session.data.id,
+          sessionId: session.id,
           providerId: parsedModel.providerID,
           modelId: parsedModel.modelID,
         };
 
         const result = yield* Effect.tryPromise({
-          try: () =>
-            client.session.prompt({
-              sessionID: session.data.id,
-              model: parsedModel,
-              ...(selectedAgent ? { agent: selectedAgent } : {}),
-              ...(selectedVariant ? { variant: selectedVariant } : {}),
-              parts: [{ type: "text", text: input.prompt }, ...fileParts],
-            }),
+          try: async () => {
+            await client.session.prompt({
+              sessionID: session.id,
+              text: input.prompt,
+              files: fileParts,
+            });
+            await client.session.wait({ sessionID: session.id });
+            const messages = await client.message.list({
+              sessionID: session.id,
+              order: "desc",
+            });
+            return messages.data.find((message) => message.type === "assistant");
+          },
           catch: (cause) =>
             new OpenCodeTextGenerationPromptRequestError({
               ...promptContext,
               cause,
             }),
         });
-        const promptFailure = getOpenCodePromptFailure(result.data?.info?.error);
+        const promptFailure = getOpenCodePromptFailure(result?.error);
         if (promptFailure) {
           return yield* new OpenCodeTextGenerationPromptResponseError({
             ...promptContext,
@@ -263,7 +265,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             providerMessage: promptFailure.message,
           });
         }
-        const responseParts = result.data?.parts ?? [];
+        const responseParts = result?.content ?? [];
         const rawText = getOpenCodeTextResponse(responseParts);
         if (rawText.length === 0) {
           return yield* new OpenCodeTextGenerationEmptyOutputError({

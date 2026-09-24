@@ -2,8 +2,13 @@ import * as NodeAssert from "node:assert/strict";
 
 import * as RegExpUtils from "effect/RegExp";
 import { describe, it } from "vite-plus/test";
+import type { FormInfo } from "@opencode/client";
 
-import { buildOpenCodePermissionRules, toOpenCodePermissionReply } from "./opencodeRuntime.ts";
+import {
+  buildOpenCodePermissionRules,
+  toOpenCodePermissionReply,
+  toOpenCodeQuestionAnswers,
+} from "./opencodeRuntime.ts";
 
 function actionFor(
   runtimeMode: Parameters<typeof buildOpenCodePermissionRules>[0],
@@ -13,9 +18,11 @@ function actionFor(
   // OpenCode uses the last matching rule. Its wildcards match directory separators.
   return buildOpenCodePermissionRules(runtimeMode).findLast(
     (rule) =>
-      (rule.permission === "*" || rule.permission === permission) &&
-      new RegExp(`^${RegExpUtils.escape(rule.pattern).replaceAll("\\*", ".*")}$`, "s").test(target),
-  )?.action;
+      (rule.action === "*" || rule.action === permission) &&
+      new RegExp(`^${RegExpUtils.escape(rule.resource).replaceAll("\\*", ".*")}$`, "s").test(
+        target,
+      ),
+  )?.effect;
 }
 
 describe("buildOpenCodePermissionRules", () => {
@@ -59,7 +66,7 @@ describe("buildOpenCodePermissionRules", () => {
 
   it("still asks before commands, network access, external directories and unknown tools", () => {
     for (const runtimeMode of ["approval-required", "auto-accept-edits", "auto"] as const) {
-      NodeAssert.equal(actionFor(runtimeMode, "bash"), "ask");
+      NodeAssert.equal(actionFor(runtimeMode, "shell"), "ask");
       NodeAssert.equal(actionFor(runtimeMode, "webfetch"), "ask");
       NodeAssert.equal(actionFor(runtimeMode, "websearch"), "ask");
       NodeAssert.equal(actionFor(runtimeMode, "external_directory"), "ask");
@@ -70,8 +77,8 @@ describe("buildOpenCodePermissionRules", () => {
 
   it("allows everything only under full access", () => {
     NodeAssert.deepEqual(buildOpenCodePermissionRules("full-access"), [
-      { permission: "*", pattern: "*", action: "allow" },
-      { permission: "external_directory", pattern: "*", action: "allow" },
+      { action: "*", resource: "*", effect: "allow" },
+      { action: "external_directory", resource: "*", effect: "allow" },
     ]);
   });
 });
@@ -85,5 +92,63 @@ describe("toOpenCodePermissionReply", () => {
     ["cancel", "reject"],
   ] as const)("maps %s to %s", (decision, reply) => {
     NodeAssert.equal(toOpenCodePermissionReply(decision), reply);
+  });
+});
+
+describe("toOpenCodeQuestionAnswers", () => {
+  it("preserves native field order and scalar values while omitting unanswered optional fields", () => {
+    const request = {
+      id: "form_123",
+      sessionID: "session_123",
+      title: "Configure run",
+      fields: [
+        {
+          key: "model",
+          type: "string",
+          options: [{ label: "Balanced", value: "balanced" }],
+        },
+        { key: "confirmed", type: "boolean" },
+        { key: "temperature", type: "number" },
+        { key: "attempts", type: "integer" },
+        {
+          key: "tags",
+          type: "multiselect",
+          options: [{ label: "Review", value: "review" }],
+        },
+        { key: "optionalNote", type: "string", required: false },
+        { key: "external", type: "external", url: "https://example.test/form" },
+      ],
+    } as unknown as FormInfo;
+
+    const answers = toOpenCodeQuestionAnswers(request, {
+      ignored: "ignored",
+      tags: ["Review", "custom"],
+      attempts: "3",
+      temperature: "0.7",
+      confirmed: "false",
+      model: "Balanced",
+    });
+
+    NodeAssert.deepEqual(answers, {
+      model: "balanced",
+      confirmed: false,
+      temperature: 0.7,
+      attempts: 3,
+      tags: ["review", "custom"],
+    });
+    NodeAssert.deepEqual(
+      toOpenCodeQuestionAnswers(request, {
+        temperature: "",
+        attempts: "1.5",
+      }),
+      {},
+    );
+    NodeAssert.deepEqual(Object.keys(answers), [
+      "model",
+      "confirmed",
+      "temperature",
+      "attempts",
+      "tags",
+    ]);
   });
 });

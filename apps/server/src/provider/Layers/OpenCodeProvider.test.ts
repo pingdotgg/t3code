@@ -28,7 +28,7 @@ import type { OpenCodeInventory } from "../opencodeRuntime.ts";
 import { readOpenCodeGoUsageLimits } from "./openCodeUsageLimits.ts";
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
-const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
+const DEFAULT_VERSION_STDOUT = "opencode 2.0.12\n";
 
 it.effect("reads Go limits with the instance's XDG credentials and preserves reset times", () =>
   Effect.gen(function* () {
@@ -160,17 +160,17 @@ const runtimeMock = {
     versionStdout: DEFAULT_VERSION_STDOUT,
     inventoryError: null as Error | null,
     connectionError: null as Error | null,
-    inventoryCwd: null as string | null,
     closeCalls: 0,
     sdkClientInputs: [] as Array<{
       baseUrl: string;
-      directory: string;
       serverPassword?: string;
     }>,
     inventory: {
-      providerList: { connected: [] as string[], all: [] as unknown[], default: {} },
+      providers: [] as unknown[],
+      models: [] as unknown[],
       agents: [] as unknown[],
       skills: [] as unknown[],
+      commands: [] as unknown[],
     } as unknown,
   },
   reset() {
@@ -179,13 +179,14 @@ const runtimeMock = {
     this.state.versionStdout = DEFAULT_VERSION_STDOUT;
     this.state.inventoryError = null;
     this.state.connectionError = null;
-    this.state.inventoryCwd = null;
     this.state.closeCalls = 0;
     this.state.sdkClientInputs.length = 0;
     this.state.inventory = {
-      providerList: { connected: [], all: [] as unknown[], default: {} },
+      providers: [] as unknown[],
+      models: [] as unknown[],
       agents: [] as unknown[],
       skills: [] as unknown[],
+      commands: [] as unknown[],
     };
   },
 };
@@ -208,7 +209,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         ...(effectiveServerPassword !== undefined
           ? { serverPassword: effectiveServerPassword }
           : {}),
-        version: "1.14.19",
+        version: "2.0.12",
         isRunning: Effect.succeed(true),
         exitCode: Effect.never,
       };
@@ -232,7 +233,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       return {
         url: serverUrl ?? "http://127.0.0.1:4301",
         ...(serverPassword ? { serverPassword } : {}),
-        version: "1.14.19",
+        version: "2.0.12",
         exitCode: null,
         external: Boolean(serverUrl),
       };
@@ -263,39 +264,22 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           }),
         )
       : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory),
-  loadInventoryFromCli: ({ cwd }) => {
-    runtimeMock.state.inventoryCwd = cwd;
-    return runtimeMock.state.inventoryError
-      ? Effect.fail(
-          new OpenCodeRuntimeError({
-            operation: "loadInventoryFromCli",
-            detail: runtimeMock.state.inventoryError.message,
-            cause: runtimeMock.state.inventoryError,
-          }),
-        )
-      : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory);
-  },
   loadOpenCodeSkills: () => Effect.succeed([]),
-  loadSkillsFromCli: () => Effect.succeed([]),
 };
 
 beforeEach(() => {
   runtimeMock.reset();
 });
 
-it("keeps native and MCP commands while preserving compaction and separate skills", () => {
+it("maps native commands while preserving compaction", () => {
   NodeAssert.deepEqual(
     openCodeCommandsToServerProviderSlashCommands([
-      { name: "review", description: "Review changes", source: "command", hints: ["$ARGUMENTS"] },
-      { name: "review", source: "command", hints: [] },
-      { name: "compact", source: "command", hints: [] },
-      { name: "skill", source: "skill", hints: [] },
-      { name: "mcp:search", source: "mcp", hints: ["query"] },
+      { name: "review", description: "Review changes" },
+      { name: "review" },
+      { name: "compact" },
+      { name: "mcp:search" },
     ]).slice(1),
-    [
-      { name: "review", description: "Review changes", input: { hint: "$ARGUMENTS" } },
-      { name: "mcp:search", input: { hint: "query" } },
-    ],
+    [{ name: "review", description: "Review changes" }, { name: "mcp:search" }],
   );
 });
 
@@ -378,36 +362,32 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("emits OpenCode variant defaults so trait picker can resolve a visible selection", () =>
+  it.effect("preserves native variant and agent defaults for the trait picker", () =>
     Effect.gen(function* () {
       runtimeMock.state.inventory = {
-        providerList: {
-          connected: ["openai"],
-          all: [
-            {
-              id: "openai",
-              name: "OpenAI",
-              models: {
-                "gpt-5.4": {
-                  id: "gpt-5.4",
-                  name: "GPT-5.4",
-                  variants: {
-                    none: {},
-                    low: {},
-                    medium: {},
-                    high: {},
-                    xhigh: {},
-                  },
-                },
-              },
-            },
-          ],
-          default: {},
-        },
-        agents: [
-          { name: "build", hidden: false, mode: "primary" },
-          { name: "plan", hidden: false, mode: "primary" },
+        providers: [{ id: "openai", name: "OpenAI", activation: "enabled" }],
+        models: [
+          {
+            id: "gpt-5.4",
+            modelID: "gpt-5.4",
+            providerID: "openai",
+            name: "GPT-5.4",
+            variants: [
+              { id: "none" },
+              { id: "low" },
+              { id: "medium" },
+              { id: "high" },
+              { id: "xhigh" },
+            ],
+          },
         ],
+        agents: [
+          { id: "review", name: "Review", hidden: false, mode: "primary" },
+          { id: "build", name: "Build", hidden: false, mode: "primary" },
+          { id: "plan", name: "Plan", hidden: false, mode: "primary" },
+        ],
+        skills: [],
+        commands: [],
       };
 
       const snapshot = yield* checkProvider(makeOpenCodeSettings());
@@ -428,7 +408,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       NodeAssert.ok(agentDescriptor && agentDescriptor.type === "select");
       NodeAssert.equal(
         agentDescriptor.options.find((option) => option.isDefault === true)?.id,
-        "build",
+        "review",
       );
     }),
   );
@@ -436,41 +416,35 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
   it.effect("includes OpenCode skills in the provider snapshot", () =>
     Effect.gen(function* () {
       runtimeMock.state.inventory = {
-        providerList: {
-          connected: ["openai"],
-          all: [
-            {
-              id: "openai",
-              name: "OpenAI",
-              models: {
-                "gpt-5.4": {
-                  id: "gpt-5.4",
-                  name: "GPT-5.4",
-                  variants: {},
-                },
-              },
-            },
-          ],
-          default: {},
-        },
+        providers: [{ id: "openai", name: "OpenAI", activation: "enabled" }],
+        models: [
+          {
+            id: "gpt-5.4",
+            modelID: "gpt-5.4",
+            providerID: "openai",
+            name: "GPT-5.4",
+            variants: [],
+          },
+        ],
         agents: [],
         skills: [
           {
             name: "openclaw-review",
             description: "Review OpenClaw workflow changes.",
-            location: "/Users/test/.agents/skills/openclaw-review/SKILL.md",
+            path: "/Users/test/.agents/skills/openclaw-review/SKILL.md",
           },
           {
             name: "openclaw-triage",
             description: "Triage OpenClaw routing issues.",
-            location: "/Users/test/.agents/skills/openclaw-triage/SKILL.md",
+            path: "/Users/test/.agents/skills/openclaw-triage/SKILL.md",
           },
           {
-            name: "missing-location",
+            name: "missing-path",
             description: "This incomplete SDK row should be skipped.",
-            location: "",
+            path: "",
           },
         ],
+        commands: [],
       };
 
       const snapshot = yield* checkProvider(makeOpenCodeSettings());
@@ -507,12 +481,10 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       NodeAssert.deepEqual(runtimeMock.state.sdkClientInputs, [
         {
           baseUrl: "http://127.0.0.1:4301",
-          directory: process.cwd(),
           serverPassword: "secret-password",
         },
       ]);
       NodeAssert.equal(runtimeMock.state.closeCalls, 1);
-      NodeAssert.equal(runtimeMock.state.inventoryCwd, null);
     }),
   );
 
@@ -525,7 +497,6 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       NodeAssert.deepEqual(runtimeMock.state.sdkClientInputs, [
         {
           baseUrl: "http://127.0.0.1:4301",
-          directory: process.cwd(),
           serverPassword: "environment-password",
         },
       ]);
@@ -569,11 +540,10 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
         { OPENCODE_SERVER_PASSWORD: "local-secret" },
       );
 
-      NodeAssert.equal(snapshot.version, "1.14.19");
+      NodeAssert.equal(snapshot.version, "2.0.12");
       NodeAssert.deepEqual(runtimeMock.state.sdkClientInputs, [
         {
           baseUrl: "http://127.0.0.1:9999",
-          directory: process.cwd(),
         },
       ]);
     }),
