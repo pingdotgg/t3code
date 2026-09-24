@@ -139,6 +139,59 @@ function renderTabs(
   );
 }
 
+function renderEmptyState(liveAgentCount: number) {
+  return renderToStaticMarkup(
+    <RightPanelTabs
+      mode="inline"
+      surfaces={[]}
+      environmentId={null}
+      activeSurfaceId={null}
+      pendingSurfaceIds={new Set()}
+      previewSessions={{}}
+      desktopByTabId={{}}
+      terminalLabelsById={new Map()}
+      onActivate={() => undefined}
+      onCloseSurface={() => undefined}
+      onCloseOtherSurfaces={() => undefined}
+      onCloseSurfacesToRight={() => undefined}
+      onCloseAllSurfaces={() => undefined}
+      onCopyFilePath={() => undefined}
+      onAddBrowser={() => undefined}
+      onAddBrowserInProfile={() => undefined}
+      onAddTerminal={() => undefined}
+      onAddPullRequest={() => undefined}
+      onAddPullRequests={() => undefined}
+      onAddDiff={() => undefined}
+      onAddFiles={() => undefined}
+      onAddAgents={() => undefined}
+      onAddDevice={() => undefined}
+      liveAgentCount={liveAgentCount}
+      browserAvailable
+      terminalAvailable={false}
+      diffAvailable={false}
+      filesAvailable={false}
+      pullRequestAvailable={false}
+      pullRequestsAvailable={false}
+      agentsAvailable={false}
+      deviceAvailable={false}
+    >
+      <div>content</div>
+    </RightPanelTabs>,
+  );
+}
+
+describe("RightPanelTabs empty-state agent badge", () => {
+  it("exposes the working agent count on the disabled Agents action", () => {
+    const html = renderEmptyState(2);
+    expect(html).toContain('aria-label="Agents, 2 agents working"');
+  });
+
+  it("leaves the label unset when no agents are working", () => {
+    const html = renderEmptyState(0);
+    expect(html).not.toContain("agents working");
+  });
+});
+
 describe("RightPanelTabs preview favicon", () => {
   it("prefers a live capture and never asks Google about a private hostname", () => {
     const captured = renderTabs(favicon("data:image/png;base64,AAAA", "http://24x.xf.local/"));

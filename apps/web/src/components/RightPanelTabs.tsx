@@ -609,6 +609,11 @@ function RightPanelEmptyState(props: {
                   <div
                     tabIndex={0}
                     aria-disabled="true"
+                    aria-label={
+                      action.badgeCount > 0
+                        ? `${action.label}, ${agentsWorkingLabel(action.badgeCount)}`
+                        : undefined
+                    }
                     className="flex h-8 w-full cursor-default items-center gap-2.5 rounded-(--control-radius) px-2.5 text-left text-sm opacity-50"
                   >
                     {actionIcon(action, "size-4")}
