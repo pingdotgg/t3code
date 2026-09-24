@@ -443,7 +443,7 @@ export const make = Effect.gen(function* () {
             recommended: definition.recommended,
             supportsStreaming: definition.supportsStreaming,
             supportsLanguageDetection: definition.supportsLanguageDetection,
-            active: selected.id === definition.id,
+            active: ready && selected.id === definition.id,
             state: operation
               ? operation.verifying
                 ? ("verifying" as const)

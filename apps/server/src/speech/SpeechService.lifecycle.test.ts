@@ -596,6 +596,15 @@ it.effect("selects another installed model after removing the active model", () 
     ).toBe(true);
   }).pipe(Effect.provide(layer)),
 );
+it.effect("does not mark a deleted model active when no models remain installed", () =>
+  Effect.gen(function* () {
+    readyModels.delete("fallback-model");
+    const speech = yield* SpeechService.SpeechService;
+    const status = yield* speech.removeModel("test-model");
+    expect(status).toMatchObject({ supported: true, state: "missing-model" });
+    expect((yield* speech.models).models.every((model) => !model.active)).toBe(true);
+  }).pipe(Effect.provide(layer)),
+);
 it.effect("retains ownership of native work after its request is interrupted", () =>
   Effect.gen(function* () {
     const started = Promise.withResolvers<void>();
