@@ -304,12 +304,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
           // interrupted pin preserves its curved XY position, not a linear Y.
           if (delta !== undefined) {
             const offset = remainingOffset(node);
-            move(
-              node,
-              delta,
-              position.pinned && !positions!.get(node)?.pinned,
-              offset.x,
-            );
+            move(node, delta, position.pinned && !positions!.get(node)?.pinned, offset.x);
           }
         }
       }
