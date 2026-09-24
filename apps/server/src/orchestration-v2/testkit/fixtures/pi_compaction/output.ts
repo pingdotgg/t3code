@@ -63,8 +63,8 @@ export function assertPiCompactionOutput(
   assert.deepEqual(
     compactions.map((item) => [item.runId, item.status, item.title]),
     [
-      [compactionRuns[0]?.id, "failed", "Context compaction failed"],
-      [compactionRuns[1]?.id, "completed", "Context compacted"],
+      [compactionRuns[0]?.id ?? null, "failed", "Context compaction failed"],
+      [compactionRuns[1]?.id ?? null, "completed", "Context compacted"],
     ],
   );
   assert.equal(compactions[0]?.summary, field(refused, "errorMessage"));

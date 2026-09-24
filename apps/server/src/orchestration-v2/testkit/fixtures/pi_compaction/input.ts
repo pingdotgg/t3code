@@ -1,8 +1,8 @@
 import type { OrchestratorFixtureInput } from "../shared.ts";
 
 export const PI_COMPACTION_MARKER = "compaction-marker-4Z7Q";
-export const PI_COMPACTION_INSTRUCTED = `/compact keep the opaque marker ${PI_COMPACTION_MARKER}`;
-export const PI_COMPACTION_RECALL_PROMPT =
+const PI_COMPACTION_INSTRUCTED = `/compact keep the opaque marker ${PI_COMPACTION_MARKER}`;
+const PI_COMPACTION_RECALL_PROMPT =
   "Return the opaque marker I asked you to remember. Respond with only the marker.";
 
 /**

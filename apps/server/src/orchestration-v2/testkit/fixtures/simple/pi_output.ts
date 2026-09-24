@@ -70,9 +70,19 @@ export function assertPiSimpleOutput(
   assertSimpleOutput(result, transcript);
   const projection = projectionFor(result, transcript.scenario);
 
-  const reasoning = projection.turnItems.find((item) => item.type === "reasoning");
-  assert.isDefined(reasoning, "Pi thinking deltas must project a reasoning item");
-  assert.include(reasoning.text, "fixture simple ok");
+  const recordedThinking = transcript.entries.flatMap((entry) => {
+    const update = field(
+      entry.type === "emit_inbound" ? entry.frame : undefined,
+      "assistantMessageEvent",
+    );
+    return field(update, "type") === "thinking_end" ? [field(update, "content")] : [];
+  });
+  assert.lengthOf(recordedThinking, 1, "the recording must stream one thinking block");
+  assert.deepEqual(
+    projection.turnItems.flatMap((item) => (item.type === "reasoning" ? [item.text] : [])),
+    recordedThinking,
+    "Pi thinking deltas must project as one reasoning item with the recorded text",
+  );
 
   assertPiSettledTokenUsage(result, transcript);
   const [turn] = projection.providerTurns;

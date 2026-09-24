@@ -124,17 +124,31 @@ function replayValueMatches(expected: unknown, actual: unknown): boolean {
   return Object.is(expected, actual);
 }
 
+/** PiRpc numbers its correlated requests `t3-N` per process. */
+const ADAPTER_REQUEST_ID = /^t3-\d+$/u;
+
+function adapterRequestId(frame: unknown): string | undefined {
+  const id = isRecord(frame) ? frame.id : undefined;
+  return typeof id === "string" && ADAPTER_REQUEST_ID.test(id) ? id : undefined;
+}
+
 /**
- * Request ids are the adapter's own per-process counter. Comparing with the
- * actual id keeps the correlation Pi recorded without pinning counter values.
+ * Compares a recorded request against the adapter's own request id, so the
+ * correlation Pi recorded holds without pinning counter values. Any other id,
+ * such as the Pi request id an `extension_ui_response` must echo, stays exact.
  */
 function withRequestId(expected: unknown, actual: unknown): unknown {
-  return isRecord(expected) &&
-    typeof expected.id === "string" &&
-    isRecord(actual) &&
-    typeof actual.id === "string"
-    ? { ...expected, id: actual.id }
+  const actualId = adapterRequestId(actual);
+  return isRecord(expected) && adapterRequestId(expected) !== undefined && actualId !== undefined
+    ? { ...expected, id: actualId }
     : expected;
+}
+
+/** A write may not match past one of these: it would be a turn early. */
+function startsTurn(entry: ProviderReplayEntryType): boolean {
+  if (entry.type !== "expect_outbound") return false;
+  const type = isRecord(entry.frame) ? entry.frame.type : undefined;
+  return type === "prompt" || type === "compact" || type === "process_start";
 }
 
 function processStartFrame(command: ChildProcess.Command) {
@@ -191,10 +205,11 @@ interface PiReplayProcess {
  *
  * Independent adapter fibers (skill discovery beside thread setup, a settle
  * probe beside a steer) can reach stdin in a different order than recorded, so
- * a write that matches a later outbound record is held until the transcript
- * reaches it. A write that matches no remaining record fails immediately.
+ * a write that matches a later outbound record of the same turn is held until
+ * the transcript reaches it. A write that matches nothing before the next
+ * turn-starting record fails immediately.
  */
-class PiReplayController {
+export class PiReplayController {
   private cursor = 0;
   private failure: unknown = null;
   private readonly consumed = new Set<number>();
@@ -228,11 +243,12 @@ class PiReplayController {
     let possible = false;
     for (let index = this.cursor; index < entries.length && !possible; index += 1) {
       const entry = entries[index]!;
+      const pending = entry.type === "expect_outbound" && !this.consumed.has(index);
       possible =
-        entry.type === "expect_outbound" &&
-        !this.consumed.has(index) &&
+        pending &&
         entryProcess(entry) === process.ordinal &&
         replayValueMatches(withRequestId(entry.frame, actual), actual);
+      if (!possible && pending && startsTurn(entry)) break;
     }
     if (!possible) {
       this.fail(
@@ -291,9 +307,9 @@ class PiReplayController {
       if (entry.type !== "expect_outbound") return false;
       if (this.consumed.has(index) || entryProcess(entry) !== process.ordinal) continue;
       if (!replayValueMatches(withRequestId(entry.frame, actual), actual)) continue;
-      const recordedId = isRecord(entry.frame) ? entry.frame.id : undefined;
-      const actualId = isRecord(actual) ? actual.id : undefined;
-      if (typeof recordedId === "string" && typeof actualId === "string") {
+      const recordedId = adapterRequestId(entry.frame);
+      const actualId = adapterRequestId(actual);
+      if (recordedId !== undefined && actualId !== undefined) {
         process.ids.set(recordedId, actualId);
       }
       this.consumed.add(index);

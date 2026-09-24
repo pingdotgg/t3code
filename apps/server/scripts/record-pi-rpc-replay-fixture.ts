@@ -18,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -186,11 +187,13 @@ function normalizeEntries(input: {
   );
 }
 
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
 function encodeTranscriptNdjson(transcript: ProviderReplayTranscript): string {
   const { entries, ...metadata } = transcript;
   return [
-    JSON.stringify({ type: "transcript_start", ...metadata }),
-    ...entries.map((entry) => JSON.stringify(entry)),
+    encodeJson({ type: "transcript_start", ...metadata }),
+    ...entries.map((entry) => encodeJson(entry)),
     "",
   ].join("\n");
 }
@@ -225,7 +228,7 @@ const record = Effect.gen(function* () {
   yield* fs.makeDirectory(path.join(workspace, ".pi"));
   yield* fs.writeFileString(
     path.join(workspace, ".pi", "settings.json"),
-    JSON.stringify(WORKSPACE_PI_SETTINGS),
+    encodeJson(WORKSPACE_PI_SETTINGS),
   );
   const sessionDir = yield* fs.makeTempDirectory({ prefix: `t3-pi-record-sessions-` });
   yield* Effect.addFinalizer(() =>

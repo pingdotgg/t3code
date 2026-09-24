@@ -1,7 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
-  CheckpointId,
   EnvironmentId,
   NodeId,
   ProviderInstanceId,
@@ -81,8 +80,8 @@ interface FakePi {
   readonly queueMessages: (data: unknown) => void;
   /** Make the next `switch_session` ack report an extension veto. */
   readonly vetoNextSwitch: () => void;
-  /** Data returned by the next `get_state` acks, consumed in order. */
-  readonly queueState: (data: unknown) => void;
+  /** Fields overriding the recorded idle state in the next `get_state` acks, in order. */
+  readonly queueState: (data: Record<string, unknown>) => void;
   /** Hold the next `get_state` response until the test resolves it. */
   readonly deferNextState: () => void;
   /** Resolve the held `get_state` request. */
@@ -137,7 +136,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   const requests = yield* Queue.unbounded<PiRpcRecord>();
   const entriesQueue: Array<unknown> = [];
   const messagesQueue: Array<unknown> = [];
-  const stateQueue: Array<unknown> = [];
+  const stateQueue: Array<Record<string, unknown>> = [];
   const statsQueue: Array<unknown> = [];
   const commandsQueue: Array<{ readonly success: boolean; readonly data?: unknown }> = [];
   const allRequests: Array<PiRpcRecord> = [];
