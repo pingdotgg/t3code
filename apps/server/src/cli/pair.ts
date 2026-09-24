@@ -10,6 +10,7 @@
  * HTTPS and pairs through the tailnet URL instead.
  */
 import {
+  AuthAdministrativeScopes,
   AuthStandardClientScopes,
   ExecutionEnvironmentDescriptor,
   PortSchema,
@@ -432,11 +433,12 @@ const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
   readonly config: ServerConfig.ServerConfig["Service"];
   readonly ttl: Option.Option<Duration.Duration>;
   readonly label: Option.Option<string>;
+  readonly fullPermissions: boolean;
 }) {
   return yield* Effect.gen(function* () {
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
     return yield* environmentAuth.createPairingLink({
-      scopes: AuthStandardClientScopes,
+      scopes: input.fullPermissions ? AuthAdministrativeScopes : AuthStandardClientScopes,
       subject: "one-time-token",
       label: Option.getOrElse(input.label, () => "t3 pair"),
       ...(Option.isSome(input.ttl) ? { ttl: input.ttl.value } : {}),
@@ -471,6 +473,11 @@ const tailscaleFlag = Flag.Boolean("tailscale").pipe(
   Flag.withDefault(false),
 );
 
+const fullPermissionsFlag = Flag.Boolean("full-permissions").pipe(
+  Flag.withDescription("Grant access and relay administration permissions to the paired client."),
+  Flag.withDefault(false),
+);
+
 const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.withSchema(PortSchema),
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale is enabled."),
@@ -481,6 +488,7 @@ export const pairCommand = Command.make("pair", {
   baseDir: baseDirFlag,
   ttl: ttlFlag,
   label: labelFlag,
+  fullPermissions: fullPermissionsFlag,
   tailscale: tailscaleFlag,
   tailscaleServePort: tailscaleServePortFlag,
 }).pipe(
@@ -520,7 +528,12 @@ export const pairCommand = Command.make("pair", {
       }
 
       const config = yield* makePairServerConfig({ target, logLevel });
-      const issued = yield* mintPairingLink({ config, ttl: flags.ttl, label: flags.label });
+      const issued = yield* mintPairingLink({
+        config,
+        ttl: flags.ttl,
+        label: flags.label,
+        fullPermissions: flags.fullPermissions,
+      });
       const pairingUrl = buildPairingUrl(pairingBaseUrl, issued.credential);
 
       yield* Console.log(

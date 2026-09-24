@@ -158,7 +158,9 @@ describe("t3 pair", () => {
           }),
         });
 
-        const output = yield* captureStdout(runCli(["pair", "--base-dir", baseDir]));
+        const output = yield* captureStdout(
+          runCli(["pair", "--base-dir", baseDir, "--full-permissions"]),
+        );
 
         assert.include(output, `Pairing with pair-test (${origin})`);
         assert.include(output, `Pairing URL: ${origin}/pair#token=`);
@@ -174,9 +176,14 @@ describe("t3 pair", () => {
           runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
         );
         // @effect-diagnostics-next-line preferSchemaOverJson:off - CLI JSON output is decoded as a presentation DTO.
-        const credentials = JSON.parse(listed) as ReadonlyArray<{ readonly label?: string }>;
+        const credentials = JSON.parse(listed) as ReadonlyArray<{
+          readonly label?: string;
+          readonly scopes: ReadonlyArray<string>;
+        }>;
         assert.equal(credentials.length, 1);
         assert.equal(credentials[0]?.label, "t3 pair");
+        assert.include(credentials[0]!.scopes, "access:write");
+        assert.include(credentials[0]!.scopes, "relay:write");
       }),
     ).pipe(
       Effect.provide(NodeServices.layer),
