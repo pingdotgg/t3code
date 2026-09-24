@@ -75,7 +75,8 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
   const inFlight = yield* Ref.make(false);
   // Install deadline for each request the desktop app accepted. Shutdown
   // interrupts the commit RPC before cleanup runs, so interruption keeps the
-  // entry. Only the request's own failure report or its deadline ends it.
+  // entry. Only the request's own failure report or its deadline ends it,
+  // and expired entries are dropped when the next install is accepted.
   const pendingInstalls = yield* Ref.make(HashMap.empty<string, number>());
 
   const isRestartPending = Effect.gen(function* () {
@@ -218,9 +219,12 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
             Effect.mapError((error) => failWith("Could not reach the T3 Code desktop app.", error)),
             Effect.andThen(Clock.currentTimeMillis),
             Effect.flatMap((acceptedAt) =>
-              Ref.update(
-                pendingInstalls,
-                HashMap.set(requestId, acceptedAt + Duration.toMillis(DESKTOP_INSTALL_TIMEOUT)),
+              Ref.update(pendingInstalls, (installs) =>
+                HashMap.set(
+                  HashMap.filter(installs, (deadline) => deadline > acceptedAt),
+                  requestId,
+                  acceptedAt + Duration.toMillis(DESKTOP_INSTALL_TIMEOUT),
+                ),
               ),
             ),
             Effect.tap(() => onHandoffAccepted()),
