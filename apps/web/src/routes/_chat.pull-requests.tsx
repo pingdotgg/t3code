@@ -6,6 +6,7 @@ import type {
   ProjectId,
   PullRequestAction,
   PullRequestInvolvement,
+  PullRequestMergeMethod,
   PullRequestListCursors,
   PullRequestListFilters,
   PullRequestListInput,
@@ -153,6 +154,13 @@ import {
   type EnvironmentQueryTarget,
 } from "../state/pullRequests";
 import { useAtomCommand } from "../state/use-atom-command";
+import { useShortcutModifierState } from "../shortcutModifierState";
+import {
+  PullRequestSpeedMergeDialog,
+  type PullRequestSpeedAction,
+} from "../components/pullRequest/PullRequestSpeedActions";
+import { readableFailure } from "../components/pullRequest/pullRequestDetail.logic";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { cn } from "~/lib/utils";
 import { Separator } from "~/components/ui/separator";
 import { primaryServerKeybindingsAtom } from "~/state/server";
@@ -928,18 +936,18 @@ function PullRequestsRouteView() {
   );
   const overrideToken = useRef(0);
   /** Writes the action's outcome onto the row; the token names this write for a later rollback. */
-  const overrideEntry = (
-    entry: EnvironmentPullRequestEntry,
-    action: PullRequestAction,
-  ): number | null => {
-    const token = ++overrideToken.current;
-    const override = pullRequestOverrideAfterAction(entry, action, new Date(), token);
-    if (override === null) return null;
-    setOverrides((current) => new Map(current).set(pullRequestEntryKey(entry), override));
-    return token;
-  };
+  const overrideEntry = useCallback(
+    (entry: EnvironmentPullRequestEntry, action: PullRequestAction): number | null => {
+      const token = ++overrideToken.current;
+      const override = pullRequestOverrideAfterAction(entry, action, new Date(), token);
+      if (override === null) return null;
+      setOverrides((current) => new Map(current).set(pullRequestEntryKey(entry), override));
+      return token;
+    },
+    [],
+  );
   /** A rollback for one write only: a later action's note over the same row is left alone. */
-  const revertOverride = (key: string, token: number | null) => {
+  const revertOverride = useCallback((key: string, token: number | null) => {
     if (token === null) return;
     setOverrides((current) => {
       if (current.get(key)?.token !== token) return current;
@@ -947,9 +955,121 @@ function PullRequestsRouteView() {
       next.delete(key);
       return next;
     });
-  };
+  }, []);
+  // Speed mode: Shift held over the list puts close, reopen and merge on the rows themselves.
+  // A key held while typing in a field is a capital letter, not a mode.
+  const modifiers = useShortcutModifierState();
+  const speed =
+    modifiers.shiftKey &&
+    typeof document !== "undefined" &&
+    !(
+      document.activeElement instanceof HTMLInputElement ||
+      document.activeElement instanceof HTMLTextAreaElement
+    );
+  const runRowAction = useAtomCommand(pullRequestEnvironment.runAction, { reportFailure: false });
+  const [speedMergeTarget, setSpeedMergeTarget] = useState<EnvironmentPullRequestEntry | null>(
+    null,
+  );
+  const speedPendingRef = useRef<ReadonlySet<string>>(new Set());
   /** The detail panel's own writes, by row, so its failure takes back its own note. */
   const detailOverrideTokens = useRef(new Map<string, number | null>());
+  // Rows with a speed action still travelling: no second one for the same row until the
+  // host answers the first, so two cannot land out of order.
+  const [speedPending, setSpeedPending] = useState<ReadonlySet<string>>(() => new Set());
+  /** Claims the row for one speed action; false when an earlier one is still travelling. */
+  const claimSpeedPending = useCallback((key: string) => {
+    if (speedPendingRef.current.has(key)) return false;
+    speedPendingRef.current = new Set(speedPendingRef.current).add(key);
+    setSpeedPending(speedPendingRef.current);
+    return true;
+  }, []);
+  const releaseSpeedPending = useCallback((key: string) => {
+    speedPendingRef.current = new Set(
+      [...speedPendingRef.current].filter((pending) => pending !== key),
+    );
+    setSpeedPending(speedPendingRef.current);
+  }, []);
+  /**
+   * The host half of a speed action, for a row already claimed. `token` names the note the
+   * caller wrote on the row, so a refusal takes back that one and not a newer one.
+   */
+  const sendSpeedAction = useCallback(
+    async (
+      entry: EnvironmentPullRequestEntry,
+      action: PullRequestSpeedAction,
+      token: number | null,
+      mergeMethod?: PullRequestMergeMethod,
+    ) => {
+      const key = pullRequestEntryKey(entry);
+      const result = await runRowAction({
+        environmentId: entry.environmentId,
+        input: {
+          projectId: entry.projectId,
+          repository: entry.repository,
+          number: entry.number,
+          host: entry.host,
+          action,
+          ...(mergeMethod ? { mergeMethod } : {}),
+        },
+      });
+      releaseSpeedPending(key);
+      if (result._tag === "Failure") {
+        // The row said what was asked; the host said no, so the row takes it back, unless a
+        // later action has already written something newer over it.
+        revertOverride(key, token);
+        toastManager.add({
+          type: "error",
+          title: `Could not ${action} #${entry.number}`,
+          description: readableFailure(
+            squashAtomCommandFailure(result),
+            "Check your access on the host.",
+          ),
+        });
+        return;
+      }
+      toastManager.add({
+        type: "success",
+        title: `#${entry.number} ${
+          action === "merge"
+            ? "merged"
+            : action === "close"
+              ? "closed"
+              : action === "reopen"
+                ? "reopened"
+                : "marked ready for review"
+        }`,
+      });
+      if (action === "merge") {
+        overrideEntry(entry, action);
+        refreshListAndStats(undefined, entry.environmentId);
+      }
+    },
+    [overrideEntry, refreshListAndStats, releaseSpeedPending, revertOverride, runRowAction],
+  );
+  const speedAct = useCallback(
+    async (
+      entry: EnvironmentPullRequestEntry,
+      action: PullRequestSpeedAction,
+      mergeMethod?: PullRequestMergeMethod,
+    ) => {
+      if (action === "merge" && mergeMethod === undefined) {
+        setSpeedMergeTarget(entry);
+        return;
+      }
+      if (!claimSpeedPending(pullRequestEntryKey(entry))) return;
+      // A merge is written onto the row once the host has done it, not when it is asked: a
+      // host that only queues the merge leaves the pull request open, and the row must not
+      // say merged ahead of it.
+      const token = action === "merge" ? null : overrideEntry(entry, action);
+      await sendSpeedAction(entry, action, token, mergeMethod);
+    },
+    [claimSpeedPending, overrideEntry, sendSpeedAction],
+  );
+  const onSpeedAction = useCallback(
+    (entry: EnvironmentPullRequestEntry, action: PullRequestSpeedAction) =>
+      void speedAct(entry, action),
+    [speedAct],
+  );
   // A reload recreates the registry the queries live in, so with nothing held the page would
   // cold-start into skeletons even though almost every row is unchanged. The last answer for
   // this set of environments is kept across reloads and hydrated here as the carried rows: they
@@ -1810,6 +1930,9 @@ function PullRequestsRouteView() {
                       selected.number === entry.number
                     }
                     onSelect={selectEntry}
+                    speed={speed}
+                    speedPending={speedPending.has(entryKey)}
+                    onSpeedAction={onSpeedAction}
                   />
                 );
               })}
@@ -1818,6 +1941,14 @@ function PullRequestsRouteView() {
         </div>
       )}
 
+      <PullRequestSpeedMergeDialog
+        target={speedMergeTarget}
+        onClose={() => setSpeedMergeTarget(null)}
+        onConfirm={(entry, method) => {
+          setSpeedMergeTarget(null);
+          void speedAct(entry, "merge", method);
+        }}
+      />
       {listQuery.error && shownCount > 0 ? (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs">
           <span>{listQuery.error} Showing the last pull requests loaded.</span>

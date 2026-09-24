@@ -7,6 +7,7 @@ import { getSourceControlPresentationForKind } from "~/sourceControlPresentation
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
+import { PullRequestSpeedActions, type PullRequestSpeedAction } from "./PullRequestSpeedActions";
 import type { EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 import {
@@ -75,6 +76,9 @@ function PullRequestRowImpl({
   statsKey,
   statsRef,
   onSelect,
+  speed = false,
+  speedPending = false,
+  onSpeedAction,
 }: {
   entry: EnvironmentPullRequestEntry;
   selected: boolean;
@@ -92,142 +96,159 @@ function PullRequestRowImpl({
   statsKey?: string;
   statsRef?: RefCallback<HTMLButtonElement>;
   onSelect: (entry: PullRequestRowTarget) => void;
+  /** Shift is held: the row wears its own close, reopen and merge buttons. */
+  speed?: boolean;
+  /** One of this row's speed actions is still with the host. */
+  speedPending?: boolean;
+  onSpeedAction?: (entry: EnvironmentPullRequestEntry, action: PullRequestSpeedAction) => void;
 }) {
   const { Icon, providerName } = getSourceControlPresentationForKind(entry.provider);
+  // The row is a button, and the speed buttons cannot nest in one, so they ride a wrapper
+  // beside it and over its right end.
   return (
-    <button
-      ref={statsRef}
-      data-pull-request-stats-key={statsKey}
-      type="button"
-      aria-current={selected ? "true" : undefined}
-      onClick={() => onSelect(entry)}
-      className={cn(
-        PULL_REQUEST_ROW_CLASS,
-        PAGE_ROW_CLASS,
-        "cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-        // Offscreen rows are skipped for style, layout and paint: a long list costs what the
-        // viewport shows, not what the pages have loaded. The intrinsic size keeps the
-        // scrollbar honest while a row is skipped.
-        "[content-visibility:auto]",
-        selected ? "bg-accent" : "hover:bg-accent/60",
-      )}
-    >
-      <PullRequestRowGlyph
-        state={entry.state}
-        isDraft={entry.isDraft}
-        mergeability={entry.mergeability}
-        baseBranch={entry.baseBranch}
-        // On the title line rather than between the lines, as main aligns it.
-        className="mt-0.75 self-start"
-      />
-      <PullRequestRowLines
-        number={
-          // The number carries the link, here as much as on the detail: a right-click on it
-          // copies the pull request's own address rather than opening the editing menu.
-          <span
-            className={PULL_REQUEST_ROW_NUMBER_CLASS}
-            onContextMenu={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              void showPullRequestLinkContextMenu({
-                url: entry.url,
-                openLabel: openOnHostLabel(entry.provider),
-                position: { x: event.clientX, y: event.clientY },
-              });
-            }}
-          >
-            #{entry.number}
-          </span>
-        }
-        title={entry.title}
-        signals={
-          <>
-            {entry.checksState === undefined ? null : (
-              <PullRequestChecksPopover
-                checksState={entry.checksState}
-                environmentId={entry.environmentId}
-                reference={{
-                  projectId: entry.projectId,
-                  repository: entry.repository,
-                  number: entry.number,
-                }}
-              />
-            )}
-            {/* Only a verdict the host actually reports: an approval, a request for changes,
+    <div className="relative">
+      <button
+        ref={statsRef}
+        data-pull-request-stats-key={statsKey}
+        type="button"
+        aria-current={selected ? "true" : undefined}
+        onClick={() => onSelect(entry)}
+        className={cn(
+          PULL_REQUEST_ROW_CLASS,
+          PAGE_ROW_CLASS,
+          "cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+          // Offscreen rows are skipped for style, layout and paint: a long list costs what the
+          // viewport shows, not what the pages have loaded. The intrinsic size keeps the
+          // scrollbar honest while a row is skipped.
+          "[content-visibility:auto]",
+          selected ? "bg-accent" : "hover:bg-accent/60",
+        )}
+      >
+        <PullRequestRowGlyph
+          state={entry.state}
+          isDraft={entry.isDraft}
+          mergeability={entry.mergeability}
+          baseBranch={entry.baseBranch}
+          // On the title line rather than between the lines, as main aligns it.
+          className="mt-0.75 self-start"
+        />
+        <PullRequestRowLines
+          number={
+            // The number carries the link, here as much as on the detail: a right-click on it
+            // copies the pull request's own address rather than opening the editing menu.
+            <span
+              className={PULL_REQUEST_ROW_NUMBER_CLASS}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                void showPullRequestLinkContextMenu({
+                  url: entry.url,
+                  openLabel: openOnHostLabel(entry.provider),
+                  position: { x: event.clientX, y: event.clientY },
+                });
+              }}
+            >
+              #{entry.number}
+            </span>
+          }
+          title={entry.title}
+          signals={
+            <>
+              {entry.checksState === undefined ? null : (
+                <PullRequestChecksPopover
+                  checksState={entry.checksState}
+                  environmentId={entry.environmentId}
+                  reference={{
+                    projectId: entry.projectId,
+                    repository: entry.repository,
+                    number: entry.number,
+                  }}
+                />
+              )}
+              {/* Only a verdict the host actually reports: an approval, a request for changes,
                 or a review the branch rules still require. No glyph on the common case of a
                 pull request nobody has reviewed, so a row only wears a person when the person
                 has said something. */}
-            {entry.reviewDecision === undefined ? null : (
-              <PullRequestReviewDecisionGlyph decision={entry.reviewDecision} />
-            )}
-          </>
-        }
-        status={
-          <>
-            {entry.stack ? (
-              <PullRequestStackPopover
-                environmentId={entry.environmentId}
-                reference={{
-                  projectId: entry.projectId,
-                  host: entry.host,
-                  repository: entry.repository,
-                  number: entry.number,
-                }}
-                membership={entry.stack}
-                onSelect={(target) =>
-                  onSelect({ ...target, host: entry.host, environmentId: entry.environmentId })
-                }
-              />
-            ) : null}
-            <PullRequestDiffStat
-              additions={entry.additions}
-              deletions={entry.deletions}
-              className="font-mono"
-            />
-          </>
-        }
-        metaClassName="@container/pr-row-meta"
-        meta={
-          <>
-            {matchedElsewhere ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-[10px]" />
+              {entry.reviewDecision === undefined ? null : (
+                <PullRequestReviewDecisionGlyph decision={entry.reviewDecision} />
+              )}
+            </>
+          }
+          status={
+            <>
+              {entry.stack ? (
+                <PullRequestStackPopover
+                  environmentId={entry.environmentId}
+                  reference={{
+                    projectId: entry.projectId,
+                    host: entry.host,
+                    repository: entry.repository,
+                    number: entry.number,
+                  }}
+                  membership={entry.stack}
+                  onSelect={(target) =>
+                    onSelect({ ...target, host: entry.host, environmentId: entry.environmentId })
                   }
-                >
-                  <span className="sr-only">matched in the description</span>
-                  <SearchIcon aria-hidden className="size-3 shrink-0" />
-                  <span aria-hidden className="hidden truncate @xs/pr-row-meta:block">
-                    matched in the description
-                  </span>
-                </TooltipTrigger>
-                <TooltipPopup side="top">Matched in the description</TooltipPopup>
-              </Tooltip>
-            ) : null}
-            {showProvider ? (
-              <Tooltip>
-                <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-                  <Icon aria-label={providerName} className="size-3" />
-                </TooltipTrigger>
-                <TooltipPopup>{providerName}</TooltipPopup>
-              </Tooltip>
-            ) : null}
-            <PullRequestRowAuthor
-              actor={entry.author}
-              className="min-w-3.5 max-w-40"
-              labelClassName="sr-only @xs/pr-row-meta:not-sr-only @xs/pr-row-meta:truncate"
-            />
-            {showProjectTitle ? <span className="truncate">{entry.repository}</span> : null}
-            {environmentLabel ? (
-              <span className="min-w-0 max-w-32 truncate">{environmentLabel}</span>
-            ) : null}
-            {entry.labels.length > 0 ? <PullRequestRowLabels labels={entry.labels} /> : null}
-          </>
-        }
-        updatedAt={entry.updatedAt}
-      />
-    </button>
+                />
+              ) : null}
+              <PullRequestDiffStat
+                additions={entry.additions}
+                deletions={entry.deletions}
+                className="font-mono"
+              />
+            </>
+          }
+          metaClassName="@container/pr-row-meta"
+          meta={
+            <>
+              {matchedElsewhere ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-[10px]" />
+                    }
+                  >
+                    <span className="sr-only">matched in the description</span>
+                    <SearchIcon aria-hidden className="size-3 shrink-0" />
+                    <span aria-hidden className="hidden truncate @xs/pr-row-meta:block">
+                      matched in the description
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">Matched in the description</TooltipPopup>
+                </Tooltip>
+              ) : null}
+              {showProvider ? (
+                <Tooltip>
+                  <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+                    <Icon aria-label={providerName} className="size-3" />
+                  </TooltipTrigger>
+                  <TooltipPopup>{providerName}</TooltipPopup>
+                </Tooltip>
+              ) : null}
+              <PullRequestRowAuthor
+                actor={entry.author}
+                className="min-w-3.5 max-w-40"
+                labelClassName="sr-only @xs/pr-row-meta:not-sr-only @xs/pr-row-meta:truncate"
+              />
+              {showProjectTitle ? <span className="truncate">{entry.repository}</span> : null}
+              {environmentLabel ? (
+                <span className="min-w-0 max-w-32 truncate">{environmentLabel}</span>
+              ) : null}
+              {entry.labels.length > 0 ? <PullRequestRowLabels labels={entry.labels} /> : null}
+            </>
+          }
+          updatedAt={entry.updatedAt}
+        />
+      </button>
+      {onSpeedAction ? (
+        <PullRequestSpeedActions
+          entry={entry}
+          shown={speed}
+          pending={speedPending}
+          onAct={onSpeedAction}
+        />
+      ) : null}
+    </div>
   );
 }
 
