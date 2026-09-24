@@ -6826,7 +6826,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 {showComposerStashAction ? (
                   <div
                     className={cn(
-                      "absolute flex top-[calc(0.5lh-1rem)] right-[calc(var(--chat-composer-drawer-inset)-0.75rem-1px)] z-10 leading-relaxed [font-size:var(--font-size-prompt,0.875rem)] sm:right-[calc(var(--chat-composer-drawer-inset)-1rem-1px)] [@media(max-width:39.999rem)_and_(pointer:coarse)]:[font-size:max(var(--font-size-prompt,1rem),16px)]",
+                      "absolute flex top-[calc(0.5lh_-_1rem)] right-[calc(var(--chat-composer-drawer-inset)_-_0.75rem_-_1px)] z-10 leading-relaxed [font-size:var(--font-size-prompt,0.875rem)] sm:right-[calc(var(--chat-composer-drawer-inset)_-_1rem_-_1px)] [@media(max-width:39.999rem)_and_(pointer:coarse)]:[font-size:max(var(--font-size-prompt,1rem),16px)]",
                       isComposerResting && "leading-8",
                     )}
                   >
