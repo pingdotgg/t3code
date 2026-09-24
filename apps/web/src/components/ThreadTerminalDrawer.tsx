@@ -29,7 +29,6 @@ import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
 import {
   type PointerEvent as ReactPointerEvent,
-  type ReactNode,
   type SetStateAction,
   useCallback,
   useEffect,
@@ -39,9 +38,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
+import { createPortal } from "react-dom";
 import { Button } from "~/components/ui/button";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
+import { TerminalActionButton } from "~/components/TerminalActionButton";
+import { TerminalSearchBar } from "~/components/TerminalSearchBar";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
@@ -54,6 +55,7 @@ import {
 import {
   GhosttyTerminalSurface,
   type GhosttyTerminalSurfaceOptions,
+  type GhosttyTerminalSearchState,
 } from "~/terminal/ghostty/surface";
 import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
 import { useOpenInPreferredEditor } from "../editorPreferences";
@@ -61,10 +63,12 @@ import { isTerminalUrl, resolvePathLinkTarget } from "../terminal-links";
 import {
   isDiffToggleShortcut,
   isTerminalClearShortcut,
+  isTerminalFindShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
   isTerminalSplitVerticalShortcut,
   isTerminalToggleShortcut,
+  shortcutLabelForCommand,
   terminalDeleteShortcutData,
   terminalNavigationShortcutData,
 } from "../keybindings";
@@ -92,6 +96,19 @@ import {
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
+const TERMINAL_SHORTCUT_OPTIONS = {
+  context: {
+    terminalFocus: true,
+    terminalOpen: true,
+    previewFocus: false,
+    previewOpen: false,
+  },
+};
+const INITIAL_TERMINAL_SEARCH = {
+  open: false,
+  query: "",
+  caseSensitive: false,
+};
 
 function maxDrawerHeight(): number {
   if (typeof window === "undefined") return DEFAULT_THREAD_TERMINAL_HEIGHT;
@@ -324,6 +341,7 @@ interface TerminalViewportProps {
   resizeEpoch: number;
   drawerHeight: number;
   keybindings: ResolvedKeybindingsConfig;
+  findSlot?: HTMLElement | null;
 }
 
 interface TerminalLaunchLocation {
@@ -350,10 +368,19 @@ export function TerminalViewport({
   resizeEpoch,
   drawerHeight,
   keybindings,
+  findSlot,
 }: TerminalViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<GhosttyTerminalSurface | null>(null);
   const visibleRef = useRef(visible);
+  const [search, setSearch] = useState(INITIAL_TERMINAL_SEARCH);
+  const [searchState, setSearchState] = useState<GhosttyTerminalSearchState>({
+    matchCount: 0,
+    activeIndex: -1,
+    truncated: false,
+  });
+  const [searchFocusRequestId, setSearchFocusRequestId] = useState(0);
+  const searchRef = useRef(search);
   const environmentId = threadRef.environmentId;
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
@@ -377,6 +404,39 @@ export function TerminalViewport({
   // cannot be mistaken for the active flow.
   const openSelectionMenuRequestIdRef = useRef<number | null>(null);
   const keybindingsRef = useRef(keybindings);
+
+  const handleSearchChange = useEffectEvent((state: GhosttyTerminalSearchState) => {
+    if (searchRef.current.open) setSearchState(state);
+  });
+
+  const updateSearch = (next: Partial<typeof INITIAL_TERMINAL_SEARCH>): void => {
+    const updated = { ...searchRef.current, ...next };
+    searchRef.current = updated;
+    setSearch(updated);
+    const term = terminalRef.current;
+    if (!updated.open) {
+      term?.clearSearch();
+      return;
+    }
+    const state = term?.setSearch(updated.query, updated);
+    if (state) setSearchState(state);
+  };
+
+  const openSearch = useEffectEvent(() => {
+    updateSearch({ open: true });
+    setSearchFocusRequestId((prev) => prev + 1);
+  });
+
+  const stepSearch = (direction: 1 | -1) => {
+    const term = terminalRef.current;
+    if (term) setSearchState(direction === 1 ? term.searchNext() : term.searchPrevious());
+  };
+
+  const handleSearchClose = () => {
+    updateSearch({ open: false });
+    terminalRef.current?.focus();
+  };
+
   const runtimeEnvKey = useMemo(() => runtimeEnvSignature(runtimeEnv), [runtimeEnv]);
   const handleSessionExited = useEffectEvent(() => {
     onSessionExited();
@@ -501,6 +561,7 @@ export function TerminalViewport({
         onSelectionChange: () => handleSelectionChange(),
         beforeKey: (event) => handleBeforeKey(event),
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
+        onSearchChange: (state) => handleSearchChange(state),
         // The surface listens from construction, so a right-click can land
         // while `create` is still awaiting WASM — before the handler below it
         // exists. The ref is only assigned once that setup has run.
@@ -519,6 +580,11 @@ export function TerminalViewport({
       terminal.setTheme(terminalThemeFromApp(mount));
       setupTerminal = terminal;
       terminalRef.current = terminal;
+      const currentSearch = searchRef.current;
+      if (currentSearch.open && currentSearch.query.length > 0) {
+        const state = terminal.setSearch(currentSearch.query, currentSearch);
+        setSearchState(state);
+      }
       // Client settings hydrate asynchronously; a font preference that landed
       // while the surface was loading found terminalRef null, so its setFont
       // was dropped. Re-apply whatever is current once the terminal exists.
@@ -744,16 +810,21 @@ export function TerminalViewport({
 
       function handleBeforeKey(event: KeyboardEvent): boolean {
         const currentKeybindings = keybindingsRef.current;
-        const options = { context: { terminalFocus: true, terminalOpen: true } };
         if (preventTerminalCloseShortcut(event, currentKeybindings)) {
           return false;
         }
+        if (isTerminalFindShortcut(event, currentKeybindings, TERMINAL_SHORTCUT_OPTIONS)) {
+          event.preventDefault();
+          event.stopPropagation();
+          openSearch();
+          return false;
+        }
         if (
-          isTerminalToggleShortcut(event, currentKeybindings, options) ||
-          isTerminalSplitShortcut(event, currentKeybindings, options) ||
-          isTerminalSplitVerticalShortcut(event, currentKeybindings, options) ||
-          isTerminalNewShortcut(event, currentKeybindings, options) ||
-          isDiffToggleShortcut(event, currentKeybindings, options)
+          isTerminalToggleShortcut(event, currentKeybindings, TERMINAL_SHORTCUT_OPTIONS) ||
+          isTerminalSplitShortcut(event, currentKeybindings, TERMINAL_SHORTCUT_OPTIONS) ||
+          isTerminalSplitVerticalShortcut(event, currentKeybindings, TERMINAL_SHORTCUT_OPTIONS) ||
+          isTerminalNewShortcut(event, currentKeybindings, TERMINAL_SHORTCUT_OPTIONS) ||
+          isDiffToggleShortcut(event, currentKeybindings, TERMINAL_SHORTCUT_OPTIONS)
         ) {
           return false;
         }
@@ -977,12 +1048,40 @@ export function TerminalViewport({
       window.cancelAnimationFrame(frame);
     };
   }, [drawerHeight, environmentId, resizeEpoch, terminalId, threadId]);
-  return (
-    <div
-      ref={containerRef}
-      tabIndex={-1}
-      className="relative h-full w-full overflow-hidden bg-[var(--terminal-background)]"
+  const findShortcutLabel = shortcutLabelForCommand(keybindings, "terminal.find", {
+    context: { terminalFocus: true, terminalOpen: true },
+  });
+  const searchBar = (
+    <TerminalSearchBar
+      open={search.open}
+      docked={Boolean(findSlot)}
+      query={search.query}
+      caseSensitive={search.caseSensitive}
+      matchCount={searchState.matchCount}
+      activeIndex={searchState.activeIndex}
+      truncated={searchState.truncated}
+      focusRequestId={searchFocusRequestId}
+      isFindShortcut={(event) =>
+        isTerminalFindShortcut(event, keybindings, TERMINAL_SHORTCUT_OPTIONS)
+      }
+      {...(findShortcutLabel ? { findShortcutLabel } : {})}
+      onOpen={() => openSearch()}
+      onQueryChange={(query) => updateSearch({ query })}
+      onCaseSensitiveChange={(caseSensitive) => updateSearch({ caseSensitive })}
+      onNext={() => stepSearch(1)}
+      onPrevious={() => stepSearch(-1)}
+      onClose={handleSearchClose}
     />
+  );
+  return (
+    <div className="relative h-full w-full">
+      <div
+        ref={containerRef}
+        tabIndex={-1}
+        className="relative h-full w-full overflow-hidden bg-[var(--terminal-background)]"
+      />
+      {visible && (findSlot ? createPortal(searchBar, findSlot) : searchBar)}
+    </div>
   );
 }
 
@@ -1016,35 +1115,6 @@ interface ThreadTerminalDrawerProps {
   terminalLabelsById?: ReadonlyMap<string, string>;
   /** Prefer per-session launch locations when the server already knows a terminal. */
   terminalLaunchLocationsById?: ReadonlyMap<string, TerminalLaunchLocation>;
-}
-
-interface TerminalActionButtonProps {
-  label: string;
-  className: string;
-  onClick: () => void;
-  children: ReactNode;
-}
-
-function TerminalActionButton({ label, className, onClick, children }: TerminalActionButtonProps) {
-  return (
-    <Popover>
-      <PopoverTrigger
-        openOnHover
-        render={<button type="button" className={className} onClick={onClick} aria-label={label} />}
-      >
-        {children}
-      </PopoverTrigger>
-      <PopoverPopup
-        tooltipStyle
-        side="bottom"
-        sideOffset={6}
-        align="center"
-        className="pointer-events-none select-none"
-      >
-        {label}
-      </PopoverPopup>
-    </Popover>
-  );
 }
 
 export default function ThreadTerminalDrawer({
@@ -1106,6 +1176,7 @@ export default function ThreadTerminalDrawer({
     setDrawerHeight(nextHeight);
   });
   const [resizeEpoch, setResizeEpoch] = useState(0);
+  const [findSlot, setFindSlot] = useState<HTMLDivElement | null>(null);
   const drawerHeightRef = useRef(drawerHeight);
   const lastSyncedHeightRef = useRef(controlledDrawerHeight);
   const onHeightChangeRef = useRef(onHeightChange);
@@ -1440,8 +1511,10 @@ export default function ThreadTerminalDrawer({
       ) : null}
 
       {!hasTerminalSidebar && (
-        <div className="pointer-events-none absolute right-2 top-2 z-20">
+        <div className="pointer-events-none absolute right-2 top-2 z-20 flex">
           <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background shadow-xs">
+            <div ref={setFindSlot} className="contents" />
+            <div className="h-4 w-px bg-border/80" />
             <TerminalActionButton
               className={`p-1 text-foreground/90 transition-colors ${
                 hasReachedSplitLimit
@@ -1578,6 +1651,7 @@ export default function ThreadTerminalDrawer({
                   resizeEpoch={resizeEpoch}
                   drawerHeight={drawerHeight}
                   keybindings={keybindings}
+                  findSlot={findSlot}
                 />
               </div>
             )}

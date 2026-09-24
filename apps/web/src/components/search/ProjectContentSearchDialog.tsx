@@ -1,7 +1,7 @@
 import { Spinner } from "~/components/ui/spinner";
 import type { ProjectContentMatch } from "@t3tools/contracts";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useActiveProjectTarget, type ActiveProjectTarget } from "~/hooks/useActiveProjectTarget";
 import { useTheme } from "~/hooks/useTheme";
@@ -12,9 +12,8 @@ import { useProjectContentSearch } from "~/state/queries";
 import { PierreEntryIcon } from "../chat/PierreEntryIcon";
 import { CommandPaletteContent } from "../CommandPaletteContent";
 import { ScrollArea } from "../ui/scroll-area";
-import { Toggle } from "../ui/toggle";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { HighlightedSearchLine } from "./HighlightedSearchLine";
+import { SearchOptionButton } from "./SearchOptionButton";
 
 interface ProjectContentSearchDialogProps {
   readonly onOpenChange: (open: boolean) => void;
@@ -52,32 +51,6 @@ function groupMatches(matches: ReadonlyArray<ProjectContentMatch>): MatchGroup[]
     }
   });
   return [...groups].map(([path, groupedMatches]) => ({ path, matches: groupedMatches }));
-}
-
-function SearchOptionButton(props: {
-  readonly active: boolean;
-  readonly label: string;
-  readonly onClick: () => void;
-  readonly children: ReactNode;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Toggle
-            aria-label={props.label}
-            pressed={props.active}
-            size="segmented"
-            variant="segmented"
-            onClick={props.onClick}
-          />
-        }
-      >
-        <span className="font-mono">{props.children}</span>
-      </TooltipTrigger>
-      <TooltipPopup side="top">{props.label}</TooltipPopup>
-    </Tooltip>
-  );
 }
 
 function EmptyContentSearchDialog() {
