@@ -4654,7 +4654,7 @@ export default function Sidebar() {
                                     ? "Filter threads by environment (filter active)"
                                     : "Filter threads by environment"
                                 }
-                                className="relative shrink-0 focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                                className="relative shrink-0"
                               />
                             }
                           />
@@ -4679,7 +4679,6 @@ export default function Sidebar() {
                         // rather than a checkbox that snaps back.
                         disabled={!isEnvironmentFilterActive}
                         onCheckedChange={handleEnableAllEnvironments}
-                        className="font-medium"
                       >
                         All environments
                       </MenuCheckboxItem>
@@ -4702,11 +4701,7 @@ export default function Sidebar() {
                             }
                             className={cn(
                               "[&>span:last-child]:min-w-0",
-                              isEnabled
-                                ? "text-foreground"
-                                : "text-muted-foreground data-highlighted:text-accent-foreground/70",
-                              isLastEnabled &&
-                                "data-disabled:pointer-events-auto data-disabled:bg-accent/40 data-disabled:opacity-100",
+                              isLastEnabled && "data-disabled:pointer-events-auto",
                             )}
                           >
                             <span className="flex min-w-0 flex-col">
