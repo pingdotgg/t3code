@@ -1753,16 +1753,22 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     contentWidthsByFileId[fileId] ?? min(style.contentWidth, max(viewportWidth, 0))
   }
 
+  struct SourceAnchor {
+    let rowId: String
+    let sourceRow: Int
+    let offset: CGFloat
+  }
+
   // Preserve the source line when wrapped rows above it enter or leave the window.
-  func visibleSourceAnchor() -> (rowId: String, sourceRow: Int, offset: CGFloat)? {
+  func visibleSourceAnchor() -> SourceAnchor? {
     guard let index = firstVisibleRowIndex(atOrAfter: verticalOffset),
           rows[index].kind != "file", let source = rows[index].sourceRow else { return nil }
     let offset = max(0, verticalOffset - rowOffsets[index])
     if rows[index].kind == "placeholder" {
       let preceding = Int(offset / style.rowHeight)
-      return (rows[index].id, source + preceding, offset - CGFloat(preceding) * style.rowHeight)
+      return SourceAnchor(rowId: rows[index].id, sourceRow: source + preceding, offset: offset - CGFloat(preceding) * style.rowHeight)
     }
-    return (rows[index].id, source, offset)
+    return SourceAnchor(rowId: rows[index].id, sourceRow: source, offset: offset)
   }
 
   func offset(forSourceRow source: Int, rowId: String) -> CGFloat? {
