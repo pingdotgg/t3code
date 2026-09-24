@@ -105,4 +105,3 @@ Weekly, or both for each provider. Reopen T3 to refresh expired readings.
 ## Daily budget alerts
 
 The latest calendar day's usage shows advisory budget levels. Claude warnings use API-rate estimates; API-equivalent warnings include subscription traffic such as Codex. Warning starts at $500 Claude or $1,000 API-equivalent, approval at $1,000 or $1,500, and pause at $2,000 for either measure. These alerts do not automatically block provider work.
-
