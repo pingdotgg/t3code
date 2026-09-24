@@ -1,5 +1,8 @@
 import {
   USAGE_CONTRACT_VERSION,
+  USAGE_MERGE_COMPATIBLE_SINCE,
+  USAGE_PROJECT_ATTRIBUTION_SINCE,
+  ProjectId,
   type EnvironmentId,
   type UsageBucket,
   type UsageDay,
@@ -8,7 +11,16 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { isModelCostUnknown, mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
+import {
+  isModelCostUnknown,
+  mergeUsage,
+  projectFilterForEnvironment,
+  type EnvironmentUsage,
+} from "./usageMerge.ts";
+
+function inProject(id: string, title: string): Partial<UsageBucket> {
+  return { projectId: ProjectId.make(id), project: title, projectAttribution: "project" };
+}
 
 function bucket(overrides: Partial<UsageBucket> = {}): UsageBucket {
   return {
@@ -28,6 +40,7 @@ function bucket(overrides: Partial<UsageBucket> = {}): UsageBucket {
     records: 5,
     unpricedRecords: 0,
     sessions: 1,
+    projectAttribution: "outside",
     ...overrides,
   };
 }
@@ -92,6 +105,10 @@ describe("mergeUsage", () => {
     expect(merged.costUsd).toBe(20);
     expect(merged.records).toBe(10);
     expect(merged.duplicateSources).toHaveLength(0);
+    expect(merged.providerContributions).toEqual([
+      { environmentId: "env-a", contractVersion: USAGE_CONTRACT_VERSION, providers: ["claude"] },
+      { environmentId: "env-b", contractVersion: USAGE_CONTRACT_VERSION, providers: ["claude"] },
+    ]);
   });
 
   it("counts a shared transcript directory once", () => {
@@ -110,6 +127,9 @@ describe("mergeUsage", () => {
     expect(merged.sessions).toBe(1);
     expect(merged.duplicateSources).toHaveLength(1);
     expect(merged.contributingEnvironments).toEqual(["env-a"]);
+    expect(merged.providerContributions).toEqual([
+      { environmentId: "env-a", contractVersion: USAGE_CONTRACT_VERSION, providers: ["claude"] },
+    ]);
   });
 
   it("drops only the duplicated provider, keeping the environment's other one", () => {
@@ -144,6 +164,10 @@ describe("mergeUsage", () => {
         merged.providers.map((provider) => [provider.provider, provider.sessions]),
       ),
     ).toEqual({ claude: 1, codex: 1 });
+    expect(merged.providerContributions).toEqual([
+      { environmentId: "env-a", contractVersion: USAGE_CONTRACT_VERSION, providers: ["claude"] },
+      { environmentId: "env-b", contractVersion: USAGE_CONTRACT_VERSION, providers: ["codex"] },
+    ]);
   });
 
   it("uses the newest scan when environments share the same transcript directory", () => {
@@ -178,7 +202,7 @@ describe("mergeUsage", () => {
           summary(
             [bucket()],
             [{ provider: "claude", hostId: "linux", homePath: "/b" }],
-            USAGE_CONTRACT_VERSION - 2,
+            USAGE_MERGE_COMPATIBLE_SINCE - 1,
           ),
         ),
       ],
@@ -412,5 +436,285 @@ describe("mergeUsage", () => {
     ]);
     expect(merged.daily).toHaveLength(1);
     expect(merged.daily[0]?.costUsd).toBe(10);
+  });
+
+  it("rolls buckets up by project, with explicit outside buckets under null", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({ ...inProject("app", "App"), costUsd: 6 }),
+              bucket({ ...inProject("app", "App"), costUsd: 2, model: "claude-opus-5" }),
+              bucket({ costUsd: 2 }),
+            ],
+            [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.projects.map((project) => [project.project, project.costUsd])).toEqual([
+      ["App", 8],
+      [null, 2],
+    ]);
+    expect(merged.projects[0]?.costShare).toBeCloseTo(0.8, 9);
+  });
+
+  it("keeps projects with the same title distinct and filters by stable id", () => {
+    const environments = [
+      environment(
+        "env-a",
+        summary(
+          [
+            bucket({ ...inProject("project-first", "App"), costUsd: 6 }),
+            bucket({ ...inProject("project-second", "App"), costUsd: 2 }),
+          ],
+          [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+        ),
+      ),
+    ];
+
+    const merged = mergeUsage(environments, USAGE_CONTRACT_VERSION);
+    expect(
+      merged.projects.map((project) => [project.projectId, project.project, project.costUsd]),
+    ).toEqual([
+      ["project-first", "App", 6],
+      ["project-second", "App", 2],
+    ]);
+
+    const secondKey = merged.projects[1]?.projectKey;
+    if (typeof secondKey !== "string") throw new Error("second project key missing");
+    const filtered = mergeUsage(environments, USAGE_CONTRACT_VERSION, { projectFilter: secondKey });
+    expect(filtered.costUsd).toBe(2);
+  });
+
+  it("reconciles aggregate, provider, project, and filtered project totals", () => {
+    const environments = [
+      environment(
+        "env-a",
+        summary(
+          [
+            bucket({ project: "App", costUsd: 6 }),
+            bucket({
+              project: "App",
+              provider: "codex",
+              model: "gpt-5.6-sol",
+              costUsd: 3,
+              totals: {
+                uncachedInputTokens: 20,
+                cachedInputTokens: 200,
+                cacheCreationTokens: 0,
+                outputTokens: 10,
+                reasoningTokens: 5,
+              },
+            }),
+            bucket({ costUsd: 2 }),
+          ],
+          [
+            { provider: "claude", hostId: "mac", homePath: "/a/.claude" },
+            { provider: "codex", hostId: "mac", homePath: "/a/.codex" },
+          ],
+        ),
+      ),
+    ];
+    const merged = mergeUsage(environments, USAGE_CONTRACT_VERSION);
+
+    expect(merged.providers.reduce((sum, provider) => sum + provider.costUsd, 0)).toBe(
+      merged.costUsd,
+    );
+    expect(merged.providers.reduce((sum, provider) => sum + provider.totalTokens, 0)).toBe(
+      merged.totalTokens,
+    );
+    expect(merged.projects.reduce((sum, project) => sum + project.costUsd, 0)).toBe(merged.costUsd);
+    expect(merged.projects.reduce((sum, project) => sum + project.totalTokens, 0)).toBe(
+      merged.totalTokens,
+    );
+
+    for (const project of merged.projects) {
+      const filtered = mergeUsage(environments, USAGE_CONTRACT_VERSION, {
+        projectFilter: project.projectKey,
+      });
+      expect(filtered.costUsd).toBe(project.costUsd);
+      expect(filtered.totalTokens).toBe(project.totalTokens);
+    }
+  });
+
+  it("marks cache-write cost unavailable when a cache-creating bucket omits it", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({ cacheWriteUsd: 3 }),
+              bucket({ cacheWriteUsd: 1, model: "claude-opus-5" }),
+              // A summary written before the field existed makes the estimate incomplete.
+              bucket({ model: "claude-opus-5" }),
+            ],
+            [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costQuality.cacheWriteUsd).toBeNull();
+    const opus = merged.models.find((model) => model.model === "claude-opus-5");
+    expect(opus?.cacheWriteUsd).toBeNull();
+  });
+
+  it("sums cache-write cost when every cache-creating bucket reports it", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket({ cacheWriteUsd: 3 }), bucket({ cacheWriteUsd: 1, model: "claude-opus-5" })],
+            [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costQuality.cacheWriteUsd).toBe(4);
+    const opus = merged.models.find((model) => model.model === "claude-opus-5");
+    expect(opus?.cacheWriteUsd).toBe(1);
+  });
+
+  it("filters every figure except the project list when a project is selected", () => {
+    const environments = [
+      environment(
+        "env-a",
+        summary(
+          [
+            bucket({ ...inProject("app", "App"), costUsd: 6 }),
+            bucket({ costUsd: 2, provider: "codex", model: "gpt-5.6-sol" }),
+          ],
+          [
+            { provider: "claude", hostId: "mac", homePath: "/a/.claude" },
+            { provider: "codex", hostId: "mac", homePath: "/a/.codex" },
+          ],
+        ),
+      ),
+    ];
+
+    const unfiltered = mergeUsage(environments, USAGE_CONTRACT_VERSION);
+    const appKey = unfiltered.projects.find((project) => project.project === "App")?.projectKey;
+    if (typeof appKey !== "string") throw new Error("app project key missing");
+    const filtered = mergeUsage(environments, USAGE_CONTRACT_VERSION, { projectFilter: appKey });
+    expect(filtered.costUsd).toBe(6);
+    expect(filtered.providers.map((provider) => provider.provider)).toEqual(["claude"]);
+    // Session counts are per source directory and cannot be split by project.
+    expect(filtered.sessions).toBe(0);
+    // The picker keeps its full option list while the filter narrows the rest.
+    expect(filtered.projects.map((project) => project.project)).toEqual(["App", null]);
+
+    const outside = mergeUsage(environments, USAGE_CONTRACT_VERSION, { projectFilter: null });
+    expect(outside.costUsd).toBe(2);
+    expect(outside.providers.map((provider) => provider.provider)).toEqual(["codex"]);
+  });
+
+  it("keeps equal project ids on different environments apart", () => {
+    const environments = [
+      environment(
+        "env-a",
+        summary(
+          [bucket({ ...inProject("cloned-project", "App"), costUsd: 6 })],
+          [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+        ),
+      ),
+      environment(
+        "env-b",
+        summary(
+          [bucket({ ...inProject("cloned-project", "App"), costUsd: 2 })],
+          [{ provider: "claude", hostId: "linux", homePath: "/b/.claude" }],
+        ),
+      ),
+    ];
+
+    const merged = mergeUsage(environments, USAGE_CONTRACT_VERSION);
+    expect(merged.projects.map((project) => project.costUsd)).toEqual([6, 2]);
+    const firstKey = merged.projects[0]?.projectKey;
+    if (typeof firstKey !== "string") throw new Error("project key missing");
+    const filtered = mergeUsage(environments, USAGE_CONTRACT_VERSION, { projectFilter: firstKey });
+    expect(filtered.costUsd).toBe(6);
+    expect(projectFilterForEnvironment(firstKey, "env-a" as EnvironmentId)).toBe(
+      "id:cloned-project",
+    );
+    expect(projectFilterForEnvironment(firstKey, "env-b" as EnvironmentId)).toBe(
+      "environment-mismatch:",
+    );
+  });
+
+  it("marks a project whose every record lacked rates as unpriced", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({ ...inProject("app", "App"), costUsd: 0, records: 3, unpricedRecords: 3 }),
+              bucket({ costUsd: 2 }),
+            ],
+            [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.projects.filter(isModelCostUnknown).map((project) => project.project)).toEqual([
+      "App",
+    ]);
+  });
+
+  it("does not treat unknown attribution from old summaries as outside projects", () => {
+    const oldEnvironment = environment(
+      "env-old",
+      summary(
+        [bucket({ costUsd: 4, projectAttribution: undefined })],
+        [{ provider: "claude", hostId: "mac", homePath: "/old/.claude" }],
+        USAGE_PROJECT_ATTRIBUTION_SINCE - 1,
+      ),
+    );
+
+    const unfiltered = mergeUsage([oldEnvironment], USAGE_CONTRACT_VERSION);
+    expect(unfiltered.costUsd).toBe(4);
+    expect(unfiltered.projects).toEqual([]);
+
+    const outside = mergeUsage([oldEnvironment], USAGE_CONTRACT_VERSION, {
+      projectFilter: null,
+    });
+    expect(outside.costUsd).toBe(0);
+  });
+
+  it("does not treat current unknown attribution as outside projects", () => {
+    const currentEnvironment = environment(
+      "env-current",
+      summary(
+        [
+          bucket({
+            provider: "grok",
+            model: "grok-code-fast-1",
+            costUsd: 4,
+            projectAttribution: "unknown",
+          }),
+        ],
+        [{ provider: "grok", hostId: "mac", homePath: "/unknown" }],
+      ),
+    );
+
+    const unfiltered = mergeUsage([currentEnvironment], USAGE_CONTRACT_VERSION);
+    expect(unfiltered.costUsd).toBe(4);
+    expect(unfiltered.projects).toEqual([]);
+
+    const outside = mergeUsage([currentEnvironment], USAGE_CONTRACT_VERSION, {
+      projectFilter: null,
+    });
+    expect(outside.costUsd).toBe(0);
   });
 });
