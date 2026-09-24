@@ -326,28 +326,6 @@ function searchTargetName(value: string | undefined): string | undefined {
   return value.split(/[\\/]/u).findLast((part) => part.length > 0 && part !== ".");
 }
 
-const SEARCH_INPUT_KEYS = [...SEARCH_QUERY_KEYS, ...SEARCH_GLOB_KEYS, ...SEARCH_TARGET_KEYS];
-
-/**
- * Claude/OpenCode search tools put pattern/glob/path on `input`, not ACP `rawInput`.
- * Copy only those keys so Edit/Write bodies stay out of persisted tool data.
- */
-export function structuredSearchToolInput(
-  data: Record<string, unknown> | undefined,
-): Record<string, unknown> | undefined {
-  const input = asRecord(data?.input) ?? asRecord(asRecord(data?.item)?.input);
-  if (!input) {
-    return undefined;
-  }
-  const picked: Record<string, unknown> = {};
-  for (const key of SEARCH_INPUT_KEYS) {
-    if (input[key] !== undefined) {
-      picked[key] = input[key];
-    }
-  }
-  return Object.keys(picked).length > 0 ? picked : undefined;
-}
-
 /** Cursor-style row: "Searched files *.{ts,tsx} in t3chat-new". */
 export function formatSearchToolLabel(
   data: Record<string, unknown> | undefined,
