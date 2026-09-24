@@ -1,0 +1,72 @@
+---
+// Mirrors the right side of the marketing nav so /docs keeps the same exits.
+import { GITHUB_REPOSITORY_URL, MARKETING_STATS } from "../../lib/site";
+---
+
+<a class="docs-nav-link" href="/download">Download</a>
+<a
+  class="docs-nav-stars"
+  href={GITHUB_REPOSITORY_URL}
+  target="_blank"
+  rel="noopener noreferrer"
+  aria-label={`Star T3 Code on GitHub — ${MARKETING_STATS.githubStars} stars`}
+>
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path
+      d="M12 2.3l2.9 5.88 6.49.94-4.7 4.58 1.11 6.47L12 17.12l-5.8 3.05 1.11-6.47-4.7-4.58 6.49-.94L12 2.3z"
+    ></path>
+  </svg>
+  <span><strong>{MARKETING_STATS.githubStars}</strong> GitHub stars</span>
+</a>
+
+<style>
+  .docs-nav-link {
+    padding: 0 10px;
+    color: var(--sl-color-gray-3);
+    font-size: 13px;
+    letter-spacing: -0.01em;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: color 0.18s ease;
+  }
+
+  .docs-nav-link:hover {
+    color: var(--sl-color-white);
+  }
+
+  .docs-nav-stars {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 34px;
+    padding: 0 14px;
+    border: 1px solid var(--t3-border);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.02);
+    color: var(--sl-color-gray-3);
+    font-size: 13px;
+    letter-spacing: -0.01em;
+    text-decoration: none;
+    white-space: nowrap;
+    transition:
+      color 0.18s ease,
+      border-color 0.18s ease,
+      background 0.18s ease;
+  }
+
+  .docs-nav-stars:hover {
+    color: var(--sl-color-white);
+    border-color: var(--t3-border-strong);
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .docs-nav-stars strong {
+    color: var(--sl-color-white);
+    font-weight: 600;
+  }
+
+  .docs-nav-stars svg {
+    flex-shrink: 0;
+    color: oklch(0.76 0.15 75);
+  }
+</style>

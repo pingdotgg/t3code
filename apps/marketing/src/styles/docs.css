@@ -1,10 +1,14 @@
-/* Starlight theme overrides so /docs matches the rest of t3.codes. */
-:root {
+/* Starlight overrides so /docs reads as part of t3.codes. Tokens mirror Layout.astro. */
+:root,
+::backdrop {
+  --t3-border: rgba(255, 255, 255, 0.08);
+  --t3-border-strong: rgba(255, 255, 255, 0.14);
+  --t3-accent: oklch(0.68 0.17 250);
+  --t3-accent-dim: oklch(0.68 0.17 250 / 0.15);
+
   --sl-font: "DM Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --sl-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-  --sl-color-accent-low: oklch(0.28 0.08 250);
-  --sl-color-accent: oklch(0.68 0.17 250);
-  --sl-color-accent-high: oklch(0.88 0.07 250);
+
   --sl-color-white: #fafafa;
   --sl-color-gray-1: #e4e4e7;
   --sl-color-gray-2: #d4d4d8;
@@ -13,19 +17,416 @@
   --sl-color-gray-5: #3f3f46;
   --sl-color-gray-6: #18181b;
   --sl-color-black: #09090b;
+
+  --sl-color-accent-low: oklch(0.28 0.08 250);
+  --sl-color-accent: var(--t3-accent);
+  --sl-color-accent-high: oklch(0.86 0.08 250);
+
+  --sl-color-text: var(--sl-color-gray-3);
+  --sl-color-bg-nav: color-mix(in srgb, #09090b 75%, transparent);
+  --sl-color-bg-sidebar: #09090b;
+  --sl-color-hairline: var(--t3-border);
+  --sl-color-hairline-light: var(--t3-border);
+  --sl-color-hairline-shade: var(--t3-border);
+  --sl-color-backdrop-overlay: rgba(9, 9, 11, 0.72);
+
+  --sl-text-h1: clamp(2.125rem, 1.6rem + 1.8vw, 3rem);
+  --sl-text-h2: 1.625rem;
+  --sl-text-h3: 1.1875rem;
+  --sl-text-h4: 1.0625rem;
+  --sl-line-height: 1.7;
+
+  --sl-nav-height: 3.75rem;
+  --sl-menu-button-size: 2.25rem;
+  --sl-nav-pad-x: 1.5rem;
+  --sl-sidebar-pad-x: 1.25rem;
+  --sl-content-width: 44rem;
 }
 
-:root[data-theme="light"] {
-  --sl-color-accent-low: oklch(0.92 0.04 250);
-  --sl-color-accent: oklch(0.52 0.19 250);
-  --sl-color-accent-high: oklch(0.34 0.13 250);
-  --sl-color-white: #09090b;
-  --sl-color-gray-1: #18181b;
-  --sl-color-gray-2: #3f3f46;
-  --sl-color-gray-3: #52525b;
-  --sl-color-gray-4: #71717a;
-  --sl-color-gray-5: #d4d4d8;
-  --sl-color-gray-6: #f4f4f5;
-  --sl-color-gray-7: #fafafa;
-  --sl-color-black: #ffffff;
+html {
+  color-scheme: dark;
+}
+
+body {
+  font-feature-settings: "ss01", "ss02";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Same film grain as the marketing pages. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 256px 256px;
+  z-index: 9999;
+}
+
+:focus-visible {
+  outline: 2px solid var(--t3-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: var(--t3-accent-dim);
+  color: var(--sl-color-white);
+}
+
+/* ── Header ─────────────────────────────────────────── */
+.page > .header {
+  backdrop-filter: blur(18px);
+}
+
+.header .social-icons {
+  gap: 8px;
+}
+
+.header .social-icons::after {
+  content: none;
+}
+
+site-search > button[data-open-modal] {
+  height: 36px;
+  border: 1px solid var(--t3-border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--sl-color-gray-4);
+  font-size: 13px;
+  letter-spacing: -0.01em;
+  box-shadow: none;
+  transition:
+    border-color 0.18s ease,
+    color 0.18s ease;
+}
+
+site-search > button[data-open-modal]:hover {
+  border-color: var(--t3-border-strong);
+  color: var(--sl-color-gray-2);
+}
+
+site-search > button[data-open-modal] kbd {
+  background: transparent;
+  color: var(--sl-color-gray-4);
+  font-family: var(--sl-font);
+}
+
+.sl-menu-button,
+.sl-menu-button:has(~ :popover-open) {
+  border: 1px solid var(--t3-border);
+  background: #0c0c0e;
+  color: var(--sl-color-gray-3);
+  box-shadow: none;
+}
+
+.sl-menu-button:has(~ :popover-open) {
+  border-color: var(--t3-border-strong);
+  color: var(--sl-color-white);
+}
+
+site-search dialog {
+  border: 1px solid var(--t3-border-strong);
+  border-radius: 16px;
+  background: #0c0c0e;
+  box-shadow: 0 32px 80px -24px rgba(0, 0, 0, 0.8);
+}
+
+/* ── Sidebar ────────────────────────────────────────── */
+.sidebar-pane {
+  border-inline-end: 1px solid var(--t3-border);
+}
+
+.sidebar-content {
+  padding-top: 1.75rem;
+}
+
+.sidebar-content .top-level > li + li {
+  margin-top: 1.5rem;
+}
+
+.sidebar-content summary {
+  padding-block: 0 0.375rem;
+}
+
+.sidebar-content .group-label .large {
+  color: var(--sl-color-white);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+.sidebar-content summary .caret {
+  color: var(--sl-color-gray-5);
+}
+
+.sidebar-content ul ul li {
+  margin-inline-start: 0.5rem;
+  border-inline-start-color: var(--t3-border);
+}
+
+.sidebar-content a {
+  border-radius: 0;
+  padding-block: 0.375em;
+  color: var(--sl-color-gray-4);
+  font-size: 14px;
+  letter-spacing: -0.005em;
+  transition: color 0.18s ease;
+}
+
+.sidebar-content a:hover {
+  color: var(--sl-color-white);
+}
+
+/* The current page takes over its slice of the rail instead of a filled pill. */
+.sidebar-content a[aria-current="page"],
+.sidebar-content a[aria-current="page"]:hover,
+.sidebar-content a[aria-current="page"]:focus {
+  position: relative;
+  background: transparent;
+  color: var(--sl-color-white);
+  font-weight: 500;
+}
+
+.sidebar-content ul ul a[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  inset-block: 0.25em;
+  inset-inline-start: calc(-0.5rem - 1px);
+  width: 2px;
+  border-radius: 2px;
+  background: var(--t3-accent);
+}
+
+/* ── Page title ─────────────────────────────────────── */
+/* The homepage hero grid, reused as the one piece of brand texture in the docs. */
+.content-panel:has(> .sl-container > h1#_top) {
+  position: relative;
+  isolation: isolate;
+  padding-block: 3.5rem 2.25rem;
+  border-bottom: 1px solid var(--t3-border);
+  overflow: hidden;
+}
+
+.content-panel:has(> .sl-container > h1#_top)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 48px 48px;
+  background-position: -1px -1px;
+  mask-image: radial-gradient(ellipse 70% 100% at 15% 0%, black 30%, transparent 85%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 100% at 15% 0%, black 30%, transparent 85%);
+}
+
+h1#_top {
+  margin-top: 0;
+  color: var(--sl-color-white);
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+  text-wrap: balance;
+}
+
+/* ── Prose ──────────────────────────────────────────── */
+.sl-markdown-content {
+  color: var(--sl-color-gray-3);
+  font-size: 16px;
+  letter-spacing: -0.005em;
+}
+
+.sl-markdown-content :is(h2, h3, h4, h5, h6) {
+  color: var(--sl-color-white);
+}
+
+.sl-markdown-content h2 {
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+
+.sl-markdown-content .sl-heading-wrapper.level-h2 {
+  margin-top: 3rem;
+}
+
+.sl-markdown-content :is(h3, h4) {
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.sl-markdown-content .sl-anchor-link {
+  color: var(--sl-color-gray-5);
+}
+
+.sl-markdown-content .sl-anchor-link:hover {
+  color: var(--t3-accent);
+}
+
+.sl-markdown-content strong {
+  color: var(--sl-color-gray-1);
+  font-weight: 600;
+}
+
+.sl-markdown-content a:not(.sl-anchor-link) {
+  color: var(--sl-color-white);
+  text-decoration: underline;
+  text-decoration-color: oklch(0.68 0.17 250 / 0.45);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition: text-decoration-color 0.18s ease;
+}
+
+.sl-markdown-content a:not(.sl-anchor-link):hover {
+  text-decoration-color: var(--t3-accent);
+}
+
+.sl-markdown-content :not(pre) > code {
+  padding: 0.125em 0.375em;
+  border: 1px solid var(--t3-border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--sl-color-gray-1);
+  font-size: 0.84em;
+}
+
+.sl-markdown-content ul > li::marker {
+  color: var(--sl-color-gray-5);
+}
+
+.sl-markdown-content hr {
+  border-color: var(--t3-border);
+}
+
+.sl-markdown-content blockquote {
+  border-inline-start: 2px solid var(--t3-accent);
+  color: var(--sl-color-gray-3);
+}
+
+/* Tables sit in the same hairline tiles as the homepage cards. */
+.sl-markdown-content table {
+  display: table;
+  width: 100%;
+  border: 1px solid var(--t3-border);
+  border-radius: 12px;
+  border-collapse: separate;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.sl-markdown-content :is(th, td) {
+  border-bottom: 1px solid var(--t3-border);
+  padding: 0.75rem 1rem;
+}
+
+.sl-markdown-content :is(th:first-child, td:first-child) {
+  padding-inline-start: 1rem;
+}
+
+.sl-markdown-content :is(th:last-child, td:last-child) {
+  padding-inline-end: 1rem;
+}
+
+.sl-markdown-content tr:last-child td {
+  border-bottom: 0;
+}
+
+.sl-markdown-content th {
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--sl-color-gray-4);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.sl-markdown-content td {
+  color: var(--sl-color-gray-3);
+}
+
+/* ── On this page ───────────────────────────────────── */
+.right-sidebar {
+  border-inline-start: 1px solid var(--t3-border);
+}
+
+starlight-toc h2 {
+  color: var(--sl-color-white);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+starlight-toc a {
+  color: var(--sl-color-gray-4);
+  font-size: 13px;
+  text-decoration: none;
+  transition: color 0.18s ease;
+}
+
+starlight-toc a:hover {
+  color: var(--sl-color-white);
+}
+
+starlight-toc a[aria-current="true"] {
+  border-radius: 0;
+  color: var(--sl-color-white);
+  box-shadow: inset 2px 0 0 var(--t3-accent);
+}
+
+/* ── Previous / next ────────────────────────────────── */
+.pagination-links {
+  margin-top: 3rem;
+}
+
+.pagination-links a {
+  border: 1px solid var(--t3-border);
+  border-radius: 12px;
+  padding: 1.125rem 1.25rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), rgba(255, 255, 255, 0));
+  color: var(--sl-color-gray-4);
+  font-size: 13px;
+  box-shadow: none;
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease;
+}
+
+.pagination-links a:hover {
+  border-color: var(--t3-border-strong);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.pagination-links a svg {
+  width: 1rem;
+  height: 1rem;
+  color: var(--sl-color-gray-5);
+}
+
+.pagination-links .link-title {
+  display: inline-block;
+  margin-top: 0.25rem;
+  color: var(--sl-color-white);
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+/* ── Small screens ──────────────────────────────────── */
+@media (max-width: 50rem) {
+  :root {
+    --sl-nav-pad-x: 1.25rem;
+  }
+
+  .content-panel:has(> .sl-container > h1#_top) {
+    padding-block: 2.25rem 1.75rem;
+  }
+
+  /* Wide tables scroll inside their tile instead of the page. */
+  .sl-markdown-content table {
+    display: block;
+    overflow: auto;
+  }
 }

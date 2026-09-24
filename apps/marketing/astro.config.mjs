@@ -3,7 +3,6 @@ import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
 
 import { docsHref } from "./src/lib/docsLinks.ts";
-import { GITHUB_REPOSITORY_URL } from "./src/lib/site.ts";
 
 export default defineConfig({
   site: "https://t3.codes",
@@ -27,13 +26,43 @@ export default defineConfig({
     starlight({
       title: "T3 Code",
       description: "Guides for installing, using, and running T3 Code.",
-      logo: { src: "./src/assets/icon.webp" },
       favicon: "/favicon.ico",
-      social: [
-        { icon: "github", label: "GitHub", href: GITHUB_REPOSITORY_URL },
-        { icon: "discord", label: "Discord", href: "https://discord.gg/jn4EGJjrvv" },
-      ],
+      components: {
+        SiteTitle: "./src/components/docs/SiteTitle.astro",
+        SocialIcons: "./src/components/docs/SocialIcons.astro",
+        ThemeProvider: "./src/components/docs/ThemeProvider.astro",
+        ThemeSelect: "./src/components/docs/ThemeSelect.astro",
+      },
       customCss: ["./src/styles/fonts.css", "./src/styles/docs.css"],
+      // Code blocks borrow the terminal window from the homepage.
+      expressiveCode: {
+        themes: ["github-dark-default"],
+        styleOverrides: {
+          borderRadius: "12px",
+          borderColor: "rgba(255, 255, 255, 0.08)",
+          codeBackground: "#0c0c0e",
+          codeFontFamily: "var(--sl-font-mono)",
+          codeFontSize: "13px",
+          codeLineHeight: "1.7",
+          codePaddingBlock: "16px",
+          codePaddingInline: "20px",
+          uiFontFamily: "var(--sl-font)",
+          frames: {
+            shadowColor: "transparent",
+            frameBoxShadowCssValue: "none",
+            terminalBackground: "#0c0c0e",
+            terminalTitlebarBackground: "rgba(255, 255, 255, 0.02)",
+            terminalTitlebarBorderBottomColor: "rgba(255, 255, 255, 0.08)",
+            terminalTitlebarDotsForeground: "#2a2a30",
+            terminalTitlebarDotsOpacity: "1",
+            terminalTitlebarForeground: "#71717a",
+            editorTabBarBackground: "rgba(255, 255, 255, 0.02)",
+            editorActiveTabBackground: "#0c0c0e",
+            editorActiveTabIndicatorTopColor: "transparent",
+            editorTabBarBorderBottomColor: "rgba(255, 255, 255, 0.08)",
+          },
+        },
+      },
       // The rest of the site owns its 404 behavior.
       disable404Route: true,
       markdown: { processedDirs: ["../../docs/user"] },

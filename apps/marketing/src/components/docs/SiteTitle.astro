@@ -1,0 +1,46 @@
+---
+// Replaces Starlight's logo lockup with the marketing nav's text wordmark.
+---
+
+<div class="docs-brand">
+  <a href="/" class="docs-brand-name" translate="no">T3 Code</a>
+  <span class="docs-brand-sep" aria-hidden="true">/</span>
+  <a href="/docs/" class="docs-brand-section">Docs</a>
+</div>
+
+<style>
+  .docs-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    white-space: nowrap;
+  }
+
+  .docs-brand a {
+    text-decoration: none;
+  }
+
+  .docs-brand-name {
+    color: var(--sl-color-white);
+    font-size: 16px;
+    font-weight: 650;
+    letter-spacing: -0.025em;
+  }
+
+  .docs-brand-sep {
+    color: var(--sl-color-gray-5);
+    font-size: 16px;
+  }
+
+  .docs-brand-section {
+    color: var(--sl-color-gray-3);
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    transition: color 0.18s ease;
+  }
+
+  .docs-brand-section:hover {
+    color: var(--sl-color-white);
+  }
+</style>
