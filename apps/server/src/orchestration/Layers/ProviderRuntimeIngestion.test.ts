@@ -5174,4 +5174,43 @@ describe("splitBufferedAssistantText", () => {
       rest: "```\n- one\n- two\n",
     });
   });
+
+  it("holds a heading until the block under it is done", () => {
+    expect(splitBufferedAssistantText("intro\n\n## Setup\n\nInstall it")).toEqual({
+      ready: "intro\n\n",
+      rest: "## Setup\n\nInstall it",
+    });
+    expect(
+      splitBufferedAssistantText("intro\n\n# Plan\n\n## Setup\n\nInstall it.\n\nNext"),
+    ).toEqual({
+      ready: "intro\n\n# Plan\n\n## Setup\n\nInstall it.\n\n",
+      rest: "Next",
+    });
+  });
+
+  it("holds a line of only bold text like a heading", () => {
+    expect(splitBufferedAssistantText("**Risk by area:**\n\n| a |\n|---|\n")).toEqual({
+      ready: "",
+      rest: "**Risk by area:**\n\n| a |\n|---|\n",
+    });
+    expect(splitBufferedAssistantText("**Note:** read this.\n\nNext")).toEqual({
+      ready: "**Note:** read this.\n\n",
+      rest: "Next",
+    });
+  });
+
+  it("delivers a held heading with its first list item or its whole code block", () => {
+    expect(splitBufferedAssistantText("## Steps\n\n- one\n- tw")).toEqual({
+      ready: "## Steps\n\n- one\n",
+      rest: "- tw",
+    });
+    expect(splitBufferedAssistantText("## Code\n\n```ts\na\n\nb\n")).toEqual({
+      ready: "",
+      rest: "## Code\n\n```ts\na\n\nb\n",
+    });
+    expect(splitBufferedAssistantText("## Code\n\n```ts\na\n```\nafter")).toEqual({
+      ready: "## Code\n\n```ts\na\n```\n",
+      rest: "after",
+    });
+  });
 });
