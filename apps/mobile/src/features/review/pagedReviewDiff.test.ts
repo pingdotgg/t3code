@@ -47,6 +47,17 @@ function page(start: number): CheckpointDiffPage {
 }
 
 describe("paged mobile diffs", () => {
+  it("preserves the scrollable preview for ordinary comment selections", async () => {
+    const selection = await loadPagedReviewCommentSelection({
+      start: 0,
+      end: 9,
+      revision: "revision",
+      fetchPage: async (start) => page(start),
+    });
+    expect(selection.lines).toHaveLength(10);
+    expect(selection.lineCount).toBe(10);
+  });
+
   it("keeps a 200,000-line comment complete without retaining renderable rows for the whole range", async () => {
     const loadedSelection = await loadPagedReviewCommentSelection({
       start: 0,

@@ -1,4 +1,8 @@
-import { CHECKPOINT_DIFF_PAGE_ROWS, type CheckpointDiffPage } from "@t3tools/contracts";
+import {
+  CHECKPOINT_DIFF_PAGE_ROWS,
+  CHECKPOINT_DIFF_WINDOW_ROWS,
+  type CheckpointDiffPage,
+} from "@t3tools/contracts";
 import type { ReviewParsedDiff, ReviewRenderableRow } from "./reviewModel";
 import type { ReviewRenderableLineRow } from "./reviewModel";
 import {
@@ -66,7 +70,7 @@ export async function loadPagedReviewCommentSelection(input: {
             firstLine ??= row;
             lastLine = row;
             consistentChange &&= row.change === firstLine.change;
-            if (lines.length < 5) lines.push(row);
+            if (lines.length < CHECKPOINT_DIFF_WINDOW_ROWS) lines.push(row);
             if (row.oldLineNumber !== null) {
               if (oldCount === 0) oldStart = row.oldLineNumber;
               oldCount += 1;
@@ -95,7 +99,7 @@ export async function loadPagedReviewCommentSelection(input: {
         ? `${marker}${firstNumber}`
         : `${marker}${firstNumber} to ${marker}${lastNumber}`;
   return {
-    lines,
+    lines: lineCount > CHECKPOINT_DIFF_WINDOW_ROWS ? lines.slice(0, 5) : lines,
     firstLine,
     lastLine,
     lineCount,

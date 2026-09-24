@@ -5,7 +5,7 @@ import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Result from "effect/Result";
 
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { CHECKPOINT_DIFF_WINDOW_ROWS, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import {
   buildReviewCommentTarget,
   clearReviewCommentTarget,
@@ -193,7 +193,7 @@ export function useReviewCommentSelectionController(input: {
             cachedLines.length === Math.abs(anchor.sourceLineIndex - endpoint.sourceLineIndex) + 1;
           // Large selections retain complete text, not thousands of renderable objects.
           const loadedSelection =
-            contiguous && cachedLines.length <= 5
+            contiguous && cachedLines.length <= CHECKPOINT_DIFF_WINDOW_ROWS
               ? undefined
               : await loadCommentRange?.(anchor.sourceRow, endpoint.sourceRow, request.signal);
           const lines = loadedSelection?.lines ?? (contiguous ? cachedLines : []);
