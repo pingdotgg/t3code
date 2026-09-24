@@ -81,6 +81,12 @@ describe("toolActivity", () => {
         input: { glob: "*.ts", path: "/tmp/t3chat-new" },
       }),
     ).toBe("Searched files *.ts in t3chat-new");
+    expect(
+      formatSearchToolLabel({ rawInput: {}, input: { pattern: "TODO", path: "apps/web" } }),
+    ).toBe("Searched TODO in web");
+    expect(formatSearchToolLabel({ input: { globPattern: "*.tsx", path: "apps/web" } })).toBe(
+      "Searched files *.tsx in web",
+    );
   });
 
   it("keeps the first non-empty rawInput when a later update is empty", () => {
@@ -90,5 +96,8 @@ describe("toolActivity", () => {
       rawInput: { path: "src/a.ts" },
       kind: "read",
     });
+    expect(
+      mergeToolActivityData({ rawInput: { path: "src/a.ts" } }, { rawInput: { startLine: 4 } }),
+    ).toEqual({ rawInput: { path: "src/a.ts", startLine: 4 } });
   });
 });

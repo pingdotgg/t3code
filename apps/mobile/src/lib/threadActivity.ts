@@ -217,7 +217,9 @@ export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = fa
   const action = toolGroupAction(entry);
   if (action === "code-search" || action === "search") {
     const toolData =
-      entry.toolData !== null && typeof entry.toolData === "object" && !Array.isArray(entry.toolData)
+      entry.toolData !== null &&
+      typeof entry.toolData === "object" &&
+      !Array.isArray(entry.toolData)
         ? (entry.toolData as Record<string, unknown>)
         : undefined;
     const searchLabel = formatSearchToolLabel(toolData);
@@ -226,16 +228,15 @@ export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = fa
   if (action === "read") {
     const [firstPath] = entry.changedFiles ?? collectToolFilePaths(entry.toolData);
     if (firstPath) {
-      return formatReadToolLabel(
-        firstPath,
-        Math.max(0, (entry.changedFiles?.length ?? 1) - 1),
-      );
+      return formatReadToolLabel(firstPath, Math.max(0, (entry.changedFiles?.length ?? 1) - 1));
     }
     if (!expanded) return "Read file";
   }
   const preview =
     entry.command ??
-    (action === "read" ? null : entry.detail) ??
+    (action === "read" || (!expanded && (action === "code-search" || action === "search"))
+      ? null
+      : entry.detail) ??
     (entry.changedFiles?.length
       ? entry.changedFiles.length === 1
         ? entry.changedFiles[0]!
@@ -700,8 +701,12 @@ function toFeedActivity(
   const detail = item.type === "notification" ? null : itemPreview(item);
   const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);
   const workEntry = toWorkLogEntry(item, createdAt, summary, detail);
-  const getFullDetail = memoizeValue(() =>
-    JSON.stringify(
+  const readPaths = toolGroupAction(workEntry) === "read" ? collectToolFilePaths(item) : null;
+  const getFullDetail = memoizeValue(() => {
+    if (readPaths) {
+      return readPaths.join("\n") || null;
+    }
+    return JSON.stringify(
       {
         visibility: row.visibility,
         sourceThreadId: row.sourceThreadId,
@@ -710,8 +715,8 @@ function toFeedActivity(
       },
       null,
       2,
-    ),
-  );
+    );
+  });
   const getCopyText = memoizeValue(() =>
     [summary, detail, getFullDetail()]
       .filter(
@@ -727,7 +732,7 @@ function toFeedActivity(
     attemptId,
     summary,
     detail,
-    canExpand: !(item.type === "error" && item.status === "failed"),
+    canExpand: !(item.type === "error" && item.status === "failed") && (readPaths?.length ?? 1) > 0,
     getFullDetail,
     getCopyText,
     icon: workEntry.toolSurface ?? itemIcon(item),

@@ -425,7 +425,12 @@ export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
   if (presentation?.icon === "browser") return "browser";
   if (presentation?.icon === "device") return "device";
   const data = asRecord(entry.toolData) ?? {};
-  const toolName = workEntryToolName(entry);
+  const toolName =
+    entry.structuredPayload?.type === "dynamic_tool"
+      ? entry.structuredPayload.toolName
+      : typeof data.toolName === "string"
+        ? data.toolName
+        : entry.toolTitle;
   const classified = classifyToolActivity({
     itemType:
       entry.itemType === "command_execution" ||

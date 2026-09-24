@@ -765,7 +765,7 @@ describe("toolGroupAction", () => {
           type: "dynamic_tool",
           toolName: "Read",
           input: { file_path: "src/env.ts" },
-        } as WorkLogPresentationEntry["structuredPayload"],
+        } as NonNullable<WorkLogPresentationEntry["structuredPayload"]>,
       }),
     ).toBe("read");
     expect(
@@ -781,7 +781,7 @@ describe("toolGroupAction", () => {
           type: "dynamic_tool",
           toolName: "Grep",
           input: { pattern: "TODO", path: "apps/web" },
-        } as WorkLogPresentationEntry["structuredPayload"],
+        } as NonNullable<WorkLogPresentationEntry["structuredPayload"]>,
       }),
     ).toBe("code-search");
   });

@@ -3260,7 +3260,11 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                   title: path ? formatReadToolLabel(path) : (title ?? "Read file"),
                   type: "dynamic_tool",
                   toolName: "Read",
-                  input: rawInputRecord ?? (path === undefined ? {} : { path }),
+                  input:
+                    path === undefined ||
+                    ["path", "filePath", "file_path"].some((key) => rawInputRecord?.[key] === path)
+                      ? (rawInputRecord ?? {})
+                      : { ...rawInputRecord, path },
                   ...(rawOutput === undefined ? {} : { output: rawOutput }),
                 };
                 break;

@@ -3401,10 +3401,7 @@ export function makeClaudeAdapterV2(
             parentItemId: null,
             ordinal: input.ordinal,
             status: input.status,
-            title:
-              readPath !== undefined
-                ? formatReadToolLabel(readPath)
-                : (searchTitle ?? null),
+            title: readPath !== undefined ? formatReadToolLabel(readPath) : (searchTitle ?? null),
             startedAt: input.startedAt,
             completedAt,
             updatedAt: input.updatedAt,

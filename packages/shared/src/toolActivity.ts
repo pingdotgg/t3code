@@ -23,7 +23,9 @@ export function computerUseToolTitle(
   return asTrimmedString(asRecord(input)?.title);
 }
 
-function recordHasKeys(value: Record<string, unknown> | undefined): value is Record<string, unknown> {
+function recordHasKeys(
+  value: Record<string, unknown> | undefined,
+): value is Record<string, unknown> {
   return value !== undefined && Object.keys(value).length > 0;
 }
 
@@ -184,7 +186,9 @@ export function mergeToolActivityData(
   }
   const previousInput = asRecord(previousRecord.rawInput);
   const nextInput = asRecord(nextRecord.rawInput);
-  const rawInput = recordHasKeys(nextInput) ? nextInput : (previousInput ?? nextInput);
+  const rawInput = recordHasKeys(nextInput)
+    ? { ...previousInput, ...nextInput }
+    : (previousInput ?? nextInput);
   const merged = { ...previousRecord, ...nextRecord };
   if (recordHasKeys(rawInput)) {
     merged.rawInput = rawInput;
@@ -289,6 +293,7 @@ export function classifyToolActivity(input: {
 const SEARCH_QUERY_KEYS = ["pattern", "query", "searchTerm", "regex", "grep", "needle"] as const;
 const SEARCH_GLOB_KEYS = [
   "glob",
+  "globPattern",
   "glob_pattern",
   "include",
   "filePattern",
@@ -323,10 +328,9 @@ function searchInputRecord(
   data: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
   return (
-    asRecord(data?.rawInput) ??
-    asRecord(data?.input) ??
-    asRecord(asRecord(data?.item)?.input) ??
-    data
+    [data?.rawInput, data?.input, asRecord(data?.item)?.input]
+      .map(asRecord)
+      .find((record) => recordHasKeys(record ?? undefined)) ?? data
   );
 }
 
@@ -334,10 +338,7 @@ function searchTargetName(value: string | undefined): string | undefined {
   if (!value) {
     return undefined;
   }
-  return value
-    .split(/[\\/]/u)
-    .filter((part) => part.length > 0 && part !== ".")
-    .at(-1);
+  return value.split(/[\\/]/u).findLast((part) => part.length > 0 && part !== ".");
 }
 
 const SEARCH_INPUT_KEYS = [...SEARCH_QUERY_KEYS, ...SEARCH_GLOB_KEYS, ...SEARCH_TARGET_KEYS];

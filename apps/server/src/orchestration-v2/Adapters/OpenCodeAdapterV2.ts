@@ -1713,7 +1713,9 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             const pattern = recordString(input, "pattern", "query", "path", "filePath");
             turnItem = {
               ...base,
-              title: formatSearchToolLabel({ input, ...(pattern === undefined ? {} : { pattern }) }) ?? base.title,
+              title:
+                formatSearchToolLabel({ input, ...(pattern === undefined ? {} : { pattern }) }) ??
+                base.title,
               type: "file_search",
               ...(pattern === undefined ? {} : { pattern }),
             };

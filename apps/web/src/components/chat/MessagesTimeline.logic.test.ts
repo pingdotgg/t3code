@@ -182,10 +182,27 @@ describe("work entry labels", () => {
         type: "dynamic_tool",
         toolName: "Read",
         input: { file_path: "src/env.ts" },
-      } as WorkLogEntry["structuredPayload"],
+      } as NonNullable<WorkLogEntry["structuredPayload"]>,
     };
     expect(workEntryDisplayLabel(readEntry, undefined)).toBe("Read src/env.ts");
     expect(workEntryReadOutput(readEntry, undefined)).toBe("src/env.ts");
+    expect(workEntryReadOutput(readEntry, "/workspace/ohseearr")).toBe(
+      "/workspace/ohseearr/src/env.ts",
+    );
+    expect(
+      workEntryReadOutput(
+        {
+          structuredPayload: {
+            type: "dynamic_tool",
+            toolName: "Read",
+            input: {},
+          } as NonNullable<WorkLogEntry["structuredPayload"]>,
+          toolData: { locations: [{ path: "src/from-location.ts" }] },
+        },
+        "/workspace/ohseearr",
+      ),
+    ).toBe("/workspace/ohseearr/src/from-location.ts");
+    expect(workEntryReadOutput({ detail: "---", toolData: {} }, undefined)).toBeNull();
   });
 
   it("labels Claude Grep from structured input instead of a generic tool heading", () => {
@@ -201,7 +218,7 @@ describe("work entry labels", () => {
             type: "dynamic_tool",
             toolName: "Grep",
             input: { pattern: "TODO", path: "apps/web" },
-          } as WorkLogEntry["structuredPayload"],
+          } as NonNullable<WorkLogEntry["structuredPayload"]>,
         },
         undefined,
       ),

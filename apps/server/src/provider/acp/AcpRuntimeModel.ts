@@ -4,7 +4,10 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import type * as EffectAcpSchema from "effect-acp/compat";
-import { deriveToolActivityPresentation, mergeToolActivityData } from "@t3tools/shared/toolActivity";
+import {
+  deriveToolActivityPresentation,
+  mergeToolActivityData,
+} from "@t3tools/shared/toolActivity";
 import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 import type {
   OrchestrationV2ProviderThreadNativeMetadata,
@@ -622,7 +625,7 @@ function locationsFromToolCallInput(input: {
   }
   if (input.content) {
     for (const entry of input.content) {
-      if (entry.type === "diff") {
+      if (entry.type === "diff" && "path" in entry) {
         pushPath(entry.path);
       }
     }

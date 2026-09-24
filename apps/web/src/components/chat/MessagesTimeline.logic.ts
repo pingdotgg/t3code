@@ -55,6 +55,7 @@ import {
   formatReadToolLabel,
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
 function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "message") {
@@ -87,23 +88,26 @@ function singleToolCallLabel(entry: WorkLogEntry): string {
 }
 
 function workEntryToolDataRecord(entry: WorkLogEntry): Record<string, unknown> | undefined {
-  return entry.toolData !== null && typeof entry.toolData === "object" && !Array.isArray(entry.toolData)
+  return entry.toolData !== null &&
+    typeof entry.toolData === "object" &&
+    !Array.isArray(entry.toolData)
     ? (entry.toolData as Record<string, unknown>)
     : undefined;
 }
 
-function workEntryReadPaths(entry: WorkLogEntry, workspaceRoot: string | undefined): string[] {
-  const fromChanged = (entry.changedFiles ?? []).map((filePath) =>
-    formatWorkspaceRelativePath(filePath, workspaceRoot),
-  );
+function workEntryReadRawPaths(entry: WorkLogEntry): readonly string[] {
+  const fromChanged = entry.changedFiles ?? [];
   if (fromChanged.length > 0) return fromChanged;
   const structured = entry.structuredPayload;
   if (structured?.type === "dynamic_tool") {
-    return collectToolFilePaths({ input: structured.input }).map((filePath) =>
-      formatWorkspaceRelativePath(filePath, workspaceRoot),
-    );
+    const structuredPaths = collectToolFilePaths({ input: structured.input });
+    if (structuredPaths.length > 0) return structuredPaths;
   }
-  return collectToolFilePaths(workEntryToolDataRecord(entry)).map((filePath) =>
+  return collectToolFilePaths(workEntryToolDataRecord(entry));
+}
+
+function workEntryReadPaths(entry: WorkLogEntry, workspaceRoot: string | undefined): string[] {
+  return workEntryReadRawPaths(entry).map((filePath) =>
     formatWorkspaceRelativePath(filePath, workspaceRoot),
   );
 }
@@ -136,12 +140,7 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
     item?.type === "dynamic_tool" ? computerUseToolTitle(item.toolName, item.input) : null;
   if (title) return title;
   const compactDetail = entry.detail?.trim();
-  if (
-    compactDetail &&
-    !providerRetry &&
-    action !== "read" &&
-    !/[\r\n]/.test(compactDetail)
-  ) {
+  if (compactDetail && !providerRetry && action !== "read" && !/[\r\n]/.test(compactDetail)) {
     return compactDetail;
   }
   const [firstPath] = entry.changedFiles ?? [];
@@ -151,7 +150,7 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
       ? path
       : `${path} +${entry.changedFiles!.length - 1} more`;
   }
-  if (action === "read" && entry.itemType !== "reasoning" && !entry.viewedImagePath) {
+  if (action === "read" && !entry.viewedImagePath) {
     return "Read file";
   }
   const heading = normalizeCompactToolLabel(entry.toolTitle || entry.label);
@@ -160,24 +159,31 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
 
 /** Inspectable read-file output is the path when we have one, otherwise nothing. */
 export function workEntryReadOutput(
-  entry: Pick<WorkLogEntry, "changedFiles" | "detail" | "viewedImagePath" | "structuredPayload" | "toolData">,
+  entry: Pick<
+    WorkLogEntry,
+    "changedFiles" | "detail" | "viewedImagePath" | "structuredPayload" | "toolData"
+  >,
   workspaceRoot: string | undefined,
 ): string | null {
   const paths = [
     ...new Set(
-      workEntryReadPaths(entry as WorkLogEntry, workspaceRoot)
-        .map((path) => path.trim())
+      workEntryReadRawPaths(entry as WorkLogEntry)
+        .map((path) => {
+          const trimmed = path.trim().replaceAll("\\", "/");
+          if (!workspaceRoot || trimmed.startsWith("/") || isWindowsAbsolutePath(trimmed)) {
+            return trimmed;
+          }
+          const root = workspaceRoot.replaceAll("\\", "/").replace(/\/+$/, "");
+          const relative = trimmed.replace(/^\.\//, "").replace(/^\/+/, "");
+          return `${root}/${relative}`;
+        })
         .filter((path) => path.length > 0),
     ),
   ];
   if (paths.length > 0) {
     return paths.join("\n");
   }
-  if (entry.viewedImagePath) {
-    return null;
-  }
-  const detail = entry.detail?.trim();
-  return detail && detail.length > 0 && !/[\r\n]/.test(detail) ? detail : null;
+  return null;
 }
 
 export function liveWorkEntryLabel(
