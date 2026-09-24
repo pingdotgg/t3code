@@ -5,12 +5,10 @@ import {
   type ServerSelfUpdateProgressStage,
   type ServerSelfUpdateResult,
 } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as HashMap from "effect/HashMap";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -48,10 +46,6 @@ export class DesktopAppUpdate extends Context.Service<
     /** True when this server was spawned by a desktop app that can be
         driven over the telemetry control channel. */
     readonly available: boolean;
-    /** True from an accepted `commit` until the desktop app reports that
-        install failed or its deadline passes. Shutdown keeps the managed
-        tunnel meanwhile, because the desktop app restarts this server. */
-    readonly isRestartPending: Effect.Effect<boolean>;
     /** Checks and downloads through the desktop app, then returns a token
         while this server is still connected. `commit` starts installation. */
     readonly run: (
@@ -73,16 +67,6 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
   const crypto = yield* Crypto.Crypto;
   const receiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
   const inFlight = yield* Ref.make(false);
-  // Install deadline for each request the desktop app accepted. Shutdown
-  // interrupts the commit RPC before cleanup runs, so interruption keeps the
-  // entry. Only the request's own failure report or its deadline ends it,
-  // and expired entries are dropped when the next install is accepted.
-  const pendingInstalls = yield* Ref.make(HashMap.empty<string, number>());
-
-  const isRestartPending = Effect.gen(function* () {
-    const now = yield* Clock.currentTimeMillis;
-    return HashMap.some(yield* Ref.get(pendingInstalls), (deadline) => deadline > now);
-  });
 
   const available = config.mode === "desktop" && config.desktopTelemetryControlFd !== undefined;
   const failWith = (reason: string, cause?: unknown) =>
@@ -217,16 +201,6 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
         yield* Effect.uninterruptible(
           receiver.commitDesktopUpdate(requestId).pipe(
             Effect.mapError((error) => failWith("Could not reach the T3 Code desktop app.", error)),
-            Effect.andThen(Clock.currentTimeMillis),
-            Effect.flatMap((acceptedAt) =>
-              Ref.update(pendingInstalls, (installs) =>
-                HashMap.set(
-                  HashMap.filter(installs, (deadline) => deadline > acceptedAt),
-                  requestId,
-                  acceptedAt + Duration.toMillis(DESKTOP_INSTALL_TIMEOUT),
-                ),
-              ),
-            ),
             Effect.tap(() => onHandoffAccepted()),
           ),
         );
@@ -244,7 +218,6 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
     if (Option.isNone(terminal)) {
       return yield* failWith("The desktop app stopped reporting the install.");
     }
-    yield* Ref.update(pendingInstalls, HashMap.remove(requestId));
     return yield* failWith(
       terminal.value.reason ??
         terminal.value.state.message ??
@@ -252,7 +225,7 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
     );
   });
 
-  return DesktopAppUpdate.of({ available, isRestartPending, run, commit });
+  return DesktopAppUpdate.of({ available, run, commit });
 });
 
 export const layer = Layer.effect(DesktopAppUpdate, make());

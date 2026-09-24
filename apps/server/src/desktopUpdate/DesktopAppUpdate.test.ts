@@ -8,7 +8,6 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
@@ -61,7 +60,6 @@ interface HarnessOptions {
       The stream ends after the last one unless `keepOpen` is set. */
   readonly reports?: (requestId: string) => readonly DesktopUpdateStatusReport[];
   readonly keepOpen?: boolean;
-  readonly receiver?: Partial<DesktopTelemetryReceiver.DesktopTelemetryReceiver["Service"]>;
 }
 
 const makeHarness = Effect.fn("test.make_desktop_app_update_harness")(function* (
@@ -100,7 +98,6 @@ const makeHarness = Effect.fn("test.make_desktop_app_update_harness")(function* 
             latest: Option.none<DesktopUpdateStatusReport>(),
             changes,
           }),
-          ...options.receiver,
         }),
         ServerConfig.layer(config),
       ),
@@ -147,7 +144,6 @@ it.layer(NodeServices.layer)("desktop app update", (it) => {
       });
       // "downloading" is not repeated for every download report.
       expect(stages).toEqual(["downloading", "installing"]);
-      expect(yield* service.isRestartPending).toBe(false);
 
       // Success releases the in-flight guard: if the desktop rejected the
       // install after reporting, the server must accept a retry instead of
@@ -207,48 +203,6 @@ it.layer(NodeServices.layer)("desktop app update", (it) => {
       expect(
         (yield* service.commit(prepared.desktopUpdateToken ?? "missing").pipe(Effect.flip)).reason,
       ).toBe("installer refused");
-      expect(yield* service.isRestartPending).toBe(false);
-    }),
-  );
-
-  it.effect(
-    "keeps an accepted install pending after its caller disconnects, until the deadline",
-    () =>
-      Effect.gen(function* () {
-        const accepted = yield* Deferred.make<void>();
-        const { service } = yield* makeHarness({ keepOpen: true });
-        const commit = yield* service
-          .commit("update-1", () => Deferred.succeed(accepted, undefined).pipe(Effect.asVoid))
-          .pipe(Effect.forkChild);
-        yield* Deferred.await(accepted);
-        // Shutdown interrupts the commit RPC before the tunnel cleanup runs.
-        yield* Fiber.interrupt(commit);
-        expect(yield* service.isRestartPending).toBe(true);
-
-        yield* TestClock.adjust("2 minutes");
-        expect(yield* service.isRestartPending).toBe(false);
-      }),
-  );
-
-  it.effect("ends only the failed request's handoff", () =>
-    Effect.gen(function* () {
-      const accepted = yield* Deferred.make<void>();
-      const { service } = yield* makeHarness({
-        receiver: {
-          desktopUpdates: Effect.succeed({
-            latest: Option.some(report("rejected", makeState(), { outcome: "failed" })),
-            changes: Stream.never,
-          }),
-        },
-      });
-      const commit = yield* service
-        .commit("update-1", () => Deferred.succeed(accepted, undefined).pipe(Effect.asVoid))
-        .pipe(Effect.forkChild);
-      yield* Deferred.await(accepted);
-      yield* Fiber.interrupt(commit);
-      yield* service.commit("rejected").pipe(Effect.flip);
-
-      expect(yield* service.isRestartPending).toBe(true);
     }),
   );
 

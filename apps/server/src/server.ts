@@ -796,7 +796,7 @@ const makeServerLayer = Layer.unwrap(
       httpListeningLayer,
       runtimeStateLayer.pipe(Layer.provide(launcherLayer)),
       tailscaleServeLayer,
-      cloudDesiredLinkReconcileLayer.pipe(Layer.provide(DesktopAppUpdateLayerLive)),
+      cloudDesiredLinkReconcileLayer,
     );
 
     return serverApplicationLayer.pipe(

@@ -1,4 +1,5 @@
 import {
+  DESKTOP_UPDATE_RESTART_MARKER_FILE,
   DesktopUpdateChannelSchema,
   type DesktopRuntimeInfo,
   type DesktopUpdateActionResult,
@@ -535,6 +536,22 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  // Tells the primary backend that the coming stop is an update restart, so it
+  // keeps its managed tunnel for the backend the updated app starts. Best
+  // effort: without the marker the backend only re-provisions its tunnel.
+  const writeUpdateRestartMarker = Effect.gen(function* () {
+    const runtimeDir = environment.path.join(environment.baseDir, "runtime");
+    yield* fileSystem.makeDirectory(runtimeDir, { recursive: true });
+    yield* fileSystem.writeFileString(
+      environment.path.join(runtimeDir, DESKTOP_UPDATE_RESTART_MARKER_FILE),
+      "",
+    );
+  }).pipe(
+    Effect.catch((error) =>
+      logUpdaterWarning("Could not write the update restart marker.", { error: error.message }),
+    ),
+  );
+
   const installDownloadedUpdate = (expectedVersion?: string) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -586,6 +603,7 @@ export const make = Effect.gen(function* () {
         yield* Ref.set(desktopState.quitting, true);
 
         return yield* Effect.gen(function* () {
+          yield* writeUpdateRestartMarker;
           // Stop every backend in the pool, not just the primary. With
           // parallel WSL + Windows backends, leaving the WSL instance up
           // means quitAndInstall's app.quit() exits before the pool's
