@@ -179,7 +179,7 @@ export function ComposerEditor({
               ? (skillLabels.get(token.value) ?? token.value)
               : token.type === "context"
                 ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
-                : basename(token.value),
+                : basename(token.value.replace(/[\\/]+$/, "")),
           detail: token.type === "context" ? composerChipSizeSuffix(record) : "",
           // Only a mention wears per-filetype artwork. An attachment chip keeps the tinted
           // monochrome glyph web draws for it: coloured artwork ignores the chip's accent and

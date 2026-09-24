@@ -147,6 +147,24 @@ describe("mobile composer context", () => {
     ).toBeNull();
   });
 
+  it("rejects directory mentions rather than routing to a file screen that would refuse them", () => {
+    expect(composerMentionPath("[src](src/)")).toBeNull();
+    expect(composerMentionPath("@src/")).toBeNull();
+    const directoryMention = {
+      version: 1 as const,
+      kind: "mention" as const,
+      contextId: ComposerContextId.make("mention-dir"),
+      label: "src",
+      path: "src/",
+    };
+    expect(
+      composerMentionPath(formatComposerContextReference(directoryMention), {
+        version: 1,
+        records: [directoryMention],
+      }),
+    ).toBeNull();
+  });
+
   it("restores deleted payloads on undo without adding removed context to the current draft", () => {
     const restore = createComposerContextHistory();
     const source = formatComposerContextReference(annotation);

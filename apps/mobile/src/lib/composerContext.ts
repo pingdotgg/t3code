@@ -36,15 +36,23 @@ export function composerContextSendBlockReason(
     : null;
 }
 
-/** Resolve the tapped source, not its display label, which can be only a basename. */
+/**
+ * Resolve the tapped source, not its display label, which can be only a
+ * basename. A trailing separator names a directory: mobile has no route for
+ * one (its file screen calls `readFile`, which the server refuses for a
+ * directory), so callers get null and skip navigation rather than dispatch
+ * a request the server would reject.
+ */
 export function composerMentionPath(source: string, context?: OrchestrationMessageContext) {
   const reference = collectComposerContextReferences(source)[0];
   if (reference) {
     const record = context?.records.find((entry) => entry.contextId === reference.contextId);
-    return record?.kind === "mention" && "path" in record ? record.path : null;
+    const path = record?.kind === "mention" && "path" in record ? record.path : null;
+    return path && /[\\/]$/.test(path) ? null : path;
   }
   const token = collectComposerInlineTokens(`${source} `)[0];
-  return token?.type === "mention" && token.source === source ? token.value : null;
+  const path = token?.type === "mention" && token.source === source ? token.value : null;
+  return path && /[\\/]$/.test(path) ? null : path;
 }
 
 export interface ComposerDocumentAttachment {
