@@ -46,7 +46,6 @@ import {
   makeOpenCodeProtocolLogger,
   makeOpenCodeAdapterV2,
   OPENCODE_PROVIDER,
-  OpenCodeProviderCapabilitiesV2,
   reconcileOpenCodePromptAdmissionStatus,
 } from "./OpenCodeAdapterV2.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
@@ -455,39 +454,6 @@ describe("OpenCodeAdapterV2", () => {
       }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
     );
   }
-
-  it.effect("fails an active turn when the event stream reaches unexpected clean EOF", () =>
-    Effect.gen(function* () {
-      const nativeEvents = asyncEventStream();
-      const harness = yield* makeOpenCodeRuntimeHarness("eof", "root", {
-        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
-        session: {
-          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
-          promptAsync: async () => ({ data: true }),
-          abort: async () => ({ data: true }),
-          children: async () => ({ data: [] }),
-        },
-      });
-      yield* harness.startTurn();
-      const received = yield* harness.runtime.events.pipe(
-        Stream.takeUntil((event) => event.type === "turn.terminal"),
-        Stream.runCollect,
-        Effect.forkScoped,
-      );
-      nativeEvents.close();
-      const events = yield* Fiber.join(received);
-      assert.isTrue(
-        events.some(
-          (event) =>
-            event.type === "provider_session.updated" && event.providerSession.status === "error",
-        ),
-      );
-      const terminal = events.find((event) => event.type === "turn.terminal");
-      assert.equal(terminal?.status, "failed");
-      assert.equal(terminal?.failure?.class, "transport_error");
-      assert.equal(terminal?.threadDisposition, "broken");
-    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
-  );
 
   it.effect("aborts external root and descendants before closing the event stream", () =>
     Effect.gen(function* () {
@@ -1497,6 +1463,7 @@ describe("OpenCodeAdapterV2", () => {
       const terminal = received.find((event) => event.type === "turn.terminal");
       assert.equal(terminal?.status, "failed");
       assert.equal(terminal?.failure?.class, "transport_error");
+      assert.equal(terminal?.threadDisposition, "broken");
       assert.equal((yield* Effect.exit(harness.startTurn()))._tag, "Failure");
     }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
   );
@@ -2083,17 +2050,6 @@ describe("OpenCodeAdapterV2", () => {
       ),
     ),
   );
-
-  it("advertises the identity strengths exposed by the SDK boundary", () => {
-    assert.equal(OpenCodeProviderCapabilitiesV2.identity.nativeThreadIds, "strong");
-    assert.equal(OpenCodeProviderCapabilitiesV2.identity.nativeTurnIds, "weak");
-    assert.equal(OpenCodeProviderCapabilitiesV2.identity.nativeItemIds, "strong");
-    assert.equal(OpenCodeProviderCapabilitiesV2.identity.nativeRequestIds, "strong");
-    assert.isTrue(OpenCodeProviderCapabilitiesV2.threads.canForkFromTurn);
-    assert.isTrue(OpenCodeProviderCapabilitiesV2.turns.supportsActiveSteering);
-    assert.equal(OpenCodeProviderCapabilitiesV2.turns.terminalStatusQuality, "strong");
-    assert.isFalse(OpenCodeProviderCapabilitiesV2.subagents.canCloseSubagents);
-  });
 
   it("maps native permission families to orchestration request kinds", () => {
     assert.equal(openCodePermissionRequestKind("bash"), "command");

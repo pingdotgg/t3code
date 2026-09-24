@@ -10,7 +10,6 @@ import { describe, expect } from "vite-plus/test";
 import {
   XAiExitPlanModeRequest,
   XAI_EMPTY_PLAN_MARKDOWN,
-  makeXAiExitPlanModeCapturedResponse,
   isGrokPlanMarkdownPath,
   extractXAiExitPlanMarkdown,
   extractGrokPlanMarkdownFromToolCallData,
@@ -24,7 +23,6 @@ import {
   isGenericAcpToolTitle,
   isXAiMonitorTool,
   isXAiPersistentMonitor,
-  makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
   makeXAiPromptCompletionRuntime,
   normalizeXAiAcpToolCallState,
@@ -1270,12 +1268,6 @@ describe("XAiAcpExtension", () => {
     });
   });
 
-  it("encodes interrupted dialogs as xAI cancelled responses", () => {
-    expect(makeXAiAskUserQuestionCancelledResponse()).toEqual({
-      outcome: "cancelled",
-    });
-  });
-
   it("does not echo preview annotations for multi-select answers", () => {
     const response = makeXAiAskUserQuestionResponse(
       {
@@ -1729,13 +1721,6 @@ describe("Grok exit_plan_mode capture (#8358)", () => {
     expect(extractXAiExitPlanMarkdown(wrapped, "  # fallback plan  ")).toBe("# fallback plan");
     expect(extractXAiExitPlanMarkdown(wrapped, "")).toBe(XAI_EMPTY_PLAN_MARKDOWN);
     expect(extractXAiExitPlanMarkdown(wrapped)).toBe(XAI_EMPTY_PLAN_MARKDOWN);
-  });
-  it("builds an abandoned exit_plan_mode response that captures the plan", () => {
-    expect(makeXAiExitPlanModeCapturedResponse()).toEqual({
-      outcome: "abandoned",
-      feedback:
-        "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.",
-    });
   });
   it("identifies Grok plan.md paths and extracts markdown from tool call data", () => {
     const linuxHost = { platform: "linux" as const, environment: {} };

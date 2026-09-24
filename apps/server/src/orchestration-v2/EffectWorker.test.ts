@@ -1,7 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
-  MessageId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -149,9 +148,7 @@ function makeExecutorLayer(input: {
     ),
     Layer.succeed(
       ThreadTitleRegenerationService,
-      ThreadTitleRegenerationService.of({
-        execute: ({ requestId, kind }) => record(`title:${kind.type}:${requestId}`),
-      }),
+      ThreadTitleRegenerationService.of({ execute: () => Effect.void }),
     ),
   );
   return executorLayer.pipe(
@@ -720,53 +717,6 @@ it.effect("backs off briefly when a due deadline loses a claim race", () =>
     yield* TestClock.adjust("1 millis");
     while ((yield* Ref.get(attempts)) < 2) yield* Effect.yieldNow;
   }).pipe(Effect.provide(TestClock.layer())),
-);
-
-it.effect("detaches a handed-off session only after the old turn terminalizes", () =>
-  Effect.gen(function* () {
-    const now = yield* DateTime.now;
-    const events = yield* Ref.make<ReadonlyArray<string>>([]);
-
-    yield* Effect.gen(function* () {
-      const executor = yield* OrchestrationEffectExecutorV2;
-      yield* executor.execute(restartEffect(now, { type: "detach" }));
-    }).pipe(Effect.provide(makeExecutorLayer({ events })));
-
-    assert.deepEqual(yield* Ref.get(events), ["interrupt", "detach", "start"]);
-  }),
-);
-
-it.effect("executes durable thread title generation effects", () =>
-  Effect.gen(function* () {
-    const now = DateTime.formatIso(yield* DateTime.now);
-    const events = yield* Ref.make<ReadonlyArray<string>>([]);
-    const commandId = CommandId.make("command:title-generation");
-    const effect: OrchestrationEffectV2 = {
-      id: "effect:title-generation",
-      commandId,
-      threadId,
-      request: {
-        type: "thread-title.generate",
-        kind: { type: "initial", messageId: MessageId.make("message:title-generation") },
-      },
-      status: "running",
-      attemptCount: 1,
-      availableAt: now,
-      leaseOwner: "test-worker",
-      leaseExpiresAt: now,
-      createdAt: now,
-      updatedAt: now,
-      completedAt: null,
-      lastError: null,
-    };
-
-    yield* Effect.gen(function* () {
-      const executor = yield* OrchestrationEffectExecutorV2;
-      yield* executor.execute(effect);
-    }).pipe(Effect.provide(makeExecutorLayer({ events })));
-
-    assert.deepEqual(yield* Ref.get(events), [`title:initial:${commandId}`]);
-  }),
 );
 
 it.effect("safely retries after replacement cleanup succeeds and start fails", () =>

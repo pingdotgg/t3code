@@ -900,19 +900,6 @@ function makeClaudeProviderAdapterRegistryReplayLayer(
   );
 }
 
-export async function replayClaudeAgentSdkTranscript(input: {
-  readonly transcript: ClaudeAgentSdkReplayTranscript;
-  readonly prompts: ReadonlyArray<string>;
-  readonly modelSelection: ModelSelection;
-  readonly cwd?: string;
-}): Promise<ReadonlyArray<SDKMessage>> {
-  return input.transcript.entries.flatMap((entry) =>
-    entry.type === "emit_inbound" && isClaudeSdkReplayMessage(entry.frame)
-      ? [sdkMessageFromReplayFrame(entry.frame)]
-      : [],
-  );
-}
-
 function serializeReplayError(error: unknown, scenario?: string): unknown {
   return error instanceof Error
     ? {

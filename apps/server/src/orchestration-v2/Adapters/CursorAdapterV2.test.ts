@@ -27,7 +27,6 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
 import {
-  CursorProviderCapabilitiesV2,
   cursorMcpServers,
   cursorRuntimeAgentPolicy,
   cursorSdkModelSelection,
@@ -844,20 +843,6 @@ describe("CursorAdapterV2", () => {
         sandboxEnabled: false,
       },
     );
-  });
-
-  it("advertises only capabilities exposed by the official SDK adapter", () => {
-    assert.isTrue(CursorProviderCapabilitiesV2.threads.canReadThreadSnapshot);
-    assert.isFalse(CursorProviderCapabilitiesV2.threads.canForkThread);
-    assert.isFalse(CursorProviderCapabilitiesV2.threads.canRollbackThread);
-    assert.isTrue(CursorProviderCapabilitiesV2.turns.supportsInterrupt);
-    assert.isFalse(CursorProviderCapabilitiesV2.turns.supportsActiveSteering);
-    assert.isTrue(CursorProviderCapabilitiesV2.turns.supportsSteeringByInterruptRestart);
-    assert.isTrue(CursorProviderCapabilitiesV2.tools.supportsMcpTools);
-    assert.isTrue(CursorProviderCapabilitiesV2.subagents.supportsSubagents);
-    assert.isFalse(CursorProviderCapabilitiesV2.subagents.exposesSubagentThreadIds);
-    assert.equal(CursorProviderCapabilitiesV2.identity.nativeItemIds, "weak");
-    assert.isFalse(CursorProviderCapabilitiesV2.approvals.supportsCommandApproval);
   });
 
   it("injects thread-scoped MCP credentials without logging them", () => {

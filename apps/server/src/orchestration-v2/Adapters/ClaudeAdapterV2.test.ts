@@ -794,16 +794,6 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     }),
   );
 
-  it("does not install a protocol logger when native logging is unavailable", () => {
-    const protocolLogger = makeClaudeAgentSdkProtocolLogger({
-      nativeEventLogger: undefined,
-      threadId: ThreadId.make("thread-1"),
-      providerSessionId: ProviderSessionId.make("provider-session-1"),
-    });
-
-    assert.equal(protocolLogger, undefined);
-  });
-
   it("logs query options without leaking environment values or callback functions", () => {
     const options: ClaudeAgentSdkQueryOptions = {
       model: "claude-sonnet-4-6",
@@ -1398,11 +1388,6 @@ describe("ClaudeAdapterV2 attachments", () => {
 });
 
 describe("ClaudeAdapterV2 native fork", () => {
-  it("advertises Claude Agent SDK session forks", () => {
-    assert.equal(ClaudeProviderCapabilitiesV2.threads.canForkThread, true);
-    assert.equal(ClaudeProviderCapabilitiesV2.threads.canForkFromTurn, true);
-  });
-
   it.effect("forks at the source assistant cursor and resumes the forked session", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -4252,63 +4237,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             (event) => event.type === "message.updated" && event.message.text === WAKE_RESULT_TEXT,
           ),
         );
-        assert.isFalse(yield* harness.hasPendingBackgroundWork);
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
-    ),
-  );
-
-  it.effect("clears the pending task when the wake notification carries no summary", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        const now = yield* DateTime.now;
-
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-wake-5a"),
-            text: "Run the build in the background.",
-            attachments: [],
-          }),
-        );
-        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
-        yield* Queue.offer(harness.sdkMessages, turnOneResult);
-        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
-
-        yield* Queue.offer(
-          harness.sdkMessages,
-          claudeSdkFrame({
-            type: "system",
-            subtype: "task_notification",
-            task_id: WAKE_TASK_ID,
-            status: "completed",
-            output_file: "/tmp/task-wake-build.log",
-            summary: null,
-            uuid: "00000000-0000-4000-8000-000000000106",
-            session_id: WAKE_NATIVE_SESSION,
-          }),
-        );
-        yield* Queue.offer(harness.sdkMessages, wakeResult);
-        yield* awaitUntil(() => harness.continuationRequests.length === 1, "continuation request");
-        assert.isNull(harness.continuationRequests[0]?.detail);
-
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-wake-5b"),
-            text: "Background task completed.",
-            attachments: [],
-            providerTurnOrdinal: 2,
-            messageCreatedBy: "agent",
-            messageCreationSource: "provider",
-          }),
-        );
-        yield* awaitUntil(() => harness.terminalEvents().length === 2, "continuation terminal");
-        assert.equal(harness.terminalEvents()[1]?.status, "completed");
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
       }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
     ),

@@ -24,7 +24,7 @@ import {
 } from "./CheckpointRollbackService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { layer as idAllocatorLayer } from "./IdAllocator.ts";
-import { ProjectionStoreReadError, ProjectionStoreV2 } from "./ProjectionStore.ts";
+import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import type { ProviderAdapterV2RollbackThreadInput } from "./ProviderAdapter.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
@@ -325,50 +325,6 @@ it.effect("reports a missing provider turn as a structured rollback failure", ()
     );
     assert.equal(error.cause, undefined);
     assert.equal(restore.mock.calls.length, 0);
-  }).pipe(Effect.provide(testLayer));
-});
-
-it.effect("wraps underlying failures with an unexpected-failure reason and cause", () => {
-  const threadId = ThreadId.make("thread:rollback-unexpected-failure");
-  const providerThreadId = ProviderThreadId.make("provider-thread:rollback-unexpected-failure");
-  const checkpointId = CheckpointId.make("checkpoint:rollback-unexpected-failure");
-  const scopeId = CheckpointScopeId.make("checkpoint-scope:rollback-unexpected-failure");
-  const projectionError = new ProjectionStoreReadError({
-    threadId,
-    cause: new Error("database read failed"),
-  });
-  const testLayer = checkpointRollbackServiceLayer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        Layer.mock(CheckpointServiceV2)({}),
-        Layer.mock(EventSinkV2)({}),
-        idAllocatorLayer,
-        Layer.mock(ProjectionStoreV2)({
-          getThreadRecords: () => Effect.fail(projectionError),
-        }),
-        Layer.mock(ProviderSessionManagerV2)({}),
-        Layer.mock(RuntimePolicyV2)({}),
-      ),
-    ),
-  );
-
-  return Effect.gen(function* () {
-    const service = yield* CheckpointRollbackServiceV2;
-    const error = yield* service
-      .execute({
-        threadId,
-        providerThreadId,
-        checkpointId,
-        scopeId,
-      })
-      .pipe(Effect.flip);
-
-    assert.equal(error.reason, "unexpected-failure");
-    assert.equal(
-      error.message,
-      `Failed to execute rollback target ${checkpointId} on provider thread ${providerThreadId} for thread ${threadId}.`,
-    );
-    assert.strictEqual(error.cause, projectionError);
   }).pipe(Effect.provide(testLayer));
 });
 

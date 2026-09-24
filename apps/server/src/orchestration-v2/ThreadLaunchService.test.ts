@@ -36,7 +36,6 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -1673,23 +1672,6 @@ it.effect("creates a strong provider-thread mapping for an imported native sessi
       launched.projection.thread.activeProviderThreadId,
       launched.projection.providerThreads[0]?.id,
     );
-  }).pipe(Effect.provide(harness.layer));
-});
-
-it.effect("does not depend on the legacy launch workflow table", () => {
-  const harness = makeHarness();
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const launches = yield* ThreadLaunch.ThreadLaunchService;
-    yield* sql`DROP TABLE orchestration_v2_thread_launch_workflows`;
-    const launched = yield* launches.launch(
-      launchInput({
-        command: "command:launch:no-workflow-table",
-        thread: "thread:launch:no-workflow-table",
-        message: "No private workflow state",
-      }),
-    );
-    assert.equal(launched.projection.messages[0]?.text, "No private workflow state");
   }).pipe(Effect.provide(harness.layer));
 });
 

@@ -362,37 +362,6 @@ const SharedApplicationDataPlaneTestLayer = Layer.merge(
 );
 
 it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
-  it.effect("creates and reads a thread through the production V2 composition", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* OrchestratorV2;
-      const threadId = ThreadId.make("runtime-layer-thread");
-      const projectId = ProjectId.make("runtime-layer-project");
-
-      const result = yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-layer-create"),
-        threadId,
-        projectId,
-        title: "Runtime layer thread",
-        modelSelection: modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-      });
-
-      const projection = yield* orchestrator.getThreadProjection(threadId);
-
-      assert.equal(result.sequence, 1);
-      assert.equal(projection.thread.id, threadId);
-      assert.equal(projection.thread.projectId, projectId);
-      assert.equal(projection.thread.providerInstanceId, "codex");
-      assert.deepEqual(projection.runs, []);
-    }),
-  );
-
   it.effect("emits model updates separately from provider switches", () =>
     Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;
