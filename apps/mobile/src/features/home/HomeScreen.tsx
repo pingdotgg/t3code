@@ -22,6 +22,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Platform,
+  ScrollView,
   View,
   type GestureResponderEvent,
   type NativeScrollEvent,
@@ -996,13 +997,19 @@ export function HomeScreen(props: HomeScreenProps) {
   if (Platform.OS === "android" && threadListV2Items.length === 0) {
     return (
       <View className="flex-1 bg-header">
-        <View
-          className="flex-1 items-center justify-center overflow-hidden rounded-t-[28px] bg-screen px-4"
-          style={{ paddingBottom: insets.bottom }}
+        <ScrollView
+          className="flex-1 overflow-hidden rounded-t-[28px] bg-screen px-4"
+          contentContainerStyle={{
+            flexGrow: 1,
+            alignItems: "center",
+            justifyContent: "center",
+            paddingBottom: insets.bottom,
+          }}
+          showsVerticalScrollIndicator={false}
         >
           {searchStatus}
           {v2ListEmpty}
-        </View>
+        </ScrollView>
       </View>
     );
   }
