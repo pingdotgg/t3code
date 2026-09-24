@@ -1,4 +1,8 @@
-import type { ConfirmDialogOptions, ConfirmDialogVariant } from "@t3tools/contracts";
+import type {
+  ConfirmDialogCheckboxOptions,
+  ConfirmDialogOptions,
+  ConfirmDialogVariant,
+} from "@t3tools/contracts";
 
 export type ConfirmDialogState =
   | { readonly status: "idle" }
@@ -6,16 +10,19 @@ export type ConfirmDialogState =
       readonly status: "confirming";
       readonly message: string;
       readonly variant: ConfirmDialogVariant;
+      readonly checkbox?: ConfirmDialogCheckboxOptions | undefined;
     }
   | {
       readonly status: "closing";
       readonly message: string;
       readonly variant: ConfirmDialogVariant;
+      readonly checkbox?: ConfirmDialogCheckboxOptions | undefined;
     };
 
 type PendingConfirmation = {
   readonly message: string;
   readonly variant: ConfirmDialogVariant;
+  readonly checkbox?: ConfirmDialogCheckboxOptions | undefined;
   readonly resolve: (confirmed: boolean) => void;
 };
 
@@ -87,6 +94,7 @@ export function requestConfirmDialog(
     const pending = {
       message,
       variant: options?.variant ?? "default",
+      checkbox: options?.checkbox,
       resolve,
     } satisfies PendingConfirmation;
     if (activeConfirmation || state.status === "closing") {
@@ -95,7 +103,12 @@ export function requestConfirmDialog(
     }
 
     activeConfirmation = pending;
-    publish({ status: "confirming", message, variant: pending.variant });
+    publish({
+      status: "confirming",
+      message,
+      variant: pending.variant,
+      checkbox: pending.checkbox,
+    });
   });
 
   return confirmation;
@@ -107,7 +120,12 @@ export function respondToConfirmDialog(confirmed: boolean): void {
   const confirmation = activeConfirmation;
   activeConfirmation = null;
   confirmation.resolve(confirmed);
-  publish({ status: "closing", message: state.message, variant: state.variant });
+  publish({
+    status: "closing",
+    message: state.message,
+    variant: state.variant,
+    checkbox: state.checkbox,
+  });
 }
 
 export function completeConfirmDialogClose(): void {
@@ -120,7 +138,12 @@ export function completeConfirmDialogClose(): void {
   }
 
   activeConfirmation = next;
-  publish({ status: "confirming", message: next.message, variant: next.variant });
+  publish({
+    status: "confirming",
+    message: next.message,
+    variant: next.variant,
+    checkbox: next.checkbox,
+  });
 }
 
 export function resetConfirmDialogForTests(): void {

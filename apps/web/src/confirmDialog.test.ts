@@ -101,4 +101,28 @@ describe("confirm dialog coordinator", () => {
     unregister();
     return expect(confirmation).resolves.toBe(true);
   });
+
+  it("passes checkbox options into confirming and queued states", async () => {
+    const unregister = registerConfirmDialogHost();
+    const onCheckedChange = () => undefined;
+    const confirmation = requireConfirmation(
+      requestConfirmDialog("Close terminal?", {
+        variant: "destructive",
+        checkbox: { label: "Don't ask again", checked: false, onCheckedChange },
+      }),
+    );
+
+    expect(readConfirmDialogState()).toEqual({
+      status: "confirming",
+      message: "Close terminal?",
+      variant: "destructive",
+      checkbox: { label: "Don't ask again", checked: false, onCheckedChange },
+    });
+
+    respondToConfirmDialog(true);
+    await expect(confirmation).resolves.toBe(true);
+    completeConfirmDialogClose();
+    expect(readConfirmDialogState()).toEqual({ status: "idle" });
+    unregister();
+  });
 });

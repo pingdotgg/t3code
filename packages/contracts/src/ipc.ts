@@ -1346,8 +1346,15 @@ export interface DesktopPreviewBridge {
 
 export type ConfirmDialogVariant = "default" | "destructive";
 
+export interface ConfirmDialogCheckboxOptions {
+  readonly label: string;
+  readonly checked?: boolean;
+  readonly onCheckedChange?: (checked: boolean) => void;
+}
+
 export interface ConfirmDialogOptions {
-  readonly variant?: ConfirmDialogVariant;
+  readonly variant?: ConfirmDialogVariant | undefined;
+  readonly checkbox?: ConfirmDialogCheckboxOptions | undefined;
 }
 
 /**

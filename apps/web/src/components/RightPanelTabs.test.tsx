@@ -173,6 +173,24 @@ describe("surface shortcuts", () => {
     expect(surfaceShortcutActionForKey(actions, shortcutEvent("B"))).toBe(actions[0]);
   });
 
+  it("matches surface shortcuts by physical key code on non-Latin layouts", () => {
+    expect(
+      surfaceShortcutActionForKey(actions, {
+        ...shortcutEvent("и"),
+        code: "KeyB",
+      }),
+    ).toBe(actions[0]);
+  });
+
+  it("does not match by physical code when the layout key is a different Latin letter", () => {
+    expect(
+      surfaceShortcutActionForKey(actions, {
+        ...shortcutEvent("d"),
+        code: "KeyB",
+      }),
+    ).toBeNull();
+  });
+
   it("does not activate unavailable surfaces", () => {
     expect(surfaceShortcutActionForKey(actions, shortcutEvent("d"))).toBeNull();
   });

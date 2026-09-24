@@ -695,7 +695,15 @@ function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   const launcherKeys = document
     .querySelector("[data-surface-launcher-keys]")
     ?.getAttribute("data-surface-launcher-keys");
-  if (launcherKeys && launcherKeys.toLowerCase().includes(event.key.toLowerCase())) return false;
+  if (launcherKeys) {
+    const layoutKey = event.key.toLowerCase();
+    const letterCode = event.code?.match(/^Key([A-Z])$/)?.[1]?.toLowerCase();
+    const normalizedKeys = launcherKeys.toLowerCase();
+    if (normalizedKeys.includes(layoutKey)) return false;
+    if (letterCode && !/^[a-z]$/.test(layoutKey) && normalizedKeys.includes(letterCode)) {
+      return false;
+    }
+  }
 
   return true;
 }

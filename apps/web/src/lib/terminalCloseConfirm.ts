@@ -1,3 +1,4 @@
+import { getClientSettings, persistClientSettingsPatch } from "~/hooks/useSettings";
 import { readLocalApi } from "~/localApi";
 
 let pendingConfirmations = 0;
@@ -18,9 +19,13 @@ export async function confirmTerminalClose(
 ): Promise<boolean> {
   const localApi = readLocalApi();
   if (!localApi) return true;
+  if (!getClientSettings().confirmTerminalClose) {
+    return true;
+  }
   pendingConfirmations += 1;
   try {
-    return await localApi.dialogs.confirm(
+    let dontAskAgain = false;
+    const confirmed = await localApi.dialogs.confirm(
       labels.length === 1
         ? [
             `Close terminal "${labels[0]}"?`,
@@ -32,8 +37,20 @@ export async function confirmTerminalClose(
               .map((label) => `"${label}"`)
               .join(", ")}.`,
           ].join("\n"),
-      { variant: "destructive" },
+      {
+        variant: "destructive",
+        checkbox: {
+          label: "Don't ask again",
+          onCheckedChange: (checked) => {
+            dontAskAgain = checked;
+          },
+        },
+      },
     );
+    if (confirmed && dontAskAgain) {
+      void persistClientSettingsPatch({ confirmTerminalClose: false });
+    }
+    return confirmed;
   } catch {
     return false;
   } finally {

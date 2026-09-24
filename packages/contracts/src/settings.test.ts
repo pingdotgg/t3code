@@ -589,6 +589,14 @@ describe("ClientSettings sidebar", () => {
     expect(decodeClientSettingsPatch({ confirmThreadUnpin: true }).confirmThreadUnpin).toBe(true);
     expect(() => decodeClientSettingsPatch({ confirmThreadUnpin: "yes" })).toThrow();
   });
+
+  it("keeps terminal close confirmation opt-out and patchable", () => {
+    expect(decodeClientSettings({}).confirmTerminalClose).toBe(true);
+    expect(decodeClientSettingsPatch({ confirmTerminalClose: false }).confirmTerminalClose).toBe(
+      false,
+    );
+    expect(() => decodeClientSettingsPatch({ confirmTerminalClose: "yes" })).toThrow();
+  });
 });
 
 describe("ClientSettings context window meter", () => {
