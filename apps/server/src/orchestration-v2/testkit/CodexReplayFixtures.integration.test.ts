@@ -660,6 +660,48 @@ function assertSiblingMergeBackSemantics(transcript: ProviderReplayTranscript) {
   assert.equal(finalText, THREAD_MERGE_BACK_SIBLINGS_RECALL);
 }
 
+/**
+ * Codex announces a v2 child with the parent's `subAgentActivity(started)`
+ * before the child's first `turn/started`; the adapter registers children
+ * from that activity.
+ */
+function assertSubagentActivityPrecedesChildTurns(transcript: ProviderReplayTranscript) {
+  if (transcript.scenario !== "subagent_v2" && transcript.scenario !== "subagent_v2_nested") {
+    return;
+  }
+
+  const announcedChildren = new Set<string>();
+  const startedChildren = new Set<string>();
+  const rootThreadId = readString(
+    findProtocolEntry(transcript, "emit_inbound", "thread/start").frame,
+    ["result", "thread", "id"],
+  );
+  for (const entry of transcript.entries) {
+    if (entry.type !== "emit_inbound") continue;
+    const method = readPath(entry.frame, ["method"]);
+    if (method === "item/started") {
+      const item = readPath(entry.frame, ["params", "item"]);
+      if (isRecord(item) && item.type === "subAgentActivity" && item.kind === "started") {
+        announcedChildren.add(readString(item, ["agentThreadId"]));
+      }
+    }
+    if (method === "turn/started") {
+      const threadId = readString(entry.frame, ["params", "threadId"]);
+      if (threadId === rootThreadId) continue;
+      assert.isTrue(
+        announcedChildren.has(threadId),
+        `${transcript.scenario}: child ${threadId} started a turn before its subAgentActivity`,
+      );
+      startedChildren.add(threadId);
+    }
+  }
+  assert.equal(
+    startedChildren.size,
+    transcript.scenario === "subagent_v2" ? 1 : 3,
+    `${transcript.scenario}: unexpected number of child turns`,
+  );
+}
+
 describe("Codex replay fixtures", () => {
   it.effect("loads each canonical Codex fixture as an app-server replay transcript", () =>
     Effect.gen(function* () {
@@ -689,6 +731,7 @@ describe("Codex replay fixtures", () => {
         assertSiblingForkSemantics(transcript);
         assertMergeBackSemantics(transcript);
         assertSiblingMergeBackSemantics(transcript);
+        assertSubagentActivityPrecedesChildTurns(transcript);
       }
     }),
   );

@@ -14,7 +14,7 @@ import {
   assertTurnItemTypes,
   assertUserMessagesInclude,
   projectionFor,
-  SUBAGENT_V2_NESTED_LIVE_PROMPT,
+  SUBAGENT_V2_NESTED_PROMPT,
 } from "../shared.ts";
 
 function projectionById(
@@ -68,7 +68,7 @@ export function assertSubagentV2NestedOutput(
   assertTurnItemTypes(rootProjection, ["user_message", "subagent", "assistant_message"]);
   assertRunProviderTurnCardinality({ projection: rootProjection, rootRunCount: 1 });
   assertNoExtraAppRunsForProviderChildren({ projection: rootProjection, expectedAppRuns: 1 });
-  assertUserMessagesInclude(rootProjection, [SUBAGENT_V2_NESTED_LIVE_PROMPT]);
+  assertUserMessagesInclude(rootProjection, [SUBAGENT_V2_NESTED_PROMPT]);
   assert.lengthOf(result.shellSnapshot.threads, 4);
 
   const first = assertCompletedProviderNativeSubagent({

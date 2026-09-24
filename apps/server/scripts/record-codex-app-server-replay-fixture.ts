@@ -28,8 +28,8 @@ import {
   SUBAGENT_CONTINUE_PARENT_PROMPT,
   SUBAGENT_CONTINUE_PROMPT,
   SUBAGENT_PROMPT,
-  SUBAGENT_V2_LIVE_PROMPT,
-  SUBAGENT_V2_NESTED_LIVE_PROMPT,
+  SUBAGENT_V2_PROMPT,
+  SUBAGENT_V2_NESTED_PROMPT,
   THREAD_ROLLBACK_AFTER_PROMPT,
   THREAD_ROLLBACK_FIRST_PROMPT,
   THREAD_ROLLBACK_SECOND_PROMPT,
@@ -442,7 +442,7 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
           name: "spawn-v2-subagent",
           description:
             "Record with a v2 model (e.g. --model gpt-5.6-sol) so Codex emits subAgentActivity items.",
-          steps: [{ type: "turn", label: "spawn-v2-subagent", prompt: SUBAGENT_V2_LIVE_PROMPT }],
+          steps: [{ type: "turn", label: "spawn-v2-subagent", prompt: SUBAGENT_V2_PROMPT }],
         },
       ],
     },
@@ -461,7 +461,7 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
             {
               type: "turn",
               label: "spawn-nested-v2-subagents",
-              prompt: SUBAGENT_V2_NESTED_LIVE_PROMPT,
+              prompt: SUBAGENT_V2_NESTED_PROMPT,
             },
           ],
         },

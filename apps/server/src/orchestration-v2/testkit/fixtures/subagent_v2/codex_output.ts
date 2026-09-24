@@ -11,7 +11,7 @@ import {
   assertTurnItemTypes,
   assertUserMessagesInclude,
   projectionFor,
-  SUBAGENT_V2_LIVE_PROMPT,
+  SUBAGENT_V2_PROMPT,
 } from "../shared.ts";
 
 export function assertSubagentV2Output(
@@ -31,7 +31,7 @@ export function assertSubagentV2Output(
   assertExecutionNodeKinds(projection, ["root_turn", "subagent"]);
   assertRunProviderTurnCardinality({ projection, rootRunCount: 1 });
   assertNoExtraAppRunsForProviderChildren({ projection, expectedAppRuns: 1 });
-  assertUserMessagesInclude(projection, [SUBAGENT_V2_LIVE_PROMPT]);
+  assertUserMessagesInclude(projection, [SUBAGENT_V2_PROMPT]);
   assert.lengthOf(projection.subagents, 1);
   assert.lengthOf(result.shellSnapshot.threads, 2);
 
