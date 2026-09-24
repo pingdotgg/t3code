@@ -204,6 +204,14 @@ export const ExecutionEnvironmentDescriptor = Schema.Struct({
 });
 export type ExecutionEnvironmentDescriptor = typeof ExecutionEnvironmentDescriptor.Type;
 
+export const EnvironmentConnectionState = Schema.Literals([
+  "connecting",
+  "connected",
+  "disconnected",
+  "error",
+]);
+export type EnvironmentConnectionState = typeof EnvironmentConnectionState.Type;
+
 export const RepositoryIdentityLocator = Schema.Struct({
   source: Schema.Literal("git-remote"),
   remoteName: TrimmedNonEmptyString,
