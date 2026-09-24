@@ -263,13 +263,15 @@ export const make = Effect.gen(function* () {
     // descriptor request rather than baked in at startup.
     getDescriptor: Effect.gen(function* () {
       const agentActivityPublishing = yield* readAgentActivityPublishingActive(secrets);
-      const openAiKey = yield* secrets.get(OPENAI_API_KEY_SECRET_NAME).pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("failed to read the OpenAI API key secret", { cause }).pipe(
-            Effect.as(Option.none<Uint8Array>()),
+      const openAiKey = yield* secrets
+        .get(OPENAI_API_KEY_SECRET_NAME)
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("failed to read the OpenAI API key secret", { cause }).pipe(
+              Effect.as(Option.none<Uint8Array>()),
+            ),
           ),
-        ),
-      );
+        );
       return {
         ...descriptor,
         capabilities: {
