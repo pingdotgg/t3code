@@ -30,13 +30,16 @@ import {
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
@@ -56,6 +59,13 @@ import {
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
+import {
+  skillCatalogPathsFromSkills,
+  skillCatalogWatchEventAffectsTarget,
+  skillCatalogWatchTargets,
+} from "../skillCatalogWatch.ts";
+
+const skillCatalogTargetKey = (instanceId: string, cwd: string) => `${instanceId}\0${cwd}`;
 
 const loadProviders = (
   providerSources: ReadonlyArray<ProviderSnapshotSource>,
@@ -213,7 +223,7 @@ export const mergeProviderSnapshot = (
     models: mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models),
     ...(nextProvider.workspaceSnapshots !== undefined
       ? { workspaceSnapshots: nextProvider.workspaceSnapshots }
-      : previousProvider.workspaceSnapshots !== undefined
+      : nextProvider.enabled && previousProvider.workspaceSnapshots !== undefined
         ? { workspaceSnapshots: previousProvider.workspaceSnapshots }
         : {}),
     ...(shouldRetainMissingOpenCodeMetadata(nextProvider)
@@ -285,6 +295,7 @@ export const ProviderRegistryLive = Layer.effect(
     const config = yield* ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const registryScope = yield* Scope.Scope;
 
     // Aggregator PubSub — consumers (WS gateway, etc.) subscribe here for
     // coalesced updates across every instance.
@@ -672,28 +683,6 @@ export const ProviderRegistryLive = Layer.effect(
           newlyAdded.push([instanceId, instance] as const);
         }
 
-        const rebuiltInstanceIds = new Set(
-          newlyAdded
-            .map(([instanceId]) => instanceId)
-            .filter((instanceId) => previousSubs.has(instanceId)),
-        );
-        if (rebuiltInstanceIds.size > 0) {
-          const [previousProviders, providers] = yield* Ref.modify(
-            providersRef,
-            (previousProviders) => {
-              const providers = previousProviders.map((provider) => {
-                if (!rebuiltInstanceIds.has(provider.instanceId)) return provider;
-                const { workspaceSnapshots: _workspaceSnapshots, ...machineSnapshot } = provider;
-                return machineSnapshot;
-              });
-              return [[previousProviders, providers] as const, providers];
-            },
-          );
-          if (haveProvidersChanged(previousProviders, providers)) {
-            yield* PubSub.publish(changesPubSub, providers);
-          }
-        }
-
         // Fork long-lived subscriptions to each new/rebuilt instance's
         // change stream before reading its current snapshot. If the
         // driver's own initial probe finishes during this sync, either
@@ -835,17 +824,13 @@ export const ProviderRegistryLive = Layer.effect(
       return yield* Ref.get(providersRef);
     });
 
-    const refreshWorkspaceSnapshot = Effect.fn("refreshWorkspaceSnapshot")(function* (input: {
+    const replaceWorkspaceSnapshot = Effect.fn("replaceWorkspaceSnapshot")(function* (input: {
       readonly instanceId: ProviderInstanceId;
       readonly cwd: string;
     }) {
       const providers = yield* Ref.get(providersRef);
       const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
-      if (
-        !provider ||
-        !provider.enabled ||
-        provider.workspaceSnapshots?.some((s) => s.cwd === input.cwd)
-      ) {
+      if (!provider?.enabled) {
         return providers;
       }
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
@@ -867,8 +852,7 @@ export const ProviderRegistryLive = Layer.effect(
                   if (currentInstance !== instance) return Ref.get(providersRef);
                   return Ref.modify(providersRef, (currentProviders) => {
                     const nextProviders = currentProviders.map((candidate) =>
-                      candidate.instanceId === input.instanceId &&
-                      !candidate.workspaceSnapshots?.some((s) => s.cwd === input.cwd)
+                      candidate.instanceId === input.instanceId
                         ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, scopedSnapshot)
                         : candidate,
                     );
@@ -897,6 +881,224 @@ export const ProviderRegistryLive = Layer.effect(
       );
     });
 
+    const refreshWorkspaceSnapshot = Effect.fn("refreshWorkspaceSnapshot")(function* (input: {
+      readonly instanceId: ProviderInstanceId;
+      readonly cwd: string;
+    }) {
+      const providers = yield* Ref.get(providersRef);
+      const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
+      if (provider?.workspaceSnapshots?.some((snapshot) => snapshot.cwd === input.cwd)) {
+        return providers;
+      }
+      return yield* replaceWorkspaceSnapshot(input);
+    });
+
+    const listSkillCatalogTargets = Effect.fn("listSkillCatalogTargets")(function* () {
+      const providers = yield* Ref.get(providersRef);
+      const instances = yield* instanceRegistry.listInstances;
+      const instanceById = new Map(
+        instances.map((instance) => [instance.instanceId, instance] as const),
+      );
+      const targets = yield* Effect.forEach(
+        providers.flatMap((provider) => {
+          const instance = instanceById.get(provider.instanceId);
+          if (
+            !provider.enabled ||
+            !instance?.snapshotForCwd ||
+            !provider.workspaceSnapshots?.length
+          ) {
+            return [];
+          }
+          return provider.workspaceSnapshots.map((snapshot) => ({ instance, snapshot }));
+        }),
+        ({ instance, snapshot }) =>
+          Effect.gen(function* () {
+            const configuredPaths = instance.skillCatalogWatchPaths
+              ? yield* instance.skillCatalogWatchPaths(snapshot.cwd)
+              : [];
+            const observedPaths = skillCatalogPathsFromSkills(
+              path,
+              snapshot.skills.map((skill) => skill.path),
+            );
+            const roots = [
+              ...new Map(
+                [...configuredPaths, ...observedPaths].map((watchPath) => [
+                  `${path.resolve(watchPath.path)}\0${watchPath.recursive}`,
+                  { path: path.resolve(watchPath.path), recursive: watchPath.recursive },
+                ]),
+              ).values(),
+            ];
+            return {
+              key: skillCatalogTargetKey(instance.instanceId, snapshot.cwd),
+              roots,
+              instance,
+              instanceId: instance.instanceId,
+              cwd: snapshot.cwd,
+            };
+          }),
+        { concurrency: "unbounded" },
+      );
+      return targets.filter((target) => target.roots.length > 0);
+    });
+
+    const watchTargetsSignature = (
+      watchTargets: ReadonlyArray<{
+        readonly path: string;
+        readonly recursive: boolean;
+        readonly expectedPaths: ReadonlyArray<string> | undefined;
+      }>,
+    ) =>
+      watchTargets
+        .map(
+          (watchTarget) =>
+            `${watchTarget.path}\0${watchTarget.recursive}\0${watchTarget.expectedPaths?.join("\0") ?? "*"}`,
+        )
+        .join("\n");
+    const resolveSkillCatalogWatchTargets = (
+      roots: ReadonlyArray<{ readonly path: string; readonly recursive: boolean }>,
+    ) =>
+      skillCatalogWatchTargets(roots).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
+
+    const watchSkillCatalogTarget = Effect.fn("watchSkillCatalogTarget")(function* (target: {
+      readonly roots: ReadonlyArray<{ readonly path: string; readonly recursive: boolean }>;
+      readonly instanceId: ProviderInstanceId;
+      readonly cwd: string;
+    }) {
+      return yield* Effect.forever(
+        Effect.gen(function* () {
+          const watchTargets = yield* resolveSkillCatalogWatchTargets(target.roots);
+          if (watchTargets.length === 0) {
+            return yield* Effect.never;
+          }
+          const signature = watchTargetsSignature(watchTargets);
+          yield* Stream.mergeAll(
+            watchTargets.map((watchTarget) =>
+              fileSystem
+                .watch(watchTarget.path, { recursive: watchTarget.recursive })
+                .pipe(
+                  Stream.filter((event) =>
+                    skillCatalogWatchEventAffectsTarget(path, watchTarget, event),
+                  ),
+                ),
+            ),
+            { concurrency: "unbounded" },
+          ).pipe(
+            Stream.debounce(Duration.millis(100)),
+            Stream.tap(() =>
+              replaceWorkspaceSnapshot({
+                instanceId: target.instanceId,
+                cwd: target.cwd,
+              }).pipe(Effect.ignoreCause({ log: true })),
+            ),
+            Stream.takeUntilEffect(() =>
+              resolveSkillCatalogWatchTargets(target.roots).pipe(
+                Effect.map((next) => watchTargetsSignature(next) !== signature),
+              ),
+            ),
+            Stream.runDrain,
+          );
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.interrupt
+              : Effect.logWarning("skill catalog watch failed; retrying", {
+                  instanceId: target.instanceId,
+                  cwd: target.cwd,
+                  cause: Cause.pretty(cause),
+                }).pipe(Effect.andThen(Effect.sleep(Duration.millis(250)))),
+          ),
+        ),
+      );
+    });
+
+    const catalogWatchersRef = yield* Ref.make<
+      ReadonlyMap<
+        string,
+        {
+          readonly rootsSignature: string;
+          readonly instance: ProviderInstance;
+          readonly fiber: Fiber.Fiber<void, never>;
+        }
+      >
+    >(new Map());
+    const skillCatalogRootsSignature = (
+      roots: ReadonlyArray<{ readonly path: string; readonly recursive: boolean }>,
+    ) =>
+      roots
+        .map((root) => `${root.path}\0${root.recursive}`)
+        .sort()
+        .join("\n");
+
+    const catalogReconcileSemaphore = yield* Semaphore.make(1);
+    const reconcileSkillCatalogWatchesUnserialized = Effect.fn("reconcileSkillCatalogWatches")(
+      function* () {
+        const targets = yield* listSkillCatalogTargets();
+        const desired = new Map(targets.map((target) => [target.key, target] as const));
+        const running = yield* Ref.get(catalogWatchersRef);
+
+        for (const [key, watcher] of running) {
+          const next = desired.get(key);
+          if (
+            next !== undefined &&
+            watcher.instance === next.instance &&
+            watcher.rootsSignature === skillCatalogRootsSignature(next.roots)
+          ) {
+            continue;
+          }
+          yield* Fiber.interrupt(watcher.fiber);
+        }
+
+        const nextWatchers = new Map<
+          string,
+          {
+            readonly rootsSignature: string;
+            readonly instance: ProviderInstance;
+            readonly fiber: Fiber.Fiber<void, never>;
+          }
+        >();
+        for (const [key, target] of desired) {
+          const existing = running.get(key);
+          if (
+            existing !== undefined &&
+            existing.instance === target.instance &&
+            existing.rootsSignature === skillCatalogRootsSignature(target.roots)
+          ) {
+            nextWatchers.set(key, existing);
+            continue;
+          }
+          if (existing !== undefined && existing.instance !== target.instance) {
+            yield* replaceWorkspaceSnapshot({
+              instanceId: target.instanceId,
+              cwd: target.cwd,
+            }).pipe(Effect.ignoreCause({ log: true }));
+          }
+          const fiber = yield* watchSkillCatalogTarget(target).pipe(
+            Effect.ignoreCause({ log: true }),
+            Effect.forkIn(registryScope),
+          );
+          nextWatchers.set(key, {
+            rootsSignature: skillCatalogRootsSignature(target.roots),
+            instance: target.instance,
+            fiber,
+          });
+        }
+        yield* Ref.set(catalogWatchersRef, nextWatchers);
+      },
+    );
+    const reconcileSkillCatalogWatches = () =>
+      catalogReconcileSemaphore.withPermits(1)(reconcileSkillCatalogWatchesUnserialized());
+
+    const catalogChanges = yield* PubSub.subscribe(changesPubSub);
+    yield* Stream.fromSubscription(catalogChanges).pipe(
+      Stream.runForEach(() => reconcileSkillCatalogWatches()),
+      Effect.ignoreCause({ log: true }),
+      Effect.forkIn(registryScope),
+    );
+    yield* reconcileSkillCatalogWatches();
+
     return {
       getProviders: Ref.get(providersRef),
       refresh: (provider?: ProviderDriverKind) =>
@@ -904,7 +1106,10 @@ export const ProviderRegistryLive = Layer.effect(
       refreshInstance: (instanceId: ProviderInstanceId) =>
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshWorkspaceSnapshot: (input) =>
-        refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
+        refreshWorkspaceSnapshot(input).pipe(
+          Effect.catchCause(recoverRefreshFailure),
+          Effect.tap(() => reconcileSkillCatalogWatches()),
+        ),
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {

@@ -48,6 +48,23 @@ export function antigravityUserSkillDirectories(
   ];
 }
 
+export function antigravitySkillCatalogRoots(
+  path: Path.Path,
+  input: { readonly cwd: string; readonly userHome: string },
+): ReadonlyArray<{ readonly directory: string; readonly scope: "user" | "project" }> {
+  const [configSkills, cliSkills] = antigravityUserSkillDirectories(
+    path,
+    path.join(input.userHome, ".gemini"),
+  );
+  return [
+    { directory: configSkills, scope: "user" },
+    { directory: path.resolve(input.cwd, ".gemini", "skills"), scope: "project" },
+    { directory: cliSkills, scope: "user" },
+    { directory: path.resolve(input.cwd, ".agents", "skills"), scope: "project" },
+    { directory: path.resolve(input.cwd, ".agent", "skills"), scope: "project" },
+  ];
+}
+
 const MAX_SKILL_BYTES = 1_000_000;
 const MAX_SCAN_BYTES = 8_000_000;
 const MAX_SCAN_ENTRIES = 10_000;
@@ -167,17 +184,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
 > {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const [configSkills, cliSkills] = antigravityUserSkillDirectories(
-    path,
-    path.join(input.userHome, ".gemini"),
-  );
-  const roots = [
-    { directory: configSkills, scope: "user" },
-    { directory: path.resolve(input.cwd, ".gemini", "skills"), scope: "project" },
-    { directory: cliSkills, scope: "user" },
-    { directory: path.resolve(input.cwd, ".agents", "skills"), scope: "project" },
-    { directory: path.resolve(input.cwd, ".agent", "skills"), scope: "project" },
-  ];
+  const roots = antigravitySkillCatalogRoots(path, input);
   const budget: ScanBudget = {
     remainingBytes: MAX_SCAN_BYTES,
     remainingEntries: MAX_SCAN_ENTRIES,

@@ -5,7 +5,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverClaudeSkills, skillOverrideSettingsPaths } from "./ClaudeSkills.ts";
+import {
+  claudeSkillCatalogWatchPaths,
+  discoverClaudeSkills,
+  skillOverrideSettingsPaths,
+} from "./ClaudeSkills.ts";
 
 const writeSkill = Effect.fn(function* (
   skillsDir: string,
@@ -20,6 +24,47 @@ const writeSkill = Effect.fn(function* (
 });
 
 it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
+  it.effect("resolves watch paths from the same instance config and environment", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-watch-paths-" });
+      const workspace = path.join(tempDir, "workspace");
+      const configuredHome = path.join(tempDir, "configured-home");
+      const inheritedHome = path.join(tempDir, "inherited-home");
+
+      const configured = yield* claudeSkillCatalogWatchPaths(
+        { homePath: configuredHome },
+        workspace,
+        { ...process.env, CLAUDE_CONFIG_DIR: inheritedHome },
+      );
+      assert.strictEqual(
+        configured.some(
+          (watchPath) =>
+            watchPath.path === path.join(configuredHome, "skills") && watchPath.recursive,
+        ),
+        true,
+      );
+      assert.strictEqual(
+        configured.some((watchPath) => watchPath.path.startsWith(inheritedHome)),
+        false,
+      );
+
+      const inherited = yield* claudeSkillCatalogWatchPaths({ homePath: "" }, workspace, {
+        ...process.env,
+        CLAUDE_CONFIG_DIR: "relative-home",
+      });
+      assert.strictEqual(
+        inherited.some(
+          (watchPath) =>
+            watchPath.path === path.join(workspace, "relative-home", "skills") &&
+            watchPath.recursive,
+        ),
+        true,
+      );
+    }),
+  );
+
   it.effect("discovers user and project skills with frontmatter metadata", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

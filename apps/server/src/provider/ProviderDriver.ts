@@ -73,6 +73,14 @@ export interface ProviderInstance {
   readonly enabled: boolean;
   readonly snapshot: ServerProviderShape;
   readonly snapshotForCwd?: (cwd: string) => Effect.Effect<ServerProvider, ProviderDriverError>;
+  /**
+   * Files and directories whose changes invalidate `snapshotForCwd`.
+   * Drivers own these paths so instance-specific configuration and environment
+   * stay identical to discovery.
+   */
+  readonly skillCatalogWatchPaths?: (
+    cwd: string,
+  ) => Effect.Effect<ReadonlyArray<{ readonly path: string; readonly recursive: boolean }>, never>;
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
   /** Invalidate T3-owned discovery caches before an explicit provider refresh. */
   readonly invalidateCaches?: Effect.Effect<void>;

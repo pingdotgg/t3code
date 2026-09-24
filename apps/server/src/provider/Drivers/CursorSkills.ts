@@ -221,14 +221,7 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const path = yield* Path.Path;
-  const userHome = environment.HOME?.trim() || environment.USERPROFILE?.trim() || NodeOS.homedir();
-  const rootsBelow = (base: string, scope: "user" | "project") => [
-    { directory: path.join(base, ".cursor", "skills"), scope },
-    { directory: path.join(base, ".agents", "skills"), scope },
-    { directory: path.join(base, ".codex", "skills"), scope },
-    { directory: path.join(base, ".claude", "skills"), scope },
-  ];
-  const roots = [...(cwd ? rootsBelow(cwd, "project") : []), ...rootsBelow(userHome, "user")];
+  const roots = cursorSkillCatalogRoots(path, cwd, environment);
 
   const skillsByName = new Map<string, ServerProviderSkill>();
   const budget: CursorSkillScanBudget = {
@@ -253,6 +246,21 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
         : undefined,
   };
 });
+
+export function cursorSkillCatalogRoots(
+  path: Path.Path,
+  cwd?: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): ReadonlyArray<{ readonly directory: string; readonly scope: "user" | "project" }> {
+  const userHome = environment.HOME?.trim() || environment.USERPROFILE?.trim() || NodeOS.homedir();
+  const rootsBelow = (base: string, scope: "user" | "project") => [
+    { directory: path.join(base, ".cursor", "skills"), scope },
+    { directory: path.join(base, ".agents", "skills"), scope },
+    { directory: path.join(base, ".codex", "skills"), scope },
+    { directory: path.join(base, ".claude", "skills"), scope },
+  ];
+  return [...(cwd ? rootsBelow(cwd, "project") : []), ...rootsBelow(userHome, "user")];
+}
 
 export const discoverCursorSkills = Effect.fn("discoverCursorSkills")(function* (
   cwd?: string,

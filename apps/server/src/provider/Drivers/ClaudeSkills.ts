@@ -295,6 +295,33 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
   return path.join(NodeOS.homedir(), ".claude");
 });
 
+export const claudeSkillCatalogWatchPaths = Effect.fn("claudeSkillCatalogWatchPaths")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+  cwd: string,
+  environment: NodeJS.ProcessEnv,
+): Effect.fn.Return<
+  ReadonlyArray<{ readonly path: string; readonly recursive: boolean }>,
+  never,
+  FileSystem.FileSystem | Path.Path
+> {
+  const path = yield* Path.Path;
+  const platform = yield* HostProcessPlatform;
+  const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
+  const repositoryRoot = yield* findRepositoryRoot(cwd);
+  return [
+    { path: path.join(configDirPath, "skills"), recursive: true },
+    { path: path.join(cwd, ".claude", "skills"), recursive: true },
+    ...skillOverrideSettingsPaths(
+      path,
+      configDirPath,
+      cwd,
+      platform,
+      environment,
+      repositoryRoot,
+    ).map((settingsPath) => ({ path: settingsPath, recursive: false })),
+  ];
+});
+
 /**
  * Enumerate Claude Code skills from the user config dir and the workspace
  * `.claude/skills`. Discovery is best-effort: unreadable roots and malformed

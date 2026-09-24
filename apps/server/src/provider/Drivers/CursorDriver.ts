@@ -55,7 +55,11 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
-import { discoverCursorSkills, probeCursorSkills } from "./CursorSkills.ts";
+import {
+  cursorSkillCatalogRoots,
+  discoverCursorSkills,
+  probeCursorSkills,
+} from "./CursorSkills.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("cursor");
@@ -235,6 +239,13 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
                 ),
                 Effect.flatMap((skills) => snapshotForCwd(cwd, skills)),
               ),
+        skillCatalogWatchPaths: (workspaceCwd) =>
+          Effect.succeed(
+            cursorSkillCatalogRoots(path, workspaceCwd, processEnv).map((root) => ({
+              path: root.directory,
+              recursive: true,
+            })),
+          ),
         adapter,
         textGeneration,
       } satisfies ProviderInstance;

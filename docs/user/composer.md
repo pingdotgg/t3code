@@ -152,6 +152,8 @@ provider. On mobile, both are also available before starting a thread on
 
 The slash menu also includes skills unless you turn off **Settings → General →
 Show skills in slash menu**. Only skills enabled for the provider are listed.
+Skills you add to a provider's skill directories appear in the picker without
+restarting T3 Code.
 
 Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.
