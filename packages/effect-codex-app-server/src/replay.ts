@@ -313,6 +313,18 @@ function normalizeLegacyInboundFrame(value: unknown): unknown {
     }
     normalized.params = params;
   }
+  if (
+    normalized.method === "item/tool/requestUserInput" &&
+    typeof normalized.params === "object" &&
+    normalized.params !== null
+  ) {
+    const params = { ...(normalized.params as Record<string, unknown>) };
+    // Codex treats a legacy request without `isBlocking` as blocking.
+    if (params.isBlocking === undefined) {
+      params.isBlocking = true;
+    }
+    normalized.params = params;
+  }
   return normalized;
 }
 
