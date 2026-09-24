@@ -1772,7 +1772,13 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
   }
 
   func offset(forSourceRow source: Int, rowId: String) -> CGFloat? {
-    let exactIndex = rows.indices.first { rows[$0].id == rowId && height(at: $0) > 0 }
+    let exactIndex = rows.indices.first { index in
+      let row = rows[index]
+      guard row.id == rowId, height(at: index) > 0 else { return false }
+      guard row.kind == "placeholder" else { return true }
+      guard let start = row.sourceRow else { return false }
+      return source >= start && source < start + (row.rowCount ?? 1)
+    }
     guard let index = exactIndex ?? rows.indices.first(where: { index in
       let row = rows[index]
       guard row.kind != "file", height(at: index) > 0, let start = row.sourceRow else { return false }

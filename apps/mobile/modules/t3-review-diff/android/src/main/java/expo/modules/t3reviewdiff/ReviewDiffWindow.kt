@@ -28,7 +28,13 @@ internal class DiffSourceViewport(
   }
 
   fun offset(anchor: DiffSourceAnchor): Int? {
-    val exact = rows.indexOfFirst { it.id == anchor.rowId }
+    val exact = rows.indexOfFirst { row ->
+      row.id == anchor.rowId && (
+        row.kind != "placeholder" || row.sourceRow?.let { start ->
+          anchor.source >= start && anchor.source < start + row.rowCount
+        } == true
+        )
+    }
     val index = if (exact >= 0) {
       exact
     } else {

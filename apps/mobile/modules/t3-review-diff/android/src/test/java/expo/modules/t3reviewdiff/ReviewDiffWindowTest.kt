@@ -46,6 +46,20 @@ class ReviewDiffWindowTest {
   }
 
   @Test
+  fun shortenedPlaceholderWithSameIdDoesNotCaptureLoadedSourceAnchor() {
+    val missing =
+      DiffSourceViewport(listOf(row("placeholder", "gap", 0, 1000)), intArrayOf(0, 20000), 20)
+    val anchor = requireNotNull(missing.anchor(105))
+    val loadedRows = listOf(
+      row("placeholder", "gap", 0, 4),
+      row("line", "wrapped4", 4),
+      row("line", "line5", 5)
+    )
+    val loaded = DiffSourceViewport(loadedRows, intArrayOf(0, 80, 160, 180), 20)
+    assertEquals(165, loaded.offset(anchor))
+  }
+
+  @Test
   fun emptyViewportDoesNotRequestOrRestoreRows() {
     val viewport = DiffSourceViewport(emptyList(), intArrayOf(0), 20)
     assertNull(viewport.anchor(0))
