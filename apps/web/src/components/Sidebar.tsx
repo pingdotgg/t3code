@@ -1421,8 +1421,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       !props.isActive &&
       !isSelected && [
         "[--sidebar-project-wash:color-mix(in_srgb,var(--sidebar-row-project-color)_12%,transparent)] dark:[--sidebar-project-wash:color-mix(in_srgb,var(--sidebar-row-project-color)_18%,transparent)]",
-        "pointer-fine:hover:bg-[linear-gradient(to_right,var(--sidebar-project-wash),transparent_85%)]",
-        "focus-visible:bg-sidebar-row-hover focus-visible:bg-[linear-gradient(to_right,var(--sidebar-project-wash),transparent_85%)] focus-visible:text-sidebar-foreground",
+        "pointer-fine:hover:bg-linear-to-r pointer-fine:hover:from-(--sidebar-project-wash) pointer-fine:hover:to-85% pointer-fine:hover:to-transparent",
+        "focus-visible:bg-sidebar-row-hover focus-visible:bg-linear-to-r focus-visible:from-(--sidebar-project-wash) focus-visible:to-85% focus-visible:to-transparent focus-visible:text-sidebar-foreground",
         "forced-colors:pointer-fine:hover:bg-none forced-colors:focus-visible:bg-none",
       ],
   );
