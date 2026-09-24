@@ -262,6 +262,12 @@ function getPublishProviderReadiness(input: {
       hint: "Provider status unavailable. Open Settings -> Source Control and rescan.",
     };
   }
+  if (discovered.enabled === false) {
+    return {
+      ready: false,
+      hint: `${discovered.label} is disabled in Source Control settings.`,
+    };
+  }
   if (discovered.status !== "available") {
     return { ready: false, hint: discovered.installHint };
   }

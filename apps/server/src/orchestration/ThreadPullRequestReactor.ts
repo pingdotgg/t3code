@@ -1,5 +1,6 @@
 import {
   canonicalRepositoryKey,
+  repositoryIdentitySourceControlProviderKind,
   sourceControlRepositorySelector,
 } from "@t3tools/shared/sourceControl";
 import {
@@ -10,6 +11,7 @@ import {
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { isSourceControlProviderEnabled } from "@t3tools/shared/serverSettings";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -23,6 +25,7 @@ import * as Stream from "effect/Stream";
 import * as GitManager from "../git/GitManager.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as OrchestrationEngine from "./Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./Services/ProjectionSnapshotQuery.ts";
@@ -76,6 +79,7 @@ export const make = Effect.gen(function* () {
   const git = yield* GitManager.GitManager;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+  const settings = yield* ServerSettings.ServerSettingsService;
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
   // Settled threads get one link discovery at startup. Failed lookups retry on
@@ -97,6 +101,7 @@ export const make = Effect.gen(function* () {
   const synchronize = Effect.fn("ThreadPullRequestReactor.synchronize")(function* (
     request: RefreshRequest,
   ) {
+    const currentSettings = yield* settings.getSettings;
     const snapshot = yield* snapshots.getShellSnapshot();
     const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
     if (request.backfill) {
@@ -133,6 +138,15 @@ export const make = Effect.gen(function* () {
           const first = group[0]!;
           const project = projects.get(first.projectId);
           if (project === undefined) return finishBackfill(group);
+          const providerKind = repositoryIdentitySourceControlProviderKind(
+            project.repositoryIdentity,
+          );
+          if (
+            providerKind !== undefined &&
+            !isSourceControlProviderEnabled(currentSettings, providerKind)
+          ) {
+            return finishBackfill(group);
+          }
           const repository = sourceControlRepositorySelector(project.repositoryIdentity);
           if (first.branch !== null && repository === null) return finishBackfill(group);
           const worktreeExists =

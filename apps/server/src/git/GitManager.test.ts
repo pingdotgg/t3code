@@ -679,6 +679,7 @@ function makeManager(input?: {
       Effect.map((provider) =>
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           resolveLink: (input) => provider.resolveLink?.(input),
+          isEnabled: () => Effect.succeed(true),
           get: () => Effect.succeed(provider),
           resolveHandle: () => Effect.succeed({ provider, context: null }),
           resolve: () => Effect.succeed(provider),

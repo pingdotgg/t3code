@@ -322,6 +322,43 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 describe("ThreadSettlementReactor", () => {
+  it.effect("skips automatic GitHub lookups while the integration is disabled", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const project = {
+          ...makeProject(),
+          repositoryIdentity: {
+            canonicalKey: "github.com/owner/repository",
+            locator: {
+              source: "git-remote" as const,
+              remoteName: "origin",
+              remoteUrl: "git@github.com:owner/repository.git",
+            },
+            displayName: "owner/repository",
+          },
+        };
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("disabled", { branch: "feature" })], [project]),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleOnMerge: true,
+            disabledSourceControlProviders: ["github"],
+          },
+          branchPullRequest: () => Effect.die("GitHub lookup should not run"),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), []);
+          assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), []);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it("distinguishes a project that inherits the threshold from one that disables it", () => {
     const inherits = ThreadSettlementReactor.autoSettlementSettingsKey({
       ...DEFAULT_SERVER_SETTINGS,

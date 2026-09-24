@@ -3816,6 +3816,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         ),
     });
     const pullRequests = yield* PullRequestService.PullRequestService;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3868,6 +3869,9 @@ export const websocketRpcRouteLayer = Layer.unwrap(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(
                     SourceControlProviderRegistry.layer.pipe(
+                      Layer.provide(
+                        Layer.succeed(ServerSettings.ServerSettingsService, serverSettings),
+                      ),
                       Layer.provide(
                         Layer.mergeAll(
                           AzureDevOpsCli.layer,

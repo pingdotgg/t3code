@@ -26,6 +26,13 @@ import {
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 const decodeServerSettingsJson = Schema.decodeUnknownOption(ServerSettingsJson);
 
+export function isSourceControlProviderEnabled(
+  settings: Pick<ServerSettings, "disabledSourceControlProviders">,
+  kind: string,
+): boolean {
+  return !settings.disabledSourceControlProviders.some((disabled) => disabled === kind);
+}
+
 /** @deprecated Read `resolveProjectSettings(...).settings.enableAgentBrowserAccess`. */
 export function resolveProjectAgentBrowserAccess(
   settings: Pick<

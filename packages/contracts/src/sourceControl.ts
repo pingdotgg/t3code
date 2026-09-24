@@ -144,6 +144,8 @@ export type VcsDiscoveryItem = typeof VcsDiscoveryItem.Type;
 
 export const SourceControlProviderDiscoveryItem = Schema.Struct({
   kind: SourceControlProviderKind,
+  // Absent from older servers, where every discovered provider was implicitly enabled.
+  enabled: Schema.optionalKey(Schema.Boolean),
   ...SourceControlDiscoverySharedFields,
   auth: SourceControlProviderAuth,
 });

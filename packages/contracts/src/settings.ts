@@ -41,6 +41,7 @@ import {
   type ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
+import { SourceControlProviderKind } from "./sourceControl.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -1239,6 +1240,9 @@ export const ServerSettings = Schema.Struct({
   sourceControlWritingStyle: SourceControlWritingStyleSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  disabledSourceControlProviders: Schema.Array(SourceControlProviderKind).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1522,6 +1526,7 @@ export const ServerSettingsPatch = Schema.Struct({
       followChangeRequestTemplates: Schema.optionalKey(Schema.Boolean),
     }),
   ),
+  disabledSourceControlProviders: Schema.optionalKey(Schema.Array(SourceControlProviderKind)),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   observability: Schema.optionalKey(

@@ -6,6 +6,8 @@ import {
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { isSourceControlProviderEnabled } from "@t3tools/shared/serverSettings";
+import { repositoryIdentitySourceControlProviderKind } from "@t3tools/shared/sourceControl";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -158,7 +160,13 @@ export const make = Effect.gen(function* () {
       },
     ))
       .filter((thread) => thread !== null)
-      .filter((thread) => !thread.pullRequests.some((link) => link.source !== "stack-dismissed"));
+      .filter((thread) => !thread.pullRequests.some((link) => link.source !== "stack-dismissed"))
+      .filter((thread) => {
+        const providerKind = repositoryIdentitySourceControlProviderKind(
+          projects.get(thread.projectId)?.repositoryIdentity,
+        );
+        return providerKind === undefined || isSourceControlProviderEnabled(settings, providerKind);
+      });
 
     // Use the same cwd as PR discovery so both paths share GitManager's cache.
     const lookupCwdByThreadId = new Map<string, string>();

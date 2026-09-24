@@ -294,6 +294,25 @@ export function sourceControlRepositorySelector(
   return identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null;
 }
 
+/** Resolve the configured provider from both current and pre-provider repository identities. */
+export function repositoryIdentitySourceControlProviderKind(
+  identity: Pick<RepositoryIdentity, "provider" | "locator"> | null | undefined,
+): SourceControlProviderKind | undefined {
+  switch (identity?.provider) {
+    case "github":
+    case "gitlab":
+    case "forgejo":
+    case "azure-devops":
+    case "bitbucket":
+    case "unknown":
+      return identity.provider;
+    default:
+      return identity
+        ? detectSourceControlProviderFromRemoteUrl(identity.locator.remoteUrl)?.kind
+        : undefined;
+  }
+}
+
 export function canonicalRepositoryKey(key: string): string {
   return key
     .replace(

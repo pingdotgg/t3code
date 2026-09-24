@@ -429,6 +429,13 @@ function buildAddProjectRemoteSourceReadiness(
       readiness[source] = unavailable;
       continue;
     }
+    if (provider.enabled === false) {
+      readiness[source] = {
+        ready: false,
+        hint: `${provider.label} is disabled in Source Control settings.`,
+      };
+      continue;
+    }
     if (provider.status !== "available") {
       readiness[source] = { ready: false, hint: provider.installHint };
       continue;

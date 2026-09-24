@@ -31,6 +31,7 @@ import { GitManager, type GitBranchPullRequest } from "../git/GitManager.ts";
 import { PullRequestService } from "../pullRequest/PullRequestService.ts";
 import { RepositoryIdentityResolver } from "../project/RepositoryIdentityResolver.ts";
 import { ServerActivation } from "../serverActivation.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 import * as ThreadPullRequestReactor from "./ThreadPullRequestReactor.ts";
@@ -134,6 +135,7 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
   readonly existingWorktrees?: ReadonlyArray<string>;
   readonly project?: OrchestrationProjectShell;
   readonly resolveRepositoryIdentity?: RepositoryIdentityResolver["Service"]["resolve"];
+  readonly disabledSourceControlProviders?: Array<"github">;
 }) {
   const activation = yield* Deferred.make<void>();
   const snapshots = yield* Ref.make<OrchestrationShellSnapshot>({
@@ -208,6 +210,9 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
       },
     }),
     Layer.succeed(ServerActivation, Deferred.await(activation)),
+    ServerSettings.layerTest({
+      disabledSourceControlProviders: options.disabledSourceControlProviders ?? [],
+    }),
     Layer.succeed(
       Crypto.Crypto,
       Crypto.make({
@@ -242,6 +247,23 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
 });
 
 describe("ThreadPullRequestReactor", () => {
+  it.effect("skips automatic GitHub lookups while the integration is disabled", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeHarness({
+          threads: [thread("disabled")],
+          disabledSourceControlProviders: ["github"],
+          branchPullRequest: () => Effect.die("GitHub lookup should not run"),
+        });
+
+        yield* Effect.gen(function* () {
+          yield* fixture.start();
+          expect(yield* Ref.get(fixture.branchCalls)).toEqual([]);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("discovers saved branch PRs without a client and shares branch lookups", () =>
     Effect.scoped(
       Effect.gen(function* () {

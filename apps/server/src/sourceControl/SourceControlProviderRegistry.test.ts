@@ -8,6 +8,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { VcsRepositoryDetectionError } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -43,6 +44,7 @@ function makeRegistry(input: {
   readonly github?: Partial<GitHubCli.GitHubCli["Service"]>;
   readonly gitlab?: Partial<GitLabCli.GitLabCli["Service"]>;
   readonly resolve?: VcsDriverRegistry.VcsDriverRegistry["Service"]["resolve"];
+  readonly disabledProviders?: Array<"github">;
 }) {
   const driver = {
     listRemotes: () =>
@@ -86,7 +88,11 @@ function makeRegistry(input: {
     ...input.process,
   });
 
-  return SourceControlProviderRegistry.make.pipe(
+  return (
+    input.disabledProviders
+      ? SourceControlProviderRegistry.makeConfigured
+      : SourceControlProviderRegistry.make
+  ).pipe(
     Effect.provide(
       Layer.mergeAll(
         NodeServices.layer,
@@ -100,10 +106,40 @@ function makeRegistry(input: {
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-source-control-registry-test-",
         }).pipe(Layer.provide(NodeServices.layer)),
+        ServerSettings.layerTest({
+          disabledSourceControlProviders: input.disabledProviders ?? [],
+        }),
       ),
     ),
   );
 }
+
+it.effect("does not invoke GitHub when the integration is disabled", () =>
+  Effect.gen(function* () {
+    let listCalls = 0;
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@github.com:pingdotgg/t3code.git" }],
+      disabledProviders: ["github"],
+      github: {
+        listOpenPullRequests: () => {
+          listCalls++;
+          return Effect.succeed([]);
+        },
+      },
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+    const result = yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "feature",
+      state: "open",
+    });
+
+    assert.deepStrictEqual(result, []);
+    assert.strictEqual(listCalls, 0);
+    assert.strictEqual(yield* registry.isEnabled("github"), false);
+  }),
+);
 
 it.effect("routes GitHub remotes to the GitHub provider", () =>
   Effect.gen(function* () {

@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import type { SourceControlProviderKind } from "@t3tools/contracts";
 import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
+import { isSourceControlProviderEnabled } from "@t3tools/shared/serverSettings";
 
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 import * as BitbucketSourceControlProvider from "./BitbucketSourceControlProvider.ts";
@@ -23,6 +24,7 @@ import {
   type SourceControlProviderDiscoverySpec,
 } from "./SourceControlProviderDiscovery.ts";
 import { ServerConfig } from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 
@@ -61,8 +63,31 @@ export class SourceControlProviderRegistry extends Context.Service<
       SourceControlProviderError
     >;
     readonly discover: Effect.Effect<ReadonlyArray<SourceControlProviderDiscoveryItem>>;
+    readonly isEnabled: (kind: SourceControlProviderKind) => Effect.Effect<boolean>;
   }
 >()("t3/sourceControl/SourceControlProviderRegistry") {}
+
+function disabledProvider(
+  kind: SourceControlProviderKind,
+): SourceControlProvider.SourceControlProvider["Service"] {
+  const unavailable = (operation: string, cwd: string) =>
+    new SourceControlProviderError({
+      provider: kind,
+      operation,
+      cwd,
+      detail: `${kind} source control integration is disabled in Settings.`,
+    });
+  return SourceControlProvider.SourceControlProvider.of({
+    kind,
+    listChangeRequests: () => Effect.succeed([]),
+    getChangeRequest: (input) => unavailable("getChangeRequest", input.cwd),
+    createChangeRequest: (input) => unavailable("createChangeRequest", input.cwd),
+    getRepositoryCloneUrls: (input) => unavailable("getRepositoryCloneUrls", input.cwd),
+    createRepository: (input) => unavailable("createRepository", input.cwd),
+    getDefaultBranch: () => Effect.succeed(null),
+    checkoutChangeRequest: (input) => unavailable("checkoutChangeRequest", input.cwd),
+  });
+}
 
 function unsupportedProvider(
   kind: SourceControlProviderKind,
@@ -287,6 +312,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
         return kind ? providers.get(kind)?.resolveLink?.(input) : undefined;
       },
       get,
+      isEnabled: () => Effect.succeed(true),
       resolveHandle,
       resolve: (input) => resolveHandle(input).pipe(Effect.map((handle) => handle.provider)),
       discover: Effect.all(
@@ -295,7 +321,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
             spec,
             process,
             cwd: config.cwd,
-          }),
+          }).pipe(Effect.map((item) => ({ ...item, enabled: true }))),
         ),
         { concurrency: "unbounded" },
       ),
@@ -336,4 +362,47 @@ export const make = Effect.gen(function* () {
   ]);
 });
 
-export const layer = Layer.effect(SourceControlProviderRegistry, make);
+/** @public Service construction is part of the canonical Effect module API. */
+export const makeConfigured = Effect.gen(function* () {
+  const registry = yield* make;
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const isEnabled = (kind: SourceControlProviderKind) =>
+    settings.getSettings.pipe(
+      Effect.map((current) => isSourceControlProviderEnabled(current, kind)),
+      // Settings are already loaded before this registry is served. If a later
+      // refresh fails, retain the historical enabled behavior instead of
+      // turning an unrelated settings I/O error into a source-control error.
+      Effect.orElseSucceed(() => true),
+    );
+  const configuredProvider = (provider: SourceControlProvider.SourceControlProvider["Service"]) =>
+    isEnabled(provider.kind).pipe(
+      Effect.map((enabled) => (enabled ? provider : disabledProvider(provider.kind))),
+    );
+  const resolveHandle: SourceControlProviderRegistry["Service"]["resolveHandle"] = (input) =>
+    registry
+      .resolveHandle(input)
+      .pipe(
+        Effect.flatMap((handle) =>
+          configuredProvider(handle.provider).pipe(
+            Effect.map((provider) => ({ ...handle, provider })),
+          ),
+        ),
+      );
+
+  return SourceControlProviderRegistry.of({
+    resolveLink: registry.resolveLink,
+    isEnabled,
+    get: (kind) => registry.get(kind).pipe(Effect.flatMap(configuredProvider)),
+    resolveHandle,
+    resolve: (input) => resolveHandle(input).pipe(Effect.map((handle) => handle.provider)),
+    discover: registry.discover.pipe(
+      Effect.flatMap((items) =>
+        Effect.forEach(items, (item) =>
+          isEnabled(item.kind).pipe(Effect.map((enabled) => ({ ...item, enabled }))),
+        ),
+      ),
+    ),
+  });
+});
+
+export const layer = Layer.effect(SourceControlProviderRegistry, makeConfigured);

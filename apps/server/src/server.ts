@@ -279,6 +279,7 @@ const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
 );
 
 const SourceControlProviderRegistryLayerLive = SourceControlProviderRegistry.layer.pipe(
+  Layer.provide(ServerSettingsLayerLive),
   Layer.provide(
     Layer.mergeAll(
       AzureDevOpsCli.layer,

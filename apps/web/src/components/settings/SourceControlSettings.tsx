@@ -168,6 +168,7 @@ function RedactedAccount(props: { readonly account: string | null }) {
 }
 
 function itemStatusDot(item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem): string {
+  if (isProviderDiscoveryItem(item) && item.enabled === false) return "bg-muted-foreground/35";
   if (isVcsNotReady(item)) return "bg-muted-foreground/35";
   if (item.status !== "available") return "bg-warning";
   if (isProviderDiscoveryItem(item) && item.auth.status !== "authenticated") return "bg-warning";
@@ -213,6 +214,10 @@ function itemSummary({
 }) {
   if (isVcsNotReady(item)) {
     return <span>Support for {item.label} is coming soon.</span>;
+  }
+
+  if (isProviderDiscoveryItem(item) && item.enabled === false) {
+    return <span>Disabled. T3 Code will not run {item.label} operations.</span>;
   }
 
   if (item.status !== "available") {
@@ -261,13 +266,15 @@ function itemSummary({
 function DiscoveryItemRow({
   item,
   children,
+  onEnabledChange,
 }: {
   readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
   readonly children?: ReactNode;
+  readonly onEnabledChange?: (enabled: boolean) => void;
 }) {
   const version = optionLabel(item.version);
   const enabled = isProviderDiscoveryItem(item)
-    ? item.status === "available" && item.auth.status === "authenticated"
+    ? item.enabled !== false
     : item.status === "available" && item.implemented;
   const auth = isProviderDiscoveryItem(item) ? item.auth : null;
   const authStatus = auth ? authPresentation(auth) : null;
@@ -326,7 +333,16 @@ function DiscoveryItemRow({
               </Button>
             ) : null}
             {!isVcsNotReady(item) ? (
-              <Switch checked={enabled} disabled aria-label={`${item.label} availability`} />
+              <Switch
+                checked={enabled}
+                disabled={!isProviderDiscoveryItem(item)}
+                onCheckedChange={(checked) => onEnabledChange?.(Boolean(checked))}
+                aria-label={
+                  isProviderDiscoveryItem(item)
+                    ? `Enable ${item.label} integration`
+                    : `${item.label} availability`
+                }
+              />
             ) : null}
           </div>
         </div>
@@ -501,6 +517,8 @@ function EmptySourceControlDiscovery({
 
 export function SourceControlSettingsPanel() {
   const { scope, environment, connectedEnvironments } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
   // Discovery scans one machine's tools, so it shows the representative
   // environment (named in the section title when several are selected);
   // the settings rows above it fan out like everywhere else.
@@ -586,7 +604,19 @@ export function SourceControlSettingsPanel() {
               headerAction={hasVersionControlSystems ? null : scanButton}
             >
               {result.sourceControlProviders.map((item) => (
-                <DiscoveryItemRow key={`provider:${item.kind}`} item={item} />
+                <DiscoveryItemRow
+                  key={`provider:${item.kind}`}
+                  item={{
+                    ...item,
+                    enabled: !settings.disabledSourceControlProviders.includes(item.kind),
+                  }}
+                  onEnabledChange={(enabled) => {
+                    const disabled = new Set(settings.disabledSourceControlProviders);
+                    if (enabled) disabled.delete(item.kind);
+                    else disabled.add(item.kind);
+                    updateSettings({ disabledSourceControlProviders: [...disabled] });
+                  }}
+                />
               ))}
             </SettingsSection>
           ) : null}
