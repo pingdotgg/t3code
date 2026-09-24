@@ -326,7 +326,7 @@ export function DeviceStreamView(props: {
       <div
         ref={hostRef}
         className={cn(
-          "relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+          "relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden outline-none",
           controlsInset && "pr-14",
         )}
         tabIndex={0}
