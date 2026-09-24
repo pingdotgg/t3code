@@ -25,6 +25,9 @@ export async function stageShowcaseAgentActivity(
     ios: { allowAlert: true, allowBadge: true, allowSound: true },
   });
   if (!permission.granted) return `notification permission ${permission.status}`;
+  // A previous appearance's pass left its alert delivered; it would stack
+  // under the new one.
+  await Notifications.dismissAllNotificationsAsync();
 
   if (Platform.OS === "android") {
     return (
