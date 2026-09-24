@@ -55,6 +55,24 @@ const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
 // content-visibility leaves mounted below the scroll viewport.
 const SIDEBAR_ROW_SUBSCRIPTION_OVERSCAN_PX = 160;
 
+export function formatSidebarThreadAccessibleStatus(input: {
+  readonly hasUnsentDraft: boolean;
+  readonly isPinned: boolean;
+  readonly isRegeneratingTitle: boolean;
+  readonly statusLabel: string | null;
+  readonly terminalLabel: string | null;
+}): string | null {
+  const labels = [
+    input.hasUnsentDraft ? "Unsent draft" : null,
+    input.isPinned ? "Pinned" : null,
+    input.isRegeneratingTitle ? "Regenerating title" : null,
+    input.statusLabel,
+    input.terminalLabel,
+  ].filter((label): label is string => label !== null);
+
+  return labels.length > 0 ? labels.join(", ") : null;
+}
+
 export function useSidebarRowSubscriptionLease(isActive: boolean): {
   readonly leaseLiveStatus: boolean;
   readonly rowRef: React.Dispatch<React.SetStateAction<HTMLElement | null>>;
