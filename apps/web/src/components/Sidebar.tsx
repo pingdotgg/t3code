@@ -263,7 +263,7 @@ import {
   ComboboxTrigger,
   useComboboxFilter,
 } from "./ui/combobox";
-import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
+import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import {
@@ -4940,36 +4940,27 @@ export default function Sidebar() {
               environmentFilter={
                 environments.length > 1 ? (
                   <Menu>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <MenuTrigger
-                            render={
-                              <SidebarMenuButton
-                                size="icon"
-                                type="button"
-                                aria-label={
-                                  isEnvironmentFilterActive
-                                    ? "Filter threads by environment (filter active)"
-                                    : "Filter threads by environment"
-                                }
-                                className="relative shrink-0 focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
-                              />
-                            }
-                          />
-                        }
-                      >
-                        <ServerIcon />
-                        {isEnvironmentFilterActive ? (
-                          <span
-                            aria-hidden
-                            data-testid="sidebar-environment-filter-active"
-                            className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-primary"
-                          />
-                        ) : null}
-                      </TooltipTrigger>
-                      <TooltipPopup>Environments</TooltipPopup>
-                    </Tooltip>
+                    <MenuTrigger
+                      render={
+                        <SidebarHeaderIconButton
+                          label={
+                            isEnvironmentFilterActive
+                              ? "Filter threads by environment (filter active)"
+                              : "Filter threads by environment"
+                          }
+                          tooltip="Environments"
+                        />
+                      }
+                    >
+                      <ServerIcon />
+                      {isEnvironmentFilterActive ? (
+                        <span
+                          aria-hidden
+                          data-testid="sidebar-environment-filter-active"
+                          className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-primary"
+                        />
+                      ) : null}
+                    </MenuTrigger>
                     <MenuPopup align="end" className="w-64 max-w-(--available-width)">
                       <MenuCheckboxItem
                         checked={!isEnvironmentFilterActive}
@@ -4978,7 +4969,6 @@ export default function Sidebar() {
                         // rather than a checkbox that snaps back.
                         disabled={!isEnvironmentFilterActive}
                         onCheckedChange={handleEnableAllEnvironments}
-                        className="font-medium"
                       >
                         All environments
                       </MenuCheckboxItem>
@@ -5001,11 +4991,7 @@ export default function Sidebar() {
                             }
                             className={cn(
                               "[&>span:last-child]:min-w-0",
-                              isEnabled
-                                ? "text-foreground"
-                                : "text-muted-foreground data-highlighted:text-accent-foreground/70",
-                              isLastEnabled &&
-                                "data-disabled:pointer-events-auto data-disabled:bg-accent/40 data-disabled:opacity-100",
+                              isLastEnabled && "data-disabled:pointer-events-auto",
                             )}
                           >
                             <span className="flex min-w-0 flex-col">
