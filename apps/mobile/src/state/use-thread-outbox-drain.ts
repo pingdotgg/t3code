@@ -640,15 +640,16 @@ async function preserveUploadedAttachmentsForEditor(
 function usageLimitBlockReason(
   providers: readonly ServerProvider[],
   selection: ModelSelection,
+  providerLocked: boolean,
 ): string | null {
   const provider = providers.find((entry) => entry.instanceId === selection.instanceId);
   const block = usageLimitSendBlock(provider, selection.model, Date.now());
   return block === null || provider === undefined
     ? null
     : formatUsageLimitSendBlock(providerDisplayLabel(provider), block, Date.now(), {
-        // A queued send is bound to the thread's provider; switching is not
-        // an option the restore can offer.
-        providerLocked: true,
+        // Existing threads are bound to their provider; a rejected creation
+        // restores to a new-task draft, where the user can still switch.
+        providerLocked,
       });
 }
 
@@ -812,6 +813,7 @@ export function useThreadOutboxDrain(): void {
       const usageBlockReason = usageLimitBlockReason(
         serverConfig.providers,
         settings.modelSelection,
+        true,
       );
       if (usageBlockReason !== null) {
         return restoreQueuedMessage(queuedMessage, usageBlockReason);
@@ -912,6 +914,7 @@ export function useThreadOutboxDrain(): void {
       const currentUsageBlockReason = usageLimitBlockReason(
         currentConfig.providers,
         settings.modelSelection,
+        true,
       );
       if (currentUsageBlockReason !== null) {
         return restoreQueuedMessage(persistedMessage, currentUsageBlockReason);
@@ -1003,6 +1006,7 @@ export function useThreadOutboxDrain(): void {
       const usageBlockReason = usageLimitBlockReason(
         serverConfig.providers,
         settings.modelSelection,
+        false,
       );
       if (usageBlockReason !== null) {
         return restoreQueuedMessage(queuedMessage, usageBlockReason);
@@ -1054,6 +1058,7 @@ export function useThreadOutboxDrain(): void {
       const currentUsageBlockReason = usageLimitBlockReason(
         currentConfig.providers,
         settings.modelSelection,
+        false,
       );
       if (currentUsageBlockReason !== null) {
         return restoreQueuedMessage(persistedMessage, currentUsageBlockReason);
