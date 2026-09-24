@@ -97,7 +97,8 @@ export function ProviderInstanceIcon(props: {
   readonly displayName: string;
   readonly accentColor?: string;
   readonly showBadge?: boolean;
-  readonly surfaceColor: string;
+  /** The surface the badge ring blends into; omit when the caller cannot name it. */
+  readonly surfaceColor?: string;
 }) {
   return (
     <View style={{ position: "relative" }}>
@@ -116,7 +117,7 @@ export function ProviderInstanceIcon(props: {
             paddingHorizontal: 2,
             borderRadius: 999,
             borderWidth: 1,
-            borderColor: props.surfaceColor,
+            borderColor: props.surfaceColor ?? "transparent",
             backgroundColor: props.accentColor,
             alignItems: "center",
             justifyContent: "center",
