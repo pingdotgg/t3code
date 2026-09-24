@@ -2813,9 +2813,9 @@ describe("orchestrator MCP toolkit", () => {
               return yield* Effect.die(new Error("Late completion successor delivery missing."));
             }
 
-            // The bounded successor can coalesce a late result only once. A
-            // third terminal after that successor has started remains
-            // inspectable, but cannot recursively create a third parent run.
+            // A terminal that lands after the successor has started is not
+            // stranded: once the successor settles, the cohort reserves one
+            // more delivery for it rather than leaving it pending forever.
             const successorGate = yield* Deferred.make<void>();
             deliveryTerminalGates.set(lateParentThreadId, successorGate);
             yield* orchestrator.dispatch({
@@ -2884,7 +2884,7 @@ describe("orchestrator MCP toolkit", () => {
               commandId: CommandId.make("command:mcp-late-parent:interrupt-third-late-child"),
               threadId: thirdLateTask.childThreadId,
               runId: thirdLateChildRun.id,
-              reason: "Terminalize after the bounded successor started.",
+              reason: "Terminalize after the successor delivery started.",
             });
             yield* waitForProjection(
               orchestrator,
@@ -2894,7 +2894,7 @@ describe("orchestrator MCP toolkit", () => {
                   ?.completionDelivery?.state === "pending",
             );
             yield* Deferred.succeed(successorGate, undefined);
-            const exhaustedCohort = yield* waitForProjection(
+            const thirdReserved = yield* waitForProjection(
               orchestrator,
               lateParentThreadId,
               (projection) => {
@@ -2903,18 +2903,61 @@ describe("orchestrator MCP toolkit", () => {
                 )?.delegatedCompletion;
                 return (
                   cohort?.settledDeliveryCount === 2 &&
-                  cohort.delivery === null &&
+                  cohort.delivery?.generation === successorDelivery.generation + 1 &&
                   projection.runs.find((run) => run.id === activeSuccessorRun.id)?.status ===
                     "completed" &&
                   projection.subagents.find((task) => task.id === thirdLateTask.id)
-                    ?.completionDelivery?.state === "pending"
+                    ?.completionDelivery?.state === "claimed"
+                );
+              },
+            );
+            const thirdDelivery = thirdReserved.runs.find((run) => run.id === lateParentRun.id)
+              ?.delegatedCompletion?.delivery;
+            if (thirdDelivery === undefined || thirdDelivery === null) {
+              return yield* Effect.die(new Error("Third late completion delivery missing."));
+            }
+            expect(thirdDelivery.taskIds).toEqual([thirdLateTask.id]);
+            expect(yield* waitForContinuationOffers(3)).toHaveLength(3);
+
+            // Settle the third delivery so the cohort is drained before the
+            // Queue Remove scenario below starts its own cohort.
+            deliveryTerminalGates.delete(lateParentThreadId);
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "agent",
+              creationSource: "server",
+              commandId: CommandId.make("command:mcp-late-parent:dispatch-third-delivery"),
+              threadId: lateParentThreadId,
+              messageId: thirdDelivery.messageId,
+              text: "Delegated task reached a terminal state.",
+              attachments: [],
+              modelSelection: codexSelection,
+              dispatchMode: { type: "queue_after_active" },
+              delegatedCompletion: {
+                parentRunId: lateParentRun.id,
+                generation: thirdDelivery.generation,
+                taskIds: thirdDelivery.taskIds,
+              },
+            });
+            const drainedCohort = yield* waitForProjection(
+              orchestrator,
+              lateParentThreadId,
+              (projection) => {
+                const cohort = projection.runs.find(
+                  (run) => run.id === lateParentRun.id,
+                )?.delegatedCompletion;
+                return (
+                  cohort?.settledDeliveryCount === 3 &&
+                  cohort.delivery === null &&
+                  projection.subagents.find((task) => task.id === thirdLateTask.id)
+                    ?.completionDelivery?.state === "delivered"
                 );
               },
             );
             expect(
-              exhaustedCohort.runs.find((run) => run.id === lateParentRun.id)?.delegatedCompletion,
-            ).toMatchObject({ settledDeliveryCount: 2, delivery: null });
-            yield* expectOffersToStay(2);
+              drainedCohort.runs.find((run) => run.id === lateParentRun.id)?.delegatedCompletion,
+            ).toMatchObject({ settledDeliveryCount: 3, delivery: null });
+            yield* expectOffersToStay(3);
 
             // Queue Remove is a durable disposal action, not a local queue
             // edit. Start a fresh parent-run cohort so removing this delivery

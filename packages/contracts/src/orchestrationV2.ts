@@ -460,8 +460,8 @@ export type OrchestrationV2DelegatedCompletionDelivery =
 export const OrchestrationV2DelegatedCompletionCohort = Schema.Struct({
   disposition: Schema.Literals(["open", "stopped", "disposed"]),
   nextGeneration: PositiveInt,
-  // Optional for compatibility with cohorts persisted before bounded
-  // follow-up delivery was introduced. Missing means no delivery has settled.
+  // Delivery runs this cohort has settled; provider mailbox acceptance is not
+  // counted. Optional for cohorts persisted before follow-up delivery.
   settledDeliveryCount: Schema.optional(NonNegativeInt),
   delivery: Schema.NullOr(OrchestrationV2DelegatedCompletionDelivery),
 });
