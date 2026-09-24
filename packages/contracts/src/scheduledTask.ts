@@ -4,6 +4,7 @@ import {
   CommandId,
   IsoDateTime,
   ProjectId,
+  RunId,
   ScheduledTaskId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -14,6 +15,7 @@ import {
   OrchestrationV2CreationSource,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
 } from "./orchestrationV2.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 
 /** 24-hour "HH:MM" wall-clock time. Mirrors `parseTimeOfDay` on the server. */
@@ -122,6 +124,31 @@ export const ScheduledTaskListResult = Schema.Struct({
 });
 export type ScheduledTaskListResult = typeof ScheduledTaskListResult.Type;
 
+/**
+ * Pins the live caller-owned run a schedule mutation was authorized under.
+ * Re-checked inside the write transaction: a mutation that commits after the
+ * provider run settled is rejected instead of carrying a dead run's
+ * authorization into unattended state.
+ */
+const ScheduledTaskExpectedActiveRun = Schema.Struct({
+  id: RunId,
+  threadId: ThreadId,
+  providerInstanceId: ProviderInstanceId,
+});
+
+/**
+ * Pins the calling thread's modes at the time the mutation was authorized.
+ * Re-read inside the write transaction so a runtime/interaction-mode change
+ * on the caller racing the authorization fails the write instead of arming
+ * work the caller can no longer run — e.g. an unbound task that copied the
+ * caller's modes before the caller switched to plan.
+ */
+const ScheduledTaskExpectedCaller = Schema.Struct({
+  threadId: ThreadId,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+});
+
 export const ScheduledTaskUpsertInput = Schema.Struct({
   id: Schema.optional(ScheduledTaskId),
   requireExisting: Schema.optional(Schema.Boolean).annotate({
@@ -140,6 +167,14 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   createdBy: Schema.optional(OrchestrationV2Actor),
   creationSource: Schema.optional(OrchestrationV2CreationSource),
+  expectedActiveRun: Schema.optional(ScheduledTaskExpectedActiveRun),
+  // Same atomic precondition as update: the modes the created task's runs
+  // execute under — the bound thread's modes — are re-resolved inside the
+  // transaction so a concurrent mode change on the destination fails the
+  // write rather than persisting a task authorized against a stale snapshot.
+  expectedExecutionRuntimeMode: Schema.optional(RuntimeMode),
+  expectedExecutionInteractionMode: Schema.optional(ProviderInteractionMode),
+  expectedCaller: Schema.optional(ScheduledTaskExpectedCaller),
 });
 export type ScheduledTaskUpsertInput = typeof ScheduledTaskUpsertInput.Type;
 
@@ -178,6 +213,22 @@ export const ScheduledTaskUpdateInput = Schema.Struct({
   runtimeMode: Schema.optional(RuntimeMode),
   /** Moves the task to another project; `projectId` stays the lookup scope. */
   nextProjectId: Schema.optional(ProjectId),
+  // Optimistic preconditions evaluated inside the write transaction: when
+  // provided, the update is rejected if the stored row no longer matches.
+  // Authorization evaluated against a separately loaded copy stays pinned to
+  // the row the write actually applies to.
+  expectedThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  expectedRuntimeMode: Schema.optional(RuntimeMode),
+  expectedInteractionMode: Schema.optional(ProviderInteractionMode),
+  // The modes the task's runs will execute under after this mutation — the
+  // post-update destination thread's modes when bound, the task's stored
+  // modes when unbound. Re-resolved inside the transaction so a concurrent
+  // destination-mode change fails the write rather than elevating past the
+  // caller's authorization.
+  expectedExecutionRuntimeMode: Schema.optional(RuntimeMode),
+  expectedExecutionInteractionMode: Schema.optional(ProviderInteractionMode),
+  expectedActiveRun: Schema.optional(ScheduledTaskExpectedActiveRun),
+  expectedCaller: Schema.optional(ScheduledTaskExpectedCaller),
 });
 export type ScheduledTaskUpdateInput = typeof ScheduledTaskUpdateInput.Type;
 
@@ -196,6 +247,14 @@ export const ScheduledTaskDeleteInput = Schema.Struct({
    * delete into a typed not-found rather than a cross-project delete.
    */
   projectId: Schema.optional(ProjectId),
+  // Optimistic preconditions enforced inside the write transaction, as on
+  // update: a mutation authorized against a stale row cannot hit a drifted one.
+  expectedThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  expectedRuntimeMode: Schema.optional(RuntimeMode),
+  expectedInteractionMode: Schema.optional(ProviderInteractionMode),
+  expectedExecutionRuntimeMode: Schema.optional(RuntimeMode),
+  expectedExecutionInteractionMode: Schema.optional(ProviderInteractionMode),
+  expectedActiveRun: Schema.optional(ScheduledTaskExpectedActiveRun),
 });
 export type ScheduledTaskDeleteInput = typeof ScheduledTaskDeleteInput.Type;
 
@@ -208,6 +267,9 @@ export const ScheduledTaskRunNowInput = Schema.Struct({
    * project's authority.
    */
   projectId: Schema.optional(ProjectId),
+  // Re-checked inside the run-claim transaction, so a manual run cannot fire
+  // after the caller run that authorized it has settled.
+  expectedActiveRun: Schema.optional(ScheduledTaskExpectedActiveRun),
 });
 export type ScheduledTaskRunNowInput = typeof ScheduledTaskRunNowInput.Type;
 
