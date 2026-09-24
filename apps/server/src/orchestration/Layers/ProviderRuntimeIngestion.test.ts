@@ -5205,6 +5205,10 @@ describe("splitBufferedAssistantText", () => {
       ready: "",
       rest: "**Risk by area:**\n\n| a |\n|---|\n",
     });
+    expect(splitBufferedAssistantText("**Use *npm* now**\n\nInstall it")).toEqual({
+      ready: "",
+      rest: "**Use *npm* now**\n\nInstall it",
+    });
     expect(splitBufferedAssistantText("**Note:** read this.\n\nNext")).toEqual({
       ready: "**Note:** read this.\n\n",
       rest: "Next",

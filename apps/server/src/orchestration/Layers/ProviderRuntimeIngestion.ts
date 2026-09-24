@@ -213,7 +213,7 @@ const BLANK_LINE_PATTERN = /^[ \t]*$/;
 const LIST_ITEM_START_PATTERN = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]/;
 // A section title: an ATX heading, or a line of only bold text, which models
 // often use as a heading.
-const SECTION_TITLE_PATTERN = /^ {0,3}(?:#{1,6}(?:[ \t]|$)|\*\*[^*]+\*\*:?$)/;
+const SECTION_TITLE_PATTERN = /^ {0,3}(?:#{1,6}(?:[ \t]|$)|\*\*(?:[^*]|\*(?!\*))+\*\*:?$)/;
 // An unindented ATX heading ends the paragraph or list above it, even with no
 // blank line between them. A bold line would continue the paragraph instead.
 const TOP_LEVEL_HEADING_PATTERN = /^#{1,6}(?:[ \t]|$)/;
