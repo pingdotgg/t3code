@@ -305,7 +305,9 @@ it("faces a display handed off by native rotation without requesting another sen
     hingeAngle: 90,
   });
   draw();
+  viewer.setInteractionActive(true, "orbit");
   viewer.orbit(0, Math.PI / 6);
+  viewer.setInteractionActive(false, "orbit");
   now = 1000;
   draw();
   const requests = onOrientationRequested.mock.calls.length;
