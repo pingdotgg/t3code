@@ -1717,6 +1717,8 @@ describe("ClaudeAdapterV2 native session identity", () => {
   );
 });
 
+const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
 describe("ClaudeAdapterV2 background wake turns", () => {
   const WAKE_NATIVE_SESSION = "native-thread-claude-wake";
   // Background Bash ids and texts follow the claude_background_task_wake
@@ -4947,6 +4949,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         yield* Queue.offer(harness.sdkMessages, resumeTaskStarted);
+        // Shaped like the recorded SendMessage ACK in
+        // claude_background_subagent_lifecycle: the text block is the JSON of
+        // tool_use_result, and "message" names the agent's short id.
+        const resumeAck = {
+          success: true,
+          message: `Resuming agent ${SUBAGENT_TASK_ID.slice(0, 7)}`,
+          resumedAgentId: SUBAGENT_TASK_ID,
+          pin: { id: SUBAGENT_TASK_ID, name: SUBAGENT_TASK_ID, ref: "42ab31" },
+        };
         yield* Queue.offer(
           harness.sdkMessages,
           claudeSdkFrame({
@@ -4955,12 +4966,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               role: "user",
               content: [
                 {
-                  type: "tool_result",
                   tool_use_id: RESUME_TOOL_USE_ID,
+                  type: "tool_result",
                   content: [
                     {
                       type: "text",
-                      text: `{"success":true,"message":"Resuming agent","resumedAgentId":"${SUBAGENT_TASK_ID}"}`,
+                      text: encodeJsonString(resumeAck),
                     },
                   ],
                 },
@@ -4969,6 +4980,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             parent_tool_use_id: null,
             uuid: "00000000-0000-4000-8000-000000000509",
             session_id: WAKE_NATIVE_SESSION,
+            tool_use_result: resumeAck,
           }),
         );
         yield* Queue.offer(harness.sdkMessages, secondNotification);
