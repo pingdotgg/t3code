@@ -1,7 +1,7 @@
 ---
 title: UI Consistency
-model: gpt-5-6-sol
-effort: medium
+model: gpt-6-sol
+effort: max
 input: incremental
 tools:
   - browse_code
