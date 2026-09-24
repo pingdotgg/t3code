@@ -17,7 +17,10 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
@@ -30,7 +33,9 @@ import {
   type AntigravityExecutable,
 } from "../AntigravityInstallation.ts";
 import {
+  ANTIGRAVITY_AUTH_BROWSER_MARKER,
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
+  ANTIGRAVITY_BROWSER_COMMAND,
   resolveAntigravityProfileDirectory,
   resolveAntigravityRuntimeTempDirectory,
 } from "../antigravityAuthSupport.ts";
@@ -48,6 +53,15 @@ const decodeRequest = Schema.decodeEffect(
     }),
   ),
 );
+const decodeAcpRequest = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      id: Schema.Union([Schema.String, Schema.Number]),
+      method: Schema.String,
+    }),
+  ),
+);
+const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const blockedCredentialKeys = new Set([
   "GEMINI_API_KEY",
   "GOOGLE_API_KEY",
@@ -60,7 +74,11 @@ function shellQuote(value: string): string {
 }
 
 const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
-  options: { readonly config?: Partial<AntigravitySettings>; readonly enabled?: boolean } = {},
+  options: {
+    readonly config?: Partial<AntigravitySettings>;
+    readonly enabled?: boolean;
+    readonly standalone?: boolean;
+  } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -129,6 +147,10 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     tempDirectory: string | undefined;
     handle: ChildProcessSpawner.ChildProcessHandle;
   }> = [];
+  const browserCommands: Array<{
+    command: string;
+    args: ReadonlyArray<string>;
+  }> = [];
 
   const installation = Layer.mock(AntigravityInstallation)({
     managedDirectory: root,
@@ -165,6 +187,101 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     Effect.gen(function* () {
       if (command._tag !== "StandardCommand")
         return yield* Effect.die("Unexpected process pipeline.");
+      const encoder = new TextEncoder();
+      if (
+        options.standalone === true &&
+        command.args[0] === "--no-warnings" &&
+        command.args[1] === ANTIGRAVITY_BROWSER_COMMAND
+      ) {
+        browserCommands.push({ command: command.command, args: command.args });
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.empty,
+          stderr: Stream.make(
+            encoder.encode(
+              `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeJsonString(command.args[2] ?? "")}\n`,
+            ),
+          ),
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+      }
+      if (options.standalone === true) {
+        const output = yield* Queue.unbounded<Uint8Array>();
+        const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+        const terminate = Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0)).pipe(
+          Effect.asVoid,
+        );
+        yield* Effect.addFinalizer(() => terminate.pipe(Effect.andThen(Queue.shutdown(output))));
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(2),
+          exitCode: Deferred.await(exited),
+          isRunning: Deferred.isDone(exited).pipe(Effect.map((done) => !done)),
+          kill: () => terminate,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.forEach((bytes: Uint8Array) =>
+            Effect.gen(function* () {
+              for (const line of new TextDecoder().decode(bytes).split("\n").filter(Boolean)) {
+                const request = yield* decodeAcpRequest(line).pipe(Effect.orDie);
+                const result =
+                  request.method === "initialize"
+                    ? {
+                        protocolVersion: 1,
+                        agentInfo: { name: "antigravity-acp", version: "mock" },
+                        agentCapabilities: {
+                          loadSession: true,
+                          sessionCapabilities: { resume: {} },
+                          auth: { logout: {} },
+                          promptCapabilities: { image: true, embeddedContext: true },
+                        },
+                        authMethods: [{ id: "oauth-personal", name: "Sign in with Google" }],
+                      }
+                    : request.method === "authenticate"
+                      ? {}
+                      : request.method === "session/new"
+                        ? {
+                            sessionId: "mock-session-1",
+                            modes: {
+                              currentModeId: "default",
+                              availableModes: [{ id: "default", name: "Default" }],
+                            },
+                            models: {
+                              currentModelId: "gemini-test-low",
+                              availableModels: [
+                                { modelId: "gemini-test-low", name: "Gemini Test Low" },
+                              ],
+                            },
+                            configOptions: [],
+                          }
+                        : undefined;
+                yield* Queue.offer(
+                  output,
+                  encoder.encode(
+                    `${encodeJsonString({
+                      jsonrpc: "2.0",
+                      id: request.id,
+                      ...(result === undefined
+                        ? { error: { code: -32601, message: "Unsupported fixture method." } }
+                        : { result }),
+                    })}\n`,
+                  ),
+                );
+              }
+            }),
+          ),
+          stdout: Stream.fromQueue(output),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+      }
       const handle = yield* spawner.spawn(command);
       const environment = command.options.env ?? {};
       launches.push({
@@ -241,6 +358,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     acquisitions,
     releases,
     launches,
+    browserCommands,
     readRequests,
     assertClosed,
   };
@@ -262,18 +380,25 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
 
 it.layer(testLayer)("AntigravityDriver", (it) => {
   it.effect.skipIf(windowsHost)(
-    "preserves the Node install message when starting a standalone provider",
+    "uses the embedded helper when starting a standalone provider",
     () =>
       Effect.gen(function* () {
-        const h = yield* makeHarness();
-        const error = yield* h.refresh().pipe(Effect.flip);
-        expect(error.detail).toContain("Install Node.js");
-        expect(h.launches).toEqual([]);
-      }).pipe(
-        Effect.scoped,
-        Effect.provideService(HostProcessIsExecutable, true),
-        Effect.provideService(HostProcessEnvironment, { PATH: "" }),
-      ),
+        const h = yield* makeHarness({ standalone: true });
+        yield* h
+          .refresh()
+          .pipe(
+            Effect.provideService(HostProcessIsExecutable, true),
+            Effect.provideService(HostProcessExecutablePath, "/packaged/t3"),
+            Effect.provideService(HostProcessEnvironment, { PATH: "" }),
+          );
+        expect(h.acquisitions).toHaveLength(1);
+        expect(h.browserCommands).toHaveLength(1);
+        expect(h.browserCommands[0]).toMatchObject({
+          command: "/packaged/t3",
+          args: ["--no-warnings", ANTIGRAVITY_BROWSER_COMMAND, expect.any(String)],
+        });
+        yield* h.assertClosed;
+      }).pipe(Effect.scoped),
   );
 
   it.effect.skipIf(windowsHost)("does not launch a process for a disabled instance", () =>

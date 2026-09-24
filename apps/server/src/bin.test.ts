@@ -145,6 +145,10 @@ const readPersistedSnapshot = (baseDir: string) =>
     }).pipe(Effect.provide(makeProjectPersistenceLayer(config)));
   });
 
+it.effect("runs the hidden Antigravity browser helper", () =>
+  runCliWithRuntime(["__antigravity-browser", "https://example.invalid/t3-browser-helper"]),
+);
+
 const makeProjectLookupFixture = Effect.fn("makeProjectLookupFixture")(function* (
   withThread: boolean,
   removeWorkspace: boolean,

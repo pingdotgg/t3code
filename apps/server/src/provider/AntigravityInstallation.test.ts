@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import {
   HostProcessArchitecture,
   HostProcessEnvironment,
+  HostProcessExecutablePath,
   HostProcessIsExecutable,
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
@@ -131,6 +132,7 @@ interface HarnessOptions {
   readonly contentEncoding?: string;
   readonly platform?: NodeJS.Platform;
   readonly path?: string;
+  readonly standalone?: boolean;
   readonly previous?: boolean;
   readonly fileSystem?: FileSystem.FileSystem;
   readonly validate?: AntigravityInstallationOptions["validate"];
@@ -186,6 +188,11 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
     Effect.provideService(HostProcessPlatform, platform),
     Effect.provideService(HostProcessArchitecture, "x64"),
     Effect.provideService(HostProcessEnvironment, { PATH: options.path ?? "" }),
+    Effect.provideService(HostProcessIsExecutable, options.standalone === true),
+    Effect.provideService(
+      HostProcessExecutablePath,
+      options.standalone === true ? "/packaged/t3" : process.execPath,
+    ),
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make((request) =>
@@ -243,17 +250,19 @@ const expectPreviousRelease = Effect.fn("test.expectPreviousAntigravityRelease")
 });
 
 it.layer(NodeServices.layer)("Antigravity installation", (it) => {
-  it.effect("reports missing Node before downloading the standalone provider runtime", () =>
+  it.effect("does not require external Node before installing a standalone runtime", () =>
     Effect.gen(function* () {
-      const { installation, requests, validations } = yield* makeHarness();
-      yield* installation.start;
-      expect(yield* terminalState(installation)).toMatchObject({
-        phase: "failed",
-        message: expect.stringContaining("Install Node.js"),
+      const { installation, requests, validations } = yield* makeHarness({
+        standalone: true,
       });
-      expect(requests).toEqual([]);
-      expect(validations).toEqual([]);
-    }).pipe(Effect.provideService(HostProcessIsExecutable, true)),
+      yield* installation.start;
+      expect(yield* terminalState(installation)).toMatchObject({ phase: "succeeded" });
+      expect(requests).toHaveLength(1);
+      expect(validations).toHaveLength(1);
+    }).pipe(
+      Effect.provideService(HostProcessIsExecutable, true),
+      Effect.provideService(HostProcessExecutablePath, "/packaged/t3"),
+    ),
   );
 
   it.effect("verifies both files before activating a streamed download", () =>

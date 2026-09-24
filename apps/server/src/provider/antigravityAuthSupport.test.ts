@@ -14,6 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as Ndjson from "effect/unstable/encoding/Ndjson";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
@@ -24,6 +25,7 @@ import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import {
   ANTIGRAVITY_AUTH_BROWSER_MARKER,
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
+  ANTIGRAVITY_BROWSER_COMMAND,
   ANTIGRAVITY_PERSONAL_AUTH,
   ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
   type AntigravityAuthConfig,
@@ -535,7 +537,7 @@ describe("Antigravity stderr compatibility", () => {
 });
 
 it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
-  it.effect("runs the browser helper with installed Node in standalone builds", () =>
+  it.effect("runs the browser helper with installed Node in script builds", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -544,37 +546,12 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         profileDirectory: path.join(directory, "profile"),
         baseEnv: { PATH: path.dirname(process.execPath) },
       });
-      expect(profile.browserCommand).not.toContain("/packaged/t3");
+      expect(profile.browserCommand).toContain("-e");
       expect(yield* fs.exists(profile.acpDirectory)).toBe(true);
     }).pipe(
-      Effect.provideService(HostProcessIsExecutable, true),
-      Effect.provideService(HostProcessExecutablePath, "/packaged/t3"),
+      Effect.provideService(HostProcessIsExecutable, false),
+      Effect.provideService(HostProcessExecutablePath, process.execPath),
     ),
-  );
-
-  it.effect("reports missing Node before creating the standalone sign-in profile", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const directory = yield* fs.makeTempDirectoryScoped();
-      const profileDirectory = path.join(directory, "profile");
-      const result = yield* prepareAntigravityProfile({
-        profileDirectory,
-        baseEnv: { PATH: "" },
-      }).pipe(Effect.result);
-      expect(Result.isFailure(result)).toBe(true);
-      if (Result.isFailure(result)) {
-        expect(result.failure).toMatchObject({
-          _tag: "AcpTransportError",
-          detail: expect.stringContaining("Install Node.js"),
-          cause: {
-            _tag: "NodeRuntimeUnavailableError",
-            cause: { _tag: "CommandResolutionError" },
-          },
-        });
-      }
-      expect(yield* fs.exists(profileDirectory)).toBe(false);
-    }).pipe(Effect.provideService(HostProcessIsExecutable, true)),
   );
 
   it.effect("preflights the no-browser helper and creates private directories only", () =>
@@ -701,6 +678,50 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
           }),
       );
       expect(exitCode).toBe(0);
+    }),
+  );
+
+  it.effect("uses the embedded T3 helper for standalone browser suppression", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+      const preflightUrl = "https://example.invalid/t3-antigravity-browser-preflight";
+      let command: ChildProcess.StandardCommand | undefined;
+      const spawner = ChildProcessSpawner.make((input) => {
+        if (!ChildProcess.isStandardCommand(input)) {
+          return Effect.die("Expected a standard browser helper command.");
+        }
+        command = input;
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.make(encode(`${ANTIGRAVITY_AUTH_BROWSER_MARKER}"${preflightUrl}"\n`)),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      });
+      const profile = yield* prepareAntigravityProfile({
+        profileDirectory: path.join(temporaryDirectory, "profile"),
+        baseEnv: { PATH: "" },
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(HostProcessIsExecutable, true),
+        Effect.provideService(HostProcessExecutablePath, "/packaged/t3"),
+      );
+      expect(command).toMatchObject({
+        command: "/packaged/t3",
+        args: ["--no-warnings", ANTIGRAVITY_BROWSER_COMMAND, preflightUrl],
+      });
+      expect(profile.browserCommand).toContain(ANTIGRAVITY_BROWSER_COMMAND);
     }),
   );
 

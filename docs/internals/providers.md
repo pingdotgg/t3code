@@ -35,6 +35,16 @@ client connections and provider-instance rebuilds. Releases are immutable, with 
 selecting the version for new processes. Running processes hold leases on their version. Updates
 and removal must respect those leases instead of replacing executables under a running agent.
 
+## Standalone servers do not have Node.js
+
+The packaged T3 server is a single executable and may run without Node.js on `PATH`. Antigravity
+installation must not use Node.js availability as a download or validation prerequisite in that
+mode. The server also cannot use its executable as a `node -e` runtime. For browser suppression,
+a standalone server invokes the unlisted `__antigravity-browser` subcommand on itself; ordinary
+Node-based servers continue to invoke the small `node -e` helper. The command is registered in
+[`bin.ts`](../../apps/server/src/bin.ts) and the selection is made in
+[`antigravityAuthSupport.ts`](../../apps/server/src/provider/antigravityAuthSupport.ts).
+
 ## Setup must not happen as a health-check side effect
 
 Opening a provider session can start MCP servers, run hooks, or launch a login browser.

@@ -5,7 +5,11 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import type { AntigravityAuthMethod, ProviderInstanceId } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessExecutablePath,
+  HostProcessIsExecutable,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -27,6 +31,7 @@ import {
 export const ANTIGRAVITY_AUTH_STDOUT_PREFIX =
   "Open the following link to authenticate the ACP server: ";
 export const ANTIGRAVITY_AUTH_BROWSER_MARKER = "__T3_ANTIGRAVITY_AUTH_URL__";
+export const ANTIGRAVITY_BROWSER_COMMAND = "__antigravity-browser";
 export const ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE =
   "Sign in to Antigravity in Settings before you continue.";
 
@@ -308,20 +313,26 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   const platform = input.platform ?? (yield* HostProcessPlatform);
   const userHome =
     input.userHome ?? resolveAntigravityUserHome(platform, input.baseEnv ?? process.env);
+  const isStandalone = yield* HostProcessIsExecutable;
+  const useEmbeddedBrowserHelper = input.runtimeExecutablePath === undefined && isStandalone;
   const runtimeExecutablePath =
     input.runtimeExecutablePath ??
-    (yield* resolveNodeExecutable("Antigravity sign-in", input.baseEnv).pipe(
-      Effect.mapError(
-        (cause) =>
-          new AcpErrors.AcpTransportError({
-            detail: nodeRuntimeUnavailableMessage("Antigravity sign-in"),
-            cause,
-          }),
-      ),
-    ));
+    (useEmbeddedBrowserHelper
+      ? yield* HostProcessExecutablePath
+      : yield* resolveNodeExecutable("Antigravity sign-in", input.baseEnv).pipe(
+          Effect.mapError(
+            (cause) =>
+              new AcpErrors.AcpTransportError({
+                detail: nodeRuntimeUnavailableMessage("Antigravity sign-in"),
+                cause,
+              }),
+          ),
+        ));
   const helperExecutable =
     platform === "win32" ? runtimeExecutablePath.replaceAll("\\", "/") : runtimeExecutablePath;
-  const browserArguments = [helperExecutable, "-e", browserHelperSource, "--", "%s"];
+  const browserArguments = useEmbeddedBrowserHelper
+    ? [helperExecutable, "--no-warnings", ANTIGRAVITY_BROWSER_COMMAND, "%s"]
+    : [helperExecutable, "-e", browserHelperSource, "--", "%s"];
   const browserCommand = browserArguments.map(quoteBrowserArgument).join(" ");
   if (
     browserCommand.includes(platform === "win32" ? ";" : ":") ||
@@ -347,9 +358,12 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     browserCommand,
   };
   const environment = antigravityEnvironment(profile, input.baseEnv ?? process.env, auth);
+  const helperArguments = useEmbeddedBrowserHelper
+    ? ["--no-warnings", ANTIGRAVITY_BROWSER_COMMAND, browserPreflightUrl]
+    : ["-e", browserHelperSource, "--", browserPreflightUrl];
   yield* Effect.gen(function* () {
     const child = yield* spawner.spawn(
-      ChildProcess.make(helperExecutable, ["-e", browserHelperSource, "--", browserPreflightUrl], {
+      ChildProcess.make(helperExecutable, helperArguments, {
         env: environment,
         extendEnv: false,
         shell: false,
