@@ -209,4 +209,5 @@ node "$runtime_dir/apps/server/dist/bin.mjs" \
   --port "$port" \
   --host "$host" \
   --base-dir "$base_dir" \
+  --log-level error \
   "${server_args[@]}"
