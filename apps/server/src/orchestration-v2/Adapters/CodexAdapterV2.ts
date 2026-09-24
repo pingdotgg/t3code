@@ -77,12 +77,12 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
+import { ServerConfig } from "../../config.ts";
+import { buildCodexDeveloperInstructions } from "../../provider/CodexDeveloperInstructions.ts";
 import {
   describeMcpElicitation,
   toMcpElicitationResponse,
-} from "../../provider/Layers/CodexSessionRuntime.ts";
-import { ServerConfig } from "../../config.ts";
-import { buildCodexDeveloperInstructions } from "../../provider/CodexDeveloperInstructions.ts";
+} from "../../provider/CodexMcpElicitation.ts";
 import {
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
@@ -896,8 +896,7 @@ export const resolveCodexForkBoundary = Effect.fn("CodexAdapterV2.resolveForkBou
 
 /**
  * The generated `thread/read` response schema does not surface `historyMode`,
- * so the probe goes through the raw request channel with a permissive decode
- * (mirrors the V1 session runtime's paginated-history detection).
+ * so the probe goes through the raw request channel with a permissive decode.
  */
 const CodexThreadHistoryMetadata = Schema.Struct({
   thread: Schema.Struct({

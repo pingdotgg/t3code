@@ -16,8 +16,8 @@ implementation checklist for `apps/server/src/orchestration-v2`.
   to `thread/fork` as `lastTurnId`; the fork-then-rollback fallback remains only for source turns
   without a native turn reference and only on legacy-history threads.
 - Codex provider conversation rollback supports only legacy-history threads. The adapter probes
-  `historyMode` and fails explicitly on paginated threads; the V1 session runtime's
-  `thread/turns/list` + `thread/revert` path is the reference for closing this gap.
+  `historyMode` and fails explicitly on paginated threads. Closing the gap means paging
+  `thread/turns/list` to find the first removed turn, then `thread/revert` with `beforeTurnId`.
 - Native Codex fork-from-earlier-run has a real replay-backed test fixture:
   `testkit/fixtures/thread_fork_native_prior_turn`.
 - Merge-back from a fork into its source thread records a `merge_back` context transfer, materializes
