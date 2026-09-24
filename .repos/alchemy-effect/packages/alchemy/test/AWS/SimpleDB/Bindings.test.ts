@@ -136,7 +136,7 @@ describe("SimpleDB Bindings", () => {
     { timeout: 240_000 },
   );
 
-  afterAll(sharedStack.destroy(), { timeout: 60_000 });
+  afterAll(sharedStack.destroy(), { timeout: 120_000 });
 
   describe("PutAttributes", () => {
     test.provider("puts attributes on an item", (_stack) =>

@@ -1,27 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { Modal, Pressable, TextInput, View } from "react-native";
+import { Platform, Modal, Pressable, TextInput, View } from "react-native";
 
 import { cn } from "../lib/cn";
 import { AppText } from "./AppText";
+import { MaterialConfirmDialog } from "./MaterialConfirmDialog";
+import type { ConfirmDialogRequest, TextInputDialogRequest } from "./ConfirmDialog.types";
 
-export type ConfirmDialogRequest = {
-  readonly title: string;
-  readonly message?: string;
-  readonly cancelText?: string;
-  readonly confirmText: string;
-  readonly destructive?: boolean;
-  readonly onConfirm: () => void;
-  readonly onCancel?: () => void;
-};
-
-export type TextInputDialogRequest = {
-  readonly title: string;
-  readonly initialValue: string;
-  readonly cancelText?: string;
-  readonly confirmText: string;
-  readonly onConfirm: (value: string) => void;
-  readonly onCancel?: () => void;
-};
+export type { ConfirmDialogRequest, TextInputDialogRequest } from "./ConfirmDialog.types";
 
 type DialogRequest =
   | { readonly kind: "confirm"; readonly request: ConfirmDialogRequest }
@@ -67,16 +52,34 @@ export function ConfirmDialogHost() {
     setPresented(null);
   }, [presented]);
 
-  const handleConfirm = useCallback(() => {
-    if (presented?.kind === "confirm") {
-      presented.request.onConfirm();
-    } else if (presented?.kind === "text-input") {
-      presented.request.onConfirm(inputValue);
-    }
-    setPresented(null);
-  }, [inputValue, presented]);
+  const handleConfirm = useCallback(
+    (nativeInputValue?: string) => {
+      if (presented?.kind === "confirm") {
+        presented.request.onConfirm();
+      } else if (presented?.kind === "text-input") {
+        presented.request.onConfirm(nativeInputValue ?? inputValue);
+      }
+      setPresented(null);
+    },
+    [inputValue, presented],
+  );
 
   const confirmDisabled = presented?.kind === "text-input" && inputValue.trim().length === 0;
+
+  if (Platform.OS === "android")
+    return presented ? (
+      <MaterialConfirmDialog
+        key={`${presented.kind}:${presented.request.title}:${presented.kind === "text-input" ? presented.request.initialValue : ""}`}
+        request={presented.request}
+        inputInitialValue={
+          presented.kind === "text-input" ? presented.request.initialValue : undefined
+        }
+        onInputChange={setInputValue}
+        confirmDisabled={confirmDisabled}
+        onCancel={handleCancel}
+        onConfirm={handleConfirm}
+      />
+    ) : null;
 
   return (
     <Modal
@@ -102,7 +105,7 @@ export function ConfirmDialogHost() {
                 autoFocus
                 className="mt-4 rounded-xl border border-border bg-screen px-3 py-2.5 text-base text-foreground"
                 onChangeText={setInputValue}
-                onSubmitEditing={confirmDisabled ? undefined : handleConfirm}
+                onSubmitEditing={confirmDisabled ? undefined : () => handleConfirm()}
                 returnKeyType="done"
                 selectTextOnFocus
                 value={inputValue}
@@ -125,7 +128,7 @@ export function ConfirmDialogHost() {
                   accessibilityRole="button"
                   disabled={confirmDisabled}
                   className="min-h-10 items-center justify-center px-4 active:bg-subtle"
-                  onPress={handleConfirm}
+                  onPress={() => handleConfirm()}
                 >
                   <AppText
                     className={cn(

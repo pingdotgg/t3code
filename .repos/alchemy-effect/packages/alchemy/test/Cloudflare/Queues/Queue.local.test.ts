@@ -289,9 +289,9 @@ test.provider(
       ).pipe(
         Effect.map((body) => (body as { received: string[] }).received),
         Effect.repeat({
-          schedule: Schedule.spaced("2 seconds"),
+          schedule: Schedule.spaced("4 seconds"),
           until: (received) => received.includes("roundtrip-hello"),
-          times: 30,
+          times: 10,
         }),
       );
       expect(received).toContain("roundtrip-hello");
@@ -308,7 +308,7 @@ test.provider(
         );
       expect(gone).toBe(true);
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  { timeout: 120_000 },
 );
 
 /**

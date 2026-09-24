@@ -134,7 +134,7 @@ export class IndexedDbDatabase extends Context.Service<
   {
     readonly database: MutableRef.MutableRef<globalThis.IDBDatabase>
     readonly IDBKeyRange: typeof globalThis.IDBKeyRange
-    readonly reactivity: Reactivity.Reactivity["Service"]
+    readonly reactivity: Reactivity.Reactivity
     readonly rebuild: Effect.Effect<void, IndexedDbDatabaseError>
   }
 >()(TypeId) {}
@@ -553,7 +553,7 @@ const makeTransactionProto = <Source extends IndexedDbVersion.AnyWithProps>({
   readonly IDBKeyRange: typeof globalThis.IDBKeyRange
   readonly tables: ReadonlyMap<string, IndexedDbVersion.Tables<Source>>
   readonly transaction: globalThis.IDBTransaction
-  readonly reactivity: Reactivity.Reactivity["Service"]
+  readonly reactivity: Reactivity.Reactivity
 }): Transaction<Source> => {
   const migration = IndexedDbQueryBuilder.make({
     database,

@@ -154,7 +154,7 @@ a path, defaulting to `${context}/Dockerfile`).
 
 ## Effect servers with bindings
 
-Pass `main: import.meta.url` and an init Effect and the program is
+Pass `main: import.meta.url` and a constructor Effect and the program is
 bundled into a generated image instead — the same authoring model as
 [Lambda](/aws/compute/lambda). Bindings work identically too:
 `Deployment` accepts the same `{ env, policyStatements }` binding

@@ -12,12 +12,11 @@ import { ConfigError } from "../../RuntimeError.shared.ts";
 import * as Workerd from "../../workerd/Workerd.ts";
 import * as PortHelpers from "../helpers/port.ts";
 
-const services = WorkerProxy.WorkerProxyLive.pipe(
-  Layer.provideMerge(
-    Layer.mergeAll(Workerd.WorkerdLive, Internet.InternetLive),
-  ),
-  Layer.provide(NodeServices.layer),
-);
+// The proxy itself needs nothing; workerd only serves the test upstreams.
+const services = Layer.mergeAll(
+  WorkerProxy.WorkerProxyLive,
+  Workerd.WorkerdLive.pipe(Layer.provide(Internet.InternetLive)),
+).pipe(Layer.provide(NodeServices.layer));
 
 const HTTP_WORKER = `
 export default {
@@ -30,10 +29,10 @@ export default {
         headers: { "x-echo": "yes", "content-type": "text/plain" },
       });
     }
-    if (url.pathname === "/headers") {
+    if (url.pathname === "/url") {
       return Response.json({
-        forwardedHost: request.headers.get("x-forwarded-host"),
-        forwardedProto: request.headers.get("x-forwarded-proto"),
+        url: request.url,
+        host: request.headers.get("host"),
       });
     }
     return new Response("not found", { status: 404 });
@@ -132,7 +131,7 @@ layer(services, { excludeTestServices: true })((it) => {
   );
 
   it.effect(
-    "forwards x-forwarded-host and x-forwarded-proto headers to the upstream worker",
+    "delivers the client's Host unchanged, so the worker's request.url is the public URL",
     () =>
       Effect.gen(function* () {
         const proxy = yield* WorkerProxy.WorkerProxy;
@@ -140,12 +139,14 @@ layer(services, { excludeTestServices: true })((it) => {
         const instance = yield* proxy.serve();
         yield* instance.set(upstream);
 
-        const headers = yield* Effect.promise(() =>
-          fetch(new URL("/headers", instance.url)).then((res) => res.json()),
+        // A byte pipe rewrites nothing: the worker sees exactly the request
+        // the client sent, and workerd derives `request.url` from its Host.
+        const seen = yield* Effect.promise(() =>
+          fetch(new URL("/url?x=1", instance.url)).then((res) => res.json()),
         );
-        expect(headers).toMatchObject({
-          forwardedHost: instance.url.host,
-          forwardedProto: "http",
+        expect(seen).toEqual({
+          url: new URL("/url?x=1", instance.url).href,
+          host: instance.url.host,
         });
       }),
   );
@@ -256,7 +257,7 @@ layer(services, { excludeTestServices: true })((it) => {
   );
 
   it.effect(
-    "retries a GET that was in flight when the upstream moved, without waiting for another request",
+    "moving the upstream resets connections pinned to the old one; the next request lands on the new one",
     () =>
       Effect.gen(function* () {
         const proxy = yield* WorkerProxy.WorkerProxy;
@@ -280,7 +281,10 @@ layer(services, { excludeTestServices: true })((it) => {
         yield* instance.set(slow);
         const pending = yield* Effect.forkChild(
           Effect.promise(() =>
-            fetch(new URL("/", instance.url)).then((res) => res.text()),
+            fetch(new URL("/", instance.url)).then(
+              (res) => res.text(),
+              () => "RESET",
+            ),
           ),
           { startImmediately: true },
         );
@@ -289,37 +293,129 @@ layer(services, { excludeTestServices: true })((it) => {
           () => new Promise((resolve) => setTimeout(resolve, 300)),
         );
         // …then restart the worker the way the dev provider does: the new
-        // target is set BEFORE the old instance is torn down, so the
-        // in-flight fetch fails after the proxy already points elsewhere.
+        // target is set BEFORE the old instance is torn down. The proxy
+        // cannot replay an exchange it never parsed, so the connection
+        // pinned to the old upstream is closed — the client sees a reset,
+        // exactly what the old runtime's teardown would have produced a
+        // moment later — and every connection from here on reaches the new
+        // upstream, including a keep-alive one the client would otherwise
+        // have kept pointed at the dead runtime.
         yield* instance.set(fresh);
         yield* Scope.close(slowScope, Exit.void);
 
-        // The in-flight GET is retryable. It must be re-driven against the
-        // new target on its own — a client waiting on THIS response never
-        // sends another request to kick the queue, so parking it until the
-        // next PUT or request would hang the client forever (the runtime's
-        // hang detector then cancels the proxy call without a response).
         const result = yield* Fiber.join(pending).pipe(
           Effect.timeoutOrElse({
             duration: "10 seconds",
-            orElse: () => Effect.succeed("TIMED OUT: parked in retry queue"),
+            orElse: () => Effect.succeed("TIMED OUT"),
           }),
         );
-        expect(result).toBe("fresh");
+        expect(result).toBe("RESET");
+        const next = yield* Effect.promise(() =>
+          fetch(new URL("/", instance.url)).then((res) => res.text()),
+        );
+        expect(next).toBe("fresh");
       }),
   );
 
   it.effect(
-    "returns immediately when the upstream fails with a non-retryable error",
+    "a connection parked longer than the pending timeout is answered with a 502",
+    () =>
+      Effect.gen(function* () {
+        const proxy = yield* WorkerProxy.WorkerProxy;
+        const instance = yield* proxy.serve({ pendingTimeout: "300 millis" });
+        const result = yield* Effect.promise(() =>
+          fetch(new URL("/", instance.url)).then(async (res) => ({
+            status: res.status,
+            body: (await res.json()) as { ok: boolean },
+          })),
+        );
+        expect(result.status).toBe(502);
+        expect(result.body.ok).toBe(false);
+      }),
+  );
+
+  it.effect(
+    "an upstream set while a connection is being made is followed before any byte is forwarded",
+    () =>
+      Effect.gen(function* () {
+        const proxy = yield* WorkerProxy.WorkerProxy;
+        const upstream = yield* serveUpstream(HTTP_WORKER);
+        const instance = yield* proxy.serve();
+        const deadPort = yield* PortHelpers.find(0);
+
+        // The first target refuses connections; the proxy learns the real
+        // one while that connect is failing. Nothing has been sent yet, so
+        // the request is safe to redirect, whatever its method.
+        yield* instance.set(new URL(`http://127.0.0.1:${deadPort}`));
+        const pending = yield* Effect.forkChild(
+          Effect.promise(() =>
+            fetch(new URL("/echo", instance.url), {
+              method: "POST",
+              body: "moved",
+            }).then(async (res) => ({
+              status: res.status,
+              body: await res.text(),
+            })),
+          ),
+          { startImmediately: true },
+        );
+        yield* instance.set(upstream);
+        const result = yield* Fiber.join(pending);
+        // Either the connect failure raced ahead (502) or the proxy followed
+        // the new target; both are correct, but a hang or a reset is not.
+        expect([200, 502]).toContain(result.status);
+        if (result.status === 200) expect(result.body).toBe("echo:moved");
+      }),
+  );
+
+  it.effect(
+    "fail answers parked connections with the message at once, and new ones until the next set",
+    () =>
+      Effect.gen(function* () {
+        const proxy = yield* WorkerProxy.WorkerProxy;
+        const upstream = yield* serveUpstream(HTTP_WORKER);
+        const instance = yield* proxy.serve();
+        const get = (path: string) =>
+          Effect.promise(() =>
+            fetch(new URL(path, instance.url)).then(async (res) => ({
+              status: res.status,
+              body: (await res.json().catch(() => undefined)) as
+                | { error: { message: string } }
+                | undefined,
+            })),
+          );
+
+        // Parked: nothing is set. `fail` must release it immediately, well
+        // inside the default pending timeout.
+        const parked = yield* Effect.forkChild(get("/"));
+        yield* Effect.sleep("50 millis");
+        yield* instance.fail("bundle exploded");
+        const first = yield* Fiber.join(parked);
+        expect(first.status).toBe(502);
+        expect(first.body?.error.message).toBe("bundle exploded");
+
+        // Still failed: a new connection is answered the same way.
+        const second = yield* get("/");
+        expect(second.status).toBe(502);
+        expect(second.body?.error.message).toBe("bundle exploded");
+
+        // `set` clears the failure.
+        yield* instance.set(upstream);
+        const third = yield* get("/echo");
+        expect(third.status).toBe(200);
+      }),
+  );
+
+  it.effect(
+    "answers 502 immediately when nothing listens at the upstream",
     () =>
       Effect.gen(function* () {
         const proxy = yield* WorkerProxy.WorkerProxy;
         const instance = yield* proxy.serve();
         const deadPort = yield* PortHelpers.find(0);
 
-        // Point the proxy at an address with nothing listening. The fetch fails
-        // with a non-retryable 502, which the per-request loop must surface
-        // immediately rather than spin on retries.
+        // Point the proxy at an address with nothing listening. The connect
+        // is refused, and the client must get a 502 rather than a hang.
         yield* instance.set(new URL(`http://127.0.0.1:${deadPort}`));
 
         const result = yield* Effect.promise(() =>
@@ -587,38 +683,21 @@ layer(services, { excludeTestServices: true })((it) => {
       }),
   );
 
-  it.effect(
-    "rejects controller requests with a missing or invalid authorization token",
-    () =>
-      Effect.gen(function* () {
-        const proxy = yield* WorkerProxy.WorkerProxy;
-        const instance = yield* proxy.serve();
-        const controllerUrl = new URL(
-          "/cdn-cgi/proxy/controller",
-          instance.url,
-        );
-
-        const noAuth = yield* Effect.promise(() =>
-          fetch(controllerUrl, {
-            method: "PUT",
-            headers: { "Content-Type": "text/plain" },
-            body: "http://127.0.0.1:9999",
-          }).then((res) => res.status),
-        );
-        expect(noAuth).toBe(401);
-
-        const badAuth = yield* Effect.promise(() =>
-          fetch(controllerUrl, {
-            method: "PUT",
-            headers: {
-              "Content-Type": "text/plain",
-              Authorization: "Bearer wrong-token",
-            },
-            body: "http://127.0.0.1:9999",
-          }).then((res) => res.status),
-        );
-        expect(badAuth).toBe(401);
-      }),
+  it.effect("streams a large response body through unchanged", () =>
+    Effect.gen(function* () {
+      const proxy = yield* WorkerProxy.WorkerProxy;
+      const upstream = yield* serveUpstream(
+        `export default { fetch: () => new Response("x".repeat(4 * 1024 * 1024)) };`,
+      );
+      const instance = yield* proxy.serve();
+      yield* instance.set(upstream);
+      const length = yield* Effect.promise(() =>
+        fetch(instance.url)
+          .then((res) => res.text())
+          .then((t) => t.length),
+      );
+      expect(length).toBe(4 * 1024 * 1024);
+    }),
   );
 });
 

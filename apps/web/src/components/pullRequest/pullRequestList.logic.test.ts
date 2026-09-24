@@ -21,6 +21,8 @@ import {
   readPullRequestListSnapshot,
   writePullRequestListSnapshot,
   rankPullRequestMatches,
+  rankPullRequestsBlockedOnAuthor,
+  rankPullRequestsBlockedOnReviewer,
   rankPullRequestsByMergeReadiness,
   scorePullRequestMatch,
   sortPullRequestGroups,
@@ -30,6 +32,10 @@ import {
   resolveQueryEnvironmentIds,
   resolveSelectedEnvironmentId,
   type EnvironmentPullRequestEntry,
+  applyPullRequestOverrides,
+  pullRequestOverrideAfterAction,
+  reusePullRequestEntries,
+  settlePullRequestOverrides,
 } from "./pullRequestList.logic";
 import {
   pullRequestListPreferences,
@@ -873,6 +879,108 @@ describe("default merge-readiness ranking", () => {
   });
 });
 
+describe("blocked-on-me ranking", () => {
+  it("ranks authored work by how surely it is the author's to unblock, newest first within a tier", () => {
+    const conflict = entry({
+      number: 1,
+      mergeability: "conflicting",
+      checksState: "failing",
+      updatedAt: "2026-08-01T00:00:00Z",
+    });
+    const olderFailing = entry({
+      number: 2,
+      checksState: "failing",
+      updatedAt: "2026-08-01T00:00:00Z",
+    });
+    const changesRequested = entry({
+      number: 3,
+      reviewDecision: "changes-requested",
+      checksState: "failing",
+      updatedAt: "2026-08-02T00:00:00Z",
+    });
+    const approved = entry({ number: 4, checksState: "passing", reviewDecision: "approved" });
+    const draft = entry({ number: 5, isDraft: true, checksState: "passing" });
+    const waiting = entry({ number: 6 });
+    const merged = entry({ number: 7, state: "merged", updatedAt: "2026-08-01T00:00:00Z" });
+    const newerClosed = entry({ number: 8, state: "closed", updatedAt: "2026-08-03T00:00:00Z" });
+    const newerFailing = entry({
+      number: 9,
+      checksState: "failing",
+      updatedAt: "2026-08-03T00:00:00Z",
+    });
+
+    expect(
+      rankPullRequestsBlockedOnAuthor([
+        waiting,
+        merged,
+        olderFailing,
+        draft,
+        approved,
+        changesRequested,
+        newerClosed,
+        conflict,
+        newerFailing,
+      ]).map((row) => row.number),
+    ).toEqual([1, 3, 9, 2, 5, 6, 4, 8, 7]);
+  });
+
+  it("ranks reviewer work with open rows first, newest first", () => {
+    const olderOpen = entry({ number: 1, updatedAt: "2026-08-01T00:00:00Z" });
+    const newerOpen = entry({ number: 2, updatedAt: "2026-08-02T00:00:00Z" });
+    const olderFinished = entry({ number: 3, state: "merged", updatedAt: "2026-08-01T00:00:00Z" });
+    const newerFinished = entry({ number: 4, state: "closed", updatedAt: "2026-08-03T00:00:00Z" });
+
+    expect(
+      rankPullRequestsBlockedOnReviewer([newerFinished, newerOpen, olderFinished, olderOpen]).map(
+        (row) => row.number,
+      ),
+    ).toEqual([2, 1, 4, 3]);
+  });
+
+  it("ranks blocked groups according to their involvement", () => {
+    const authored = [
+      entry({ number: 1, isDraft: true }),
+      entry({ number: 2, checksState: "failing" }),
+    ];
+    const reviewing = [
+      entry({ number: 3, updatedAt: "2026-08-02T00:00:00Z" }),
+      entry({ number: 4, updatedAt: "2026-08-01T00:00:00Z" }),
+    ];
+    const others = [
+      entry({ number: 5, updatedAt: "2026-08-02T00:00:00Z" }),
+      entry({ number: 6, isDraft: true }),
+    ];
+    const groups = [
+      { key: "authored", label: "Authored", entries: authored },
+      { key: "reviewRequested", label: "Review requested", entries: reviewing },
+      { key: "others", label: "Others", entries: others },
+    ] as const;
+
+    expect(
+      sortPullRequestGroups(groups, "blocked", "", undefined, "all").map((group) =>
+        group.entries.map((row) => row.number),
+      ),
+    ).toEqual([
+      [2, 1],
+      [3, 4],
+      [5, 6],
+    ]);
+    expect(
+      sortPullRequestGroups([groups[2]], "blocked", "", undefined, "authored")[0]!.entries.map(
+        (row) => row.number,
+      ),
+    ).toEqual([6, 5]);
+    expect(
+      sortPullRequestGroups([groups[2]], "blocked", "", undefined, "reviewing")[0]!.entries.map(
+        (row) => row.number,
+      ),
+    ).toEqual([5, 6]);
+    expect(sortPullRequestGroups(groups, "blocked", "needle", undefined, "authored")).toEqual(
+      groups,
+    );
+  });
+});
+
 describe("line counts that arrive after the rows", () => {
   const stats = new Map([["env-1 project-1 7", { additions: 42, deletions: 3 }]]);
 
@@ -1494,5 +1602,95 @@ describe("the priority groups against a paginated feed", () => {
     expect(
       groups.find((group) => group.key === "others")?.entries.map((row) => row.number),
     ).toEqual([6123]);
+  });
+});
+
+describe("pull request list overrides", () => {
+  const entry = (number: number, state: "open" | "closed" | "merged") =>
+    ({
+      host: "github.com",
+      repository: "pingdotgg/t3code",
+      number,
+      state,
+      isDraft: false,
+      updatedAt: "2026-07-01T00:00:00Z",
+      labels: [],
+    }) as unknown as PullRequestListEntry;
+  const key = (row: { number: number }) => `#${row.number}`;
+
+  it("maps the actions that change a row's state and nothing else", () => {
+    const now = new Date("2026-07-02T00:00:00Z");
+    expect(pullRequestOverrideAfterAction(entry(1, "open"), "close", now, 7)).toEqual({
+      state: "closed",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+      token: 7,
+      at: now.getTime(),
+    });
+    expect(pullRequestOverrideAfterAction(entry(1, "closed"), "reopen", now, 1)?.state).toBe(
+      "open",
+    );
+    expect(pullRequestOverrideAfterAction(entry(1, "open"), "merge", now, 1)?.state).toBe("merged");
+    expect(pullRequestOverrideAfterAction(entry(1, "open"), "draft", now, 1)?.isDraft).toBe(true);
+    expect(pullRequestOverrideAfterAction(entry(1, "open"), "update-branch", now, 1)).toBeNull();
+  });
+
+  it("writes the override over the row and drops it from a list whose state it left", () => {
+    const rows = [entry(1, "open"), entry(2, "open")];
+    const overrides = new Map([
+      ["#1", { state: "closed" as const, updatedAt: "2026-07-03T00:00:00Z", token: 1, at: 0 }],
+    ]);
+    expect(
+      applyPullRequestOverrides(rows, overrides, key, "open").map((row) => row.number),
+    ).toEqual([2]);
+    const all = applyPullRequestOverrides(rows, overrides, key, "all");
+    expect(all.map((row) => [row.number, row.state])).toEqual([
+      [1, "closed"],
+      [2, "open"],
+    ]);
+    expect(applyPullRequestOverrides(rows, new Map(), key, "open")).toBe(rows);
+  });
+
+  it("hands back the held object for a row a refresh did not change", () => {
+    const previous = [entry(1, "open"), entry(2, "open")];
+    const next = [{ ...entry(1, "open") }, { ...entry(2, "open"), state: "merged" as const }];
+    const reused = reusePullRequestEntries(previous, next, key);
+    expect(reused[0]).toBe(previous[0]);
+    expect(reused[1]).toBe(next[1]);
+    expect(
+      reusePullRequestEntries(previous, [{ ...entry(1, "open") }, { ...entry(2, "open") }], key),
+    ).toBe(previous);
+  });
+});
+
+describe("pull request list override settlement", () => {
+  const entry = (number: number, state: "open" | "closed" | "merged") =>
+    ({ number, state, isDraft: false, labels: [] }) as unknown as PullRequestListEntry;
+  const key = (row: { number: number }) => `#${row.number}`;
+
+  it("keeps an override until an answer agrees with it", () => {
+    const at = 1_000_000;
+    const closed = { state: "closed" as const, updatedAt: "2026-07-03T00:00:00Z", token: 1, at };
+    const overrides = new Map([["#1", closed]]);
+    // A read from before the action still says open: the override stands.
+    expect(settlePullRequestOverrides(overrides, [entry(1, "open")], key, at + 5_000)).toBe(
+      overrides,
+    );
+    // Absent from the answer says nothing: the row may live in another group or page.
+    expect(settlePullRequestOverrides(overrides, [entry(2, "open")], key, at + 5_000).size).toBe(1);
+    // Present as closed: confirmed.
+    expect(settlePullRequestOverrides(overrides, [entry(1, "closed")], key, at + 5_000).size).toBe(
+      0,
+    );
+    // Present as open a good while later: the host's news, which outranks the note.
+    expect(settlePullRequestOverrides(overrides, [entry(1, "open")], key, at + 90_000).size).toBe(
+      0,
+    );
+  });
+
+  it("does not hand back the old order when only the order changed", () => {
+    const previous = [entry(1, "open"), entry(2, "open")];
+    const swapped = reusePullRequestEntries(previous, [entry(2, "open"), entry(1, "open")], key);
+    expect(swapped).not.toBe(previous);
+    expect(swapped.map((row) => row.number)).toEqual([2, 1]);
   });
 });

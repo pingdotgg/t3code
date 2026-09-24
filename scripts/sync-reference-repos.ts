@@ -91,14 +91,11 @@ export class ReferenceRepoGitSubtreeError extends Schema.TaggedError<ReferenceRe
   }
 }
 
-export const ReferenceRepoSyncError = Schema.Union([
-  ReferenceRepoSelectionError,
-  ReferenceRepoVersionSourceError,
-  ReferenceRepoVersionResolutionError,
-  ReferenceRepoGitSubtreeError,
-]);
-export type ReferenceRepoSyncError = typeof ReferenceRepoSyncError.Type;
-export const isReferenceRepoSyncError = Schema.is(ReferenceRepoSyncError);
+export type ReferenceRepoSyncError =
+  | ReferenceRepoSelectionError
+  | ReferenceRepoVersionSourceError
+  | ReferenceRepoVersionResolutionError
+  | ReferenceRepoGitSubtreeError;
 
 const decodeJsonSource = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeYamlSource = Schema.decodeEffect(fromYaml(Schema.Unknown));
@@ -296,21 +293,21 @@ export const syncReferenceRepos = Effect.fn("syncReferenceRepos")(function* (
 export const syncReferenceReposCommand = Command.make(
   "sync-reference-repos",
   {
-    repo: Flag.string("repo").pipe(
+    repo: Flag.String("repo").pipe(
       Flag.withDescription("Sync only the named reference repo. Defaults to all configured repos."),
       Flag.optional,
     ),
-    latest: Flag.boolean("latest").pipe(
+    latest: Flag.Boolean("latest").pipe(
       Flag.withDescription(
         "Sync each repo from its latest branch instead of the installed version.",
       ),
       Flag.withDefault(false),
     ),
-    root: Flag.string("root").pipe(
+    root: Flag.String("root").pipe(
       Flag.withDescription("Workspace root used to resolve versions and subtree prefixes."),
       Flag.optional,
     ),
-    dryRun: Flag.boolean("dry-run").pipe(
+    dryRun: Flag.Boolean("dry-run").pipe(
       Flag.withDescription("Print planned subtree operations without running git."),
       Flag.withDefault(false),
     ),

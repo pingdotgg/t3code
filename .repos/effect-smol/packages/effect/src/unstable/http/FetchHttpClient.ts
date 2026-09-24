@@ -68,7 +68,7 @@ const fetch: HttpClient.HttpClient = HttpClient.make((request, url, signal, fibe
             method: request.method,
             headers,
             body,
-            duplex: request.body._tag === "Stream" ? "half" : undefined,
+            duplex: typeof ReadableStream !== "undefined" && body instanceof ReadableStream ? "half" : undefined,
             signal
           } as any),
         catch: (cause) =>

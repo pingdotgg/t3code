@@ -105,7 +105,9 @@ describe("DynamoDB Bindings", () => {
     { timeout: 240_000 },
   );
 
-  afterAll(sharedStack.destroy(), { timeout: 60_000 });
+  // Lambda cleanup watches for late log flushes before the dependent tables
+  // can be deleted. Allow time for both phases to confirm deletion.
+  afterAll(sharedStack.destroy(), { timeout: 120_000 });
 
   describe("PutItem", () => {
     test.provider("puts an item into the table", (_stack) =>

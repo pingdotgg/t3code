@@ -1,0 +1,165 @@
+---
+title: "Part 5: Add your application's API"
+description: Add a typed /me endpoint beside Git and use the caller already supplied by your authentication middleware.
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+Your Git host already identifies callers. Add `/api/v1/me` to return the current
+user. This part introduces an application API as a sibling of the existing Git
+routes; it uses the same Worker, URL, and authentication.
+
+## Define the response and error
+
+Create `src/api.ts`:
+
+```typescript
+// src/api.ts
+import * as Schema from "effect/Schema";
+
+const User = Schema.Struct({ id: Schema.String });
+
+class Unauthorized extends Schema.TaggedError<Unauthorized>()(
+  "Unauthorized",
+  {},
+  { httpApiStatus: 401 },
+) {}
+```
+
+The endpoint returns the caller's ID. Its error schema declares that a missing
+caller is an HTTP `401`.
+
+## Define the endpoint
+
+Add the API imports:
+
+```diff lang="typescript"
+// src/api.ts
+import * as Schema from "effect/Schema";
++import * as HttpApi from "effect/unstable/httpapi/HttpApi";
++import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
++import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
+```
+
+Append the endpoint and its group:
+
+```typescript
+// src/api.ts (append)
+const Me = HttpApiEndpoint.get("me", "/api/v1/me", {
+  success: User,
+  error: Unauthorized,
+});
+
+class AppRoutes extends HttpApiGroup.make("app").add(Me) {}
+export class AppApi extends HttpApi.make("app").add(AppRoutes) {}
+```
+
+`AppRoutes` is your application's group. `AppApi` describes that group, including
+the path and response schema of `/api/v1/me`.
+
+## Implement the endpoint
+
+Add these imports:
+
+```diff lang="typescript"
+// src/api.ts
+import * as Schema from "effect/Schema";
++import * as Effect from "effect/Effect";
++import * as Layer from "effect/Layer";
++import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
++import { Session } from "./session.ts";
+```
+
+Append the implementation:
+
+```typescript
+// src/api.ts (append)
+const MeLive = HttpApiBuilder.group(AppApi, "app", (h) =>
+  h.handle("me", () =>
+    Effect.gen(function* () {
+      const { user } = yield* Session;
+      if (user === null) return yield* new Unauthorized();
+      return user;
+    }),
+  ),
+);
+
+export const AppApiLive = HttpApiBuilder.layer(AppApi).pipe(
+  Layer.provide(MeLive),
+);
+```
+
+The handler reads `Session`, which the middleware from Part 4 supplies.
+`MeLive` implements your group; `AppApiLive` registers its HTTP routes.
+
+## Compose your routes with Git
+
+Import the new route layer in `src/git.ts`:
+
+```diff lang="typescript"
+// src/git.ts
+import { Authentication } from "./middleware.ts";
++import { AppApiLive } from "./api.ts";
+```
+
+Merge it beside Git before applying the middleware:
+
+```diff lang="typescript"
+// src/git.ts
+-const PublicRoutes = Git.ApiLive.pipe(
++const PublicRoutes = Layer.mergeAll(AppApiLive, Git.ApiLive).pipe(
+  Layer.provide(Authentication.layer),
+);
+```
+
+Both sets of routes now run with the same access policy and request session.
+Your application's API definition and handlers stay in `src/api.ts`.
+
+## Deploy the application endpoint
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun alchemy deploy`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npx alchemy deploy`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm alchemy deploy`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn alchemy deploy`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+No new storage resource is needed for this change.
+
+## Call your endpoint
+
+Use the session cookie from Part 4:
+
+```sh
+curl --fail-with-body -b dana.cookies "$HOST/api/v1/me"
+```
+
+Expect `{"id":"..."}` with the same ID as `$OWNER`. The API key also identifies
+Dana:
+
+```sh
+curl --fail-with-body -u "x:$KEY" "$HOST/api/v1/me"
+```
+
+Without either credential, `/me` returns `401`:
+
+```sh
+curl -i "$HOST/api/v1/me"
+```
+
+Verify that Git still works on the same host:
+
+```sh
+git -c credential.helper= -C work fetch origin
+```
+
+Enter Dana's API key when prompted. Continue to
+[Part 6: Protect a branch](/git/tutorial/part-6).

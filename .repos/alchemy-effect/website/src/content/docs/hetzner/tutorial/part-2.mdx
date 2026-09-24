@@ -144,7 +144,7 @@ unchanged on Cloudflare Workers or AWS Lambda.
 
 :::note
 Notice the "Effect returning an Effect" pattern. The outer generator
-is the **Init phase** — it runs at deploy time and at process
+is the **Construction phase** — it runs at deploy time and at process
 startup. The inner `fetch` generator is the **Runtime phase** — it
 runs per request.
 :::

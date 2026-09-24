@@ -12,6 +12,44 @@ import type * as RpcGroup from "effect/unstable/rpc/RpcGroup"
 import * as RpcTest from "effect/unstable/rpc/RpcTest"
 
 describe("EventLogRemote", () => {
+  it.effect("retries wrapped Forbidden authentication errors", () =>
+    Effect.gen(function*() {
+      const harness = yield* makeHarness(EventLogRemote.makeUnencrypted)
+      const identity = yield* EventLog.makeIdentity
+      let authenticationAttempts = 0
+
+      yield* Effect.forever(Effect.gen(function*() {
+        const request = yield* harness.take
+        if (request._tag === "EventLog.Hello") {
+          request.resume(Effect.succeed(new EventLogMessage.HelloResponse({ remoteId, challenge })))
+        } else if (request._tag === "EventLog.Authenticate") {
+          authenticationAttempts++
+          request.resume(
+            authenticationAttempts === 1
+              ? Effect.fail(
+                new EventLogMessage.EventLogProtocolError({
+                  requestTag: "Authenticate",
+                  publicKey: undefined,
+                  code: "Forbidden",
+                  message: "Session auth challenge has expired"
+                })
+              )
+              : Effect.void
+          )
+        } else if (request._tag === "EventLog.WriteSingle") {
+          request.resume(Effect.void)
+        }
+      })).pipe(Effect.forkChild)
+
+      yield* harness.remote.write({
+        identity,
+        storeId: defaultStoreId,
+        entries: [makeEntry()]
+      })
+
+      assert.strictEqual(authenticationAttempts, 2)
+    }).pipe(Effect.provide(EventLogEncryption.layerSubtle)))
+
   it.effect("makeUnencrypted authenticates before writing plaintext entries", () =>
     Effect.gen(function*() {
       const harness = yield* makeHarness(EventLogRemote.makeUnencrypted)

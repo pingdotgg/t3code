@@ -65,7 +65,7 @@ export const makeLanguageModelLayer = (
   Layer.effect(AiLanguageModel.LanguageModel, makeLanguageModel(options));
 
 /**
- * Build a {@link AiLanguageModel.Service} that proxies generateText/streamText
+ * Build a {@link AiLanguageModel.LanguageModel} that proxies generateText/streamText
  * through the supplied AI Gateway client to a Workers AI model.
  */
 export const makeLanguageModel = ({
@@ -73,7 +73,7 @@ export const makeLanguageModel = ({
   model,
   parameters,
 }: LanguageModelOptions): Effect.Effect<
-  AiLanguageModel.Service,
+  AiLanguageModel.LanguageModel,
   never,
   RuntimeContext
 > =>

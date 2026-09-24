@@ -2,8 +2,8 @@
   replacement: "Socket.CloseEvent"
   note: "The close-event marker is internal in v4; use the CloseEvent class or Socket.isCloseEvent."
 "@effect/platform/Socket#currentSendQueueCapacity":
-  replacement: "Socket.SendQueueCapacity"
-  note: "The FiberRef was replaced by a defaulted Context.Reference."
+  replacement: none
+  note: "The send queue was removed. The v4 Socket is pull-based: acquire socket.reader in a scope and pull frame batches; writes apply the transport's native backpressure."
 "@effect/platform/Socket#layerWebSocket":
   replacement: "Socket.layerWebSocket"
   note: "The constructor remains in effect/unstable/socket/Socket; its URL may now also be an Effect."
@@ -25,3 +25,12 @@
 "@effect/platform/Socket#WebSocketConstructor":
   replacement: "Socket.WebSocketConstructor"
   note: "The service moved to effect/unstable/socket/Socket and is now a Context.Service class."
+"@effect/platform/Socket#defaultCloseCodeIsError":
+  replacement: none
+  note: "Sockets no longer classify close codes; every close fails the reader's pull with a SocketError wrapping SocketCloseError. Consumers that treat a close as normal catch the error."
+"@effect/platform/Socket#fromTransformStream":
+  replacement: "Socket.fromTransformStream"
+  note: "The constructor remains in effect/unstable/socket/Socket but drops closeCodeIsError; every close fails the reader's pull with a SocketError wrapping SocketCloseError."
+"@effect/platform/Socket#toChannelMap":
+  replacement: none
+  note: "The v4 Socket read side is an Effect that never completes via Cause.Done; map frames by acquiring Socket.readerBytes or Socket.readerString, or Effect.map the reader from socket.reader, and use Socket.toChannel or Socket.toChannelString for duplex channels."

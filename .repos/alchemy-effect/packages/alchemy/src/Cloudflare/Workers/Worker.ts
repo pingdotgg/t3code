@@ -2,8 +2,6 @@ import type * as cf from "@cloudflare/workers-types";
 import * as workers from "@distilled.cloud/cloudflare/workers";
 import type * as Config from "effect/Config";
 import type { ConfigError } from "effect/Config";
-import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -23,6 +21,7 @@ import {
 import {
   isResourceOfType,
   Resource,
+  type ResourceClass,
   type ResourceClassLike,
 } from "../../Resource.ts";
 import type { Rpc } from "../../Rpc.ts";
@@ -37,12 +36,15 @@ import type { DispatchNamespace } from "../WorkersForPlatforms/DispatchNamespace
 import type { WorkflowExport } from "../Workflows/Workflow.ts";
 import type { Reference as ZoneReference } from "../Zone/lookup.ts";
 import { type Assets, type AssetsProps } from "./Assets.ts";
-import {
-  resolveAccessContext,
-  type WorkerAccessConfig,
-  type WorkerAccessIdentity,
-  type WorkerExecutionContextAccess,
+import type {
+  WorkerAccessConfig,
+  WorkerAccessIdentity,
 } from "./WorkerAccess.ts";
+import {
+  WorkerEnvironment,
+  WorkerExecutionContext,
+  WorkerTypeId,
+} from "./WorkerRuntime.ts";
 import { type DurableObjectExport } from "./DurableObject.ts";
 import { Request } from "./Request.ts";
 import type { ModuleRule } from "./Sources/Prebuilt.ts";
@@ -58,183 +60,10 @@ import {
   type WorkerRuntimeContext,
 } from "./WorkerRuntimeContext.ts";
 
-export const WorkerTypeId = "Cloudflare.Worker";
-export type WorkerTypeId = typeof WorkerTypeId;
+export * from "./WorkerRuntime.ts";
 
 export const isWorker = <T>(value: T): value is T & Worker =>
   isResourceOfType(value, WorkerTypeId);
-
-export class WorkerEnvironment extends Context.Service<
-  WorkerEnvironment,
-  Record<string, any>
->()("Cloudflare.Workers.WorkerEnvironment") {}
-
-export class CachePurgeError extends Data.TaggedError("CachePurgeError")<{
-  message: string;
-  cause?: unknown;
-}> {}
-
-/**
- * Effect-native view of the Workers Cache runtime API on the execution
- * context (`ctx.cache`). Only available when the Worker has Workers Cache
- * enabled (the `cache` prop or `yield* Cloudflare.cache()`).
- */
-export interface WorkerExecutionContextCache {
-  /**
-   * Purge cached responses by `Cache-Tag`, path prefix, or everything.
-   */
-  purge(
-    options: cf.CachePurgeOptions,
-  ): Effect.Effect<cf.CachePurgeResult, CachePurgeError, RuntimeContext>;
-}
-
-export class WorkerExecutionContext extends Context.Service<
-  WorkerExecutionContext,
-  {
-    /**
-     * Run an Effect in the background without blocking the response, keeping
-     * the Worker alive until it settles. The Effect runs with the caller's
-     * full context (services, tracing), and the resulting promise is
-     * registered with workerd's `ctx.waitUntil`.
-     */
-    waitUntil<A, E, R>(
-      effect: Effect.Effect<A, E, R>,
-    ): Effect.Effect<void, never, R | RuntimeContext>;
-    /**
-     * Forward the request to the origin if the Worker throws an unhandled
-     * exception, instead of returning an error page.
-     */
-    passThroughOnException(): Effect.Effect<void, never, RuntimeContext>;
-    /**
-     * The Workers Cache runtime API (`ctx.cache`).
-     */
-    readonly cache: WorkerExecutionContextCache;
-    /**
-     * The Cloudflare Access context for the current request (`ctx.access`),
-     * or `undefined` when the request did not pass through Access. Under
-     * `alchemy dev` the Worker's `dev.access` config simulates it.
-     */
-    readonly access: Effect.Effect<
-      WorkerExecutionContextAccess | undefined,
-      never,
-      RuntimeContext
-    >;
-    /**
-     * The raw workerd ExecutionContext, for interop with async APIs.
-     */
-    readonly raw: cf.ExecutionContext;
-  }
->()("Cloudflare.Workers.WorkerExecutionContext") {}
-
-export const fromExecutionContext = (
-  ctx: cf.ExecutionContext,
-  env?: Record<string, unknown>,
-): WorkerExecutionContext["Service"] => ({
-  raw: ctx,
-  access: Effect.sync(() => resolveAccessContext(ctx, env)),
-  waitUntil: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    Effect.gen(function* () {
-      const context = yield* Effect.context<R>();
-      // Register the promise with workerd un-awaited — waitUntil extends the
-      // invocation's lifetime without blocking the response.
-      yield* Effect.sync(() =>
-        ctx.waitUntil(Effect.runPromise(effect.pipe(Effect.provide(context)))),
-      );
-    }),
-  passThroughOnException: () => Effect.sync(() => ctx.passThroughOnException()),
-  cache: {
-    purge: (options) =>
-      ctx.cache
-        ? Effect.tryPromise({
-            try: () => ctx.cache!.purge(options),
-            catch: (cause) =>
-              new CachePurgeError({
-                message:
-                  cause instanceof Error
-                    ? cause.message
-                    : "Unknown cache purge error",
-                cause,
-              }),
-          })
-        : Effect.fail(
-            new CachePurgeError({
-              message:
-                "ctx.cache is not available — enable Workers Cache on this " +
-                "Worker (the `cache` prop or `yield* Cloudflare.cache()`) " +
-                "and note it is not supported in local dev.",
-            }),
-          ),
-  },
-});
-
-/**
- * A {@link WorkerExecutionContext} whose methods resolve the live per-event
- * context from the calling fiber at call time. Provided during the Worker's
- * init phase (plan and runtime module init) so the service can be yielded
- * and closed over in the top-level closure; every method is colored with
- * `RuntimeContext`, so it can only be *run* inside a handler, where the
- * bridge provides the real per-event context that these methods defer to.
- */
-export const deferredExecutionContext: WorkerExecutionContext["Service"] = {
-  get raw(): cf.ExecutionContext {
-    throw new Error(
-      "WorkerExecutionContext.raw is only available inside a request handler",
-    );
-  },
-  waitUntil: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    liveExecutionContext.pipe(
-      Effect.flatMap((live) => live.waitUntil(effect)),
-    ) as Effect.Effect<void, never, R | RuntimeContext>,
-  passThroughOnException: () =>
-    liveExecutionContext.pipe(
-      Effect.flatMap((live) => live.passThroughOnException()),
-    ) as Effect.Effect<void, never, RuntimeContext>,
-  cache: {
-    purge: (options) =>
-      liveExecutionContext.pipe(
-        Effect.flatMap((live) => live.cache.purge(options)),
-      ) as Effect.Effect<cf.CachePurgeResult, CachePurgeError, RuntimeContext>,
-  },
-  // A getter so this module-level literal doesn't eagerly reference
-  // `liveExecutionContext` before its declaration below.
-  get access() {
-    return liveExecutionContext.pipe(
-      Effect.flatMap((live) => live.access),
-    ) as Effect.Effect<
-      WorkerExecutionContextAccess | undefined,
-      never,
-      RuntimeContext
-    >;
-  },
-};
-
-const liveExecutionContext = WorkerExecutionContext.pipe(
-  Effect.flatMap((live) =>
-    live === deferredExecutionContext
-      ? Effect.die(
-          new Error(
-            "WorkerExecutionContext can only be used inside a request handler",
-          ),
-        )
-      : Effect.succeed(live),
-  ),
-);
-
-export type WorkerEvent = Exclude<
-  {
-    [type in keyof cf.ExportedHandler]: {
-      kind: "Cloudflare.Workers.WorkerEvent";
-      type: type;
-      input: Parameters<Exclude<cf.ExportedHandler[type], undefined>>[0];
-      env: Parameters<Exclude<cf.ExportedHandler[type], undefined>>[1];
-      context: Parameters<Exclude<cf.ExportedHandler[type], undefined>>[2];
-    };
-  }[keyof cf.ExportedHandler],
-  undefined
->;
-
-export const isWorkerEvent = (value: any): value is WorkerEvent =>
-  value?.kind === "Cloudflare.Workers.WorkerEvent";
 
 /**
  * Assets configuration that includes a pre-computed hash.
@@ -268,17 +97,6 @@ export type WorkerPlacement = Exclude<
   workers.PutScriptRequest["metadata"]["placement"],
   undefined
 >;
-
-export const ExportedHandlerMethods = [
-  "fetch",
-  "tail",
-  "trace",
-  "tailStream",
-  "scheduled",
-  "test",
-  "email",
-  "queue",
-] as const satisfies (keyof cf.ExportedHandler)[];
 
 export type WorkerServices =
   | Worker
@@ -406,6 +224,22 @@ export interface WorkerDomainConfig {
    * Alternative to {@link zoneId} / {@link zoneName}.
    */
   zone?: ZoneReference;
+  /**
+   * Opt into custom-domain Worker Previews (private beta). When `true`,
+   * Previews of this Worker are served at `<preview-name>.<name>` (and a
+   * pinned `<deployment-id>-<preview-name>.<name>` per deploy). Cloudflare
+   * provisions a wildcard DNS record and certificate. Equivalent to
+   * Wrangler's `previews_enabled` on a custom-domain route.
+   *
+   * Unset, the field is not sent to Cloudflare — existing custom-domain
+   * attaches are unchanged. This is a **parent** setting: enable it on
+   * the production Worker, not on the Preview Worker. A dedicated Preview
+   * hostname (`previews.example.com`) avoids colliding with existing
+   * subdomains.
+   *
+   * @default false
+   */
+  previews?: boolean;
 }
 
 export interface WorkerRouteConfig {
@@ -610,6 +444,62 @@ export interface WorkerVersionOptions {
   tag?: string;
 }
 
+/**
+ * Worker Preview configuration — uploads this Worker as a first-class
+ * [Preview](https://developers.cloudflare.com/workers/previews/) of
+ * another Worker's script instead of creating a script of its own.
+ *
+ * Distinct from {@link WorkerVersionOptions}: a version is an immutable
+ * upload onto the parent script (gradual rollouts, canaries, Version
+ * URLs). A Preview is a named copy with its own variables, secrets,
+ * bindings, and isolated same-Worker Durable Object / Container state.
+ * Cloudflare recommends Previews for branch and pull-request testing.
+ *
+ * Mutually exclusive with {@link WorkerVersionOptions.parent}.
+ */
+export interface WorkerPreviewOptions {
+  /**
+   * The Worker this Preview belongs to. Accepts a Worker reference —
+   * typically `yield* Cloudflare.Worker.ref(id, { stage, stack })` for
+   * a Worker deployed in another stage/stack, or a locally-declared
+   * Worker — or a literal script name as an escape hatch.
+   *
+   * When set, this resource does not create a script of its own: it
+   * creates (or updates) a Preview of the parent's script and deploys
+   * this Worker's code, assets, and bindings to it. Script-level
+   * settings that belong to the parent — `name`, `namespace`, `crons`,
+   * `domain`, `routes`, `workersDev`, `access` — cannot be set on a
+   * Preview Worker. Locally-hosted Durable Object and Workflow classes
+   * *are* allowed: each Preview gets its own isolated namespace.
+   *
+   * Changing the parent replaces the resource (a Preview belongs to
+   * exactly one script).
+   */
+  of: string | Worker;
+  /**
+   * Preview name. Defaults to a DNS-safe form of the stack stage
+   * (`pr-123`, `feat-login`). Appears in Preview URLs:
+   * `https://<name>-<worker>.<subdomain>.workers.dev` and, when the
+   * parent has {@link WorkerDomainConfig.previews} enabled,
+   * `https://<name>.<domain>`.
+   *
+   * Must start with a lowercase letter, contain only lowercase letters,
+   * digits, and dashes, and `<name>-<worker-name>` must fit in 63
+   * characters (a DNS label).
+   */
+  name?: string;
+  /**
+   * Human-readable annotation attached to the Preview deployment,
+   * shown in the Cloudflare dashboard.
+   */
+  message?: string;
+  /**
+   * Machine-readable tag annotation attached to the Preview deployment
+   * (e.g. a git commit SHA or PR number).
+   */
+  tag?: string;
+}
+
 export interface WorkerProps<
   // PERF: unconstrained for the same reason as `Worker<Bindings>` above —
   // the `extends WorkerBindingProps` proof is expensive for generic mapped
@@ -647,12 +537,23 @@ export interface WorkerProps<
   namespace?: string | DispatchNamespace;
   /**
    * Worker versions & gradual deployments. Set `version.parent` to upload
-   * this Worker as a preview/canary *version* of another Worker's script
+   * this Worker as a canary *version* of another Worker's script
    * instead of creating its own; set `version.traffic` below 100 to
-   * gradually roll out a deploy of this Worker's own script. See
+   * gradually roll out a deploy of this Worker's own script. For branch
+   * and pull-request testing, use {@link preview} instead. See
    * {@link WorkerVersionOptions}.
    */
   version?: WorkerVersionOptions;
+  /**
+   * Opt into Cloudflare's [Worker Previews](https://developers.cloudflare.com/workers/previews/)
+   * (private beta). Unset, this Worker deploys as a normal script and none
+   * of the Preview APIs are called. Set `preview.of` to upload this Worker
+   * as a Preview of another Worker's script instead: own URL, bindings,
+   * and isolated Durable Object state; the parent's live deployment is
+   * untouched. Mutually exclusive with {@link version.parent}. See
+   * {@link WorkerPreviewOptions}.
+   */
+  preview?: WorkerPreviewOptions;
   /**
    * Controls the Worker's `workers.dev` surface.
    *
@@ -813,8 +714,8 @@ export interface WorkerProps<
    * - Resource references (R2 bucket, KV namespace, D1 database,
    *   another Worker, Durable Object, etc.) — emitted as the
    *   corresponding native binding.
-   * - `effect/Config` values (`Config.redacted`, `Config.string`,
-   *   `Config.number`, …) — resolved at deploy time and bound as
+   * - `effect/Config` values (`Config.Redacted`, `Config.String`,
+   *   `Config.Number`, …) — resolved at deploy time and bound as
    *   `secret_text` on Cloudflare regardless of the `Config`
    *   constructor used. See
    *   [Secrets & env](/cloudflare/security/secrets-env).
@@ -1218,6 +1119,7 @@ export type Worker<Bindings = any> = Resource<
           aliases: string[];
           redirects: string[];
           zone?: ZoneReference;
+          previews?: boolean;
         }
       | undefined;
     tags: string[] | undefined;
@@ -1250,6 +1152,34 @@ export type Worker<Bindings = any> = Resource<
      * avoid treating the parent's script as this resource's own.
      */
     versionOf?: string | undefined;
+    /**
+     * The parent script name this Worker is a Preview of, when this
+     * resource is a Preview Worker (`preview.of` set). `undefined` for
+     * a Worker that owns its own script. Discriminator `read`/`delete`
+     * use so they never treat the parent's script as this resource's own.
+     */
+    previewOf?: string | undefined;
+    /**
+     * Cloudflare's immutable Preview id. Set when this resource is a
+     * Preview Worker (`preview.of`).
+     */
+    previewId?: string | undefined;
+    /**
+     * The Preview name as created — the user-provided `preview.name`, or
+     * the auto-derived name from the stack stage.
+     */
+    previewName?: string | undefined;
+    /**
+     * DNS-safe slug Cloudflare assigned to this Preview. Used in Preview
+     * URLs (`<slug>-<worker>.<subdomain>.workers.dev` and
+     * `<slug>.<domain>` when the parent has custom-domain Previews).
+     */
+    previewSlug?: string | undefined;
+    /**
+     * Same-Worker Durable Object class names hosted on the last Preview
+     * deploy — the baseline for the next Preview's class migrations.
+     */
+    previewDoClasses?: string[] | undefined;
     /**
      * The id of the version uploaded by the most recent deploy. Only set
      * when versioning is in play: always for a version worker
@@ -1296,11 +1226,26 @@ export type Worker<Bindings = any> = Resource<
   {
     bindings?: WorkerBinding[];
     /**
+     * Extra env vars merged into the Worker at reconcile. `Redacted`
+     * values deploy as `secret_text`. Used by later resources (e.g. a
+     * Stripe webhook signing secret) to attach env without the Worker
+     * init depending on that resource.
+     */
+    env?: Record<string, any>;
+    /**
      * Workers Cache settings contributed by `yield* Cloudflare.cache()`.
      * Merged into the upload metadata's `cache_options`; an explicit
      * `WorkerProps.cache` takes precedence.
      */
     cache?: WorkerCache;
+    /**
+     * Workers Observability traces settings contributed by
+     * `Cloudflare.Telemetry()`. Deep-merged into upload metadata: bound
+     * traces fill in when `WorkerProps.observability.traces` is omitted,
+     * and never clobber the default logs config. An explicit
+     * `observability.traces` object wins.
+     */
+    observability?: Pick<WorkerObservability, "traces">;
     containers?: {
       className: string;
       dev: DevContainerImage | undefined;
@@ -1450,11 +1395,11 @@ export const isSelf = (value: unknown): value is Self =>
  *
  * ```typescript
  * Effect.gen(function* () {
- *   // Phase 1: bind resources (runs at deploy time)
+ *   // Construction: bind resources (deploy time and cold start)
  *   const kv = yield* Cloudflare.KV.ReadWriteNamespace(MyKV);
  *
  *   return {
- *     // Phase 2: runtime handlers (runs on each request)
+ *     // Runtime: handlers, once per request
  *     fetch: Effect.gen(function* () {
  *       const value = yield* kv.get("key");
  *       return HttpServerResponse.text(value ?? "not found");
@@ -1464,7 +1409,7 @@ export const isSelf = (value: unknown): value is Self =>
  * ```
  *
  * There are three ways to define a Worker, from simplest to most
- * flexible. See the [Functions & Servers](/infrastructure-as-effects/functions-and-servers)
+ * flexible. See the [Runtime](/infrastructure-as-effects/runtime)
  * page for the full explanation.
  *
  * - **Async** — plain `async fetch` handler, no Effect runtime in the bundle.
@@ -1571,6 +1516,37 @@ export const isSelf = (value: unknown): value is Self =>
  * };
  * ```
  *
+ * **Example:** Binding a named entrypoint
+ *
+ * `env: { TARGET: worker }` targets the Worker's default entrypoint.
+ * `Cloudflare.WorkerEntrypoint` binds one of its named
+ * `WorkerEntrypoint` class exports instead; `InferEnv` types the entry
+ * as a `Fetcher` stub whose RPC methods are called directly.
+ * ```typescript
+ * const caller = yield* Cloudflare.Worker("Caller", {
+ *   main: "./src/caller.ts",
+ *   env: {
+ *     API: Cloudflare.WorkerEntrypoint(target, "Api"), // env.API.greet("alice")
+ *   },
+ * });
+ * ```
+ *
+ * **Example:** Entrypoint props
+ *
+ * The options form attaches properties the target entrypoint reads from
+ * `this.ctx.props`. `Output` values resolve at deploy time. `alchemy dev`
+ * delivers `props` to the local workerd; the deploy API's binding schema
+ * does not carry the field yet, so `props` are dropped at upload while the
+ * binding itself deploys correctly.
+ * ```typescript
+ * env: {
+ *   VENDOR: Cloudflare.WorkerEntrypoint(vendorWorker, {
+ *     entrypoint: "Vendor",
+ *     props: { baseUrl: site.url },
+ *   }),
+ * }
+ * ```
+ *
  * ### Python Workers
  * Point `main` at a `.py` file to deploy a
  * [Python Worker](https://developers.cloudflare.com/workers/languages/python/)
@@ -1634,11 +1610,11 @@ export const isSelf = (value: unknown): value is Self =>
  *   "MyWorker",
  *   { main: import.meta.url },
  *   Effect.gen(function* () {
- *     // init: bind resources
+ *     // Construction: bind resources
  *     const kv = yield* Cloudflare.KV.ReadWriteNamespace(MyKV);
  *
  *     return {
- *       // runtime: use them
+ *       // Runtime: use them
  *       fetch: Effect.gen(function* () {
  *         const value = yield* kv.get("key");
  *         return HttpServerResponse.text(value ?? "not found");
@@ -1674,11 +1650,11 @@ export const isSelf = (value: unknown): value is Self =>
  * export default WorkerB.make(
  *   { main: import.meta.url },
  *   Effect.gen(function* () {
- *     // init: bind resources
+ *     // Construction: bind resources
  *     const kv = yield* Cloudflare.KV.ReadWriteNamespace(MyKV);
  *
  *     return {
- *       // runtime: use them
+ *       // Runtime: use them
  *       greet: (name: string) =>
  *         Effect.gen(function* () {
  *           yield* kv.put("last-greeted", name);
@@ -1718,7 +1694,7 @@ export const isSelf = (value: unknown): value is Self =>
  *   main: import.meta.url,
  *   compatibility: {
  *     flags: ["nodejs_compat"],
- *     date: "2026-03-17",
+ *     date: "2026-08-31",
  *   },
  * }
  * ```
@@ -1728,6 +1704,25 @@ export const isSelf = (value: unknown): value is Self =>
  * {
  *   main: import.meta.url,
  *   assets: "./public",
+ * }
+ * ```
+ *
+ * **Example:** Run the Worker before the asset layer
+ *
+ * A path that matches no asset already falls through to the Worker.
+ * `runWorkerFirst` routes the listed paths (or, with `true`, every
+ * request) through the Worker ahead of asset matching, for an asset
+ * that would otherwise shadow a route or an SPA fallback that would
+ * answer an API call. A `_headers` or `_redirects` file in the
+ * directory is applied automatically and `.assetsignore` excludes
+ * files from the upload.
+ * ```typescript
+ * {
+ *   main: import.meta.url,
+ *   assets: {
+ *     directory: "./public",
+ *     runWorkerFirst: ["/api/*", "/admin/*"],
+ *   },
  * }
  * ```
  *
@@ -1774,17 +1769,13 @@ export const isSelf = (value: unknown): value is Self =>
  * ```
  *
  * ### Bundling & Tree-shaking
- * `main` is bundled with rolldown at deploy time. Top-level calls in the
- * `effect`, `@effect/*`, `alchemy`, `@alchemy.run/*`, and
- * `@distilled.cloud/*` packages receive `#__PURE__` annotations by
- * default, so anything the Worker doesn't use from those packages is
- * tree-shaken out of the bundle. Any other
- * package — including your own app — is left untouched unless you list
- * it explicitly.
+ * `main` is bundled with rolldown at deploy time. Unused code is
+ * tree-shaken. `effect`, alchemy, and `@distilled.cloud` are marked
+ * pure so unused parts prune more aggressively. Your app is not
+ * marked pure.
  *
- * **Example:** Treat additional packages as pure
- * Pass package names (or picomatch globs) via `build.pure.packages` to
- * annotate them in addition to the defaults.
+ * **Example:** Mark additional packages as pure
+ * Only list packages with no top-level side effects.
  * ```typescript
  * {
  *   main: "./src/worker.ts",
@@ -1794,18 +1785,7 @@ export const isSelf = (value: unknown): value is Self =>
  * }
  * ```
  *
- * Listing a package annotates calls whose result is bound (variable
- * initializers, exports) — safe anywhere. If a listed package also
- * declares `"sideEffects": false` (or `[]`) in its `package.json`, that
- * combination opts it into full annotation: top-level calls whose result
- * is discarded (e.g. `router.on("/path", handler)` registrations) are
- * also marked pure and deleted under minification when unused. Only list
- * a `sideEffects: false` package if its modules really are free of
- * meaningful top-level side effects. The `effect`, `alchemy`, and
- * `@distilled.cloud` defaults declare exactly that, on purpose — their
- * modules are designed to be fully tree-shakeable.
- *
- * **Example:** Disable pure annotations
+ * **Example:** Turn it off
  * ```typescript
  * {
  *   main: "./src/worker.ts",
@@ -1864,15 +1844,49 @@ export const isSelf = (value: unknown): value is Self =>
  * });
  * ```
  *
+ * ### Worker Previews
+ * The `preview` prop maps Cloudflare's
+ * [Worker Previews](https://developers.cloudflare.com/workers/previews/) —
+ * a named copy of a Worker with its own URL, variables, secrets, bindings,
+ * and isolated same-Worker Durable Object state. Use it for branch and
+ * pull-request testing. Distinct from {@link version}: a version is an
+ * immutable upload onto the parent script (gradual rollouts, canaries);
+ * a Preview does not take production traffic.
+ *
+ * A Preview Worker's `url` is its stable Preview URL
+ * (`<name>-<parent>.<subdomain>.workers.dev`, or
+ * `<name>.<domain>` when the parent has `domain.previews`). The name
+ * defaults to the stack stage (override with `preview.name`). Destroying
+ * the Preview Worker deletes the Preview; the parent is untouched.
+ *
+ * **Example:** PR preview of another stage's Worker
+ * ```typescript
+ * const parent = yield* Cloudflare.Worker.ref("Api", { stage: "prod" });
+ * const preview = yield* Cloudflare.Worker("Api", {
+ *   main: "./src/api.ts",
+ *   preview: { of: parent, message: `PR #${process.env.PR_NUMBER}` },
+ * });
+ * // preview.url -> https://<stage>-<name>.<subdomain>.workers.dev
+ * ```
+ *
+ * **Example:** Custom-domain Preview URLs
+ * ```typescript
+ * // On the production Worker:
+ * yield* Cloudflare.Worker("Api", {
+ *   main: "./src/api.ts",
+ *   domain: { name: "app.example.com", previews: true },
+ * });
+ * // A Preview of that Worker is then at https://<preview-name>.app.example.com
+ * ```
+ *
  * ### Versions & Gradual Deployments
  * The `version` prop maps Cloudflare's
  * [versions and gradual deployments](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/)
  * onto Alchemy stages. A Worker with `version.parent` set uploads an
  * immutable *version* to the parent Worker's script instead of creating its
- * own — by default with no traffic, reachable only at its preview URL
- * (`worker.url`), which is the PR-preview workflow. Give it `traffic` to
- * run it as a canary, or use `version.traffic` on a normal Worker to roll
- * out its own deploys gradually.
+ * own — give it `traffic` to run it as a canary, or use `version.traffic`
+ * on a normal Worker to roll out its own deploys gradually. For branch
+ * and pull-request testing, use {@link preview} instead.
  *
  * A version worker's `url` is its *aliased* preview URL
  * (`<alias>-<name>.<subdomain>.workers.dev`) — the alias is derived from
@@ -1888,20 +1902,14 @@ export const isSelf = (value: unknown): value is Self =>
  * as are locally-hosted Durable Object or Workflow classes. Preview URLs
  * require the parent's workers.dev subdomain to be enabled (the default).
  *
- * **Example:** PR preview: a version of another stage's Worker
+ * **Example:** Upload a version without routing traffic
  * ```typescript
- * // The staging stage deploys the real Worker; a PR stage uploads its
- * // code as a zero-traffic version of staging's script and gets back a
- * // stable preview URL.
- * const parent = yield* Cloudflare.Worker.ref("MyWorker", {
- *   stage: "staging",
- * });
- * const preview = yield* Cloudflare.Worker("MyWorker", {
+ * // Inspect this upload at its Version URL before a gradual rollout.
+ * // For branch/PR testing, use `preview.of` instead.
+ * yield* Cloudflare.Worker("MyWorker", {
  *   main: "./src/worker.ts",
- *   version: { parent, message: `PR #${process.env.PR_NUMBER}` },
+ *   version: { traffic: 0, tag: process.env.GITHUB_SHA },
  * });
- * // preview.url -> https://<alias>-<name>.<subdomain>.workers.dev
- * // (stable across deploys; re-points at each newly uploaded version)
  * ```
  *
  * **Example:** Canary: send 10% of the parent's traffic to a version
@@ -1957,10 +1965,10 @@ export const isSelf = (value: unknown): value is Self =>
  *     return {
  *       fetch: Effect.gen(function* () {
  *         const publicUrl = yield* url;
- *         return Response.json({ url: publicUrl });
+ *         return yield* HttpServerResponse.json({ url: publicUrl });
  *       }),
  *     };
- *   }).pipe(Effect.provide(Cloudflare.Workers.URLBinding)),
+ *   }),
  * );
  * ```
  *
@@ -1984,6 +1992,12 @@ export const isSelf = (value: unknown): value is Self =>
  * prop. Pass the prop yourself to tune sampling, enable persistence, or
  * turn on the new `traces` channel (the same toggle the dashboard's
  * Observability tab writes).
+ *
+ * Effect-native Workers should prefer `Cloudflare.Telemetry()` over
+ * setting `observability.traces` by hand: providing the Layer enables
+ * traces on this Worker and mirrors `Effect.withSpan` into the Cloudflare
+ * waterfall. Pin `compatibility: { date: "2026-08-25" }` (or later) until
+ * the global default date is raised past 2026-07-28.
  *
  * Field names match the Cloudflare API (camelCased): `headSamplingRate`,
  * `invocationLogs`, etc.
@@ -2058,7 +2072,7 @@ export const isSelf = (value: unknown): value is Self =>
  * Workers Cache puts a regionally tiered cache in front of the Worker —
  * cache hits are served from the edge without invoking the Worker (and
  * without billing CPU time). In an Effect-native Worker, enable it by
- * yielding `Cloudflare.cache()` in the init phase, which also returns the
+ * yielding `Cloudflare.cache()` in the Construction phase, which also returns the
  * runtime purge client; async Workers use the `cache` prop instead. Control
  * what gets cached from your handlers via standard response headers:
  * `Cache-Control` (including `stale-while-revalidate`), `Cache-Tag` for
@@ -2071,7 +2085,7 @@ export const isSelf = (value: unknown): value is Self =>
  * **Example:** Enabling and purging the cache in an Effect Worker
  * ```typescript
  * Effect.gen(function* () {
- *   // init: enable Workers Cache on this Worker
+ *   // Construction: enable Workers Cache on this Worker
  *   const { purge } = yield* Cloudflare.cache({ crossVersionCache: true });
  *
  *   return {
@@ -2114,17 +2128,17 @@ export const isSelf = (value: unknown): value is Self =>
  *
  * For ad-hoc background work, `WorkerExecutionContext.waitUntil(effect)`
  * forks an Effect with the caller's full context and keeps the invocation
- * alive until it settles. The context can be yielded once in the init
- * closure and used from any handler; its methods are `RuntimeContext`-
+ * alive until it settles. The context can be yielded once in the
+ * constructor and used from any handler; its methods are `RuntimeContext`-
  * colored, so they can only run inside a handler.
  *
- * The init closure is evaluated once per isolate: the bridge builds the
+ * The constructor is evaluated once per isolate: the bridge builds the
  * Worker's layer stack on the first event and every later event reuses the
  * built services. Resolve services, bind resources, build handlers there —
  * one-shot I/O that caches a plain value (e.g. fetching a secret for a
  * client) is fine, but nothing disposable: the build scope is never closed
- * (workerd has no isolate-teardown hook), so a finalizer added in the init
- * closure never runs, and I/O-backed objects (sockets, response bodies) are
+ * (workerd has no isolate-teardown hook), so a finalizer added in the
+ * constructor never runs, and I/O-backed objects (sockets, response bodies) are
  * pinned to the request that created them. Anything that needs cleanup
  * belongs in a handler, where `Effect.addFinalizer` attaches to the
  * per-event scope.
@@ -2142,7 +2156,7 @@ export const isSelf = (value: unknown): value is Self =>
  *
  * **Example:** Background work with waitUntil
  * ```typescript
- * // init
+ * // Construction
  * const exec = yield* Cloudflare.WorkerExecutionContext;
  *
  * return {
@@ -2155,13 +2169,13 @@ export const isSelf = (value: unknown): value is Self =>
  * ```
  *
  * ### R2 Bucket
- * Bind an R2 bucket in the init phase with `Cloudflare.R2.ReadWriteBucket`.
+ * Bind an R2 bucket in the Construction phase with `Cloudflare.R2.ReadWriteBucket`.
  * The returned handle exposes `get`, `put`, `delete`, and `list`
  * methods you can call in your runtime handlers.
  *
  * **Example:** Binding and using R2
  * ```typescript
- * // init
+ * // Construction
  * const bucket = yield* Cloudflare.R2.ReadWriteBucket(MyBucket);
  *
  * return {
@@ -2189,7 +2203,7 @@ export const isSelf = (value: unknown): value is Self =>
  *
  * **Example:** Binding and using KV
  * ```typescript
- * // init
+ * // Construction
  * const kv = yield* Cloudflare.KV.ReadWriteNamespace(MyKV);
  *
  * return {
@@ -2207,7 +2221,7 @@ export const isSelf = (value: unknown): value is Self =>
  *
  * **Example:** Binding and querying D1
  * ```typescript
- * // init
+ * // Construction
  * const db = yield* Cloudflare.D1.QueryDatabase(MyDatabase);
  *
  * return {
@@ -2222,13 +2236,13 @@ export const isSelf = (value: unknown): value is Self =>
  * ```
  *
  * ### Durable Objects
- * Yield a `DurableObject` class in the init phase to get a
+ * Yield a `DurableObject` class in the Construction phase to get a
  * namespace handle. Call `getByName` or `getById` to get a typed RPC
  * stub, then call its methods from your runtime handlers.
  *
  * **Example:** Using a Durable Object
  * ```typescript
- * // init
+ * // Construction
  * const counters = yield* Counter;
  *
  * return {
@@ -2242,7 +2256,7 @@ export const isSelf = (value: unknown): value is Self =>
  *
  * ### Containers
  * Containers run long-lived processes alongside Durable Objects.
- * Provide `Cloudflare.Containers.layer(Sandbox, …)` on a DO's init to
+ * Provide `Cloudflare.Containers.layer(Sandbox, …)` on a DO's constructor to
  * bind, start, and monitor the container; then `yield* Sandbox`
  * resolves the **running** instance. Call its typed methods or use
  * `getTcpPort` to make HTTP requests to its exposed ports.
@@ -2282,13 +2296,13 @@ export const isSelf = (value: unknown): value is Self =>
  *
  * **Example:** Loading a dynamic Worker
  * ```typescript
- * // init
+ * // Construction
  * const loader = yield* Cloudflare.WorkerLoader("Loader");
  *
  * return {
  *   fetch: Effect.gen(function* () {
  *     const worker = yield* loader.load({
- *       compatibilityDate: "2026-01-28",
+ *       compatibilityDate: "2026-08-31",
  *       mainModule: "worker.js",
  *       modules: {
  *         "worker.js": `export default {
@@ -2310,6 +2324,7 @@ export const isSelf = (value: unknown): value is Self =>
  * @category Workers & Compute
  */
 export const Worker: ResourceClassLike<Worker> &
+  Pick<ResourceClass<Worker>, "ref"> &
   Effect.Effect<
     Worker & WorkerRuntimeContext & RuntimeContext,
     never,
@@ -2440,13 +2455,7 @@ export const Worker: ResourceClassLike<Worker> &
   } = Platform(
   WorkerTypeId,
   {
-    // Both hooks are wrapped in arrows so the imported references are resolved
-    // at call time rather than at module-load time. Worker.ts forms import
-    // cycles with both WorkerAsyncBindings.ts (which imports `isWorker` here)
-    // and WorkerRuntimeContext.ts (which imports `WorkerTypeId`/`WorkerEnvironment`
-    // here). Reading either binding eagerly here hits TDZ when Bun loads the
-    // package from node_modules in a different module-init order than the local
-    // workspace.
+    // WorkerAsyncBindings imports isWorker; defer access until module initialization completes.
     onCreate: (resource, props) =>
       bindWorkerAsyncBindings(resource as Worker, props),
     createRuntimeContext: (id) => makeWorkerRuntimeContext(id),

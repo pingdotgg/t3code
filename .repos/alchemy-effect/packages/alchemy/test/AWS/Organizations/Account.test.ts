@@ -28,10 +28,28 @@ test.provider("list enumerates organization accounts", () =>
       expect(typeof account.accountId).toBe("string");
       expect(typeof account.accountArn).toBe("string");
       expect(account.tags).toBeDefined();
+      if (account.name != null) {
+        expect(typeof account.name).toBe("string");
+      }
+      if (account.email != null) {
+        expect(typeof account.email).toBe("string");
+      }
     }
 
     if (process.env.AWS_TEST_ORG_MANAGEMENT) {
       expect(all.length).toBeGreaterThan(0);
+      const management = all.find(
+        (account) =>
+          typeof account.name === "string" &&
+          account.name.length > 0 &&
+          typeof account.email === "string" &&
+          account.email.length > 0,
+      );
+      expect(management).toBeDefined();
+      expect(typeof management?.name).toBe("string");
+      expect(management!.name!.length).toBeGreaterThan(0);
+      expect(typeof management?.email).toBe("string");
+      expect(management!.email!.length).toBeGreaterThan(0);
     }
   }),
 );

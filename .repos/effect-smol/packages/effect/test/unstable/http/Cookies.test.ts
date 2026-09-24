@@ -40,6 +40,18 @@ describe("Cookies", () => {
     })
   })
 
+  describe("fromSetCookie", () => {
+    it("ignores invalid cookie names", () => {
+      const cookies = Cookies.fromSetCookie([
+        "bad name=value",
+        "session=abc"
+      ])
+
+      assertNone(Cookies.get(cookies, "bad name"))
+      assertSome(Cookies.getValue(cookies, "session"), "abc")
+    })
+  })
+
   describe("toSetCookieHeaders", () => {
     const invalidCookie = {
       name: "session",
@@ -89,9 +101,9 @@ describe("Cookies", () => {
     )
   })
 
-  describe("CookiesSchema", () => {
+  describe("Schema.Cookies", () => {
     it("serializerIso annotation", () => {
-      const _sessionId = Schema.toIso(Cookies.CookiesSchema).at("sessionId")
+      const _sessionId = Schema.toIso(Schema.Cookies).at("sessionId")
       const cookies = Cookies.fromSetCookie([
         "sessionId=abc123; Path=/; HttpOnly; Secure",
         "theme=dark; Path=/; Max-Age=3600",
@@ -104,7 +116,7 @@ describe("Cookies", () => {
     })
 
     it("toCodecJson", async () => {
-      const schema = Cookies.CookiesSchema
+      const schema = Schema.Cookies
       const asserts = new TestSchema.Asserts(Schema.toCodecJson(Schema.toType(schema)))
 
       const encoding = asserts.encoding()
@@ -122,6 +134,21 @@ describe("Cookies", () => {
         ]
       )
     })
+  })
+
+  it("RecordFromCookies converts cookies to decoded string values", () => {
+    const cookies = Cookies.fromSetCookie(["session=abc", "theme=dark"])
+
+    deepStrictEqual(Schema.decodeSync(Schema.RecordFromCookies)(cookies), {
+      session: "abc",
+      theme: "dark"
+    })
+    deepStrictEqual(
+      Cookies.toSetCookieHeaders(
+        Schema.encodeSync(Schema.RecordFromCookies)({ session: "abc", theme: "dark" })
+      ),
+      ["session=abc", "theme=dark"]
+    )
   })
 
   it("get and getValue return Option", () => {

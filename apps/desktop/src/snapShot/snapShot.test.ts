@@ -464,6 +464,45 @@ describe("findAccessibleWindow", () => {
     expect(findAccessibleWindow(windows, { ...captured, title: "" }, "wayland")).toBeUndefined();
   });
 
+  it("accepts one PID-scoped untitled window whose bounds match", () => {
+    const windows = [{ name: null, bounds: captured.bounds }];
+
+    expect(
+      findAccessibleWindow(windows, captured, "wayland", { allowUntitledUniqueBounds: true }),
+    ).toBe(windows[0]);
+    expect(findAccessibleWindow(windows, captured, "wayland")).toBeUndefined();
+  });
+
+  it("rejects ambiguous PID-scoped untitled windows even when bounds match", () => {
+    const windows = [
+      { name: null, bounds: captured.bounds },
+      { name: "", bounds: { ...captured.bounds, x: 0, y: 0 } },
+    ];
+
+    expect(
+      findAccessibleWindow(windows, captured, "wayland", { allowUntitledUniqueBounds: true }),
+    ).toBeUndefined();
+  });
+
+  it("does not fall back to a differently titled PID-scoped window with matching bounds", () => {
+    const windows = [{ name: "Preferences", bounds: captured.bounds }];
+
+    expect(
+      findAccessibleWindow(windows, captured, "wayland", { allowUntitledUniqueBounds: true }),
+    ).toBeUndefined();
+  });
+
+  it("does not use unique bounds when a titled match is already ambiguous", () => {
+    const windows = [
+      { name: "Editor", bounds: captured.bounds },
+      { name: "Editor", bounds: { ...captured.bounds, x: 0, y: 0 } },
+    ];
+
+    expect(
+      findAccessibleWindow(windows, captured, "wayland", { allowUntitledUniqueBounds: true }),
+    ).toBeUndefined();
+  });
+
   it.each(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])(
     "ignores a leading Wayland title spinner frame %s",
     (frame) => {

@@ -29,6 +29,7 @@ beforeEach(() => {
   transitionCapturePageMock.mockReset().mockResolvedValue(undefined);
   transitionSnapshotMock.mockReset().mockResolvedValue(undefined);
   prepareCaptureRevealMock.mockReset();
+  accessibilityListMock.mockReset().mockResolvedValue([]);
 });
 
 const {
@@ -39,6 +40,7 @@ const {
   accessibilityProcessCoolMock,
   accessibilityProcessReadMock,
   accessibilityByPidMock,
+  accessibilityListMock,
   accessibilityForegroundMock,
   accessibilityTrustedMock,
   allWindowsMock,
@@ -87,6 +89,7 @@ const {
     }
   >(),
   accessibilityByPidMock: vi.fn(),
+  accessibilityListMock: vi.fn(),
   accessibilityForegroundMock: vi.fn(),
   accessibilityTrustedMock: vi.fn((_prompt = false) => true),
   allWindowsMock: vi.fn(
@@ -430,6 +433,7 @@ import * as SnapShotAccessibility from "./SnapShotAccessibility.ts";
 // Tests hand it this stand-in so the mocks above drive window lookups.
 const accessibilityApp = {
   byPid: accessibilityByPidMock,
+  list: accessibilityListMock,
   foreground: accessibilityForegroundMock,
 } as unknown as Parameters<typeof SnapShotAccessibility.readAccessibleWindowContextWithApp>[0];
 const readAccessibleWindowContext = (
@@ -2650,6 +2654,140 @@ it.each([
     assert.deepEqual(accessibilityByPidMock.mock.calls, [[123, { timeout: 0 }]]);
     assert.lengthOf(tree.mock.calls, expected ? 1 : 0);
   } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+it("reads Flatpak app text from the AT-SPI proxy when the compositor PID misses", async () => {
+  vi.stubEnv("XDG_SESSION_TYPE", "wayland");
+  const bounds = { x: 0, y: 0, width: 1_920, height: 1_048 };
+  const tree = vi.fn(async () => ({
+    name: "Issue — Zen Browser",
+    children: [{ name: "New Tab", children: [] }],
+  }));
+  const proxyWindow = {
+    role: "window",
+    name: "Issue — Zen Browser",
+    bounds,
+    tree,
+    children: async () => [],
+  };
+  accessibilityByPidMock
+    .mockReset()
+    .mockRejectedValue(
+      new Error("XA11Y_SELECTOR_NOT_MATCHED: No element matched selector: application[pid=207651]"),
+    );
+  accessibilityListMock.mockReset().mockResolvedValue([
+    {
+      pid: 1,
+      children: async () => [
+        {
+          role: "window",
+          name: "Files",
+          bounds,
+          tree: async () => ({ name: "Files", children: [] }),
+        },
+      ],
+    },
+    { pid: 207646, children: async () => [proxyWindow] },
+  ]);
+  try {
+    assert.strictEqual(
+      await readAccessibleWindowText(
+        {
+          title: "Issue — Zen Browser",
+          bounds: { x: 0, y: 0, width: 1_920, height: 1_048 },
+          owner: { processId: 207651 },
+        },
+        "linux",
+        "Issue — Zen Browser",
+      ),
+      "Issue — Zen Browser\nNew Tab",
+    );
+    assert.deepEqual(accessibilityByPidMock.mock.calls, [[207651, { timeout: 0 }]]);
+    assert.lengthOf(accessibilityListMock.mock.calls, 1);
+    assert.lengthOf(tree.mock.calls, 1);
+  } finally {
+    accessibilityListMock.mockReset().mockResolvedValue([]);
+    vi.unstubAllEnvs();
+  }
+});
+
+it("reads GTK4 app text from one unnamed PID-scoped window of the captured size", async () => {
+  vi.stubEnv("XDG_SESSION_TYPE", "wayland");
+  const bounds = { x: 0, y: 0, width: 1_920, height: 1_048 };
+  const tree = vi.fn(async () => ({
+    name: "System Monitor",
+    children: [{ name: "CPU", children: [] }],
+  }));
+  accessibilityByPidMock.mockReset().mockResolvedValue({
+    children: async () => [
+      {
+        role: "group",
+        name: null,
+        bounds,
+        tree,
+        children: async () => [
+          { role: "page_tab_list", name: "Processes", bounds, children: async () => [] },
+        ],
+      },
+    ],
+  });
+  accessibilityListMock.mockReset().mockResolvedValue([]);
+  try {
+    assert.strictEqual(
+      await readAccessibleWindowText(
+        {
+          title: "System Monitor",
+          bounds: { x: 12, y: 48, width: 1_920, height: 1_048 },
+          owner: { processId: 210600 },
+        },
+        "linux",
+        "System Monitor",
+      ),
+      "System Monitor\nCPU",
+    );
+    assert.deepEqual(accessibilityByPidMock.mock.calls, [[210600, { timeout: 0 }]]);
+    assert.lengthOf(accessibilityListMock.mock.calls, 0);
+    assert.lengthOf(tree.mock.calls, 1);
+  } finally {
+    accessibilityListMock.mockReset().mockResolvedValue([]);
+    vi.unstubAllEnvs();
+  }
+});
+
+it("does not guess GTK4 app text when two unnamed PID windows share the captured size", async () => {
+  vi.stubEnv("XDG_SESSION_TYPE", "wayland");
+  const bounds = { x: 0, y: 0, width: 1_920, height: 1_048 };
+  const tree = vi.fn(async () => ({ value: "Wrong window", children: [] }));
+  accessibilityByPidMock.mockReset().mockResolvedValue({
+    children: async () => [
+      { role: "group", name: null, bounds, tree },
+      { role: "group", name: null, bounds: { ...bounds, x: 12 }, tree },
+    ],
+  });
+  accessibilityListMock.mockReset().mockResolvedValue([
+    {
+      pid: 99,
+      children: async () => [{ role: "window", name: "System Monitor", bounds, tree }],
+    },
+  ]);
+  try {
+    assert.isUndefined(
+      await readAccessibleWindowText(
+        {
+          title: "System Monitor",
+          bounds: { x: 12, y: 48, width: 1_920, height: 1_048 },
+          owner: { processId: 210600 },
+        },
+        "linux",
+        "System Monitor",
+      ),
+    );
+    assert.lengthOf(accessibilityListMock.mock.calls, 0);
+    assert.lengthOf(tree.mock.calls, 0);
+  } finally {
+    accessibilityListMock.mockReset().mockResolvedValue([]);
     vi.unstubAllEnvs();
   }
 });

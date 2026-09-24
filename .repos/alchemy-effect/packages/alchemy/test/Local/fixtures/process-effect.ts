@@ -90,6 +90,20 @@ export const pidListeningOn = (wsUrl: string) => {
   );
 };
 
+/**
+ * POSIX process-group id of a pid via `ps` (no Node API exposes another
+ * process's pgid). Returns NaN when the pid is gone.
+ */
+export const pgidOf = (pid: number) =>
+  ChildProcess.make("ps", ["-o", "pgid=", "-p", String(pid)], {
+    stdout: "pipe",
+  }).pipe(
+    Effect.flatMap((handle) =>
+      handle.stdout.pipe(Stream.decodeText, Stream.mkString),
+    ),
+    Effect.map((stdout) => Number.parseInt(stdout.trim(), 10)),
+  );
+
 /** Send a signal to a pid we don't own a handle to. */
 export const killPid = (
   pid: number,

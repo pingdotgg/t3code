@@ -7,7 +7,9 @@ import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { mergeUsage } from "@t3tools/shared/usageMerge";
 import {
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   UsageDay,
@@ -131,14 +133,15 @@ describe("UsageService", () => {
           [
             { type: "session_meta", payload: { id: "codex-account-session" } },
             { type: "turn_context", payload: { model: "gpt-5.6-sol" } },
-            {
+            // A-B-A at one timestamp must preserve both equal A events.
+            ...[11, 12, 11].map((outputTokens) => ({
               type: "event_msg",
               timestamp: "2026-08-01T10:00:00Z",
               payload: {
                 type: "token_count",
-                info: { last_token_usage: { input_tokens: 10, output_tokens: 11 } },
+                info: { last_token_usage: { input_tokens: 10, output_tokens: outputTokens } },
               },
-            },
+            })),
           ]
             .map((line) => encodeUnknownJsonString(line))
             .join("\n") + "\n",
@@ -198,7 +201,21 @@ describe("UsageService", () => {
         ),
       );
       const summary = yield* service.readSummary(WINDOW);
-      assert.strictEqual(totalOutputTokens(summary), 36);
+      assert.strictEqual(totalOutputTokens(summary), 59);
+      yield* Effect.promise(() =>
+        NodeFSP.rename(
+          NodePath.join(codexHome, "sessions", "rollout.jsonl"),
+          NodePath.join(codexHome, "sessions", "moved.jsonl"),
+        ),
+      );
+      const moved = yield* service.readSummary(WINDOW);
+      assert.deepStrictEqual(moved.buckets, summary.buckets);
+      yield* Effect.promise(() =>
+        NodeFSP.rm(NodePath.join(codexHome, "sessions"), { recursive: true }),
+      );
+      const removed = yield* service.readSummary(WINDOW);
+      assert.deepStrictEqual(removed.buckets, summary.buckets);
+
       const sources = summary.sources.filter((source) => source.status === "ok");
       assert.strictEqual(sources.length, 4);
       assert.strictEqual(
@@ -390,6 +407,97 @@ describe("UsageService", () => {
       yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
       const second = yield* service.readSummary(WINDOW);
       assert.strictEqual(totalOutputTokens(second), 12);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("preserves saved tokens, costs and sessions after transcript cleanup and restart", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const alias = NodePath.join(home, "claude-alias");
+      yield* Effect.promise(() =>
+        NodeFSP.symlink(NodePath.join(home, "claude"), alias, "junction"),
+      );
+      const content = claudeLine(1, 5);
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, content));
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const first = yield* service.readSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(first), 5);
+        assert.isAbove(first.buckets[0]?.costUsd ?? 0, 0);
+
+        yield* Effect.promise(() => NodeFSP.rm(transcript));
+        const deleted = yield* service.readSummary(WINDOW);
+        assert.deepStrictEqual(deleted.buckets, first.buckets);
+        assert.deepStrictEqual(deleted.sources, first.sources);
+
+        const restarted = yield* UsageService.make;
+        const restored = yield* restarted.readSummary(WINDOW);
+        assert.deepStrictEqual(restored.buckets, first.buckets);
+        assert.deepStrictEqual(restored.sources, first.sources);
+
+        // A moved transcript must not count the saved usage twice.
+        yield* Effect.promise(() => NodeFSP.writeFile(transcript + ".jsonl", content));
+        const moved = yield* restarted.readSummary(WINDOW);
+        assert.deepStrictEqual(moved.buckets, first.buckets);
+        assert.strictEqual(moved.sources[0]?.distinctSessions, 1);
+
+        const replacementProjects = NodePath.join(home, "replacement-projects");
+        yield* Effect.promise(() => NodeFSP.mkdir(replacementProjects));
+        yield* Effect.promise(() =>
+          NodeFSP.rm(NodePath.join(home, "claude", "projects"), { recursive: true }),
+        );
+        const afterRootCleanup = yield* UsageService.make;
+        const missingRoot = yield* afterRootCleanup.readSummary(WINDOW);
+        assert.deepStrictEqual(missingRoot.buckets, first.buckets);
+        assert.strictEqual(missingRoot.sources[0]?.distinctSessions, 1);
+        assert.strictEqual(missingRoot.sources[0]?.status, "ok");
+        assert.deepStrictEqual(missingRoot.sources[0]?.fingerprint, first.sources[0]?.fingerprint);
+        yield* Effect.promise(async () => {
+          const projects = NodePath.join(home, "claude", "projects");
+          await NodeFSP.rename(replacementProjects, projects);
+          await NodeFSP.writeFile(NodePath.join(projects, "new.jsonl"), claudeLine(2, 7));
+        });
+        const recreated = yield* afterRootCleanup.readSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(recreated), 12);
+        assert.deepStrictEqual(recreated.sources[0]?.fingerprint, first.sources[0]?.fingerprint);
+
+        const merged = mergeUsage(
+          [
+            {
+              environmentId: EnvironmentId.make("cleanup-test"),
+              label: "test",
+              summary: recreated,
+            },
+            {
+              environmentId: EnvironmentId.make("other-environment"),
+              label: "before cleanup",
+              summary: first,
+            },
+          ],
+          missingRoot.contractVersion,
+        );
+        assert.strictEqual(merged.outputTokens, 12);
+        assert.strictEqual(merged.sessions, 1);
+        assert.strictEqual(merged.costUsd, recreated.buckets[0]?.costUsd);
+
+        const outsideWindow = yield* restarted.readSummary({
+          ...WINDOW,
+          sinceDay: UsageDay.make("2026-08-02"),
+        });
+        assert.deepStrictEqual(outsideWindow.buckets, []);
+        assert.strictEqual(outsideWindow.sources[0]?.distinctSessions, 0);
+      }).pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-cleanup-test",
+            home,
+            settings: { providers: { ...settings.providers, claudeAgent: { homePath: alias } } },
+            ratesDocument: {
+              "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
+            },
+          }),
+        ),
+      );
     }).pipe(Effect.scoped),
   );
 

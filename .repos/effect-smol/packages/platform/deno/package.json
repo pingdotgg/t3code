@@ -1,7 +1,7 @@
 {
   "name": "@effect/platform-deno",
   "type": "module",
-  "version": "4.0.0-rc.112",
+  "version": "4.0.0-rc.115",
   "license": "MIT",
   "description": "Platform specific implementations for the Deno runtime",
   "homepage": "https://effect.website",
@@ -26,7 +26,7 @@
     "functional-programming"
   ],
   "engines": {
-    "deno": ">=2.5.0"
+    "deno": ">=2.8.3"
   },
   "sideEffects": [],
   "exports": {

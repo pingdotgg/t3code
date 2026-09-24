@@ -703,7 +703,7 @@ export const evaluate: <A, Req = never>(
     }
     if (Config.isConfig(expr)) {
       // Resolve Config against the deploy environment — see resolveInput in
-      // Plan.ts for rationale. `Config.redacted` resolves to a `Redacted`,
+      // Plan.ts for rationale. `Config.Redacted` resolves to a `Redacted`,
       // which stays opaque via the leaf fallthrough below.
       return yield* evaluate(yield* expr, upstream, ancestors);
     } else if (isPlainData(expr)) {

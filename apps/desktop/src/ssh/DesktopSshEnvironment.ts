@@ -45,10 +45,6 @@ export type DesktopSshEnvironmentOperationError =
 
 export type DesktopSshEnvironmentDiscoverError = SshHostDiscoveryError;
 
-export type DesktopSshEnvironmentError =
-  | DesktopSshEnvironmentDiscoverError
-  | DesktopSshEnvironmentOperationError;
-
 export class DesktopSshEnvironment extends Context.Service<
   DesktopSshEnvironment,
   {

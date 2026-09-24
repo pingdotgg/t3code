@@ -100,6 +100,15 @@ describe("WorkerProvider", () => {
       });
     });
 
+    test("previews: true is preserved", () => {
+      expect(resolve({ name: "app.example.com", previews: true })).toEqual({
+        name: "app.example.com",
+        aliases: [],
+        redirects: [],
+        previews: true,
+      });
+    });
+
     test("object form dedupes and punycodes hostnames", () => {
       expect(
         resolve({

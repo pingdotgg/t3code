@@ -177,8 +177,8 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
 const command = Command.make(
   "smoke-cli-archive",
   {
-    archive: Flag.string("archive"),
-    expectVersion: Flag.string("expect-version"),
+    archive: Flag.String("archive"),
+    expectVersion: Flag.String("expect-version"),
   },
   (input) => smokeCliArchive(input).pipe(Effect.scoped),
 ).pipe(Command.withDescription("Extract a CLI archive and run its executable."));

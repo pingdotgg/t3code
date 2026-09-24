@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   exists: vi.fn(),
 }));
 
-vi.mock("../state/use-composer-drafts", () => ({
+vi.mock("./composerAttachmentPreviewRetention", () => ({
   retainComposerAttachmentFileForPreview: mocks.retain,
 }));
 vi.mock("./attachmentDownload", () => ({ shareLocalAttachment: mocks.share }));

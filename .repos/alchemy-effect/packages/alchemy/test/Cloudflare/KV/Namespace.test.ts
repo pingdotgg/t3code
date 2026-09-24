@@ -142,7 +142,7 @@ test.provider(
         const state = yield* yield* State;
         yield* state.delete({
           stack: stack.name,
-          stage: "test",
+          stage: stack.stage,
           fqn: "AdoptableNamespace",
         });
       }).pipe(Effect.provide(stack.state));
@@ -164,7 +164,7 @@ test.provider(
         const state = yield* yield* State;
         return yield* state.get({
           stack: stack.name,
-          stage: "test",
+          stage: stack.stage,
           fqn: "AdoptableNamespace",
         });
       }).pipe(Effect.provide(stack.state));

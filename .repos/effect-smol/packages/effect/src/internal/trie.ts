@@ -12,7 +12,7 @@ import type * as TR from "../Trie.ts"
 import type { NoInfer } from "../Types.ts"
 
 /** @internal */
-export const TrieTypeId = "~effect/collections/Trie"
+export const TrieTypeId = "~effect/Trie"
 
 type TraversalMap<K, V, A> = (k: K, v: V) => A
 
@@ -516,7 +516,10 @@ export const remove = dual<
       const n2 = nStack[s]
       const d = dStack[s]
       const child = nStack[s + 1]
-      const nc = child.left === undefined && child.mid === undefined && child.right === undefined ? undefined : child
+      const nc =
+        child.value === undefined && child.left === undefined && child.mid === undefined && child.right === undefined
+          ? undefined
+          : child
       if (d === -1) {
         // left
         nStack[s] = {

@@ -34,12 +34,12 @@ export function ProjectActionsList({
             <ScriptIcon icon={script.icon} className="size-4 shrink-0 text-muted-foreground" />
             <span className="min-w-0 truncate">{script.name}</span>
             {script.runOnWorktreeCreate ? (
-              <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-[11px] font-normal text-muted-foreground">
+              <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-2xs font-normal text-muted-foreground">
                 setup
               </span>
             ) : null}
             {script.previewUrl ? (
-              <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-[11px] font-normal text-muted-foreground max-sm:hidden">
+              <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-2xs font-normal text-muted-foreground max-sm:hidden">
                 preview · desktop only
               </span>
             ) : null}
@@ -51,16 +51,17 @@ export function ProjectActionsList({
             {shortcutLabel ? (
               <span className="text-xs text-muted-foreground">{shortcutLabel}</span>
             ) : null}
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              className="shrink-0 text-muted-foreground opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
-              aria-label={`Edit ${script.name}`}
-              disabled={disabled}
-              onClick={() => onEdit(script)}
-            >
-              <SettingsIcon className="size-3.5" />
-            </Button>
+            <span className="flex shrink-0 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+              <Button
+                size="icon-xs"
+                variant="ghost-muted"
+                aria-label={`Edit ${script.name}`}
+                disabled={disabled}
+                onClick={() => onEdit(script)}
+              >
+                <SettingsIcon className="size-3.5" />
+              </Button>
+            </span>
           </>
         }
       />

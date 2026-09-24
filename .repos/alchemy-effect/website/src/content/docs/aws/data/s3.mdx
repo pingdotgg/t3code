@@ -23,7 +23,7 @@ least-privilege IAM policy from the bindings you actually use.
 S3 buckets are canonical Alchemy resources, so you create them
 the same way as the Lambda — yield the resource inside an Effect
 and the Stack captures it. Open `src/api.ts` and add a bucket in
-the outer init:
+the constructor:
 
 ```diff lang="typescript"
 // src/api.ts
@@ -65,7 +65,7 @@ as **bindings**. A binding is two things:
 2. An IAM policy statement that gets attached to the function
    role automatically — scoped to the exact bucket ARN.
 
-Bind them in the outer init, alongside the bucket:
+Bind them in the constructor, alongside the bucket:
 
 ```diff lang="typescript"
 Effect.gen(function* () {

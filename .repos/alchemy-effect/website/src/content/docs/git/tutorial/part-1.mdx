@@ -1,0 +1,285 @@
+---
+title: "Part 1: Push your first repository"
+description: Deploy a Git host, push a commit, and clone it back. Add storage and hashing one layer at a time.
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+Start with a Git remote you can push to. This part deploys a Worker backed by
+Durable Objects and R2, then sends a real commit through it and clones it back.
+
+:::caution
+This first deployment is open: anyone who knows its URL can create repositories,
+read them, and write to them. Use a disposable repository. [Part 2](/git/tutorial/part-2)
+adds access control before you use the host for private work.
+:::
+
+## Create the project
+
+You need Bun or Node.js 22+, Git, and a Cloudflare account with Workers, Durable Objects, and R2.
+Complete [Cloudflare setup](/cloudflare/setup) to connect your account.
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`mkdir git-tutorial
+cd git-tutorial
+bun init -y
+bun add alchemy effect
+mkdir src`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`mkdir git-tutorial
+cd git-tutorial
+npm init -y
+npm install alchemy effect
+mkdir src`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`mkdir git-tutorial
+cd git-tutorial
+pnpm init
+pnpm add alchemy effect
+mkdir src`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`mkdir git-tutorial
+cd git-tutorial
+yarn init -y
+yarn add alchemy effect
+mkdir src`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+Run the remaining commands from this project directory. Keep the same directory,
+stack name, and deployment stage throughout the tutorial so each deploy updates
+this host.
+
+## Add the Git routes
+
+Create `src/git.ts`:
+
+```typescript
+// src/git.ts
+import * as Git from "alchemy/Git";
+import * as Layer from "effect/Layer";
+
+export const GitLive = Git.ApiLive.pipe(
+  Layer.provide(Git.ApiHandlersLive),
+);
+```
+
+`Git.ApiLive` registers the Git HTTP endpoints, including the protocol used by
+`git push` and `git clone`. `Git.ApiHandlersLive` implements those endpoints.
+Its remaining dependencies describe where repositories live and how incoming
+objects are checked. Supply each one below before deploying.
+
+## Store repository data
+
+```diff lang="typescript"
+// src/git.ts
+export const GitLive = Git.ApiLive.pipe(
+  Layer.provide(Git.ApiHandlersLive),
++  Layer.provide(Git.ReposDurableObject),
+);
+```
+
+`Git.ReposDurableObject` gives each repository a Durable Object. It stores the
+repository's refs and object metadata and coordinates writes to that repository.
+
+## Look up repositories by name
+
+```diff lang="typescript"
+// src/git.ts
+  Layer.provide(Git.ReposDurableObject),
++  Layer.provide(Git.RegistryDurableObject),
+);
+```
+
+The registry maps an `owner/name`, such as `acme/web`, to its repository. This
+lets an incoming request find the right Durable Object.
+
+## Verify incoming Git objects
+
+```diff lang="typescript"
+// src/git.ts
+  Layer.provide(Git.RegistryDurableObject),
++  Layer.provide(Git.HasherInline),
+);
+```
+
+Git objects are identified by hashes of their contents. `Git.HasherInline`
+verifies incoming objects in the Worker during a push.
+
+## Store packs and large objects
+
+```diff lang="typescript"
+// src/git.ts
++import * as Cloudflare from "alchemy/Cloudflare";
+import * as Git from "alchemy/Git";
+import * as Layer from "effect/Layer";
+
++const GitObjects = Cloudflare.R2.Bucket("GitObjects", { forceDestroy: true });
++
+export const GitLive = Git.ApiLive.pipe(
+```
+
+This bucket holds packs, clone bundles, and large objects. `forceDestroy: true`
+lets you remove the tutorial stack even when the bucket contains data; destroying
+this stack also deletes those objects.
+
+Connect the bucket to Git:
+
+```diff lang="typescript"
+// src/git.ts
+  Layer.provide(Git.HasherInline),
++  Layer.provide(Git.BlobStoreR2(GitObjects)),
+);
+```
+
+The R2 layer supplies the blob-storage operations used by the Worker and the
+repository Durable Objects.
+
+## Serve Git from a Worker
+
+Create `src/host.ts`:
+
+```typescript
+// src/host.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Git from "alchemy/Git";
+import * as Http from "alchemy/Http";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as HttpRouter from "effect/unstable/http/HttpRouter";
+import { GitLive } from "./git.ts";
+
+export default class GitHost extends Cloudflare.Worker<GitHost>()(
+  "GitHost",
+  { main: import.meta.url, ...Git.GIT_WORKER_OPTIONS },
+  Effect.gen(function* () {
+    const fetch = yield* HttpRouter.toHttpEffect(
+      GitLive.pipe(Layer.provide(Http.Platform)),
+    );
+    return { fetch };
+  }),
+) {}
+```
+
+`HttpRouter.toHttpEffect` turns the route layer into the Worker's `fetch` handler.
+`Http.Platform` provides its HTTP platform dependencies. `GIT_WORKER_OPTIONS`
+sets the Worker compatibility flags and CPU limit used by Git.
+
+## Declare the stack
+
+Create `alchemy.run.ts`:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import GitHost from "./src/host.ts";
+
+export default Alchemy.Stack(
+  "GitTutorial",
+  { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  Effect.gen(function* () {
+    const host = yield* GitHost;
+    return { url: host.url.as<string>() };
+  }),
+);
+```
+
+Yielding the Worker includes its bucket and Durable Object bindings in the
+stack. The output gives you the URL clients will use.
+
+## Deploy
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun alchemy deploy`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npx alchemy deploy`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm alchemy deploy`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn alchemy deploy`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+Copy the printed URL, including `https://`, without a trailing slash:
+
+```sh
+export HOST="https://your-worker.workers.dev"
+```
+
+Verify that the Git API is reachable:
+
+```sh
+curl --fail-with-body "$HOST/api/v1/repos"
+```
+
+It returns a JSON repository list. On a new host the list is empty. A new
+`workers.dev` deployment can briefly return a Cloudflare 404 while it propagates;
+repeat this read check until the API responds before creating the repository.
+Updates in later parts can also briefly serve the previous version.
+
+## Create a repository
+
+```sh
+curl --fail-with-body -X POST "$HOST/api/v1/repos" \
+  -H "Content-Type: application/json" \
+  -d '{"owner":"acme","name":"web"}'
+```
+
+The repository is named `acme/web`. At this stage `acme` is just a namespace;
+there are no user accounts. Creating a repository reserves that name before you
+push any commits.
+
+## Push a commit
+
+```sh
+git init -b main work
+git -C work config user.name "Tutorial"
+git -C work config user.email "tutorial@example.com"
+printf '# My repository\n' > work/README.md
+git -C work add README.md
+git -C work commit -m "First commit"
+git -C work remote add origin "$HOST/acme/web.git"
+git -C work push -u origin main
+```
+
+The push uploads the commit and its objects, then creates `main` on your host.
+
+## Clone it back
+
+```sh
+git clone "$HOST/acme/web.git" verify
+git -C verify fsck --strict
+git -C work rev-parse HEAD
+git -C verify rev-parse HEAD
+```
+
+The two commit IDs should match, and `fsck` should report no corrupt or missing
+objects. You now have a working Git remote.
+
+Continue to [Part 2: Control access](/git/tutorial/part-2). If you stop here,
+remove the open learning deployment:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun alchemy destroy`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npx alchemy destroy`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm alchemy destroy`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn alchemy destroy`} lang="sh" />
+  </TabItem>
+</Tabs>

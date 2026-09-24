@@ -1,4 +1,38 @@
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
+import type { ProviderInstanceId } from "@t3tools/contracts";
+
+export type ModelFavorite = {
+  readonly provider: ProviderInstanceId;
+  readonly model: string;
+};
+
+export function modelFavoriteKey(provider: ProviderInstanceId, model: string): string {
+  return `${provider}:${model}`;
+}
+
+export function toggleModelFavorite(
+  favorites: ReadonlyArray<ModelFavorite>,
+  option: ModelOption,
+): ReadonlyArray<ModelFavorite> {
+  const provider = option.selection.instanceId;
+  const model = option.selection.model;
+  return favorites.some((favorite) => favorite.provider === provider && favorite.model === model)
+    ? favorites.filter((favorite) => favorite.provider !== provider || favorite.model !== model)
+    : [...favorites, { provider, model }];
+}
+
+/** Keep catalog order within each group when favorites move to the front. */
+export function favoritesFirst(
+  models: ReadonlyArray<ModelOption>,
+  favoriteKeys: ReadonlySet<string>,
+): ReadonlyArray<ModelOption> {
+  const favorites: ModelOption[] = [];
+  const others: ModelOption[] = [];
+  for (const model of models) {
+    (favoriteKeys.has(model.key) ? favorites : others).push(model);
+  }
+  return [...favorites, ...others];
+}
 
 /** Match the terms a user can actually see or recognize in the model picker. */
 export function modelMatchesCatalogQuery(input: {

@@ -34,28 +34,28 @@ export default class EnvEffectWorker extends Cloudflare.Worker<EnvEffectWorker>(
       SECRET_JSON: Redacted.make({ token: "abc", scopes: ["read", "write"] }),
       // Config declared statically on `env` — Alchemy resolves at deploy
       // time and binds it as `secret_text` on the Worker.
-      CONFIG_REDACTED: Config.redacted("CONFIG_REDACTED"),
+      CONFIG_REDACTED: Config.Redacted("CONFIG_REDACTED"),
     },
   },
   Effect.gen(function* () {
     // Captured during Init — Alchemy binds these onto the Worker and the
     // runtime ConfigProvider (backed by `env`) re-resolves them here.
-    const configStr = yield* Config.string("CONFIG_STR");
-    const configNum = yield* Config.number("CONFIG_NUM");
-    const configRedactedInit = yield* Config.redacted("CONFIG_REDACTED_INIT");
+    const configStr = yield* Config.String("CONFIG_STR");
+    const configNum = yield* Config.Number("CONFIG_NUM");
+    const configRedactedInit = yield* Config.Redacted("CONFIG_REDACTED_INIT");
     // Composite forms — each member is bound individually, so the whole
     // shape must survive the deploy → runtime round-trip.
     const configAllObj = yield* Config.all({
-      str: Config.string("CONFIG_STR"),
-      num: Config.number("CONFIG_NUM"),
-      redacted: Config.redacted("CONFIG_REDACTED_INIT"),
+      str: Config.String("CONFIG_STR"),
+      num: Config.Number("CONFIG_NUM"),
+      redacted: Config.Redacted("CONFIG_REDACTED_INIT"),
     });
     const configAllTuple = yield* Config.all([
-      Config.string("CONFIG_STR"),
-      Config.number("CONFIG_NUM"),
+      Config.String("CONFIG_STR"),
+      Config.Number("CONFIG_NUM"),
     ]);
     // Nested prefix — bound under the flattened `CONFIG_NESTED_HOST` key.
-    const configNested = yield* Config.string("HOST").pipe(
+    const configNested = yield* Config.String("HOST").pipe(
       Config.nested("CONFIG_NESTED"),
     );
 
@@ -116,23 +116,23 @@ export default class EnvEffectWorker extends Cloudflare.Worker<EnvEffectWorker>(
           // runtime ConfigProvider (not the Init interceptor) answers the
           // read. The bound values arrive in `env` as
           // `{"_tag":"Redacted","value":...}` markers and must be reified
-          // transparently: `Config.number` must decode the raw source value,
+          // transparently: `Config.Number` must decode the raw source value,
           // not the marker JSON.
           const nested = yield* Effect.gen(function* () {
             const allObj = yield* Config.all({
-              str: Config.string("CONFIG_STR"),
-              num: Config.number("CONFIG_NUM"),
-              redacted: Config.redacted("CONFIG_REDACTED_INIT"),
+              str: Config.String("CONFIG_STR"),
+              num: Config.Number("CONFIG_NUM"),
+              redacted: Config.Redacted("CONFIG_REDACTED_INIT"),
             });
             return {
-              CONFIG_STR: yield* Config.string("CONFIG_STR"),
-              CONFIG_NUM: yield* Config.number("CONFIG_NUM"),
+              CONFIG_STR: yield* Config.String("CONFIG_STR"),
+              CONFIG_NUM: yield* Config.Number("CONFIG_NUM"),
               // Combinators re-apply at runtime against the bound source.
-              CONFIG_NUM_WITH_DEFAULT: yield* Config.number("CONFIG_NUM").pipe(
+              CONFIG_NUM_WITH_DEFAULT: yield* Config.Number("CONFIG_NUM").pipe(
                 Config.withDefault(999),
               ),
               // Never read during Init, so never bound — the default applies.
-              CONFIG_UNSET_WITH_DEFAULT: yield* Config.number(
+              CONFIG_UNSET_WITH_DEFAULT: yield* Config.Number(
                 "CONFIG_UNSET",
               ).pipe(Config.withDefault(3000)),
               CONFIG_ALL_OBJ: {
@@ -142,15 +142,15 @@ export default class EnvEffectWorker extends Cloudflare.Worker<EnvEffectWorker>(
                 redactedIsRedacted: Redacted.isRedacted(allObj.redacted),
               },
               CONFIG_ALL_TUPLE: yield* Config.all([
-                Config.string("CONFIG_STR"),
-                Config.number("CONFIG_NUM"),
+                Config.String("CONFIG_STR"),
+                Config.Number("CONFIG_NUM"),
               ]),
-              CONFIG_NESTED_HOST: yield* Config.string("HOST").pipe(
+              CONFIG_NESTED_HOST: yield* Config.String("HOST").pipe(
                 Config.nested("CONFIG_NESTED"),
               ),
             };
           });
-          const redactedAtRuntime = yield* Config.redacted(
+          const redactedAtRuntime = yield* Config.Redacted(
             "CONFIG_REDACTED_INIT",
           );
           return yield* HttpServerResponse.json({

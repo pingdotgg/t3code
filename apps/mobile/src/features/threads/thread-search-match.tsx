@@ -2,7 +2,6 @@ import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state
 
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
-import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 function foldAsciiCase(value: string): string {
   return value.replace(/[A-Z]/g, (character) => character.toLowerCase());
@@ -49,19 +48,19 @@ export function ThreadSearchMatchExcerpt(props: {
   readonly query: string;
   readonly selected?: boolean;
   readonly compact?: boolean;
+  readonly sidebar?: boolean;
 }) {
   const isUser = props.match.source === "user";
-  const { materialYouStyleLayoutActive } = useAppearancePreferences();
   const parts = splitHighlightParts(props.match.snippet, props.query);
   return (
     <Text
       className={cn(
         props.compact ? "text-sm" : "text-xs",
         props.selected
-          ? materialYouStyleLayoutActive
-            ? "text-thread-selected-foreground-muted"
-            : "text-user-bubble-foreground-muted"
-          : "text-foreground-muted",
+          ? "text-thread-selected-foreground-muted"
+          : props.sidebar
+            ? "text-drawer-foreground-muted"
+            : "text-foreground-muted",
       )}
       numberOfLines={1}
     >
@@ -69,11 +68,11 @@ export function ThreadSearchMatchExcerpt(props: {
         className={cn(
           props.compact ? "text-sm font-t3-medium" : "text-xs font-t3-medium",
           props.selected
-            ? materialYouStyleLayoutActive
-              ? "text-thread-selected-foreground"
-              : "text-user-bubble-foreground"
+            ? "text-thread-selected-foreground"
             : isUser
-              ? "text-foreground-secondary"
+              ? props.sidebar
+                ? "text-drawer-foreground-muted"
+                : "text-foreground-secondary"
               : "text-adaptive-emerald-600-400",
         )}
       >
@@ -85,12 +84,14 @@ export function ThreadSearchMatchExcerpt(props: {
             props.compact ? "text-sm" : "text-xs",
             part.highlighted && "font-t3-bold",
             props.selected
-              ? materialYouStyleLayoutActive
-                ? "text-thread-selected-foreground"
-                : "text-user-bubble-foreground"
+              ? "text-thread-selected-foreground"
               : part.highlighted
-                ? "text-foreground"
-                : "text-foreground-muted",
+                ? props.sidebar
+                  ? "text-drawer-foreground"
+                  : "text-foreground"
+                : props.sidebar
+                  ? "text-drawer-foreground-muted"
+                  : "text-foreground-muted",
           )}
           key={part.start}
         >

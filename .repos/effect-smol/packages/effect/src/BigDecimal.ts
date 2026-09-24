@@ -106,12 +106,16 @@ const BigDecimalProto: Omit<BigDecimal, "value" | "scale" | "normalized"> = {
 export const isBigDecimal = (u: unknown): u is BigDecimal => hasProperty(u, TypeId)
 
 /**
- * Creates a `BigDecimal` from a `bigint` value and a scale.
+ * Creates a `BigDecimal` from a `bigint` value and a safe integer scale.
  *
  * **When to use**
  *
  * Use to construct a decimal directly from its unscaled integer value and
  * decimal scale.
+ *
+ * **Gotchas**
+ *
+ * Throws a `RangeError` if `scale` is not a safe integer.
  *
  * **Example** (Creating decimals from bigint and scale)
  *
@@ -133,6 +137,9 @@ export const isBigDecimal = (u: unknown): u is BigDecimal => hasProperty(u, Type
  * @since 2.0.0
  */
 export const make = (value: bigint, scale: number): BigDecimal => {
+  if (!Number.isSafeInteger(scale)) {
+    throw new RangeError(`Scale must be a safe integer, got ${scale}`)
+  }
   const o = Object.create(BigDecimalProto)
   o.value = value
   o.scale = scale
@@ -630,6 +637,46 @@ export const divideUnsafe: {
   return divideWithPrecision(self.value, that.value, scale, DEFAULT_PRECISION)
 })
 
+const MAX_COMPARISON_SCALE_ALIGNMENT = 100
+const comparisonPowersOfTen: Array<bigint | undefined> = [bigint1]
+
+const compareBigInt = (self: bigint, that: bigint): Ordering => self === that ? 0 : self < that ? -1 : 1
+
+const compareMagnitude = (self: BigDecimal, that: BigDecimal): Ordering => {
+  const selfDigits = `${self.value < bigint0 ? -self.value : self.value}`
+  const thatDigits = `${that.value < bigint0 ? -that.value : that.value}`
+  const exponentDifference = BigInt(selfDigits.length - thatDigits.length) - BigInt(self.scale) + BigInt(that.scale)
+  if (exponentDifference !== bigint0) return exponentDifference < bigint0 ? -1 : 1
+
+  const length = Math.max(selfDigits.length, thatDigits.length)
+  for (let i = 0; i < length; i++) {
+    const selfDigit = i < selfDigits.length ? selfDigits.charCodeAt(i) : 48
+    const thatDigit = i < thatDigits.length ? thatDigits.charCodeAt(i) : 48
+    if (selfDigit !== thatDigit) return selfDigit < thatDigit ? -1 : 1
+  }
+  return 0
+}
+
+const compare = (self: BigDecimal, that: BigDecimal): Ordering => {
+  if (self.scale === that.scale) return compareBigInt(self.value, that.value)
+
+  const selfSign = sign(self)
+  const thatSign = sign(that)
+  if (selfSign !== thatSign) return selfSign < thatSign ? -1 : 1
+  if (selfSign === 0) return 0
+
+  const scaleDifference = self.scale - that.scale
+  const absoluteScaleDifference = Math.abs(scaleDifference)
+  if (absoluteScaleDifference > MAX_COMPARISON_SCALE_ALIGNMENT) {
+    return selfSign === -1 ? compareMagnitude(that, self) : compareMagnitude(self, that)
+  }
+
+  const powerOfTen = comparisonPowersOfTen[absoluteScaleDifference] ??= bigint10 ** BigInt(absoluteScaleDifference)
+  return scaleDifference > 0
+    ? compareBigInt(self.value, that.value * powerOfTen)
+    : compareBigInt(self.value * powerOfTen, that.value)
+}
+
 /**
  * Provides an `Order` instance for `BigDecimal` that allows comparing and sorting BigDecimal values.
  *
@@ -655,22 +702,7 @@ export const divideUnsafe: {
  * @category instances
  * @since 2.0.0
  */
-export const Order: order.Order<BigDecimal> = order.make((self, that) => {
-  const scmp = order.Number(sign(self), sign(that))
-  if (scmp !== 0) {
-    return scmp
-  }
-
-  if (self.scale > that.scale) {
-    return order.BigInt(self.value, scale(that, self.scale).value)
-  }
-
-  if (self.scale < that.scale) {
-    return order.BigInt(scale(self, that.scale).value, that.value)
-  }
-
-  return order.BigInt(self.value, that.value)
-})
+export const Order: order.Order<BigDecimal> = order.make(compare)
 
 /**
  * Returns `true` if the first argument is less than the second, otherwise `false`.
@@ -1100,17 +1132,7 @@ export const remainderUnsafe: {
  * @category instances
  * @since 2.0.0
  */
-export const Equivalence: Equ.Equivalence<BigDecimal> = Equ.make((self, that) => {
-  if (self.scale > that.scale) {
-    return scale(that, self.scale).value === self.value
-  }
-
-  if (self.scale < that.scale) {
-    return scale(self, that.scale).value === that.value
-  }
-
-  return self.value === that.value
-})
+export const Equivalence: Equ.Equivalence<BigDecimal> = Equ.make((self, that) => compare(self, that) === 0)
 
 /**
  * Checks whether two `BigDecimal`s are equal.

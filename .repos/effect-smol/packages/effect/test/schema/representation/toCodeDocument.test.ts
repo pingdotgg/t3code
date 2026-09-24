@@ -1,4 +1,6 @@
+import { assert } from "@effect/vitest"
 import { JsonSchema, Schema, SchemaRepresentation } from "effect"
+import { TestSchema } from "effect/testing"
 import { describe, it } from "vitest"
 import { assertTrue, deepStrictEqual, strictEqual, throws } from "../../utils/assert.ts"
 
@@ -1067,7 +1069,7 @@ describe("toCodeDocument", () => {
       assertSchema(
         { schema: Schema.Tuple([Schema.optionalKey(Schema.String)]) },
         {
-          codes: makeCode(`Schema.Tuple([Schema.optionalKey(Schema.String)])`, "readonly [string?]")
+          codes: makeCode(`Schema.Tuple([Schema.optionalKey(Schema.String)])`, `readonly [(string)?]`)
         }
       )
       assertSchema(
@@ -1075,10 +1077,58 @@ describe("toCodeDocument", () => {
         {
           codes: makeCode(
             `Schema.Tuple([Schema.optionalKey(Schema.String)]).annotate({ "description": "a" })`,
-            "readonly [string?]"
+            `readonly [(string)?]`
           )
         }
       )
+    })
+
+    it("optional union elements", () => {
+      assertSchema(
+        { schema: Schema.Tuple([Schema.optionalKey(Schema.Union([Schema.String, Schema.Number]))]) },
+        {
+          codes: makeCode(
+            `Schema.Tuple([Schema.optionalKey(Schema.Union([Schema.String, Schema.Number]))])`,
+            `readonly [(string | number)?]`
+          )
+        }
+      )
+      assertSchema(
+        { schema: Schema.Tuple([Schema.optionalKey(Schema.Literals(["a", "b"]))]) },
+        {
+          codes: makeCode(
+            `Schema.Tuple([Schema.optionalKey(Schema.Literals(["a", "b"]))])`,
+            `readonly [("a" | "b")?]`
+          )
+        }
+      )
+    })
+
+    it("optional readonly tuple element", () => {
+      assertSchema(
+        { schema: Schema.Tuple([Schema.optionalKey(Schema.Tuple([Schema.String]))]) },
+        {
+          codes: makeCode(
+            `Schema.Tuple([Schema.optionalKey(Schema.Tuple([Schema.String]))])`,
+            `readonly [(readonly [string])?]`
+          )
+        }
+      )
+    })
+
+    it("optional union element imported from JSON Schema", () => {
+      assertJsonSchema({
+        schema: {
+          type: "array",
+          prefixItems: [{ anyOf: [{ type: "string" }, { type: "number" }] }],
+          items: false
+        }
+      }, {
+        codes: makeCode(
+          `Schema.Tuple([Schema.optionalKey(Schema.Union([Schema.String, Schema.Number.check(Schema.isFinite())]))])`,
+          `readonly [(string | number)?]`
+        )
+      })
     })
 
     it("annotateKey", () => {
@@ -1114,6 +1164,20 @@ describe("toCodeDocument", () => {
 
   it("TupleWithRest", () => {
     assertSchema(
+      {
+        schema: Schema.TupleWithRest(
+          Schema.Tuple([Schema.optionalKey(Schema.Union([Schema.String, Schema.Number]))]),
+          [Schema.Boolean]
+        )
+      },
+      {
+        codes: makeCode(
+          `Schema.TupleWithRest(Schema.Tuple([Schema.optionalKey(Schema.Union([Schema.String, Schema.Number]))]), [Schema.Boolean])`,
+          `readonly [(string | number)?, ...Array<boolean>]`
+        )
+      }
+    )
+    assertSchema(
       { schema: Schema.TupleWithRest(Schema.Tuple([Schema.String]), [Schema.Number]) },
       {
         codes: makeCode(
@@ -1147,6 +1211,42 @@ describe("toCodeDocument", () => {
   })
 
   describe("Struct", () => {
+    it("preserves a required __proto__ property in generated code", async () => {
+      const schema = Schema.Struct({ ["__proto__"]: Schema.String })
+      assertSchema({ schema }, {
+        codes: makeCode(
+          `Schema.Struct({ ["__proto__"]: Schema.String })`,
+          `{ readonly "__proto__": string }`
+        )
+      })
+
+      const document = SchemaRepresentation.toCodeDocument(SchemaRepresentation.toRepresentations([schema.ast]))
+      const generated: typeof schema = new Function("Schema", `return ${document.codes[0].runtime}`)(Schema)
+      assert.deepStrictEqual(Object.keys(generated.fields), ["__proto__"])
+      const decoding = new TestSchema.Asserts(generated).decoding()
+      await decoding.succeed({ ["__proto__"]: "value" })
+      await decoding.fail({}, `Missing key\n  at ["__proto__"]`)
+      await decoding.fail({ ["__proto__"]: 123 }, `Expected string\n  at ["__proto__"]`)
+    })
+
+    it("preserves an optional __proto__ property in generated code", async () => {
+      const schema = Schema.Struct({ ["__proto__"]: Schema.optionalKey(Schema.String) })
+      assertSchema({ schema }, {
+        codes: makeCode(
+          `Schema.Struct({ ["__proto__"]: Schema.optionalKey(Schema.String) })`,
+          `{ readonly "__proto__"?: string }`
+        )
+      })
+
+      const document = SchemaRepresentation.toCodeDocument(SchemaRepresentation.toRepresentations([schema.ast]))
+      const generated: typeof schema = new Function("Schema", `return ${document.codes[0].runtime}`)(Schema)
+      assert.deepStrictEqual(Object.keys(generated.fields), ["__proto__"])
+      const decoding = new TestSchema.Asserts(generated).decoding()
+      await decoding.succeed({})
+      await decoding.succeed({ ["__proto__"]: "value" })
+      await decoding.fail({ ["__proto__"]: 123 }, `Expected string\n  at ["__proto__"]`)
+    })
+
     it("empty struct", () => {
       assertSchema({ schema: Schema.Struct({}) }, {
         codes: makeCode("Schema.Struct({  })", "{  }")

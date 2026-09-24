@@ -11,6 +11,7 @@ import {
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
+  type CommandPaletteActionItem,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
 
@@ -439,6 +440,54 @@ describe("buildThreadActionItems", () => {
     ]);
   });
 
+  it("orders title matches by recent activity before older prefix matches", () => {
+    const threads = [
+      makeThread({
+        id: ThreadId.make("old-prefix"),
+        title: "Convex InvalidCursor in Convex threads query",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-02T00:00:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.make("recent-title"),
+        title: "Disable Convex schema validation",
+        createdAt: "2025-12-01T00:00:00.000Z",
+        updatedAt: "2026-03-24T00:00:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.make("recent-content"),
+        title: "Fix schema validation",
+        createdAt: "2026-03-25T00:00:00.000Z",
+        updatedAt: "2026-03-25T00:00:00.000Z",
+      }),
+    ];
+    const items = buildThreadActionItems({
+      threads,
+      projectTitleById: new Map([[PROJECT_ID, "T3 Code"]]),
+      sortOrder: "created_at",
+      icon: null,
+      getContentMatch: (thread) =>
+        thread.id === ThreadId.make("recent-content")
+          ? { source: "user", snippet: "Please check Convex", query: "convex" }
+          : undefined,
+      runThread: async () => undefined,
+    });
+
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "convex",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      threadSearchItems: items,
+    });
+
+    expect(groups[0]?.items.map((item) => item.value)).toEqual([
+      "thread:recent-title",
+      "thread:old-prefix",
+      "thread:recent-content",
+    ]);
+  });
+
   it("preserves thread project-name matches when there is no stronger title match", () => {
     const group: CommandPaletteGroup = {
       value: "threads-search",
@@ -581,6 +630,40 @@ describe("buildThreadActionItems", () => {
       query: "reconnect",
     });
     expect(item?.description).toBe("T3 Code · #feat/search");
+  });
+
+  it("surfaces threads when the query is their ID, without outranking title matches", () => {
+    const idThread = makeThread({
+      id: ThreadId.make("thread-alpha-1234"),
+      title: "Unrelated work",
+      updatedAt: "2026-03-05T00:00:00.000Z",
+    });
+    const titleThread = makeThread({
+      id: ThreadId.make("thread-other-9999"),
+      title: "Fix thread-alpha-1234 flakes",
+      updatedAt: "2026-03-04T00:00:00.000Z",
+    });
+    const items = buildThreadActionItems({
+      threads: [idThread, titleThread],
+      projectTitleById: new Map([[PROJECT_ID, "T3 Code"]]),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async (_thread) => undefined,
+    });
+
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "  THREAD-ALPHA-1234  ",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      settingsSearchItems: [],
+      threadSearchItems: items,
+    });
+
+    expect(groups.flatMap((group) => group.items)).toEqual([
+      expect.objectContaining({ value: `thread:${titleThread.id}` }),
+      expect.objectContaining({ value: `thread:${idThread.id}` }),
+    ]);
   });
 
   it("prefers renderDescription when provided", () => {
@@ -737,4 +820,34 @@ it.each([
   expect(groups.flatMap((group) => group.items.map((item) => item.title))).toEqual([
     "Implementation",
   ]);
+});
+
+describe("filterCommandPaletteGroups", () => {
+  it("sorts secondary settings results after other matches", () => {
+    const item = (value: string, title: string, secondary?: boolean) =>
+      ({
+        kind: "action",
+        value,
+        title,
+        searchTerms: [title, "General"],
+        icon: null,
+        run: async () => undefined,
+        ...(secondary ? { secondary } : {}),
+      }) satisfies CommandPaletteActionItem;
+    const [group] = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "model",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      settingsSearchItems: [
+        item("setting:keybinding-modelPicker.toggle", "Model Picker: Toggle", true),
+        item("setting:default-model", "Default model"),
+      ],
+      threadSearchItems: [],
+    });
+    expect(group?.items.map((entry) => entry.value)).toEqual([
+      "setting:default-model",
+      "setting:keybinding-modelPicker.toggle",
+    ]);
+  });
 });

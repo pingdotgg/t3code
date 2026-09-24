@@ -82,30 +82,30 @@ export class ThreadCliRequestError extends Schema.TaggedError<ThreadCliRequestEr
   }
 }
 
-const threadArgument = Argument.string("thread").pipe(
+const threadArgument = Argument.String("thread").pipe(
   Argument.withDescription("Thread id. Defaults to T3_THREAD_ID inside a T3 agent session."),
   Argument.optional,
 );
 
-const forFlag = Flag.string("for").pipe(
+const forFlag = Flag.String("for").pipe(
   Flag.withSchema(DurationFromString),
   Flag.withDescription("Snooze duration, for example 1h, 10d, or 2 weeks."),
   Flag.optional,
 );
 
-const untilFlag = Flag.string("until").pipe(
+const untilFlag = Flag.String("until").pipe(
   Flag.withDescription("Absolute ISO-8601 wake time."),
   Flag.optional,
 );
 
-const jsonFlag = Flag.boolean("json").pipe(
+const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription(
     "Emit JSON instead of human-readable output. With --follow, emits one JSON object per line.",
   ),
   Flag.withDefault(false),
 );
 
-const followFlag = Flag.boolean("follow").pipe(
+const followFlag = Flag.Boolean("follow").pipe(
   Flag.withAlias("f"),
   Flag.withDescription(
     "Stream assistant text live as it is written; activity lines go to stderr. Implies --wait for send/new.",
@@ -219,13 +219,11 @@ export function resolveThreadCliWakeTime(input: {
 
 /** Pretty-printed JSON for `--json` output; these are plain CLI views, not wire payloads. */
 export function formatThreadCliJson(value: unknown): string {
-  // @effect-diagnostics-next-line preferSchemaOverJson:off
   return JSON.stringify(value, null, 2);
 }
 
 /** Single-line JSON for NDJSON streaming output. */
 export function formatThreadCliJsonLine(value: unknown): string {
-  // @effect-diagnostics-next-line preferSchemaOverJson:off
   return JSON.stringify(value);
 }
 
@@ -544,7 +542,7 @@ const threadSnoozeCommand = Command.make("snooze", {
 const threadInterruptCommand = Command.make("interrupt", {
   ...projectLocationFlags,
   thread: threadArgument,
-  wait: Flag.boolean("wait").pipe(
+  wait: Flag.Boolean("wait").pipe(
     Flag.withDescription("Wait until the turn has actually stopped."),
     Flag.withDefault(false),
   ),
@@ -651,7 +649,7 @@ const threadStatusCommand = Command.make("status", {
 const threadListCommand = Command.make("list", {
   ...projectLocationFlags,
   json: jsonFlag,
-  all: Flag.boolean("all").pipe(
+  all: Flag.Boolean("all").pipe(
     Flag.withDescription("Include archived threads."),
     Flag.withDefault(false),
   ),
@@ -679,7 +677,7 @@ const threadListCommand = Command.make("list", {
 const threadShowCommand = Command.make("show", {
   ...projectLocationFlags,
   thread: threadArgument,
-  turns: Flag.integer("turns").pipe(
+  turns: Flag.Int("turns").pipe(
     Flag.withDescription("Number of recent turns to include. Default: 5."),
     Flag.withDefault(5),
   ),
@@ -780,18 +778,18 @@ const startFollowing = Effect.fn("startFollowing")(function* (input: {
 
 const readThreadCliStdin = () => (process.stdin.isTTY ? undefined : NodeFS.readFileSync(0, "utf8"));
 
-const waitFlag = Flag.boolean("wait").pipe(
+const waitFlag = Flag.Boolean("wait").pipe(
   Flag.withDescription("Wait for the turn to finish and print the assistant reply."),
   Flag.withDefault(false),
 );
 
-const timeoutFlag = Flag.string("timeout").pipe(
+const timeoutFlag = Flag.String("timeout").pipe(
   Flag.withSchema(DurationFromString),
   Flag.withDescription("Maximum time to wait with --wait or --follow. Default: 30m."),
   Flag.optional,
 );
 
-const messageArgument = Argument.string("message").pipe(
+const messageArgument = Argument.String("message").pipe(
   Argument.withDescription("Message text. Omit or pass `-` to read it from stdin."),
   Argument.optional,
 );
@@ -912,7 +910,7 @@ const startThreadCliTurn = Effect.fn("startThreadCliTurn")(function* (input: {
 
 const threadSendCommand = Command.make("send", {
   ...projectLocationFlags,
-  thread: Argument.string("thread").pipe(
+  thread: Argument.String("thread").pipe(
     Argument.withDescription("Thread id. Use `-` for T3_THREAD_ID inside a T3 agent session."),
   ),
   message: messageArgument,
@@ -968,21 +966,21 @@ const threadSendCommand = Command.make("send", {
 
 const threadNewCommand = Command.make("new", {
   ...projectLocationFlags,
-  project: Flag.string("project").pipe(
+  project: Flag.String("project").pipe(
     Flag.withDescription(
       "Project id, title, or workspace path. Defaults to the project containing the current directory.",
     ),
     Flag.optional,
   ),
-  title: Flag.string("title").pipe(
+  title: Flag.String("title").pipe(
     Flag.withDescription("Thread title. Defaults to the first line of the message."),
     Flag.optional,
   ),
-  provider: Flag.string("provider").pipe(
+  provider: Flag.String("provider").pipe(
     Flag.withDescription("Provider instance id, for example `codex` or `claudeAgent`."),
     Flag.optional,
   ),
-  model: Flag.string("model").pipe(
+  model: Flag.String("model").pipe(
     Flag.withDescription("Model id. Required when --provider differs from the project default."),
     Flag.optional,
   ),

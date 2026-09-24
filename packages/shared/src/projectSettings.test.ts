@@ -9,7 +9,9 @@ import { createModelSelection } from "./model.ts";
 import {
   clearProjectSettingsOverrides,
   hasProjectSettingsOverrides,
+  resolveProjectFileBackedSetting,
   resolveProjectSettings,
+  resolveWorktreeCleanup,
   withProjectSettingsOverrides,
 } from "./projectSettings.ts";
 import { applyServerSettingsPatch } from "./serverSettings.ts";
@@ -27,6 +29,24 @@ describe("resolveProjectSettings", () => {
     expect(resolveProjectSettings(DEFAULT_SERVER_SETTINGS, null).settings).toBe(
       DEFAULT_SERVER_SETTINGS,
     );
+  });
+
+  it("ignores an override left undefined by a forward-compatible decode", () => {
+    const resolved = resolveProjectSettings(
+      {
+        ...DEFAULT_SERVER_SETTINGS,
+        defaultRuntimeMode: "full-access",
+        projectSettingsOverrides: { [projectId]: { defaultRuntimeMode: undefined } as never },
+      },
+      projectId,
+    );
+    expect(resolved.settings.defaultRuntimeMode).toBe("full-access");
+    expect(resolved.sources.defaultRuntimeMode).toBe("environment");
+    expect(
+      hasProjectSettingsOverrides({
+        projectSettingsOverrides: { [projectId]: { defaultRuntimeMode: undefined } as never },
+      }),
+    ).toBe(false);
   });
 
   it("treats a null project like an absent one before the shell snapshot arrives", () => {
@@ -114,6 +134,81 @@ describe("resolveProjectSettings", () => {
     const resolved = resolveProjectSettings(settings, projectId);
     expect(resolved.settings.defaultModelSelection).toBeNull();
     expect(resolved.sources.defaultModelSelection).toBe("environment");
+  });
+});
+
+describe("resolveProjectSettings with a t3.json", () => {
+  it("walks project override, environment value, file, then built-in for file-backed keys", () => {
+    const file = { defaultThreadEnvMode: "worktree" as const };
+    const fromOverride = resolveProjectSettings(
+      {
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: { [projectId]: { defaultThreadEnvMode: "local" } },
+      },
+      projectId,
+      null,
+      file,
+    );
+    expect(fromOverride.settings.defaultThreadEnvMode).toBe("local");
+    expect(fromOverride.sources.defaultThreadEnvMode).toBe("project");
+
+    const fromEnvironment = resolveProjectSettings(
+      { ...DEFAULT_SERVER_SETTINGS, defaultThreadEnvMode: "local" },
+      projectId,
+      null,
+      file,
+    );
+    expect(fromEnvironment.settings.defaultThreadEnvMode).toBe("local");
+    expect(fromEnvironment.sources.defaultThreadEnvMode).toBe("environment");
+
+    const fromFile = resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId, null, file);
+    expect(fromFile.settings.defaultThreadEnvMode).toBe("worktree");
+    expect(fromFile.sources.defaultThreadEnvMode).toBe("t3.json");
+
+    const builtIn = resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId, null, null);
+    expect(builtIn.settings.defaultThreadEnvMode).toBe("local");
+    expect(builtIn.sources.defaultThreadEnvMode).toBe("environment");
+    // A stored null override defers like an unset one and is not reported
+    // as the project's value.
+    const nullOverride = resolveProjectSettings(
+      {
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: { [projectId]: { defaultThreadEnvMode: null } as never },
+      },
+      projectId,
+      null,
+      file,
+    );
+    expect(nullOverride.settings.defaultThreadEnvMode).toBe("worktree");
+    expect(nullOverride.sources.defaultThreadEnvMode).toBe("t3.json");
+    // A file that does not mention the key leaves the source alone too.
+    expect(
+      resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId, null, {}).sources
+        .defaultThreadEnvMode,
+    ).toBe("environment");
+  });
+
+  it("resolves one key from the settings tier, then the file, then the built-in", () => {
+    expect(
+      resolveProjectFileBackedSetting("worktreeSubmodules", "none", {
+        worktreeSubmodules: "top-level",
+      }),
+    ).toEqual({ value: "none", source: "environment" });
+    expect(
+      resolveProjectFileBackedSetting("worktreeSubmodules", null, {
+        worktreeSubmodules: "top-level",
+      }),
+    ).toEqual({ value: "top-level", source: "t3.json" });
+    expect(resolveProjectFileBackedSetting("worktreeSubmodules", null, null)).toEqual({
+      value: "recursive",
+      source: "environment",
+    });
+  });
+
+  it("leaves settings untouched when no file is passed", () => {
+    expect(resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId).settings).toBe(
+      DEFAULT_SERVER_SETTINGS,
+    );
   });
 });
 
@@ -212,5 +307,62 @@ describe("projectSettingsOverrides patches", () => {
       ...settings.projectSettingsOverrides,
       [otherProjectId]: { defaultThreadEnvMode: "worktree" },
     });
+  });
+});
+
+describe("resolveWorktreeCleanup", () => {
+  it("inherits machine rules, disables one project and keeps custom rules isolated", () => {
+    const machine = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      storageCleanup: { worktreeAfterDays: 8, worktreeOnDelete: true, logsAfterDays: 3 },
+    });
+    const inherited = resolveWorktreeCleanup(machine, projectId);
+    const off = applyServerSettingsPatch(machine, {
+      projectSettingsOverrides: {
+        [projectId]: { worktreeCleanup: { mode: "off" } },
+      },
+    });
+    expect(resolveWorktreeCleanup(off, projectId)).toEqual({
+      worktreeAfterDays: null,
+      worktreeOnDelete: false,
+      worktreeOnMerge: false,
+      worktreeUnchanged: false,
+    });
+    expect(resolveWorktreeCleanup(off, otherProjectId)).toEqual(inherited);
+    const custom = applyServerSettingsPatch(off, {
+      projectSettingsOverrides: {
+        [projectId]: {
+          worktreeCleanup: { mode: "custom", rules: { ...inherited, worktreeAfterDays: 15 } },
+        },
+      },
+    });
+    expect(resolveWorktreeCleanup(custom, projectId).worktreeAfterDays).toBe(15);
+    expect(custom.storageCleanup.logsAfterDays).toBe(3);
+    const reset = applyServerSettingsPatch(custom, {
+      projectSettingsOverrides: {
+        [projectId]: clearProjectSettingsOverrides(custom, projectId, ["worktreeCleanup"]),
+      },
+    });
+    expect(resolveWorktreeCleanup(reset, projectId)).toEqual(inherited);
+  });
+  it("completes partial machine custom rules and preserves them across edits", () => {
+    const initial = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      storageCleanup: { worktreeAfterDays: 8, worktreeOnDelete: true },
+    });
+    const custom = applyServerSettingsPatch(initial, {
+      worktreeCleanup: { mode: "custom", rules: { worktreeOnMerge: true } },
+    });
+    const edited = applyServerSettingsPatch(custom, {
+      worktreeCleanup: { mode: "custom", rules: { worktreeAfterDays: 15 } },
+    });
+    expect(resolveWorktreeCleanup(edited, null)).toEqual({
+      worktreeAfterDays: 15,
+      worktreeOnDelete: true,
+      worktreeOnMerge: true,
+      worktreeUnchanged: false,
+    });
+    expect(
+      resolveWorktreeCleanup(applyServerSettingsPatch(edited, { worktreeCleanup: null }), null)
+        .worktreeAfterDays,
+    ).toBe(8);
   });
 });

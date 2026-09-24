@@ -1,3 +1,4 @@
+import type { DeviceToolVersions } from "@t3tools/contracts";
 /**
  * Pinned installs of the two external tools device support is built on.
  *
@@ -25,9 +26,9 @@ import * as Semaphore from "effect/Semaphore";
 import * as ProcessRunner from "../processRunner.ts";
 
 const DEVICE_HUB_PACKAGE = "expo-device-hub";
-export const DEVICE_HUB_VERSION = "0.9.0";
+export const DEVICE_HUB_VERSION = "0.10.1";
 const AGENT_DEVICE_PACKAGE = "agent-device";
-export const AGENT_DEVICE_VERSION = "0.20.10";
+export const AGENT_DEVICE_VERSION = "0.21.12";
 
 const INSTALL_TIMEOUT = Duration.minutes(10);
 const installLock = Semaphore.makeUnsafe(1);
@@ -221,3 +222,46 @@ export const isDeviceHubInstalled = (baseDir: string) =>
 
 export const isAgentDeviceInstalled = (baseDir: string) =>
   isToolInstalled(baseDir, AGENT_DEVICE_SPEC, (paths) => paths.agentDevice);
+
+/** Read completed installs without downloading or starting either tool. */
+export const deviceToolVersions = Effect.fn("DeviceToolchain.versions")(function* (
+  baseDir: string,
+  running: { hub?: string; agent?: string } = {},
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const inspect = Effect.fn("DeviceToolchain.inspect")(function* (spec: ToolSpec) {
+    const directory = path.join(baseDir, "tools", spec.name);
+    const names = yield* fs.readDirectory(directory).pipe(
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.succeed([]),
+      ),
+    );
+    const versions = yield* Effect.filter(names, (version) =>
+      /^[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$/.test(version)
+        ? Effect.gen(function* () {
+            const paths = toolPaths(path, baseDir, { ...spec, version });
+            const sentinel = yield* fs.readFileString(paths.sentinelPath).pipe(
+              Effect.catchIf(
+                (error) => error.reason._tag === "NotFound",
+                () => Effect.succeed(null),
+              ),
+            );
+            return sentinel?.trim() === version && (yield* fs.exists(paths.entryPath));
+          })
+        : Effect.succeed(false),
+    );
+    return {
+      requiredVersion: spec.version,
+      installedVersions: versions.sort(),
+      runningVersion: (spec.name === DEVICE_HUB_PACKAGE ? running.hub : running.agent) ?? null,
+    };
+  });
+  return yield* Effect.gen(function* () {
+    return {
+      hub: yield* inspect(HUB_SPEC),
+      agent: yield* inspect(AGENT_DEVICE_SPEC),
+    } satisfies DeviceToolVersions;
+  }).pipe(Effect.orElseSucceed(() => undefined));
+});

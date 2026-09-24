@@ -4,19 +4,21 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
-import { buildEventTelemetry } from "../../Telemetry.ts";
+import { buildEventTelemetry } from "../../TelemetryRuntime.ts";
 import { isScopeEjected } from "../Workers/HttpServer.ts";
 import { getWorkerExport } from "../Workers/WorkerBridge.ts";
+import type {
+  WorkflowExport,
+  WorkflowImpl,
+  WorkflowStepConfig,
+  WorkflowStepEvent,
+  WorkflowTaskOptions,
+} from "./Workflow.ts";
 import {
   WorkflowEvent as WorkflowEventService,
-  type WorkflowExport,
-  type WorkflowImpl,
   WorkflowStep,
   WorkflowStepContext,
-  type WorkflowStepConfig,
-  type WorkflowStepEvent,
-  type WorkflowTaskOptions,
-} from "./Workflow.ts";
+} from "./WorkflowRuntime.ts";
 
 /**
  * Create a WorkflowBridge class that extends `WorkflowEntrypoint` and
@@ -131,7 +133,7 @@ const wrapWorkflowEvent = (event: any): WorkflowEventService["Service"] => ({
       : new Date(event.timestamp),
   instanceId: event.instanceId ?? "",
   workflowName: event.workflowName ?? "",
-  schedule: event.schedule,
+  schedule: event.schedule ?? undefined,
 });
 
 export const wrapWorkflowStep = (step: any): WorkflowStep["Service"] => ({
@@ -192,6 +194,8 @@ export const wrapWorkflowStep = (step: any): WorkflowStep["Service"] => ({
 const toWorkflowStepConfig = (
   options: WorkflowTaskOptions<any, any, any>,
 ): WorkflowStepConfig | undefined => {
-  if (!options.retries && !options.timeout) return undefined;
-  return { retries: options.retries, timeout: options.timeout };
+  const config: WorkflowStepConfig = {};
+  if (options.retries) config.retries = options.retries;
+  if (options.timeout !== undefined) config.timeout = options.timeout;
+  return Object.keys(config).length > 0 ? config : undefined;
 };

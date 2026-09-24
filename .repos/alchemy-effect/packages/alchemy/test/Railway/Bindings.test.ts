@@ -1,12 +1,12 @@
+import { RailwayAuth } from "@/Railway/AuthProvider.ts";
+import { fromAuthProvider } from "@/Railway/Credentials.ts";
 import { fromCredentials } from "@distilled.cloud/aws/Credentials";
 import * as AwsEndpoint from "@distilled.cloud/aws/Endpoint";
 import type { RegionName } from "@distilled.cloud/aws/Region";
 import * as S3 from "@distilled.cloud/aws/s3";
-import { CredentialsFromEnv } from "@distilled.cloud/railway";
 import * as railway from "@distilled.cloud/railway";
 import * as Alchemy from "@/index.ts";
 import * as Railway from "@/Railway";
-import { RailwayRetryPolicy } from "@/Railway/RetryPolicy.ts";
 import * as Test from "@/Test/Alchemy";
 import { describe, expect } from "alchemy-test";
 import * as Data from "effect/Data";
@@ -15,7 +15,6 @@ import * as Layer from "effect/Layer";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import BucketApi, {
@@ -37,13 +36,7 @@ const logLevel = Effect.provideService(
 
 const distilled = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        RailwayRetryPolicy,
-        CredentialsFromEnv,
-        FetchHttpClient.layer,
-      ),
-    ),
+    Effect.provide(fromAuthProvider().pipe(Layer.provide(RailwayAuth))),
   );
 
 class NotReady extends Data.TaggedError("NotReady")<{
@@ -84,7 +77,7 @@ const readServiceVariables = (
     })
     .pipe(
       Effect.map(asVariableMap),
-      Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
+      railway.catchTags(["RailwayNotFound"], () =>
         Effect.succeed({} as Record<string, string>),
       ),
     );
@@ -95,11 +88,20 @@ const firstCredentials = (
   projectId: string,
 ) =>
   railway
-    .bucketS3Credentials({
-      bucketId,
-      environmentId,
-      projectId,
-    })
+    .bucketS3Credentials(
+      {
+        bucketId,
+        environmentId,
+        projectId,
+      },
+      {
+        bucketName: true,
+        endpoint: true,
+        accessKeyId: true,
+        secretAccessKey: true,
+        region: true,
+      },
+    )
     .pipe(
       Effect.flatMap((items) => {
         const first = items[0];
@@ -172,9 +174,9 @@ const Stack = Alchemy.Stack(
   }),
 );
 
-const stack = beforeAll(deploy(Stack), { timeout: 3_600_000 });
+const stack = beforeAll(deploy(Stack), { timeout: 120_000 });
 afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), {
-  timeout: 3_600_000,
+  timeout: 120_000,
 });
 
 const retryTransient = {
@@ -267,7 +269,7 @@ describe("Railway Bindings", () => {
         expect(bucketBody.length).toBeGreaterThan(0);
       }
     }).pipe(logLevel),
-    { timeout: 3_600_000 },
+    { timeout: 120_000 },
   );
 
   describe("ReadWriteRedis", () => {
@@ -318,7 +320,7 @@ describe("Railway Bindings", () => {
         const got = yield* Railway.runRedisCommand(url, "GET", ["marker"]);
         expect(got).toEqual(REDIS_VALUE);
       }).pipe(logLevel),
-      { timeout: 3_600_000 },
+      { timeout: 120_000 },
     );
   });
 
@@ -383,7 +385,7 @@ describe("Railway Bindings", () => {
             : yield* Stream.mkString(Stream.decodeText(got.Body));
         expect(text).toEqual(OBJECT_BODY);
       }).pipe(logLevel),
-      { timeout: 3_600_000 },
+      { timeout: 120_000 },
     );
   });
 });

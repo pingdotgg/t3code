@@ -1,0 +1,113 @@
+{
+  "name": "@alchemy.run/pkg",
+  "version": "2.0.0-beta.78",
+  "description": "Preview package registry for pull requests: a Cloudflare Worker verified by GitHub Actions runs, plus the pkg CLI that packs and publishes workspace packages.",
+  "homepage": "https://alchemy.run",
+  "license": "Apache-2.0",
+  "author": "Sam Goodwin <sam@alchemy.run>",
+  "keywords": [
+    "alchemy",
+    "cloudflare",
+    "effect",
+    "preview-packages",
+    "pull-request"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "packages/pkg"
+  },
+  "bugs": {
+    "url": "https://github.com/alchemy-run/alchemy/issues"
+  },
+  "bin": {
+    "pkg": "./src/cli/bin.ts"
+  },
+  "files": [
+    "dist",
+    "migrations",
+    "src",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "tsc -b && bun ../../scripts/copy-package-files.ts pkg",
+    "test": "bun test ./test"
+  },
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./Registry": {
+      "bun": "./src/Registry.ts",
+      "import": "./src/Registry.ts"
+    },
+    "./Manifest": {
+      "bun": "./src/Manifest.ts",
+      "import": "./src/Manifest.ts"
+    },
+    "./Protocol": {
+      "bun": "./src/Protocol.ts",
+      "import": "./src/Protocol.ts"
+    }
+  },
+  "dependencies": {
+    "@distilled.cloud/github": "workspace:*",
+    "alchemy": "workspace:*",
+    "effect": "catalog:",
+    "modern-tar": "^0.8.4"
+  },
+  "peerDependencies": {
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "@effect/platform-bun": {
+      "optional": true
+    },
+    "@effect/platform-node": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "bin": {
+      "pkg": "./dist/cli/bin.js"
+    },
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "bun": "./src/index.ts",
+        "worker": "./src/index.ts",
+        "import": "./dist/index.js"
+      },
+      "./Registry": {
+        "types": "./dist/Registry.d.ts",
+        "bun": "./src/Registry.ts",
+        "worker": "./src/Registry.ts",
+        "import": "./dist/Registry.js"
+      },
+      "./Manifest": {
+        "types": "./dist/Manifest.d.ts",
+        "bun": "./src/Manifest.ts",
+        "worker": "./src/Manifest.ts",
+        "import": "./dist/Manifest.js"
+      },
+      "./Protocol": {
+        "types": "./dist/Protocol.d.ts",
+        "bun": "./src/Protocol.ts",
+        "worker": "./src/Protocol.ts",
+        "import": "./dist/Protocol.js"
+      }
+    }
+  },
+  "devDependencies": {
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@types/bun": "catalog:",
+    "typescript": "catalog:"
+  }
+}

@@ -7,15 +7,13 @@ import type { Compression, CompressionAlgorithm, CompressionOptions } from "../H
 import * as Response from "../HttpServerResponse.ts"
 
 /** @internal */
-export const varyAcceptEncoding = (headers: Headers.Headers): string | undefined => {
+export const varyWith = (headers: Headers.Headers, dimension: string): string => {
   const vary = headers["vary"]
   if (vary === undefined) {
-    return "Accept-Encoding"
+    return dimension
   }
   const members = vary.split(",").map((member) => member.trim().toLowerCase())
-  return members.includes("*") || members.includes("accept-encoding")
-    ? undefined
-    : `${vary}, Accept-Encoding`
+  return members.includes("*") || members.includes(dimension.toLowerCase()) ? vary : `${vary}, ${dimension}`
 }
 
 /** @internal */
@@ -26,10 +24,9 @@ export const wrapCompression = (impl: Compression): Compression => ({
       if (compressed === response) {
         return response
       }
-      const headers: Record<string, string> = { "content-encoding": algorithm }
-      const vary = varyAcceptEncoding(compressed.headers)
-      if (vary !== undefined) {
-        headers["vary"] = vary
+      const headers: Record<string, string> = {
+        "content-encoding": algorithm,
+        vary: varyWith(compressed.headers, "Accept-Encoding")
       }
       const etag = compressed.headers["etag"]
       if (etag !== undefined && !etag.startsWith("W/")) {
@@ -70,7 +67,7 @@ export const makeCompressionWeb = (options: {
         return Effect.succeed(streamBody(
           response,
           () => options.transform(algorithm, opts)(singleChunkStream(data)),
-          body.contentType
+          response.headers["content-type"] ?? body.contentType
         ))
       }
       case "Stream": {
@@ -78,7 +75,7 @@ export const makeCompressionWeb = (options: {
         return Effect.succeed(streamBody(
           response,
           () => options.transform(algorithm, opts)(Stream.toReadableStream(stream)),
-          body.contentType
+          response.headers["content-type"] ?? body.contentType
         ))
       }
       case "Raw": {
@@ -88,7 +85,9 @@ export const makeCompressionWeb = (options: {
         }
         return Effect.succeed(setBodyWithoutLength(
           response,
-          HttpBody.raw(options.transform(algorithm, opts)(readable), { contentType: body.contentType })
+          HttpBody.raw(options.transform(algorithm, opts)(readable), {
+            contentType: response.headers["content-type"] ?? body.contentType
+          })
         ))
       }
       default: {

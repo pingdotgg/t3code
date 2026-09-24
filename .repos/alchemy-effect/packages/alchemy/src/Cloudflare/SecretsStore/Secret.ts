@@ -17,7 +17,7 @@ import { isResourceOfType, Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import {
   generateLocalId,
-  LOCAL_ENTRY_URL,
+  LOCAL_PROVIDERS_URL,
   localRuntimeServices,
 } from "../LocalRuntime.ts";
 import type { Providers } from "../Providers.ts";
@@ -391,7 +391,7 @@ export const SecretProviderLive = () =>
 export const SecretProviderLocal = () =>
   RpcProvider.effect(
     Secret,
-    LOCAL_ENTRY_URL,
+    LOCAL_PROVIDERS_URL,
     Effect.gen(function* () {
       // The local runtime services (workerd `Runtime`, binding plugins) and
       // the HTTP client are resolved once at layer build and closed over —
@@ -466,7 +466,7 @@ export const StoreSecretProvider = () =>
     // The local provider's reconcile/delete boot an ephemeral workerd
     // gateway to seed the simulator, so it needs the shared local runtime
     // layer. Under `alchemy dev` the provider is an RPC stub (this gated
-    // layer is empty and unused) and the sidecar entry (`../Local.ts`)
+    // layer is empty and unused) and the provider group (`../Local.ts`)
     // supplies the real runtime; without the proxy the provider builds
     // in-process and this layer is real.
     local: () =>

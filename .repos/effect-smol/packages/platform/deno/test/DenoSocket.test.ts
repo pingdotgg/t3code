@@ -4,10 +4,25 @@ import { Deferred, Effect, Fiber, Queue } from "effect"
 import * as Stream from "effect/Stream"
 import * as Socket from "effect/unstable/socket/Socket"
 
+const ca = Deno.readTextFileSync(new URL("./fixtures/tls/ca.pem", import.meta.url))
+const cert = Deno.readTextFileSync(new URL("./fixtures/tls/cert.pem", import.meta.url))
+const key = Deno.readTextFileSync(new URL("./fixtures/tls/key.pem", import.meta.url))
+
 const makeTcpServer = Effect.acquireRelease(
   Effect.sync(() => Deno.listen({ hostname: "127.0.0.1", port: 0 })),
   (listener) => Effect.sync(() => listener.close())
 )
+
+const makeTlsServer = Effect.acquireRelease(
+  Effect.sync(() => Deno.listenTls({ hostname: "127.0.0.1", port: 0, cert, key })),
+  (listener) => Effect.sync(() => listener.close())
+)
+
+const runTlsEchoServer = (listener: Deno.TlsListener) =>
+  Effect.tryPromise({
+    try: () => listener.accept().then((conn) => conn.readable.pipeTo(conn.writable)),
+    catch: (cause) => cause
+  }).pipe(Effect.ignore)
 
 const makeTempDir = Effect.acquireRelease(
   Effect.promise(() => Deno.makeTempDir()),
@@ -83,6 +98,40 @@ const replaceDenoConnect = (
   )
 
 describe("DenoSocket", () => {
+  it.effect("upgrades a TCP reader to TLS", () =>
+    Effect.gen(function*() {
+      const listener = yield* makeTlsServer
+      yield* runTlsEchoServer(listener).pipe(Effect.forkScoped)
+      const address = listener.addr as Deno.NetAddr
+      const socket = yield* DenoSocket.makeTcp({ hostname: address.hostname, port: address.port })
+      const writer = yield* socket.writer
+      const { pull, upgrade } = yield* socket.reader
+
+      yield* upgrade({ ca: [ca] })
+      yield* writer.writeAll(["Hello", "World"])
+
+      const decoder = new TextDecoder()
+      let output = ""
+      while (output.length < 10) {
+        for (const chunk of yield* pull) output += typeof chunk === "string" ? chunk : decoder.decode(chunk)
+      }
+      assert.strictEqual(output, "HelloWorld")
+    }))
+
+  it.effect("reports TLS handshake failures as SocketUpgradeError", () =>
+    Effect.gen(function*() {
+      const listener = yield* makeTlsServer
+      yield* runTlsEchoServer(listener).pipe(Effect.forkScoped)
+      const address = listener.addr as Deno.NetAddr
+      const socket = yield* DenoSocket.makeTcp({ hostname: address.hostname, port: address.port })
+      const { pull, upgrade } = yield* socket.reader
+
+      const error = yield* upgrade().pipe(Effect.flip)
+      assert.strictEqual(error.reason._tag, "SocketUpgradeError")
+      if (error.reason._tag === "SocketUpgradeError") assert.instanceOf(error.reason.cause, Error)
+      assert.strictEqual(yield* pull.pipe(Effect.flip), error)
+    }))
+
   it.effect("echoes over TCP", () =>
     Effect.gen(function*() {
       const listener = yield* makeTcpServer
@@ -92,6 +141,10 @@ describe("DenoSocket", () => {
       const output = yield* Stream.make("Hello", "World").pipe(
         Stream.encodeText,
         Stream.pipeThroughChannel(DenoSocket.makeTcpChannel({ hostname: address.hostname, port: address.port })),
+        Stream.catchIf(
+          (error) => error.reason._tag === "SocketCloseError",
+          () => Stream.empty
+        ),
         Stream.decodeText(),
         Stream.mkString
       )
@@ -131,9 +184,14 @@ describe("DenoSocket", () => {
 
       const socket = yield* DenoSocket.makeTcp({ hostname: address.hostname, port: address.port })
       const messages = yield* Queue.unbounded<Uint8Array>()
-      const runFiber = yield* socket.run((chunk) => Queue.offer(messages, chunk)).pipe(Effect.forkChild)
+      const runFiber = yield* Effect.gen(function*() {
+        const pull = yield* Socket.readerBytes(socket)
+        while (true) {
+          yield* Queue.offerAll(messages, yield* pull)
+        }
+      }).pipe(Effect.scoped, Effect.catchReason("SocketError", "SocketCloseError", () => Effect.void), Effect.forkChild)
       yield* Effect.scoped(
-        socket.writer.pipe(Effect.flatMap((write) => write(encoder.encode("Hello"))))
+        socket.writer.pipe(Effect.flatMap((writer) => writer.write(encoder.encode("Hello"))))
       )
       yield* Deferred.await(writeClosed)
 
@@ -158,6 +216,10 @@ describe("DenoSocket", () => {
 
       const output = yield* Stream.empty.pipe(
         Stream.pipeThroughChannel(DenoSocket.makeTcpChannel({ hostname: address.hostname, port: address.port })),
+        Stream.catchIf(
+          (error) => error.reason._tag === "SocketCloseError",
+          () => Stream.empty
+        ),
         Stream.decodeText(),
         Stream.mkString
       )
@@ -165,7 +227,7 @@ describe("DenoSocket", () => {
       assert.strictEqual(output, "Closed")
     }))
 
-  it.effect("does not carry a consumed half-close into a second run", () =>
+  it.effect("does not carry a consumed half-close into a second acquisition", () =>
     Effect.gen(function*() {
       const encoder = new TextEncoder()
       const first = makeTestConn({ pendingRead: true, closeReadableOnCloseWrite: true })
@@ -175,15 +237,27 @@ describe("DenoSocket", () => {
       const socket = yield* DenoSocket.fromConn(Effect.sync(() => connections[index++]!))
       const opened = yield* Deferred.make<void>()
 
-      const firstRun = yield* socket.run(() => {}, {
-        onOpen: Deferred.succeed(opened, undefined)
-      }).pipe(Effect.forkChild)
+      const firstRun = yield* Effect.gen(function*() {
+        const { pull } = yield* socket.reader
+        yield* Deferred.succeed(opened, undefined)
+        while (true) {
+          yield* pull
+        }
+      }).pipe(Effect.scoped, Effect.catchReason("SocketError", "SocketCloseError", () => Effect.void), Effect.forkChild)
       yield* Deferred.await(opened)
       yield* Effect.scoped(socket.writer)
       yield* Fiber.join(firstRun)
 
       const received: Array<Uint8Array> = []
-      yield* socket.run((chunk) => Effect.sync(() => received.push(chunk)))
+      yield* Effect.gen(function*() {
+        const pull = yield* Socket.readerBytes(socket)
+        while (true) {
+          const chunk = yield* pull
+          for (const data of chunk) {
+            received.push(data)
+          }
+        }
+      }).pipe(Effect.scoped, Effect.catchReason("SocketError", "SocketCloseError", () => Effect.void))
 
       assert.deepStrictEqual(received, [encoder.encode("Second")])
       assert.strictEqual(first.closeWrites(), 1)
@@ -197,7 +271,7 @@ describe("DenoSocket", () => {
       listener.close()
       const socket = yield* DenoSocket.makeTcp({ hostname: address.hostname, port: address.port })
 
-      const error = yield* socket.run(() => {}).pipe(Effect.flip)
+      const error = yield* Effect.scoped(Effect.asVoid(socket.reader)).pipe(Effect.flip)
 
       assert.instanceOf(error, Socket.SocketError)
       assert.strictEqual(error.reason._tag, "SocketOpenError")
@@ -225,14 +299,14 @@ describe("DenoSocket", () => {
       })
 
       const tcpSocket = yield* DenoSocket.makeTcp({ port: 1, noDelay: false, keepAlive: true })
-      yield* tcpSocket.run(() => {})
+      yield* Effect.scoped(Effect.asVoid(tcpSocket.reader))
       const unixSocket = yield* DenoSocket.makeTcp({
         transport: "unix",
         path: "/unused.sock",
         noDelay: true,
         keepAlive: false
       })
-      yield* unixSocket.run(() => {})
+      yield* Effect.scoped(Effect.asVoid(unixSocket.reader))
 
       assert.deepStrictEqual(noDelay, [false])
       assert.deepStrictEqual(keepAlive, [true])
@@ -255,11 +329,37 @@ describe("DenoSocket", () => {
       const output = yield* Stream.make("Hello", "Unix").pipe(
         Stream.encodeText,
         Stream.pipeThroughChannel(DenoSocket.makeTcpChannel({ transport: "unix", path })),
+        Stream.catchIf(
+          (error) => error.reason._tag === "SocketCloseError",
+          () => Stream.empty
+        ),
         Stream.decodeText(),
         Stream.mkString
       )
 
       assert.strictEqual(output, "HelloUnix")
+    }))
+
+  it.effect("rejects TLS upgrades on Unix sockets without disrupting the connection", () =>
+    Effect.gen(function*() {
+      const directory = yield* makeTempDir
+      const path = `${directory}/upgrade.sock`
+      const listener = yield* Effect.acquireRelease(
+        Effect.sync(() => Deno.listen({ transport: "unix", path })),
+        (listener) => Effect.sync(() => listener.close())
+      )
+      yield* runEchoServer(listener).pipe(Effect.forkScoped)
+
+      const socket = yield* DenoSocket.makeTcp({ transport: "unix", path })
+      const writer = yield* socket.writer
+      const { pull, upgrade } = yield* socket.reader
+
+      const error = yield* upgrade().pipe(Effect.flip)
+      assert.strictEqual(error.reason._tag, "SocketUpgradeError")
+
+      yield* writer.write("HelloUnix")
+      const [received] = yield* pull
+      assert.strictEqual(new TextDecoder().decode(received as Uint8Array), "HelloUnix")
     }))
 
   it.effect("uses Deno's native WebSocket", () =>
@@ -282,17 +382,24 @@ describe("DenoSocket", () => {
 
       yield* Effect.gen(function*() {
         const socket = yield* Socket.Socket
-        const runFiber = yield* socket.run((chunk) => Queue.offer(messages, chunk)).pipe(Effect.forkChild)
-        const write = yield* socket.writer
-        yield* write("Hello WebSocket")
+        const runFiber = yield* Effect.gen(function*() {
+          const pull = yield* Socket.readerBytes(socket)
+          while (true) {
+            yield* Queue.offerAll(messages, yield* pull)
+          }
+        }).pipe(
+          Effect.scoped,
+          Effect.catchReason("SocketError", "SocketCloseError", () => Effect.void),
+          Effect.forkChild
+        )
+        const writer = yield* socket.writer
+        yield* writer.write("Hello WebSocket")
 
         assert.deepStrictEqual(yield* Queue.take(messages), new TextEncoder().encode("Hello WebSocket"))
         yield* Fiber.interrupt(runFiber)
       }).pipe(
         Effect.scoped,
-        Effect.provide(DenoSocket.layerWebSocket(`ws://${address.hostname}:${address.port}`, {
-          closeCodeIsError: () => false
-        }))
+        Effect.provide(DenoSocket.layerWebSocket(`ws://${address.hostname}:${address.port}`))
       )
     }))
 
@@ -311,20 +418,23 @@ describe("DenoSocket", () => {
       })
 
       const socket = yield* Socket.fromTransformStream(
-        Effect.succeed({ readable, writable }),
-        { closeCodeIsError: () => false }
+        Effect.succeed({ readable, writable })
       )
       yield* socket.writer.pipe(
-        Effect.tap((write) => write("Hello").pipe(Effect.andThen(write("World")))),
+        Effect.tap((writer) => writer.write("Hello").pipe(Effect.andThen(writer.write("World")))),
         Effect.scoped,
         Effect.forkChild
       )
       const received: Array<string> = []
-      yield* socket.run((chunk) =>
-        Effect.sync(() => {
-          received.push(decoder.decode(chunk))
-        })
-      ).pipe(Effect.scoped)
+      yield* Effect.gen(function*() {
+        const pull = yield* Socket.readerString(socket)
+        while (true) {
+          const chunk = yield* pull
+          for (const data of chunk) {
+            received.push(data)
+          }
+        }
+      }).pipe(Effect.scoped, Effect.catchReason("SocketError", "SocketCloseError", () => Effect.void))
 
       assert.deepStrictEqual(chunks, ["Hello", "World"])
       assert.deepStrictEqual(received, ["A", "B", "C"])

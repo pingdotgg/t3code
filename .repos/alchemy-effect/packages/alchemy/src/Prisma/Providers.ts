@@ -1,9 +1,10 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import { AuthProviders } from "../Auth/AuthProvider.ts";
 import { CredentialsStoreLive } from "../Auth/Credentials.ts";
-import { AlchemyProfile, ProfileLive } from "../Auth/Profile.ts";
+import { ProfileStore, ProfileStoreLive } from "../Auth/Profile.ts";
 import * as Provider from "../Provider.ts";
 import { PlatformServices } from "../Util/PlatformServices.ts";
 import { proxyChain } from "../Util/proxy-chain.ts";
@@ -18,6 +19,8 @@ import {
   type PrismaManagementClient,
 } from "./Client.ts";
 import { Connection, ConnectionProvider } from "./Connection.ts";
+import { Retry } from "@distilled.cloud/prisma";
+import * as Credentials from "./Credentials.ts";
 import { Compute, ComputeProvider } from "./Compute.ts";
 import { CustomDomain, CustomDomainProvider } from "./CustomDomain.ts";
 import { Database, DatabaseProvider } from "./Database.ts";
@@ -48,10 +51,18 @@ export type ProviderRequirements = Layer.Services<ReturnType<typeof providers>>;
 /**
  * Standalone operation helpers own a private auth registry because they run
  * outside a Stack. Credential resolution stays eager here so constructing
- * `managementApi()` preserves its existing fail-fast behavior.
+ * `managementApi()` preserves its existing fail-fast behavior — which also
+ * lets the distilled `Credentials` service read the already-resolved
+ * {@link PrismaEnvironment} rather than building its own.
  */
 const standaloneManagementApiLayer = () =>
   PrismaClientLive.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        Credentials.fromEnvironment(),
+        Layer.succeed(Retry.Retry, Retry.makeDefault),
+      ),
+    ),
     Layer.provideMerge(fromProfile()),
     Layer.provideMerge(PrismaAuth),
     Layer.provideMerge(
@@ -60,7 +71,7 @@ const standaloneManagementApiLayer = () =>
         // The Prisma-scoped upload client (node transport) rides the
         // providers' output so artifact uploads can reach it at op time.
         PrismaUploadClientLive,
-        Layer.provide(ProfileLive, PlatformServices),
+        Layer.provide(ProfileStoreLive, PlatformServices),
         Layer.provide(CredentialsStoreLive, PlatformServices),
       ),
     ),
@@ -76,8 +87,8 @@ const standaloneManagementApiLayer = () =>
 /**
  * Stack provider discovery must register auth without requiring credentials.
  * The management client is resolved on its first API operation, after
- * `alchemy login` has had a chance to configure the registered Prisma auth
- * provider. The nested client layer shares the provider layer's lifetime.
+ * `alchemy profile edit` has had a chance to configure the registered Prisma
+ * auth provider. The nested client layer shares the provider layer's lifetime.
  */
 const stackManagementApiLayer = () =>
   Layer.effect(
@@ -85,7 +96,7 @@ const stackManagementApiLayer = () =>
     Effect.gen(function* () {
       const scope = yield* Effect.scope;
       const authProviders = yield* AuthProviders;
-      const profile = yield* AlchemyProfile;
+      const profileStore = yield* ProfileStore;
       const client = Layer.buildWithScope(
         PrismaClientLive.pipe(
           Layer.provideMerge(
@@ -93,7 +104,7 @@ const stackManagementApiLayer = () =>
               Layer.provide(
                 Layer.mergeAll(
                   Layer.succeed(AuthProviders, authProviders),
-                  Layer.succeed(AlchemyProfile, profile),
+                  Layer.succeed(ProfileStore, profileStore),
                 ),
               ),
             ),
@@ -106,13 +117,19 @@ const stackManagementApiLayer = () =>
       return proxyChain(cached) as PrismaManagementClient;
     }),
   ).pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        Credentials.fromAuthProvider(),
+        Layer.succeed(Retry.Retry, Retry.makeDefault),
+      ),
+    ),
     Layer.provideMerge(PrismaAuth),
     Layer.provideMerge(
       Layer.mergeAll(
         // The Prisma-scoped upload client (node transport) rides the
         // providers' output so artifact uploads can reach it at op time.
         PrismaUploadClientLive,
-        Layer.provide(ProfileLive, PlatformServices),
+        Layer.provide(ProfileStoreLive, PlatformServices),
         Layer.provide(CredentialsStoreLive, PlatformServices),
       ),
     ),
@@ -132,9 +149,26 @@ const stackManagementApiLayer = () =>
  *   Effect.provide(Prisma.managementApi()),
  * );
  * ```
+ *
+ * This layer covers the operation helpers. The lifecycle helpers
+ * (`destroyApp`, `destroyDeployment`, `destroyProjectApps`,
+ * `waitForDeploymentStatus`, `syncComputeEnvironment`) also need an
+ * `HttpClient` from the caller, because the Prisma-scoped node transport is
+ * `Layer.provide`d privately here — see the comment on the private provide
+ * above for why it must not reach the surrounding stack. Add one, e.g.:
+ *
+ * ```typescript
+ * yield* Prisma.destroyApp(appId).pipe(
+ *   Effect.provide(Prisma.managementApi()),
+ *   Effect.provide(FetchHttpClient.layer),
+ * );
+ * ```
  */
 export const managementApi = () =>
-  standaloneManagementApiLayer().pipe(Layer.orDie);
+  standaloneManagementApiLayer().pipe(
+    Layer.provide(FetchHttpClient.layer),
+    Layer.orDie,
+  );
 
 /**
  * Build a layer that registers all Prisma resource providers, the Prisma
@@ -215,5 +249,6 @@ export const providers = () =>
     // auth registers without resolving credentials, so `alchemy dev` never
     // needs a Prisma token.
     Layer.provideMerge(stackManagementApiLayer()),
+    Layer.provide(FetchHttpClient.layer),
     Layer.orDie,
   );

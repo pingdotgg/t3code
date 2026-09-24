@@ -334,7 +334,7 @@ export const make = (
           if (error) {
             resume(
               Exit.fail(
-                new SqlError({ reason: classifyError(error as string, "Failed to execute statement", "execute") })
+                new SqlError({ reason: classifyError(error, "Failed to execute statement", "execute") })
               )
             )
           } else {
@@ -343,6 +343,9 @@ export const make = (
         }
       }
       port.addEventListener("message", onMessage)
+      if ("start" in port) {
+        port.start()
+      }
 
       function onError(cause: Event) {
         const exit = Exit.fail(
@@ -362,7 +365,7 @@ export const make = (
       yield* Scope.addFinalizer(
         scope,
         Effect.sync(() => {
-          worker.removeEventListener("message", onMessage)
+          port.removeEventListener("message", onMessage)
           worker.removeEventListener("error", onError)
         })
       )
@@ -384,7 +387,7 @@ export const make = (
         params: ReadonlyArray<unknown> = [],
         rowMode: "object" | "array" = "object"
       ): Effect.Effect<Array<any>, SqlError, never> => {
-        const rows = Effect.withFiber<[Array<string>, Array<any>], SqlError>((fiber) => {
+        const rows = Effect.withFiber<WorkerResult, SqlError>((fiber) => {
           const id = currentId++
           return send(id, [id, sql, params], fiber.getRef(Transferables))
         })
@@ -468,8 +471,10 @@ function rowToObject(columns: Array<string>, row: Array<any>) {
   }
   return obj
 }
-const extractObject = (rows: [Array<string>, Array<any>]) => rows[1].map((row) => rowToObject(rows[0], row))
-const extractRows = (rows: [Array<string>, Array<any>]) => rows[1]
+type WorkerResult = [columns: Array<Array<string>>, rows: Array<any>]
+
+const extractObject = (rows: WorkerResult) => rows[1].map((row, index) => rowToObject(rows[0][index], row))
+const extractRows = (rows: WorkerResult) => rows[1]
 
 /**
  * Fiber reference that stores transferables to include with worker-backed SQLite WASM query messages.

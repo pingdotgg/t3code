@@ -1,14 +1,28 @@
 import * as CloudFront from "@/AWS/CloudFront";
 import * as Lambda from "@/AWS/Lambda";
 import * as S3 from "@/AWS/S3";
+import type * as cloudfront from "@distilled.cloud/aws/cloudfront";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
+
+// Distribution grants can still be propagating after the function URL is ready.
+const authorizationPolicy = {
+  while: (
+    error:
+      | cloudfront.CreateInvalidationError
+      | cloudfront.GetInvalidationError
+      | cloudfront.ListInvalidationsError,
+  ) => error._tag === "AccessDenied",
+  schedule: Schedule.spaced("3 seconds"),
+  times: 8,
+};
 
 export class CloudFrontTestFunction extends Lambda.Function<Lambda.Function>()(
   "CloudFrontTestFunction",
@@ -76,7 +90,7 @@ export default CloudFrontTestFunction.make(
                 Items: body.paths,
               },
             },
-          });
+          }).pipe(Effect.retry(authorizationPolicy));
           return yield* HttpServerResponse.json({
             invalidationId: response.Invalidation?.Id,
             status: response.Invalidation?.Status,
@@ -85,7 +99,9 @@ export default CloudFrontTestFunction.make(
 
         if (request.method === "GET" && pathname === "/invalidation") {
           const id = url.searchParams.get("id")!;
-          const response = yield* getInvalidation({ Id: id });
+          const response = yield* getInvalidation({ Id: id }).pipe(
+            Effect.retry(authorizationPolicy),
+          );
           return yield* HttpServerResponse.json({
             invalidationId: response.Invalidation?.Id,
             status: response.Invalidation?.Status,
@@ -93,7 +109,9 @@ export default CloudFrontTestFunction.make(
         }
 
         if (request.method === "GET" && pathname === "/invalidations") {
-          const response = yield* listInvalidations({});
+          const response = yield* listInvalidations({}).pipe(
+            Effect.retry(authorizationPolicy),
+          );
           return yield* HttpServerResponse.json({
             invalidationIds: (response.InvalidationList?.Items ?? []).map(
               (item) => item.Id,

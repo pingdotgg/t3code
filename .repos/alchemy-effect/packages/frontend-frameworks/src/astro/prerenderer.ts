@@ -29,6 +29,7 @@ import type {
   BindingHooks,
   Module,
 } from "@alchemy.run/cloudflare-runtime/core";
+import { DEFAULT_COMPATIBILITY_DATE } from "@alchemy.run/cloudflare-runtime/core/internal/constants";
 import * as Runtime from "@alchemy.run/cloudflare-runtime/core/Runtime";
 import * as RuntimeServices from "@alchemy.run/cloudflare-runtime/core/RuntimeServices";
 import * as Credentials from "@distilled.cloud/cloudflare/Credentials";
@@ -52,9 +53,6 @@ import {
   PRERENDER_ENDPOINT,
   STATIC_PATHS_ENDPOINT,
 } from "./runtime/utils/prerender-constants.ts";
-
-/** Matches `dev-server.ts` in `@alchemy.run/cloudflare-runtime/vite`. */
-const DEFAULT_COMPATIBILITY_DATE = "2026-05-12";
 
 /** The subdirectory of the server output dir that hosts the prerender build. */
 const PRERENDER_OUTPUT_SUBDIR = "./.prerender/";

@@ -14,6 +14,7 @@ import type * as RpcClientError from "effect/unstable/rpc/RpcClientError";
 import type { Dependencies } from "../../Dependencies.ts";
 import type { HttpEffect } from "../../Http.ts";
 import type { InputProps } from "../../Input.ts";
+import type { Named } from "../../Named.ts";
 import type { Rpc as RpcShape } from "../../Rpc.ts";
 import { effectClass, taggedFunction } from "../../Util/effect.ts";
 import type { Worker, WorkerProps } from "./Worker.ts";
@@ -53,17 +54,25 @@ const SchemaSymbol = Symbol.for("alchemy.RpcWorker.schema");
 // `Deps` mirrors `Cloudflare.Worker<Self, Bindings, Deps>` — declares
 // the DOs / Workers this script publishes for cross-script binding so
 // `Counter.from(WorkerA)` type-checks from another script.
+//
+// `Id` is the const logical id (`Named<Id>`), matching `Cloudflare.Worker`.
 export interface RpcWorkerYieldable<
   Self,
   Rpcs extends Rpc.Any,
   Deps = never,
-> extends Effect.Effect<
-  Worker<{}> & RpcShape<Self> & Dependencies<Deps>,
-  never,
-  any
-> {
+  Id extends string = string,
+>
+  extends
+    Effect.Effect<Worker<{}> & RpcShape<Self> & Dependencies<Deps>, never, any>,
+    Named<Id> {
   /** @internal */
   readonly [SchemaSymbol]: RpcGroup.RpcGroup<Rpcs>;
+  /**
+   * Logical id of the Worker this class declares. Copied from the
+   * underlying `Cloudflare.Worker` so callers can read it off the
+   * class without yielding (e.g. `transferredFrom: TaskWorker`).
+   */
+  readonly LogicalId: Id;
 }
 
 /**
@@ -98,11 +107,11 @@ export interface RpcWorkerClass extends Effect.Effect<
      * `Layer.Layer<Self>` so consumers that don't host the worker can
      * import the class without pulling its runtime into their bundle.
      */
-    <Rpcs extends Rpc.Any>(
-      id: string,
+    <const Id extends string, Rpcs extends Rpc.Any>(
+      id: Id,
       props: RpcWorkerProps<Rpcs>,
-    ): RpcWorkerYieldable<Self, Rpcs, Deps> & {
-      new (_: never): {};
+    ): RpcWorkerYieldable<Self, Rpcs, Deps, Id> & {
+      new (_: never): Named<Id>;
       make<InnerR = never, InitReq = never>(
         props: InputProps<WorkerProps>,
         impl: Effect.Effect<
@@ -113,20 +122,26 @@ export interface RpcWorkerClass extends Effect.Effect<
       ): Layer.Layer<Self, never, Exclude<InitReq | InnerR, never>>;
     };
     /** Inline-impl form. */
-    <Rpcs extends Rpc.Any, InnerR = never, InitReq = never>(
-      id: string,
+    <
+      const Id extends string,
+      Rpcs extends Rpc.Any,
+      InnerR = never,
+      InitReq = never,
+    >(
+      id: Id,
       props: RpcWorkerProps<Rpcs> & InputProps<WorkerProps>,
       impl: Effect.Effect<
         Effect.Effect<HttpEffect<InnerR>, never, InnerR>,
         ConfigError,
         InitReq
       >,
-    ): RpcWorkerYieldable<Self, Rpcs, Deps> & {
+    ): RpcWorkerYieldable<Self, Rpcs, Deps, Id> & {
       // Phantom — `class X extends RpcWorker<X>()(...)` carries `X`
       // through the result type via `Rpc<Self>` on the binding side;
-      // the instance shape itself is empty (no methods exposed on
-      // `new X(...)` — everything goes through `fetch`).
-      new (_: never): {};
+      // the instance shape itself is empty besides `Named<Id>` (no
+      // methods exposed on `new X(...)` — everything goes through
+      // `fetch`).
+      new (_: never): Named<Id>;
     };
   };
 
@@ -514,6 +529,17 @@ const wrapImpl = (impl: Effect.Effect<Effect.Effect<HttpEffect<any>>>) =>
     (fetch) => ({ fetch }) as unknown as { fetch: HttpEffect<any> },
   );
 
+// `effectClass` does not copy statics from the underlying Worker.
+const stampLogicalId = (
+  klass: Record<symbol | string, unknown>,
+  source: { LogicalId?: unknown },
+  id: string,
+) => {
+  klass.LogicalId =
+    typeof source.LogicalId === "string" ? source.LogicalId : id;
+  return klass;
+};
+
 const buildModular = (id: string, props: RpcWorkerProps<any>) => {
   const { schema } = props;
   // Delegate to `Cloudflare.Worker<Self>()(id, props)` (modular form)
@@ -531,7 +557,7 @@ const buildModular = (id: string, props: RpcWorkerProps<any>) => {
     ): Layer.Layer<any, never, any> => Underlying.make(props, wrapImpl(impl));
   } as unknown as Record<symbol | string, unknown>;
   klass[SchemaSymbol] = schema;
-  return klass;
+  return stampLogicalId(klass, Underlying, id);
 };
 
 const build = (
@@ -560,7 +586,7 @@ const build = (
   // still works.) `underlying` is already an Effect, so pass it directly.
   const klass = effectClass(
     underlying as Effect.Effect<Worker>,
-  ) as unknown as Record<symbol, unknown>;
+  ) as unknown as Record<symbol | string, unknown>;
   klass[SchemaSymbol] = schema;
-  return klass;
+  return stampLogicalId(klass, underlying, id);
 };

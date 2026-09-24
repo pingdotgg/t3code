@@ -448,6 +448,54 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
     }),
   );
 
+  it.effect("passes image attachments to Codex by path instead of base64", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-image-attachment");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const runtime = sessionRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      runtime.sendTurnImpl.mockClear();
+
+      const serverConfig = yield* ServerConfig;
+      const attachmentsDir = serverConfig.attachmentsDir;
+      const attachmentId = "attachment-local-image-1";
+      const attachmentPath = NodePath.join(attachmentsDir, `${attachmentId}.png`);
+      NodeFS.writeFileSync(attachmentPath, Buffer.alloc(4, 0x89));
+
+      try {
+        yield* adapter.sendTurn({
+          threadId,
+          input: "Use this image.",
+          attachments: [
+            {
+              type: "image",
+              id: attachmentId,
+              name: "generated.png",
+              mimeType: "image/png",
+              sizeBytes: NodeFS.statSync(attachmentPath).size,
+            },
+          ],
+        });
+
+        const input = runtime.sendTurnImpl.mock.calls[0]?.[0];
+        NodeAssert.ok(input);
+        NodeAssert.deepStrictEqual(input.attachments, [
+          {
+            type: "localImage",
+            path: attachmentPath,
+          },
+        ]);
+      } finally {
+        NodeFS.rmSync(attachmentPath, { force: true });
+      }
+    }),
+  );
+
   it.effect("passes configured launch args into the session runtime", () => {
     const runtimeFactory = makeRuntimeFactory();
     const layer = Layer.effect(
@@ -1668,6 +1716,48 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       }
       NodeAssert.equal(firstEvent.value.turnId, "turn-1");
       NodeAssert.equal(firstEvent.value.payload.delta, "## Final plan");
+    }),
+  );
+
+  it.effect("maps app permission approval requests to permission_approval request types", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-app-permission-request"),
+        kind: "request",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/permissions/requestApproval",
+        requestId: ApprovalRequestId.make("req-perm-1"),
+        requestKind: "permission",
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("app_1"),
+        payload: {
+          cwd: "/tmp/project",
+          itemId: "app_1",
+          permissions: { network: { enabled: true } },
+          reason: "Fetch data from api.example.com",
+          startedAtMs: 1_778_000_000_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.type, "request.opened");
+      if (firstEvent.value.type !== "request.opened") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.payload.requestType, "permission_approval");
+      NodeAssert.equal(firstEvent.value.payload.detail, "Fetch data from api.example.com");
     }),
   );
 

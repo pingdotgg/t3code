@@ -1,6 +1,6 @@
 import * as AWS from "@/AWS";
 import { Index, VectorBucket } from "@/AWS/S3Vectors";
-import type { ScopedPlanStatusSession } from "@/Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "@/Report.ts";
 import * as Provider from "@/Provider";
 import * as Test from "@/Test/Alchemy";
 import * as s3vectors from "@distilled.cloud/aws/s3vectors";

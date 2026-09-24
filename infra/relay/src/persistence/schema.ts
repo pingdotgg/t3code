@@ -138,7 +138,7 @@ export const relayAgentActivityRows = pgTable(
   {
     environmentId: varchar("environment_id", { length: 191 }).notNull(),
     environmentPublicKey: text("environment_public_key").notNull(),
-    threadId: varchar("thread_id", { length: 191 }).notNull(),
+    threadId: varchar("thread_id", { length: 512 }).notNull(),
     stateJson: jsonb("state_json").notNull().$type<RelayAgentActivityState>(),
     updatedAt: varchar("updated_at", { length: 64 }).notNull(),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
@@ -156,7 +156,7 @@ export const relayDeliveryAttempts = pgTable(
     createdAt: varchar("created_at", { length: 64 }).notNull(),
     userId: varchar("user_id", { length: 255 }),
     environmentId: varchar("environment_id", { length: 191 }),
-    threadId: varchar("thread_id", { length: 191 }),
+    threadId: varchar("thread_id", { length: 512 }),
     deviceId: varchar("device_id", { length: 255 }),
     kind: varchar("kind", { length: 64 }).notNull(),
     sourceJobId: varchar("source_job_id", { length: 64 }),

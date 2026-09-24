@@ -338,6 +338,8 @@ export function NativeMarkdownSelectableText(props: {
       }
       uiTextView
       selectable
+      selectionColor={props.textStyle.selectionColor}
+      selectionHandleColor={props.textStyle.selectionHandleColor}
       style={{
         flexShrink: 1,
         minWidth: 0,

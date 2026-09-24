@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
-import fg from "fast-glob";
+import { glob } from "tinyglobby";
 import { gitignoreRulesToGlobs } from "../Util/gitignore-rules-to-globs.ts";
 import { initialCwd } from "../Util/Node.ts";
 import { sha256, sha256Object } from "../Util/sha256.ts";
@@ -109,11 +109,9 @@ const Memo = Effect.gen(function* () {
     const resolvedCwd = path.resolve(initialCwd, cwd ?? ".");
     return {
       cwd: resolvedCwd,
-      // Rewrite absolute include patterns to cwd-relative ones: fast-glob
-      // silently drops an absolute pattern's matches when the same call also
-      // contains relative patterns, and relative patterns keep the matched
-      // keys (and therefore the memo hash) free of machine-specific path
-      // prefixes.
+      // Normalize absolute include patterns to cwd-relative ones so matched
+      // keys (and therefore the memo hash) stay free of machine-specific
+      // path prefixes.
       include: (options.include ?? ["**/*"]).map((pattern) =>
         path.isAbsolute(pattern)
           ? path.relative(resolvedCwd, pattern).replaceAll("\\", "/")
@@ -135,10 +133,11 @@ const Memo = Effect.gen(function* () {
     const [files, lockfile] = yield* Effect.all(
       [
         Effect.promise(() =>
-          fg.glob(options.include, {
+          glob(options.include, {
             cwd: options.cwd,
             ignore: options.exclude,
             onlyFiles: true,
+            expandDirectories: false,
             dot: true,
           }),
         ),

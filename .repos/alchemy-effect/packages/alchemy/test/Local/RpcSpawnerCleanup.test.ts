@@ -26,7 +26,12 @@ const CHILD_TS_URL = new URL(
 const DEVSERVER_PARENT_TS = fileURLToPath(
   new URL("./fixtures/rpc-spawner-devserver-parent.ts", import.meta.url),
 );
-const DEVSERVER_SIDECAR_TS_URL = new URL(
+// The dev sidecar entry plus the provider group it serves `Command.Dev` from.
+const SIDECAR_TS_URL = new URL(
+  "../../src/Local/Sidecar.ts",
+  import.meta.url,
+).toString();
+const COMMAND_PROVIDERS_TS_URL = new URL(
   "../../src/Command/Local.ts",
   import.meta.url,
 ).toString();
@@ -132,7 +137,8 @@ for (const runtime of runtimes()) {
               bin,
               [
                 ...args,
-                DEVSERVER_SIDECAR_TS_URL,
+                SIDECAR_TS_URL,
+                COMMAND_PROVIDERS_TS_URL,
                 `node ${LONG_RUNNING_CJS}`,
                 pidFile,
               ],

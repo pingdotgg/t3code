@@ -18,7 +18,9 @@ const script = JSON.parse(NodeFS.readFileSync(process.env.T3_CODEX_COLLAB_SCRIPT
 const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 let turnStartCount = 0;
 let activeTurn;
-
+// Server->client requests the runtime must answer (approval prompts), keyed
+// by the numeric JSON-RPC id this peer allocated for them.
+const openServerRequests = new Map();
 const rl = NodeReadline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   let message;
@@ -28,6 +30,30 @@ rl.on("line", (line) => {
     return;
   }
   const { id, method } = message;
+  if (openServerRequests.has(id)) {
+    // The runtime answered an approval request. Record the response so tests
+    // can assert settlement behavior, then emit serverRequest/resolved as a
+    // deterministic receipt (tests wait on the runtime's event stream rather
+    // than polling the sidecar file). Real codex identifies the resolved
+    // request by its item id — the key the runtime correlates on — so the
+    // receipt exercises the same path that closes the approval card in the
+    // UI.
+    const request = openServerRequests.get(id);
+    openServerRequests.delete(id);
+    NodeFS.appendFileSync(
+      `${process.env.T3_CODEX_COLLAB_SCRIPT}.approvalResponses`,
+      `${JSON.stringify({ id, label: request.label, result: message.result ?? null })}\n`,
+    );
+    write({
+      jsonrpc: "2.0",
+      method: "serverRequest/resolved",
+      params: {
+        threadId: script.rootThreadId,
+        requestId: request.itemId ?? request.label,
+      },
+    });
+    return;
+  }
   if (method === undefined && script.serverRequests?.some((request) => request.id === id)) {
     NodeFS.appendFileSync(
       `${process.env.T3_CODEX_COLLAB_SCRIPT}.responses`,
@@ -58,7 +84,18 @@ rl.on("line", (line) => {
     return;
   }
   if (method === "account/read") {
-    write({ id, result: { account: { type: "apiKey" }, requiresOpenaiAuth: false } });
+    write({
+      id,
+      result: { account: script.account ?? { type: "apiKey" }, requiresOpenaiAuth: false },
+    });
+    return;
+  }
+  if (method === "account/rateLimits/read" && script.failRateLimitsRead) {
+    write({ id, error: { code: -32000, message: "usage unavailable" } });
+    return;
+  }
+  if (method === "account/rateLimitResetCredit/consume" && script.resetCreditOutcome) {
+    write({ id, result: { outcome: script.resetCreditOutcome } });
     return;
   }
   if (method === "skills/list" || method === "model/list") {
@@ -136,8 +173,24 @@ rl.on("line", (line) => {
     for (const notification of script.notifications) {
       write({ jsonrpc: "2.0", method: notification.method, params: notification.params });
     }
-    for (const request of script.serverRequests ?? []) {
-      write({ jsonrpc: "2.0", id: request.id, method: request.method, params: request.params });
+    for (const [index, request] of (script.serverRequests ?? []).entries()) {
+      if (request.id !== undefined) {
+        // Legacy form: caller-supplied JSON-RPC ids recorded in .responses.
+        write({ jsonrpc: "2.0", id: request.id, method: request.method, params: request.params });
+        continue;
+      }
+      // Scripted server->client requests (approval prompts). String values in
+      // params may reference "${threadId}" / "${turnId}" placeholders that are
+      // substituted with the ids this peer actually allocated.
+      const requestId = 9000 + index;
+      const label = request.label ?? `approval-${requestId}`;
+      openServerRequests.set(requestId, { label, itemId: request.params?.itemId });
+      const params = JSON.parse(
+        JSON.stringify(request.params)
+          .replaceAll("${threadId}", String(rootThreadId))
+          .replaceAll("${turnId}", String(turn.id)),
+      );
+      write({ jsonrpc: "2.0", id: requestId, method: request.method, params });
     }
     if (script.holdTurnOpen !== true) {
       write({

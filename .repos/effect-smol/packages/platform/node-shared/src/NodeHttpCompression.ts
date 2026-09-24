@@ -93,7 +93,7 @@ export const make = (fallback: Platform.Compression): Platform.Compression => ({
     }
     return Effect.map(compress(body.body, algorithm, options), (result) =>
       Response.setHeader(
-        Response.setBody(response, HttpBody.uint8Array(result, body.contentType)),
+        Response.setBody(response, HttpBody.uint8Array(result, response.headers["content-type"] ?? body.contentType)),
         "content-length",
         result.byteLength.toString()
       ))

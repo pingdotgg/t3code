@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import { mobilePreferencesAtom } from "../../state/preferences";
-import { resolveLegacyPlanModeEnabled } from "./legacy-plan-mode";
+import { resolveLegacyPlanModeEnabled } from "../../state/legacy-plan-mode";
 
 /**
  * Mobile preferences are device-local, matching the desktop client setting.

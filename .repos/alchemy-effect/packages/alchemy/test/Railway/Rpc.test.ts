@@ -47,7 +47,7 @@ const getText = (url: string) =>
       ),
       Effect.retry({
         schedule: Schedule.spaced("4 seconds"),
-        times: 20,
+        times: 10,
       }),
     );
   });
@@ -101,7 +101,7 @@ test.provider.skip(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  { timeout: 120_000 },
 );
 
 test.provider.skip(
@@ -163,5 +163,5 @@ test.provider.skip(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  { timeout: 120_000 },
 );
