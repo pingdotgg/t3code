@@ -151,6 +151,9 @@ export const PROPOSED_PLAN_PROMPT =
   "Create a short implementation plan for adding deterministic replay fixtures. Do not ask questions. Present the final plan in a proposed plan block.";
 export const WEB_SEARCH_PROMPT =
   "Search the web for FIFA World Cup ticket pricing, then answer exactly: web search fixture complete";
+export const SKILL_INVOCATION_PROMPT = "$review README.md";
+/** What Cursor receives once the adapter rewrites a discovered `$skill` mention. */
+export const SKILL_INVOCATION_CURSOR_MESSAGE = "/review README.md";
 
 export type OrchestratorFixtureInputStep =
   | {
@@ -239,6 +242,13 @@ export type OrchestratorFixtureInputStep =
 
 export interface OrchestratorFixtureInput {
   readonly interactionMode?: ProviderInteractionMode;
+  /**
+   * Files committed into the replay workspace before the scenario runs, keyed
+   * by workspace-relative path. A recorder must seed the same files so adapter
+   * logic that reads the workspace (e.g. skill discovery) sees what the
+   * provider saw.
+   */
+  readonly workspaceFiles?: Readonly<Record<string, string>>;
   readonly steps: ReadonlyArray<OrchestratorFixtureInputStep>;
 }
 

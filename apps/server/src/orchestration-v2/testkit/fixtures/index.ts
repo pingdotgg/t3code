@@ -35,6 +35,8 @@ import { queuedCancelledWhileActiveInput } from "./queued_cancelled_while_active
 import { assertQueuedTurnOutput } from "./queued_turn/codex_output.ts";
 import { queuedTurnInput } from "./queued_turn/input.ts";
 import { assertSimpleClaudeOutput } from "./simple/claude_output.ts";
+import { assertSkillInvocationCursorOutput } from "./skill_invocation/cursor_output.ts";
+import { skillInvocationInput } from "./skill_invocation/input.ts";
 import { assertSimpleOutput } from "./simple/codex_output.ts";
 import { simpleInput } from "./simple/input.ts";
 import { assertSubagentOutput } from "./subagent/codex_output.ts";
@@ -242,6 +244,18 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         transcriptFile: new URL("./simple/opencode_transcript.ndjson", import.meta.url),
         modelSelection: OPENCODE_MODEL_SELECTION,
         assertOutput: assertSimpleOutput,
+      },
+    ],
+  },
+  {
+    name: "skill_invocation",
+    buildInput: skillInvocationInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("cursor"),
+        transcriptFile: new URL("./skill_invocation/cursor_transcript.ndjson", import.meta.url),
+        modelSelection: CURSOR_MODEL_SELECTION,
+        assertOutput: assertSkillInvocationCursorOutput,
       },
     ],
   },

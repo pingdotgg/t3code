@@ -39,128 +39,6 @@ import { isCursorCancellationError, loggedCursorAgentOptions } from "./CursorAge
 const decodeCursorSettings = Schema.decodeEffect(CursorSettings);
 
 describe("CursorAdapterV2", () => {
-  it.effect("sends discovered skills as native slash invocations with runtime instructions", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-skills-" });
-      const skillDirectory = path.join(workspace, ".cursor", "skills", "review");
-      yield* fileSystem.makeDirectory(skillDirectory, { recursive: true });
-      yield* fileSystem.writeFileString(
-        path.join(skillDirectory, "SKILL.md"),
-        "---\nname: review\n---\nReview the changes.",
-      );
-      const sentMessages: Array<string> = [];
-      const instanceId = ProviderInstanceId.make("cursor");
-      const threadId = ThreadId.make("cursor-skills-thread");
-      const modelSelection = { instanceId, model: "composer-2.5" };
-      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: workspace,
-      });
-      const adapter = makeCursorAdapterV2({
-        instanceId,
-        settings: yield* decodeCursorSettings({}),
-        environment: { HOME: workspace },
-        fileSystem,
-        path,
-        idAllocator: yield* IdAllocatorV2,
-        serverConfig: yield* ServerConfig.pipe(
-          Effect.provide(serverConfigLayerTest(workspace, { prefix: "cursor-v2-skills-config-" })),
-        ),
-        runner: {
-          assertComplete: Effect.void,
-          open: () =>
-            Effect.succeed({
-              agentId: "native-cursor-skills",
-              listMessages: Effect.succeed([]),
-              close: Effect.void,
-              send: (input) =>
-                Effect.sync(() => {
-                  sentMessages.push(
-                    typeof input.message === "string" ? input.message : input.message.text,
-                  );
-                  return {
-                    agentId: "native-cursor-skills",
-                    runId: "native-cursor-run",
-                    wait: Effect.succeed({
-                      id: "native-cursor-run",
-                      requestId: "native-request",
-                      status: "finished" as const,
-                      model: { id: "composer-2.5" },
-                      durationMs: 1,
-                    }),
-                    cancel: Effect.void,
-                  };
-                }),
-            }),
-        },
-      });
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("cursor-skills-session"),
-        modelSelection,
-        runtimePolicy,
-      });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      const now = yield* DateTime.now;
-      yield* runtime.startTurn({
-        threadId,
-        providerThread,
-        modelSelection,
-        runtimePolicy,
-        runId: RunId.make("cursor-skills-run"),
-        runOrdinal: 1,
-        providerTurnOrdinal: 1,
-        attemptId: RunAttemptId.make("cursor-skills-attempt"),
-        rootNodeId: NodeId.make("cursor-skills-root"),
-        appThread: {
-          id: threadId,
-          projectId: ProjectId.make("cursor-skills-project"),
-          createdBy: "user",
-          creationSource: "web",
-          title: "Cursor skills",
-          providerInstanceId: instanceId,
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          activeProviderThreadId: providerThread.id,
-          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-          forkedFrom: null,
-          createdAt: now,
-          updatedAt: now,
-          archivedAt: null,
-          settledOverride: null,
-          settledAt: null,
-          lastVisitedAt: null,
-          deletedAt: null,
-        },
-        message: {
-          messageId: MessageId.make("cursor-skills-message"),
-          createdBy: "user",
-          creationSource: "web",
-          text: "$review this with $HOME and $missing",
-          attachments: [],
-        },
-      });
-      yield* runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
-      );
-      assert.lengthOf(sentMessages, 1);
-      assert.isTrue(sentMessages[0]!.startsWith("/review this with $HOME and $missing\n\n"));
-      assert.include(sentMessages[0]!, "Cursor");
-      assert.include(sentMessages[0]!, "T3 Code");
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, idAllocatorLayer))),
-  );
-
   for (const { status, model } of [
     { status: "finished", model: undefined },
     { status: "cancelled", model: "claude-opus-4-6" },
@@ -202,20 +80,29 @@ describe("CursorAdapterV2", () => {
                 close: Effect.void,
                 send: (input) =>
                   Effect.gen(function* () {
-                    yield* input.onDelta!({
-                      type: "tool-call-started",
-                      modelCallId: "model-call",
-                      callId: "task-call",
-                      toolCall: {
-                        type: "task",
-                        args: {
-                          description: "Review",
-                          prompt: "Review the code.",
-                          subagentType: { kind: "generalPurpose" },
-                          ...(model === undefined ? {} : { model }),
-                        },
+                    // Recorded Cursor task calls (see fixtures/subagent) stream a
+                    // partial-tool-call before tool-call-started with the same args.
+                    // The run then ends without tool-call-completed, which a live
+                    // run cannot produce on demand.
+                    const taskToolCall = {
+                      type: "task" as const,
+                      args: {
+                        description: "Review",
+                        prompt: "Review the code.",
+                        subagentType: { kind: "unspecified" },
+                        ...(model === undefined ? {} : { model }),
+                        agentId: "cursor-task-agent",
+                        mode: "unspecified" as const,
                       },
-                    }).pipe(Effect.orDie);
+                    };
+                    for (const type of ["partial-tool-call", "tool-call-started"] as const) {
+                      yield* input.onDelta!({
+                        type,
+                        modelCallId: "model-call",
+                        callId: "task-call",
+                        toolCall: taskToolCall,
+                      }).pipe(Effect.orDie);
+                    }
                     return {
                       agentId: "native-cursor-lifecycle",
                       runId: "native-cursor-run",

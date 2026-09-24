@@ -38,8 +38,12 @@ function runGit(
   });
 }
 
+/** Workspace-relative path to file contents, committed with the initial README. */
+export type ReplayWorkspaceFiles = Readonly<Record<string, string>>;
+
 const makeCheckpointWorkspaceEffect = Effect.fn("makeCheckpointWorkspace")(function* (
   fixtureName: string,
+  files: ReplayWorkspaceFiles = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -50,7 +54,12 @@ const makeCheckpointWorkspaceEffect = Effect.fn("makeCheckpointWorkspace")(funct
   yield* runGit(cwd, ["config", "user.name", "T3 Code Test"]);
   yield* runGit(cwd, ["config", "user.email", "t3code-test@example.com"]);
   yield* fs.writeFileString(path.join(cwd, "README.md"), `# ${fixtureName}\n`);
-  yield* runGit(cwd, ["add", "README.md"]);
+  for (const [relativePath, contents] of Object.entries(files)) {
+    const filePath = path.join(cwd, relativePath);
+    yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+    yield* fs.writeFileString(filePath, contents);
+  }
+  yield* runGit(cwd, ["add", "README.md", ...Object.keys(files)]);
   yield* runGit(cwd, ["commit", "-m", "initial"]);
   return cwd;
 });
@@ -62,13 +71,16 @@ const removeCheckpointWorkspaceEffect = Effect.fn("removeCheckpointWorkspace")(f
   yield* fs.remove(cwd, { recursive: true });
 });
 
-export const checkpointWorkspace = (fixtureName: string) =>
-  Effect.acquireRelease(makeCheckpointWorkspaceEffect(fixtureName), (cwd) =>
+export const checkpointWorkspace = (fixtureName: string, files?: ReplayWorkspaceFiles) =>
+  Effect.acquireRelease(makeCheckpointWorkspaceEffect(fixtureName, files), (cwd) =>
     removeCheckpointWorkspaceEffect(cwd).pipe(Effect.orDie),
   ).pipe(Effect.provide(NodeServices.layer));
 
-export async function makeCheckpointWorkspace(fixtureName: string): Promise<string> {
+export async function makeCheckpointWorkspace(
+  fixtureName: string,
+  files?: ReplayWorkspaceFiles,
+): Promise<string> {
   return await Effect.runPromise(
-    makeCheckpointWorkspaceEffect(fixtureName).pipe(Effect.provide(NodeServices.layer)),
+    makeCheckpointWorkspaceEffect(fixtureName, files).pipe(Effect.provide(NodeServices.layer)),
   );
 }

@@ -85,7 +85,8 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
     transcriptEntriesThroughLabel(rawTranscript, input.driver.transcriptEntriesThroughLabel),
     { driver: input.driver.driver, model: input.driver.modelSelection.model },
   );
-  const workspace = yield* checkpointWorkspace(input.fixtureName);
+  const fixtureInput = input.buildInput();
+  const workspace = yield* checkpointWorkspace(input.fixtureName, fixtureInput.workspaceFiles);
   const transcript = yield* input.harness.decodeTranscript(
     input.driver.driver === "codex"
       ? materializeReplayTranscriptWorkspace(replayTranscript, workspace)
@@ -93,7 +94,7 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
   );
   const materialized = yield* materializeFixtureInput({
     scenario: input.fixtureName,
-    fixtureInput: input.buildInput(),
+    fixtureInput,
     driver: input.driver.driver,
     modelSelection: input.driver.modelSelection,
   }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
