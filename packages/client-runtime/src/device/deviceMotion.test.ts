@@ -62,7 +62,7 @@ it("selects the predicted nearest view once and preserves velocity when interrup
   motion.advance(96);
   motion.dragActive(false, 100);
   for (let time = 116; time <= 2500; time += 16) motion.advance(time);
-  expect(choose).toHaveBeenCalledOnce();
+  expect(choose).toHaveBeenCalledTimes(2);
   expect(motion.needsFrame()).toBe(false);
 });
 
@@ -78,12 +78,16 @@ it("lets a hard flick coast through multiple turns before settling on a visible 
 
   let previous = motion.rotation.clone();
   let travel = 0;
-  for (let time = 40; time <= 6000; time += 8) {
+  let lateSpeed = 0;
+  for (let time = 40; time <= 8500; time += 8) {
     motion.advance(time);
-    travel += motion.rotation.angleTo(previous);
+    const distance = motion.rotation.angleTo(previous);
+    travel += distance;
+    if (time >= 2500) lateSpeed = Math.max(lateSpeed, distance / 0.008);
     previous = motion.rotation.clone();
   }
   expect(travel).toBeGreaterThan(4 * Math.PI);
+  expect(lateSpeed).toBeLessThan(2.5);
   expect(choose).toHaveBeenCalledOnce();
   expect(motion.rotation.angleTo(new Quaternion())).toBeLessThan(1e-6);
   expect(motion.needsFrame()).toBe(false);

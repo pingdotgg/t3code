@@ -24,11 +24,11 @@ const damping = 0.78;
 const frequency = (2 * Math.PI) / response;
 const decay = frequency * damping;
 const stepSeconds = 1 / 120;
-// Fast releases coast before the resting spring takes over.
+// Fast releases combine exponential friction with a critically damped correction.
 const flickThreshold = 4.5;
 const flickLimit = 22;
 const spinDecay = 1.1;
-const spinStopSpeed = 0.7;
+const settleFrequency = 2;
 
 /** A moving spring target follows cumulative camera-space gestures; release latches the nearest useful view. */
 export function createDeviceMotion(options: { choose: (rotation: Quaternion) => Quaternion }) {
@@ -37,7 +37,8 @@ export function createDeviceMotion(options: { choose: (rotation: Quaternion) => 
   const velocity = new Vector3();
   const gestureVelocity = new Vector3();
   let spring: { at: number; rotation: Quaternion; velocity: Vector3; steps: number } | null = null;
-  let spin: { at: number; rotation: Quaternion; velocity: Vector3 } | null = null;
+  let spin: { at: number; rotation: Quaternion; velocity: Vector3; correction: Vector3 } | null =
+    null;
   let drag: {
     start: Quaternion;
     rest: Quaternion;
@@ -70,7 +71,18 @@ export function createDeviceMotion(options: { choose: (rotation: Quaternion) => 
     const rest = drag.rest;
     drag = null;
     if (moved && velocity.length() >= flickThreshold) {
-      spin = { at: now, rotation: rotation.clone(), velocity: velocity.clone() };
+      // Choose where the free spin would finish, then correct toward that view
+      // throughout the coast rather than handing off to a spring at low speed.
+      const projected = rotation
+        .clone()
+        .premultiply(fromVector(velocity.clone().multiplyScalar(1 / spinDecay)));
+      target.copy(options.choose(projected)).normalize();
+      spin = {
+        at: now,
+        rotation: rotation.clone(),
+        velocity: velocity.clone(),
+        correction: rotationVector(target.clone().multiply(projected.invert())),
+      };
       return;
     }
     if (moved) beginSpring(options.choose(prediction), now);
@@ -79,23 +91,26 @@ export function createDeviceMotion(options: { choose: (rotation: Quaternion) => 
   const advance = (now: number, reduced = false) => {
     if (held || !Number.isFinite(now)) return false;
     if (spin) {
-      const stopAt =
-        spin.at + (Math.log(spin.velocity.length() / spinStopSpeed) / spinDecay) * 1000;
-      const seconds = Math.max(0, (Math.min(now, stopAt) - spin.at) / 1000);
-      const decay = Math.exp(-spinDecay * seconds);
+      const seconds = Math.max(0, (now - spin.at) / 1000);
+      const coast = Math.exp(-spinDecay * seconds);
+      const settle = Math.exp(-settleFrequency * seconds);
+      const correction = fromVector(
+        spin.correction.clone().multiplyScalar(1 - (1 + settleFrequency * seconds) * settle),
+      );
       rotation
         .copy(spin.rotation)
-        .premultiply(fromVector(spin.velocity.clone().multiplyScalar((1 - decay) / spinDecay)))
+        .premultiply(fromVector(spin.velocity.clone().multiplyScalar((1 - coast) / spinDecay)))
+        .premultiply(correction)
         .normalize();
-      velocity.copy(spin.velocity).multiplyScalar(decay);
-      if (reduced || now >= stopAt) {
+      velocity
+        .copy(spin.velocity)
+        .multiplyScalar(coast)
+        .applyQuaternion(correction)
+        .addScaledVector(spin.correction, settleFrequency ** 2 * seconds * settle);
+      if (reduced || (rotation.angleTo(target) < 0.01 && velocity.length() < 0.08)) {
         spin = null;
-        beginSpring(options.choose(rotation.clone()), reduced ? now : stopAt);
-        if (reduced) {
-          rotation.copy(target);
-          velocity.set(0, 0, 0);
-          spring = null;
-        } else advance(now);
+        rotation.copy(target);
+        velocity.set(0, 0, 0);
       }
       return true;
     }
