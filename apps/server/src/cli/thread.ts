@@ -17,6 +17,8 @@ import {
 import * as NodeFS from "node:fs";
 import * as Console from "effect/Console";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -24,6 +26,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { Argument, Command, Flag, GlobalFlag } from "effect/unstable/cli";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
@@ -32,6 +35,11 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import {
+  ThreadFollowRenderer,
+  threadEventStream,
+  type ThreadFollowOutput,
+} from "./threadFollow.ts";
 import {
   type CliAuthLocationFlags,
   DurationFromString,
@@ -84,7 +92,17 @@ const untilFlag = Flag.string("until").pipe(
 );
 
 const jsonFlag = Flag.boolean("json").pipe(
-  Flag.withDescription("Emit JSON instead of human-readable output."),
+  Flag.withDescription(
+    "Emit JSON instead of human-readable output. With --follow, emits one JSON object per line.",
+  ),
+  Flag.withDefault(false),
+);
+
+const followFlag = Flag.boolean("follow").pipe(
+  Flag.withAlias("f"),
+  Flag.withDescription(
+    "Stream assistant text live as it is written; activity lines go to stderr. Implies --wait for send/new.",
+  ),
   Flag.withDefault(false),
 );
 
@@ -196,6 +214,12 @@ export function resolveThreadCliWakeTime(input: {
 export function formatThreadCliJson(value: unknown): string {
   // @effect-diagnostics-next-line preferSchemaOverJson:off
   return JSON.stringify(value, null, 2);
+}
+
+/** Single-line JSON for NDJSON streaming output. */
+export function formatThreadCliJsonLine(value: unknown): string {
+  // @effect-diagnostics-next-line preferSchemaOverJson:off
+  return JSON.stringify(value);
 }
 
 export type ThreadCliStatus = "running" | "approval" | "input" | "error" | "snoozed" | "idle";
@@ -424,6 +448,7 @@ const runThreadCli = Effect.fn("runThreadCli")(function* <A>(
       Error,
       HttpClient.HttpClient
     >;
+    readonly follow: (threadId: string) => ReturnType<typeof threadEventStream>;
   }) => Effect.Effect<A, Error, Crypto.Crypto | HttpClient.HttpClient>,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
@@ -458,6 +483,7 @@ const runThreadCli = Effect.fn("runThreadCli")(function* <A>(
           fetchDetail: (threadId, turnLimit) =>
             fetchThreadDetail(origin, token, threadId, turnLimit),
           refreshSnapshot: fetchShellSnapshot(origin, token),
+          follow: (threadId) => threadEventStream({ origin, token, threadId }),
         });
       }),
     );
@@ -597,13 +623,17 @@ const threadShowCommand = Command.make("show", {
     Flag.withDescription("Number of recent turns to include. Default: 5."),
     Flag.withDefault(5),
   ),
+  follow: followFlag,
   json: jsonFlag,
 }).pipe(
-  Command.withDescription("Print a thread's recent user and assistant messages."),
+  Command.withDescription(
+    "Print a thread's recent user and assistant messages. With --follow, keep streaming new output until interrupted.",
+  ),
   Command.withHandler((flags) =>
     runThreadCli(
       flags,
-      Effect.fn("threadShowCli")(function* ({ snapshot, fetchDetail }) {
+      Effect.fn("threadShowCli")(function* (cli) {
+        const { snapshot, fetchDetail } = cli;
         const thread = resolveThreadCliTarget(
           snapshot,
           Option.getOrUndefined(flags.thread),
@@ -624,10 +654,69 @@ const threadShowCommand = Command.make("show", {
         for (const message of messages) {
           yield* Console.log(`[${message.role}] ${message.createdAt}\n${message.text}\n`);
         }
+        if (flags.follow) {
+          const renderer = new ThreadFollowRenderer();
+          // Anything already printed above is seeded so it is not repeated;
+          // an in-progress message continues from where the snapshot left off.
+          renderer.seed(detail.thread.messages);
+          yield* cli
+            .follow(thread.id)
+            .pipe(
+              Stream.runForEach((item) =>
+                writeFollowOutput(item.kind === "snapshot" ? [] : renderer.handleItem(item), false),
+              ),
+            );
+        }
       }),
     ),
   ),
 );
+
+/**
+ * Writes followed output. Plain mode sends reply text to stdout and activity to
+ * stderr, so stdout stays the pure reply. JSON mode emits one NDJSON object per
+ * chunk on stdout.
+ */
+const writeFollowOutput = (outputs: ReadonlyArray<ThreadFollowOutput>, json: boolean) =>
+  Effect.sync(() => {
+    for (const output of outputs) {
+      if (json) {
+        process.stdout.write(`${formatThreadCliJsonLine(output)}\n`);
+      } else if (output.type === "text") {
+        process.stdout.write(output.text);
+      } else {
+        process.stderr.write(`\n· ${output.summary}\n`);
+      }
+    }
+  });
+
+/**
+ * Starts consuming the live stream in the background and resolves once the
+ * initial snapshot has seeded the renderer, so nothing sent afterwards is
+ * missed or duplicated.
+ */
+const startFollowing = Effect.fn("startFollowing")(function* (input: {
+  readonly cli: ThreadCliRunInput;
+  readonly threadId: string;
+  readonly renderer: ThreadFollowRenderer;
+  readonly json: boolean;
+}) {
+  const ready = yield* Deferred.make<void>();
+  const fiber = yield* input.cli.follow(input.threadId).pipe(
+    Stream.runForEach((item) =>
+      Effect.gen(function* () {
+        if (item.kind === "snapshot" || item.kind === "synchronized") {
+          yield* Deferred.succeed(ready, undefined);
+        }
+        yield* writeFollowOutput(input.renderer.handleItem(item), input.json);
+      }),
+    ),
+    Effect.ensuring(Deferred.succeed(ready, undefined)),
+    Effect.forkScoped,
+  );
+  yield* Deferred.await(ready);
+  return fiber;
+});
 
 const readThreadCliStdin = () => (process.stdin.isTTY ? undefined : NodeFS.readFileSync(0, "utf8"));
 
@@ -638,7 +727,7 @@ const waitFlag = Flag.boolean("wait").pipe(
 
 const timeoutFlag = Flag.string("timeout").pipe(
   Flag.withSchema(DurationFromString),
-  Flag.withDescription("Maximum time to wait with --wait. Default: 30m."),
+  Flag.withDescription("Maximum time to wait with --wait or --follow. Default: 30m."),
   Flag.optional,
 );
 
@@ -658,15 +747,32 @@ const startThreadCliTurn = Effect.fn("startThreadCliTurn")(function* (input: {
   readonly threadId: ThreadId;
   readonly label: string;
   readonly previousTurnId: string | null;
+  /** Commands dispatched before the turn, such as creating the thread. */
+  readonly prepare?: ReadonlyArray<ThreadCliDispatchCommand>;
   readonly command: (ids: {
     readonly commandId: CommandId;
     readonly messageId: MessageId;
     readonly createdAt: string;
   }) => Extract<ThreadCliDispatchCommand, { type: "thread.turn.start" }>;
   readonly wait: boolean;
+  readonly follow: boolean;
   readonly timeout: Option.Option<Duration.Duration>;
   readonly json: boolean;
 }) {
+  for (const command of input.prepare ?? []) {
+    yield* input.cli.dispatch(command);
+  }
+  // Subscribe before dispatching so the start of the reply is never missed.
+  const renderer = new ThreadFollowRenderer();
+  const follower = input.follow
+    ? yield* startFollowing({
+        cli: input.cli,
+        threadId: input.threadId,
+        renderer,
+        json: input.json,
+      })
+    : undefined;
+
   const messageId = MessageId.make(yield* commandUuid);
   yield* input.cli.dispatch(
     input.command({
@@ -675,7 +781,7 @@ const startThreadCliTurn = Effect.fn("startThreadCliTurn")(function* (input: {
       createdAt: DateTime.formatIso(yield* DateTime.now),
     }),
   );
-  if (!input.wait) {
+  if (!input.wait && !input.follow) {
     yield* Console.log(
       input.json
         ? formatThreadCliJson({ threadId: input.threadId, messageId, status: "started" })
@@ -702,23 +808,47 @@ const startThreadCliTurn = Effect.fn("startThreadCliTurn")(function* (input: {
   );
   const detail = yield* input.cli.fetchDetail(input.threadId, 1);
   const reply = selectTurnReply(detail.thread.messages, settled.turnId);
-  yield* Console.log(
-    input.json
-      ? formatThreadCliJson({
-          threadId: input.threadId,
-          messageId,
-          turnId: settled.turnId,
-          state: settled.state,
-          reply,
-        })
-      : reply,
-  );
+
+  if (follower !== undefined) {
+    yield* Fiber.interrupt(follower);
+    // The stored messages are authoritative; print anything the stream missed.
+    yield* writeFollowOutput(
+      renderer.reconcile(detail.thread.messages, settled.turnId),
+      input.json,
+    );
+    yield* Effect.sync(() =>
+      process.stdout.write(
+        input.json
+          ? `${formatThreadCliJsonLine({
+              type: "result",
+              threadId: input.threadId,
+              messageId,
+              turnId: settled.turnId,
+              state: settled.state,
+              reply,
+            })}\n`
+          : "\n",
+      ),
+    );
+  } else {
+    yield* Console.log(
+      input.json
+        ? formatThreadCliJson({
+            threadId: input.threadId,
+            messageId,
+            turnId: settled.turnId,
+            state: settled.state,
+            reply,
+          })
+        : reply,
+    );
+  }
   if (settled.state !== "completed") {
     return yield* new ThreadCliUsageError({
       message: `Turn ${settled.turnId} ended with state '${settled.state}'.`,
     });
   }
-});
+}, Effect.scoped);
 
 const threadSendCommand = Command.make("send", {
   ...projectLocationFlags,
@@ -727,6 +857,7 @@ const threadSendCommand = Command.make("send", {
   ),
   message: messageArgument,
   wait: waitFlag,
+  follow: followFlag,
   timeout: timeoutFlag,
   json: jsonFlag,
 }).pipe(
@@ -766,6 +897,7 @@ const threadSendCommand = Command.make("send", {
             createdAt,
           }),
           wait: flags.wait,
+          follow: flags.follow,
           timeout: flags.timeout,
           json: flags.json,
         });
@@ -796,6 +928,7 @@ const threadNewCommand = Command.make("new", {
   ),
   message: messageArgument,
   wait: waitFlag,
+  follow: followFlag,
   timeout: timeoutFlag,
   json: jsonFlag,
 }).pipe(
@@ -824,7 +957,7 @@ const threadNewCommand = Command.make("new", {
         // The HTTP dispatch endpoint does not expand `thread.turn.start`
         // bootstraps (only the WebSocket path does), so create the thread
         // explicitly before starting its first turn.
-        yield* cli.dispatch({
+        const createCommand: ThreadCliDispatchCommand = {
           type: "thread.create",
           commandId: CommandId.make(yield* commandUuid),
           threadId,
@@ -836,12 +969,13 @@ const threadNewCommand = Command.make("new", {
           branch: null,
           worktreePath: null,
           createdAt: DateTime.formatIso(yield* DateTime.now),
-        });
+        };
         yield* startThreadCliTurn({
           cli,
           threadId,
           label: title,
           previousTurnId: null,
+          prepare: [createCommand],
           command: ({ commandId, messageId, createdAt }) => ({
             type: "thread.turn.start",
             commandId,
@@ -853,6 +987,7 @@ const threadNewCommand = Command.make("new", {
             createdAt,
           }),
           wait: flags.wait,
+          follow: flags.follow,
           timeout: flags.timeout,
           json: flags.json,
         });
