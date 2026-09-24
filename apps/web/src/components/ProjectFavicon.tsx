@@ -1,4 +1,4 @@
-import type { EnvironmentId, ProjectIconColor } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   getProjectFaviconResourceKey,
