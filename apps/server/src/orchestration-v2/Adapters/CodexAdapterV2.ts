@@ -79,6 +79,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
+import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../../provider/CodexDeveloperInstructions.ts";
 import {
   describeMcpElicitation,
@@ -1411,6 +1412,7 @@ export const createCodexAdapterV2 = (
     const settings = {
       ...config,
       enabled,
+      binaryPath: expandHomePath(config.binaryPath),
       homePath: homeLayout.effectiveHomePath ?? "",
     } satisfies CodexSettings;
 
