@@ -21,16 +21,16 @@ import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./ba
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 8 as const;
+export const USAGE_CONTRACT_VERSION = 9 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
  * v5 only adds `grok` to {@link UsageProviderKind}; v6 adds optional project
  * attribution to buckets; v7 adds the separate thread-breakdown RPC; v8 adds
- * optional cache-write costs. v4 Claude/Codex buckets remain valid, so
- * mixed-version environments keep those totals instead of treating every older
- * server as stale.
+ * optional cache-write costs; v9 adds optional cache-write TTL counters. v4
+ * Claude/Codex buckets remain valid, so mixed-version environments keep those
+ * totals instead of treating every older server as stale.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 /** First contract version whose buckets carry project attribution. */
@@ -80,6 +80,10 @@ export const UsageTokenTotals = Schema.Struct({
   uncachedInputTokens: NonNegativeInt,
   cachedInputTokens: NonNegativeInt,
   cacheCreationTokens: NonNegativeInt,
+  /** Anthropic five-minute cache writes, when the transcript reports the TTL. */
+  cacheCreation5mTokens: Schema.optional(NonNegativeInt),
+  /** Anthropic one-hour cache writes, when the transcript reports the TTL. */
+  cacheCreation1hTokens: Schema.optional(NonNegativeInt),
   outputTokens: NonNegativeInt,
   reasoningTokens: NonNegativeInt,
 });
@@ -124,9 +128,9 @@ export const UsageBucket = Schema.Struct({
    */
   cacheSavingsUsd: Schema.Number,
   /**
-   * Estimated cost of the cache-creation tokens in this bucket at the model's
-   * cache-write rate. A subset of `costUsd` when the bucket is model-priced.
-   * Absent from summaries written before this field existed.
+   * Estimated cache-write cost at the model and TTL-specific rates. Cache
+   * creation is a billing category, not proof of expiry. A subset of `costUsd`
+   * when the bucket is model-priced. Absent from older summaries.
    */
   cacheWriteUsd: Schema.optional(Schema.Number),
   costSource: UsageCostSource,

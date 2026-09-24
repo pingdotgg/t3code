@@ -6,6 +6,9 @@
 environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
 cost. These estimates are not your subscription bill.
 
+Claude estimates price each model-fallback attempt under the model that ran it, and price
+five-minute and one-hour cache writes at their own rates when the transcript reports them.
+
 On web and desktop, the date fields beside the presets accept a custom range of up to 90 days.
 Drag across a daily chart to zoom to that range, and double-click the chart to return to the range
 you had before zooming.
@@ -30,6 +33,7 @@ Rows that map to a thread carry a link that opens it.
 The **Estimated cache writes** total prices cache-creation tokens at each model's cache-write rate.
 It only applies to model-priced records that report cache-creation tokens. Rows without cache
 writes show a dash; incomplete or unavailable pricing is labeled **Unavailable** instead of zero.
+Cache creation is a billing category, not evidence that a cache entry expired.
 
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.

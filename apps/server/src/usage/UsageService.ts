@@ -188,7 +188,12 @@ export const make = Effect.gen(function* () {
 
   const fileCache: ScanCache = new Map();
   const sourceCache = new Map<string, typeof CachedSource.Type>();
-  let cacheDirty = false;
+  // Revisions let a slower persist skip marking a newer in-memory cache as
+  // saved; the semaphore keeps concurrent summary and thread scans from
+  // interleaving writes.
+  let cacheRevision = 0;
+  let persistedCacheRevision = 0;
+  const cachePersistSemaphore = yield* Semaphore.make(1);
   const isWithinDirectory = (filePath: string, dir: string) => {
     const relative = path.relative(dir, filePath);
     return relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative);
@@ -355,7 +360,7 @@ export const make = Effect.gen(function* () {
             : currentVolumeId;
         if (previous?.dir !== dir || previous.volumeId !== volumeId) {
           sourceCache.set(sourceKey, { dir, volumeId });
-          cacheDirty = true;
+          cacheRevision += 1;
         }
         const key = `${provider}\0${dir}`;
         if (seen.has(key)) continue;
@@ -446,22 +451,24 @@ export const make = Effect.gen(function* () {
     }),
   );
 
-  const persistScanCache = Effect.fn("UsageService.persistScanCache")(function* () {
-    if (!cacheDirty) return;
-    // Cleared only after the write lands, so a failed persist is retried on
+  const persistScanCacheUnlocked = Effect.fn("UsageService.persistScanCacheUnlocked")(function* () {
+    if (cacheRevision === persistedCacheRevision) return;
+    // Recorded only after the write lands, so a failed persist is retried on
     // the next scan instead of leaving disk permanently stale.
+    const revision = cacheRevision;
     yield* encodeScanCacheFile({
       ...encodeScanCache(fileCache),
       sources: Object.fromEntries(sourceCache),
     }).pipe(
       Effect.flatMap((serialized) => fileSystem.writeFileString(scanCachePath, serialized)),
       Effect.map(() => {
-        cacheDirty = false;
+        persistedCacheRevision = revision;
       }),
       // A cache we cannot write is a slower next start, not a failed read.
       Effect.catchCause(() => Effect.void),
     );
   });
+  const persistScanCache = () => cachePersistSemaphore.withPermits(1)(persistScanCacheUnlocked());
 
   /**
    * Parses one transcript, reusing the cached result when it is unchanged.
@@ -508,13 +515,12 @@ export const make = Effect.gen(function* () {
         return cached?.provider === provider ? [...cached.records, ...cached.tailRecords] : [];
 
       // Stored already de-duplicated within the file, which is 99% of all
-      // duplicates. The aggregator still runs the cross-file dedupe pass. One
-      // seen set spans the cached base, the new lines, and the tail so a
-      // resumed parse dedupes exactly like a full one.
+      // duplicates. The final snapshot wins, so a resumed Claude parse can
+      // replace an earlier progressive snapshot from the cached base; the
+      // aggregator's cross-file pass also keeps the last copy.
       const base = parsed.resumed && cached !== undefined ? cached.records : [];
-      const seen = new Set<string>();
-      const records = dedupeWithinFile([...base, ...parsed.records], seen);
-      const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
+      const records = dedupeWithinFile([...base, ...parsed.records]);
+      const tailRecords = dedupeWithinFile(parsed.tailRecords);
 
       fileCache.set(filePath, {
         size,
@@ -524,7 +530,7 @@ export const make = Effect.gen(function* () {
         tailRecords,
         position: parsed.position,
       });
-      cacheDirty = true;
+      cacheRevision += 1;
       return tailRecords.length === 0 ? records : [...records, ...tailRecords];
     });
 
@@ -728,7 +734,7 @@ export const make = Effect.gen(function* () {
     }
 
     const pruned = pruneScanCache(fileCache, retentionCutoffMs);
-    if (pruned > 0) cacheDirty = true;
+    if (pruned > 0) cacheRevision += 1;
     yield* persistScanCache();
 
     const aggregated = aggregator.finish();
@@ -970,7 +976,7 @@ export const make = Effect.gen(function* () {
     // A thread-only client must warm and bound the same durable cache as the
     // summary RPC, otherwise restarts repeat parsing and stale entries grow.
     const pruned = pruneScanCache(fileCache, retentionCutoffMs);
-    if (pruned > 0) cacheDirty = true;
+    if (pruned > 0) cacheRevision += 1;
     yield* persistScanCache();
 
     const attribution = yield* loadThreadAttribution(projectSnapshot);

@@ -17,7 +17,7 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
-import type { CodexScanState, UsageRecord } from "./usageTranscripts.ts";
+import { cacheCreationSplit, type CodexScanState, type UsageRecord } from "./usageTranscripts.ts";
 
 // v2: Codex fork-copy suppression changed what a file parses to, so v1
 // entries would keep serving double-counted records forever.
@@ -25,7 +25,9 @@ import type { CodexScanState, UsageRecord } from "./usageTranscripts.ts";
 // re-parses only its appended bytes instead of starting over.
 // v4: records carry the session's cwd for project attribution; v3 entries
 // would pin every cached file to "no project" forever.
-const USAGE_SCAN_CACHE_VERSION = 4 as const;
+// v5: Claude records retain cache TTLs and expanded fallback iterations, and
+// keep the final progressive snapshot per response.
+const USAGE_SCAN_CACHE_VERSION = 5 as const;
 
 export interface CachedFile {
   readonly size: number;
@@ -61,6 +63,8 @@ type SerializedRecord = readonly [
   dedupeKey: string | null,
   reportedCostUsd: number | null,
   cwdIndex: number,
+  cacheCreation5mTokens: number,
+  cacheCreation1hTokens: number,
 ];
 
 interface SerializedFile {
@@ -104,19 +108,24 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
     return next;
   };
 
-  const serializeRecord = (record: UsageRecord): SerializedRecord => [
-    record.timestampMs,
-    intern(models, modelIndex, record.model),
-    intern(sessions, sessionIndex, record.sessionId),
-    record.totals.uncachedInputTokens,
-    record.totals.cachedInputTokens,
-    record.totals.cacheCreationTokens,
-    record.totals.outputTokens,
-    record.totals.reasoningTokens,
-    record.dedupeKey,
-    record.reportedCostUsd,
-    intern(cwds, cwdIndex, record.cwd),
-  ];
+  const serializeRecord = (record: UsageRecord): SerializedRecord => {
+    const { fiveMinute, oneHour } = cacheCreationSplit(record.totals);
+    return [
+      record.timestampMs,
+      intern(models, modelIndex, record.model),
+      intern(sessions, sessionIndex, record.sessionId),
+      record.totals.uncachedInputTokens,
+      record.totals.cachedInputTokens,
+      record.totals.cacheCreationTokens,
+      record.totals.outputTokens,
+      record.totals.reasoningTokens,
+      record.dedupeKey,
+      record.reportedCostUsd,
+      intern(cwds, cwdIndex, record.cwd),
+      fiveMinute,
+      oneHour,
+    ];
+  };
 
   const files: Record<string, SerializedFile> = {};
   for (const [path, entry] of cache) {
@@ -138,6 +147,10 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
 
 function isRecordArray(value: unknown): value is readonly unknown[] {
   return Array.isArray(value);
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
 /**
@@ -176,7 +189,7 @@ export function decodeScanCache(document: unknown): ScanCache {
   ): UsageRecord[] | null => {
     const records: UsageRecord[] = [];
     for (const row of rows) {
-      if (!isRecordArray(row) || row.length < 11) return null;
+      if (!isRecordArray(row) || row.length < 13) return null;
       const [
         timestampMs,
         modelIndex,
@@ -189,6 +202,8 @@ export function decodeScanCache(document: unknown): ScanCache {
         dedupeKey,
         reportedCostUsd,
         cwdIndex,
+        cacheCreation5m,
+        cacheCreation1h,
       ] = row as SerializedRecord;
 
       const model = typeof modelIndex === "number" ? models[modelIndex] : undefined;
@@ -198,11 +213,14 @@ export function decodeScanCache(document: unknown): ScanCache {
         !Number.isFinite(timestampMs) ||
         model === undefined ||
         cwd === undefined ||
-        !Number.isFinite(uncached) ||
-        !Number.isFinite(cached) ||
-        !Number.isFinite(cacheCreation) ||
-        !Number.isFinite(output) ||
-        !Number.isFinite(reasoning)
+        !isNonNegativeInteger(uncached) ||
+        !isNonNegativeInteger(cached) ||
+        !isNonNegativeInteger(cacheCreation) ||
+        !isNonNegativeInteger(cacheCreation5m) ||
+        !isNonNegativeInteger(cacheCreation1h) ||
+        cacheCreation5m + cacheCreation1h > cacheCreation ||
+        !isNonNegativeInteger(output) ||
+        !isNonNegativeInteger(reasoning)
       ) {
         return null;
       }
@@ -217,6 +235,8 @@ export function decodeScanCache(document: unknown): ScanCache {
           uncachedInputTokens: uncached,
           cachedInputTokens: cached,
           cacheCreationTokens: cacheCreation,
+          ...(cacheCreation5m === 0 ? {} : { cacheCreation5mTokens: cacheCreation5m }),
+          ...(cacheCreation1h === 0 ? {} : { cacheCreation1hTokens: cacheCreation1h }),
           outputTokens: output,
           reasoningTokens: reasoning,
         },
@@ -321,22 +341,18 @@ export function pruneScanCache(cache: ScanCache, retentionCutoffMs: number): num
   return removed;
 }
 
-/**
- * Within-file de-duplication, applied before an entry is cached.
- *
- * Callers stitching an incremental parse together pass one `seen` set across
- * the line and tail record batches so the whole file stays deduplicated as a
- * unit; the set is mutated in place.
- */
-export function dedupeWithinFile(
-  records: readonly UsageRecord[],
-  seen: Set<string> = new Set(),
-): readonly UsageRecord[] {
+/** Within-file de-duplication, retaining the final complete Claude snapshot. */
+export function dedupeWithinFile(records: readonly UsageRecord[]): readonly UsageRecord[] {
+  const indexByKey = new Map<string, number>();
   const kept: UsageRecord[] = [];
   for (const record of records) {
     if (record.dedupeKey !== null) {
-      if (seen.has(record.dedupeKey)) continue;
-      seen.add(record.dedupeKey);
+      const existing = indexByKey.get(record.dedupeKey);
+      if (existing !== undefined) {
+        kept[existing] = record;
+        continue;
+      }
+      indexByKey.set(record.dedupeKey, kept.length);
     }
     kept.push(record);
   }

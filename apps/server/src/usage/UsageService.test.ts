@@ -831,6 +831,24 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("replaces a cached progressive snapshot when a transcript grows", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(serviceLayers({ prefix: "usage-service-progressive-test", home, settings })),
+      );
+
+      const first = yield* service.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(first), 5);
+
+      yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(1, 12)));
+      const second = yield* service.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(second), 12);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("returns a usage read error when provider runtime state cannot be read", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
