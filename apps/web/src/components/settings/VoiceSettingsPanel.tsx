@@ -143,7 +143,7 @@ function ModelCard(props: {
             {model.supportsStreaming ? <Badge variant="outline">Streaming</Badge> : null}
           </div>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{model.description}</p>
-          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-muted-foreground">
             <span className="inline-flex items-center gap-1">
               <GlobeIcon className="size-3" />
               {model.languages.length === 1
@@ -196,7 +196,7 @@ function ModelCard(props: {
               style={{ width: `${progress}%` }}
             />
           </div>
-          <div className="mt-1 text-[11px] text-muted-foreground">
+          <div className="mt-1 text-2xs text-muted-foreground">
             {model.state === "verifying"
               ? "Verifying download…"
               : `${Math.round(progress)}% downloaded`}

@@ -29,6 +29,7 @@ describe("environment speech contracts", () => {
       acceleration: "auto",
       language: "auto",
       effectiveLanguage: "auto",
+      modelUnloadTimeout: "min_15",
       gpuDevices: [],
       customWords: ["T3 Code"],
       removeFillerWords: false,
