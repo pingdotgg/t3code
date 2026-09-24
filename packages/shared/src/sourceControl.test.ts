@@ -59,8 +59,8 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     ).toBe("bitbucket");
   });
 
-  it("detects Forgejo and Gitea hosts while preserving HTTP origins", () => {
-    for (const host of ["codeberg.org", "forgejo.example.test", "gitea.example.test"]) {
+  it("detects Forgejo hosts while preserving HTTP origins", () => {
+    for (const host of ["codeberg.org", "forgejo.example.test"]) {
       expect(detectSourceControlProviderFromRemoteUrl(`http://${host}:3000/team/repo.git`)).toEqual(
         {
           kind: "forgejo",
@@ -70,6 +70,22 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
       );
     }
     expect(getChangeRequestTerminologyForKind("forgejo")).toEqual({
+      shortLabel: "PR",
+      singular: "pull request",
+    });
+  });
+
+  it("detects Gitea hosts while preserving HTTP origins", () => {
+    for (const host of ["gitea.com", "gitea.example.test"]) {
+      expect(detectSourceControlProviderFromRemoteUrl(`http://${host}:3000/team/repo.git`)).toEqual(
+        {
+          kind: "gitea",
+          name: host === "gitea.com" ? "Gitea" : "Gitea Self-Hosted",
+          baseUrl: `http://${host}:3000`,
+        },
+      );
+    }
+    expect(getChangeRequestTerminologyForKind("gitea")).toEqual({
       shortLabel: "PR",
       singular: "pull request",
     });
@@ -121,6 +137,9 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
       detectSourceControlProviderFromRemoteUrl("https://bitbucket.example.com/workspace/repo.git")
         ?.kind,
     ).toBe("bitbucket");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://gitea.example.com/owner/repo.git")?.kind,
+    ).toBe("gitea");
   });
 
   it("does not match provider names embedded in unrelated DNS labels", () => {
@@ -136,6 +155,9 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
       detectSourceControlProviderFromRemoteUrl(
         "https://notbitbucket.example.com/workspace/repo.git",
       )?.kind,
+    ).toBe("unknown");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://notgitea.example.com/owner/repo.git")?.kind,
     ).toBe("unknown");
   });
 

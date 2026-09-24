@@ -274,7 +274,7 @@ interface AddProjectEnvironmentOption {
 
 type AddProjectRemoteProviderKind = Extract<
   SourceControlProviderKind,
-  "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops"
+  "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops" | "gitea"
 >;
 type AddProjectRemoteSource = AddProjectRemoteProviderKind | "url";
 
@@ -298,6 +298,7 @@ const REMOTE_PROJECT_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
   "github",
   "gitlab",
   "forgejo",
+  "gitea",
   "bitbucket",
   "azure-devops",
 ];
@@ -305,6 +306,7 @@ const REMOTE_PROJECT_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKin
   "github",
   "gitlab",
   "forgejo",
+  "gitea",
   "bitbucket",
   "azure-devops",
 ];
@@ -315,6 +317,8 @@ function remoteProjectSourceLabel(source: AddProjectRemoteSource): string {
       return "GitHub";
     case "forgejo":
       return "Forgejo / Gitea";
+    case "gitea":
+      return "Gitea";
     case "gitlab":
       return "GitLab";
     case "bitbucket":
@@ -329,6 +333,7 @@ function remoteProjectSourceLabel(source: AddProjectRemoteSource): string {
 function remoteProjectSourcePathHint(source: AddProjectRemoteSource): string {
   switch (source) {
     case "forgejo":
+    case "gitea":
     case "github":
       return "owner/repo";
     case "gitlab":
@@ -354,6 +359,8 @@ function remoteProjectSourceIcon(source: AddProjectRemoteSource, className: stri
       return <GitHubIcon className={className} />;
     case "forgejo":
       return <ForgejoIcon className={className} />;
+    case "gitea":
+      return <GitPullRequestArrowIcon className={className} />;
     case "gitlab":
       return <GitLabIcon className={className} />;
     case "bitbucket":
@@ -408,6 +415,7 @@ function buildAddProjectRemoteSourceReadiness(
     github: unavailable,
     gitlab: unavailable,
     forgejo: unavailable,
+    gitea: unavailable,
     bitbucket: unavailable,
     "azure-devops": unavailable,
   };

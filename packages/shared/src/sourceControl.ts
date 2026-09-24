@@ -5,7 +5,14 @@ import type {
 } from "@t3tools/contracts";
 
 export interface ChangeRequestPresentation {
-  readonly icon: "github" | "gitlab" | "forgejo" | "azure-devops" | "bitbucket" | "change-request";
+  readonly icon:
+    | "github"
+    | "gitlab"
+    | "forgejo"
+    | "azure-devops"
+    | "bitbucket"
+    | "gitea"
+    | "change-request";
   readonly providerName: string;
   readonly shortName: string;
   readonly longName: string;
@@ -58,6 +65,17 @@ const FORGEJO_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   urlExample: "https://codeberg.org/owner/repo/pulls/42",
 };
 
+const GITEA_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
+  icon: "gitea",
+  providerName: "Gitea",
+  shortName: "PR",
+  longName: "pull request",
+  pluralLongName: "pull requests",
+  providerLongName: "Gitea pull request",
+  checkoutCommandExample: "tea pulls checkout 123",
+  urlExample: "https://git.example.com/owner/repo/pulls/42",
+};
+
 const AZURE_DEVOPS_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   icon: "azure-devops",
   providerName: "Azure DevOps",
@@ -100,6 +118,8 @@ export function resolveChangeRequestPresentation(
       return GITLAB_CHANGE_REQUEST_PRESENTATION;
     case "forgejo":
       return FORGEJO_CHANGE_REQUEST_PRESENTATION;
+    case "gitea":
+      return GITEA_CHANGE_REQUEST_PRESENTATION;
     case "azure-devops":
       return AZURE_DEVOPS_CHANGE_REQUEST_PRESENTATION;
     case "bitbucket":
@@ -213,14 +233,20 @@ export function detectSourceControlProviderFromRemoteUrl(
   }
   const hostname = parseHostName(host);
 
-  if (
-    hostname === "codeberg.org" ||
-    hasDnsLabel(hostname, "forgejo") ||
-    hasDnsLabel(hostname, "gitea")
-  ) {
+  if (hostname === "codeberg.org" || hasDnsLabel(hostname, "forgejo")) {
     return {
       kind: "forgejo",
       name: "Forgejo",
+      baseUrl: /^https?:/iu.test(remoteUrl.trim())
+        ? new URL(remoteUrl.trim()).origin
+        : toBaseUrl(host),
+    };
+  }
+
+  if (hostname === "gitea.com" || hasDnsLabel(hostname, "gitea")) {
+    return {
+      kind: "gitea",
+      name: hostname === "gitea.com" ? "Gitea" : "Gitea Self-Hosted",
       baseUrl: /^https?:/iu.test(remoteUrl.trim())
         ? new URL(remoteUrl.trim()).origin
         : toBaseUrl(host),

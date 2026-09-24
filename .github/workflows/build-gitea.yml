@@ -1,0 +1,116 @@
+name: Build Gitea fork artifacts
+
+# Personal fork build. Upstream runs on Blacksmith runners that do not exist in
+# this fork, so everything here uses GitHub-hosted runners instead.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - gitea-provider-merge
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux (server bundle + AppImage)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Install Linux packaging prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libsecret-1-dev pkg-config imagemagick
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Linux AppImage
+        run: vp run dist:desktop:linux
+
+      - name: Upload Linux server bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: t3-server-linux-x64
+          path: apps/server/dist
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Linux AppImage
+        uses: actions/upload-artifact@v7
+        with:
+          name: t3-desktop-linux-x64
+          path: release/*.AppImage
+          if-no-files-found: error
+          retention-days: 30
+
+  windows:
+    name: Windows (NSIS installer)
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      # Mirrors upstream: node-pty and friends are rebuilt with MSVC, which
+      # wants the Spectre-mitigated libraries that are optional in the base
+      # runner image.
+      - name: Install Spectre-mitigated MSVC libs
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -products * -latest -property installationPath
+          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          $proc = Start-Process -FilePath $setupExe `
+            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64.Spectre", "--quiet", "--norestart" `
+            -Wait -PassThru -NoNewWindow
+          if ($null -eq $proc -or $proc.ExitCode -ne 0) {
+            $code = if ($null -ne $proc) { $proc.ExitCode } else { 1 }
+            Write-Error "Visual Studio Installer failed with exit code $code"
+            exit $code
+          }
+
+      - name: Build Windows installer
+        run: vp run dist:desktop:win
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: t3-desktop-windows-x64
+          path: release/*.exe
+          if-no-files-found: error
+          retention-days: 30

@@ -1,9 +1,15 @@
-import Svg, { Circle, Defs, G, LinearGradient, Path, Stop } from "react-native-svg";
+import Svg, { Circle, Defs, G, LinearGradient, Line, Path, Stop } from "react-native-svg";
 import { withUniwind } from "uniwind";
 
 const ThemedSvg = withUniwind(Svg);
 
-export type SourceControlIconKind = "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops";
+export type SourceControlIconKind =
+  | "github"
+  | "gitlab"
+  | "forgejo"
+  | "bitbucket"
+  | "azure-devops"
+  | "gitea";
 
 export function SourceControlIcon(props: {
   readonly kind: SourceControlIconKind;
@@ -14,6 +20,29 @@ export function SourceControlIcon(props: {
   const size = props.size ?? 18;
 
   switch (props.kind) {
+    case "gitea":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <Circle cx="18" cy="18" r="3" stroke={props.color ?? "currentColor"} strokeWidth="2" />
+          <Circle cx="6" cy="6" r="3" stroke={props.color ?? "currentColor"} strokeWidth="2" />
+          <Path
+            d="M13 6h3a2 2 0 0 1 2 2v7"
+            stroke={props.color ?? "currentColor"}
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <Line
+            x1="6"
+            y1="9"
+            x2="6"
+            y2="21"
+            stroke={props.color ?? "currentColor"}
+            strokeWidth="2"
+            strokeLinecap="round"
+          />
+        </Svg>
+      );
     case "forgejo":
       // Official two-color mark from https://forgejo.org/favicon.svg.
       return (

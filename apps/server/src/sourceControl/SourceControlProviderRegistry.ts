@@ -13,6 +13,7 @@ import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/source
 
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 import * as BitbucketSourceControlProvider from "./BitbucketSourceControlProvider.ts";
+import * as GiteaSourceControlProvider from "./GiteaSourceControlProvider.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
 import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts";
@@ -311,6 +312,7 @@ export const make = Effect.gen(function* () {
   const bitbucket = yield* BitbucketSourceControlProvider.make;
   const bitbucketDiscovery = yield* BitbucketSourceControlProvider.makeDiscovery;
   const azureDevOps = yield* AzureDevOpsSourceControlProvider.make;
+  const gitea = yield* GiteaSourceControlProvider.make;
   return yield* makeWithProviders([
     {
       kind: "github",
@@ -331,6 +333,11 @@ export const make = Effect.gen(function* () {
       kind: "bitbucket",
       provider: bitbucket,
       discovery: bitbucketDiscovery,
+    },
+    {
+      kind: "gitea",
+      provider: gitea,
+      discovery: GiteaSourceControlProvider.discovery,
     },
     { kind: "forgejo", provider: forgejo, discovery: forgejoDiscovery },
   ]);

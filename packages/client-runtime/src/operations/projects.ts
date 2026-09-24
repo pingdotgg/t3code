@@ -25,7 +25,7 @@ import type { EnvironmentProject } from "../state/models.ts";
 
 export type AddProjectRemoteProviderKind = Extract<
   SourceControlProviderKind,
-  "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops"
+  "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops" | "gitea"
 >;
 export type AddProjectRemoteSource = AddProjectRemoteProviderKind | "url";
 
@@ -60,6 +60,7 @@ const ADD_PROJECT_REMOTE_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
   "github",
   "gitlab",
   "forgejo",
+  "gitea",
   "bitbucket",
   "azure-devops",
 ];
@@ -68,6 +69,7 @@ const ADD_PROJECT_REMOTE_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProvide
   "github",
   "gitlab",
   "forgejo",
+  "gitea",
   "bitbucket",
   "azure-devops",
 ];
@@ -78,6 +80,8 @@ export function addProjectRemoteSourceLabel(source: AddProjectRemoteSource): str
       return "GitHub";
     case "forgejo":
       return "Forgejo / Gitea";
+    case "gitea":
+      return "Gitea";
     case "gitlab":
       return "GitLab";
     case "bitbucket":
@@ -92,6 +96,7 @@ export function addProjectRemoteSourceLabel(source: AddProjectRemoteSource): str
 export function addProjectRemoteSourcePathHint(source: AddProjectRemoteSource): string {
   switch (source) {
     case "forgejo":
+    case "gitea":
     case "github":
       return "owner/repo";
     case "gitlab":
@@ -126,7 +131,9 @@ export function normalizePastedCloneUrl(input: string): string {
 export function getDefaultCloneUrl(
   repository: Pick<SourceControlRepositoryInfo, "provider" | "url" | "sshUrl">,
 ): string {
-  return repository.provider === "github" || repository.provider === "forgejo"
+  return repository.provider === "github" ||
+    repository.provider === "forgejo" ||
+    repository.provider === "gitea"
     ? repository.url
     : repository.sshUrl;
 }
@@ -161,6 +168,7 @@ export function buildAddProjectRemoteSourceReadiness(
     github: unavailable,
     gitlab: unavailable,
     forgejo: unavailable,
+    gitea: unavailable,
     bitbucket: unavailable,
     "azure-devops": unavailable,
   };

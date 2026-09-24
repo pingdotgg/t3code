@@ -66,6 +66,7 @@ import {
   SettingsSection,
   useSettingsSearchTargetId,
 } from "./settingsLayout";
+import { formattedAuthSuffix, formattedSetupGuidance } from "./SourceControlSettings.logic";
 import { searchableSetting } from "./settingsSearch";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
@@ -80,6 +81,9 @@ const SOURCE_CONTROL_PROVIDER_ICONS: Partial<Record<SourceControlProviderKind, I
   forgejo: ForgejoIcon,
   "azure-devops": AzureDevOpsIcon,
   bitbucket: BitbucketIcon,
+  // No Gitea logo is bundled yet, so it takes the neutral change-request mark rather than
+  // another host's brand, matching the rest of the clients.
+  gitea: GitPullRequestIcon,
 };
 
 const VCS_ICONS: Partial<Record<VcsDriverKind, Icon>> = {
@@ -221,6 +225,7 @@ function itemSummary({
 
   if (auth) {
     if (auth.status === "authenticated") {
+      const suffix = formattedAuthSuffix(optionLabel(auth.host), optionLabel(auth.detail));
       return (
         <>
           <span>Authenticated</span>
@@ -230,6 +235,7 @@ function itemSummary({
               <RedactedAccount account={authAccount} />
             </>
           ) : null}
+          {suffix ? <span>{suffix}</span> : null}
         </>
       );
     }
@@ -241,9 +247,9 @@ function itemSummary({
     if (auth.status === "unauthenticated") {
       return (
         <span>
-          {item.label} is not authenticated on this server. Sign in or configure credentials using
-          the <code className="rounded bg-muted px-1 py-px text-[11px]">{item.executable}</code>{" "}
-          tool on the server host to enable change request features.
+          {formattedSetupGuidance(item.label)}{" "}
+          <code className="rounded bg-muted px-1 py-px text-[11px]">{item.executable}</code> tool on
+          the server host to enable change request features.
         </span>
       );
     }

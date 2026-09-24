@@ -139,7 +139,7 @@ interface PendingDefaultBranchAction {
 
 type PublishProviderKind = Extract<
   SourceControlProviderKind,
-  "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops"
+  "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops" | "gitea"
 >;
 
 type GitActionToastId = ReturnType<typeof toastManager.add>;
@@ -188,6 +188,14 @@ const RUNNING_SOURCE_CONTROL_ACTIONS = ["runStackedAction", "pull", "publishRepo
 
 const PUBLISH_PROVIDER_OPTIONS = [
   {
+    value: "gitea",
+    label: "Gitea",
+    description: "Your authenticated instance",
+    host: null,
+    pathPlaceholder: "owner/repository",
+    Icon: GitBranchPlusIcon,
+  },
+  {
     value: "forgejo",
     label: "Forgejo / Gitea",
     description: "Your signed-in server",
@@ -231,7 +239,7 @@ const PUBLISH_PROVIDER_OPTIONS = [
   readonly value: PublishProviderKind;
   readonly label: string;
   readonly description: string;
-  readonly host: string;
+  readonly host: string | null;
   readonly pathPlaceholder: string;
   readonly Icon: typeof GitHubIcon;
 }>;
@@ -451,6 +459,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
       github: null,
       gitlab: null,
       forgejo: null,
+      gitea: null,
       bitbucket: null,
       "azure-devops": null,
     };
@@ -503,10 +512,10 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const publishRepository = publishRepositoryOverride ?? publishRepositoryPrefill;
   const currentPublishProvider = publishProviderOption(publishProvider);
   const publishHost =
-    publishProvider === "forgejo"
+    publishProvider === "forgejo" || publishProvider === "gitea"
       ? (Option.getOrNull(
           sourceControlDiscovery.data?.sourceControlProviders.find(
-            (provider) => provider.kind === "forgejo",
+            (provider) => provider.kind === publishProvider,
           )?.auth.host ?? Option.none(),
         ) ?? currentPublishProvider.host)
       : currentPublishProvider.host;
