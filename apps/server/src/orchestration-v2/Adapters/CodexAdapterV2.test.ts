@@ -1,4 +1,3 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off
 import * as NodeOS from "node:os";
 
 import { historyResponseItems } from "../ContextHandoffBudget.ts";
