@@ -1,7 +1,8 @@
 import type { DevicePlatform, EnvironmentId } from "@t3tools/contracts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
+import { Button } from "~/components/ui/button";
 import { refreshDeviceHubAccess, useDeviceHubAccess } from "~/state/device";
 import { DeviceLoadingView } from "./DeviceLoadingView";
 import { type DeviceAxElement, fetchDeviceAxTree } from "./deviceHubApi";
@@ -11,7 +12,7 @@ import {
   type DeviceScreenSize,
   type DeviceStreamClient,
   type DeviceStreamStatus,
-} from "./deviceStream";
+} from "@t3tools/client-runtime/device/stream";
 
 const AX_POLL_INTERVAL_MS = 2_000;
 
@@ -49,6 +50,9 @@ export function DeviceStreamView(props: {
   const [screen, setScreen] = useState<DeviceScreenSize | null>(null);
   const [mjpegUrl, setMjpegUrl] = useState<string | null>(null);
   const [mjpegGeneration, setMjpegGeneration] = useState(0);
+  const attachMjpegImage = useCallback((image: HTMLImageElement | null) => {
+    clientRef.current?.setMjpegImage(image);
+  }, []);
   const [inputState, setInputState] = useState<{ connected: boolean; detail?: string }>({
     connected: false,
   });
@@ -235,11 +239,13 @@ export function DeviceStreamView(props: {
       role="application"
       aria-label={`${props.platform === "ios" ? "iOS Simulator" : "Android Emulator"} screen`}
       onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
         if (event.metaKey && !["r", "R"].includes(event.key)) return;
         event.preventDefault();
         clientRef.current?.sendKey(event.nativeEvent, "down");
       }}
       onKeyUp={(event) => {
+        if (event.target !== event.currentTarget) return;
         clientRef.current?.sendKey(event.nativeEvent, "up");
       }}
     >
@@ -279,7 +285,7 @@ export function DeviceStreamView(props: {
         {props.visible && access && mjpegUrl ? (
           <img
             key={mjpegGeneration}
-            src={mjpegUrl}
+            ref={attachMjpegImage}
             alt=""
             draggable={false}
             className="absolute top-0 left-0 object-contain"
@@ -317,14 +323,29 @@ export function DeviceStreamView(props: {
         </div>
       ) : null}
       {status !== "streaming" ? (
-        <div className="pointer-events-none absolute inset-0">
+        <div className="absolute inset-0">
           <DeviceLoadingView
             name={props.deviceName ?? "Device"}
             description={props.deviceDescription ?? ""}
             stage="stream"
             message={status === "error" ? (detail ?? "Stream failed.") : "Connecting video…"}
             error={status === "error"}
-          />
+          >
+            {status === "error" ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  // An expired ticket surfaces as unauthorized on restart and
+                  // refreshes access through the effect; no need to mint one here.
+                  clientRef.current?.stop();
+                  clientRef.current?.start();
+                }}
+              >
+                Reconnect
+              </Button>
+            ) : null}
+          </DeviceLoadingView>
         </div>
       ) : null}
     </div>
