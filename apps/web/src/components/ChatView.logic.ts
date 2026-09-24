@@ -681,7 +681,11 @@ export function reconcileMountedTerminalThreadIds(input: {
   const activeThreadMounted =
     input.activeThreadTerminalOpen ||
     (input.activeThreadId !== null && input.currentThreadIds.includes(input.activeThreadId));
-  if (input.activeThreadId && activeThreadMounted && !nextThreadIds.includes(input.activeThreadId)) {
+  if (
+    input.activeThreadId &&
+    activeThreadMounted &&
+    !nextThreadIds.includes(input.activeThreadId)
+  ) {
     nextThreadIds.push(input.activeThreadId);
   }
 
