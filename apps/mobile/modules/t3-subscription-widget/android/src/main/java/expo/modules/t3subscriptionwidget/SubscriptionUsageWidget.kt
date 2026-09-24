@@ -78,9 +78,15 @@ class SubscriptionUsageWidget : AppWidgetProvider() {
       views.setTextViewText(R.id.t3_widget_title, title)
       views.setContentDescription(
         R.id.t3_widget_title,
-        if (rows.isEmpty()) title else context.resources.getQuantityString(
-            R.plurals.t3_subscription_widget_title_description, rows.size, rows.size
-        )
+        if (rows.isEmpty()) {
+          title
+        } else {
+          context.resources.getQuantityString(
+            R.plurals.t3_subscription_widget_title_description,
+            rows.size,
+            rows.size
+          )
+        }
       )
       openApp?.let { views.setOnClickPendingIntent(R.id.t3_widget_root, it) }
       openAppIntent(context, id, snapshot, forCollection = true)?.let {
@@ -133,7 +139,9 @@ class SubscriptionUsageWidget : AppWidgetProvider() {
         PendingIntent.FLAG_UPDATE_CURRENT or if (forCollection) {
           // Collection rows use fill-in intents with an explicit app target.
           if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
-        } else PendingIntent.FLAG_IMMUTABLE
+        } else {
+          PendingIntent.FLAG_IMMUTABLE
+        }
       )
     }
 
