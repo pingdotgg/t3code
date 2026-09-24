@@ -135,7 +135,7 @@ export const load: Effect.Effect<OtelEnvironment> = Config.all({
  * `OTEL_RESOURCE_ATTRIBUTES` for themselves and die when it does not decode,
  * so they see what `load` accepted instead.
  */
-export const resourceAttributesLayer = (attributes: Readonly<Record<string, string>>) =>
+export const layerResourceAttributes = (attributes: Readonly<Record<string, string>>) =>
   ConfigProvider.layerAdd(
     ConfigProvider.fromEnv({
       env: {

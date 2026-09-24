@@ -106,7 +106,7 @@ describe("OtelEnvironment", () => {
     }),
   );
 
-  describe("resourceAttributesLayer", () => {
+  describe("layerResourceAttributes", () => {
     it.effect.each([
       { name: "a list that does not decode", raw: "team=%zz", attributes: [] },
       { name: "encoded separators", raw: "a%2Cb=x%3Dy", attributes: ["a,b"] },
@@ -118,7 +118,7 @@ describe("OtelEnvironment", () => {
         const otel = yield* OtelEnvironment.load.pipe(Effect.provide(env));
         const resource = yield* OtlpResource.fromConfig({ serviceName: "t3" }).pipe(
           Effect.provide(
-            Layer.provide(OtelEnvironment.resourceAttributesLayer(otel.resourceAttributes), env),
+            Layer.provide(OtelEnvironment.layerResourceAttributes(otel.resourceAttributes), env),
           ),
         );
         assert.deepStrictEqual(

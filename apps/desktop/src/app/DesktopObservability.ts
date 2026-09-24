@@ -692,7 +692,7 @@ const telemetryLayer = Layer.unwrap(
 
     return otelWarningsLayer.pipe(
       Layer.provideMerge(Layer.mergeAll(loggerLayer, tracerLayer)),
-      Layer.provide(OtelEnvironment.resourceAttributesLayer(endpoints.resourceAttributes)),
+      Layer.provide(OtelEnvironment.layerResourceAttributes(endpoints.resourceAttributes)),
     );
   }),
 );
