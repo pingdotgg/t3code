@@ -1,3 +1,5 @@
+import { sanitizeNewRefName } from "@t3tools/shared/git";
+
 type WorkspaceMode = "local" | "worktree";
 
 export function resolveNewTaskWorkspaceLabel(input: {
@@ -80,4 +82,14 @@ export function shouldCheckoutNewTaskBranch(input: {
   readonly workspaceMode: WorkspaceMode;
 }): boolean {
   return input.workspaceMode === "local" && !input.branchIsCurrent && !input.branchWorktreePath;
+}
+
+export function filterNewTaskBranches<T extends { readonly name: string }>(
+  branches: ReadonlyArray<T>,
+  rawQuery: string,
+): ReadonlyArray<T> {
+  const query = sanitizeNewRefName(rawQuery).toLowerCase();
+  return query.length === 0
+    ? branches
+    : branches.filter((branch) => branch.name.toLowerCase().includes(query));
 }
