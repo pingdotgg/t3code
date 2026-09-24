@@ -556,7 +556,7 @@ effectIt.effect("terminalizes a starting run when its final start attempt fails 
         type: "error",
         status: "failed",
         title: "Provider turn failed to start",
-        failure: { class: "provider_error" },
+        failure: { class: "provider_error", message: "pi process exited with code 1" },
       },
     ]);
   }),

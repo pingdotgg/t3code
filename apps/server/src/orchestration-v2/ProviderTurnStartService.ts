@@ -60,6 +60,13 @@ export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStart
 
 const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
 
+/** The adapter's underlying error names what actually failed, e.g. the provider process exiting. */
+const nestedErrorMessage = (error: unknown): string | undefined => {
+  const cause =
+    typeof error === "object" && error !== null && "cause" in error ? error.cause : undefined;
+  return cause instanceof Error ? cause.message : typeof cause === "string" ? cause : undefined;
+};
+
 export interface ProviderTurnStartServiceV2Shape {
   /**
    * Starts the run's provider turn. When `willRetry` is true, a session open
@@ -378,7 +385,11 @@ export const layer: Layer.Layer<
           item: {
             type: "error",
             title: "Provider turn failed to start",
-            failure: makeProviderFailure({ cause: input.startFailure, class: "provider_error" }),
+            failure: makeProviderFailure({
+              cause: input.startFailure,
+              message: nestedErrorMessage(input.startFailure),
+              class: "provider_error",
+            }),
           },
         });
         return;
@@ -561,15 +572,9 @@ export const layer: Layer.Layer<
         if (input.willRetry === true) return yield* sessionResult.failure;
         const failedAt = yield* DateTime.now;
         const openError = sessionResult.failure;
-        const nestedCause = "cause" in openError ? openError.cause : undefined;
         const failure = makeProviderFailure({
           cause: openError,
-          message:
-            nestedCause instanceof Error
-              ? nestedCause.message
-              : typeof nestedCause === "string"
-                ? nestedCause
-                : openError.message,
+          message: nestedErrorMessage(openError) ?? openError.message,
           class: "provider_error",
         });
         yield* settleRunBeforeStart({
