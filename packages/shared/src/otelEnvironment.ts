@@ -8,6 +8,7 @@
  * @module otelEnvironment
  */
 import * as Config from "effect/Config";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -17,6 +18,8 @@ export interface OtelEnvironment {
   readonly disabled: boolean;
   /** Messages for the caller to log once at startup. */
   readonly warnings: ReadonlyArray<string>;
+  /** `OTEL_RESOURCE_ATTRIBUTES`, or nothing when it could not be read. */
+  readonly resourceAttributes: Readonly<Record<string, string>>;
 }
 
 interface Flag {
@@ -64,6 +67,32 @@ const flag = (
 const T3CODE_TRUE = ["true", "yes", "on", "1", "y"];
 const T3CODE_FALSE = ["false", "no", "off", "0", "n"];
 
+const RESOURCE_ATTRIBUTES = "OTEL_RESOURCE_ATTRIBUTES";
+
+interface ResourceAttributes {
+  readonly value: Readonly<Record<string, string>>;
+  readonly warning?: string;
+}
+
+// The schema Effect's OTLP exporters read this variable with.
+const resourceAttributes = Config.Record(
+  Schema.StringFromUriComponent,
+  Schema.StringFromUriComponent,
+  RESOURCE_ATTRIBUTES,
+).pipe(
+  Config.map((value): ResourceAttributes => ({ value })),
+  Config.orElse(() =>
+    Config.String(RESOURCE_ATTRIBUTES).pipe(
+      // The value is left out because attributes can carry credentials.
+      Config.map((): ResourceAttributes => ({
+        value: {},
+        warning: `${RESOURCE_ATTRIBUTES} is not a list of percent-encoded key=value pairs and was ignored`,
+      })),
+    ),
+  ),
+  Config.withDefault<ResourceAttributes>({ value: {} }),
+);
+
 export const load: Effect.Effect<OtelEnvironment> = Config.all({
   t3: flag(
     "T3CODE_OTEL_SDK_DISABLED",
@@ -81,10 +110,13 @@ export const load: Effect.Effect<OtelEnvironment> = Config.all({
     (value) =>
       `OTEL_SDK_DISABLED=${value} was read as false; the OpenTelemetry specification recognizes only the string true, so use OTEL_SDK_DISABLED=true or T3CODE_OTEL_SDK_DISABLED to say it any other way`,
   ),
+  resource: resourceAttributes,
 }).pipe(
-  Effect.map(({ t3, spec }) => {
+  Effect.map(({ t3, spec, resource }) => {
     const disabled = t3.value ?? spec.value ?? false;
-    const warnings = [t3.warning, spec.warning].filter((warning) => warning !== undefined);
+    const warnings = [t3.warning, spec.warning, resource.warning].filter(
+      (warning) => warning !== undefined,
+    );
     if (disabled) {
       warnings.push(
         t3.value
@@ -92,14 +124,34 @@ export const load: Effect.Effect<OtelEnvironment> = Config.all({
           : "OTEL_SDK_DISABLED is set, so no telemetry is exported, whatever configured it; set T3CODE_OTEL_SDK_DISABLED=false to export anyway",
       );
     }
-    return { disabled, warnings };
+    return { disabled, warnings, resourceAttributes: resource.value };
   }),
   // Every read above falls back instead of failing, so this cannot happen.
   Effect.orDie,
 );
 
+/**
+ * Provide this around Effect's OTLP exporters, which read
+ * `OTEL_RESOURCE_ATTRIBUTES` for themselves and die when it does not decode,
+ * so they see what `load` accepted instead.
+ */
+export const layerResourceAttributes = (attributes: Readonly<Record<string, string>>) =>
+  ConfigProvider.layerAdd(
+    ConfigProvider.fromEnv({
+      env: {
+        [RESOURCE_ATTRIBUTES]: Object.entries(attributes)
+          .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+          .join(","),
+      },
+      // Keeps an emptied list from falling through to the raw value.
+      preserveEmptyStrings: true,
+    }),
+    { asPrimary: true },
+  );
+
 /** An environment that asked for nothing, for tests and for the pairing CLI. */
 export const none: OtelEnvironment = {
   disabled: false,
   warnings: [],
+  resourceAttributes: {},
 };
