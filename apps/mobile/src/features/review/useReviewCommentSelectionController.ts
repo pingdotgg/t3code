@@ -13,12 +13,13 @@ import {
   getSelectedReviewCommentLines,
   setReviewCommentTarget,
   useReviewCommentTarget,
+  type LoadedReviewCommentSelection,
 } from "./reviewCommentSelection";
 import type {
   NativeReviewDiffData,
   NativeReviewDiffCommentTarget,
 } from "./nativeReviewDiffAdapter";
-import type { ReviewSectionItem, ReviewRenderableLineRow } from "./reviewModel";
+import type { ReviewSectionItem } from "./reviewModel";
 
 interface PendingNativeCommentSelection extends NativeReviewDiffCommentTarget {
   readonly sectionId: string;
@@ -35,7 +36,7 @@ export function useReviewCommentSelectionController(input: {
     start: number,
     end: number,
     signal: AbortSignal,
-  ) => Promise<ReadonlyArray<ReviewRenderableLineRow> | null>;
+  ) => Promise<LoadedReviewCommentSelection | null>;
 }) {
   const { environmentId, nativeReviewDiffData, selectedSection, threadId, loadCommentRange } =
     input;
@@ -62,6 +63,19 @@ export function useReviewCommentSelectionController(input: {
       activeCommentTarget.sectionTitle === selectedSection?.title &&
       activeCommentTarget.startIndex !== activeCommentTarget.endIndex
     ) {
+      if (activeCommentTarget.loadedSelection) {
+        const first = activeCommentTarget.loadedSelection.firstLine.sourceLineIndex!;
+        const last = activeCommentTarget.loadedSelection.lastLine.sourceLineIndex!;
+        return [...nativeReviewDiffData.commentTargetsByRowId].flatMap(([rowId, target]) => {
+          const index = target.lines[target.lineIndex]?.sourceLineIndex;
+          return target.filePath === activeCommentTarget.filePath &&
+            index !== undefined &&
+            index >= first &&
+            index <= last
+            ? [rowId]
+            : [];
+        });
+      }
       return pipe(
         getSelectedReviewCommentLines(activeCommentTarget),
         Arr.filterMap((line) => {
@@ -75,6 +89,7 @@ export function useReviewCommentSelectionController(input: {
   }, [
     activeCommentTarget,
     nativeReviewDiffData.rowIdByCommentLineId,
+    nativeReviewDiffData.commentTargetsByRowId,
     pendingNativeCommentSelection,
     selectedSection?.title,
   ]);
@@ -172,15 +187,19 @@ export function useReviewCommentSelectionController(input: {
                   Math.max(anchorIndex, target.lineIndex) + 1,
                 )
               : [];
-          const lines =
+          const contiguous =
             anchor.sourceLineIndex !== undefined &&
             endpoint.sourceLineIndex !== undefined &&
-            cachedLines.length === Math.abs(anchor.sourceLineIndex - endpoint.sourceLineIndex) + 1
-              ? cachedLines
+            cachedLines.length === Math.abs(anchor.sourceLineIndex - endpoint.sourceLineIndex) + 1;
+          // Large selections retain complete text, not thousands of renderable objects.
+          const loadedSelection =
+            contiguous && cachedLines.length <= 5
+              ? undefined
               : await loadCommentRange?.(anchor.sourceRow, endpoint.sourceRow, request.signal);
-          if (!lines?.length || request.signal.aborted) return;
-          setReviewCommentTarget(
-            buildReviewCommentTarget(
+          const lines = loadedSelection?.lines ?? (contiguous ? cachedLines : []);
+          if (!lines.length || request.signal.aborted || loadedSelection === null) return;
+          setReviewCommentTarget({
+            ...buildReviewCommentTarget(
               {
                 sectionId: selectedSection.id,
                 sectionTitle: selectedSection.title,
@@ -190,7 +209,8 @@ export function useReviewCommentSelectionController(input: {
               0,
               lines.length - 1,
             ),
-          );
+            ...(loadedSelection ? { loadedSelection } : {}),
+          });
           return;
         }
         setReviewCommentTarget(

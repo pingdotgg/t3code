@@ -2,12 +2,18 @@ import { describe, expect, it } from "vite-plus/test";
 import type { CheckpointDiffPage } from "@t3tools/contracts";
 import {
   buildPagedReviewParsedDiff,
-  loadPagedReviewCommentLines,
+  loadPagedReviewCommentSelection,
   reviewDiffWindowStart,
   retainReviewDiffWindows,
   mergeReviewDiffWindows,
 } from "./pagedReviewDiff";
 import { buildNativeReviewDiffData } from "./nativeReviewDiffAdapter";
+
+import {
+  buildReviewCommentTarget,
+  formatReviewCommentContext,
+  parseReviewInlineComments,
+} from "./reviewCommentSelection";
 
 function page(start: number): CheckpointDiffPage {
   return {
@@ -41,6 +47,40 @@ function page(start: number): CheckpointDiffPage {
 }
 
 describe("paged mobile diffs", () => {
+  it("keeps a 200,000-line comment complete without retaining renderable rows for the whole range", async () => {
+    const loadedSelection = await loadPagedReviewCommentSelection({
+      start: 0,
+      end: 199_999,
+      revision: "revision",
+      fetchPage: async (start) => page(start),
+    });
+    expect(loadedSelection.lines).toHaveLength(5);
+    expect(loadedSelection.lineCount).toBe(200_000);
+    const context = formatReviewCommentContext(
+      {
+        ...buildReviewCommentTarget(
+          {
+            sectionId: "turn:1",
+            sectionTitle: "Turn 1",
+            filePath: "large.ts",
+            lines: loadedSelection.lines,
+          },
+          0,
+          loadedSelection.lines.length - 1,
+        ),
+        loadedSelection,
+      },
+      "Review this range",
+    );
+    const comment = parseReviewInlineComments(context)[0]!;
+    expect(comment.startIndex).toBe(0);
+    expect(comment.endIndex).toBe(199_999);
+    expect(comment.rangeLabel).toBe("+1 to +200000");
+    expect(comment.diff.split("\n")).toHaveLength(200_001);
+    expect(comment.diff).toContain("+line 100000");
+    expect(comment.diff).toContain("+line 199999");
+  });
+
   it("retains separated windows with exact placeholder spacing and a bounded cache", () => {
     let windows = retainReviewDiffWindows([], page(0));
     windows = retainReviewDiffWindows(windows, page(199_500));
@@ -63,7 +103,7 @@ describe("paged mobile diffs", () => {
 
   it("loads an exact comment range across evicted windows, including reversed selections", async () => {
     const starts: number[] = [];
-    const lines = await loadPagedReviewCommentLines({
+    const selection = await loadPagedReviewCommentSelection({
       start: 2000,
       end: 500,
       revision: "revision",
@@ -73,11 +113,15 @@ describe("paged mobile diffs", () => {
       },
     });
     expect(starts).toEqual([500, 1268]);
-    expect(lines).toHaveLength(1501);
-    expect(lines[0]!.sourceLineIndex).toBe(500);
-    expect(lines.at(-1)!.sourceLineIndex).toBe(2000);
+    expect(selection.lineCount).toBe(1501);
+    expect(selection.lines).toHaveLength(5);
+    expect(selection.firstLine.sourceLineIndex).toBe(500);
+    expect(selection.lastLine.sourceLineIndex).toBe(2000);
+    expect(selection.diff.split("\n")).toHaveLength(1502);
+    expect(selection.diff).toContain("+line 2000");
+    expect(selection.rangeLabel).toBe("+501 to +2001");
     await expect(
-      loadPagedReviewCommentLines({
+      loadPagedReviewCommentSelection({
         start: 0,
         end: 500,
         revision: "old",

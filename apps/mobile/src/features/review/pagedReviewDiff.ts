@@ -1,6 +1,11 @@
 import { CHECKPOINT_DIFF_PAGE_ROWS, type CheckpointDiffPage } from "@t3tools/contracts";
 import type { ReviewParsedDiff, ReviewRenderableRow } from "./reviewModel";
 import type { ReviewRenderableLineRow } from "./reviewModel";
+import {
+  getReviewChangeMarker,
+  getReviewUnifiedLineNumber,
+  type LoadedReviewCommentSelection,
+} from "./reviewCommentSelection";
 
 /** Retain nearby and separately visible files without growing with the full diff. */
 export function retainReviewDiffWindows(
@@ -24,13 +29,22 @@ export function mergeReviewDiffWindows(
   return { ...latest, rows: [...rows.values()].sort((a, b) => a.index - b.index) };
 }
 
-export async function loadPagedReviewCommentLines(input: {
+export async function loadPagedReviewCommentSelection(input: {
   readonly start: number;
   readonly end: number;
   readonly revision: string;
   readonly fetchPage: (start: number) => Promise<CheckpointDiffPage>;
-}): Promise<ReadonlyArray<ReviewRenderableLineRow>> {
+}): Promise<LoadedReviewCommentSelection> {
   const lines: ReviewRenderableLineRow[] = [];
+  const chunks: string[] = [];
+  let firstLine: ReviewRenderableLineRow | undefined;
+  let lastLine: ReviewRenderableLineRow | undefined;
+  let lineCount = 0;
+  let oldStart = 0,
+    newStart = 0,
+    oldCount = 0,
+    newCount = 0;
+  let consistentChange = true;
   const end = Math.max(input.start, input.end);
   let start = Math.min(input.start, input.end);
   while (start <= end) {
@@ -39,6 +53,7 @@ export async function loadPagedReviewCommentLines(input: {
       throw new Error("The diff changed while loading the selection. Select the range again.");
     }
     const parsed = buildPagedReviewParsedDiff(page);
+    const chunk: string[] = [];
     if (parsed.kind === "files") {
       for (const file of parsed.files) {
         for (const row of file.rows) {
@@ -47,14 +62,46 @@ export async function loadPagedReviewCommentLines(input: {
             row.sourceRow !== undefined &&
             row.sourceRow >= start &&
             row.sourceRow <= end
-          )
-            lines.push(row);
+          ) {
+            firstLine ??= row;
+            lastLine = row;
+            consistentChange &&= row.change === firstLine.change;
+            if (lines.length < 5) lines.push(row);
+            if (row.oldLineNumber !== null) {
+              if (oldCount === 0) oldStart = row.oldLineNumber;
+              oldCount += 1;
+            }
+            if (row.newLineNumber !== null) {
+              if (newCount === 0) newStart = row.newLineNumber;
+              newCount += 1;
+            }
+            lineCount += 1;
+            chunk.push(getReviewChangeMarker(row.change) + row.content);
+          }
         }
       }
     }
+    if (chunk.length) chunks.push(chunk.join("\n"));
     start = page.rows.at(-1)!.index + 1;
   }
-  return lines;
+  if (!firstLine || !lastLine) throw new Error("The selected range contains no diff lines.");
+  const marker = consistentChange ? getReviewChangeMarker(firstLine.change).trim() : "";
+  const firstNumber = getReviewUnifiedLineNumber(firstLine);
+  const lastNumber = getReviewUnifiedLineNumber(lastLine);
+  const rangeLabel =
+    firstNumber === null || lastNumber === null
+      ? `${lineCount} lines`
+      : firstNumber === lastNumber
+        ? `${marker}${firstNumber}`
+        : `${marker}${firstNumber} to ${marker}${lastNumber}`;
+  return {
+    lines,
+    firstLine,
+    lastLine,
+    lineCount,
+    rangeLabel,
+    diff: [`@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`, ...chunks].join("\n"),
+  };
 }
 
 /** Keep a page behind and two pages ahead of the visible row. */

@@ -3,6 +3,15 @@ import { replaceComposerContextReferences } from "@t3tools/shared/composerContex
 
 import type { ReviewRenderableLineRow } from "./reviewModel";
 
+export interface LoadedReviewCommentSelection {
+  readonly lines: ReadonlyArray<ReviewRenderableLineRow>;
+  readonly firstLine: ReviewRenderableLineRow;
+  readonly lastLine: ReviewRenderableLineRow;
+  readonly lineCount: number;
+  readonly diff: string;
+  readonly rangeLabel: string;
+}
+
 export interface ReviewCommentTarget {
   readonly sectionId: string;
   readonly sectionTitle: string;
@@ -10,6 +19,7 @@ export interface ReviewCommentTarget {
   readonly lines: ReadonlyArray<ReviewRenderableLineRow>;
   readonly startIndex: number;
   readonly endIndex: number;
+  readonly loadedSelection?: LoadedReviewCommentSelection;
 }
 
 export interface ReviewInlineComment {
@@ -107,6 +117,7 @@ export function buildReviewCommentTarget(
 }
 
 export function formatReviewSelectedRangeLabel(target: ReviewCommentTarget): string {
+  if (target.loadedSelection) return target.loadedSelection.rangeLabel;
   const lines = getSelectedReviewCommentLines(target);
   const firstLine = lines[0]!;
   const lastLine = lines[lines.length - 1]!;
@@ -149,6 +160,7 @@ function getDiffHunkRange(
 }
 
 function formatReviewSelectedDiff(target: ReviewCommentTarget): string {
+  if (target.loadedSelection) return target.loadedSelection.diff;
   const selectedLines = getSelectedReviewCommentLines(target);
   const oldRange = getDiffHunkRange(selectedLines, "oldLineNumber");
   const newRange = getDiffHunkRange(selectedLines, "newLineNumber");
@@ -240,10 +252,10 @@ function parseReviewInlineComment(
 export function formatReviewCommentContext(target: ReviewCommentTarget, comment: string): string {
   const rangeLabel = formatReviewSelectedRangeLabel(target);
   const diff = formatReviewSelectedDiff(target);
-  const longestBacktickRun = Math.max(
-    0,
-    ...Array.from(diff.matchAll(/`+/g), (match) => match[0].length),
-  );
+  let longestBacktickRun = 0;
+  for (const match of diff.matchAll(/`+/g)) {
+    longestBacktickRun = Math.max(longestBacktickRun, match[0].length);
+  }
   const fence = "`".repeat(Math.max(3, longestBacktickRun + 1));
   return [
     [
@@ -251,8 +263,8 @@ export function formatReviewCommentContext(target: ReviewCommentTarget, comment:
       ` sectionId="${escapeReviewCommentAttribute(target.sectionId)}"`,
       ` sectionTitle="${escapeReviewCommentAttribute(target.sectionTitle)}"`,
       ` filePath="${escapeReviewCommentAttribute(target.filePath)}"`,
-      ` startIndex="${target.lines[target.startIndex]?.sourceLineIndex ?? target.startIndex}"`,
-      ` endIndex="${target.lines[target.endIndex]?.sourceLineIndex ?? target.endIndex}"`,
+      ` startIndex="${target.loadedSelection?.firstLine.sourceLineIndex ?? target.lines[target.startIndex]?.sourceLineIndex ?? target.startIndex}"`,
+      ` endIndex="${target.loadedSelection?.lastLine.sourceLineIndex ?? target.lines[target.endIndex]?.sourceLineIndex ?? target.endIndex}"`,
       ` rangeLabel="${escapeReviewCommentAttribute(rangeLabel)}"`,
       ">",
     ].join(""),

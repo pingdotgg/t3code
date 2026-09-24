@@ -59,20 +59,22 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
     () => (target ? getSelectedReviewCommentLines(target) : []),
     [target],
   );
-  const firstLine = selectedLines[0] ?? null;
-  const lastLine = selectedLines[selectedLines.length - 1] ?? null;
+  const firstLine = target?.loadedSelection?.firstLine ?? selectedLines[0] ?? null;
+  const lastLine =
+    target?.loadedSelection?.lastLine ?? selectedLines[selectedLines.length - 1] ?? null;
+  const selectedLineCount = target?.loadedSelection?.lineCount ?? selectedLines.length;
   const firstNumber = firstLine ? getReviewUnifiedLineNumber(firstLine) : null;
   const lastNumber = lastLine ? getReviewUnifiedLineNumber(lastLine) : null;
   const canSubmit =
     commentText.trim().length > 0 && target !== null && !!environmentId && !!threadId;
   const selectionLabel =
-    selectedLines.length === 1
+    selectedLineCount === 1
       ? firstNumber !== null
         ? `Line ${firstNumber}`
         : "File comment"
       : firstNumber !== null && lastNumber !== null
         ? `Lines ${firstNumber}-${lastNumber}`
-        : `${selectedLines.length} lines selected`;
+        : `${selectedLineCount} lines selected`;
   const previewHeight = Math.max(
     Math.min(selectedLines.length, REVIEW_COMMENT_PREVIEW_MAX_LINES) * codeSurface.rowHeight,
     codeSurface.rowHeight,
@@ -249,6 +251,12 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
                 </ScrollView>
               </View>
 
+              {selectedLineCount > selectedLines.length ? (
+                <Text className="text-xs text-foreground-muted">
+                  Showing the first {selectedLines.length} lines. All {selectedLineCount} selected
+                  lines will be included.
+                </Text>
+              ) : null}
               <View className="min-h-0 flex-1 gap-2">
                 <Text className="text-sm font-t3-bold text-foreground">Comment</Text>
                 <View className="min-h-[132px] flex-1 overflow-hidden rounded-[20px] border border-border bg-card">

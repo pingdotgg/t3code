@@ -444,6 +444,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
             generation == self?.rowsDecodeGeneration
           }, completion: { [weak self] in
             guard let self, generation == self.rowsDecodeGeneration else { return }
+            let anchor = self.contentView.visibleSourceAnchor()
             self.rows = decodedRows
             self.contentView.rows = decodedRows
             if decodedRows.first?.sourceRow == nil {
@@ -455,6 +456,11 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
               "firstKind": decodedRows.first?.kind ?? "none",
             ])
             self.updateContentMetrics()
+            if let anchor, let offset = self.contentView.offset(forSourceRow: anchor.sourceRow) {
+              let maxOffset = max(0, self.contentView.contentHeight - self.scrollView.bounds.height)
+              self.scrollView.setContentOffset(CGPoint(x: 0, y: min(maxOffset, offset + anchor.offset)), animated: false)
+              self.updateViewportFrame()
+            }
             self.applyPendingScrollIfNeeded()
             self.emitVisibleRange(reason: "rows-loaded")
           })
@@ -1745,6 +1751,28 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
 
   private func contentWidth(for fileId: String) -> CGFloat {
     contentWidthsByFileId[fileId] ?? min(style.contentWidth, max(viewportWidth, 0))
+  }
+
+  // Preserve the source line when wrapped rows above it enter or leave the window.
+  func visibleSourceAnchor() -> (sourceRow: Int, offset: CGFloat)? {
+    guard let index = firstVisibleRowIndex(atOrAfter: verticalOffset),
+          rows[index].kind != "file", let source = rows[index].sourceRow else { return nil }
+    let offset = max(0, verticalOffset - rowOffsets[index])
+    if rows[index].kind == "placeholder" {
+      let preceding = Int(offset / style.rowHeight)
+      return (source + preceding, offset - CGFloat(preceding) * style.rowHeight)
+    }
+    return (source, offset)
+  }
+
+  func offset(forSourceRow source: Int) -> CGFloat? {
+    guard let index = rows.indices.first(where: { index in
+      let row = rows[index]
+      guard row.kind != "file", height(at: index) > 0, let start = row.sourceRow else { return false }
+      return source >= start && source < start + (row.kind == "placeholder" ? (row.rowCount ?? 1) : 1)
+    }) else { return nil }
+    let preceding = rows[index].kind == "placeholder" ? source - (rows[index].sourceRow ?? source) : 0
+    return rowOffsets[index] + CGFloat(preceding) * style.rowHeight
   }
 
   func firstVisibleSourceRow() -> Int? {

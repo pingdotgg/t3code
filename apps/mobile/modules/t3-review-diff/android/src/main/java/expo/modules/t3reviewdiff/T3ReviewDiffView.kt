@@ -701,12 +701,25 @@ private class DiffCanvasView(context: Context) : View(context) {
   private var lastVisibleRange: Triple<Int, Int, Int?>? = null
   var rows: List<DiffRow> = emptyList()
     set(value) {
+      val anchor = visibleSourceAnchor()
       field = value
       lastVisibleRange = null
       headerPathOffsetsByFileId.keys.retainAll(
         value.asSequence().filter { it.kind == "file" }.map { it.resolvedFileId }.toSet(),
       )
       rebuildOffsets()
+      anchor?.let { (source, offset) ->
+        val index = rows.indexOfFirst { row ->
+          row.kind != "file" && row.sourceRow?.let { start ->
+            source >= start && source < start + (if (row.kind == "placeholder") row.rowCount else 1)
+          } == true
+        }
+        if (index >= 0) {
+          val row = rows[index]
+          val preceding = if (row.kind == "placeholder") source - row.sourceRow!! else 0
+          setVerticalOffset(rowOffsets[index] + preceding * style.rowHeightPx.toInt() + offset)
+        }
+      }
     }
   var tokensByRowId: Map<String, List<DiffToken>> = emptyMap()
     set(value) {
@@ -928,6 +941,20 @@ private class DiffCanvasView(context: Context) : View(context) {
   }
 
   private fun firstVisibleRow(): Int = rowIndexAt(verticalOffset)
+
+  // Preserve the source line when wrapped rows above it enter or leave the window.
+  private fun visibleSourceAnchor(): Pair<Int, Int>? {
+    if (rows.isEmpty()) return null
+    val index = firstVisibleRow()
+    val row = rows[index]
+    if (row.kind == "file") return null
+    val source = row.sourceRow ?: return null
+    val offset = verticalOffset - rowOffsets[index]
+    val rowHeight = style.rowHeightPx.toInt().coerceAtLeast(1)
+    return if (row.kind == "placeholder") {
+      Pair(source + offset / rowHeight, offset % rowHeight)
+    } else Pair(source, offset)
+  }
 
   fun firstVisibleSourceRow(): Int? {
     if (rows.isEmpty()) return null

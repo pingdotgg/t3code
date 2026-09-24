@@ -10,7 +10,7 @@ import type {
 
 import { orchestrationEnvironment } from "../../state/orchestration";
 import {
-  loadPagedReviewCommentLines,
+  loadPagedReviewCommentSelection,
   reviewDiffWindowStart,
   retainReviewDiffWindows,
   mergeReviewDiffWindows,
@@ -214,7 +214,7 @@ export function useReviewSections(input: {
     async (start: number, end: number, signal: AbortSignal) => {
       if (!environmentId || !threadId || !activeCheckpoint || !turnData?.page) return null;
       try {
-        return await loadPagedReviewCommentLines({
+        return await loadPagedReviewCommentSelection({
           start,
           end,
           revision: turnData.page.revision,
