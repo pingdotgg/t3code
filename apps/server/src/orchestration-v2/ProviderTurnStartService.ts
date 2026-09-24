@@ -208,11 +208,16 @@ export const layer: Layer.Layer<
       };
     };
 
-    const start = Effect.fn("orchestrationV2.providerTurnStart.start")(function* (input: {
-      readonly threadId: ThreadId;
-      readonly runId: RunId;
-      readonly willRetry?: boolean;
-    }) {
+    const start = Effect.fn("orchestrationV2.providerTurnStart.start")(function* (
+      input: {
+        readonly threadId: ThreadId;
+        readonly runId: RunId;
+        readonly willRetry?: boolean;
+        /** Set by the final attempt's failure handler to settle the run instead of starting it. */
+        readonly startFailure?: unknown;
+      },
+      progress: { sessionOpened: boolean } = { sessionOpened: false },
+    ) {
       const { runId } = input;
       const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
       const run = projection.runs.find((candidate) => candidate.id === runId);
@@ -363,6 +368,21 @@ export const layer: Layer.Layer<
           });
         },
       );
+      if ("startFailure" in input) {
+        yield* settleRunBeforeStart({
+          signal: "provider-turn-start-failure",
+          status: "failed",
+          now: yield* DateTime.now,
+          providerInstanceId: run.providerInstanceId,
+          itemProviderThreadId: providerThread.id,
+          item: {
+            type: "error",
+            title: "Provider turn failed to start",
+            failure: makeProviderFailure({ cause: input.startFailure, class: "provider_error" }),
+          },
+        });
+        return;
+      }
       if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
         const isEmptyCompaction =
           message.text.trim().toLowerCase() === "/compact" && !projection.hasConversation;
@@ -563,6 +583,7 @@ export const layer: Layer.Layer<
         return;
       }
       const session = sessionResult.success;
+      progress.sessionOpened = true;
       let effectiveHandoffs = handoffs;
       const loadedProviderThread = yield* Effect.gen(function* () {
         if (nativeForkTransfer !== undefined) {
@@ -1172,7 +1193,19 @@ export const layer: Layer.Layer<
 
     return ProviderTurnStartServiceV2.of({
       start: (input) =>
-        start(input).pipe(
+        Effect.suspend(() => {
+          const progress = { sessionOpened: false };
+          return start(input, progress).pipe(
+            // A final attempt that fails after its session opened fails the run instead of
+            // leaving it `starting` until the next server restart. If that write fails, the
+            // original error keeps the effect retryable.
+            Effect.catch((cause) =>
+              input.willRetry === true || !progress.sessionOpened
+                ? Effect.fail(cause)
+                : start({ ...input, startFailure: cause }).pipe(Effect.mapError(() => cause)),
+            ),
+          );
+        }).pipe(
           Effect.mapError((cause) =>
             isProviderTurnStartError(cause)
               ? cause
