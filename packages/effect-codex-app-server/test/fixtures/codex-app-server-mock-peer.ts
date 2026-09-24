@@ -84,6 +84,7 @@ const handleMethod = (message: Record<string, unknown>) => {
     case "skills/list": {
       pendingSkillsListRequestId = message.id as number | string;
       pendingUserInputRequestId = sendRequest("item/tool/requestUserInput", {
+        isBlocking: true,
         itemId: "item-approval-1",
         threadId: "thread-1",
         turnId: "turn-1",

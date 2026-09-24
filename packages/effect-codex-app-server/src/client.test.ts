@@ -95,6 +95,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
       assert.equal(result.skills.data[0]?.skills.length, 0);
       assert.deepEqual(yield* Ref.get(userInputRequests), [
         {
+          isBlocking: true,
           itemId: "item-approval-1",
           threadId: "thread-1",
           turnId: "turn-1",
