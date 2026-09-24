@@ -845,6 +845,28 @@ describe("CursorAdapterV2", () => {
     );
   });
 
+  it("loads the user's Cursor settings layers in every runtime mode", () => {
+    // The SDK loads no rules, skills, hooks, or MCP config from disk unless
+    // settingSources names them, so an omitted list silently drops AGENTS.md.
+    for (const runtimeMode of ["full-access", "auto-accept-edits", "approval-required"] as const) {
+      const options = makeCursorAgentOptions({
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("cursor"),
+          model: "composer-2.5",
+        },
+        runtimePolicy: { runtimeMode, interactionMode: "default", cwd: "/workspace" },
+        threadId: ThreadId.make("thread-cursor-setting-sources"),
+      });
+      assert.deepEqual(options.local?.settingSources, [
+        "project",
+        "user",
+        "team",
+        "mdm",
+        "plugins",
+      ]);
+    }
+  });
+
   it("injects thread-scoped MCP credentials without logging them", () => {
     const threadId = ThreadId.make("thread-cursor-mcp");
     McpProviderSession.setMcpProviderSession({

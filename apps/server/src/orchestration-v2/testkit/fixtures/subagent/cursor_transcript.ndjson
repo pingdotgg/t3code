@@ -1,5 +1,5 @@
 {"type":"transcript_start","provider":"cursor","protocol":"cursor-agent-sdk.local","version":"1","scenario":"subagent","metadata":{"generatedBy":"recordCursorAgentSdkReplayTranscript","nativeAgentId":"agent-1eee5e51-da10-4b21-af9a-ef9aca8c482d"}}
-{"type":"expect_outbound","label":"agent.open","frame":{"type":"agent.open","operation":"create","options":{"model":{"id":"composer-2.5"},"hasName":true,"mode":"agent","local":{"hasCwd":true,"autoReview":false,"sandboxEnabled":true,"enableAgentRetries":true}}}}
+{"type":"expect_outbound","label":"agent.open","frame":{"type":"agent.open","operation":"create","options":{"model":{"id":"composer-2.5"},"hasName":true,"mode":"agent","local":{"hasCwd":true,"autoReview":false,"settingSources":["project","user","team","mdm","plugins"],"sandboxEnabled":true,"enableAgentRetries":true}}}}
 {"type":"emit_inbound","label":"agent.opened","frame":{"type":"agent.opened","agentId":"agent-1eee5e51-da10-4b21-af9a-ef9aca8c482d"}}
 {"type":"expect_outbound","label":"run.start:1","frame":{"type":"run.start","message":"Spawn 2 subagents, one to read package.json and one to read tsconfig.json","options":{"model":{"id":"composer-2.5"},"mode":"agent"}}}
 {"type":"emit_inbound","label":"run.started:1","frame":{"type":"run.started","runId":"run-4f9fd970-8f15-44ae-8973-09aa4d42daaf","agentId":"agent-1eee5e51-da10-4b21-af9a-ef9aca8c482d"}}

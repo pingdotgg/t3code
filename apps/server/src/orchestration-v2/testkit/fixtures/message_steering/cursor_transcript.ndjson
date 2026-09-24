@@ -1,5 +1,5 @@
 {"type":"transcript_start","provider":"cursor","protocol":"cursor-agent-sdk.local","version":"1","scenario":"message_steering","metadata":{"generatedBy":"recordCursorAgentSdkReplayTranscript","nativeAgentId":"agent-95a210ed-ddf9-4b36-b265-9a2b02e46050"}}
-{"type":"expect_outbound","label":"agent.open","frame":{"type":"agent.open","operation":"create","options":{"model":{"id":"composer-2.5"},"hasName":true,"mode":"agent","local":{"hasCwd":true,"autoReview":false,"sandboxEnabled":false,"enableAgentRetries":true}}}}
+{"type":"expect_outbound","label":"agent.open","frame":{"type":"agent.open","operation":"create","options":{"model":{"id":"composer-2.5"},"hasName":true,"mode":"agent","local":{"hasCwd":true,"autoReview":false,"settingSources":["project","user","team","mdm","plugins"],"sandboxEnabled":false,"enableAgentRetries":true}}}}
 {"type":"emit_inbound","label":"agent.opened","frame":{"type":"agent.opened","agentId":"agent-95a210ed-ddf9-4b36-b265-9a2b02e46050"}}
 {"type":"expect_outbound","label":"run.start:1","frame":{"type":"run.start","message":"Respond with exactly: steering fixture initial response","options":{"model":{"id":"composer-2.5"},"mode":"agent"}}}
 {"type":"emit_inbound","label":"run.started:1","frame":{"type":"run.started","runId":"run-c794f71d-f53a-47ba-b127-b9f26cf64ce1","agentId":"agent-95a210ed-ddf9-4b36-b265-9a2b02e46050"}}

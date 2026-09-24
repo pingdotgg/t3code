@@ -1,5 +1,5 @@
 {"type":"transcript_start","provider":"cursor","protocol":"cursor-agent-sdk.local","version":"1","scenario":"multi_turn","metadata":{"generatedBy":"recordCursorAgentSdkReplayTranscript","nativeAgentId":"agent-93ba82d8-7489-48f7-9b93-b9f65f425666"}}
-{"type":"expect_outbound","label":"agent.open","frame":{"type":"agent.open","operation":"create","options":{"model":{"id":"composer-2.5"},"hasName":true,"mode":"agent","local":{"hasCwd":true,"autoReview":false,"sandboxEnabled":false,"enableAgentRetries":true}}}}
+{"type":"expect_outbound","label":"agent.open","frame":{"type":"agent.open","operation":"create","options":{"model":{"id":"composer-2.5"},"hasName":true,"mode":"agent","local":{"hasCwd":true,"autoReview":false,"settingSources":["project","user","team","mdm","plugins"],"sandboxEnabled":false,"enableAgentRetries":true}}}}
 {"type":"emit_inbound","label":"agent.opened","frame":{"type":"agent.opened","agentId":"agent-93ba82d8-7489-48f7-9b93-b9f65f425666"}}
 {"type":"expect_outbound","label":"run.start:1","frame":{"type":"run.start","message":"Respond with exactly: first fixture turn complete","options":{"model":{"id":"composer-2.5"},"mode":"agent"}}}
 {"type":"emit_inbound","label":"run.started:1","frame":{"type":"run.started","runId":"run-e94938bb-f461-4834-b729-c4562b715945","agentId":"agent-93ba82d8-7489-48f7-9b93-b9f65f425666"}}

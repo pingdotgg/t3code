@@ -5,6 +5,7 @@ import type {
   McpServerConfig,
   RunResult,
   SDKUserMessage,
+  SettingSource,
   ToolCall,
 } from "@cursor/sdk";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
@@ -310,6 +311,22 @@ function nativeThreadId(providerThread: OrchestrationV2ProviderThread): string {
   return id;
 }
 
+/**
+ * Every Cursor settings layer the Cursor CLI loads: project and user rules,
+ * skills, hooks, and MCP servers, team and MDM admin policy, and account
+ * plugins. The SDK loads none of them when `settingSources` is omitted.
+ * Sandbox policy files are read either way, and hooks can only deny or ask
+ * (which local SDK runs reject), so these layers do not loosen the sandbox or
+ * approval mode T3 sets.
+ */
+const CURSOR_AGENT_SETTING_SOURCES = [
+  "project",
+  "user",
+  "team",
+  "mdm",
+  "plugins",
+] as const satisfies ReadonlyArray<SettingSource>;
+
 export function makeCursorAgentOptions(input: {
   readonly apiKey?: string;
   readonly modelSelection: ModelSelection;
@@ -326,6 +343,7 @@ export function makeCursorAgentOptions(input: {
     local: {
       ...(input.runtimePolicy.cwd === null ? {} : { cwd: input.runtimePolicy.cwd }),
       autoReview: policy.autoReview,
+      settingSources: [...CURSOR_AGENT_SETTING_SOURCES],
       sandboxOptions: {
         enabled: policy.sandboxEnabled,
       },
