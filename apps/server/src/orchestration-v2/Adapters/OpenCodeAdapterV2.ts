@@ -146,7 +146,7 @@ const makeOpenCodeMessageId = Effect.fnUntraced(function* () {
  * message is the best native turn correlation point, and session idle is the
  * authoritative terminal signal.
  */
-export const OpenCodeProviderCapabilitiesV2 = {
+const OpenCodeProviderCapabilitiesV2 = {
   sessions: {
     // The current adapter owns one directory-bound client/server per session.
     // Keep it isolated until its runtime is made safe for cross-thread pooling.
