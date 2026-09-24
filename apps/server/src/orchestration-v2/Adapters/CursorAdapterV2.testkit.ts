@@ -44,6 +44,7 @@ import {
   makeCursorAgentOptions,
 } from "./CursorAdapterV2.ts";
 import type { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import type { RuntimePolicyV2Override } from "../RuntimePolicy.ts";
 
 const CursorAgentSdkReplayTranscript = Schema.Struct({
   provider: Schema.Literal(CURSOR_PROVIDER),
@@ -670,15 +671,22 @@ export const CursorOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarnes
     makeCursorProviderAdapterRegistryReplayLayer(transcript),
 };
 
+function sanitizeReplayText(
+  text: string,
+  replacements: ReadonlyArray<readonly [string, string]>,
+): string {
+  return replacements.reduce(
+    (current, [from, to]) => (from.length === 0 ? current : current.replaceAll(from, to)),
+    text,
+  );
+}
+
 function sanitizeReplayValue(
   value: unknown,
   replacements: ReadonlyArray<readonly [string, string]>,
 ): unknown {
   if (typeof value === "string") {
-    return replacements.reduce(
-      (text, [from, to]) => (from.length === 0 ? text : text.replaceAll(from, to)),
-      value,
-    );
+    return sanitizeReplayText(value, replacements);
   }
   if (Array.isArray(value)) {
     return value.map((entry) => sanitizeReplayValue(entry, replacements));
@@ -686,8 +694,12 @@ function sanitizeReplayValue(
   if (typeof value !== "object" || value === null) {
     return value;
   }
+  // Keys too: grep results are keyed by workspace path.
   return Object.fromEntries(
-    Object.entries(value).map(([key, entry]) => [key, sanitizeReplayValue(entry, replacements)]),
+    Object.entries(value).map(([key, entry]) => [
+      sanitizeReplayText(key, replacements),
+      sanitizeReplayValue(entry, replacements),
+    ]),
   );
 }
 
@@ -733,13 +745,14 @@ async function waitForRecordingSignal(signal: Promise<void>, description: string
 function recordingRuntimePolicy(input: {
   readonly cwd: string;
   readonly interactionMode: "default" | "plan";
+  readonly override?: Pick<RuntimePolicyV2Override, "approvalPolicy" | "sandboxPolicy">;
 }): ProviderAdapterV2RuntimePolicy {
   return {
     runtimeMode: "full-access",
     interactionMode: input.interactionMode,
     cwd: input.cwd,
-    approvalPolicy: "never",
-    sandboxPolicy: {
+    approvalPolicy: input.override?.approvalPolicy ?? "never",
+    sandboxPolicy: input.override?.sandboxPolicy ?? {
       type: "dangerFullAccess",
       networkAccess: true,
     },
@@ -756,6 +769,11 @@ export async function recordCursorAgentSdkReplayTranscript(input: {
   /** Stable fixture cwd used to sanitize runtime-only workspace paths in recorded updates. */
   readonly transcriptCwd?: string;
   readonly interactionMode?: "default" | "plan";
+  /** The replay fixture's policy override, so the recorded agent.open frame matches replay. */
+  readonly runtimePolicyOverride?: Pick<
+    RuntimePolicyV2Override,
+    "approvalPolicy" | "sandboxPolicy"
+  >;
   readonly apiKey?: string;
   readonly interruptAfterToolStart?: boolean;
   readonly interruptAfterRunStartPromptIndex?: number;
@@ -788,6 +806,7 @@ export async function recordCursorAgentSdkReplayTranscript(input: {
   const runtimePolicy = recordingRuntimePolicy({
     cwd: input.cwd,
     interactionMode,
+    ...(input.runtimePolicyOverride === undefined ? {} : { override: input.runtimePolicyOverride }),
   });
   const options = makeCursorAgentOptions({
     ...(input.apiKey === undefined ? {} : { apiKey: input.apiKey }),
@@ -816,8 +835,11 @@ export async function recordCursorAgentSdkReplayTranscript(input: {
     },
   });
 
+  // Agents sometimes search the workspace's parent too; map it to /tmp so the
+  // recording host's temp layout stays out of the fixture.
   const replacements: ReadonlyArray<readonly [string, string]> = [
     [input.cwd, input.transcriptCwd ?? `/tmp/cursor-replay-${input.scenario}`],
+    [input.cwd.slice(0, input.cwd.lastIndexOf("/")), "/tmp"],
   ];
 
   try {
@@ -954,6 +976,10 @@ export async function recordCursorAgentSdkReplayTranscript(input: {
           toolStarted.promise,
           "Cursor SDK tool-call-started before interrupt",
         );
+        // Cancelling in the same tick as the SDK's tool-call-started callback
+        // leaves an unhandled AbortError inside @cursor/sdk (1.0.22 to 1.0.32)
+        // that kills the process. One timer tick later the cancel is clean.
+        await Effect.runPromise(Effect.sleep("10 millis"));
         entries.push({
           type: "expect_outbound",
           label: `run.cancel:${index + 1}`,

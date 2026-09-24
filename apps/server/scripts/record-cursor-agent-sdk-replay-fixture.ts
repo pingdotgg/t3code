@@ -16,12 +16,16 @@ import {
   PROVIDER_THREAD_RESUME_FIRST_PROMPT,
   PROVIDER_THREAD_RESUME_SECOND_PROMPT,
   PROPOSED_PLAN_PROMPT,
+  READ_ONLY_NEVER_POLICY,
   SIMPLE_PROMPT,
+  SKILL_INVOCATION_CURSOR_MESSAGE,
   SUBAGENT_PROMPT,
   TODO_LIST_PROMPT,
   TOOL_CALL_READ_ONLY_PROMPT,
   TURN_INTERRUPT_MID_TOOL_PROMPT,
+  WORKSPACE_NEVER_POLICY,
 } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
+import { skillInvocationInput } from "../src/orchestration-v2/testkit/fixtures/skill_invocation/input.ts";
 import {
   cursorReplayPromptsForWorkspace,
   cursorReplayTranscriptCwd,
@@ -56,24 +60,36 @@ const RECORDINGS = {
     prompts: [PROPOSED_PLAN_PROMPT],
     output: "../src/orchestration-v2/testkit/fixtures/proposed_plan/cursor_transcript.ndjson",
     interactionMode: "plan",
+    runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
   },
   todo_list: {
     prompts: [TODO_LIST_PROMPT],
     output: "../src/orchestration-v2/testkit/fixtures/todo_list/cursor_transcript.ndjson",
+    runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
   },
   subagent: {
     prompts: [SUBAGENT_PROMPT],
     output: "../src/orchestration-v2/testkit/fixtures/subagent/cursor_transcript.ndjson",
+    runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
   },
   tool_call_read_only: {
     prompts: [TOOL_CALL_READ_ONLY_PROMPT],
     output: "../src/orchestration-v2/testkit/fixtures/tool_call_read_only/cursor_transcript.ndjson",
+    runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
   },
   turn_interrupt_mid_tool: {
     prompts: [TURN_INTERRUPT_MID_TOOL_PROMPT],
     output:
       "../src/orchestration-v2/testkit/fixtures/turn_interrupt_mid_tool/cursor_transcript.ndjson",
     interruptAfterToolStart: true,
+    runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+  },
+  skill_invocation: {
+    // The adapter rewrites a discovered `$review` mention to Cursor's native
+    // `/review` invocation before sending, so the SDK sees the rewritten form.
+    prompts: [SKILL_INVOCATION_CURSOR_MESSAGE],
+    output: "../src/orchestration-v2/testkit/fixtures/skill_invocation/cursor_transcript.ndjson",
+    workspaceFiles: skillInvocationInput().workspaceFiles,
   },
 } as const;
 
@@ -112,8 +128,12 @@ async function prepareWorkspace(scenario: RecordingName): Promise<{
       owned: false,
     };
   }
+  const recording = RECORDINGS[scenario];
   return {
-    cwd: await makeCheckpointWorkspace(`cursor-agent-sdk-record-${scenario}`),
+    cwd: await makeCheckpointWorkspace(
+      `cursor-agent-sdk-record-${scenario}`,
+      "workspaceFiles" in recording ? recording.workspaceFiles : undefined,
+    ),
     owned: true,
   };
 }
@@ -189,6 +209,9 @@ try {
     ...(transcriptCwd === undefined ? {} : { transcriptCwd }),
     apiKey,
     ...("interactionMode" in recording ? { interactionMode: recording.interactionMode } : {}),
+    ...("runtimePolicyOverride" in recording
+      ? { runtimePolicyOverride: recording.runtimePolicyOverride }
+      : {}),
     ...("interruptAfterToolStart" in recording
       ? { interruptAfterToolStart: recording.interruptAfterToolStart }
       : {}),
