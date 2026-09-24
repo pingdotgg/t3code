@@ -92,7 +92,7 @@ it("release uses elapsed time equally at different frame rates and a captured co
   expect(fast.needsFrame()).toBe(false);
 });
 
-it("waits for trackpad quiet, handles reduced motion and invalid deltas, and settles without idle frames", () => {
+it("holds a trackpad orbit through a pause, then continues from that angle without idle frames", () => {
   const choose = vi.fn(() => new Quaternion());
   const motion = createDeviceMotion({ choose });
   motion.orbit(NaN, 0, 0);
@@ -102,8 +102,14 @@ it("waits for trackpad quiet, handles reduced motion and invalid deltas, and set
   expect(choose).not.toHaveBeenCalled();
   expect(motion.rotation.angleTo(new Quaternion())).toBeGreaterThan(0);
   motion.advance(140, true);
-  expect(choose).toHaveBeenCalledOnce();
-  expect(motion.rotation.angleTo(new Quaternion())).toBeLessThan(1e-6);
+  expect(choose).not.toHaveBeenCalled();
+  const held = motion.rotation.clone();
+  expect(held.angleTo(new Quaternion())).toBeGreaterThan(0.5);
+  expect(motion.needsFrame()).toBe(false);
+  motion.orbit(80, 0, 200);
+  motion.advance(340, true);
+  expect(motion.rotation.angleTo(held)).toBeGreaterThan(0.1);
+  expect(choose).not.toHaveBeenCalled();
   expect(motion.needsFrame()).toBe(false);
   expect(rotationVector(rotation(0, Math.PI)).length()).toBeCloseTo(Math.PI);
 });

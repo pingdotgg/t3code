@@ -53,8 +53,14 @@ export function createDeviceMotion(options: { choose: (rotation: Quaternion) => 
       steps: 0,
     };
   };
-  const release = (now: number) => {
+  const release = (now: number, snap = true) => {
     if (!drag) return;
+    if (!snap) {
+      const rest = drag.x !== 0 || drag.y !== 0 ? target.clone() : drag.rest;
+      drag = null;
+      beginSpring(rest, now);
+      return;
+    }
     // A pause before lifting a pointer should not resurrect an old flick.
     if (now - lastInput > 100) gestureVelocity.set(0, 0, 0);
     const prediction = target
@@ -69,7 +75,9 @@ export function createDeviceMotion(options: { choose: (rotation: Quaternion) => 
   };
   const advance = (now: number, reduced = false) => {
     if (held || !Number.isFinite(now)) return false;
-    if (drag && !pointer && now >= lastInput + 140) release(lastInput + 140);
+    // Wheel events have no reliable finger-up signal. A quiet trackpad gesture
+    // keeps its angle; only an explicit pointer release chooses a resting view.
+    if (drag && !pointer && now >= lastInput + 140) release(lastInput + 140, false);
     if (drag) {
       // Follow the target during the gesture. Retain the logarithm's winding so
       // a long drag cannot reverse its spring force when crossing a half turn.
