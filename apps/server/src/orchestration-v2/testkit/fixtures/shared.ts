@@ -318,6 +318,12 @@ export const OPENCODE_MODEL_SELECTION = {
   options: [{ id: "agent", value: "build" }],
 } satisfies ModelSelection;
 
+/** Pi fixtures are recorded against this pinned OpenRouter model; the slug is `provider/model`. */
+export const PI_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("pi"),
+  model: "openrouter/deepseek/deepseek-v4-flash",
+} satisfies ModelSelection;
+
 export const ACP_REGISTRY_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("acpRegistry"),
   model: "default",

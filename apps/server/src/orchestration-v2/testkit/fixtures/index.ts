@@ -38,6 +38,7 @@ import { assertSimpleClaudeOutput } from "./simple/claude_output.ts";
 import { assertSkillInvocationCursorOutput } from "./skill_invocation/cursor_output.ts";
 import { skillInvocationInput } from "./skill_invocation/input.ts";
 import { assertSimpleOutput } from "./simple/codex_output.ts";
+import { assertPiSimpleOutput } from "./simple/pi_output.ts";
 import { simpleInput } from "./simple/input.ts";
 import { assertSubagentOutput } from "./subagent/codex_output.ts";
 import { assertClaudeSubagentOutput } from "./subagent/claude_output.ts";
@@ -92,6 +93,7 @@ import {
   CURSOR_MODEL_SELECTION,
   GROK_MODEL_SELECTION,
   OPENCODE_MODEL_SELECTION,
+  PI_MODEL_SELECTION,
   READ_ONLY_NEVER_POLICY,
   READ_ONLY_ON_REQUEST_POLICY,
   RESTRICTED_GRANULAR_POLICY,
@@ -244,6 +246,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         transcriptFile: new URL("./simple/opencode_transcript.ndjson", import.meta.url),
         modelSelection: OPENCODE_MODEL_SELECTION,
         assertOutput: assertSimpleOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("pi"),
+        transcriptFile: new URL("./simple/pi_transcript.ndjson", import.meta.url),
+        modelSelection: PI_MODEL_SELECTION,
+        assertOutput: assertPiSimpleOutput,
       },
     ],
   },
@@ -531,6 +539,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./multi_turn/grok_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        assertOutput: assertMultiTurnOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("pi"),
+        transcriptFile: new URL("./multi_turn/pi_transcript.ndjson", import.meta.url),
+        modelSelection: PI_MODEL_SELECTION,
         assertOutput: assertMultiTurnOutput,
       },
     ],
