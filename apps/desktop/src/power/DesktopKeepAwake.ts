@@ -378,10 +378,20 @@ const writeRecoveryFile = (file: string | null, saved: KeepAwakeSavedByScheme): 
   if (file === null) {
     return;
   }
+  // Atomic update: a kill between truncate and write must never leave a
+  // corrupt file behind while schemes stay forced — a failed replacement
+  // leaves the previous file (if any) untouched.
+  const tmp = `${file}.tmp`;
   try {
-    NodeFs.writeFileSync(file, JSON.stringify(Object.fromEntries(saved)), "utf8");
+    NodeFs.writeFileSync(tmp, JSON.stringify(Object.fromEntries(saved)), "utf8");
+    NodeFs.renameSync(tmp, file);
   } catch {
     // Best-effort: without the file we just lose crash recovery for this session.
+    try {
+      NodeFs.rmSync(tmp, { force: true });
+    } catch {
+      // Ignore cleanup failures; a stale tmp file is harmless (never read).
+    }
   }
 };
 
@@ -434,24 +444,29 @@ const sanitizeSavedByScheme = (input: unknown): KeepAwakeSavedByScheme | null =>
 };
 
 /**
- * Best-effort restore for a previous session that died while enabled.
- * Returns true when a recovery file existed (so the caller logs it).
+ * Outcome of the best-effort restore for a previous session that died
+ * while enabled. "recovered": a file existed and was handled (restored
+ * and/or deleted). "absent": no file — nothing to do. "retry": no
+ * conclusive answer (unavailable path, transient fs error) — the caller
+ * leaves its done-flag clear so a later call tries again.
  */
+type KeepAwakeRecoveryOutcome = "recovered" | "absent" | "retry";
+
 const recoverPreviousSession = (
   runPowercfg: (args: ReadonlyArray<string>) => string,
   recoveryFile: string | null,
-): boolean => {
+): KeepAwakeRecoveryOutcome => {
   if (recoveryFile === null) {
-    return false;
+    return "retry";
   }
   let found = false;
   try {
     found = NodeFs.existsSync(recoveryFile);
   } catch {
-    return false;
+    return "retry";
   }
   if (!found) {
-    return false;
+    return "absent";
   }
   try {
     const saved = sanitizeSavedByScheme(
@@ -464,7 +479,7 @@ const recoverPreviousSession = (
     // Corrupt file: fall through to delete + log below.
   }
   deleteRecoveryFile(recoveryFile);
-  return true;
+  return "recovered";
 };
 
 /**
@@ -554,14 +569,25 @@ export const make = (
     // setPath. Idempotent — runs at most once per process.
     const recoveryChecked = yield* Ref.make(false);
     const ensureRecoveryChecked: Effect.Effect<void, never, never> = Effect.gen(function* () {
-      const done = yield* Ref.getAndSet(recoveryChecked, true);
-      if (done || !isWindows) {
+      if (!isWindows) {
         return;
       }
-      const recovered = yield* Effect.sync(() =>
-        recoverPreviousSession(runPowercfg, getRecoveryFile()),
-      );
-      if (recovered) {
+      const done = yield* Ref.get(recoveryChecked);
+      if (done) {
+        return;
+      }
+      const file = getRecoveryFile();
+      if (file === null) {
+        // userData unavailable this early — leave the flag clear so a later
+        // call retries once the path exists.
+        return;
+      }
+      const outcome = yield* Effect.sync(() => recoverPreviousSession(runPowercfg, file));
+      if (outcome === "retry") {
+        return;
+      }
+      yield* Ref.set(recoveryChecked, true);
+      if (outcome === "recovered") {
         yield* Effect.logWarning(
           "[keep-awake] Restored power settings left behind by a previous session and removed the recovery file.",
         );
