@@ -1655,6 +1655,34 @@ code {
 
 /* Chat markdown rendering */
 
+/* Bidi: Hebrew/Arabic messages. Every leaf block resolves its own base direction
+   from its first strong character (`plaintext`), so a Hebrew paragraph reads and
+   aligns right-to-left while the English block above it stays put — no global
+   flip, mixed-language threads just work. Containers that carry a directional
+   decoration (list markers, blockquote bar, table column order) get `dir="auto"`
+   in ChatMarkdown.tsx and use logical properties below. Code stays LTR. */
+.chat-markdown :is(p, li, h1, h2, h3, h4, h5, h6, td, th, dt, dd) {
+  unicode-bidi: plaintext;
+}
+
+/* A block ChatMarkdown.tsx pinned `dir="rtl"`: RTL prose that *opens* with a
+   Latin tech token (a URL, a path, `server.py`), which the browser's own
+   first-strong scan would misread as LTR. `plaintext` ignores the `dir`
+   attribute, so the pinned block — and the plaintext leaves inside a pinned
+   list or quote, which would otherwise re-resolve themselves line by line —
+   falls back to `isolate` and inherits the pinned direction. */
+.chat-markdown [dir="rtl"],
+.chat-markdown [dir="rtl"] :is(p, li, h1, h2, h3, h4, h5, h6, td, th, dt, dd) {
+  unicode-bidi: isolate;
+}
+
+.chat-markdown pre,
+.chat-markdown code,
+.chat-markdown .chat-markdown-codeblock {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
 .chat-markdown > :first-child {
   margin-top: 0;
 }
@@ -1711,7 +1739,9 @@ code {
      custom property, so without this a task-list under a multi-digit ordered
      list would inherit the outer gutter instead of its own default. */
   --list-gutter: 1.25rem;
-  padding-left: 1.25rem;
+  /* Logical, because a list whose text is Arabic or Hebrew carries dir="auto"
+     and paints its markers on the right — the gutter has to move with them. */
+  padding-inline-start: 1.25rem;
   list-style-type: disc;
 }
 
@@ -1722,7 +1752,7 @@ code {
    nested ol without its own widened marker doesn't inherit the outer one. */
 .chat-markdown ol {
   --list-gutter: 1.25rem;
-  padding-left: var(--list-gutter, 1.25rem);
+  padding-inline-start: var(--list-gutter, 1.25rem);
   list-style-type: decimal;
 }
 
@@ -1756,7 +1786,8 @@ code {
 }
 
 .chat-markdown li.task-list-item input[type="checkbox"] {
-  margin: 0 0.35em 0.15em calc(-1 * var(--list-gutter, 1.25rem));
+  margin-block: 0 0.15em;
+  margin-inline: calc(-1 * var(--list-gutter, 1.25rem)) 0.35em;
   vertical-align: middle;
 }
 
@@ -1784,8 +1815,9 @@ code {
 }
 
 .chat-markdown blockquote {
-  border-left: 2px solid var(--contrast-border);
-  padding-left: 0.8rem;
+  /* Logical, so an RTL quote's bar sits on its right. */
+  border-inline-start: 2px solid var(--contrast-border);
+  padding-inline-start: 0.8rem;
   color: var(--contrast-muted-foreground);
 }
 
@@ -1799,6 +1831,7 @@ code {
 
 .chat-markdown section[data-footnotes] ol {
   margin: 0;
+  padding-inline-start: 1.25rem;
 }
 
 .chat-markdown section[data-footnotes] li + li {
@@ -1905,7 +1938,10 @@ code {
 .chat-markdown th,
 .chat-markdown td {
   padding: 0.45rem 0.75rem;
-  text-align: left;
+  /* Logical: the table's base direction comes from its own content (an RTL
+     table opens at its rightmost column), and each cell carries dir="auto"
+     so it aligns to its own text. */
+  text-align: start;
 }
 
 .chat-markdown thead th {

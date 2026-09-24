@@ -1,3 +1,4 @@
+import { DirectionProvider, type TextDirection } from "@base-ui/react/direction-provider";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -468,7 +469,11 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     ...defaultSchema.attributes,
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
     code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
-    blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
+    blockquote: [
+      ...(defaultSchema.attributes?.blockquote ?? []),
+      "dataAlert",
+      "dataAlertDirection",
+    ],
     div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
     a: [...(defaultSchema.attributes?.a ?? []), "dataPullRequestAutolink"],
     img: [
@@ -492,6 +497,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkCodexDirectives,
   remarkPreserveCodeMeta,
   remarkNormalizeLinksAndTagInlineCode,
+  remarkTextDirection,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
@@ -502,13 +508,172 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkBreaks,
   remarkPreserveCodeMeta,
   remarkNormalizeLinksAndTagInlineCode,
+  remarkTextDirection,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+
+// Inside a right-to-left block the bidi algorithm hands the neutrals around a
+// Latin run — quotes, commas, a plus sign — to whichever strong run is nearer,
+// which strands them on the wrong visual side ('"AIOS" סותר' flips its quotes,
+// "U1+U2+U3, ההסלמה" splits the comma off its run). Wrapping each Latin run in
+// a <bdi> isolates it, so the punctuation around it resolves against the
+// Hebrew it belongs to. A run may span several words joined by thin neutrals
+// ("speed-to-lead", "U1+U2+U3+U5", "OpenAI export"); a connector is only
+// swallowed when another Latin word follows it, so sentence-final punctuation
+// stays outside the isolate.
+const LATIN_RUN = /\p{Script=Latin}[\p{Script=Latin}\d]*(?:[ +&/.:'@_-]+[\p{Script=Latin}\d]+)*/gu;
+const BIDI_LEAF_TAG_NAMES = new Set([
+  "p",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "td",
+  "th",
+  "li",
+  "dt",
+  "dd",
+]);
+// Links stay atomic: an anchor's text is usually a URL or a title whose own
+// strong letters already resolve as one run — slicing it into isolates would
+// let the neutrals between the pieces reorder against the paragraph.
+const BIDI_SKIP_TAG_NAMES = new Set(["a", "code", "pre", "bdi", "bdo"]);
+
+type HastNode = {
+  type?: string;
+  tagName?: string;
+  value?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNode[];
+};
+
+function splitTextIntoIsolates(value: string): HastNode[] {
+  const out: HastNode[] = [];
+  let last = 0;
+  for (const match of value.matchAll(LATIN_RUN)) {
+    const start = match.index ?? 0;
+    if (start > last) {
+      out.push({ type: "text", value: value.slice(last, start) });
+    }
+    out.push({
+      type: "element",
+      tagName: "bdi",
+      properties: {},
+      children: [{ type: "text", value: match[0] }],
+    });
+    last = start + match[0].length;
+  }
+  if (last === 0) {
+    return [{ type: "text", value }];
+  }
+  if (last < value.length) {
+    out.push({ type: "text", value: value.slice(last) });
+  }
+  return out;
+}
+
+function isolateLatinRuns(node: HastNode) {
+  if (!node.children) {
+    return;
+  }
+  node.children = node.children.flatMap((child): HastNode[] => {
+    if (child.type === "text" && typeof child.value === "string") {
+      return splitTextIntoIsolates(child.value);
+    }
+    if (child.type === "element" && BIDI_SKIP_TAG_NAMES.has(child.tagName ?? "")) {
+      return [child];
+    }
+    isolateLatinRuns(child);
+    return [child];
+  });
+}
+
+function rehypeIsolateLatinRuns() {
+  return (tree: HastNode) => {
+    const visit = (node: HastNode) => {
+      if (
+        node.type === "element" &&
+        BIDI_LEAF_TAG_NAMES.has(node.tagName ?? "") &&
+        resolvedTextDirection(hastTextContent(node)) === "rtl"
+      ) {
+        isolateLatinRuns(node);
+        return;
+      }
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+  };
+}
+
+/**
+ * Block-level direction for elements `remarkTextDirection` never saw: raw HTML
+ * reaches the tree through `rehypeRaw`, after the mdast pass has already run,
+ * so a literal `<p>שלום</p>` in chat prose would otherwise keep the
+ * inherited LTR alignment (`unicode-bidi: plaintext` fixes the *ordering*
+ * inside the line, but never sets `direction`, which is what `text-align:
+ * start` follows).
+ *
+ * An element that already carries `dir` — whether authored in the raw HTML or
+ * stamped on by the mdast pass — is left alone and claims its subtree, which
+ * is the same rule `remarkTextDirection` uses: the browser's own `dir="auto"`
+ * scan stops at a descendant with an explicit direction, so re-marking the
+ * blocks inside a claimed container would fight it.
+ */
+function rehypeRawTextDirection() {
+  return (tree: HastNode) => {
+    const visit = (node: HastNode, insideClaimed: boolean) => {
+      if (node.type !== "element") {
+        node.children?.forEach((child) => visit(child, insideClaimed));
+        return;
+      }
+
+      const properties = (node as { properties?: Record<string, unknown> }).properties;
+      if (properties?.dir != null) {
+        node.children?.forEach((child) => visit(child, true));
+        return;
+      }
+
+      if (!insideClaimed && BIDI_LEAF_TAG_NAMES.has(node.tagName ?? "")) {
+        const detectionText = hastTextContent(node);
+        // Same pin rule as the mdast pass: `dir="auto"` is a plain first-strong
+        // scan that cannot discount a leading Latin tech token, so pin the
+        // block only where the heuristic and first-strong disagree.
+        const dir =
+          firstStrongDirection(detectionText) === "ltr" &&
+          resolvedTextDirection(detectionText) === "rtl"
+            ? "rtl"
+            : "auto";
+        (node as { properties?: Record<string, unknown> }).properties = {
+          ...properties,
+          dir,
+        };
+        node.children?.forEach((child) => visit(child, true));
+        return;
+      }
+
+      node.children?.forEach((child) => visit(child, insideClaimed));
+    };
+    visit(tree, false);
+  };
+}
 
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,
   rehypePreserveImageSourceMeta,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
+  // After sanitize, so the `dir` it assigns survives the schema.
+  rehypeRawTextDirection,
+  rehypeIsolateLatinRuns,
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+
+/**
+ * Without `rehypeRaw` there is no raw HTML to direction-mark, but RTL prose
+ * still needs its Latin runs isolated — that pass is not tied to raw HTML.
+ */
+const CHAT_MARKDOWN_PLAIN_REHYPE_PLUGINS = [rehypeIsolateLatinRuns] satisfies NonNullable<
+  ReactMarkdownOptions["rehypePlugins"]
+>;
 
 /** GitHub's own five alert kinds, in its colors: the glyph names the urgency, the title says it. */
 const GITHUB_ALERT_PRESENTATIONS: Record<
@@ -587,6 +752,7 @@ function extractPreCodeMeta(node: unknown): string | undefined {
 type MarkdownAstNode = {
   type?: string;
   meta?: unknown;
+  value?: string;
   url?: string;
   data?: {
     hProperties?: Record<string, unknown>;
@@ -645,6 +811,151 @@ function remarkNormalizeLinksAndTagInlineCode() {
   };
 }
 
+/**
+ * Message prose belongs to whoever wrote it, so its direction is a property of
+ * the text and not of the app: `dir="auto"` makes the browser read each block's
+ * base direction off that block's own first strong character, which is what
+ * puts an Arabic sentence's trailing punctuation and its list markers on the
+ * right side without touching the English block above it.
+ *
+ * Code and tables opt out and stay LTR. Their shape is not prose — identifiers,
+ * paths, and column order read the same in every locale, and letting an Arabic
+ * comment flip a snippet would misreport what the agent actually wrote.
+ */
+const AUTO_DIRECTION_NODE_TYPES = new Set([
+  "blockquote",
+  "heading",
+  "listItem",
+  "paragraph",
+  "tableCell",
+]);
+const LTR_DIRECTION_NODE_TYPES = new Set(["code", "inlineCode", "table"]);
+
+/**
+ * The text a block's direction is judged from: its own prose, with the
+ * LTR-pinned nodes (inline code, fences, tables) excluded structurally —
+ * `dir="auto"` skips them too, since they carry their own `dir`.
+ */
+function directionDetectionText(node: MarkdownAstNode): string {
+  if (LTR_DIRECTION_NODE_TYPES.has(node.type ?? "")) {
+    return "";
+  }
+  if (typeof node.value === "string") {
+    return node.value;
+  }
+  return (node.children ?? []).map(directionDetectionText).join("");
+}
+
+function setDirection(node: MarkdownAstNode, dir: "auto" | "ltr" | "rtl") {
+  node.data = {
+    ...node.data,
+    hProperties: {
+      ...node.data?.hProperties,
+      dir,
+    },
+  };
+}
+
+function remarkTextDirection() {
+  return (tree: MarkdownAstNode) => {
+    // `dir="auto"` reads the first strong character of an element's *own* text
+    // and skips any descendant that carries its own `dir`. Blocks below a marked
+    // one are normally left alone (the `plaintext` CSS lets each resolve its own
+    // text), with two exceptions: every list item is marked so a Hebrew item in
+    // an English list still gets its bullet in the right-hand gutter (a marker's
+    // side follows the `direction` property, which only a `dir` attribute
+    // flips), and a leaf whose heuristic disagrees with its own first-strong
+    // scan is pinned, since `plaintext` cannot discount a leading Latin token.
+    // `pinnedRtl` tracks whether the nearest claimed ancestor was forced to an
+    // explicit `dir="rtl"` (a heuristic override, not the default `"auto"`).
+    // That pin is deliberate — the `[dir="rtl"] … li` CSS rule means nested
+    // content should inherit it rather than recompute its own direction.
+    // Everywhere else — including under a plain `"auto"` ancestor — a nested
+    // list's own items still resolve independently, same as a top-level one.
+    const visit = (node: MarkdownAstNode, insideAutoBlock: boolean, pinnedRtl: boolean) => {
+      const type = node.type ?? "";
+      if (LTR_DIRECTION_NODE_TYPES.has(type)) {
+        setDirection(node, "ltr");
+        // A pinned table is not an `auto` ancestor, so its cells are free to
+        // pick their own direction while the column order stays put.
+        node.children?.forEach((child) => visit(child, false, false));
+        return;
+      }
+
+      if (type === "list") {
+        // Each item claims its own direction below, which leaves the list
+        // element itself no text for `dir="auto"` to judge — so its gutter
+        // side is pinned explicitly from all the items together.
+        if (!insideAutoBlock) {
+          setDirection(node, resolvedTextDirection(directionDetectionText(node)));
+        }
+        // A nested list's items resolve from their own text just like a
+        // top-level list's, unless they sit under a pinned `dir="rtl"`
+        // ancestor — there, inheritance is the point, so leave them be.
+        node.children?.forEach((child) => visit(child, pinnedRtl && insideAutoBlock, pinnedRtl));
+        return;
+      }
+
+      // A GitHub alert is rendered as a titled callout rather than a quote, and
+      // its own renderer builds that chrome from scratch. Its outer container
+      // hardcodes `dir="auto"`, but the browser's native scan for that skips
+      // any descendant that itself carries an explicit `dir` — and the alert's
+      // own paragraphs need one (below) so their own text aligns correctly.
+      // That leaves the container's native scan nothing to resolve from, so
+      // its direction is computed here instead and threaded through as data
+      // for the renderer to apply directly.
+      const isAlertBlockquote = type === "blockquote" && node.data?.hProperties?.dataAlert != null;
+      if (isAlertBlockquote) {
+        node.data = {
+          ...node.data,
+          hProperties: {
+            ...node.data?.hProperties,
+            dataAlertDirection: resolvedTextDirection(directionDetectionText(node)),
+          },
+        };
+      }
+      const isDirectionBlock = !isAlertBlockquote && AUTO_DIRECTION_NODE_TYPES.has(type);
+      let pinnedRtlHere = false;
+      if (isDirectionBlock && !insideAutoBlock) {
+        // `dir="auto"` (and the `plaintext` CSS) is the browser's own first-strong
+        // scan, which cannot discount a leading Latin tech token — "server.py זה
+        // הקובץ" resolves LTR. When the heuristic disagrees with plain first-strong,
+        // pin the block with an explicit `dir="rtl"` (index.css lifts `plaintext`
+        // for it); everywhere else the browser keeps resolving the block itself.
+        const detectionText = directionDetectionText(node);
+        const dir =
+          firstStrongDirection(detectionText) === "ltr" &&
+          resolvedTextDirection(detectionText) === "rtl"
+            ? "rtl"
+            : "auto";
+        setDirection(node, dir);
+        pinnedRtlHere = dir === "rtl";
+      } else if (isDirectionBlock && insideAutoBlock) {
+        // Inside a claimed block the `plaintext` CSS still re-resolves each
+        // leaf from its own text — pin just the leaves whose leading Latin
+        // token would make that scan misread otherwise-RTL prose.
+        const detectionText = directionDetectionText(node);
+        if (
+          firstStrongDirection(detectionText) === "ltr" &&
+          resolvedTextDirection(detectionText) === "rtl"
+        ) {
+          setDirection(node, "rtl");
+          pinnedRtlHere = true;
+        }
+      }
+      node.children?.forEach((child) =>
+        visit(
+          child,
+          insideAutoBlock || (isDirectionBlock && !insideAutoBlock),
+          pinnedRtl || pinnedRtlHere,
+        ),
+      );
+    };
+
+    visit(tree, false, false);
+  };
+}
+
 function nodeToPlainText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") {
     return String(node);
@@ -698,7 +1009,84 @@ function readInitialWordWrapSetting(): boolean {
   return getClientSettings().wordWrap;
 }
 
-function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
+// Strong-RTL code points: Hebrew, Arabic, Syriac, Thaana, NKo, Samaritan, Mandaic and
+// their extensions/presentation forms, the RTL formatting mark (RLM), plus the astral
+// RTL blocks (Phoenician … Adlam).
+const STRONG_RTL_CHAR =
+  /[\u0590-\u08FF\u200F\uFB1D-\uFDFF\uFE70-\uFEFF\u{10800}-\u{10FFF}\u{1E800}-\u{1EFFF}]/u;
+// First letter decides (UBA P2/P3): digits, punctuation and symbols are neutral.
+// RLM/ALM (the strong-direction formatting marks) count too — a block that opens
+// with one is asserting its direction explicitly.
+const FIRST_LETTER = /[\p{L}\u061C\u200F]/u;
+
+// The direction a block of text renders in — what `dir="auto"` would resolve.
+export function firstStrongDirection(text: string): TextDirection {
+  const letter = FIRST_LETTER.exec(text)?.[0];
+  return letter && STRONG_RTL_CHAR.test(letter) ? "rtl" : "ltr";
+}
+
+// The Latin spans that must not get the direction vote: tech tokens a Hebrew
+// sentence often *opens* with (a URL, an inline-code span, a path, a file name
+// — "server.py זה הקובץ הראשי"), plus quoted or parenthesized Latin — a cited
+// title or gloss ('הוספתי סעיף "Build-feedback call additions"', "אסטרטגיות
+// (product-lens)") names a thing rather than continuing the prose. Mirrors the
+// mobile app's pattern (each app keeps its own copy — no cross-app imports)
+// and stripLeadingLTR from the claude-desktop-rtl-patch.
+const LTR_TECH_TOKEN =
+  /https?:\/\/\S+|`[^`\n]+`|(?:^|(?<=\s))\S*[/\\]\S+|\b\w+\.\w{1,5}\b|"[^"\n]+"|[“«][^”»\n]+[”»]|\([^()\n]+\)/gu;
+
+function stripLtrTechTokens(text: string): string {
+  // A span carrying its own strong-RTL letters (an RTL slash pair like כן/לא,
+  // a Hebrew quotation) is prose, not a citation — it keeps its vote.
+  return text.replace(LTR_TECH_TOKEN, (token) => (STRONG_RTL_CHAR.test(token) ? token : " "));
+}
+
+// The last-resort vote: which strong script owns most of the text's letters.
+// Counted per letter (`\p{L}`), so neutral digits/punctuation and RTL combining
+// marks (niqqud, harakat — marks, not letters) never tilt the tally.
+function rtlLetterMajority(text: string): boolean {
+  let balance = 0;
+  for (const letter of text.match(/\p{L}/gu) ?? []) {
+    balance += STRONG_RTL_CHAR.test(letter) ? 1 : -1;
+  }
+  return balance > 0;
+}
+
+// First-strong, with two corrections for RTL prose that *opens* with Latin:
+// a leading tech token (URL, path, file name) never gets the first-strong vote,
+// and a text whose letters are mostly RTL is RTL even when it leads with a
+// Latin prose label — "**Next step (ישן):** מתחילים לבנות…" is a Hebrew
+// sentence, and reading it LTR strands its closing punctuation on the wrong
+// side. A mostly-English text with a few Hebrew words stays LTR — its Latin
+// letters keep the majority.
+export function resolvedTextDirection(text: string): TextDirection {
+  if (firstStrongDirection(text) === "rtl") {
+    return "rtl";
+  }
+  if (!STRONG_RTL_CHAR.test(text)) {
+    return "ltr";
+  }
+  const stripped = stripLtrTechTokens(text);
+  if (firstStrongDirection(stripped) === "rtl") {
+    return "rtl";
+  }
+  return rtlLetterMajority(stripped) ? "rtl" : "ltr";
+}
+
+function hastTextContent(node: unknown): string {
+  if (!node || typeof node !== "object") return "";
+  const n = node as { type?: string; tagName?: string; value?: string; children?: unknown[] };
+  if (n.type === "text") return n.value ?? "";
+  // Code is direction-neutral here too, mirroring the mdast-side exclusion.
+  if (n.tagName === "code") return "";
+  return (n.children ?? []).map(hastTextContent).join("");
+}
+
+function MarkdownTable({
+  children,
+  dir = "ltr",
+  ...props
+}: Omit<React.ComponentProps<"table">, "dir"> & { dir?: TextDirection }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const tableRef = useRef<HTMLTableElement | null>(null);
   const [expanded, setExpanded] = useState(readInitialWordWrapSetting);
@@ -773,11 +1161,23 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
       className="chat-markdown-table-container"
       data-expanded={expanded ? "true" : "false"}
     >
-      <ScrollArea radius="none" chainVerticalScroll scrollFade className="w-full max-w-full">
-        <table ref={tableRef} {...props}>
-          {children}
-        </table>
-      </ScrollArea>
+      {/* A concrete direction on the scroll viewport (not just the table) so an
+          overflowing RTL table opens at its first, rightmost column — and the same
+          value fed to Base UI, whose scroll-fade math reads its DirectionProvider
+          rather than the DOM `dir`. */}
+      <DirectionProvider direction={dir}>
+        <ScrollArea
+          dir={dir}
+          radius="none"
+          chainVerticalScroll
+          scrollFade
+          className="w-full max-w-full"
+        >
+          <table ref={tableRef} {...props}>
+            {children}
+          </table>
+        </ScrollArea>
+      </DirectionProvider>
       <div className="mt-0.5 flex items-center justify-between select-none">
         <Tooltip>
           <TooltipTrigger
@@ -973,6 +1373,9 @@ function MarkdownCodeBlock({
 
   return (
     <div
+      // The fence's own chrome, not just its code: a title bar and copy/wrap
+      // controls that read left-to-right regardless of the prose around them.
+      dir="ltr"
       className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-[var(--radius)] border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
@@ -2161,6 +2564,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
           hasPrimaryAction ? (
             <ContextChip
               kind="mention"
+              // A path is an identifier, so it reads left-to-right wherever the
+              // prose around it points. The `code` renderer swaps this chip in for
+              // the `<code dir="ltr">` it replaces, so the pin has to live here too.
+              dir="ltr"
               render={<a href={href} />}
               className={MARKDOWN_FILE_LINK_CLASS_NAME}
               data-markdown-copy={copyMarkdown}
@@ -2184,6 +2591,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
           ) : (
             <ContextChip
               kind="mention"
+              dir="ltr"
               render={<button type="button" />}
               aria-label={`File options for ${label}`}
               aria-haspopup="menu"
@@ -2753,15 +3161,35 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const alert =
       GITHUB_ALERT_PRESENTATIONS[String((props as Record<string, unknown>)["data-alert"] ?? "")];
     if (!alert) {
-      return <blockquote {...props}>{children}</blockquote>;
+      return (
+        <blockquote dir="auto" {...props}>
+          {children}
+        </blockquote>
+      );
     }
     // Not a <blockquote>: the stylesheet mutes those, and an alert's body is ordinary
     // text under a colored title — which is how the host renders it.
+    //
+    // The container's direction is computed by remarkTextDirection rather than
+    // left to a native `dir="auto"` scan: the body paragraphs below carry their
+    // own explicit `dir` (for their own alignment), and the browser's `auto`
+    // resolution skips descendants that already have one — leaving nothing for
+    // a native scan on this container to resolve from.
+    const alertDirection =
+      String((props as Record<string, unknown>)["data-alert-direction"] ?? "") === "rtl"
+        ? "rtl"
+        : "ltr";
     return (
-      <div role="note" className={cn("my-1 border-l-2 pl-3", alert.borderClassName)}>
+      <div
+        role="note"
+        dir={alertDirection}
+        className={cn("my-1 border-s-2 ps-3", alert.borderClassName)}
+      >
         <p className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}>
           <alert.Icon aria-hidden className="size-3.5 shrink-0" />
-          {alert.label}
+          {/* dir="ltr" on the label text only (not the row) keeps it out of the container's
+              direction — the body decides the side and the row follows it. */}
+          <span dir="ltr">{alert.label}</span>
         </p>
         {children}
       </div>
@@ -2773,8 +3201,19 @@ const CHAT_MARKDOWN_COMPONENTS = {
         .length ?? 0;
     const gutterStyle = orderedListGutterStyle(itemCount, start);
     return (
-      <ol {...props} start={start} style={gutterStyle ? { ...style, ...gutterStyle } : style} />
+      <ol
+        dir="auto"
+        {...props}
+        start={start}
+        style={gutterStyle ? { ...style, ...gutterStyle } : style}
+      />
     );
+  },
+  // `dir="auto"`: the browser picks each list's / quote's / table's base direction from its
+  // first strong character, so Hebrew/Arabic content gets its markers, bar and column order
+  // on the right while English blocks stay LTR (paired with the bidi rules in index.css).
+  ul: function MarkdownUnorderedList({ node: _node, ...props }) {
+    return <ul dir="auto" {...props} />;
   },
   li: function MarkdownListItem({ node, children, ...props }) {
     const { text, skills } = use(ChatMarkdownRendererContext);
@@ -3203,8 +3642,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
     }
     return <ChatMarkdownImageFallback alt={altText} copyMarkdown={copyMarkdown} kind={kind} />;
   },
-  table: function MarkdownTableRenderer({ node: _node, ...props }) {
-    return <MarkdownTable {...props} />;
+  table: function MarkdownTableRenderer({ node, dir: _dir, ...props }) {
+    return <MarkdownTable dir={resolvedTextDirection(hastTextContent(node))} {...props} />;
   },
   details: function MarkdownDetailsRenderer({ node: _node, children, open: detailsOpen }) {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
@@ -3297,7 +3736,9 @@ function ChatMarkdown({
       <ChatMarkdownRendererContext value={componentState}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
-          rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
+          rehypePlugins={
+            parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : CHAT_MARKDOWN_PLAIN_REHYPE_PLUGINS
+          }
           skipHtml={false}
           components={CHAT_MARKDOWN_COMPONENTS}
           urlTransform={markdownUrlTransform}

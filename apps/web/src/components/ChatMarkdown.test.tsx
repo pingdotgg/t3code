@@ -61,7 +61,9 @@ vi.mock("~/lib/openPullRequestLink", () => ({
 
 import ChatMarkdown, {
   canUseMarkdownFileShellActions,
+  firstStrongDirection,
   hasMarkdownFilePrimaryAction,
+  resolvedTextDirection,
   shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./ChatMarkdown";
 
@@ -615,8 +617,10 @@ describe("ChatMarkdown file option chips", () => {
     );
     const nestedLinkText = nestedLinkHtml.replace(/<[^>]+>/g, "");
 
+    // The list item carries dir="auto" like every other bidi leaf block; what
+    // this asserts is that the rejected citation survives verbatim inside it.
     expect(malformedHtml).toContain(
-      "<li>Bad :codex-file-citation{purpose=&quot;output&quot;}</li>",
+      '<li dir="auto">Bad :codex-file-citation{purpose=&quot;output&quot;}</li>',
     );
     expect(nestedLinkText).toContain(
       "Bad :codex-file-citation{path=&quot;/tmp/project/report.xlsx&quot;}",
@@ -705,15 +709,15 @@ describe("ChatMarkdown heading levels", () => {
       />,
     );
 
-    expect(html).toContain('<h1 aria-level="4">Top</h1>');
-    expect(html).toContain('<h2 aria-level="5">Section</h2>');
-    expect(html).toContain('<h6 aria-level="6">Fine print</h6>');
+    expect(html).toContain('<h1 dir="auto" aria-level="4">Top</h1>');
+    expect(html).toContain('<h2 dir="auto" aria-level="5">Section</h2>');
+    expect(html).toContain('<h6 dir="auto" aria-level="6">Fine print</h6>');
   });
 
   it("leaves heading levels alone when the markdown is not nested", () => {
     const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text="# Top" />);
 
-    expect(html).toContain("<h1>Top</h1>");
+    expect(html).toContain('<h1 dir="auto">Top</h1>');
   });
 });
 
@@ -859,5 +863,256 @@ describe("ChatMarkdown Windows file links", () => {
     expect(html).not.toContain("javascript:");
     expect(html).not.toContain("d:alert");
     expect(html).not.toContain("chat-markdown-file-link");
+  });
+});
+
+describe("chat markdown text direction", () => {
+  function render(text: string) {
+    return renderToStaticMarkup(<ChatMarkdown text={text} cwd="/repo" />);
+  }
+
+  it("lets each block pick its own direction from its own text", () => {
+    const html = render("English first.\n\nمرحبا بالعالم.");
+    expect(html).toContain('<p dir="auto">English first.</p>');
+    expect(html).toContain('<p dir="auto">مرحبا بالعالم.</p>');
+  });
+
+  it("marks headings, lists, and quotes so their markers follow the text", () => {
+    const html = render("# عنوان\n\n- عنصر\n\n> اقتباس");
+    expect(html).toContain('<h1 dir="auto">');
+    // The list's gutter side is pinned from all its items together.
+    expect(html).toContain('<ul dir="rtl">');
+    expect(html).toContain('<blockquote dir="auto">');
+  });
+
+  it("gives every list item its own direction, so mixed lists keep each marker beside its text", () => {
+    const html = render("- English item\n- פריט בעברית");
+    expect(html).toContain('<ul dir="ltr">');
+    expect(html).toContain('<li dir="auto">');
+  });
+
+  it("gives a nested list's items their own direction too, not just the top level", () => {
+    // A Hebrew item nested under an English top-level item must still get its
+    // own `dir`, or its marker inherits the (wrong) English sub-list side.
+    const html = render("- English top\n  - English sub\n  - פריט בעברית");
+    expect(html).toContain('<li dir="auto">פריט בעברית</li>');
+  });
+
+  it("gives raw HTML blocks their own direction too", () => {
+    // Raw HTML arrives via `rehypeRaw`, after the mdast direction pass has
+    // already run, so without the rehype pass these keep the inherited LTR
+    // alignment however `unicode-bidi: plaintext` reorders the glyphs.
+    const html = render("<p>שלום עולם</p>");
+    expect(html).toContain('<p dir="auto">שלום עולם</p>');
+  });
+
+  it("gives each raw table cell its own direction, not the table's", () => {
+    const html = render(
+      "<table><tbody><tr><td>English cell</td><td>خلية عربية</td></tr></tbody></table>",
+    );
+    expect(html).toContain('<td dir="auto">English cell</td>');
+    expect(html).toContain('<td dir="auto">خلية عربية</td>');
+  });
+
+  it("keeps a direction the raw HTML author wrote", () => {
+    const html = render('<p dir="ltr">שלום</p>');
+    expect(html).toContain('<p dir="ltr">שלום</p>');
+    expect(html).not.toContain('<p dir="auto">שלום</p>');
+  });
+
+  it("does not re-mark the blocks inside a claimed raw container", () => {
+    const html = render('<blockquote dir="rtl"><p>שלום</p></blockquote>');
+    expect(html).not.toContain('<p dir="auto">');
+  });
+
+  it("isolates Latin runs in RTL prose even when raw HTML is not parsed", () => {
+    // `rehypeIsolateLatinRuns` is not tied to raw HTML; it must still run when
+    // a caller opts out of `rehypeRaw`.
+    const html = renderToStaticMarkup(
+      <ChatMarkdown text={'הפקודה "git status" עובדת.'} cwd="/repo" parseRawHtml={false} />,
+    );
+    expect(html).toContain("<bdi>git status</bdi>");
+  });
+
+  it("does not re-mark the blocks inside a claimed quote", () => {
+    const html = render("> اقتباس");
+    // `renderToStaticMarkup` serializes adjacent tags with no separator, so
+    // this is the actual boundary a nested, wrongly re-marked paragraph
+    // would produce — the newline-separated form the assertion used to check
+    // for can never appear in real output.
+    expect(html).not.toContain('<blockquote dir="auto"><p dir="auto">');
+  });
+
+  it("pins code left-to-right so an Arabic comment cannot reorder a snippet", () => {
+    const html = render("`git status` وأيضا\n\n```sh\n# تعليق\ngit status\n```");
+    // The paragraph around it still reads right-to-left; only the code opts out.
+    expect(html).toContain('<p dir="auto">');
+    expect(html).toContain('<code data-inline-code="" dir="ltr">git status</code>');
+    expect(html).toContain('<div dir="ltr" class="chat-markdown-codeblock');
+  });
+
+  it("gives a GitHub alert's body its own direction under LTR callout chrome", () => {
+    // The alert renderer builds its own element, so the blockquote cannot be the
+    // marked block — the body paragraphs have to carry the direction instead.
+    const html = render("> [!NOTE]\n> مرحبا بالعالم.");
+    expect(html).toContain('<p dir="auto">مرحبا بالعالم.</p>');
+    expect(html).not.toContain("<blockquote");
+  });
+
+  it("flips the alert's own chrome for an RTL body, not just the body text", () => {
+    // The container hardcodes `dir="auto"`, whose native scan stops at the body
+    // paragraph's own `dir` — so the side its border and icon sit on comes from
+    // the direction computed in the mdast pass and threaded through as data.
+    const html = render("> [!NOTE]\n> مرحبا بالعالم.");
+    expect(html).toContain('role="note" dir="rtl"');
+  });
+
+  it("keeps an English alert's chrome on the left", () => {
+    const html = render("> [!WARNING]\n> Careful with this.");
+    expect(html).toContain('role="note" dir="ltr"');
+  });
+
+  it("pins a file-link chip left-to-right even inside right-to-left prose", () => {
+    // The `code` renderer swaps the chip in for the `<code dir="ltr">` it
+    // replaces, so a path in an Arabic sentence keeps its own reading order.
+    const html = render("عدّل `src/main.ts` من فضلك.");
+    // The chip renders as an anchor or, with no primary action, a button —
+    // either way it carries the LTR pin.
+    expect(html).toMatch(/<(a|button)[^>]* dir="ltr"/);
+  });
+
+  it("gives a table its base direction from its own content, cells still self-resolve", () => {
+    // The direction sits on the scroll viewport wrapping the table, so an
+    // overflowing Hebrew/Arabic table opens at its first, rightmost column.
+    const html = render("| اسم | value |\n| --- | --- |\n| قيمة | 1 |");
+    expect(html).toContain('dir="rtl"');
+    expect(html).toContain('<th dir="auto">');
+    expect(html).toContain('<td dir="auto">');
+  });
+
+  it("keeps an English table left-to-right", () => {
+    const html = render("| Name | value |\n| --- | --- |\n| a | 1 |");
+    expect(html).not.toContain('dir="rtl"');
+  });
+
+  it('keeps a Hebrew block opening with an inline-code span on dir="auto"', () => {
+    // The code span carries its own dir="ltr", so both the plugin's detection
+    // text and the browser's dir="auto" scan skip it — no pin needed.
+    const html = render("`server.py` זה הקובץ הראשי");
+    expect(html).toContain('<p dir="auto">');
+    expect(html).not.toContain('<p dir="rtl">');
+  });
+
+  it("pins a Hebrew block that opens with a URL right-to-left", () => {
+    const html = render("https://claude.ai זה האתר של קלוד");
+    expect(html).toContain('<p dir="rtl">');
+  });
+
+  it("pins a Hebrew block that opens with a path right-to-left", () => {
+    const html = render("src/main.ts זה הקובץ שצריך לערוך");
+    expect(html).toContain('<p dir="rtl">');
+  });
+
+  it("pins a Hebrew list that opens with a tech token right-to-left, markers included", () => {
+    const html = render("- server.py זה הקובץ\n- עוד פריט");
+    expect(html).toContain('<ul dir="rtl">');
+  });
+
+  it("keeps an English block with one Hebrew word on the browser's own resolution", () => {
+    const html = render("The word שלום means hello");
+    expect(html).toContain('<p dir="auto">');
+    expect(html).not.toContain('dir="rtl"');
+  });
+
+  it("keeps a pure English block on the browser's own resolution", () => {
+    const html = render("English only, no tech tokens.");
+    expect(html).toContain('<p dir="auto">');
+    expect(html).not.toContain('dir="rtl"');
+  });
+
+  it('leaves a Hebrew-first block on dir="auto", unchanged', () => {
+    const html = render("שלום, תריץ `git status` עכשיו");
+    expect(html).toContain('<p dir="auto">');
+    expect(html).not.toContain('<p dir="rtl">');
+  });
+
+  it("isolates a Latin run inside RTL prose so its quotes stay on the right sides", () => {
+    const html = render('הבוט "סותר את Kapso" לגמרי');
+    expect(html).toContain("<bdi>Kapso</bdi>");
+  });
+
+  it("keeps a compound Latin run whole inside one isolate", () => {
+    const html = render("דמו = U1+U2+U3+U5, ההסלמה אחרי");
+    expect(html).toContain("<bdi>U1+U2+U3+U5</bdi>");
+  });
+
+  it("leaves English blocks and code untouched by the isolation pass", () => {
+    const html = render("Plain English `code span` here");
+    expect(html).not.toContain("<bdi>");
+    const rtlWithCode = render("תריץ `git status` עכשיו");
+    expect(rtlWithCode).toContain('<code data-inline-code="" dir="ltr">git status</code>');
+  });
+
+  it("keeps a link atomic inside RTL prose instead of slicing it into isolates", () => {
+    const html = render("הקישור https://claude.ai/docs זה טוב");
+    expect(html).not.toContain("<bdi>https");
+  });
+
+  it("gives a table opening with a tech-token cell its direction from its prose", () => {
+    const html = render("| `id.ts` | שם |\n| --- | --- |\n| `a.py` | קובץ |");
+    expect(html).toContain('dir="rtl"');
+  });
+});
+
+describe("resolvedTextDirection", () => {
+  it("discounts leading tech tokens when the text is RTL prose", () => {
+    expect(resolvedTextDirection("https://claude.ai זה האתר של קלוד")).toBe("rtl");
+    expect(resolvedTextDirection("server.py זה הקובץ הראשי")).toBe("rtl");
+    expect(resolvedTextDirection("src/main.ts זה הקובץ")).toBe("rtl");
+    expect(resolvedTextDirection("`git status` תריץ קודם")).toBe("rtl");
+  });
+
+  it("keeps English text left-to-right, one Hebrew word or none", () => {
+    expect(resolvedTextDirection("The word שלום means hello")).toBe("ltr");
+    expect(resolvedTextDirection("Hello world")).toBe("ltr");
+    // Latin letters hold the majority here, so the leading English words decide.
+    expect(resolvedTextDirection("Claude Code זה כלי")).toBe("ltr");
+  });
+
+  it("reads a Hebrew sentence that opens with a Latin prose label right-to-left", () => {
+    expect(
+      resolvedTextDirection('Next step (ישן): "מתחילים לבנות תחנה 1, לאט. החוסמים: 3 קבצים."'),
+    ).toBe("rtl");
+    expect(resolvedTextDirection("TL;DR: הפיצ׳ר עובד, נשאר רק לנקות את הקוד")).toBe("rtl");
+    // A Latin-majority sentence quoting some Hebrew still reads left-to-right.
+    expect(resolvedTextDirection("The customer wrote שלום וברכה in the ticket")).toBe("ltr");
+  });
+
+  it("discounts quoted and parenthesized Latin citations from the vote", () => {
+    expect(resolvedTextDirection('PROFILE — הוספתי סעיף "Build-feedback call additions"')).toBe(
+      "rtl",
+    );
+    expect(resolvedTextDirection("P1 — אסטרטגיות (product-lens):")).toBe("rtl");
+    // A Hebrew quotation inside English prose keeps its vote — still LTR.
+    expect(resolvedTextDirection('They titled it "ברוכים הבאים" and moved on quickly')).toBe("ltr");
+  });
+
+  it("keeps Hebrew-first text right-to-left, unchanged", () => {
+    expect(resolvedTextDirection("שלום, זה טקסט עם Claude Code בתוכו")).toBe("rtl");
+  });
+});
+
+describe("firstStrongDirection", () => {
+  it("reads the first letter, skipping neutral digits and punctuation", () => {
+    expect(firstStrongDirection("רכיב | סטטוס")).toBe("rtl");
+    expect(firstStrongDirection("1. (שלב) ראשון")).toBe("rtl");
+    expect(firstStrongDirection("\u{1E900}\u{1E92F} adlam")).toBe("rtl"); // astral RTL block
+    expect(firstStrongDirection("Component | Status")).toBe("ltr");
+    expect(firstStrongDirection("42 — Next.js then עברית")).toBe("ltr");
+  });
+
+  it("falls back to ltr when there is no strong character", () => {
+    expect(firstStrongDirection("")).toBe("ltr");
+    expect(firstStrongDirection("123 | 456")).toBe("ltr");
   });
 });

@@ -345,17 +345,22 @@ function SidebarThreadTooltip({
   const driverKind = providerEntry?.driverKind ?? null;
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
   return (
-    <TooltipPopup side="right" align="start" sideOffset={4} variant="glass">
+    <TooltipPopup side="right" align="start" sideOffset={4} variant="glass" className="text-start">
       {/* The viewport's own inset (py-1 px-2) plus this one make the floating inset. */}
       <div className="flex min-w-0 max-w-80 flex-col gap-2 px-1 py-2">
-        <div className="min-w-0 truncate text-xs leading-tight font-medium text-foreground">
+        <div
+          dir="auto"
+          className="min-w-0 truncate text-xs leading-tight font-medium text-foreground"
+        >
           {thread.title}
         </div>
         <div className="grid gap-1.5 pl-0.5 text-xs text-muted-foreground">
           {projectDisplayName ? (
             <div className="flex min-w-0 items-center gap-2">
               {project ? <ProjectFavicon project={project} className="size-3 shrink-0" /> : null}
-              <div className="min-w-0 truncate text-foreground/75">{projectDisplayName}</div>
+              <div dir="auto" className="min-w-0 truncate text-foreground/75">
+                {projectDisplayName}
+              </div>
             </div>
           ) : null}
           {environmentLabel ? (
@@ -766,7 +771,10 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
             {props.project ? (
               <ProjectFavicon project={props.project} className="size-4 shrink-0" />
             ) : null}
-            <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
+            <span
+              dir="auto"
+              className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label"
+            >
               {props.projectDisplayName}
             </span>
             <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
@@ -787,7 +795,9 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
               </Tooltip>
             </span>
           </div>
-          <div className="mt-0.5 truncate text-sm font-medium text-foreground/90">{preview}</div>
+          <div dir="auto" className="mt-0.5 truncate text-sm font-medium text-foreground/90">
+            {preview}
+          </div>
         </div>
       </div>
     </li>
@@ -1442,6 +1452,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const title = isRenaming ? (
     <input
       autoFocus
+      dir="auto"
       value={renamingTitle}
       aria-label="Thread title"
       onChange={(event) => onRenameTitleChange(event.target.value)}
@@ -1454,6 +1465,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     />
   ) : (
     <span
+      // Titles are generated from the thread's own prompt, so an Arabic thread
+      // gets an Arabic title — and its truncation ellipsis belongs on the left.
+      dir="auto"
       className={cn(
         "min-w-0 flex-1 text-sm transition-opacity motion-reduce:transition-none",
         shouldRecede ? "font-normal" : "font-medium",
@@ -1753,6 +1767,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ) : null}
               {props.projectDisplayName ? (
                 <span
+                  dir="auto"
                   className={cn(
                     "min-w-0 flex-1 truncate text-secondary-label text-xs",
                     shouldRecede ? "font-normal" : "font-medium",
@@ -2097,7 +2112,9 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           ) : null}
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="flex min-w-0 items-center gap-2.5">
-              <span className="min-w-0 flex-1 truncate">{thread.title}</span>
+              <span dir="auto" className="min-w-0 flex-1 truncate text-start">
+                {thread.title}
+              </span>
               <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
                 {threadTimeLabel(thread)}
               </span>

@@ -32,6 +32,8 @@ type FontStyle = "normal" | "italic";
 
 type TextAlign = "auto" | "left" | "right" | "center" | "justify";
 
+type WritingDirection = "auto" | "ltr" | "rtl";
+
 interface NativeProps extends ViewProps {
   text: string;
   color?: ColorValue;
@@ -45,6 +47,7 @@ interface NativeProps extends ViewProps {
   textDecorationStyle?: WithDefault<TextDecorationStyle, "solid">;
   textDecorationColor?: ColorValue;
   textAlign?: WithDefault<TextAlign, "auto">;
+  writingDirection?: WithDefault<WritingDirection, "auto">;
   shadowRadius?: WithDefault<Float, 0>;
   contextMenuConfig?: string;
   onPress?: BubblingEventHandler<TargetedEvent>;

@@ -427,6 +427,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var fontSize: CGFloat = 14
   private var lineHeight: CGFloat = 20
   private var contentInsetVertical: CGFloat = 0
+  private var isRightToLeft = false
   private var shouldAutoFocus = false
   private var didAutoFocus = false
   private var isReadOnly = false
@@ -499,6 +500,12 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
 
     placeholderLabel.numberOfLines = 0
     placeholderLabel.adjustsFontForContentSizeCategory = true
+    // Seed the alignment to match `isRightToLeft`'s initial `false`.
+    // `UILabel` defaults to `.natural`, which resolves to the right under an
+    // RTL system locale, and `setWritingDirection("ltr")` — the first call for
+    // an empty or Latin draft — returns early because the direction has not
+    // changed, so it would never correct it.
+    placeholderLabel.textAlignment = .left
     addSubview(placeholderLabel)
     applyTypography()
     applyTheme()
@@ -665,6 +672,31 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       right: 0
     )
     setNeedsLayout()
+  }
+
+  // Live composer direction, decided in JS from the draft's first strong
+  // letter. UIKit does not re-resolve a text view's base direction from its
+  // content, and restoreBaseTypingAttributes would clobber any keyboard-driven
+  // direction anyway — so the direction rides the base paragraph style, which
+  // TextKit's natural alignment follows, and the existing text is restyled in
+  // place (never rebuilt: a rebuild from the controlled value could race a
+  // keystroke the revision guard has not acknowledged yet).
+  func setWritingDirection(_ writingDirection: String) {
+    let isRTL = writingDirection == "rtl"
+    guard isRTL != isRightToLeft else {
+      return
+    }
+    isRightToLeft = isRTL
+    placeholderLabel.textAlignment = isRTL ? .right : .left
+    let storageRange = NSRange(location: 0, length: textView.textStorage.length)
+    if storageRange.length > 0 {
+      textView.textStorage.addAttribute(
+        .paragraphStyle,
+        value: baseParagraphStyle(),
+        range: storageRange
+      )
+    }
+    restoreBaseTypingAttributes()
   }
 
   func setEditable(_ editable: Bool) {
@@ -1055,16 +1087,22 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     return nil
   }
 
-  private func baseAttributes() -> [NSAttributedString.Key: Any] {
-    let font = UIFont(name: fontFamily, size: fontSize)
-      ?? UIFont.systemFont(ofSize: fontSize)
+  private func baseParagraphStyle() -> NSParagraphStyle {
     let paragraph = NSMutableParagraphStyle()
     paragraph.minimumLineHeight = lineHeight
     paragraph.maximumLineHeight = lineHeight
+    paragraph.baseWritingDirection = isRightToLeft ? .rightToLeft : .leftToRight
+    paragraph.alignment = .natural
+    return paragraph
+  }
+
+  private func baseAttributes() -> [NSAttributedString.Key: Any] {
+    let font = UIFont(name: fontFamily, size: fontSize)
+      ?? UIFont.systemFont(ofSize: fontSize)
     return [
       .font: font,
       .foregroundColor: UIColor(composerHex: theme.text) ?? .label,
-      .paragraphStyle: paragraph,
+      .paragraphStyle: baseParagraphStyle(),
     ]
   }
 

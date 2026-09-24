@@ -422,7 +422,7 @@ export const ChatHeader = memo(function ChatHeader({
                   }
                 >
                   <ProjectFavicon project={activeProject} className="size-3.5" />
-                  <WorkspaceBreadcrumbText className="max-w-40">
+                  <WorkspaceBreadcrumbText dir="auto" className="max-w-40">
                     {activeProjectName}
                   </WorkspaceBreadcrumbText>
                 </TooltipTrigger>
@@ -438,6 +438,7 @@ export const ChatHeader = memo(function ChatHeader({
           {renamingTitle !== null ? (
             <input
               autoFocus
+              dir="auto"
               aria-label="Thread title"
               className="min-w-0 flex-1 rounded-sm bg-transparent text-sm font-medium text-foreground outline-none ring-1 ring-ring/50 focus:ring-ring"
               defaultValue={renamingTitle}
@@ -465,7 +466,7 @@ export const ChatHeader = memo(function ChatHeader({
                 }
               >
                 <h2 className="min-w-0">
-                  <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
+                  <WorkspaceBreadcrumbText dir="auto">{activeThreadTitle}</WorkspaceBreadcrumbText>
                 </h2>
                 <ChevronDownIcon
                   aria-hidden
@@ -473,16 +474,20 @@ export const ChatHeader = memo(function ChatHeader({
                   className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/thread-title:opacity-100 group-focus-visible/thread-title:opacity-100"
                 />
               </TooltipTrigger>
-              <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
+              <TooltipPopup dir="auto" side="top">
+                {activeThreadTitle}
+              </TooltipPopup>
             </Tooltip>
           ) : (
             <Tooltip>
               <TooltipTrigger
                 render={<h2 aria-label={activeThreadTitle} className="min-w-0 flex-1" />}
               >
-                <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
+                <WorkspaceBreadcrumbText dir="auto">{activeThreadTitle}</WorkspaceBreadcrumbText>
               </TooltipTrigger>
-              <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
+              <TooltipPopup dir="auto" side="top">
+                {activeThreadTitle}
+              </TooltipPopup>
             </Tooltip>
           )}
         </WorkspaceBreadcrumbItem>

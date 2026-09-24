@@ -69,6 +69,9 @@ public class T3ComposerEditorModule: Module {
       Prop("contentInsetVertical") { (view: T3ComposerEditorView, contentInsetVertical: Double) in
         view.setContentInsetVertical(CGFloat(contentInsetVertical))
       }
+      Prop("writingDirection") { (view: T3ComposerEditorView, writingDirection: String) in
+        view.setWritingDirection(writingDirection)
+      }
       Prop("editable") { (view: T3ComposerEditorView, editable: Bool) in
         view.setEditable(editable)
       }

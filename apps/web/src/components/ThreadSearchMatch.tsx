@@ -60,7 +60,9 @@ export function ThreadSearchMatchExcerpt(props: {
       <span className={isUser ? "text-blue-400" : "text-emerald-400"}>
         {isUser ? "You:" : "Agent:"}
       </span>{" "}
-      <HighlightedSearchText text={props.match.snippet} query={props.match.query} />
+      <span dir="auto">
+        <HighlightedSearchText text={props.match.snippet} query={props.match.query} />
+      </span>
     </span>
   );
 }
