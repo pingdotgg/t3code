@@ -30,6 +30,9 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
 import { PersistenceSqlError } from "../persistence/Errors.ts";
+import { ProjectionThreadRepositoryLive } from "../persistence/Layers/ProjectionThreads.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import {
   ProjectionProjectRepository,
   type ProjectionProject,
@@ -96,6 +99,7 @@ const serviceLayers = (input: {
   readonly environment?: NodeJS.ProcessEnv;
   /** Defaults to no projects, so every session with a cwd is outside projects. */
   readonly listProjects?: ProjectionProjectRepository["Service"]["listAll"];
+  readonly runtimeRepository?: ProviderSessionRuntime.ProviderSessionRuntimeRepository["Service"];
 }) =>
   ServerConfig.layerTest(process.cwd(), { prefix: input.prefix }).pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -125,6 +129,17 @@ const serviceLayers = (input: {
         getById: () => Effect.die("unused"),
         listAll: input.listProjects ?? (() => Effect.succeed([])),
       }),
+    ),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        ProjectionThreadRepositoryLive,
+        input.runtimeRepository === undefined
+          ? ProviderSessionRuntime.layer
+          : Layer.succeed(
+              ProviderSessionRuntime.ProviderSessionRuntimeRepository,
+              input.runtimeRepository,
+            ),
+      ).pipe(Layer.provideMerge(SqlitePersistenceMemory)),
     ),
   );
 
@@ -815,4 +830,129 @@ describe("UsageService", () => {
       );
     }).pipe(Effect.scoped),
   );
+
+  it.live("returns a usage read error when provider runtime state cannot be read", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const repositoryFailure = Effect.die(new Error("runtime repository unavailable"));
+      const runtimeRepository: ProviderSessionRuntime.ProviderSessionRuntimeRepository["Service"] =
+        {
+          upsert: () => repositoryFailure,
+          recordImportedTranscript: () => repositoryFailure,
+          getByThreadId: () => repositoryFailure,
+          list: () => repositoryFailure,
+          deleteByThreadId: () => repositoryFailure,
+        };
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-runtime-failure-test",
+            home,
+            settings,
+            runtimeRepository,
+          }),
+        ),
+      );
+
+      const error = yield* service.readThreadBreakdown(WINDOW).pipe(Effect.flip);
+      assert.strictEqual(error.reason, "scanFailed");
+      assert.strictEqual(error.detail, "Provider runtime state could not be read");
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("folds thread rows that reconcile with the summary, including after cleanup", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const threadTokens = (rows: readonly { totals: { outputTokens: number } }[]) =>
+          rows.reduce((total, row) => total + row.totals.outputTokens, 0);
+
+        const summary = yield* service.readSummary(WINDOW);
+        const breakdown = yield* service.readThreadBreakdown(WINDOW);
+        assert.strictEqual(totalOutputTokens(summary), 5);
+        assert.strictEqual(threadTokens(breakdown.rows), 5);
+
+        // Saved usage outlives transcript cleanup in both views.
+        yield* Effect.promise(() => NodeFSP.rm(transcript));
+        const afterCleanup = yield* service.readThreadBreakdown(WINDOW);
+        assert.strictEqual(threadTokens(afterCleanup.rows), 5);
+      }).pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-thread-reconcile-test", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("rejects exact thread windows longer than 24 hours", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-thread-window-test", home, settings }),
+        ),
+      );
+      const reason = yield* service
+        .readThreadBreakdown({
+          timeZone: "UTC",
+          sinceDay: UsageDay.make("2026-08-01"),
+          untilDay: UsageDay.make("2026-08-02"),
+          sinceTime: "2026-08-01T00:00:00.000Z",
+          untilTime: "2026-08-02T01:00:00.000Z",
+        })
+        .pipe(
+          Effect.match({
+            onFailure: (error) => error.reason,
+            onSuccess: () => "success" as const,
+          }),
+        );
+
+      assert.strictEqual(reason, "invalidWindow");
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("shares project reads within a thread request and reloads them for the next", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      let projectReads = 0;
+      // Built in the test scope so the in-memory database outlives `make`.
+      const dependencies = yield* Layer.build(
+        serviceLayers({
+          prefix: "usage-one-project-snapshot",
+          home,
+          settings,
+          listProjects: () =>
+            Effect.sync(() => {
+              projectReads += 1;
+              return [];
+            }),
+        }),
+      );
+      const service = yield* UsageService.make.pipe(Effect.provide(dependencies));
+      yield* service.readThreadBreakdown(WINDOW);
+      assert.strictEqual(projectReads, 1);
+      yield* service.readThreadBreakdown(WINDOW);
+      assert.strictEqual(projectReads, 2);
+    }).pipe(Effect.scoped),
+  );
+});
+
+describe("isValidUsageDay", () => {
+  it("rejects impossible start and end dates instead of normalising them", () => {
+    assert.isTrue(UsageService.isValidUsageDay("2026-02-28"));
+    assert.isFalse(UsageService.isValidUsageDay("2026-02-29"));
+    assert.isFalse(UsageService.isValidUsageDay("2026-13-01"));
+  });
+});
+
+describe("shortSessionLabel", () => {
+  it("never exposes a file-derived path", () => {
+    assert.strictEqual(
+      UsageService.shortSessionLabel("claude:file:session-dir:updates"),
+      "Untitled session",
+    );
+  });
 });

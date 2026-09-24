@@ -14,26 +14,28 @@
  */
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
  * Bumped whenever the shape of {@link UsageSummary} changes incompatibly. The
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 6 as const;
+export const USAGE_CONTRACT_VERSION = 7 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
  * v5 only adds `grok` to {@link UsageProviderKind}; v6 adds optional project
- * attribution to buckets. v4 Claude/Codex buckets remain valid, so
- * mixed-version environments keep those totals instead of treating every
- * older server as stale.
+ * attribution to buckets; v7 adds the separate thread-breakdown RPC. v4
+ * Claude/Codex buckets remain valid, so mixed-version environments keep those
+ * totals instead of treating every older server as stale.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 /** First contract version whose buckets carry project attribution. */
 export const USAGE_PROJECT_ATTRIBUTION_SINCE = 6 as const;
+/** First contract version that exposes the thread-breakdown RPC. */
+export const USAGE_THREAD_BREAKDOWN_SINCE = 7 as const;
 
 export const UsageProviderKind = Schema.Literals(["claude", "codex", "grok"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
@@ -220,6 +222,94 @@ export const UsageSummary = Schema.Struct({
   scanDurationMs: NonNegativeInt,
 });
 export type UsageSummary = typeof UsageSummary.Type;
+
+export const UsageThreadBreakdownInput = Schema.Struct({
+  /** Inclusive first day of the window, in `timeZone`. */
+  sinceDay: UsageDay,
+  /** Inclusive last day of the window, in `timeZone`. */
+  untilDay: UsageDay,
+  timeZone: TrimmedNonEmptyString,
+  /** Inclusive UTC instant for a rolling window such as Past 24h. */
+  sinceTime: Schema.optional(TrimmedNonEmptyString),
+  /** Exclusive UTC instant for a rolling window such as Past 24h. */
+  untilTime: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Restrict to one project's records: a namespaced stable key selects that
+   * project, `null` selects records outside every project, absent applies no
+   * filter.
+   */
+  projectKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** Providers this environment owns after physical-source de-duplication. */
+  providers: Schema.optional(Schema.Array(UsageProviderKind)),
+});
+export type UsageThreadBreakdownInput = typeof UsageThreadBreakdownInput.Type;
+
+/** One Claude subagent's slice of its parent thread. */
+export const UsageAgentRow = Schema.Struct({
+  agentId: TrimmedNonEmptyString,
+  totals: UsageTokenTotals,
+  costUsd: Schema.Number,
+});
+export type UsageAgentRow = typeof UsageAgentRow.Type;
+
+/**
+ * One day of a thread's model-priced cost split by component. Days the thread
+ * was idle are omitted. Unpriced and provider-reported records contribute to
+ * the row totals but not this split.
+ */
+export const UsageThreadDayCost = Schema.Struct({
+  day: UsageDay,
+  cacheWriteUsd: Schema.Number,
+  cacheReadUsd: Schema.Number,
+  /** Fresh input plus output. */
+  freshUsd: Schema.Number,
+});
+export type UsageThreadDayCost = typeof UsageThreadDayCost.Type;
+
+/**
+ * One thread's (or unattributed session group's) slice of the window.
+ *
+ * `threadId` is present when the sessions map to a T3 Code thread on this
+ * environment, via the thread's resume cursor or its dedicated worktree.
+ * Sessions that never ran through T3 Code stay session-granular with a title
+ * taken from the transcript.
+ */
+export const UsageThreadRow = Schema.Struct({
+  /** Stable within one environment; opaque to clients. */
+  key: TrimmedNonEmptyString,
+  threadId: Schema.NullOr(ThreadId),
+  title: TrimmedNonEmptyString,
+  provider: UsageProviderKind,
+  projectId: Schema.optional(ProjectId),
+  project: Schema.optional(TrimmedNonEmptyString),
+  totals: UsageTokenTotals,
+  costUsd: Schema.Number,
+  /** Distinct transcript sessions folded into this row. */
+  sessions: NonNegativeInt,
+  /** Lower-cost thread rows represented by this grouped remainder row. */
+  groupedRows: Schema.optional(NonNegativeInt),
+  agents: Schema.Array(UsageAgentRow),
+  daily: Schema.Array(UsageThreadDayCost),
+});
+export type UsageThreadRow = typeof UsageThreadRow.Type;
+
+/**
+ * On-demand drill-down behind the usage summary. Named rows are capped
+ * server-side because a window can hold thousands of sessions. Lower-cost
+ * rows fold into provider/project-specific remainder rows so totals reconcile
+ * without sending every transcript session over the WebSocket.
+ */
+export const UsageThreadBreakdown = Schema.Struct({
+  contractVersion: Schema.Number,
+  readAt: Schema.String,
+  sinceDay: UsageDay,
+  untilDay: UsageDay,
+  rows: Schema.Array(UsageThreadRow),
+  /** Underlying rows folded into the returned remainder rows. */
+  truncatedRows: NonNegativeInt,
+  scanDurationMs: NonNegativeInt,
+});
+export type UsageThreadBreakdown = typeof UsageThreadBreakdown.Type;
 
 export class UsageReadError extends Schema.TaggedError<UsageReadError>()("UsageReadError", {
   reason: Schema.Literals(["scanFailed", "invalidWindow"]),

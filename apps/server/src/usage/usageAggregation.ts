@@ -21,6 +21,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
+import { normalizeUsagePath } from "./usagePaths.ts";
 import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
 
 /**
@@ -29,7 +30,7 @@ import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
  * `en-CA` yields ISO-ordered parts, which is why it is used here rather than
  * assembling the day from `Date` getters (those are host-local only).
  */
-function makeDayFormatter(timeZone: string): (timestampMs: number) => string {
+export function makeDayFormatter(timeZone: string): (timestampMs: number) => string {
   let format: Intl.DateTimeFormat;
   try {
     format = new Intl.DateTimeFormat("en-CA", {
@@ -75,15 +76,11 @@ export interface ProjectAttribution {
  */
 export function makeProjectResolver(
   projects: readonly ProjectRoot[],
-  separator: string,
 ): (cwd: string) => ProjectAttribution | null {
   const roots = projects
     .map((project) => ({
       projectId: project.projectId,
-      root:
-        project.workspaceRoot.length > 1 && project.workspaceRoot.endsWith(separator)
-          ? project.workspaceRoot.slice(0, -1)
-          : project.workspaceRoot,
+      root: normalizeUsagePath(project.workspaceRoot),
       title: project.title.trim(),
       deleted: project.deleted,
     }))
@@ -94,11 +91,12 @@ export function makeProjectResolver(
   return (cwd) => {
     if (cwd.length === 0) return null;
     if (byCwd.has(cwd)) return byCwd.get(cwd) ?? null;
+    const normalizedCwd = normalizeUsagePath(cwd);
     let resolved: ProjectAttribution | null = null;
     for (const { projectId, root, title } of roots) {
       if (
-        cwd === root ||
-        (root === separator ? cwd.startsWith(separator) : cwd.startsWith(`${root}${separator}`))
+        normalizedCwd === root ||
+        (root === "/" ? normalizedCwd.startsWith("/") : normalizedCwd.startsWith(`${root}/`))
       ) {
         resolved = { projectId, title };
         break;

@@ -11,7 +11,12 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { isModelCostUnknown, mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
+import {
+  isModelCostUnknown,
+  mergeUsage,
+  projectFilterForEnvironment,
+  type EnvironmentUsage,
+} from "./usageMerge.ts";
 
 function inProject(id: string, title: string): Partial<UsageBucket> {
   return { projectId: ProjectId.make(id), project: title, projectAttribution: "project" };
@@ -100,6 +105,10 @@ describe("mergeUsage", () => {
     expect(merged.costUsd).toBe(20);
     expect(merged.records).toBe(10);
     expect(merged.duplicateSources).toHaveLength(0);
+    expect(merged.providerContributions).toEqual([
+      { environmentId: "env-a", contractVersion: USAGE_CONTRACT_VERSION, providers: ["claude"] },
+      { environmentId: "env-b", contractVersion: USAGE_CONTRACT_VERSION, providers: ["claude"] },
+    ]);
   });
 
   it("counts a shared transcript directory once", () => {
@@ -118,6 +127,9 @@ describe("mergeUsage", () => {
     expect(merged.sessions).toBe(1);
     expect(merged.duplicateSources).toHaveLength(1);
     expect(merged.contributingEnvironments).toEqual(["env-a"]);
+    expect(merged.providerContributions).toEqual([
+      { environmentId: "env-a", contractVersion: USAGE_CONTRACT_VERSION, providers: ["claude"] },
+    ]);
   });
 
   it("drops only the duplicated provider, keeping the environment's other one", () => {
@@ -152,6 +164,10 @@ describe("mergeUsage", () => {
         merged.providers.map((provider) => [provider.provider, provider.sessions]),
       ),
     ).toEqual({ claude: 1, codex: 1 });
+    expect(merged.providerContributions).toEqual([
+      { environmentId: "env-a", contractVersion: USAGE_CONTRACT_VERSION, providers: ["claude"] },
+      { environmentId: "env-b", contractVersion: USAGE_CONTRACT_VERSION, providers: ["codex"] },
+    ]);
   });
 
   it("uses the newest scan when environments share the same transcript directory", () => {
@@ -532,6 +548,12 @@ describe("mergeUsage", () => {
     if (typeof firstKey !== "string") throw new Error("project key missing");
     const filtered = mergeUsage(environments, USAGE_CONTRACT_VERSION, { projectFilter: firstKey });
     expect(filtered.costUsd).toBe(6);
+    expect(projectFilterForEnvironment(firstKey, "env-a" as EnvironmentId)).toBe(
+      "id:cloned-project",
+    );
+    expect(projectFilterForEnvironment(firstKey, "env-b" as EnvironmentId)).toBe(
+      "environment-mismatch:",
+    );
   });
 
   it("marks a project whose every record lacked rates as unpriced", () => {

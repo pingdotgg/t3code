@@ -91,6 +91,12 @@ export interface CostQuality {
   readonly cacheSavingsUsd: number;
 }
 
+export interface EnvironmentProviderContribution {
+  readonly environmentId: EnvironmentId;
+  readonly contractVersion: number;
+  readonly providers: readonly UsageProviderKind[];
+}
+
 export interface MergedUsage {
   readonly costUsd: number;
   readonly uncachedInputTokens: number;
@@ -114,6 +120,8 @@ export interface MergedUsage {
   /** Environments whose data was dropped as a duplicate of another's. */
   readonly duplicateSources: readonly string[];
   readonly contributingEnvironments: readonly EnvironmentId[];
+  /** Provider rows this environment owns after physical-source de-duplication. */
+  readonly providerContributions: readonly EnvironmentProviderContribution[];
   readonly staleEnvironments: readonly EnvironmentId[];
 }
 
@@ -238,6 +246,7 @@ const EMPTY_MERGED: MergedUsage = {
   },
   duplicateSources: [],
   contributingEnvironments: [],
+  providerContributions: [],
   staleEnvironments: [],
 };
 
@@ -264,6 +273,32 @@ function bucketProjectKey(
 ): string | null | undefined {
   if (bucket.projectId !== undefined) return JSON.stringify([environmentId, bucket.projectId]);
   return bucket.projectAttribution === "outside" ? null : undefined;
+}
+
+/**
+ * Converts a merged project key back to the key one server's thread breakdown
+ * understands (`id:<projectId>`). A key from another environment selects
+ * nothing there.
+ */
+export function projectFilterForEnvironment(
+  filter: string | null | undefined,
+  environmentId: EnvironmentId,
+): string | null | undefined {
+  if (filter === undefined || filter === null) return filter;
+  try {
+    const parsed: unknown = JSON.parse(filter);
+    if (
+      Array.isArray(parsed) &&
+      parsed.length === 2 &&
+      parsed[0] === environmentId &&
+      typeof parsed[1] === "string"
+    ) {
+      return `id:${parsed[1]}`;
+    }
+  } catch {
+    // A malformed or foreign key must select nothing in this environment.
+  }
+  return "environment-mismatch:";
 }
 
 /**
@@ -356,10 +391,18 @@ export function mergeUsage(
     }
   >();
   const contributingEnvironments: EnvironmentId[] = [];
+  const providerContributions: EnvironmentProviderContribution[] = [];
 
   for (const environment of current) {
     const { buckets, sessionsByProvider } = ownedContribution(environment, ownerByFingerprint);
-    if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
+    if (buckets.length > 0) {
+      contributingEnvironments.push(environment.environmentId);
+      providerContributions.push({
+        environmentId: environment.environmentId,
+        contractVersion: environment.summary.contractVersion,
+        providers: [...new Set(buckets.map((bucket) => bucket.provider))].sort(),
+      });
+    }
 
     // Session counts are per source directory; a project filter cannot split
     // them, so a filtered merge leaves every session figure at 0.
@@ -553,6 +596,9 @@ export function mergeUsage(
     },
     duplicateSources: duplicates,
     contributingEnvironments,
+    providerContributions: providerContributions.sort((a, b) =>
+      a.environmentId.localeCompare(b.environmentId),
+    ),
     staleEnvironments,
   };
 }

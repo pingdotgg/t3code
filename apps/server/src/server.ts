@@ -39,6 +39,7 @@ import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import { ProjectionProjectRepositoryLive } from "./persistence/Layers/ProjectionProjects.ts";
+import { ProjectionThreadRepositoryLive } from "./persistence/Layers/ProjectionThreads.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
 import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -209,8 +210,11 @@ const BackgroundLayerLive = BackgroundPolicy.layer.pipe(
 );
 
 const UsageLayerLive = UsageService.layer.pipe(
-  // The repository resolves each session's cwd to the project it ran in.
+  // Projects resolve each session's cwd to the project it ran in; threads and
+  // resume cursors attribute sessions to threads for the drill-down.
   Layer.provide(ProjectionProjectRepositoryLive),
+  Layer.provide(ProjectionThreadRepositoryLive),
+  Layer.provide(ProviderSessionRuntime.layer),
   Layer.provide(ServerSettingsLayerLive),
 );
 

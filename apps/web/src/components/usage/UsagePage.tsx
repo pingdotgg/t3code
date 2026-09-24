@@ -17,6 +17,7 @@ import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import {
   isCompatibleUsageContractVersion,
   isModelCostUnknown,
+  projectFilterForEnvironment,
   type DailyTotals,
   type HourlyTotals,
   type ProjectTotals,
@@ -68,6 +69,7 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
+import { UsageThreadTable } from "./UsageThreadTable";
 import { sortModelsByTokens } from "./usageBreakdown";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
 import {
@@ -115,7 +117,7 @@ export function UsagePage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const refreshingRef = useRef(false);
-  const [breakdown, setBreakdown] = useState<"model" | "project" | "time">("model");
+  const [breakdown, setBreakdown] = useState<"model" | "project" | "thread" | "time">("model");
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
   // The label travels with the key so it survives a window where the project has no usage.
@@ -128,6 +130,7 @@ export function UsagePage() {
     window,
     selectedEnvironmentIds,
     projectFilter,
+    breakdown === "thread",
   );
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
@@ -607,7 +610,12 @@ export function UsagePage() {
                       value={[breakdown]}
                       onValueChange={(next) => {
                         const value = next[0];
-                        if (value === "model" || value === "project" || value === "time") {
+                        if (
+                          value === "model" ||
+                          value === "project" ||
+                          value === "thread" ||
+                          value === "time"
+                        ) {
                           setBreakdown(value);
                         }
                       }}
@@ -616,6 +624,7 @@ export function UsagePage() {
                         [
                           { value: "model", label: "Model" },
                           { value: "project", label: "Project" },
+                          { value: "thread", label: "Thread" },
                           { value: "time", label: isPast24Hours ? "Hour" : "Day" },
                         ] as const
                       ).map((option) => (
@@ -626,7 +635,30 @@ export function UsagePage() {
                     </ToggleGroup>
                   </div>
 
-                  {breakdown === "project" ? (
+                  {breakdown === "thread" ? (
+                    <UsageThreadTable
+                      input={{
+                        sinceDay: window.sinceDay,
+                        untilDay: window.untilDay,
+                        timeZone: window.timeZone,
+                        ...(window.sinceTime === undefined ? {} : { sinceTime: window.sinceTime }),
+                        ...(window.untilTime === undefined ? {} : { untilTime: window.untilTime }),
+                        ...(projectFilter === undefined ? {} : { projectKey: projectFilter }),
+                      }}
+                      providerContributions={merged.providerContributions}
+                      summaryFailedEnvironments={
+                        selectedEnvironments.filter(
+                          (environment) =>
+                            (environment.error !== null ||
+                              merged.staleEnvironments.includes(environment.environmentId)) &&
+                            projectFilterForEnvironment(
+                              projectFilter,
+                              environment.environmentId,
+                            ) !== "environment-mismatch:",
+                        ).length
+                      }
+                    />
+                  ) : breakdown === "project" ? (
                     <table className="w-full table-fixed text-sm">
                       <colgroup>
                         <col className="w-2/5" />

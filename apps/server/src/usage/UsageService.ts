@@ -25,6 +25,8 @@ import {
   type UsagePricing,
   type UsageSummary,
   type UsageSummaryInput,
+  type UsageThreadBreakdown,
+  type UsageThreadBreakdownInput,
   UsageReadError,
 } from "@t3tools/contracts";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
@@ -45,16 +47,21 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ServerConfig } from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
+import { ProjectionThreadRepository } from "../persistence/Services/ProjectionThreads.ts";
+import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { makeProjectResolver, UsageAggregator } from "./usageAggregation.ts";
+import { dedicatedUsageWorktreePath } from "./usagePaths.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
   readTranscriptRecords,
+  readTranscriptTitle,
 } from "./usageTranscriptReader.ts";
+import { foldThreadRows, ThreadUsageAccumulator, type ThreadRef } from "./usageThreads.ts";
 import {
   decodeScanCache,
   dedupeWithinFile,
@@ -83,6 +90,12 @@ const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** Longest window the UI offers, plus slack. Older entries are pruned. */
 const CACHE_RETENTION_DAYS = 90;
 
+/**
+ * Maximum rows sent per breakdown request, including grouped remainders. A
+ * window can hold thousands of sessions, so lower-cost rows fold together.
+ */
+const THREAD_ROW_CAP = 40;
+
 const decodeCodexSettings = Schema.decodeOption(CodexSettings);
 const decodeClaudeSettings = Schema.decodeOption(ClaudeSettings);
 
@@ -103,6 +116,11 @@ const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.
 const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
 const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
 const encodeUsageRecordKey = Schema.encodeSync(ScanCacheJson);
+
+export function isValidUsageDay(day: string): boolean {
+  const parsed = DateTime.make(`${day}T00:00:00Z`);
+  return Option.isSome(parsed) && DateTime.formatIso(parsed.value).slice(0, 10) === day;
+}
 const CachedSource = Schema.Struct({ dir: Schema.String, volumeId: Schema.String });
 const decodeCachedSources = Schema.decodeUnknownOption(
   Schema.Struct({ sources: Schema.Record(Schema.String, CachedSource) }),
@@ -112,6 +130,9 @@ export class UsageService extends Context.Service<
   UsageService,
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
+    readonly readThreadBreakdown: (
+      input: UsageThreadBreakdownInput,
+    ) => Effect.Effect<UsageThreadBreakdown, UsageReadError>;
     /** Refetches the rate table ahead of its TTL. See `ensureRates`. */
     readonly refreshRates: Effect.Effect<UsagePricing>;
   }
@@ -140,6 +161,16 @@ export const layerTest = Layer.succeed(
         pricing: EMPTY_PRICING,
         scanDurationMs: 0,
       }),
+    readThreadBreakdown: (input) =>
+      Effect.succeed({
+        contractVersion: USAGE_CONTRACT_VERSION,
+        readAt: "1970-01-01T00:00:00.000Z",
+        sinceDay: input.sinceDay,
+        untilDay: input.untilDay,
+        rows: [],
+        truncatedRows: 0,
+        scanDurationMs: 0,
+      }),
     refreshRates: Effect.succeed(EMPTY_PRICING),
   }),
 );
@@ -152,6 +183,8 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcessEnvironment;
   const projectRepository = yield* ProjectionProjectRepository;
+  const threadRepository = yield* ProjectionThreadRepository;
+  const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
 
   const fileCache: ScanCache = new Map();
   const sourceCache = new Map<string, typeof CachedSource.Type>();
@@ -339,27 +372,56 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * Builds the cwd → project resolver for one scan.
-   *
-   * Projects are re-read every scan so a project created or renamed since the
-   * last refresh attributes correctly. If the project list cannot be read, the
-   * scan reports unknown attribution rather than claiming the work ran outside
-   * every project.
+   * Reads every project (including soft-deleted ones, so past spend stays
+   * attributed) with its threads. `null` when the project list cannot be read.
    */
-  const resolveProjects = projectRepository.listAll().pipe(
-    Effect.map((projects) =>
-      makeProjectResolver(
-        projects.map((project) => ({
+  const loadProjectThreads = Effect.gen(function* () {
+    const projects = yield* projectRepository
+      .listAll()
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (projects === null) return null;
+    return yield* Effect.forEach(
+      projects,
+      Effect.fnUntraced(function* (project) {
+        const threads = yield* threadRepository
+          .listByProjectId({ projectId: project.projectId })
+          .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+        return { project, threads };
+      }),
+      { concurrency: 8 },
+    );
+  });
+
+  /**
+   * Builds the cwd → project resolver for one request.
+   *
+   * Projects and thread worktrees are re-read every request so a project
+   * created or renamed since the last refresh attributes correctly. If the
+   * project list cannot be read, the scan reports unknown attribution rather
+   * than claiming the work ran outside every project.
+   */
+  const resolveProjects = Effect.fn("UsageService.resolveProjects")(function* (
+    snapshot: typeof loadProjectThreads = loadProjectThreads,
+  ) {
+    const projects = yield* snapshot;
+    if (projects === null) return undefined;
+    return makeProjectResolver(
+      projects.flatMap(({ project, threads }) => {
+        const root = {
           projectId: project.projectId,
           workspaceRoot: project.workspaceRoot,
           title: project.title,
           deleted: project.deletedAt !== null,
-        })),
-        path.sep,
-      ),
-    ),
-    Effect.orElseSucceed(() => undefined),
-  );
+        };
+        return [
+          root,
+          ...threads.flatMap((thread) =>
+            thread.worktreePath === null ? [] : [{ ...root, workspaceRoot: thread.worktreePath }],
+          ),
+        ];
+      }),
+    );
+  });
 
   /**
    * Loads the persisted scan cache exactly once per process.
@@ -509,6 +571,55 @@ export const make = Effect.gen(function* () {
     return scanned;
   });
 
+  /**
+   * Files that still contribute to one source: the walked files plus saved
+   * records for transcripts that cleanup removed. Codex records carry an
+   * occurrence key so moved rollout copies de-duplicate without collapsing
+   * repeated equal events within one rollout. The summary and the thread
+   * breakdown both fold these, so their totals reconcile.
+   */
+  const contributingFiles = (
+    { provider, dir, files }: ScannedDir,
+    retentionCutoffMs: number,
+  ): { readonly path: string; readonly records: readonly UsageRecord[] }[] => {
+    const retainedFiles = [...(files ?? [])];
+    const livePaths = new Set(retainedFiles.map((file) => file.path));
+    // Cleanup may remove transcripts, but the usage we already saved still
+    // contributes to this source. Keep the normal aggregation and dedupe path.
+    for (const [filePath, entry] of fileCache) {
+      if (
+        entry.provider !== provider ||
+        entry.mtimeMs < retentionCutoffMs ||
+        livePaths.has(filePath) ||
+        !isWithinDirectory(filePath, dir)
+      )
+        continue;
+      retainedFiles.push({ path: filePath, records: [...entry.records, ...entry.tailRecords] });
+    }
+    return retainedFiles.map((file) => {
+      if (provider !== "codex") return file;
+      const codexEventOccurrences = new Map<string, number>();
+      return {
+        path: file.path,
+        records: file.records.map((record) => {
+          if (record.sessionId.length === 0) return record;
+          // Match moved rollout copies without collapsing repeated equal events
+          // within one rollout (timestamps can have only second precision).
+          const key = encodeUsageRecordKey([
+            record.provider,
+            record.sessionId,
+            record.timestampMs,
+            record.model,
+            record.totals,
+          ]);
+          const occurrence = (codexEventOccurrences.get(key) ?? 0) + 1;
+          codexEventOccurrences.set(key, occurrence);
+          return { ...record, dedupeKey: key + ":" + occurrence };
+        }),
+      };
+    });
+  };
+
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
     input: UsageSummaryInput,
     settings: ServerSettingsValue,
@@ -575,59 +686,30 @@ export const make = Effect.gen(function* () {
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
       rates,
-      resolveProject: yield* resolveProjects,
+      resolveProject: yield* resolveProjects(),
       priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
     });
 
     const sources: UsageSource[] = [];
 
-    for (const { provider, dir, volumeId, files } of scannedDirs) {
-      const retainedFiles = [...(files ?? [])];
-      const livePaths = new Set(retainedFiles.map((file) => file.path));
-      // Cleanup may remove transcripts, but the usage we already saved still
-      // contributes to this source. Keep the normal aggregation and dedupe path.
-      for (const [filePath, entry] of fileCache) {
-        if (
-          entry.provider !== provider ||
-          entry.mtimeMs < retentionCutoffMs ||
-          livePaths.has(filePath) ||
-          !isWithinDirectory(filePath, dir)
-        )
-          continue;
-        retainedFiles.push({ path: filePath, records: [...entry.records, ...entry.tailRecords] });
-      }
+    for (const scannedDir of scannedDirs) {
+      const { provider, dir, volumeId, files } = scannedDir;
       let scannedFiles = 0;
       let skippedFiles = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
 
-      for (const file of retainedFiles) {
+      for (const file of contributingFiles(scannedDir, retentionCutoffMs)) {
         if (file.records.length === 0) {
           skippedFiles += 1;
           continue;
         }
         scannedFiles += 1;
-        const codexEventOccurrences = new Map<string, number>();
         for (const record of file.records) {
-          let usageRecord = record;
-          if (record.provider === "codex" && record.sessionId.length > 0) {
-            // Match moved rollout copies without collapsing repeated equal events
-            // within one rollout (timestamps can have only second precision).
-            const key = encodeUsageRecordKey([
-              record.provider,
-              record.sessionId,
-              record.timestampMs,
-              record.model,
-              record.totals,
-            ]);
-            const occurrence = (codexEventOccurrences.get(key) ?? 0) + 1;
-            codexEventOccurrences.set(key, occurrence);
-            usageRecord = { ...record, dedupeKey: key + ":" + occurrence };
-          }
           // Only sessions contributing in-window count; the mtime slack can
           // admit boundary files whose records fall outside the range.
-          if (aggregator.add(usageRecord) && record.sessionId.length > 0) {
+          if (aggregator.add(record) && record.sessionId.length > 0) {
             sessionIds.add(record.sessionId);
           }
         }
@@ -717,7 +799,226 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  return { readSummary, refreshRates } as const;
+  /**
+   * Maps each thread's current provider session to the thread, from resume
+   * cursors. Historic sessions of the same thread attribute through the
+   * worktree map instead; sessions that never ran through T3 Code stay
+   * session-granular.
+   */
+  const loadThreadAttribution = Effect.fn("UsageService.loadThreadAttribution")(function* (
+    snapshot: typeof loadProjectThreads = loadProjectThreads,
+  ) {
+    const sessionToThread = new Map<string, ThreadRef>();
+    const worktreeToThread = new Map<string, ThreadRef>();
+    const titles = new Map<string, string>();
+
+    const projects = yield* snapshot;
+    const worktreeClaims = new Map<string, { ref: ThreadRef; shared: boolean }>();
+    for (const { project, threads } of projects ?? []) {
+      for (const thread of threads) {
+        const title = thread.title.trim();
+        if (title.length > 0) titles.set(thread.threadId, title);
+        const worktree = dedicatedUsageWorktreePath(project.workspaceRoot, thread.worktreePath);
+        // The project root is not a dedicated worktree: interactive sessions
+        // run there too, and several threads usually share it.
+        if (worktree === null) continue;
+        const ref: ThreadRef = { threadId: thread.threadId, title: title || thread.threadId };
+        const claim = worktreeClaims.get(worktree);
+        if (claim === undefined) worktreeClaims.set(worktree, { ref, shared: false });
+        else claim.shared = true;
+      }
+    }
+    for (const [worktree, claim] of worktreeClaims) {
+      if (!claim.shared) worktreeToThread.set(worktree, claim.ref);
+    }
+
+    const runtimes = yield* runtimeRepository.list().pipe(
+      Effect.catchCause(
+        (cause) =>
+          new UsageReadError({
+            reason: "scanFailed",
+            detail: "Provider runtime state could not be read",
+            cause: Cause.squash(cause),
+          }),
+      ),
+    );
+    for (const runtime of runtimes) {
+      const cursor = runtime.resumeCursor;
+      if (typeof cursor !== "object" || cursor === null) continue;
+      const cursorRecord = cursor as Record<string, unknown>;
+      // Claude cursors carry the transcript uuid as `resume`; Codex cursors
+      // carry the rollout uuid as `threadId`. Other providers do not surface
+      // usage transcripts, so their cursors are irrelevant here.
+      const sessionId =
+        runtime.providerName === "claudeAgent"
+          ? cursorRecord["resume"]
+          : runtime.providerName === "codex"
+            ? cursorRecord["threadId"]
+            : undefined;
+      if (typeof sessionId !== "string" || sessionId.length === 0) continue;
+      const provider = runtime.providerName === "claudeAgent" ? "claude" : "codex";
+      sessionToThread.set(`${provider}:${sessionId}`, {
+        threadId: runtime.threadId,
+        title: titles.get(runtime.threadId) ?? runtime.threadId,
+      });
+    }
+
+    return { sessionToThread, worktreeToThread };
+  });
+
+  const readThreadBreakdown = Effect.fn("UsageService.readThreadBreakdown")(function* (
+    input: UsageThreadBreakdownInput,
+  ) {
+    if (input.sinceDay > input.untilDay) {
+      return yield* new UsageReadError({
+        reason: "invalidWindow",
+        detail: `sinceDay '${input.sinceDay}' is after untilDay '${input.untilDay}'`,
+      });
+    }
+    const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
+    const windowEnd = DateTime.make(`${input.untilDay}T00:00:00Z`);
+    if (
+      Option.isNone(windowStart) ||
+      Option.isNone(windowEnd) ||
+      !isValidUsageDay(input.sinceDay) ||
+      !isValidUsageDay(input.untilDay)
+    ) {
+      return yield* new UsageReadError({
+        reason: "invalidWindow",
+        detail: "Thread usage requires valid sinceDay and untilDay dates",
+      });
+    }
+
+    let exactWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null = null;
+    if (input.sinceTime !== undefined || input.untilTime !== undefined) {
+      const sinceTime =
+        input.sinceTime === undefined ? Option.none() : DateTime.make(input.sinceTime);
+      const untilTime =
+        input.untilTime === undefined ? Option.none() : DateTime.make(input.untilTime);
+      if (Option.isNone(sinceTime) || Option.isNone(untilTime)) {
+        return yield* new UsageReadError({
+          reason: "invalidWindow",
+          detail: "Thread usage requires both valid sinceTime and untilTime instants",
+        });
+      }
+      const sinceTimeMs = DateTime.toEpochMillis(sinceTime.value);
+      const untilTimeMs = DateTime.toEpochMillis(untilTime.value);
+      const durationMs = untilTimeMs - sinceTimeMs;
+      if (durationMs <= 0 || durationMs > MAX_HOURLY_WINDOW_MS) {
+        return yield* new UsageReadError({
+          reason: "invalidWindow",
+          detail: "Thread usage exact window must be greater than zero and at most 24 hours",
+        });
+      }
+      exactWindow = { sinceTimeMs, untilTimeMs };
+    }
+
+    const startedAtMs = yield* Clock.currentTimeMillis;
+    const settings = yield* readSettings;
+    yield* ensureScanCacheLoaded;
+
+    const windowStartMs =
+      (exactWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
+    const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    // Same walk as the summary. Files the summary just parsed are cache-warm,
+    // so this re-stats them instead of re-reading transcripts.
+    const [, scannedDirs] = yield* Effect.all(
+      [ensureRates(false), collectDirs(windowStartMs, settings, retentionCutoffMs)],
+      { concurrency: 2 },
+    );
+
+    const projectSnapshot = yield* Effect.cached(loadProjectThreads);
+    const resolveProject = yield* resolveProjects(projectSnapshot);
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: input.timeZone,
+      sinceDay: input.sinceDay,
+      untilDay: input.untilDay,
+      ...exactWindow,
+      rates,
+      priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
+      ...(resolveProject === undefined ? {} : { resolveProject }),
+    });
+
+    // Preferred transcript per session for title extraction: the main file,
+    // never a subagent's.
+    const titleFiles = new Map<
+      string,
+      { readonly path: string; readonly provider: UsageProviderKind }
+    >();
+
+    for (const scannedDir of scannedDirs) {
+      const { provider } = scannedDir;
+      if (input.providers !== undefined && !input.providers.includes(provider)) continue;
+      for (const file of contributingFiles(scannedDir, retentionCutoffMs)) {
+        if (file.records.length === 0) continue;
+        const isSubagent =
+          provider === "claude" && path.basename(path.dirname(file.path)) === "subagents";
+        const agentId = isSubagent ? path.basename(file.path, ".jsonl") : null;
+        for (const record of file.records) {
+          const sessionKey =
+            record.sessionId.length > 0
+              ? `${provider}:${record.sessionId}`
+              : `${provider}:file:${path.basename(path.dirname(file.path))}:${path.basename(file.path, ".jsonl")}`;
+          accumulator.add(record, { sessionKey, agentId });
+          if (!isSubagent && !titleFiles.has(sessionKey)) {
+            titleFiles.set(sessionKey, { path: file.path, provider });
+          }
+        }
+      }
+    }
+
+    // A thread-only client must warm and bound the same durable cache as the
+    // summary RPC, otherwise restarts repeat parsing and stale entries grow.
+    const pruned = pruneScanCache(fileCache, retentionCutoffMs);
+    if (pruned > 0) cacheDirty = true;
+    yield* persistScanCache();
+
+    const attribution = yield* loadThreadAttribution(projectSnapshot);
+    const folded = foldThreadRows(accumulator.finish(), attribution, {
+      cap: THREAD_ROW_CAP,
+      ...(input.projectKey === undefined ? {} : { projectFilter: input.projectKey }),
+    });
+
+    // Transcript titles only for retained unattributed rows. Grouped remainder
+    // rows already carry a generated title.
+    const rows = yield* Effect.forEach(
+      folded.rows,
+      Effect.fnUntraced(function* ({ titleSessionKey, ...row }) {
+        if (row.title !== null) return { ...row, title: row.title };
+        const source = titleFiles.get(titleSessionKey);
+        const transcriptTitle =
+          source === undefined
+            ? null
+            : yield* Effect.promise(() => readTranscriptTitle(source.path, source.provider));
+        const fallback = row.key.startsWith("remainder:")
+          ? row.key
+          : shortSessionLabel(titleSessionKey);
+        return { ...row, title: transcriptTitle ?? fallback };
+      }),
+      { concurrency: 8 },
+    );
+
+    const readAt = yield* DateTime.now;
+    const finishedAtMs = yield* Clock.currentTimeMillis;
+    return {
+      contractVersion: USAGE_CONTRACT_VERSION,
+      readAt: DateTime.formatIso(readAt),
+      sinceDay: input.sinceDay,
+      untilDay: input.untilDay,
+      rows,
+      truncatedRows: folded.truncatedRows,
+      scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
+    } satisfies UsageThreadBreakdown;
+  });
+
+  return { readSummary, readThreadBreakdown, refreshRates } as const;
 });
+
+/** `claude:8f14e45f-...` reads as `Session 8f14e45f`. */
+export function shortSessionLabel(sessionKey: string): string {
+  if (sessionKey.includes(":file:")) return "Untitled session";
+  const sessionId = sessionKey.slice(sessionKey.lastIndexOf(":") + 1);
+  return sessionId.length > 8 ? `Session ${sessionId.slice(0, 8)}` : `Session ${sessionId}`;
+}
 
 export const layer = Layer.effect(UsageService, make);
