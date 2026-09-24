@@ -1,14 +1,7 @@
 import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
-import type {
-  DeviceActionInput,
-  DeviceDetail,
-  DevicePermission,
-  DeviceSummary,
-  DeviceTextSize,
-  EnvironmentId,
-} from "@t3tools/contracts";
+import type { DevicePermission, DeviceSummary, DeviceTextSize } from "@t3tools/contracts";
 import { ChevronDown, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
@@ -24,21 +17,8 @@ import { Spinner } from "~/components/ui/spinner";
 import { Switch } from "~/components/ui/switch";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { cn } from "~/lib/utils";
-import { deviceEnvironment } from "~/state/device";
-import { formatEnvironmentQueryError } from "~/state/query";
-import { useAtomCommand } from "~/state/use-atom-command";
-import {
-  type DeviceEventLogEntry,
-  type DeviceForegroundInfo,
-  subscribeDeviceEventLog,
-  subscribeDeviceForeground,
-} from "./deviceHubApi";
-
-type ActionBody = DeviceActionInput extends infer A
-  ? A extends { readonly type: string }
-    ? Omit<A, "hostId" | "deviceId">
-    : never
-  : never;
+import type { DeviceControls } from "./useDeviceControls";
+import { type DeviceEventLogEntry, subscribeDeviceEventLog } from "./deviceHubApi";
 
 const TEXT_SIZES: ReadonlyArray<{ value: DeviceTextSize; label: string }> = [
   { value: "small", label: "Small" },
@@ -102,7 +82,8 @@ const LOCATION_PRESETS = [
  * local state so the controls never show a value the device did not confirm.
  */
 export function DeviceToolsPanel(props: {
-  readonly environmentId: EnvironmentId;
+  readonly controls: DeviceControls;
+  readonly hostDiagnostics: string | undefined;
   readonly device: DeviceSummary;
   readonly access: DeviceHubAccess | null;
   readonly axOverlay: boolean;
@@ -110,62 +91,10 @@ export function DeviceToolsPanel(props: {
   readonly onClose: () => void;
   readonly className?: string;
 }) {
-  const { environmentId, device } = props;
-  const readDetail = useAtomCommand(deviceEnvironment.detail, { reportFailure: false });
-  const runAction = useAtomCommand(deviceEnvironment.action, { reportFailure: false });
-  const [detail, setDetail] = useState<DeviceDetail | null>(null);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [foreground, setForeground] = useState<DeviceForegroundInfo | null | undefined>(undefined);
-  const isIos = device.platform === "ios";
-
-  const target = useMemo(
-    () => ({ hostId: device.hostId, deviceId: device.id }),
-    [device.hostId, device.id],
-  );
-
-  // The panel is keyed by device, so a mount is always a fresh device.
-  useEffect(() => {
-    let cancelled = false;
-    void readDetail({ environmentId, input: target }).then((result) => {
-      if (cancelled) return;
-      if (result._tag === "Success") setDetail(result.value);
-      else setError(formatEnvironmentQueryError(result.cause));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [environmentId, readDetail, target]);
-
-  useEffect(() => {
-    if (!props.access) return;
-    return subscribeDeviceForeground(
-      { access: props.access, platform: device.platform, deviceId: device.id },
-      setForeground,
-    );
-  }, [device.id, device.platform, props.access]);
-
-  const act = useCallback(
-    async (body: ActionBody) => {
-      setPending(true);
-      setError(null);
-      try {
-        const result = await runAction({
-          environmentId,
-          input: { ...target, ...body } as DeviceActionInput,
-        });
-        if (result._tag === "Success") setDetail(result.value);
-        else setError(formatEnvironmentQueryError(result.cause));
-      } finally {
-        setPending(false);
-      }
-    },
-    [environmentId, runAction, target],
-  );
-
+  const { device, controls } = props;
+  const { detail, pending, error, foregroundApp, disabled, act } = controls;
   const settings = detail?.settings;
-  const foregroundApp = foreground === undefined ? (detail?.foregroundApp ?? null) : foreground;
-  const disabled = pending || detail === null;
+  const isIos = device.platform === "ios";
 
   return (
     <div
@@ -192,6 +121,14 @@ export function DeviceToolsPanel(props: {
           <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground">
             <Spinner size="sm" /> Reading device settings…
           </div>
+        ) : null}
+
+        {props.hostDiagnostics ? (
+          <Section title="Host diagnostics">
+            <p className="whitespace-pre-line text-xs text-muted-foreground">
+              {props.hostDiagnostics}
+            </p>
+          </Section>
         ) : null}
 
         <Section title="App">
@@ -398,9 +335,7 @@ export function DeviceToolsPanel(props: {
 function Section(props: { readonly title: string; readonly children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-2 border-b px-3 py-2.5 last:border-b-0">
-      <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-        {props.title}
-      </h3>
+      <h3 className="text-xs font-medium text-muted-foreground">{props.title}</h3>
       {props.children}
     </section>
   );
@@ -698,7 +633,7 @@ function EventLogSection(props: {
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="flex w-full items-center gap-1.5 border-b px-3 py-2.5 text-left text-xs font-medium tracking-wide text-muted-foreground uppercase">
+      <CollapsibleTrigger className="flex w-full items-center gap-1.5 border-b px-3 py-2.5 text-left text-xs font-medium text-muted-foreground">
         Event log
         <ChevronDown
           className={cn("ml-auto size-3.5 transition-transform", open && "rotate-180")}

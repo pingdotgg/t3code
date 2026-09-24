@@ -1,0 +1,49 @@
+{
+  "author": "Apple Inc.",
+  "assetLicense": "No open-source or redistribution license has been established.",
+  "conversion": {
+    "blender": "4.5.9",
+    "gltfTransform": "4.2.1",
+    "changes": [
+      "Extracted device bodies and a separate Magic Keyboard accessory; excluded unrelated parts and presentation duplicates.",
+      "Normalized portrait axes, centered the screen and uniformly scaled its height to 2.2 scene units.",
+      "Replaced the baked marketing screen with a named placeholder for the live framebuffer.",
+      "Resized textures to at most 1024 pixels and encoded them as WebP; retained body geometry."
+    ]
+  },
+  "models": [
+    {
+      "id": "iphone-18-pro",
+      "file": "iphone-18-pro.glb",
+      "sourceUrl": "https://www.apple.com/105/media/us/iphone-18-pro/2026/591df885-5ee2-4173-86e6-401021249f7c/ar/iphone-18-pro-e-sim.usdz",
+      "sourceSha256": "0f2dac354fbc6505e7917983de460f2cc68e253f96aabf52e9f0468a4803f317",
+      "bodyNode": "UBGArkKGrAMRRnj",
+      "screenNode": "EHjrGDHNHzgNjtE.001"
+    },
+    {
+      "id": "iphone-18-pro-max",
+      "file": "iphone-18-pro-max.glb",
+      "sourceUrl": "https://www.apple.com/105/media/us/iphone-18-pro/2026/591df885-5ee2-4173-86e6-401021249f7c/ar/iphone-18-pro-e-sim.usdz",
+      "sourceSha256": "0f2dac354fbc6505e7917983de460f2cc68e253f96aabf52e9f0468a4803f317",
+      "bodyNode": "wUOhcMgiBmCgGaw",
+      "screenNode": "EHjrGDHNHzgNjtE"
+    },
+    {
+      "id": "ipad-pro-13-m5",
+      "file": "ipad-pro-13-m5.glb",
+      "sourceUrl": "https://www.apple.com/105/media/us/ipad-pro/2025/adee90db-c01e-430d-b726-fe64c0063f08/ar/ipad-pro-space-black.usdz",
+      "sourceSha256": "48098daf7c49117c81a4e4e1808899b93fad081faeba6c8b65124946b83b5ac6",
+      "bodyNode": "zRrSLDpdYmKeRJQ",
+      "screenNode": "lsDiIbtoSGSmWWZ"
+    },
+    {
+      "id": "ipad-pro-13-m5-magic-keyboard",
+      "file": "ipad-pro-13-m5-magic-keyboard.glb",
+      "sourceUrl": "https://www.apple.com/105/media/us/ipad-pro/2025/adee90db-c01e-430d-b726-fe64c0063f08/ar/ipad-pro-space-black.usdz",
+      "sourceSha256": "48098daf7c49117c81a4e4e1808899b93fad081faeba6c8b65124946b83b5ac6",
+      "bodyNode": "zRrSLDpdYmKeRJQ",
+      "screenNode": "lsDiIbtoSGSmWWZ",
+      "accessoryNode": "PoBqSMmyhhcJsBX"
+    }
+  ]
+}

@@ -19,6 +19,7 @@
  * The decoder only runs while frames arrive and the viewer is attached; a
  * hidden panel calls `stop()` so an idle device costs nothing on the GPU.
  */
+import { createCanvasFrameSink, type DeviceFrameSink } from "./frame.ts";
 import { type DeviceHubAccess, withDeviceHubQuery } from "./hubAccess.ts";
 import type { DevicePlatform } from "@t3tools/contracts";
 
@@ -217,6 +218,7 @@ export interface DeviceStreamClient {
   readonly sendKey: (event: KeyboardEvent, phase: "down" | "up") => void;
   readonly pressButton: (button: DeviceHardwareButton) => void;
   readonly rotate: () => void;
+  readonly setOrientation: (orientation: DeviceScreenSize["orientation"]) => void;
 }
 
 const HID_USAGE_BY_CODE: Readonly<Record<string, number>> = {
@@ -282,10 +284,11 @@ const IOS_ORIENTATIONS: ReadonlyArray<DeviceScreenSize["orientation"]> = [
 
 export function createDeviceStreamClient(
   target: DeviceStreamTarget,
-  canvas: HTMLCanvasElement,
+  output: HTMLCanvasElement | DeviceFrameSink,
   events: DeviceStreamEvents,
 ): DeviceStreamClient {
   const { access, platform, deviceId } = target;
+  const sink = "present" in output ? output : createCanvasFrameSink(output);
   const vendor = platform === "ios" ? "/vendor/serve-sim" : "/vendor/serve-emu";
   const device = encodeURIComponent(deviceId);
   const httpUrl = (path: string) =>
@@ -402,17 +405,14 @@ export function createDeviceStreamClient(
 
   const paint = (source: CanvasImageSource, width: number, height: number) => {
     if (stopped) return;
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
-      canvas.height = height;
-      if (platform === "android") {
-        screen = { width, height, orientation: width > height ? "landscape_left" : "portrait" };
-        events.onScreen(screen);
-      }
+    if (platform === "android" && (screen?.width !== width || screen.height !== height)) {
+      screen = { width, height, orientation: width > height ? "landscape_left" : "portrait" };
+      events.onScreen(screen);
     }
-    const context = canvas.getContext("2d");
-    if (!context) return fail("Could not display the device stream. Reconnect to try again.");
-    context.drawImage(source, 0, 0, width, height);
+    if (!sink.present(source, width, height)) {
+      fail("Could not display the device stream. Reconnect to try again.");
+      return;
+    }
     frameReceived();
   };
 
@@ -860,6 +860,9 @@ export function createDeviceStreamClient(
       const next =
         IOS_ORIENTATIONS[(IOS_ORIENTATIONS.indexOf(current) + 1) % IOS_ORIENTATIONS.length]!;
       send(taggedJson(IOS_MSG_ORIENTATION, { orientation: next }));
+    },
+    setOrientation: (orientation) => {
+      if (platform === "ios") send(taggedJson(IOS_MSG_ORIENTATION, { orientation }));
     },
   };
 }

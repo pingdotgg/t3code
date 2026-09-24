@@ -111,6 +111,7 @@ describe("native device stream transport", () => {
     expect(imageUrl.searchParams.get("hostId")).toBe("ssh-host");
     expect(fetch).toHaveBeenCalledTimes(1);
     socket.onopen?.();
+    client.setOrientation("landscape_right");
     client.pressButton("home");
     client.sendTouch("begin", 0.25, 0.75);
     const messages = socket.send.mock.calls.slice(1).map(([bytes]) => {
@@ -121,6 +122,7 @@ describe("native device stream transport", () => {
       };
     });
     expect(messages).toEqual([
+      { tag: 0x07, body: { orientation: "landscape_right" } },
       { tag: 0x04, body: { button: "home" } },
       { tag: 0x03, body: { type: "begin", x: 0.25, y: 0.75 } },
     ]);
@@ -140,6 +142,7 @@ describe("native device stream transport", () => {
     client.sendTouch("begin", 0.2, 0.8);
     client.sendTouch("move", 0.2, 0.4);
     client.sendTouch("end", 0.2, 0.1);
+    client.setOrientation("landscape_right");
     client.pressButton("home");
     client.pressButton("appSwitcher");
     expect(
