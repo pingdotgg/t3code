@@ -806,7 +806,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   <button
                     type="button"
                     aria-label={`Open localhost:${discoveredPorts[0]?.port ?? ""}`}
-                    className="inline-flex cursor-pointer items-center justify-center text-emerald-600 outline-hidden focus-visible:ring-1 focus-visible:ring-ring dark:text-emerald-400"
+                    className="inline-flex cursor-pointer items-center justify-center text-success-foreground outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                     onClick={handleOpenDiscoveredPort}
                   />
                 }

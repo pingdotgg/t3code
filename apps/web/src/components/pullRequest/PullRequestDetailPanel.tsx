@@ -379,7 +379,7 @@ function PullRequestBaseFreshnessWarning({
             type="button"
             aria-label={summary}
             className={cn(
-              "inline-flex min-w-0 shrink-0 cursor-help items-center gap-1 rounded-sm text-amber-600 outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-amber-400/90",
+              "inline-flex min-w-0 shrink-0 cursor-help items-center gap-1 rounded-sm text-warning-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring",
               className,
             )}
           />

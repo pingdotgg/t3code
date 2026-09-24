@@ -204,6 +204,18 @@ export default defineConfig({
         rules: { "shadcn/no-unknown-classes": "error" },
       },
       {
+        // Colors come from theme tokens so status tones follow custom themes. components/ui
+        // has no findings and stays covered too.
+        files: ["apps/web/src/**"],
+        rules: { "shadcn/no-raw-colors": "error" },
+      },
+      {
+        // Third-party marks (brand logos, the macOS permission panes, Codex's Computer Use
+        // mark) must keep their exact colors, so the files that hold them are exempt.
+        files: ["apps/web/src/components/Icons.tsx", "apps/web/src/components/JetBrainsIcons.tsx"],
+        rules: { "shadcn/no-raw-colors": "off" },
+      },
+      {
         // components/ui exports own their look. App code picks a variant or size instead
         // of restyling with className; layout classes (width, flex, margin, position) stay
         // allowed because placement belongs to the parent. components/ui is for generic

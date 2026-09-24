@@ -414,7 +414,7 @@ function SidebarThreadTooltip({
             </div>
           ) : null}
           {thread.session?.lastError ? (
-            <div className="flex min-w-0 items-center gap-2 text-red-600 dark:text-red-400">
+            <div className="flex min-w-0 items-center gap-2 text-destructive-foreground">
               <CircleAlertIcon className="size-3 shrink-0 stroke-current" />
               <div className="min-w-0 truncate">Error occurred</div>
             </div>
@@ -529,8 +529,8 @@ function SortableThreadRow(props: {
 
 // Unsent work shares one look: the new-thread draft rows and thread rows
 // with unsent composer text both use this tint and pen so they read alike.
-const draftSurfaceClassName = "bg-amber-400/[0.04] hover:bg-amber-400/[0.08]";
-const draftPenClassName = "size-3 shrink-0 text-amber-600 dark:text-amber-300/80";
+const draftSurfaceClassName = "bg-warning/4 hover:bg-warning/8";
+const draftPenClassName = "size-3 shrink-0 text-warning-foreground";
 
 // Structural list items — the section headers and the
 // empty-section placeholders — take part in the sortable list so they shift
@@ -647,7 +647,7 @@ function SidebarSectionHeader(props: {
   const snoozed = props.marker === "snoozed-header";
   const className = cn(
     "flex h-full w-full items-center gap-2 px-2 text-left text-xs font-medium",
-    snoozed ? "text-blue-600 dark:text-blue-400" : "text-sidebar-muted-foreground/60",
+    snoozed ? "text-info-foreground" : "text-sidebar-muted-foreground/60",
     props.dragging && "text-sidebar-foreground/80",
     props.isDropTarget && "text-primary",
   );
@@ -658,7 +658,7 @@ function SidebarSectionHeader(props: {
         aria-hidden
         className={cn(
           "h-px min-w-2 flex-1",
-          snoozed ? "bg-blue-500/20 dark:bg-blue-400/15" : "bg-sidebar-border/60",
+          snoozed ? "bg-info/20" : "bg-sidebar-border/60",
           props.dragging && "bg-sidebar-foreground/25",
           props.isDropTarget && "bg-primary/50",
         )}
@@ -1143,7 +1143,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           ? {
               label: "Approval",
               icon: "approval" as const,
-              className: "text-amber-700 dark:text-amber-300",
+              className: "text-warning-foreground",
             }
           : status === "input"
             ? {
@@ -1161,7 +1161,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 ? {
                     label: "Woke",
                     icon: "woke" as const,
-                    className: "text-amber-700 dark:text-amber-300",
+                    className: "text-warning-foreground",
                   }
                 : isUnread
                   ? {
@@ -1629,7 +1629,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
                     // Snoozed rows show when they come BACK, not when they were
                     // last touched — the return ticket is the row's whole story.
-                    <span className="text-xs text-blue-600 tabular-nums dark:text-blue-400">
+                    <span className="text-xs text-info-foreground tabular-nums">
                       {props.snoozeWakeLabelText}
                     </span>
                   ) : isWoke ? (
@@ -1642,7 +1642,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                             type="button"
                             aria-label="Dismiss Woke notification"
                             onClick={handleAcknowledgeWokeClick}
-                            className="inline-flex cursor-pointer items-center gap-1 rounded-sm text-xs font-medium text-amber-700 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring dark:text-amber-300"
+                            className="inline-flex cursor-pointer items-center gap-1 rounded-sm text-xs font-medium text-warning-foreground outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
                           >
                             <AlarmClockIcon aria-hidden className="size-3" />
                             <span role="status">Woke</span>

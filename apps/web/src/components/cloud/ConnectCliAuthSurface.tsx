@@ -23,7 +23,7 @@ function ConnectCliAuthMessage({
   return (
     <>
       {eyebrow ? (
-        <p className="text-[10px] font-semibold tracking-[0.18em] text-blue-600 uppercase dark:text-blue-400">
+        <p className="text-[10px] font-semibold tracking-[0.18em] text-primary uppercase">
           {eyebrow}
         </p>
       ) : null}

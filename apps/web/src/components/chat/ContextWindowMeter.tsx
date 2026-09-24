@@ -63,7 +63,7 @@ export function ContextWindowMeter(props: {
                   cy="12"
                   r={radius}
                   fill="none"
-                  stroke="color-mix(in oklab, var(--color-muted-foreground) 24%, transparent)"
+                  className="stroke-muted-foreground/24"
                   strokeWidth="3"
                 />
                 <circle

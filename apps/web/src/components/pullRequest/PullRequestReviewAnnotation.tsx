@@ -220,7 +220,7 @@ export function ReviewThreadCard({
     >
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         {thread.isResolved ? (
-          <CheckCircle2Icon className="size-3.5 text-emerald-600 dark:text-emerald-500" />
+          <CheckCircle2Icon className="size-3.5 text-success-foreground" />
         ) : (
           <CircleIcon className="size-3.5" />
         )}
