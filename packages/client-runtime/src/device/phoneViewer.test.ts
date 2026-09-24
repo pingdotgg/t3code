@@ -10,6 +10,7 @@ const gpu = vi.hoisted(() => ({
     frames: {
       scene: Scene;
       phone: Object3D | undefined;
+      rotation: Quaternion | undefined;
       yaw: number | undefined;
       cameraZ: number;
     }[];
@@ -48,6 +49,7 @@ vi.mock("three", async () => {
         this.state.frames.push({
           scene,
           phone,
+          rotation: phone?.quaternion.clone(),
           yaw: phone?.rotation.y,
           cameraZ: camera.position.z,
         });
@@ -76,7 +78,7 @@ vi.mock("./modelScene.ts", async () => {
   };
 });
 
-import { BoxGeometry, Group, Mesh, MeshBasicMaterial, PlaneGeometry } from "three";
+import { BoxGeometry, Group, Mesh, MeshBasicMaterial, PlaneGeometry, Quaternion } from "three";
 import { disposeDeviceModel } from "./modelScene.ts";
 import { createPhoneViewer } from "./phoneViewer.ts";
 import { IOS_TABLET_SHAPE } from "./shapeProfile.ts";
@@ -330,5 +332,19 @@ it("springs an ordinary device back toward its screen, freezes captured input, a
   expect(pending.size).toBe(0);
   expect(Math.abs(state.frames.at(-1)!.yaw!)).toBeLessThanOrEqual(Math.PI / 3 + 1e-6);
   expect(state.frames.at(-1)!.phone).toBe(dragged.phone);
+  viewer.dispose();
+});
+
+it("resets the device to a square front view after orbiting", () => {
+  const { viewer, draw, pending, state } = fixture();
+  const front = state.frames.at(-1)!.rotation!;
+  expect(front.angleTo(new Quaternion())).toBeLessThan(1e-6);
+  viewer.orbit(0.8, 0.4);
+  draw(80);
+  expect(state.frames.at(-1)!.rotation!.angleTo(front)).toBeGreaterThan(0.05);
+  viewer.resetPose();
+  for (let time = 96; time <= 3000 && pending.size; time += 16) draw(time);
+  expect(pending.size).toBe(0);
+  expect(state.frames.at(-1)!.rotation!.angleTo(new Quaternion())).toBeLessThan(1e-6);
   viewer.dispose();
 });

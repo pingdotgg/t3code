@@ -6,7 +6,6 @@ import {
   LinearFilter,
   Matrix4,
   PerspectiveCamera,
-  Euler,
   Quaternion,
   Scene,
   SRGBColorSpace,
@@ -95,7 +94,7 @@ export function createPhoneViewer(options: {
   let phone = createPhoneScene(texture, layout, profile);
   scene.add(phone.root);
   let disposed = false;
-  const rest = new Quaternion().setFromEuler(new Euler(0.035, -0.12, 0, "YXZ"));
+  const rest = new Quaternion();
   const motion = createDeviceMotion({
     choose: (rotation) =>
       nearestDeviceView(rotation, [{ rotation: new Quaternion(), yawLimit: Math.PI / 3 }])!
