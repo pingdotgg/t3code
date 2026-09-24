@@ -507,7 +507,7 @@ export function UsagePage() {
                         {metric === "tokens" ? "processed tokens" : "cost"}
                       </h2>
                       {isPast24Hours ? null : (
-                        <span className="text-[10px] tracking-wide text-muted-foreground uppercase">
+                        <span className="text-3xs tracking-wide text-muted-foreground uppercase">
                           drag to zoom · double-click resets
                         </span>
                       )}
@@ -732,8 +732,11 @@ function UsageDateRangeInputs({
   });
   const comparison = compareUsageDays(sinceInput.value, untilInput.value);
   const invalid = comparison === null || comparison > 0;
-  const inputClassName =
-    "w-auto rounded-md transition-colors hover:bg-background/55 hover:text-foreground focus-within:bg-background focus-within:text-foreground focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-1 focus-within:ring-offset-background has-aria-invalid:text-destructive focus-within:has-aria-invalid:ring-destructive/50 dark:hover:bg-input/32 dark:focus-within:bg-input/72 [&_[data-slot=input]]:h-6 [&_[data-slot=input]]:px-2.5 [&_[data-slot=input]]:leading-6 [&_[data-slot=input]]:pointer-coarse:h-8.5 [&_[data-slot=input]]:pointer-coarse:leading-8.5 [&_[data-slot=input]::-webkit-calendar-picker-indicator]:opacity-50";
+  // The field chrome lives on a plain wrapper, not on <Input>: the no-restyle
+  // lint rule reserves color/spacing/typography on ui components, and the
+  // `[&_[data-slot=input]]` selectors reach the native input inside.
+  const fieldClassName =
+    "w-auto rounded-md transition-colors hover:bg-background/55 hover:text-foreground focus-within:bg-background focus-within:text-foreground focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-1 focus-within:ring-offset-background has-aria-invalid:text-destructive focus-within:has-aria-invalid:ring-destructive/50 dark:hover:bg-input/32 dark:focus-within:bg-input/72 [color-scheme:inherit] [&_[data-slot=input]]:h-6 [&_[data-slot=input]]:px-2.5 [&_[data-slot=input]]:leading-6 [&_[data-slot=input]]:pointer-coarse:h-8.5 [&_[data-slot=input]]:pointer-coarse:leading-8.5 [&_[data-slot=input]::-webkit-calendar-picker-indicator]:opacity-50";
 
   return (
     <div
@@ -742,31 +745,33 @@ function UsageDateRangeInputs({
         className,
       )}
     >
-      <Input
-        nativeInput
-        unstyled
-        type="date"
-        size="compact"
-        aria-label="From day"
-        className={cn(inputClassName, "[color-scheme:inherit]")}
-        max={untilInput.value}
-        disabled={disabled}
-        aria-invalid={invalid || undefined}
-        {...sinceInput}
-      />
+      <span className={fieldClassName}>
+        <Input
+          nativeInput
+          unstyled
+          type="date"
+          size="compact"
+          aria-label="From day"
+          max={untilInput.value}
+          disabled={disabled}
+          aria-invalid={invalid || undefined}
+          {...sinceInput}
+        />
+      </span>
       <span className="px-0.5">to</span>
-      <Input
-        nativeInput
-        unstyled
-        type="date"
-        size="compact"
-        aria-label="To day"
-        className={cn(inputClassName, "[color-scheme:inherit]")}
-        min={sinceInput.value}
-        disabled={disabled}
-        aria-invalid={invalid || undefined}
-        {...untilInput}
-      />
+      <span className={fieldClassName}>
+        <Input
+          nativeInput
+          unstyled
+          type="date"
+          size="compact"
+          aria-label="To day"
+          min={sinceInput.value}
+          disabled={disabled}
+          aria-invalid={invalid || undefined}
+          {...untilInput}
+        />
+      </span>
     </div>
   );
 }
