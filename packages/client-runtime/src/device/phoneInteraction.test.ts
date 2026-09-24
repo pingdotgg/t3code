@@ -64,6 +64,25 @@ it("blocks navigation during either captured gesture, then resumes without sendi
   expect(touch.mock.calls.map(([phase]) => phase)).toEqual(["begin", "end"]);
 });
 
+it("ends wheel orbit without ending a captured screen touch", () => {
+  const onInteractionActive = vi.fn();
+  const input = createPhoneInteraction({
+    screenPoint: () => ({ x: 0.5, y: 0.5 }),
+    touch: vi.fn(),
+    orbit: vi.fn(),
+    zoomBy: vi.fn(),
+    onInteractionActive,
+  });
+  input.endWheel();
+  expect(onInteractionActive).toHaveBeenCalledWith(false, "orbit");
+  input.begin(1, { x: 0.5, y: 0.5 });
+  onInteractionActive.mockClear();
+  input.endWheel();
+  expect(onInteractionActive).not.toHaveBeenCalled();
+  input.end(1);
+  expect(onInteractionActive).toHaveBeenCalledWith(false, "touch");
+});
+
 it("normalizes wheel units, distinguishes pinch, and bounds jumps from coarse scroll wheels", () => {
   const wheel = { width: 400, height: 800, deltaX: 16, deltaY: 32, deltaMode: 0, ctrlKey: false };
   expect(phoneWheelNavigation(wheel)).toEqual({ type: "orbit", x: -0.04, y: -0.04 });

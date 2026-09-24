@@ -48,6 +48,9 @@ export function createPhoneInteraction(options: {
       else options.orbit(gesture.x, gesture.y);
       return true;
     },
+    endWheel() {
+      if (!active) options.onInteractionActive?.(false, "orbit");
+    },
     begin(id: number, point: Point, forceOrbit = false) {
       if (active) return false;
       const screen = forceOrbit ? null : options.screenPoint(point, false);

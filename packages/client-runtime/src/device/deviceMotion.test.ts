@@ -62,7 +62,30 @@ it("selects the predicted nearest view once and preserves velocity when interrup
   motion.advance(96);
   motion.dragActive(false, 100);
   for (let time = 116; time <= 2500; time += 16) motion.advance(time);
-  expect(choose).toHaveBeenCalledTimes(2);
+  expect(choose).toHaveBeenCalledOnce();
+  expect(motion.needsFrame()).toBe(false);
+});
+
+it("lets a hard flick coast through multiple turns before settling on a visible view", () => {
+  const choose = vi.fn(() => new Quaternion());
+  const motion = createDeviceMotion({ choose });
+  motion.dragActive(true, 0);
+  motion.orbit(0, 80, 16);
+  motion.advance(16);
+  motion.orbit(0, 80, 32);
+  motion.advance(32);
+  motion.dragActive(false, 32);
+
+  let previous = motion.rotation.clone();
+  let travel = 0;
+  for (let time = 40; time <= 6000; time += 8) {
+    motion.advance(time);
+    travel += motion.rotation.angleTo(previous);
+    previous = motion.rotation.clone();
+  }
+  expect(travel).toBeGreaterThan(4 * Math.PI);
+  expect(choose).toHaveBeenCalledOnce();
+  expect(motion.rotation.angleTo(new Quaternion())).toBeLessThan(1e-6);
   expect(motion.needsFrame()).toBe(false);
 });
 
@@ -92,7 +115,7 @@ it("release uses elapsed time equally at different frame rates and a captured co
   expect(fast.needsFrame()).toBe(false);
 });
 
-it("holds a trackpad orbit through a pause, then continues from that angle without idle frames", () => {
+it("holds a trackpad orbit through a pause and snaps only when the gesture ends", () => {
   const choose = vi.fn(() => new Quaternion());
   const motion = createDeviceMotion({ choose });
   motion.orbit(NaN, 0, 0);
@@ -110,6 +133,11 @@ it("holds a trackpad orbit through a pause, then continues from that angle witho
   motion.advance(340, true);
   expect(motion.rotation.angleTo(held)).toBeGreaterThan(0.1);
   expect(choose).not.toHaveBeenCalled();
+  expect(motion.needsFrame()).toBe(false);
+  motion.dragActive(false, 340);
+  motion.advance(2500);
+  expect(choose).toHaveBeenCalledOnce();
+  expect(motion.rotation.angleTo(new Quaternion())).toBeLessThan(1e-6);
   expect(motion.needsFrame()).toBe(false);
   expect(rotationVector(rotation(0, Math.PI)).length()).toBeCloseTo(Math.PI);
 });

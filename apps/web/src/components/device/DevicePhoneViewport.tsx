@@ -52,6 +52,7 @@ export function DevicePhoneViewport(props: {
     if (!host || !canvas || !decoded) return;
     let disposed = false;
     let trackpad: ReturnType<typeof bindPhoneTrackpad> | null = null;
+    let stopTrackpadEnd: (() => void) | undefined;
     const resize = () => {
       const { width, height } = host.getBoundingClientRect();
       viewerRef.current?.resize(width, height, window.devicePixelRatio);
@@ -88,6 +89,7 @@ export function DevicePhoneViewport(props: {
           onInteractionActive: viewer.setInteractionActive,
         });
         trackpad = bindPhoneTrackpad(canvas, interactionRef.current);
+        stopTrackpadEnd = window.desktopBridge?.onTrackpadScrollEnd?.(() => trackpad?.endOrbit());
         resize();
         viewer.frameUpdated();
       })
@@ -96,6 +98,7 @@ export function DevicePhoneViewport(props: {
       });
     return () => {
       disposed = true;
+      stopTrackpadEnd?.();
       trackpad?.dispose();
       interactionRef.current?.end();
       interactionRef.current = null;

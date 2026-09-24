@@ -10,7 +10,7 @@ export function bindPhoneTrackpad(
     HTMLCanvasElement,
     "addEventListener" | "removeEventListener" | "getBoundingClientRect"
   >,
-  interaction: Pick<ReturnType<typeof createPhoneInteraction>, "navigate">,
+  interaction: Pick<ReturnType<typeof createPhoneInteraction>, "navigate" | "endWheel">,
   pinch?: {
     begin: (x: number, y: number) => boolean;
     move: (logScale: number) => void;
@@ -20,6 +20,15 @@ export function bindPhoneTrackpad(
   let scale: number | null = null;
   let wheelActive = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let orbitActive = false;
+  let orbitTimer: ReturnType<typeof setTimeout> | null = null;
+  const endOrbit = () => {
+    if (orbitTimer) clearTimeout(orbitTimer);
+    orbitTimer = null;
+    if (!orbitActive) return;
+    orbitActive = false;
+    interaction.endWheel();
+  };
   const finish = () => {
     if (timer) clearTimeout(timer);
     timer = null;
@@ -41,6 +50,7 @@ export function bindPhoneTrackpad(
     consume(event);
     if (scale !== null) return;
     if (event.ctrlKey) {
+      endOrbit();
       if (!wheelActive) {
         begin(event);
         wheelActive = true;
@@ -57,6 +67,10 @@ export function bindPhoneTrackpad(
       return;
     }
     if (wheelActive) finish();
+    if ("momentum" in event && event.momentum === true) {
+      endOrbit();
+      return;
+    }
     const rect = canvas.getBoundingClientRect();
     const navigation = phoneWheelNavigation({
       width: rect.width,
@@ -66,7 +80,12 @@ export function bindPhoneTrackpad(
       deltaMode: event.deltaMode,
       ctrlKey: event.ctrlKey,
     });
-    if (navigation) interaction.navigate(navigation);
+    if (navigation && interaction.navigate(navigation)) {
+      orbitActive = true;
+      if (orbitTimer) clearTimeout(orbitTimer);
+      // Browsers without a release signal still return to a useful view.
+      orbitTimer = setTimeout(endOrbit, 1200);
+    }
   };
   const gestureScale = (event: Event) => {
     if (
@@ -80,6 +99,7 @@ export function bindPhoneTrackpad(
   };
   const start = (event: Event) => {
     consume(event);
+    endOrbit();
     finish();
     begin(event);
     scale = gestureScale(event) ?? 1;
@@ -100,7 +120,9 @@ export function bindPhoneTrackpad(
   canvas.addEventListener("gesturechange", change, { passive: false });
   canvas.addEventListener("gestureend", end, { passive: false });
   return {
+    endOrbit,
     cancel() {
+      endOrbit();
       finish();
     },
     dispose() {
@@ -108,6 +130,7 @@ export function bindPhoneTrackpad(
       canvas.removeEventListener("gesturestart", start);
       canvas.removeEventListener("gesturechange", change);
       canvas.removeEventListener("gestureend", end);
+      endOrbit();
       finish();
     },
   };

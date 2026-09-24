@@ -20,9 +20,9 @@ const gesture = (type: string, scale: number) =>
 
 it("consumes scrolling and page zoom only on the bound canvas and releases listeners on detach", () => {
   const canvas = new Canvas();
-  const navigate = vi.fn();
+  const navigate = vi.fn(() => true);
   const listeners = vi.spyOn(canvas, "addEventListener");
-  const binding = bindPhoneTrackpad(canvas, { navigate });
+  const binding = bindPhoneTrackpad(canvas, { navigate, endWheel: vi.fn() });
   const swipe = wheel();
   canvas.dispatchEvent(swipe);
   const pinch = wheel(true);
@@ -44,8 +44,8 @@ it("consumes scrolling and page zoom only on the bound canvas and releases liste
 
 it("consumes Safari pinch without zooming the model and resumes orbit after cancellation", () => {
   const canvas = new Canvas();
-  const navigate = vi.fn();
-  const binding = bindPhoneTrackpad(canvas, { navigate });
+  const navigate = vi.fn(() => true);
+  const binding = bindPhoneTrackpad(canvas, { navigate, endWheel: vi.fn() });
   canvas.dispatchEvent(gesture("gesturestart", 1));
   canvas.dispatchEvent(gesture("gesturechange", 1.2));
   canvas.dispatchEvent(wheel(true));
@@ -60,8 +60,8 @@ it("normalizes Chrome and Safari pinch, expires wheel sequences and cancels on d
   vi.useFakeTimers();
   const canvas = new Canvas();
   const pinch = { begin: vi.fn(() => true), move: vi.fn(), end: vi.fn() };
-  const navigate = vi.fn();
-  const binding = bindPhoneTrackpad(canvas, { navigate }, pinch);
+  const navigate = vi.fn(() => true);
+  const binding = bindPhoneTrackpad(canvas, { navigate, endWheel: vi.fn() }, pinch);
   canvas.dispatchEvent(wheel(true));
   canvas.dispatchEvent(wheel(true));
   expect(pinch.begin).toHaveBeenCalledOnce();
@@ -79,4 +79,27 @@ it("normalizes Chrome and Safari pinch, expires wheel sequences and cancels on d
   canvas.dispatchEvent(wheel(true));
   expect(pinch.move).toHaveBeenCalledTimes(count);
   expect(navigate).not.toHaveBeenCalled();
+});
+
+it("keeps a paused wheel orbit active until native release or browser fallback", () => {
+  vi.useFakeTimers();
+  const canvas = new Canvas();
+  const navigate = vi.fn(() => true);
+  const endWheel = vi.fn();
+  const binding = bindPhoneTrackpad(canvas, { navigate, endWheel });
+  canvas.dispatchEvent(wheel());
+  vi.advanceTimersByTime(500);
+  expect(endWheel).not.toHaveBeenCalled();
+  binding.endOrbit();
+  expect(endWheel).toHaveBeenCalledOnce();
+  canvas.dispatchEvent(wheel());
+  vi.advanceTimersByTime(1199);
+  expect(endWheel).toHaveBeenCalledOnce();
+  vi.advanceTimersByTime(1);
+  expect(endWheel).toHaveBeenCalledTimes(2);
+  canvas.dispatchEvent(wheel());
+  canvas.dispatchEvent(Object.assign(wheel(), { momentum: true }));
+  expect(endWheel).toHaveBeenCalledTimes(3);
+  expect(navigate).toHaveBeenCalledTimes(3);
+  binding.dispose();
 });
