@@ -203,6 +203,22 @@ describe("GhosttyTerminalSurface visibility", () => {
           }),
         );
       },
+      blur() {
+        input?.dispatchEvent(new Event("blur"));
+      },
+      /**
+       * Serves `text` to the paste shortcut's clipboard reads. The returned
+       * function asserts how many reads started and waits for the last one to
+       * settle, so no read can land after the caller's next assertion.
+       */
+      stubClipboard(text: string) {
+        const readText = vi.fn(async () => text);
+        vi.stubGlobal("navigator", { platform: "MacIntel", clipboard: { readText } });
+        return async (reads: number) => {
+          expect(readText).toHaveBeenCalledTimes(reads);
+          await readText.mock.results[reads - 1]?.value;
+        };
+      },
       paste(text: string) {
         input?.dispatchEvent(
           Object.assign(new Event("paste", { cancelable: true }), {
@@ -338,12 +354,11 @@ describe("GhosttyTerminalSurface visibility", () => {
 
   it("pastes once when the shortcut's clipboard read lands before the native paste", async () => {
     const harness = createHarness();
-    const readText = vi.fn(async () => "echo hi");
-    vi.stubGlobal("navigator", { platform: "MacIntel", clipboard: { readText } });
+    const settleReads = harness.stubClipboard("echo hi");
     await harness.create({ beforeKey: () => true });
 
     harness.key("v", { metaKey: true });
-    await readText.mock.results[0]?.value;
+    await settleReads(1);
     expect(harness.onData).toHaveBeenCalledTimes(1);
     harness.paste("echo hi");
     harness.key("v", { metaKey: true }, "keyup");
@@ -353,20 +368,35 @@ describe("GhosttyTerminalSurface visibility", () => {
     // its read must not land on top of the native paste that won.
     harness.key("v", { metaKey: true });
     harness.paste("echo hi");
-    await readText.mock.results[1]?.value;
+    await settleReads(2);
     expect(harness.onData).toHaveBeenCalledTimes(2);
+  });
+
+  it("still drops the late native paste when other keys move mid-gesture", async () => {
+    const harness = createHarness();
+    const settleReads = harness.stubClipboard("echo hi");
+    await harness.create({ beforeKey: () => true });
+
+    harness.key("v", { metaKey: true });
+    await settleReads(1);
+    // Rolling typing: another key goes down and a previous one comes up
+    // before the browser's paste event arrives.
+    harness.key("Shift", { shiftKey: true });
+    harness.key("Shift", {}, "keyup");
+    harness.paste("echo hi");
+
+    expect(harness.onData.mock.calls.filter(([data]) => data === "echo hi")).toHaveLength(1);
   });
 
   it("keeps a later menu paste once the shortcut that only the read served ends", async () => {
     const harness = createHarness();
-    const readText = vi.fn(async () => "echo hi");
-    vi.stubGlobal("navigator", { platform: "MacIntel", clipboard: { readText } });
+    const settleReads = harness.stubClipboard("echo hi");
     await harness.create({ beforeKey: () => true });
 
     // No native paste for the shortcut: the read is the only delivery. An
     // Edit → Paste of the same text afterwards has no keydown of its own.
     harness.key("v", { metaKey: true });
-    await readText.mock.results[0]?.value;
+    await settleReads(1);
     harness.key("v", { metaKey: true }, "keyup");
     harness.paste("echo hi");
     expect(harness.onData).toHaveBeenCalledTimes(2);
@@ -374,9 +404,16 @@ describe("GhosttyTerminalSurface visibility", () => {
     // Same when the read only settles after the shortcut was released.
     harness.key("v", { metaKey: true });
     harness.key("v", { metaKey: true }, "keyup");
-    await readText.mock.results[1]?.value;
+    await settleReads(2);
     harness.paste("echo hi");
     expect(harness.onData).toHaveBeenCalledTimes(4);
+
+    // Same when focus leaves before the release, so the terminal never sees it.
+    harness.key("v", { metaKey: true });
+    await settleReads(3);
+    harness.blur();
+    harness.paste("echo hi");
+    expect(harness.onData).toHaveBeenCalledTimes(6);
   });
 
   it("starts a selection when dragging from a link", async () => {
