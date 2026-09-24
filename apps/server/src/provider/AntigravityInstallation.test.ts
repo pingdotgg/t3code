@@ -5,7 +5,6 @@ import {
   HostProcessEnvironment,
   HostProcessIsExecutable,
   HostProcessPlatform,
-  HostProcessTempDirectory,
 } from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -333,7 +332,6 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       );
       const methods: string[] = [];
       const profiles = new Set<string>();
-      const runtimeTempDirectories = new Set<string>();
       let closedRuntimes = 0;
       const spawner = ChildProcessSpawner.make(
         Effect.fn("test.spawnAntigravityValidator")(function* (command) {
@@ -344,8 +342,6 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           if (!profile) return yield* Effect.die("Expected a disposable validation profile.");
           profiles.add(profile);
           const helper = command.args[0] === "-e";
-          const runtimeTemp = command.options.env?.TEMP ?? command.options.env?.TMPDIR;
-          if (!helper && runtimeTemp) runtimeTempDirectories.add(runtimeTemp);
           const output = yield* Queue.unbounded<Uint8Array>();
           const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
           const terminate = Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0)).pipe(
@@ -419,26 +415,10 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           });
         }),
       );
-      const path = yield* Path.Path;
-      const systemTemp = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-validate-temp-" });
-      // A previous validation whose cleanup failed left an unpacked runtime
-      // in the fixed validation root; an unrelated T3 root must survive.
-      const unrelated = path.join(systemTemp, "t3-agy", "0123456789ab");
       const { installation, stagingReleased } = yield* makeHarness({
         previous: true,
         useDefaultValidation: true,
-        platform: "win32",
-        archive: Buffer.from(zipFixtures.windows, "base64"),
-      }).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        // Windows unpacks outside the profile, so its removal is not implied.
-        Effect.provideService(HostProcessTempDirectory, systemTemp),
-      );
-      const validationRoot = (yield* fs
-        .readDirectory(path.join(systemTemp, "t3-agy"))
-        .pipe(Effect.orElseSucceed(() => [] as Array<string>))).length;
-      expect(validationRoot).toBe(0);
-      yield* fs.makeDirectory(unrelated, { recursive: true });
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
       yield* installation.start;
       expect((yield* terminalState(installation)).phase).toBe(
         testCase.valid ? "succeeded" : "failed",
@@ -447,21 +427,9 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       expect(methods).toEqual(["initialize"]);
       expect(closedRuntimes).toBe(1);
       expect(profiles.size).toBe(1);
-      expect(runtimeTempDirectories.size).toBe(1);
-      const [runtimeTemp] = runtimeTempDirectories;
-      // Validation unpacks under a fixed, short root the next run can sweep.
-      expect(path.dirname(runtimeTemp!)).toBe(path.join(systemTemp, "t3-agy"));
-      for (const directory of [...profiles, ...runtimeTempDirectories]) {
-        expect(yield* fs.exists(directory)).toBe(false);
+      for (const profile of profiles) {
+        expect(yield* fs.exists(profile)).toBe(false);
       }
-      expect(yield* fs.exists(unrelated)).toBe(true);
-
-      // A run whose cleanup failed is reclaimed before the next validation.
-      yield* fs.makeDirectory(path.join(runtimeTemp!, "_MEI000012ab2"), { recursive: true });
-      yield* installation.start;
-      yield* terminalState(installation);
-      expect(yield* fs.exists(path.join(runtimeTemp!, "_MEI000012ab2"))).toBe(false);
-      expect([...runtimeTempDirectories]).toEqual([runtimeTemp]);
       if (testCase.valid) {
         expect((yield* installation.resolve()).version).toBe("fixture-new");
       } else {

@@ -10,7 +10,6 @@ import {
   HostProcessExecutablePath,
   HostProcessIsExecutable,
   HostProcessPlatform,
-  HostProcessTempDirectory,
 } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -32,8 +31,7 @@ import {
 } from "../AntigravityInstallation.ts";
 import {
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
-  resolveAntigravityProfileDirectory,
-  resolveAntigravityRuntimeTempDirectory,
+  resolveAntigravityInstanceDirectories,
 } from "../antigravityAuthSupport.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -75,7 +73,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
   );
   const requestLog = path.join(root, "requests.jsonl");
-  const profileDirectory = resolveAntigravityProfileDirectory(config.stateDir, instanceId);
+  const directories = yield* resolveAntigravityInstanceDirectories(config.stateDir, instanceId);
+  const profileDirectory = directories.profile;
   const instancePath = `${path.join(root, "instance-bin")}:${baseEnv.PATH ?? ""}`;
 
   const makeExecutable = Effect.fn("AntigravityDriverTest.makeExecutable")(function* (
@@ -234,6 +233,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     fs,
     path,
     profileDirectory,
+    directories,
     instancePath,
     first,
     second,
@@ -476,11 +476,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
     () =>
       Effect.gen(function* () {
         const h = yield* makeHarness();
-        const tempRoot = resolveAntigravityRuntimeTempDirectory(
-          h.profileDirectory,
-          hostPlatform,
-          yield* HostProcessTempDirectory,
-        );
+        const tempRoot = h.directories.runtimeTemp;
         yield* h.refresh();
         yield* h.refresh();
         const directories = h.launches.flatMap((launch) =>
@@ -495,26 +491,21 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  // Posix host paths stand in for Windows ones: only the root choice differs.
-  it.effect.each(["linux", "win32"] as const)(
-    "removes runtime temp directories left by a previous server on create (%s)",
-    (platform) =>
+  it.effect.skipIf(windowsHost)(
+    "removes runtime temp directories left by a previous server on create",
+    () =>
       Effect.gen(function* () {
-        if (windowsHost) return;
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const config = yield* ServerConfig;
-        const systemTemp = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-system-temp-" });
-        const instanceId = ProviderInstanceId.make(`antigravity-orphan-sweep-${platform}`);
-        const profileDirectory = resolveAntigravityProfileDirectory(config.stateDir, instanceId);
-        const tempRoot = resolveAntigravityRuntimeTempDirectory(
-          profileDirectory,
-          platform,
-          systemTemp,
+        const instanceId = ProviderInstanceId.make("antigravity-orphan-sweep");
+        const directories = yield* resolveAntigravityInstanceDirectories(
+          config.stateDir,
+          instanceId,
         );
-        // Windows unpacked under the profile before the root moved to the system temp.
-        const legacyRoot = path.join(profileDirectory, "antigravity-acp", "tmp");
-        for (const root of [tempRoot, legacyRoot]) {
+        // Older builds unpacked inside the profile.
+        const legacyRoot = path.join(directories.profile, "antigravity-acp", "tmp");
+        for (const root of [directories.runtimeTemp, legacyRoot]) {
           const orphan = path.join(root, "run-orphan", "_MEI123", "google3");
           yield* fs.makeDirectory(orphan, { recursive: true });
           yield* fs.writeFileString(path.join(orphan, "payload.bin"), "stale");
@@ -533,12 +524,9 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
               acquire: () => Effect.die("unused"),
             }),
           ),
-          Effect.provideService(HostProcessPlatform, platform),
-          Effect.provideService(HostProcessTempDirectory, systemTemp),
         );
-        expect(yield* fs.exists(tempRoot)).toBe(false);
+        expect(yield* fs.exists(directories.runtimeTemp)).toBe(false);
         expect(yield* fs.exists(legacyRoot)).toBe(false);
-        expect(yield* fs.exists(systemTemp)).toBe(true);
       }).pipe(Effect.scoped),
   );
 

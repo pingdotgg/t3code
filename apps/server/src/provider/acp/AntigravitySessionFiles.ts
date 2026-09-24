@@ -43,12 +43,12 @@ export const removeAntigravitySessionFiles = Effect.fn("removeAntigravitySession
 );
 
 /**
- * Removes an instance's runtime temp root and every per-process directory in
- * it. Call once when the driver starts, before it launches any process, so a
+ * Removes every per-process runtime temp directory under an instance's root.
+ * Call once when the driver starts, before it launches any process, so a
  * previous server that was killed mid-session cannot leave unpacked runtimes
- * behind. Only T3-owned roots are passed here. Other programs' entries in the
- * system temp directory are never listed, since Windows does not lock data
- * files and sweeping them could gut a live extraction.
+ * behind. Only T3-owned directories are touched. The system temp directory
+ * belongs to other programs and Windows does not lock data files, so sweeping
+ * it could gut a live extraction.
  */
 export const removeAntigravityRuntimeTempDirs = Effect.fn("removeAntigravityRuntimeTempDirs")(
   function* (tempDirectory: string) {
