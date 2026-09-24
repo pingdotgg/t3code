@@ -240,7 +240,7 @@ function ProviderSettingsFieldRow({
   const inputId = `${idPrefix}-${field.key}`;
   const descriptionClassName =
     variant === "dialog"
-      ? "text-[11px] text-muted-foreground"
+      ? "text-2xs text-muted-foreground"
       : "mt-1 block text-xs text-muted-foreground";
   const label = <span className="text-xs font-medium text-foreground">{field.label}</span>;
   const description = field.description ? (
@@ -388,7 +388,6 @@ function ProviderSettingsFieldRow({
         ) : (
           <Input
             id={inputId}
-            className="bg-background"
             type={type}
             autoComplete={field.control === "password" ? "off" : undefined}
             value={readProviderConfigString(value, field.key)}
