@@ -54,11 +54,22 @@ export type ThreadSnoozeShell = Pick<
   OrchestrationThreadShell,
   | "snoozedUntil"
   | "snoozedAt"
+  | "snoozedThroughTurnId"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
   | "session"
   | "latestTurn"
 >;
+
+function completedTurnRaisesHand(shell: ThreadSnoozeShell): boolean {
+  return (
+    shell.snoozedAt != null &&
+    shell.latestTurn?.state === "completed" &&
+    shell.latestTurn.completedAt != null &&
+    shell.latestTurn.turnId !== shell.snoozedThroughTurnId &&
+    Date.parse(shell.latestTurn.completedAt) > Date.parse(shell.snoozedAt)
+  );
+}
 
 /**
  * A snoozed thread "raises its hand" when something happens that outranks
@@ -80,12 +91,7 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
   ) {
     return true;
   }
-  if (
-    shell.snoozedAt != null &&
-    shell.latestTurn?.state === "completed" &&
-    shell.latestTurn.completedAt != null &&
-    Date.parse(shell.latestTurn.completedAt) > Date.parse(shell.snoozedAt)
-  ) {
+  if (completedTurnRaisesHand(shell)) {
     return true;
   }
   return false;
@@ -153,12 +159,7 @@ export function threadWokeAt(
   // indicator the user already cleared by visiting (snoozedUntil is newer
   // than that visit's lastVisitedAt).
   if (threadRaisedHandWhileSnoozed(shell)) {
-    if (
-      shell.snoozedAt != null &&
-      shell.latestTurn?.state === "completed" &&
-      shell.latestTurn.completedAt != null &&
-      Date.parse(shell.latestTurn.completedAt) > Date.parse(shell.snoozedAt)
-    ) {
+    if (completedTurnRaisesHand(shell) && shell.latestTurn?.completedAt != null) {
       return shell.latestTurn.completedAt;
     }
     return shell.session?.updatedAt ?? shell.snoozedAt ?? null;

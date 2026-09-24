@@ -5,6 +5,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type OrchestrationReadModel,
   type OrchestrationThread,
 } from "@t3tools/contracts";
@@ -24,9 +25,11 @@ const SNOOZED_AT = "1969-12-30T00:00:00.000Z";
 function makeReadModel(input: {
   readonly snoozedUntil?: string | null;
   readonly snoozedAt?: string | null;
+  readonly snoozedThroughTurnId?: string | null;
   readonly archivedAt?: string | null;
   readonly activities?: OrchestrationThread["activities"];
   readonly messages?: OrchestrationThread["messages"];
+  readonly session?: OrchestrationThread["session"];
 }): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
@@ -50,12 +53,14 @@ function makeReadModel(input: {
         settledAt: null,
         snoozedUntil: input.snoozedUntil ?? null,
         snoozedAt: input.snoozedAt ?? (input.snoozedUntil != null ? SNOOZED_AT : null),
+        snoozedThroughTurnId:
+          input.snoozedThroughTurnId == null ? null : TurnId.make(input.snoozedThroughTurnId),
         deletedAt: null,
         messages: input.messages ?? [],
         proposedPlans: [],
         activities: input.activities ?? [],
         checkpoints: [],
-        session: null,
+        session: input.session ?? null,
       },
     ],
     updatedAt: NOW,
@@ -92,6 +97,54 @@ it.layer(NodeServices.layer)("snoozed thread decider", (it) => {
           commandId: CommandId.make("cmd-snooze-past"),
           threadId: ThreadId.make("thread-1"),
           snoozedUntil: PAST_WAKE,
+        },
+        readModel: makeReadModel({}),
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+    }),
+  );
+
+  it.effect("records the active turn whose completion must not wake the snooze", () =>
+    Effect.gen(function* () {
+      const activeTurnId = TurnId.make("turn-active");
+      const event = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.snooze",
+          commandId: CommandId.make("cmd-snooze-through-turn"),
+          threadId: ThreadId.make("thread-1"),
+          snoozedUntil: FUTURE_WAKE,
+          snoozedThroughTurnId: activeTurnId,
+        },
+        readModel: makeReadModel({
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "running",
+            providerName: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            runtimeMode: "full-access",
+            activeTurnId,
+            lastError: null,
+            updatedAt: NOW,
+          },
+        }),
+      });
+      const events = Array.isArray(event) ? event : [event];
+      expect(events[0]?.type).toBe("thread.snoozed");
+      if (events[0]?.type === "thread.snoozed") {
+        expect(events[0].payload.snoozedThroughTurnId).toBe(activeTurnId);
+      }
+    }),
+  );
+
+  it.effect("rejects preserving a snooze through a turn that is not active", () =>
+    Effect.gen(function* () {
+      const error = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.snooze",
+          commandId: CommandId.make("cmd-snooze-wrong-turn"),
+          threadId: ThreadId.make("thread-1"),
+          snoozedUntil: FUTURE_WAKE,
+          snoozedThroughTurnId: TurnId.make("turn-other"),
         },
         readModel: makeReadModel({}),
       }).pipe(Effect.flip);

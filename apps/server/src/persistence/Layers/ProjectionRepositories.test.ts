@@ -423,6 +423,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         unsettledAt: null,
         snoozedUntil: "2026-03-26T09:00:00.000Z",
         snoozedAt: "2026-03-25T00:00:00.000Z",
+        snoozedThroughTurnId: TurnId.make("turn-snoozed-through"),
         pinnedAt: "2026-03-25T00:00:00.000Z",
         latestUserMessageAt: null,
         pendingApprovalCount: 0,
@@ -442,6 +443,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       assert.strictEqual(row.settledAt, "2026-03-25T00:00:00.000Z");
       assert.strictEqual(row.snoozedUntil, "2026-03-26T09:00:00.000Z");
       assert.strictEqual(row.snoozedAt, "2026-03-25T00:00:00.000Z");
+      assert.strictEqual(row.snoozedThroughTurnId, "turn-snoozed-through");
       assert.strictEqual(row.pinnedAt, "2026-03-25T00:00:00.000Z");
 
       // Un-settle to the keep-active pin and wake the snooze; confirm the
@@ -453,6 +455,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         unsettledAt: "2026-03-26T00:00:00.000Z",
         snoozedUntil: null,
         snoozedAt: null,
+        snoozedThroughTurnId: null,
         pinnedAt: null,
       });
       const repersisted = yield* threads.getById({
@@ -464,6 +467,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       assert.strictEqual(updated?.unsettledAt, "2026-03-26T00:00:00.000Z");
       assert.strictEqual(updated?.snoozedUntil, null);
       assert.strictEqual(updated?.snoozedAt, null);
+      assert.strictEqual(updated?.snoozedThroughTurnId, null);
       assert.strictEqual(updated?.pinnedAt, null);
     }),
   );

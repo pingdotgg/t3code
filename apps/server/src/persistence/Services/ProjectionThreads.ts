@@ -47,6 +47,7 @@ export const ProjectionThread = Schema.Struct({
   unsettledAt: Schema.NullOr(IsoDateTime),
   snoozedUntil: Schema.NullOr(IsoDateTime),
   snoozedAt: Schema.NullOr(IsoDateTime),
+  snoozedThroughTurnId: Schema.optional(Schema.NullOr(TurnId)),
   pinnedAt: Schema.NullOr(IsoDateTime),
   pinOrderKey: Schema.optional(Schema.NullOr(Schema.String)),
   activeOrderKey: Schema.optional(Schema.NullOr(Schema.String)),

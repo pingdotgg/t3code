@@ -826,6 +826,9 @@ export const OrchestrationThread = Schema.Struct({
   // Optional so payloads from pre-snooze servers still decode.
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  // A CLI-triggered snooze can deliberately survive the completion of the
+  // turn that requested it. Other later completions still wake the thread.
+  snoozedThroughTurnId: Schema.optional(Schema.NullOr(TurnId)),
   // Active pinned threads render in the pinned block. Settled and snoozed
   // threads remain in their respective shelves even when pinned.
   // Optional so payloads from pre-pinning servers still decode.
@@ -905,6 +908,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   unsettledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  snoozedThroughTurnId: Schema.optional(Schema.NullOr(TurnId)),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -1181,6 +1185,10 @@ const ThreadSnoozeCommand = Schema.Struct({
   // will arrive as an optional condition field alongside this; time-based
   // snooze is just the first kind of condition.
   snoozedUntil: IsoDateTime,
+  // Optional so existing clients keep their current wake-on-completion
+  // behavior. The CLI sets this to the active turn when an agent snoozes its
+  // own thread near the end of that turn.
+  snoozedThroughTurnId: Schema.optional(TurnId),
 });
 
 const ThreadUnsnoozeCommand = Schema.Struct({
@@ -1795,6 +1803,7 @@ export const ThreadSnoozedPayload = Schema.Struct({
   threadId: ThreadId,
   snoozedUntil: IsoDateTime,
   snoozedAt: IsoDateTime,
+  snoozedThroughTurnId: Schema.optional(Schema.NullOr(TurnId)),
   updatedAt: IsoDateTime,
 });
 

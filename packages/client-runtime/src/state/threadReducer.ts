@@ -133,6 +133,7 @@ export function applyThreadDetailEvent(
           activeOrderKey: null,
           snoozedUntil: null,
           snoozedAt: null,
+          snoozedThroughTurnId: null,
           deletedAt: null,
           pullRequests: [],
           messages: [],
@@ -200,6 +201,7 @@ export function applyThreadDetailEvent(
           ...thread,
           snoozedUntil: event.payload.snoozedUntil,
           snoozedAt: event.payload.snoozedAt,
+          snoozedThroughTurnId: event.payload.snoozedThroughTurnId ?? null,
           updatedAt: event.payload.updatedAt,
         },
       };
@@ -211,6 +213,7 @@ export function applyThreadDetailEvent(
           ...thread,
           snoozedUntil: null,
           snoozedAt: null,
+          snoozedThroughTurnId: null,
           updatedAt: event.payload.updatedAt,
         },
       };
