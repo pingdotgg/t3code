@@ -17,7 +17,7 @@ import {
   resolveEnvironmentMachineKind,
   resolveProviderInstanceEnabled,
 } from "@t3tools/contracts";
-import { DEFAULT_SERVER_SETTINGS, DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import {
   getBackgroundActivityPresetSettings,
   resolveServerBackgroundActivitySettings,
@@ -935,10 +935,11 @@ export function EnvironmentProviderSettings({
           ) : null
         }
         onSaveCustomModels={async (next) => {
-          // Read settings at dispatch time: building the patch from this render's snapshot
-          // would spread away a provider write queued ahead of this one.
-          const latestSettings =
-            readAtom(serverEnvironment.settingsValueAtom(environmentId)) ?? DEFAULT_SERVER_SETTINGS;
+          // Read settings at dispatch time so the replacement map includes every provider
+          // write the environment has already confirmed. Without loaded settings, a map built
+          // from defaults would erase this environment's other instances, so fail the save.
+          const latestSettings = readAtom(serverEnvironment.settingsValueAtom(environmentId));
+          if (latestSettings === null) return false;
           const result = await saveProviderSettings({
             environmentId,
             input: {

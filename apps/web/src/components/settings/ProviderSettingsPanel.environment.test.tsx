@@ -433,5 +433,12 @@ describe("EnvironmentProviderSettings routing", () => {
         },
       }),
     );
+
+    // Without loaded settings the replacement map would be built from defaults and erase
+    // the environment's other instances, so the save must fail without writing.
+    settingsState.value = null;
+    commands.saveSettings.mockClear();
+    expect(await save(next)).toBe(false);
+    expect(commands.saveSettings).not.toHaveBeenCalled();
   });
 });
