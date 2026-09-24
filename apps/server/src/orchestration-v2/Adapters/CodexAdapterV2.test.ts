@@ -67,6 +67,7 @@ import {
   codexBackgroundCommandDetail,
   codexFileChangeApprovalPrompt,
   codexProviderTurnTokenUsage,
+  codexSkillMentionText,
   codexThreadRuntimeParams,
   type CodexAppServerClientFactoryShape,
   makeCodexAdapterV2,
@@ -1213,6 +1214,26 @@ describe("CodexAdapterV2 fork boundary", () => {
       assert.include(String(error.cause), "provider-turn-missing");
     }),
   );
+});
+
+describe("CodexAdapterV2 skill mentions", () => {
+  it("sends currency-sigil skill mentions as the $ mention Codex parses", () => {
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ["€review do it", "$review do it"],
+      ["£ship", "$ship"],
+      ["please ¥review this diff", "please $review this diff"],
+      ["first line\n₹ship it", "first line\n$ship it"],
+      ["𑿝review then €2spec", "$review then $2spec"],
+      ["$review", "$review"],
+      ["costs €20", "costs €20"],
+      ["€5k", "€5k"],
+      ["budget €100M or €1e6", "budget €100M or €1e6"],
+      ["5€review", "5€review"],
+    ];
+    for (const [text, expected] of cases) {
+      assert.equal(codexSkillMentionText(text), expected, text);
+    }
+  });
 });
 
 describe("CodexAdapterV2 background command detail", () => {
