@@ -145,7 +145,9 @@ export function MediaActions({
         toastManager.add({
           type: "success",
           title: action === "copy-url" ? "URL copied" : "Path copied",
-          ...(hostEnvironment ? { description: `Path on ${hostEnvironment}` } : {}),
+          ...(hostEnvironment && reference?.kind === "file"
+            ? { description: `Path on ${hostEnvironment}` }
+            : {}),
         });
       } else if (action === "open-file") {
         source.onOpenFile?.();
