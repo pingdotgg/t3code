@@ -822,6 +822,7 @@ for (const scenario of ["failure", "interruption", "stale-attempt", "start-guard
       const refreshes = yield* Ref.make(0);
       const guardedWrites = yield* Ref.make(0);
       const writes = yield* Ref.make<ReadonlyArray<ReadonlyArray<OrchestrationV2DomainEvent>>>([]);
+      const effectRequests = yield* Ref.make<ReadonlyArray<string>>([]);
       const testLayer = runExecutionServiceLayer.pipe(
         Layer.provide(
           Layer.mergeAll(
@@ -830,6 +831,11 @@ for (const scenario of ["failure", "interruption", "stale-attempt", "start-guard
                 scenario === "start-guard" ? Effect.void : Effect.die("not reached"),
             }),
             Layer.mock(EventSinkV2)({
+              writeWithEffects: (input) =>
+                Ref.update(effectRequests, (current) => [
+                  ...current,
+                  ...input.effects.map((effect) => effect.request.type),
+                ]).pipe(Effect.as([])),
               writeIfRunCurrent: (input) =>
                 Effect.gen(function* () {
                   assert.equal(input.threadId, threadId);
@@ -939,6 +945,9 @@ for (const scenario of ["failure", "interruption", "stale-attempt", "start-guard
         assert.equal(yield* Ref.get(guardedWrites), 0);
         assert.equal(yield* Ref.get(refreshes), 0);
         assert.isEmpty(events);
+        // The declined turn still owns the baseline captured during
+        // preparation, so it queues that baseline's cleanup.
+        assert.deepEqual(yield* Ref.get(effectRequests), ["checkpoint.baseline.cleanup"]);
         return;
       }
       assert.equal(yield* Ref.get(guardedWrites), 1);

@@ -336,6 +336,7 @@ it.effect(
       const plan = yield* planThreadDeletion({
         command,
         projection,
+        attachmentIds: [],
         now: deletedAt,
         idAllocator: yield* IdAllocatorV2,
       });

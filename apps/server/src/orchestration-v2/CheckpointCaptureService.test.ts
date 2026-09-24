@@ -394,7 +394,6 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
             return;
           }
           assert.equal(runUpdated.payload.status, "completed");
-          const capturedEvent = events.find((event) => event.type === "checkpoint.captured");
           assert.equal(runUpdated.payload.checkpointId, captured.id);
           assert.isUndefined(
             runUpdated.payload.delegatedCompletion,
