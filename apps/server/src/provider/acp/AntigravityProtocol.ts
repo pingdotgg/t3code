@@ -378,3 +378,143 @@ export function antigravitySubagentOutput(toolCall: AcpToolCallState): string | 
   const output = toolCall.data.rawOutput;
   return typeof output === "string" && output.trim() ? boundText(output.trim()) : undefined;
 }
+
+export interface AntigravityBackgroundTaskNotification {
+  readonly taskId: string;
+  readonly status: "completed" | "failed" | "stopped";
+  readonly exitCode?: number;
+  readonly output?: string;
+}
+
+const BACKGROUND_TASK_PATTERN =
+  /Background task\s+([^\s]+)\s+(has completed|failed|was cancelled|stopped)\.?(?:\s+Task exit code:\s*(-?\d+))?(?:\s+Execution output:\s*([\s\S]*))?/i;
+
+/**
+ * Parses background task completion or termination notices delivered inside `<system_message>` tags.
+ * Explicit cancellation and stop phrases take priority over exit code checks to preserve the stopped status.
+ *
+ * @param content - The inner text of a `<system_message>` block.
+ * @returns The structured notification metadata, or null if the message is not a task notification.
+ */
+export function parseAntigravityBackgroundTaskMessage(
+  content: string,
+): AntigravityBackgroundTaskNotification | null {
+  const match = BACKGROUND_TASK_PATTERN.exec(content);
+  if (!match || !match[1] || !match[2]) {
+    return null;
+  }
+  const taskId = match[1];
+  const phrase = match[2].toLowerCase();
+  const exitCode = match[3] !== undefined ? parseInt(match[3], 10) : undefined;
+  const rawOutput = match[4]?.trim();
+  const output = rawOutput && rawOutput.length > 0 ? boundText(rawOutput) : undefined;
+
+  let status: "completed" | "failed" | "stopped";
+  if (phrase === "was cancelled" || phrase === "stopped") {
+    status = "stopped";
+  } else if (phrase === "failed") {
+    status = "failed";
+  } else if (exitCode !== undefined) {
+    status = exitCode === 0 ? "completed" : "failed";
+  } else {
+    status = "completed";
+  }
+
+  return {
+    taskId,
+    status,
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    ...(output !== undefined ? { output } : {}),
+  };
+}
+
+export interface ProcessAntigravitySystemMessagesResult {
+  readonly sanitizedText: string;
+  readonly tasks: ReadonlyArray<AntigravityBackgroundTaskNotification>;
+  readonly pendingText: string;
+}
+
+const PARTIAL_SYSTEM_MESSAGE_PREFIXES = [
+  "<system_message",
+  "<system_messag",
+  "<system_messa",
+  "<system_mess",
+  "<system_mes",
+  "<system_me",
+  "<system_m",
+  "<system_",
+  "<system",
+  "<syste",
+  "<syst",
+  "<sys",
+  "<sy",
+  "<s",
+  "<",
+] as const;
+
+/**
+ * Strips `<system_message>` tags from incoming assistant text deltas, extracting background task notifications
+ * and buffering partial tag boundaries across streaming chunks.
+ *
+ * @param input - The accumulated or chunked assistant message text.
+ * @param options - Processing options; set `flush: true` to flush unclosed tags on turn end.
+ * @returns An object containing sanitized assistant text, extracted task notifications, and unparsed pending text.
+ */
+export function processAntigravitySystemMessages(
+  input: string,
+  options?: { readonly flush?: boolean },
+): ProcessAntigravitySystemMessagesResult {
+  const tasks: AntigravityBackgroundTaskNotification[] = [];
+  const CLOSED_TAG_PATTERN = /<system_message(?:[^>]*)>([\s\S]*?)<\/system_message>/gi;
+
+  let sanitized = input.replace(CLOSED_TAG_PATTERN, (_, content: string) => {
+    const task = parseAntigravityBackgroundTaskMessage(content);
+    if (task) {
+      tasks.push(task);
+    }
+    return "";
+  });
+
+  if (options?.flush) {
+    const UNCLOSED_TAG_PATTERN = /<system_message(?:[^>]*)>([\s\S]*)$/i;
+    sanitized = sanitized.replace(UNCLOSED_TAG_PATTERN, (_, content: string) => {
+      const task = parseAntigravityBackgroundTaskMessage(content);
+      if (task) {
+        tasks.push(task);
+      }
+      return "";
+    });
+    return {
+      sanitizedText: sanitized,
+      tasks,
+      pendingText: "",
+    };
+  }
+
+  const openTagIndex = sanitized.search(/<system_message(?:[^>]*)>/i);
+  if (openTagIndex !== -1) {
+    return {
+      sanitizedText: sanitized.slice(0, openTagIndex),
+      tasks,
+      pendingText: sanitized.slice(openTagIndex),
+    };
+  }
+
+  const lower = sanitized.toLowerCase();
+  for (const prefix of PARTIAL_SYSTEM_MESSAGE_PREFIXES) {
+    if (lower.endsWith(prefix)) {
+      const cutIndex = sanitized.length - prefix.length;
+      return {
+        sanitizedText: sanitized.slice(0, cutIndex),
+        tasks,
+        pendingText: sanitized.slice(cutIndex),
+      };
+    }
+  }
+
+  return {
+    sanitizedText: sanitized,
+    tasks,
+    pendingText: "",
+  };
+}

@@ -80,8 +80,10 @@ import {
   isAntigravityUserInputRequest,
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
+  processAntigravitySystemMessages,
   sanitizeAntigravityToolPayload,
   selectAntigravityPermissionOptionId,
+  type AntigravityBackgroundTaskNotification,
 } from "../acp/AntigravityProtocol.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -211,6 +213,7 @@ interface SessionContext {
   stopped: boolean;
   closed: boolean;
   disconnected: boolean;
+  systemMessagePendingText: string;
 }
 
 const CLIENT_FILE_MAX_BYTES = 8 * 1024 * 1024;
@@ -389,6 +392,85 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       }),
     );
 
+  /**
+   * Correlates an Antigravity background task notification with active open commands,
+   * emitting a structured tool completion event and a `task.completed` event.
+   *
+   * @param context - The active session context.
+   * @param task - The parsed background task notification.
+   */
+  const handleBackgroundTaskCompletion = (
+    context: SessionContext,
+    task: AntigravityBackgroundTaskNotification,
+  ) =>
+    context.commandLock.withPermit(
+      Effect.gen(function* () {
+        let matchedId: string | undefined;
+        let matchedCommand: OpenCommand | undefined;
+
+        if (context.commands.has(task.taskId)) {
+          matchedId = task.taskId;
+          matchedCommand = context.commands.get(task.taskId);
+        } else {
+          for (const [id, command] of context.commands) {
+            if (id === task.taskId || task.taskId.endsWith(id) || id.endsWith(task.taskId)) {
+              matchedId = id;
+              matchedCommand = command;
+              break;
+            }
+          }
+        }
+
+        const turnId = matchedCommand?.turnId ?? context.activeTurnId;
+        const toolUseId = matchedId ?? task.taskId;
+        const taskId = RuntimeTaskId.make(toolUseId);
+        const summary = task.output?.trim() || undefined;
+
+        if (matchedCommand) {
+          const rawOutput = {
+            ...(task.exitCode !== undefined ? { exitCode: task.exitCode } : {}),
+            ...(task.output ? { combinedOutput: task.output } : {}),
+          };
+          yield* emit(
+            makeAcpToolCallEvent({
+              stamp: yield* stamp,
+              provider: PROVIDER,
+              threadId: context.threadId,
+              turnId,
+              toolCall: normalizeAntigravityToolCall({
+                ...matchedCommand.toolCall,
+                status: task.status === "failed" ? "failed" : "completed",
+                data: {
+                  ...matchedCommand.toolCall.data,
+                  rawOutput,
+                },
+              }),
+              rawPayload: {},
+            }),
+          );
+        }
+
+        yield* emit({
+          type: "task.completed",
+          ...(yield* stamp),
+          provider: PROVIDER,
+          threadId: context.threadId,
+          turnId,
+          payload: {
+            taskId,
+            taskType: "local_bash",
+            toolUseId,
+            status: task.status,
+            ...(summary ? { summary } : {}),
+          },
+        });
+
+        if (matchedId) {
+          context.commands.delete(matchedId);
+        }
+      }),
+    );
+
   const finishSubagents = (
     context: SessionContext,
     status: Extract<RuntimeTaskStatus, "cancelled" | "failed" | "idle">,
@@ -434,6 +516,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
             }
           }).pipe(Effect.ensuring(Scope.close(context.scope, Exit.void)));
           context.closed = true;
+          context.systemMessagePendingText = "";
           if (sessions.get(context.threadId) === context) sessions.delete(context.threadId);
           yield* finishBackgroundCommands(context);
           yield* finishSubagents(
@@ -587,20 +670,41 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         );
         return;
       case "ThoughtDelta":
-      case "ContentDelta":
         yield* emit(
           makeAcpContentDeltaEvent({
             stamp: yield* stamp,
             provider: PROVIDER,
             threadId: context.threadId,
             turnId: context.activeTurnId,
-            ...(event._tag === "ContentDelta" && event.itemId ? { itemId: event.itemId } : {}),
-            ...(event._tag === "ThoughtDelta" ? { streamKind: "reasoning_text" } : {}),
+            streamKind: "reasoning_text",
             text: event.text,
             rawPayload: sanitizeAntigravityToolPayload(event.rawPayload),
           }),
         );
         return;
+      case "ContentDelta": {
+        const { sanitizedText, tasks, pendingText } = processAntigravitySystemMessages(
+          context.systemMessagePendingText + event.text,
+        );
+        context.systemMessagePendingText = pendingText;
+        for (const task of tasks) {
+          yield* handleBackgroundTaskCompletion(context, task);
+        }
+        if (sanitizedText.length > 0) {
+          yield* emit(
+            makeAcpContentDeltaEvent({
+              stamp: yield* stamp,
+              provider: PROVIDER,
+              threadId: context.threadId,
+              turnId: context.activeTurnId,
+              ...(event.itemId ? { itemId: event.itemId } : {}),
+              text: sanitizedText,
+              rawPayload: sanitizeAntigravityToolPayload(event.rawPayload),
+            }),
+          );
+        }
+        return;
+      }
       case "PlanUpdated":
         yield* emit(
           makeAcpPlanUpdatedEvent({
@@ -883,6 +987,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                 stopped: false,
                 closed: false,
                 disconnected: false,
+                systemMessagePendingText: "",
               };
               const running = context;
               sessions.set(input.threadId, running);
@@ -995,6 +1100,28 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       Effect.gen(function* () {
         if (turn.settled || context.stopped || context.generation !== turn.generation) return;
         turn.settled = true;
+        if (context.systemMessagePendingText.length > 0) {
+          const { sanitizedText, tasks } = processAntigravitySystemMessages(
+            context.systemMessagePendingText,
+            { flush: true },
+          );
+          context.systemMessagePendingText = "";
+          for (const task of tasks) {
+            yield* handleBackgroundTaskCompletion(context, task);
+          }
+          if (sanitizedText.length > 0) {
+            yield* emit(
+              makeAcpContentDeltaEvent({
+                stamp: yield* stamp,
+                provider: PROVIDER,
+                threadId: input.threadId,
+                turnId: turn.turnId,
+                text: sanitizedText,
+                rawPayload: {},
+              }),
+            );
+          }
+        }
         yield* promoteBackgroundCommands(context);
         yield* finishSubagents(
           context,

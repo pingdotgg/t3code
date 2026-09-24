@@ -775,6 +775,143 @@ it.layer(layer)("AntigravityAdapter", (it) => {
     }),
   );
 
+  it.effect(
+    "suppresses background task <system_message> from assistant text and emits task.completed",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.adapter.startSession({
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+        });
+        const sending = yield* h.adapter
+          .sendTurn({ threadId, input: "Run test suite in background" })
+          .pipe(Effect.forkChild);
+        const prompt = yield* h.nextPrompt;
+        yield* h.emitNative({
+          _tag: "ToolCallUpdated",
+          toolCall: {
+            toolCallId: "task-1183",
+            kind: "execute",
+            status: "inProgress",
+            command: "npm test",
+            data: {},
+          },
+          rawPayload: {},
+        });
+        yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
+        yield* Fiber.join(sending);
+        const started = yield* h.waitForEvent((event) => event.type === "task.started");
+        expect(started.payload.taskId).toBe("task-1183");
+
+        // The background task completion notification arrives as a ContentDelta with <system_message>
+        const backgroundNotification =
+          "<system_message> Background task session-uuid/task-1183 has completed. Task exit code: 0 Execution output:\nAll 45 tests passed\n</system_message>";
+        yield* h.emitNative({
+          _tag: "ContentDelta",
+          text: backgroundNotification,
+          rawPayload: {},
+        });
+
+        const completed = yield* h.waitForEvent((event) => event.type === "task.completed");
+        expect(completed.payload.taskId).toBe("task-1183");
+        expect(completed.payload.status).toBe("completed");
+        expect(completed.payload.summary).toBe("All 45 tests passed");
+
+        // Verify the command tool call was updated with structured output and exit code
+        const toolCompleted = h.seen.find(
+          (event) =>
+            event.type === "item.completed" &&
+            event.payload.itemType === "command_execution" &&
+            event.itemId === "task-1183",
+        );
+        expect(
+          toolCompleted?.type === "item.completed" ? toolCompleted.payload.data : undefined,
+        ).toMatchObject({
+          item: { aggregatedOutput: "All 45 tests passed", exitCode: 0 },
+        });
+
+        // Assert that NO content.delta containing <system_message>, task output, or exit code leaked into assistant text
+        const contentDeltas = h.seen.filter((event) => event.type === "content.delta");
+        for (const delta of contentDeltas) {
+          expect(delta.payload.delta).not.toContain("<system_message>");
+          expect(delta.payload.delta).not.toContain("Background task");
+          expect(delta.payload.delta).not.toContain("All 45 tests passed");
+          expect(delta.payload.delta).not.toContain("Task exit code: 0");
+        }
+      }),
+  );
+
+  it.effect(
+    "buffers streamed system message across content chunks and preserves surrounding text",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.adapter.startSession({
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+        });
+        const sending = yield* h.adapter
+          .sendTurn({ threadId, input: "Run watch command" })
+          .pipe(Effect.forkChild);
+        const prompt = yield* h.nextPrompt;
+        yield* h.emitNative({
+          _tag: "ToolCallUpdated",
+          toolCall: {
+            toolCallId: "watch-99",
+            kind: "execute",
+            status: "inProgress",
+            command: "watch",
+            data: {},
+          },
+          rawPayload: {},
+        });
+        yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
+        yield* Fiber.join(sending);
+        yield* h.waitForEvent((event) => event.type === "task.started");
+
+        // Stream chunk 1: text before + partial prefix
+        yield* h.emitNative({
+          _tag: "ContentDelta",
+          text: "Running smoothly. <sys",
+          rawPayload: {},
+        });
+
+        const firstDelta = yield* h.waitForEvent(
+          (event): event is Extract<ProviderRuntimeEvent, { type: "content.delta" }> =>
+            event.type === "content.delta" && event.payload.delta === "Running smoothly. ",
+        );
+        expect(firstDelta.payload.delta).toBe("Running smoothly. ");
+
+        // Stream chunk 2: remainder of system message + trailing text
+        yield* h.emitNative({
+          _tag: "ContentDelta",
+          text: "tem_message> Background task watch-99 failed. Task exit code: 1 Execution output:\nProcess crashed\n</system_message> Task has finished.",
+          rawPayload: {},
+        });
+
+        const taskCompleted = yield* h.waitForEvent((event) => event.type === "task.completed");
+        expect(taskCompleted.payload.taskId).toBe("watch-99");
+        expect(taskCompleted.payload.status).toBe("failed");
+        expect(taskCompleted.payload.summary).toBe("Process crashed");
+
+        const secondDelta = yield* h.waitForEvent(
+          (event): event is Extract<ProviderRuntimeEvent, { type: "content.delta" }> =>
+            event.type === "content.delta" && event.payload.delta === " Task has finished.",
+        );
+        expect(secondDelta.payload.delta).toBe(" Task has finished.");
+
+        // Verify total content.delta events contain only assistant text
+        const allDeltas = h.seen.filter((event) => event.type === "content.delta");
+        const fullText = allDeltas.map((e) => e.payload.delta).join("");
+        expect(fullText).toBe("Running smoothly.  Task has finished.");
+        expect(fullText).not.toContain("<system_message>");
+        expect(fullText).not.toContain("Process crashed");
+      }),
+  );
+
   it.effect("keeps a launched batch active while child tools continue", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
