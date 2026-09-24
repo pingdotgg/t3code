@@ -24,6 +24,10 @@ Choose CPU to avoid GPU use, or select a specific GPU on the transcription
 environment. If that GPU fails or becomes unavailable, transcription reports an
 error instead of switching to CPU.
 
+**Model unload** defaults to 15 minutes of inactivity on the selected environment.
+Choose Never to keep the model ready until the environment stops, or Immediately
+to release its memory after each transcription.
+
 Add names, technical terms, and other uncommon vocabulary to the **Dictionary**.
 The words are stored on the selected transcription environment and apply to every
 web or desktop client that uses it.

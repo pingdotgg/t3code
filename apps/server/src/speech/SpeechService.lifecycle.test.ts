@@ -131,6 +131,66 @@ it.effect("prepares a batch model before audio arrives and reuses it for transcr
   }).pipe(Effect.provide(layer)),
 );
 
+it.effect("unloads after the chosen idle period and reloads on the next recording", () =>
+  Effect.gen(function* () {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    try {
+      const speech = yield* SpeechService.SpeechService;
+      yield* speech.updateModelUnloadTimeout("min_2");
+      yield* speech.transcribe(pcm());
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(2 * 60_000 - 1));
+      expect(native.dispose).not.toHaveBeenCalled();
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(1));
+      expect(native.dispose).toHaveBeenCalledOnce();
+      yield* speech.transcribe(pcm());
+      expect(loadNative).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("keeps prepared batch models through the maximum recording and honors Never", () =>
+  Effect.gen(function* () {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    try {
+      const speech = yield* SpeechService.SpeechService;
+      yield* speech.updateModelUnloadTimeout("min_2");
+      yield* speech.prepareModel;
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(2 * 60_000));
+      expect(native.dispose).not.toHaveBeenCalled();
+      yield* speech.updateModelUnloadTimeout("never");
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(60 * 60_000));
+      expect(native.dispose).not.toHaveBeenCalled();
+      yield* speech.updateModelUnloadTimeout("immediately");
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+      expect(native.dispose).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("waits for an active stream before immediate unloading", () =>
+  Effect.gen(function* () {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    try {
+      const speech = yield* SpeechService.SpeechService;
+      yield* speech.updateModelUnloadTimeout("immediately");
+      yield* Effect.gen(function* () {
+        const stream = yield* speech.startStream;
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(60_000));
+        expect(native.dispose).not.toHaveBeenCalled();
+        yield* stream.finish;
+      }).pipe(Effect.scoped);
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+      expect(native.dispose).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  }).pipe(Effect.provide(layer)),
+);
+
 it.effect("recognizes the correction word without showing it in the dictionary", () =>
   Effect.gen(function* () {
     native.transcribe.mockResolvedValueOnce({ text: "I want orange, er, yellow." });

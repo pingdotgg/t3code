@@ -181,6 +181,16 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "updateModelUnloadTimeout",
+        Effect.fn("environment.voice.updateModelUnloadTimeout")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          return yield* speech
+            .updateModelUnloadTimeout(args.payload.timeout)
+            .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
+        }),
+      )
+      .handle(
         "updateLanguage",
         Effect.fn("environment.voice.updateLanguage")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);

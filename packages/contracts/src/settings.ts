@@ -55,6 +55,7 @@ import {
   SpeechAcceleration,
   SpeechCustomWords,
   SpeechLanguage,
+  SpeechModelUnloadTimeout,
   SpeechPostProcessingPrompts,
 } from "./speech.ts";
 
@@ -1223,6 +1224,9 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
   ),
   speechAcceleration: SpeechAcceleration.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
+  speechModelUnloadTimeout: SpeechModelUnloadTimeout.pipe(
+    Schema.withDecodingDefault(Effect.succeed("min_15")),
+  ),
   speechLanguage: SpeechLanguage.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
   speechCustomWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   speechRemoveFillerWords: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -1667,6 +1671,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   speechModelId: Schema.optionalKey(Schema.String),
   speechAcceleration: Schema.optionalKey(SpeechAcceleration),
+  speechModelUnloadTimeout: Schema.optionalKey(SpeechModelUnloadTimeout),
   speechLanguage: Schema.optionalKey(SpeechLanguage),
   speechCustomWords: Schema.optionalKey(SpeechCustomWords),
   speechRemoveFillerWords: Schema.optionalKey(Schema.Boolean),

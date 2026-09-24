@@ -13,6 +13,16 @@ export const SpeechAcceleration = Schema.Union([
   Schema.String.check(Schema.isPattern(/^gpu:.+/), Schema.isMaxLength(500)),
 ]);
 export type SpeechAcceleration = typeof SpeechAcceleration.Type;
+export const SpeechModelUnloadTimeout = Schema.Literals([
+  "never",
+  "immediately",
+  "min_2",
+  "min_5",
+  "min_10",
+  "min_15",
+  "hour_1",
+]);
+export type SpeechModelUnloadTimeout = typeof SpeechModelUnloadTimeout.Type;
 export const SpeechLanguage = Schema.String.check(Schema.isMinLength(2), Schema.isMaxLength(16));
 export type SpeechLanguage = typeof SpeechLanguage.Type;
 export const SpeechGpuDevice = Schema.Struct({ id: Schema.String, name: Schema.String });
@@ -68,6 +78,9 @@ export const EnvironmentSpeechStatus = Schema.Union([
     language: SpeechLanguage.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
     effectiveLanguage: SpeechLanguage.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
     acceleration: SpeechAcceleration.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
+    modelUnloadTimeout: SpeechModelUnloadTimeout.pipe(
+      Schema.withDecodingDefault(Effect.succeed("min_15")),
+    ),
     gpuDevices: Schema.Array(SpeechGpuDevice).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
     customWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
     removeFillerWords: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -83,6 +96,9 @@ export const EnvironmentSpeechCustomWordsRequest = Schema.Struct({ words: Speech
 export const EnvironmentSpeechFillerWordsRequest = Schema.Struct({ enabled: Schema.Boolean });
 export const EnvironmentSpeechAccelerationRequest = Schema.Struct({
   acceleration: SpeechAcceleration,
+});
+export const EnvironmentSpeechModelUnloadTimeoutRequest = Schema.Struct({
+  timeout: SpeechModelUnloadTimeout,
 });
 export const EnvironmentSpeechLanguageRequest = Schema.Struct({ language: SpeechLanguage });
 export const SpeechPostProcessingPrompt = Schema.Struct({

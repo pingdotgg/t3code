@@ -8,6 +8,7 @@ import {
   updateEnvironmentSpeechCustomWords,
   updateEnvironmentSpeechFillerWordRemoval,
   updateEnvironmentSpeechAcceleration,
+  updateEnvironmentSpeechModelUnloadTimeout,
   updateEnvironmentSpeechLanguage,
 } from "@t3tools/client-runtime/voice-input";
 import type {
@@ -15,6 +16,7 @@ import type {
   EnvironmentSpeechModel,
   EnvironmentSpeechStatus,
   SpeechAcceleration,
+  SpeechModelUnloadTimeout,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { CheckIcon, DownloadIcon, GlobeIcon, RefreshCwIcon, Trash2Icon, XIcon } from "lucide-react";
@@ -332,6 +334,9 @@ export function VoiceSettingsPanel() {
     ? (currentStatus.removeFillerWords ?? true)
     : true;
   const acceleration = currentStatus?.supported ? (currentStatus.acceleration ?? "auto") : "auto";
+  const modelUnloadTimeout = currentStatus?.supported
+    ? (currentStatus.modelUnloadTimeout ?? "min_15")
+    : "min_15";
   const gpuDevices = currentStatus?.supported ? (currentStatus.gpuDevices ?? []) : [];
   const normalizedCustomWord = customWordDraft
     .replace(/[<>"']/g, "")
@@ -807,6 +812,61 @@ export function VoiceSettingsPanel() {
       </SettingsSection>
       <VoicePostProcessingSettings />
       <SettingsSection title="Advanced">
+        <SettingsRow
+          {...searchableSetting("speech-model-unload")}
+          description="Unload the model after it has been idle on the selected environment. Never keeps it loaded until that environment stops."
+          control={
+            <Select
+              value={modelUnloadTimeout}
+              disabled={!currentStatus?.supported || operation !== null}
+              onValueChange={(value) => {
+                if (!prepared || !value) return;
+                setOperation("model-unload");
+                void runtime
+                  .runPromise(
+                    updateEnvironmentSpeechModelUnloadTimeout(
+                      prepared,
+                      value as SpeechModelUnloadTimeout,
+                    ),
+                  )
+                  .then((nextStatus) => setStatus({ prepared, value: nextStatus }))
+                  .catch((error) => {
+                    toastManager.add({
+                      type: "error",
+                      title: "Could not update model unload setting",
+                      description: error instanceof Error ? error.message : String(error),
+                    });
+                  })
+                  .finally(() => setOperation(null));
+              }}
+            >
+              <SelectTrigger size="sm" aria-label="Model unload" className="max-w-80">
+                <SelectValue>
+                  {
+                    {
+                      never: "Never",
+                      immediately: "Immediately",
+                      min_2: "2 minutes",
+                      min_5: "5 minutes",
+                      min_10: "10 minutes",
+                      min_15: "15 minutes",
+                      hour_1: "1 hour",
+                    }[modelUnloadTimeout]
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem value="never">Never</SelectItem>
+                <SelectItem value="immediately">Immediately</SelectItem>
+                <SelectItem value="min_2">2 minutes</SelectItem>
+                <SelectItem value="min_5">5 minutes</SelectItem>
+                <SelectItem value="min_10">10 minutes</SelectItem>
+                <SelectItem value="min_15">15 minutes</SelectItem>
+                <SelectItem value="hour_1">1 hour</SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
         <SettingsRow
           {...searchableSetting("speech-acceleration")}
           description="Choose where transcription runs on the selected environment. Auto uses a GPU when available."

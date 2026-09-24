@@ -63,6 +63,7 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
       Layer.provide(
         Layer.succeed(SpeechService.SpeechService, {
           status: Effect.succeed({ supported: false as const, reason: "test" }),
+          prepareModel: Effect.void,
           models: Effect.succeed({ models: [] }),
           downloadModel: () => Effect.succeed({ supported: false as const, reason: "test" }),
           selectModel: () => Effect.succeed({ supported: false as const, reason: "test" }),
@@ -71,6 +72,8 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
           updateFillerWordRemoval: () =>
             Effect.succeed({ supported: false as const, reason: "test" }),
           updateAcceleration: () => Effect.succeed({ supported: false as const, reason: "test" }),
+          updateModelUnloadTimeout: () =>
+            Effect.succeed({ supported: false as const, reason: "test" }),
           updateLanguage: () => Effect.succeed({ supported: false as const, reason: "test" }),
           transcribe,
           startStream: Effect.die("not used"),
@@ -143,6 +146,7 @@ effectIt.effect.each([
       );
       const service = Layer.succeed(SpeechService.SpeechService, {
         status: Effect.succeed({ supported: false as const, reason: "test" }),
+        prepareModel: Effect.void,
         models: Effect.succeed({ models: [] }),
         downloadModel: () => Effect.fail(error),
         selectModel: () => Effect.fail(error),
@@ -150,6 +154,7 @@ effectIt.effect.each([
         updateCustomWords: () => Effect.fail(error),
         updateFillerWordRemoval: () => Effect.fail(error),
         updateAcceleration: () => Effect.fail(error),
+        updateModelUnloadTimeout: () => Effect.fail(error),
         updateLanguage: () => Effect.fail(error),
         transcribe: () => Effect.fail(error),
         startStream: Effect.fail(error),

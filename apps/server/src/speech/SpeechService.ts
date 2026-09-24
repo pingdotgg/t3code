@@ -3,10 +3,12 @@ import type {
   EnvironmentSpeechStatus,
   SpeechAcceleration,
   SpeechLanguage,
+  SpeechModelUnloadTimeout,
 } from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -157,6 +159,9 @@ export class SpeechService extends Context.Service<
     readonly updateAcceleration: (
       acceleration: SpeechAcceleration,
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
+    readonly updateModelUnloadTimeout: (
+      timeout: SpeechModelUnloadTimeout,
+    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly updateLanguage: (
       language: SpeechLanguage,
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
@@ -193,10 +198,64 @@ export const make = Effect.gen(function* () {
   let activeOperation: Promise<unknown> | undefined;
   let closing = false;
   const lifetime = new AbortController();
+  let unloadTimeout: SpeechModelUnloadTimeout = "min_15";
+  let unloadFiber: Fiber.Fiber<void, never> | undefined;
+  let unloadGeneration = 0;
+  let lastUse = 0;
+  const unloadMilliseconds: Record<Exclude<SpeechModelUnloadTimeout, "never">, number> = {
+    immediately: 0,
+    min_2: 2 * 60_000,
+    min_5: 5 * 60_000,
+    min_10: 10 * 60_000,
+    min_15: 15 * 60_000,
+    hour_1: 60 * 60_000,
+  };
+  const clearUnloadTimer = () => {
+    unloadGeneration += 1;
+    if (unloadFiber) Effect.runFork(Fiber.interrupt(unloadFiber));
+    unloadFiber = undefined;
+  };
+  const scheduleUnload = (minimumDelay = 0) => {
+    clearUnloadTimer();
+    if (!model || closing || unloadTimeout === "never") return;
+    const generation = unloadGeneration;
+    const delay = Math.max(
+      minimumDelay,
+      unloadMilliseconds[unloadTimeout] - (performance.now() - lastUse),
+    );
+    unloadFiber = Effect.runFork(
+      Effect.sleep(delay).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            if (generation !== unloadGeneration) return;
+            unloadFiber = undefined;
+            if (activeOperation || activeTranscriptions || loading) {
+              scheduleUnload(1000);
+              return;
+            }
+            const loaded = model;
+            model = undefined;
+            loadedModelId = undefined;
+            loadedAcceleration = undefined;
+            if (loaded) {
+              const pending = Promise.resolve().then(() => loaded.dispose());
+              activeOperation = pending;
+              void pending
+                .catch(() => undefined)
+                .finally(() => {
+                  if (activeOperation === pending) activeOperation = undefined;
+                });
+            }
+          }),
+        ),
+      ),
+    );
+  };
 
   yield* Effect.addFinalizer(() =>
     Effect.promise(async () => {
       closing = true;
+      clearUnloadTimer();
       lifetime.abort();
       await model?.dispose();
       model = undefined;
@@ -249,8 +308,11 @@ export const make = Effect.gen(function* () {
     signal = lifetime.signal,
     acceleration = "auto",
   ) => {
-    if (model && loadedModelId === definition.id && loadedAcceleration === acceleration)
+    if (model && loadedModelId === definition.id && loadedAcceleration === acceleration) {
+      lastUse = performance.now();
+      scheduleUnload();
       return model;
+    }
     if (model) {
       await model.dispose();
       model = undefined;
@@ -267,6 +329,9 @@ export const make = Effect.gen(function* () {
             throw new SpeechBusyError({ operation: "model preparation" });
           }
           model = loaded;
+          lastUse = performance.now();
+          // Batch preparation can precede up to five minutes of recording.
+          scheduleUnload();
           loadedModelId = definition.id;
           loadedAcceleration = acceleration;
           loading = undefined;
@@ -297,6 +362,14 @@ export const make = Effect.gen(function* () {
 
   const readSettings = (operation: string) =>
     serverSettings.getSettings.pipe(
+      Effect.tap((settings) =>
+        Effect.sync(() => {
+          if (unloadTimeout !== settings.speechModelUnloadTimeout) {
+            unloadTimeout = settings.speechModelUnloadTimeout;
+            scheduleUnload();
+          }
+        }),
+      ),
       Effect.mapError((cause) => new SpeechOperationError({ operation, cause })),
     );
 
@@ -318,6 +391,10 @@ export const make = Effect.gen(function* () {
           return await pending;
         } finally {
           activeOperation = undefined;
+          lastUse = performance.now();
+          scheduleUnload(
+            operation === "model preparation" ? MAX_SPEECH_DURATION_SECONDS * 1000 : 0,
+          );
         }
       },
       catch: (cause) => speechError(operation, cause),
@@ -341,6 +418,7 @@ export const make = Effect.gen(function* () {
       language: settings.speechLanguage,
       effectiveLanguage: effectiveSpeechLanguage(definition, settings.speechLanguage),
       acceleration: settings.speechAcceleration,
+      modelUnloadTimeout: settings.speechModelUnloadTimeout,
       gpuDevices: await (gpuDevices ??= listNativeSpeechGpuDevices().catch(() => [])),
       customWords: normalizeSpeechCustomWords(settings.speechCustomWords),
       removeFillerWords: settings.speechRemoveFillerWords,
@@ -432,6 +510,8 @@ export const make = Effect.gen(function* () {
           }
           activeTranscriptions -= 1;
           if (activeOperation === released.promise) activeOperation = undefined;
+          lastUse = performance.now();
+          scheduleUnload();
           released.resolve();
         }),
       );
@@ -583,6 +663,10 @@ export const make = Effect.gen(function* () {
     updateAcceleration: (acceleration) =>
       writeSettings("acceleration update", { speechAcceleration: acceleration }).pipe(
         Effect.andThen(freshStatus("acceleration update")),
+      ),
+    updateModelUnloadTimeout: (timeout) =>
+      writeSettings("model unload timeout update", { speechModelUnloadTimeout: timeout }).pipe(
+        Effect.andThen(freshStatus("model unload timeout update")),
       ),
     updateLanguage: (language) =>
       writeSettings("language update", { speechLanguage: language }).pipe(

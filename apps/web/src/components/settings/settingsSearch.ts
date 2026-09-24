@@ -529,6 +529,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["voice speech gpu cpu hardware transcription"],
   },
   {
+    id: "speech-model-unload",
+    title: "Model unload",
+    to: "/settings/voice",
+    searchTerms: ["voice speech transcription memory idle timeout never"],
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/threads",
