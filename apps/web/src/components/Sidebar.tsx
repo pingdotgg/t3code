@@ -206,6 +206,8 @@ import {
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
+  type SidebarSubagentCounts,
+  deriveSidebarSubagentCounts,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
@@ -1046,6 +1048,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // the descriptor is not loaded. Pinning itself lives in the context menu.
   pinningSupported: boolean;
   isPinned: boolean;
+  // Present only while a subagent of this thread is still working.
+  subagentCounts: SidebarSubagentCounts | undefined;
   // Present on rows whose server supports every drop outcome: dnd-kit
   // sortable bag applied to the row root so the whole row drags (the
   // pointer sensor's distance constraint keeps plain clicks working).
@@ -1990,12 +1994,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 </span>
               )}
             </div>
-            <div className="mt-1 flex min-w-0">
+            <div className="mt-1 flex min-w-0 items-center gap-2">
               {title}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
                   Regenerating title
                 </span>
+              ) : null}
+              {props.subagentCounts ? (
+                <SidebarSubagentCountsBadge counts={props.subagentCounts} />
               ) : null}
             </div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
@@ -2047,6 +2054,41 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     </li>
   );
 });
+
+function SidebarSubagentCountsBadge(props: { counts: SidebarSubagentCounts }) {
+  const { working, done, failed } = props.counts;
+  const label = [
+    `${working} subagent${working === 1 ? "" : "s"} working`,
+    done > 0 ? `${done} done` : null,
+    failed > 0 ? `${failed} failed` : null,
+  ]
+    .filter((part) => part !== null)
+    .join(", ");
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-xs font-medium tabular-nums"
+    >
+      <span className="inline-flex items-center gap-0.5 text-sky-600 dark:text-sky-400">
+        <CircleDashedIcon aria-hidden className="size-3.5 shrink-0" />
+        {working}
+      </span>
+      {done > 0 ? (
+        <span className="inline-flex items-center gap-0.5 text-emerald-700 dark:text-emerald-300">
+          <CheckIcon aria-hidden className="size-3 shrink-0" />
+          {done}
+        </span>
+      ) : null}
+      {failed > 0 ? (
+        <span className="inline-flex items-center gap-0.5 text-red-700 dark:text-red-300">
+          <CircleAlertIcon aria-hidden className="size-3.5 shrink-0" />
+          {failed}
+        </span>
+      ) : null}
+    </span>
+  );
+}
 
 function latestRunDiff(
   thread: SidebarThreadSummary,
@@ -2214,6 +2256,7 @@ export default function Sidebar() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
+  const subagentCountsByThreadKey = useMemo(() => deriveSidebarSubagentCounts(threads), [threads]);
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -4811,6 +4854,7 @@ export default function Sidebar() {
                                 .threadPinning === true
                             }
                             isPinned={thread.pinnedAt != null}
+                            subagentCounts={subagentCountsByThreadKey.get(threadKey)}
                             sortable={sortable}
                             dropVerb={
                               dragState?.activeKey === threadKey

@@ -6,6 +6,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
@@ -1364,4 +1365,56 @@ export function sortScopedProjectsForSidebar<
       left.environmentId.localeCompare(right.environmentId) ||
       left.id.localeCompare(right.id),
   );
+}
+
+export interface SidebarSubagentCounts {
+  readonly working: number;
+  readonly done: number;
+  readonly failed: number;
+}
+
+type SidebarSubagentThread = Pick<
+  SidebarThreadSummary,
+  "environmentId" | "id" | "lineage" | "createdAt" | "latestUserMessageAt"
+> & {
+  readonly source: Pick<SidebarThreadSummary["source"], "status" | "activityRunStatus">;
+};
+
+/**
+ * Subagent tallies keyed by the parent's scoped thread key. Only parents with a subagent still working get an entry: a quiet
+ * thread must not carry a finished batch forever. Counts cover subagents
+ * spawned since the parent's latest user message, so earlier batches drop out
+ * when the user moves on.
+ */
+export function deriveSidebarSubagentCounts(
+  threads: ReadonlyArray<SidebarSubagentThread>,
+): ReadonlyMap<string, SidebarSubagentCounts> {
+  const key = (environmentId: EnvironmentId, threadId: ThreadId) =>
+    scopedThreadKey(scopeThreadRef(environmentId, threadId));
+  const parents = new Map(threads.map((thread) => [key(thread.environmentId, thread.id), thread]));
+  const tallies = new Map<string, { working: number; done: number; failed: number }>();
+  for (const thread of threads) {
+    const parentThreadId = thread.lineage.parentThreadId;
+    if (thread.lineage.relationshipToParent !== "subagent" || parentThreadId === null) continue;
+    const parentKey = key(thread.environmentId, parentThreadId);
+    const batchStartedAt = parents.get(parentKey)?.latestUserMessageAt ?? null;
+    if (batchStartedAt !== null && thread.createdAt < batchStartedAt) continue;
+    const status = thread.source.activityRunStatus ?? thread.source.status;
+    const tally = tallies.get(parentKey) ?? { working: 0, done: 0, failed: 0 };
+    if (["preparing", "queued", "starting", "running", "waiting"].includes(status)) {
+      tally.working += 1;
+    } else if (status === "completed") {
+      tally.done += 1;
+    } else if (status === "failed" || status === "interrupted") {
+      tally.failed += 1;
+    } else {
+      continue;
+    }
+    tallies.set(parentKey, tally);
+  }
+  const counts = new Map<string, SidebarSubagentCounts>();
+  for (const [parentKey, tally] of tallies) {
+    if (tally.working > 0) counts.set(parentKey, tally);
+  }
+  return counts;
 }
