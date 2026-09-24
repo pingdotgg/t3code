@@ -51,7 +51,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as HttpEffect from "effect/unstable/http/HttpEffect";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
@@ -60,6 +60,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { requireEnvironmentScope } from "../auth/http.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { formatHostForUrl } from "../startupAccess.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import {
   SERVICE_STATE_FILE,
@@ -297,7 +298,7 @@ function endpointRequestPort(url: URL): number {
   return Number(url.port || (url.protocol === "https:" ? 443 : 80));
 }
 
-function isAllowedEndpointOrigin(input: {
+function hasAllowedEndpointOriginHost(input: {
   readonly origin: RelayManagedEndpointOrigin;
   readonly requestUrl: string;
 }): boolean {
@@ -310,7 +311,39 @@ function isAllowedEndpointOrigin(input: {
     return false;
   }
 
+  return true;
+}
+
+function isAllowedEndpointOrigin(input: {
+  readonly origin: RelayManagedEndpointOrigin;
+  readonly requestUrl: string;
+}): boolean {
+  if (!hasAllowedEndpointOriginHost(input)) {
+    return false;
+  }
+
+  const url = new URL(input.requestUrl);
   return input.origin.localHttpPort === endpointRequestPort(url);
+}
+
+export function managedTunnelOriginForAddress(
+  address: HttpServer.Address,
+): RelayManagedEndpointOrigin | null {
+  if (address._tag !== "TcpAddress") {
+    return null;
+  }
+
+  const listenerHost = normalizeHostname(address.hostname);
+  const localHttpHost =
+    listenerHost === "0.0.0.0" ? "127.0.0.1" : listenerHost === "::" ? "::1" : listenerHost;
+  if (!isLoopbackHostname(localHttpHost)) {
+    return null;
+  }
+
+  return {
+    localHttpHost,
+    localHttpPort: address.port,
+  };
 }
 
 // A managed (Cloudflare tunnel) endpoint is provisioned by the relay and must
@@ -434,7 +467,26 @@ const cloudLinkProofHandler = Effect.fn("environment.cloud.linkProof")(
         message: "Invalid managed endpoint origin.",
       });
     }
-    const proof = yield* makeCloudLinkProof(dependencies, request, requestUrl);
+    let proofRequest = request;
+    let proofRequestUrl = requestUrl;
+    if (request.endpoint.providerKind === "cloudflare_tunnel") {
+      const server = yield* HttpServer.HttpServer;
+      const listenerOrigin = managedTunnelOriginForAddress(server.address);
+      if (
+        listenerOrigin === null ||
+        !hasAllowedEndpointOriginHost({ origin: request.origin, requestUrl })
+      ) {
+        return yield* new EnvironmentHttpBadRequestError({
+          message: "Invalid managed endpoint origin.",
+        });
+      }
+      proofRequest = {
+        ...request,
+        origin: listenerOrigin,
+      };
+      proofRequestUrl = `http://${formatHostForUrl(listenerOrigin.localHttpHost)}:${listenerOrigin.localHttpPort}`;
+    }
+    const proof = yield* makeCloudLinkProof(dependencies, proofRequest, proofRequestUrl);
     yield* appendCloudCredentialResponseHeaders;
     return proof satisfies RelayEnvironmentLinkProof;
   },
