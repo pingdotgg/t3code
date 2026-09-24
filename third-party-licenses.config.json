@@ -467,8 +467,8 @@
       }
     },
     {
-      "name": "@opencode-ai/sdk",
-      "sourceUrl": "https://github.com/anomalyco/opencode/tree/dev/packages/sdk/js",
+      "repositoryUrl": "https://github.com/anomalyco/opencode",
+      "sourceUrl": "https://github.com/anomalyco/opencode",
       "generatedNotice": {
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) 2025 opencode"]

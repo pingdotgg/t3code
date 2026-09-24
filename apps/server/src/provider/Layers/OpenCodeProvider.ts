@@ -26,7 +26,7 @@ import {
   openCodeRuntimeErrorDetail,
   type OpenCodeInventory,
 } from "../opencodeRuntime.ts";
-import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
+import type { AgentInfo, ModelInfo } from "@opencode/client";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 
 const OPENCODE_PRESENTATION = {
@@ -168,8 +168,8 @@ function inferDefaultVariant(
   return undefined;
 }
 
-function inferDefaultAgent(agents: ReadonlyArray<Agent>): string | undefined {
-  return agents.find((agent) => agent.name === "build")?.name ?? agents[0]?.name ?? undefined;
+function inferDefaultAgent(agents: ReadonlyArray<AgentInfo>): string | undefined {
+  return agents[0]?.id;
 }
 
 const DEFAULT_OPENCODE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
@@ -201,17 +201,10 @@ const DEFAULT_OPENCODE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabi
 
 function openCodeCapabilitiesForModel(input: {
   readonly providerID: string;
-  readonly model: ProviderListResponse["all"][number]["models"][string];
-  readonly agents: ReadonlyArray<Agent>;
+  readonly model: ModelInfo;
+  readonly agents: ReadonlyArray<AgentInfo>;
 }): ModelCapabilities {
-  const rawVariantValues = Object.keys(input.model.variants ?? {});
-  // When a model advertises no variants, synthesize the standard reasoning
-  // levels so the composer still offers a Reasoning selector (mirrors the
-  // Codex/Grok experience where reasoning is always configurable). The set
-  // covers the common OpenCode variant spectrum; `inferDefaultVariant`
-  // picks the provider-appropriate default (e.g. medium for openai/opencode).
-  const variantValues =
-    rawVariantValues.length > 0 ? rawVariantValues : ["low", "medium", "high", "xhigh"];
+  const variantValues = input.model.variants.map((variant) => variant.id);
   const defaultVariant = inferDefaultVariant(input.providerID, variantValues);
   const variantOptions = variantValues.map((value) =>
     defaultVariant === value
@@ -223,9 +216,9 @@ function openCodeCapabilitiesForModel(input: {
   );
   const defaultAgent = inferDefaultAgent(primaryAgents);
   const agentOptions = primaryAgents.map((agent) =>
-    defaultAgent === agent.name
-      ? { id: agent.name, label: titleCaseSlug(agent.name), isDefault: true as const }
-      : { id: agent.name, label: titleCaseSlug(agent.name) },
+    defaultAgent === agent.id
+      ? { id: agent.id, label: titleCaseSlug(agent.name), isDefault: true as const }
+      : { id: agent.id, label: titleCaseSlug(agent.name) },
   );
   return createModelCapabilities({
     optionDescriptors: [
@@ -256,33 +249,37 @@ function openCodeCapabilitiesForModel(input: {
 }
 
 function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerProviderModel> {
-  const connected = new Set(input.providerList.connected);
+  // ProviderInfo exposes availability as `activation` (auto|enabled|disabled);
+  // disabled providers and disabled models must not surface as selectable or
+  // count toward the connected-provider probe.
+  const activeProviderNames = new Map(
+    input.providers
+      .filter((provider) => provider.activation !== "disabled")
+      .map((provider) => [provider.id, provider.name]),
+  );
   const models: Array<ServerProviderModel> = [];
 
-  for (const provider of input.providerList.all) {
-    if (!connected.has(provider.id)) {
+  for (const model of input.models) {
+    if (model.enabled === false || !activeProviderNames.has(model.providerID)) {
+      continue;
+    }
+    const name = nonEmptyTrimmed(model.name);
+    if (!name) {
       continue;
     }
 
-    for (const model of Object.values(provider.models)) {
-      const name = nonEmptyTrimmed(model.name);
-      if (!name) {
-        continue;
-      }
-
-      const subProvider = nonEmptyTrimmed(provider.name);
-      models.push({
-        slug: `${provider.id}/${model.id}`,
-        name,
-        ...(subProvider ? { subProvider } : {}),
-        isCustom: false,
-        capabilities: openCodeCapabilitiesForModel({
-          providerID: provider.id,
-          model,
-          agents: input.agents,
-        }),
-      });
-    }
+    const subProvider = nonEmptyTrimmed(activeProviderNames.get(model.providerID));
+    models.push({
+      slug: `${model.providerID}/${model.id}`,
+      name,
+      ...(subProvider ? { subProvider } : {}),
+      isCustom: false,
+      capabilities: openCodeCapabilitiesForModel({
+        providerID: model.providerID,
+        model,
+        agents: input.agents,
+      }),
+    });
   }
 
   return models.toSorted((left, right) => left.name.localeCompare(right.name));
@@ -299,7 +296,7 @@ export function openCodeSkillsToServerProviderSkills(
   const skills: ServerProviderSkill[] = [];
   for (const skill of input ?? []) {
     const name = trimOptional(skill.name);
-    const path = trimOptional(skill.location);
+    const path = trimOptional(skill.path);
     if (!name || !path) {
       continue;
     }
@@ -323,14 +320,12 @@ export function openCodeCommandsToServerProviderSlashCommands(
   const names = new Set([COMPACT_SLASH_COMMAND.name]);
   for (const command of input ?? []) {
     const name = trimOptional(command.name);
-    if (!name || names.has(name) || command.source === "skill") continue;
+    if (!name || names.has(name)) continue;
     names.add(name);
     const description = trimOptional(command.description);
-    const hint = trimOptional(command.hints.join(" "));
     commands.push({
       name,
       ...(description ? { description } : {}),
-      ...(hint ? { input: { hint } } : {}),
     });
   }
   return commands;
@@ -504,9 +499,9 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       .loadOpenCodeInventory(
         openCodeRuntime.createOpenCodeSdkClient({
           baseUrl: server.url,
-          directory: cwd,
           ...(server.serverPassword !== undefined ? { serverPassword: server.serverPassword } : {}),
         }),
+        cwd,
       )
       .pipe(Effect.map((inventory) => ({ inventory, version: server.version })));
   const inventoryEffect = isExternalServer
@@ -540,7 +535,9 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
   const skills = openCodeSkillsToServerProviderSkills(inventoryExit.value.inventory.skills);
-  const connectedCount = inventoryExit.value.inventory.providerList.connected.length;
+  const connectedCount = inventoryExit.value.inventory.providers.filter(
+    (provider) => provider.activation !== "disabled",
+  ).length;
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,
     enabled: true,

@@ -1,4 +1,4 @@
-import type { OpencodeClient } from "@opencode-ai/sdk/v2";
+import type { OpenCodeClient } from "@opencode/client";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import {
@@ -34,13 +34,13 @@ describe("resolveOpenCodeConfigContent", () => {
     ).toBe('{"source":"caller"}');
   });
 
-  it("falls back to the inherited environment and then an empty config", () => {
+  it("falls back to the inherited environment and then undefined", () => {
     expect(
       resolveOpenCodeConfigContent(undefined, {
         OPENCODE_CONFIG_CONTENT: '{"source":"process"}',
       }),
     ).toBe('{"source":"process"}');
-    expect(resolveOpenCodeConfigContent(undefined, {})).toBe("{}");
+    expect(resolveOpenCodeConfigContent(undefined, {})).toBeUndefined();
   });
 });
 
@@ -52,6 +52,21 @@ describe("resolveOpenCodeServerPassword", () => {
         {},
       ),
     ).toBe(" env password ");
+  });
+
+  it("prefers the v2 password environment variable", () => {
+    expect(
+      resolveOpenCodeServerPassword(
+        {
+          external: false,
+          environment: {
+            OPENCODE_PASSWORD: "v2-password",
+            OPENCODE_SERVER_PASSWORD: "legacy-password",
+          },
+        },
+        {},
+      ),
+    ).toBe("v2-password");
   });
 
   it("uses the settings password for a local server", () => {
@@ -85,46 +100,42 @@ describe("resolveOpenCodeServerPassword", () => {
 
 function makeHealthClient(
   result: (options?: { readonly signal?: AbortSignal }) => Promise<unknown>,
-): OpencodeClient {
+): OpenCodeClient {
   return {
-    global: {
-      health: result,
+    server: {
+      info: result,
     },
-  } as unknown as OpencodeClient;
+  } as unknown as OpenCodeClient;
 }
 
 describe("verifyOpenCodeServerVersion", () => {
   effectIt.effect("accepts a supported server version", () =>
     Effect.gen(function* () {
       const version = yield* verifyOpenCodeServerVersion(
-        makeHealthClient(() => Promise.resolve({ data: { healthy: true, version: "1.14.19" } })),
+        makeHealthClient(() => Promise.resolve({ version: "2.0.12" })),
       );
-      expect(version).toBe("1.14.19");
+      expect(version).toBe("2.0.12");
     }),
   );
 
   effectIt.effect("rejects a server below the supported version", () =>
     Effect.gen(function* () {
       const error = yield* verifyOpenCodeServerVersion(
-        makeHealthClient(() => Promise.resolve({ data: { healthy: true, version: "1.14.18" } })),
+        makeHealthClient(() => Promise.resolve({ version: "1.14.18" })),
       ).pipe(Effect.flip);
       expect(error).toBeInstanceOf(OpenCodeRuntimeError);
       expect(error.detail).toContain("v1.14.18 is too old");
     }),
   );
 
-  for (const data of [
-    { healthy: true },
-    { healthy: true, version: "not-a-version" },
-    { healthy: false, version: "1.14.19" },
-  ]) {
+  for (const data of [{ healthy: true }, { healthy: true, version: "not-a-version" }]) {
     effectIt.effect(`rejects an invalid health response: ${JSON.stringify(data)}`, () =>
       Effect.gen(function* () {
         const error = yield* verifyOpenCodeServerVersion(
-          makeHealthClient(() => Promise.resolve({ data })),
+          makeHealthClient(() => Promise.resolve(data)),
         ).pipe(Effect.flip);
         expect(error).toBeInstanceOf(OpenCodeRuntimeError);
-        expect(error.detail).toContain("requires OpenCode v1.14.19 or newer");
+        expect(error.detail).toContain("requires OpenCode v2.0.12 or newer");
       }),
     );
   }
@@ -185,16 +196,16 @@ const writeOutput = (stream) => new Promise((resolve, reject) => {
   stream.write("x".repeat(2 * 1024 * 1024), (error) => error ? reject(error) : resolve());
 });
 const server = createServer(async (request, response) => {
-  if (request.url.startsWith("/global/health")) {
+  if (request.url.startsWith("/api/info")) {
     response.setHeader("Content-Type", "application/json");
-    response.end(JSON.stringify({ healthy: true, version: "1.14.19" }));
+    response.end(JSON.stringify({ version: "2.0.12", pid: 1, urls: [], paths: { tmp: "/tmp" } }));
     return;
   }
   await Promise.all([writeOutput(process.stdout), writeOutput(process.stderr)]);
   response.end("drained");
 });
 server.listen(0, "127.0.0.1", () => {
-  process.stdout.write("opencode server listening on http://127.0.0.1:" + server.address().port + "\\n");
+  process.stdout.write("server listening on http://127.0.0.1:" + server.address().port + "\\n");
 });
 `,
         );
