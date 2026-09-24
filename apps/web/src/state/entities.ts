@@ -229,6 +229,15 @@ export function readEnvironmentSupportsPinReorder(environmentId: EnvironmentId):
   );
 }
 
+/** Whether the environment's server understands thread.auto-settle.set.
+    Same version-skew contract as settlement. */
+export function readEnvironmentSupportsAutoSettleOptOut(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadAutoSettleOptOut === true
+  );
+}
+
 export function readEnvironmentSupportsActiveReorder(environmentId: EnvironmentId): boolean {
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities

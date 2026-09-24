@@ -26,6 +26,7 @@ import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsStat
 import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
 import {
+  readEnvironmentSupportsAutoSettleOptOut,
   readEnvironmentSupportsPinning,
   readEnvironmentSupportsPinReorder,
   readEnvironmentSupportsActiveReorder,
@@ -104,6 +105,18 @@ function topOfPinnedRunOrderKey(): string | undefined {
     if (firstKey === null || shell.pinOrderKey < firstKey) firstKey = shell.pinOrderKey;
   }
   return pinOrderKeyBetween(null, firstKey) ?? undefined;
+}
+
+export class ThreadAutoSettleOptOutUnsupportedError extends Schema.TaggedError<ThreadAutoSettleOptOutUnsupportedError>()(
+  "ThreadAutoSettleOptOutUnsupportedError",
+  {
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return "This environment's server does not support turning auto-settle off per thread yet. Update the server to use it.";
+  }
 }
 
 export class ThreadPinningUnsupportedError extends Schema.TaggedError<ThreadPinningUnsupportedError>()(
@@ -198,6 +211,9 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const unpinThreadMutation = useAtomCommand(threadEnvironment.unpin, {
+    reportFailure: false,
+  });
+  const setThreadAutoSettleMutation = useAtomCommand(threadEnvironment.setAutoSettle, {
     reportFailure: false,
   });
   const reorderPinnedThreadMutation = useAtomCommand(threadEnvironment.reorderPin, {
@@ -556,6 +572,27 @@ export function useThreadActions() {
     [unsettleThreadMutation],
   );
 
+  /** Turns automatic settlement (inactivity, merged PR) on or off for one thread. */
+  const setThreadAutoSettle = useCallback(
+    async (target: ScopedThreadRef, enabled: boolean) => {
+      if (!readEnvironmentSupportsAutoSettleOptOut(target.environmentId)) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new ThreadAutoSettleOptOutUnsupportedError({
+              environmentId: target.environmentId,
+              threadId: target.threadId,
+            }),
+          ),
+        );
+      }
+      return setThreadAutoSettleMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, enabled },
+      });
+    },
+    [setThreadAutoSettleMutation],
+  );
+
   const pinThread = useCallback(
     async (target: ScopedThreadRef, opts: { orderKey?: string } = {}) => {
       // Version skew: never send the command to a server that predates it.
@@ -875,6 +912,7 @@ export function useThreadActions() {
       confirmAndUnpinThread,
       reorderPinnedThread,
       reorderActiveThread,
+      setThreadAutoSettle,
     }),
     [
       archiveThread,
@@ -884,6 +922,7 @@ export function useThreadActions() {
       pinThread,
       reorderPinnedThread,
       reorderActiveThread,
+      setThreadAutoSettle,
       settleThread,
       snoozeThread,
       unarchiveThread,

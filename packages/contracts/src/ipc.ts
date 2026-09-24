@@ -40,6 +40,8 @@ export interface ContextMenuItem<T extends string = string> {
   icon?: string;
   /** Inserts a visual section divider immediately before this item. */
   separatorBefore?: boolean;
+  /** Shows a check mark. Used to mark the current option inside a submenu. */
+  checked?: boolean;
   children?: readonly ContextMenuItem<T>[];
 }
 
@@ -55,6 +57,7 @@ export interface ContextMenuItemSchemaType {
   readonly header?: boolean;
   readonly icon?: string;
   readonly separatorBefore?: boolean;
+  readonly checked?: boolean;
   readonly children?: readonly ContextMenuItemSchemaType[];
 }
 
@@ -66,6 +69,7 @@ export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Sc
   header: Schema.optionalKey(Schema.Boolean),
   icon: Schema.optionalKey(Schema.String),
   separatorBefore: Schema.optionalKey(Schema.Boolean),
+  checked: Schema.optionalKey(Schema.Boolean),
   children: Schema.optionalKey(
     Schema.Array(
       Schema.suspend((): Schema.Codec<ContextMenuItemSchemaType> => ContextMenuItemSchema),
