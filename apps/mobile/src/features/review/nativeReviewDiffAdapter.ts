@@ -130,6 +130,7 @@ interface CachedNativeReviewDiffData {
 }
 
 interface PreparedNativeReviewFileRows {
+  readonly sourceLineStarts?: ReviewRenderableFile["sourceLineStarts"];
   readonly fileId: string;
   readonly filePath: string;
   readonly lineCount: number;
@@ -274,6 +275,7 @@ function createNoticeRow(fileId: string, suffix: string, text: string): NativeRe
 }
 
 function noticeRowsForFile(file: ReviewRenderableFile): ReadonlyArray<NativeReviewDiffRow> {
+  if (file.sourceRowCount !== undefined) return [];
   if (file.notice) return [createNoticeRow(file.id, "loading", file.notice)];
   if (file.rows.length > 0) {
     return [];
@@ -411,7 +413,11 @@ function mapLineRow(
 ): NativeReviewDiffRow {
   return {
     kind: "line",
-    id: `${file.id}:line:${rowIndex}:${row.id}`,
+    id:
+      row.sourceRow === undefined
+        ? `${file.id}:line:${rowIndex}:${row.id}`
+        : `${file.id}:line:${row.id}`,
+    ...(row.sourceRow === undefined ? {} : { sourceRow: row.sourceRow }),
     fileId: file.id,
     content: row.content,
     change: row.change,
@@ -435,16 +441,37 @@ function prepareFileRows(file: ReviewRenderableFile): PreparedNativeReviewFileRo
       changeType: mapChangeType(file),
       additions: file.additions,
       deletions: file.deletions,
+      ...(file.sourceRowStart === undefined ? {} : { sourceRow: file.sourceRowStart }),
     },
   ];
 
   const lineRows = file.rows.filter((row): row is ReviewRenderableLineRow => row.kind === "line");
+  const addPlaceholder = (start: number, end: number) => {
+    if (end > start)
+      rows.push({
+        kind: "placeholder",
+        id: `${file.id}:placeholder:${start}`,
+        fileId: file.id,
+        sourceRow: start,
+        rowCount: end - start,
+        text: "Loading diff…",
+      });
+  };
+  let sourceCursor = file.sourceRowStart;
   let lineIndex = 0;
   file.rows.forEach((row, rowIndex) => {
+    if (sourceCursor !== undefined && row.sourceRow !== undefined) {
+      addPlaceholder(sourceCursor, row.sourceRow);
+      sourceCursor = row.sourceRow + 1;
+    }
     if (row.kind === "hunk") {
       rows.push({
         kind: "hunk",
-        id: `${file.id}:hunk:${rowIndex}:${row.id}`,
+        id:
+          row.sourceRow === undefined
+            ? `${file.id}:hunk:${rowIndex}:${row.id}`
+            : `${file.id}:hunk:${row.id}`,
+        ...(row.sourceRow === undefined ? {} : { sourceRow: row.sourceRow }),
         fileId: file.id,
         text: row.context ? `${row.header} ${row.context}` : row.header,
       });
@@ -462,13 +489,22 @@ function prepareFileRows(file: ReviewRenderableFile): PreparedNativeReviewFileRo
     lineIndex += 1;
   });
 
+  if (sourceCursor !== undefined && file.sourceRowStart !== undefined) {
+    addPlaceholder(sourceCursor, file.sourceRowStart + (file.sourceRowCount ?? 0));
+  }
   rows.push(...noticeRowsForFile(file));
   const prepared: PreparedNativeReviewFileRows = {
     fileId: file.id,
     filePath: file.path,
-    lineCount: lineRows.length,
+    lineCount: file.sourceLineCount ?? lineRows.length,
+    ...(file.sourceLineStarts ? { sourceLineStarts: file.sourceLineStarts } : {}),
     // Comments must not split the source deletion/addition runs used for word matching.
-    rows: addNativeWordDiffRanges(rows),
+    // A partial window may begin in the middle of a deletion run; pairing its
+    // tail with the first additions would highlight unrelated words.
+    rows:
+      file.sourceRowCount !== undefined && file.rows.length < file.sourceRowCount
+        ? rows
+        : addNativeWordDiffRanges(rows),
     commentTargetsByRowId,
     rowIdByCommentLineId,
     commentedRows: null,
@@ -492,8 +528,13 @@ function insertFileComments(
 
   const commentsByEndIndex = new Map<number, ReviewInlineComment[]>();
   for (const comment of comments) {
-    const endIndex = Math.min(comment.endIndex, file.lineCount - 1);
+    let endIndex = Math.min(comment.endIndex, file.lineCount - 1);
     if (endIndex < 0) continue;
+    if (file.sourceLineStarts) {
+      const segment = file.sourceLineStarts.findLast((segment) => segment.lineIndex <= endIndex);
+      if (!segment) continue;
+      endIndex += segment.rowIndex - segment.lineIndex;
+    }
     const existing = commentsByEndIndex.get(endIndex);
     if (existing) {
       existing.push(comment);
@@ -502,11 +543,8 @@ function insertFileComments(
     }
   }
   const rows: NativeReviewDiffRow[] = [];
-  let lineIndex = 0;
-  for (const row of file.rows) {
-    rows.push(row);
-    if (row.kind !== "line") continue;
-    for (const comment of commentsByEndIndex.get(lineIndex) ?? []) {
+  const appendComments = (index: number) => {
+    for (const comment of commentsByEndIndex.get(index) ?? []) {
       rows.push({
         kind: "comment",
         id: comment.id,
@@ -515,8 +553,33 @@ function insertFileComments(
         commentText: comment.text,
         commentRangeLabel: comment.rangeLabel,
         commentSectionTitle: comment.sectionTitle,
+        ...(file.sourceLineStarts ? { sourceRow: index } : {}),
       });
     }
+  };
+  let lineIndex = 0;
+  for (const row of file.rows) {
+    if (row.kind === "placeholder" && row.sourceRow !== undefined) {
+      let start = row.sourceRow;
+      const end = start + (row.rowCount ?? 0);
+      for (const index of [...commentsByEndIndex.keys()].sort((a, b) => a - b)) {
+        if (index < start || index >= end) continue;
+        rows.push({
+          ...row,
+          id: `${row.id}:${start}`,
+          sourceRow: start,
+          rowCount: index + 1 - start,
+        });
+        appendComments(index);
+        start = index + 1;
+      }
+      if (start < end)
+        rows.push({ ...row, id: `${row.id}:${start}`, sourceRow: start, rowCount: end - start });
+      continue;
+    }
+    rows.push(row);
+    if (row.kind !== "line") continue;
+    appendComments(row.sourceRow ?? lineIndex);
     lineIndex += 1;
   }
   file.commentedRows = { commentsKey, rows };

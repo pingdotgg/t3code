@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { NativeSyntheticEvent } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import * as Arr from "effect/Array";
@@ -18,7 +18,7 @@ import type {
   NativeReviewDiffData,
   NativeReviewDiffCommentTarget,
 } from "./nativeReviewDiffAdapter";
-import type { ReviewSectionItem } from "./reviewModel";
+import type { ReviewSectionItem, ReviewRenderableLineRow } from "./reviewModel";
 
 interface PendingNativeCommentSelection extends NativeReviewDiffCommentTarget {
   readonly sectionId: string;
@@ -31,9 +31,16 @@ export function useReviewCommentSelectionController(input: {
   readonly threadId?: ThreadId;
   readonly selectedSection: ReviewSectionItem | null;
   readonly nativeReviewDiffData: NativeReviewDiffData;
+  readonly loadCommentRange?: (
+    start: number,
+    end: number,
+    signal: AbortSignal,
+  ) => Promise<ReadonlyArray<ReviewRenderableLineRow> | null>;
 }) {
-  const { environmentId, nativeReviewDiffData, selectedSection, threadId } = input;
+  const { environmentId, nativeReviewDiffData, selectedSection, threadId, loadCommentRange } =
+    input;
   const navigation = useNavigation();
+  const rangeRequest = useRef<AbortController | null>(null);
   const activeCommentTarget = useReviewCommentTarget();
   const [pendingNativeCommentSelection, setPendingNativeCommentSelection] =
     useState<PendingNativeCommentSelection | null>(null);
@@ -105,6 +112,7 @@ export function useReviewCommentSelectionController(input: {
   useEffect(() => {
     clearReviewCommentTarget();
     setPendingNativeCommentSelection(null);
+    return () => rangeRequest.current?.abort();
   }, [selectedSection?.id]);
 
   useEffect(() => {
@@ -114,7 +122,7 @@ export function useReviewCommentSelectionController(input: {
   }, [activeCommentTarget]);
 
   const onPressLine = useCallback(
-    (
+    async (
       event: NativeSyntheticEvent<{
         readonly rowId?: string;
         readonly gesture?: "tap" | "longPress";
@@ -133,6 +141,7 @@ export function useReviewCommentSelectionController(input: {
       if (!target) {
         return;
       }
+      rangeRequest.current?.abort();
 
       if (gesture === "longPress") {
         clearReviewCommentTarget();
@@ -150,6 +159,40 @@ export function useReviewCommentSelectionController(input: {
         pendingNativeCommentSelection.sectionTitle === selectedSection.title &&
         pendingNativeCommentSelection.filePath === target.filePath
       ) {
+        const anchor = pendingNativeCommentSelection.lines[pendingNativeCommentSelection.lineIndex];
+        const endpoint = target.lines[target.lineIndex];
+        if (anchor?.sourceRow !== undefined && endpoint?.sourceRow !== undefined) {
+          const request = new AbortController();
+          rangeRequest.current = request;
+          const anchorIndex = target.lines.findIndex((line) => line.id === anchor.id);
+          const cachedLines =
+            anchorIndex >= 0
+              ? target.lines.slice(
+                  Math.min(anchorIndex, target.lineIndex),
+                  Math.max(anchorIndex, target.lineIndex) + 1,
+                )
+              : [];
+          const lines =
+            anchor.sourceLineIndex !== undefined &&
+            endpoint.sourceLineIndex !== undefined &&
+            cachedLines.length === Math.abs(anchor.sourceLineIndex - endpoint.sourceLineIndex) + 1
+              ? cachedLines
+              : await loadCommentRange?.(anchor.sourceRow, endpoint.sourceRow, request.signal);
+          if (!lines?.length || request.signal.aborted) return;
+          setReviewCommentTarget(
+            buildReviewCommentTarget(
+              {
+                sectionId: selectedSection.id,
+                sectionTitle: selectedSection.title,
+                filePath: target.filePath,
+                lines,
+              },
+              0,
+              lines.length - 1,
+            ),
+          );
+          return;
+        }
         setReviewCommentTarget(
           buildReviewCommentTarget(
             {
@@ -181,10 +224,12 @@ export function useReviewCommentSelectionController(input: {
       openReviewCommentSheet,
       pendingNativeCommentSelection,
       selectedSection,
+      loadCommentRange,
     ],
   );
 
   const clearSelection = useCallback(() => {
+    rangeRequest.current?.abort();
     clearReviewCommentTarget();
     setPendingNativeCommentSelection(null);
   }, []);

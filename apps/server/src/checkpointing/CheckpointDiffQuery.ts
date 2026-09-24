@@ -32,6 +32,7 @@ import {
 import type { CheckpointServiceError } from "./Errors.ts";
 import { checkpointRefForThreadTurn } from "./Utils.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
+import { createCheckpointDiffWindow } from "./CheckpointDiffWindow.ts";
 
 /** Service tag for checkpoint diff queries. */
 export class CheckpointDiffQuery extends Context.Service<
@@ -165,6 +166,7 @@ export const make = Effect.gen(function* () {
         });
       }
 
+      const window = input.page ? createCheckpointDiffWindow(input.page.start) : null;
       const diff = yield* checkpointStore
         .diffCheckpoints({
           cwd: workspaceCwd,
@@ -172,10 +174,13 @@ export const make = Effect.gen(function* () {
           toCheckpointRef,
           fallbackFromToHead: false,
           ignoreWhitespace,
+          ...(window ? { onStdoutChunk: window.write } : {}),
         })
         .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
 
-      const turnDiff = buildTurnDiffResult(input, diff);
+      const turnDiff = window
+        ? { ...buildTurnDiffResult(input, ""), page: window.finish(diff) }
+        : buildTurnDiffResult(input, diff);
       if (!isTurnDiffResult(turnDiff)) {
         return yield* new CheckpointDiffResultInvalidError({
           operation,

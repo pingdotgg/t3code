@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Struct from "effect/Struct";
+import { CheckpointDiffPage } from "./checkpointDiff.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ProviderOptionSelections } from "./model.ts";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
@@ -2245,12 +2246,16 @@ export const OrchestrationGetTurnDiffInput = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
     ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
+    page: Schema.optionalKey(Schema.Struct({ start: NonNegativeInt })),
   }),
   { unsafePreserveChecks: true },
 );
 export type OrchestrationGetTurnDiffInput = typeof OrchestrationGetTurnDiffInput.Type;
 
-export const OrchestrationGetTurnDiffResult = ThreadTurnDiff;
+export const OrchestrationGetTurnDiffResult = ThreadTurnDiff.mapFields(
+  Struct.assign({ page: Schema.optionalKey(CheckpointDiffPage) }),
+  { unsafePreserveChecks: true },
+);
 export type OrchestrationGetTurnDiffResult = typeof OrchestrationGetTurnDiffResult.Type;
 
 export const OrchestrationGetFullThreadDiffInput = Schema.Struct({

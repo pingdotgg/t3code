@@ -4,6 +4,7 @@ import { countReviewCommentContexts, parseReviewInlineComments } from "./reviewC
 import { getCachedNativeReviewDiffData } from "./nativeReviewDiffAdapter";
 import { markReviewEvent, measureReviewWork } from "./reviewPerf";
 import { getCachedReviewParsedDiff } from "./reviewState";
+import { buildPagedReviewParsedDiff } from "./pagedReviewDiff";
 import {
   applyReviewDiffMetadata,
   buildReviewParsedDiff,
@@ -128,19 +129,22 @@ export function useReviewDiffData(input: {
   const { draftMessage, selectedSection, threadKey } = input;
   const selectedSectionId = selectedSection?.id ?? null;
   const source = selectedSection?.source;
+  const page = selectedSection?.page;
   const lazySource = source?.truncated && source.files ? source : null;
   const previewDiff = useMemo<ReviewParsedDiff>(
     () =>
-      lazySource
-        ? { kind: "empty" }
-        : measureReviewWork("parse-diff", () =>
-            getCachedReviewParsedDiff({
-              threadKey,
-              sectionId: selectedSection?.id ?? null,
-              diff: selectedSection?.diff,
-            }),
-          ),
-    [lazySource, selectedSection?.diff, selectedSection?.id, threadKey],
+      page
+        ? buildPagedReviewParsedDiff(page)
+        : lazySource
+          ? { kind: "empty" }
+          : measureReviewWork("parse-diff", () =>
+              getCachedReviewParsedDiff({
+                threadKey,
+                sectionId: selectedSection?.id ?? null,
+                diff: selectedSection?.diff,
+              }),
+            ),
+    [lazySource, page, selectedSection?.diff, selectedSection?.id, threadKey],
   );
   const registry = useContext(RegistryContext);
   const { environmentId, cwd } = input;

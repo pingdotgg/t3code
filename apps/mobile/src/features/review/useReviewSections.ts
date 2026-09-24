@@ -1,9 +1,22 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import * as DateTime from "effect/DateTime";
 
-import type { EnvironmentId, OrchestrationCheckpointSummary, ThreadId } from "@t3tools/contracts";
+import type {
+  CheckpointDiffPage,
+  EnvironmentId,
+  OrchestrationCheckpointSummary,
+  ThreadId,
+} from "@t3tools/contracts";
 
-import { useCheckpointDiff } from "../../state/queries";
+import { orchestrationEnvironment } from "../../state/orchestration";
+import {
+  loadPagedReviewCommentLines,
+  reviewDiffWindowStart,
+  retainReviewDiffWindows,
+  mergeReviewDiffWindows,
+} from "./pagedReviewDiff";
+import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { appAtomRegistry } from "../../state/atom-registry";
 import { useEnvironmentQuery } from "../../state/query";
 import { reviewEnvironment } from "../../state/review";
 import { useSelectedThreadDetail } from "../../state/use-thread-detail";
@@ -18,7 +31,6 @@ import {
   setReviewAsyncError,
   setReviewGitSections,
   setReviewSelectedSectionId,
-  setReviewTurnDiff,
   setReviewTurnDiffLoading,
   type ReviewCacheForThread,
 } from "./reviewState";
@@ -123,14 +135,122 @@ export function useReviewSections(input: {
   const activeSectionId = activeCheckpoint
     ? getReviewSectionIdForCheckpoint(activeCheckpoint)
     : null;
-  const activeTurnDiff = useCheckpointDiff({
-    environmentId: enabled ? (environmentId ?? null) : null,
-    threadId: enabled ? (threadId ?? null) : null,
-    fromTurnCount:
-      enabled && activeCheckpoint ? Math.max(0, activeCheckpoint.checkpointTurnCount - 1) : null,
-    toTurnCount: enabled ? (activeCheckpoint?.checkpointTurnCount ?? null) : null,
-    ignoreWhitespace: false,
+  const turnScope = `${environmentId}:${threadId}:${activeSectionId}`;
+  const [window, setWindow] = useState({ scope: turnScope, start: 0 });
+  const windowStart = window.scope === turnScope ? window.start : 0;
+  const activeTurnDiff = useEnvironmentQuery(
+    enabled && environmentId && threadId && activeCheckpoint && selectedSection?.kind === "turn"
+      ? orchestrationEnvironment.turnDiffPage({
+          environmentId,
+          input: {
+            threadId,
+            fromTurnCount: Math.max(0, activeCheckpoint.checkpointTurnCount - 1),
+            toTurnCount: activeCheckpoint.checkpointTurnCount,
+            ignoreWhitespace: false,
+            page: { start: windowStart },
+          },
+        })
+      : null,
+  );
+  // Keep the current window visible while the next one arrives, without retaining
+  // every visited page in the per-thread full-patch cache.
+  const [previousWindow, setPreviousWindow] = useState({
+    scope: turnScope,
+    data: activeTurnDiff.data,
+    pages: activeTurnDiff.data?.page
+      ? [activeTurnDiff.data.page]
+      : ([] as ReadonlyArray<CheckpointDiffPage>),
   });
+  if (
+    previousWindow.scope !== turnScope ||
+    (activeTurnDiff.data && activeTurnDiff.data !== previousWindow.data)
+  ) {
+    setPreviousWindow({
+      scope: turnScope,
+      data: activeTurnDiff.data,
+      pages: activeTurnDiff.data?.page
+        ? retainReviewDiffWindows(
+            previousWindow.scope === turnScope ? previousWindow.pages : [],
+            activeTurnDiff.data.page,
+          )
+        : [],
+    });
+  }
+  const turnData =
+    activeTurnDiff.data ?? (previousWindow.scope === turnScope ? previousWindow.data : null);
+  const mergedPage = useMemo(
+    () => mergeReviewDiffWindows(previousWindow.scope === turnScope ? previousWindow.pages : []),
+    [previousWindow, turnScope],
+  );
+  const resolvedSelectedSection = useMemo(
+    () =>
+      selectedSection?.kind === "turn" && turnData
+        ? {
+            ...selectedSection,
+            diff: turnData.diff,
+            ...(mergedPage ? { page: mergedPage } : {}),
+            isLoading: false,
+          }
+        : selectedSection,
+    [selectedSection, turnData, mergedPage],
+  );
+  const loadTurnDiffRow = useCallback(
+    (row: number) => {
+      const start = reviewDiffWindowStart(row);
+      if (
+        previousWindow.scope === turnScope &&
+        previousWindow.pages.some((page) => page.start === start)
+      )
+        return;
+      setWindow((current) =>
+        current.scope === turnScope && current.start === start
+          ? current
+          : { scope: turnScope, start },
+      );
+    },
+    [turnScope, setWindow, previousWindow],
+  );
+  const loadTurnDiffRange = useCallback(
+    async (start: number, end: number, signal: AbortSignal) => {
+      if (!environmentId || !threadId || !activeCheckpoint || !turnData?.page) return null;
+      try {
+        return await loadPagedReviewCommentLines({
+          start,
+          end,
+          revision: turnData.page.revision,
+          fetchPage: async (start) => {
+            const result = await executeAtomQuery(
+              appAtomRegistry,
+              orchestrationEnvironment.turnDiffPage({
+                environmentId,
+                input: {
+                  threadId,
+                  fromTurnCount: Math.max(0, activeCheckpoint.checkpointTurnCount - 1),
+                  toTurnCount: activeCheckpoint.checkpointTurnCount,
+                  ignoreWhitespace: false,
+                  page: { start },
+                },
+              }),
+              { signal },
+            );
+            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+            if (!result.value.page)
+              throw new Error("The server did not return the requested diff lines.");
+            return result.value.page;
+          },
+        });
+      } catch (error) {
+        if (!signal.aborted && reviewCache.threadKey) {
+          setReviewAsyncError(
+            reviewCache.threadKey,
+            error instanceof Error ? error.message : "Could not load the selected diff lines.",
+          );
+        }
+        return null;
+      }
+    },
+    [environmentId, threadId, activeCheckpoint, turnData, reviewCache.threadKey],
+  );
 
   useEffect(() => {
     if (!reviewCache.threadKey || !activeSectionId) {
@@ -143,7 +263,6 @@ export function useReviewSections(input: {
     if (!reviewCache.threadKey || !activeSectionId || !activeTurnDiff.data) {
       return;
     }
-    setReviewTurnDiff(reviewCache.threadKey, activeSectionId, activeTurnDiff.data.diff);
     setReviewAsyncError(reviewCache.threadKey, null);
   }, [activeSectionId, activeTurnDiff.data, reviewCache.threadKey]);
 
@@ -176,14 +295,18 @@ export function useReviewSections(input: {
   return {
     error: diffPreview.error ?? activeTurnDiff.error ?? reviewCache.asyncState.error,
     isSelectedSectionPending:
-      selectedSection?.kind === "turn" ? activeTurnDiff.isPending : diffPreview.isPending,
+      selectedSection?.kind === "turn"
+        ? activeTurnDiff.isPending && !turnData
+        : diffPreview.isPending,
     loadingGitDiffs: diffPreview.isPending,
     diffPreviewRevision: diffPreview.data
       ? DateTime.formatIso(diffPreview.data.generatedAt)
       : undefined,
     loadingTurnIds,
     reviewSections,
-    selectedSection,
+    selectedSection: resolvedSelectedSection,
+    loadTurnDiffRow,
+    loadTurnDiffRange,
     refreshSelectedSection,
     selectSection,
   };

@@ -15,6 +15,7 @@ import { describe, expect } from "vite-plus/test";
 import { checkpointRefForThreadTurn } from "./Utils.ts";
 import { parseTurnDiffFilesFromNumstat } from "./Diffs.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
+import { createCheckpointDiffWindow } from "./CheckpointDiffWindow.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ServerConfig from "../config.ts";
@@ -117,6 +118,42 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
   });
 
   describe("diffCheckpoints", () => {
+    it.effect(
+      "streams a 200,000-line diff beyond the buffered output cap into a bounded final page",
+      () =>
+        Effect.gen(function* () {
+          const tmp = yield* makeTmpDir();
+          yield* initRepoWithCommit(tmp);
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          const threadId = ThreadId.make("thread-streamed-checkpoint");
+          const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
+          const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+          yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: fromCheckpointRef });
+          const text = Array.from({ length: 200_000 }, (_, i) => `${i}: ${"x".repeat(60)}\n`).join(
+            "",
+          );
+          expect(text.length).toBeGreaterThan(10_000_000);
+          yield* writeTextFile(NodePath.join(tmp, "large.txt"), text);
+          yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: toCheckpointRef });
+          const window = createCheckpointDiffWindow(199_680);
+          const buffered = yield* checkpointStore.diffCheckpoints({
+            cwd: tmp,
+            fromCheckpointRef,
+            toCheckpointRef,
+            ignoreWhitespace: false,
+            onStdoutChunk: window.write,
+          });
+          const page = window.finish(buffered);
+          expect(buffered.length).toBeLessThanOrEqual(4_096);
+          expect(page.files[0]).toMatchObject({ path: "large.txt", additions: 200_000 });
+          expect(page.rows.length).toBeLessThanOrEqual(768);
+          expect(page.rows.at(-1)).toMatchObject({
+            newLineNumber: 200_000,
+            content: `199999: ${"x".repeat(60)}`,
+          });
+        }),
+    );
+
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();

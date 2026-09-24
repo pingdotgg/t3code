@@ -1,6 +1,10 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { ChangeTypes, FileDiffMetadata } from "@pierre/diffs/types";
-import type { OrchestrationCheckpointSummary, ReviewDiffPreviewSource } from "@t3tools/contracts";
+import type {
+  CheckpointDiffPage,
+  OrchestrationCheckpointSummary,
+  ReviewDiffPreviewSource,
+} from "@t3tools/contracts";
 import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
@@ -13,6 +17,7 @@ const DIRTY_WORKTREE_TITLE = "Dirty worktree";
 const DIRTY_WORKTREE_SUBTITLE = "Tracked, staged, and untracked worktree changes";
 
 export interface ReviewSectionItem {
+  readonly page?: CheckpointDiffPage;
   readonly id: string;
   readonly kind: ReviewSectionKind;
   readonly title: string;
@@ -25,6 +30,7 @@ export interface ReviewSectionItem {
 }
 
 export interface ReviewRenderableHunkRow {
+  readonly sourceRow?: number;
   readonly kind: "hunk";
   readonly id: string;
   readonly header: string;
@@ -32,6 +38,8 @@ export interface ReviewRenderableHunkRow {
 }
 
 export interface ReviewRenderableLineRow {
+  readonly sourceRow?: number;
+  readonly sourceLineIndex?: number;
   readonly kind: "line";
   readonly id: string;
   readonly change: "context" | "add" | "delete";
@@ -49,6 +57,13 @@ export interface ReviewRenderableLineRow {
 export type ReviewRenderableRow = ReviewRenderableHunkRow | ReviewRenderableLineRow;
 
 export interface ReviewRenderableFile {
+  readonly sourceRowStart?: number;
+  readonly sourceRowCount?: number;
+  readonly sourceLineCount?: number;
+  readonly sourceLineStarts?: ReadonlyArray<{
+    readonly lineIndex: number;
+    readonly rowIndex: number;
+  }>;
   readonly id: string;
   readonly cacheKey: string;
   readonly notice?: string;
