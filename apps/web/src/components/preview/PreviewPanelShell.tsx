@@ -1,4 +1,5 @@
 import {
+  createContext,
   type ReactNode,
   type RefObject,
   useEffect,
@@ -14,6 +15,9 @@ import { cn } from "~/lib/utils";
 import { RightPanelResizeHandle } from "./RightPanelResizeHandle";
 
 export type PreviewPanelMode = "inline" | "sheet" | "sidebar" | "embedded";
+
+/** Lets nested terminals settle their PTY size after the panel's final width commits. */
+export const PreviewPanelResizeEpochContext = createContext(0);
 
 const PREVIEW_PANEL_WIDTH_STORAGE_KEY = "t3code:preview-panel-width";
 const PREVIEW_PANEL_MIN_WIDTH = 360;
@@ -73,7 +77,7 @@ export function PreviewPanelShell(props: {
   // Only inline non-maximized mode applies `width`/`maxWidth`; skip the
   // container measurement (and its re-renders) everywhere else.
   const maxWidth = useClampedMaxWidth(hostRef, isInline && !maximized);
-  const { width, handlers } = useResizableWidth({
+  const { width, resizeEpoch, handlers } = useResizableWidth({
     storageKey: props.widthStorageKey ?? PREVIEW_PANEL_WIDTH_STORAGE_KEY,
     defaultWidth: props.defaultWidth ?? PREVIEW_PANEL_DEFAULT_WIDTH,
     minWidth: PREVIEW_PANEL_MIN_WIDTH,
@@ -150,7 +154,9 @@ export function PreviewPanelShell(props: {
           style={collapsible && !maximized ? { width: `calc(${width}px - 1px)` } : undefined}
         >
           {useDragRegion ? <div className="electron-drag-region h-0 w-full" aria-hidden /> : null}
-          {props.children}
+          <PreviewPanelResizeEpochContext value={resizeEpoch}>
+            {props.children}
+          </PreviewPanelResizeEpochContext>
         </div>
       </div>
     </div>
