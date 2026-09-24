@@ -84,6 +84,7 @@ import {
   deriveThreadActivityRun,
   deriveLatestThreadRun,
   deriveThreadRuntime,
+  threadRuntimeHasInterruptibleRun,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thread-workflows";
 import {
@@ -4230,7 +4231,10 @@ export default function ChatView(props: ChatViewProps) {
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
   }, [composerRef]);
-  const canInterruptRunningThread = activeThread !== undefined && phase === "running";
+  // A run still preparing or starting can be stopped before its provider turn begins.
+  const canInterruptRunningThread =
+    activeThread !== undefined &&
+    (phase === "running" || threadRuntimeHasInterruptibleRun(activeRuntime));
   const onInterrupt = useCallback(async () => {
     if (!activeThread) return;
     const result = await interruptThreadTurn({
@@ -10715,6 +10719,7 @@ export default function ChatView(props: ChatViewProps) {
                             onPageScrollRelease={onComposerPageScrollRelease}
                             onCompactContext={onCompactContext}
                             onSend={onSend}
+                            canInterrupt={canInterruptRunningThread}
                             onInterrupt={onInterrupt}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}
                             onRespondToApproval={onRespondToApproval}

@@ -46,6 +46,8 @@ interface ComposerPrimaryActionsProps {
   isEditingQueuedMessage?: boolean;
   onSubmitMessage?: MouseEventHandler<HTMLButtonElement>;
   onPreviousPendingQuestion: () => void;
+  /** Whether Stop is available, including for a run that has not reached `isRunning` yet. */
+  canInterrupt?: boolean;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
 }
@@ -95,6 +97,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isEditingQueuedMessage = false,
   onSubmitMessage,
   onPreviousPendingQuestion,
+  canInterrupt = false,
   onInterrupt,
   onImplementPlanInNewThread,
 }: ComposerPrimaryActionsProps) {
@@ -244,6 +247,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   }
 
   if (isRunning && !hasSendableContent && !isEditingQueuedMessage) {
+    return renderStopGenerationButton(false);
+  }
+
+  // A run that is still starting cannot take a message yet, so Stop replaces the send spinner.
+  if (canInterrupt && !isRunning && !isEditingQueuedMessage) {
     return renderStopGenerationButton(false);
   }
 
