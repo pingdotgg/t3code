@@ -32,6 +32,7 @@ import {
   antigravityProfileSettings,
   buildAntigravityAcpSpawnInput,
   isAntigravitySignInRequiredError,
+  LINUX_ANTIGRAVITY_SECCOMP_LAUNCHER,
   makeAntigravityStderrHandler,
   makeAntigravityStdoutTransform,
   parseAntigravityAuthorizationUrl,
@@ -109,6 +110,44 @@ describe("Antigravity process environment", () => {
         TMPDIR: profile.tempDirectory,
       },
     });
+  });
+
+  it("uses the Linux seccomp launcher when pythonExecutable is available on Linux", () => {
+    const linuxProfile: AntigravityProfile = {
+      ...profile,
+      platform: "linux",
+      pythonExecutable: "/usr/bin/python3",
+    };
+    const spawn = buildAntigravityAcpSpawnInput({
+      installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+      profile: linuxProfile,
+      cwd: "/project",
+    });
+
+    expect(spawn.command).toBe("/usr/bin/python3");
+    expect(spawn.args).toEqual([
+      "-I",
+      "-c",
+      LINUX_ANTIGRAVITY_SECCOMP_LAUNCHER,
+      "/release/acp",
+      "--uid=",
+    ]);
+  });
+
+  it("does not use the seccomp launcher on non-Linux platforms even if pythonExecutable is set", () => {
+    const macProfile: AntigravityProfile = {
+      ...profile,
+      platform: "darwin",
+      pythonExecutable: "/usr/bin/python3",
+    };
+    const spawn = buildAntigravityAcpSpawnInput({
+      installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+      profile: macProfile,
+      cwd: "/project",
+    });
+
+    expect(spawn.command).toBe("/release/acp");
+    expect(spawn.args).toEqual([]);
   });
 
   it("passes only the configured method's credential and keeps the GCP pair out of the environment", () => {
@@ -735,6 +774,40 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         expect(Result.isFailure(result)).toBe(true);
         expect(yield* fs.exists(profileDirectory)).toBe(false);
       }
+    }),
+  );
+
+  it.effect("sets and allows opting out of pythonExecutable on Linux when preparing profile", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+      const profile = yield* prepareAntigravityProfile({
+        profileDirectory: path.join(temporaryDirectory, "profile"),
+        platform: "linux",
+        pythonExecutable: "/custom/bin/python3",
+      });
+      expect(profile.pythonExecutable).toBe("/custom/bin/python3");
+
+      const optOutProfile = yield* prepareAntigravityProfile({
+        profileDirectory: path.join(temporaryDirectory, "opt-out-profile"),
+        platform: "linux",
+        pythonExecutable: "",
+      });
+      expect(optOutProfile.pythonExecutable).toBeUndefined();
+
+      const binDirectory = path.join(temporaryDirectory, "bin");
+      yield* fs.makeDirectory(binDirectory, { recursive: true });
+      const mockPython = path.join(binDirectory, "python3");
+      yield* fs.writeFileString(mockPython, "#!/bin/sh\nexit 0\n");
+      yield* fs.chmod(mockPython, 0o755);
+
+      const discoveredProfile = yield* prepareAntigravityProfile({
+        profileDirectory: path.join(temporaryDirectory, "discovered-profile"),
+        platform: "linux",
+        baseEnv: { PATH: binDirectory },
+      });
+      expect(discoveredProfile.pythonExecutable).toBe(mockPython);
     }),
   );
 });

@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 import type { AntigravityAuthMethod, ProviderInstanceId } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
+import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -89,6 +90,7 @@ export interface AntigravityProfile {
   /** Parent of the per-process temp directories PyInstaller unpacks into. */
   readonly tempDirectory: string;
   readonly browserCommand: string;
+  readonly pythonExecutable?: string;
 }
 
 /**
@@ -291,6 +293,34 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
   }
 });
 
+const resolvePythonExecutable = Effect.fn("antigravityAuthSupport.resolvePythonExecutable")(
+  function* (platform: NodeJS.Platform, environment?: NodeJS.ProcessEnv) {
+    if (platform !== "linux") return undefined;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const candidates = ["python3"];
+    for (const candidate of candidates) {
+      const resolved = yield* resolveCommandPath(
+        candidate,
+        environment ? { env: environment } : {},
+      ).pipe(
+        Effect.map((commandPath) => path.resolve(commandPath)),
+        Effect.orElseSucceed(() => undefined),
+      );
+      if (resolved !== undefined) {
+        return resolved;
+      }
+    }
+    for (const fallback of ["/usr/bin/python3", "/bin/python3"]) {
+      const exists = yield* fs.exists(fallback).pipe(Effect.orElseSucceed(() => false));
+      if (exists) {
+        return fallback;
+      }
+    }
+    return undefined;
+  },
+);
+
 /** Prepares a private profile without reading or copying Google credentials. */
 export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(function* (input: {
   readonly profileDirectory: string;
@@ -300,6 +330,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   readonly auth?: AntigravityAuthConfig;
   /** Home the agent expands `~` against. Defaults to the launch environment's. */
   readonly userHome?: string;
+  readonly pythonExecutable?: string;
 }) {
   const auth = input.auth ?? ANTIGRAVITY_PERSONAL_AUTH;
   const fs = yield* FileSystem.FileSystem;
@@ -338,6 +369,10 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   const geminiHome = path.resolve(input.profileDirectory);
   const acpDirectory = path.join(geminiHome, "antigravity-acp");
   const tempDirectory = resolveAntigravityRuntimeTempDirectory(geminiHome);
+  const pythonExecutable =
+    input.pythonExecutable !== undefined
+      ? input.pythonExecutable || undefined
+      : yield* resolvePythonExecutable(platform, input.baseEnv);
   const profile: AntigravityProfile = {
     platform,
     geminiHome,
@@ -345,6 +380,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     tokenPath: path.join(acpDirectory, "acp_token.json"),
     tempDirectory,
     browserCommand,
+    ...(pythonExecutable !== undefined ? { pythonExecutable } : {}),
   };
   const environment = antigravityEnvironment(profile, input.baseEnv ?? process.env, auth);
   yield* Effect.gen(function* () {
@@ -418,6 +454,35 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   return profile;
 });
 
+/**
+ * On Linux, Google's hermetic `agy_acp_server.par` requires seccomp confinement
+ * to be active. In desktop/launcher environments without pre-existing seccomp
+ * confinement, internal security checks fail and terminate the process with
+ * SIGKILL. Installing an allow-all BPF seccomp filter before exec satisfies
+ * this check and prevents the crash.
+ *
+ * Using `os.execv` replaces the Python launcher process in-place with zero
+ * lingering wrapper overhead or pipe indirection.
+ */
+export const LINUX_ANTIGRAVITY_SECCOMP_LAUNCHER = [
+  "import ctypes, os, sys",
+  "try:",
+  "    class F(ctypes.Structure):",
+  '        _fields_ = [("c", ctypes.c_uint16), ("jt", ctypes.c_uint8), ("jf", ctypes.c_uint8), ("k", ctypes.c_uint32)]',
+  "    class P(ctypes.Structure):",
+  '        _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.POINTER(F))]',
+  "    libc = ctypes.CDLL(None, use_errno=True)",
+  "    f = (F * 1)(F(6, 0, 0, 0x7fff0000))",
+  "    p = P(1, f)",
+  "    if libc.prctl(38, 1, 0, 0, 0) != 0 or libc.prctl(22, 2, ctypes.byref(p)) != 0:",
+  '        sys.stderr.write("antigravity launcher: seccomp setup failed, errno %d\\n" % ctypes.get_errno())',
+  "        raise SystemExit(1)",
+  "except Exception as error:",
+  '    sys.stderr.write("antigravity launcher: seccomp setup failed: %r\\n" % (error,))',
+  "    raise SystemExit(1)",
+  "os.execv(sys.argv[1], sys.argv[1:])",
+].join("\n");
+
 /** Applies the same subscription-only launch settings to every ACP process. */
 export function buildAntigravityAcpSpawnInput(input: {
   readonly installation: {
@@ -431,9 +496,27 @@ export function buildAntigravityAcpSpawnInput(input: {
   /** Per-process temp directory. Defaults to the profile's shared temp directory. */
   readonly runtimeTempDirectory?: string;
 }): AcpSpawnInput {
+  const linuxArgs = ["--uid="];
+  const useLinuxSeccompLauncher =
+    input.profile.platform === "linux" && Boolean(input.profile.pythonExecutable);
+  const command = useLinuxSeccompLauncher
+    ? input.profile.pythonExecutable!
+    : input.installation.executablePath;
+  const args = useLinuxSeccompLauncher
+    ? [
+        "-I",
+        "-c",
+        LINUX_ANTIGRAVITY_SECCOMP_LAUNCHER,
+        input.installation.executablePath,
+        ...linuxArgs,
+      ]
+    : input.profile.platform === "linux"
+      ? linuxArgs
+      : [];
+
   return {
-    command: input.installation.executablePath,
-    args: input.profile.platform === "linux" ? ["--uid="] : [],
+    command,
+    args,
     cwd: input.cwd,
     env: {
       ...antigravityEnvironment(
