@@ -218,6 +218,7 @@ export interface DeviceStreamClient {
   readonly sendKey: (event: KeyboardEvent, phase: "down" | "up") => void;
   readonly pressButton: (button: DeviceHardwareButton) => void;
   readonly rotate: () => void;
+  readonly setOrientation: (orientation: DeviceScreenSize["orientation"]) => void;
 }
 
 const HID_USAGE_BY_CODE: Readonly<Record<string, number>> = {
@@ -859,6 +860,9 @@ export function createDeviceStreamClient(
       const next =
         IOS_ORIENTATIONS[(IOS_ORIENTATIONS.indexOf(current) + 1) % IOS_ORIENTATIONS.length]!;
       send(taggedJson(IOS_MSG_ORIENTATION, { orientation: next }));
+    },
+    setOrientation: (orientation) => {
+      if (platform === "ios") send(taggedJson(IOS_MSG_ORIENTATION, { orientation }));
     },
   };
 }

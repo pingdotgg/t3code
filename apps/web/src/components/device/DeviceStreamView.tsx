@@ -68,7 +68,6 @@ export function DeviceStreamView(props: {
   const cancelPhoneInputRef = useRef<(() => void) | null>(null);
   const cancelPhoneInput = useCallback(() => cancelPhoneInputRef.current?.(), []);
   const resetViewRef = useRef<(() => void) | null>(null);
-  const resetView = useCallback(() => resetViewRef.current?.(), []);
   const onResetReady = useCallback((reset: (() => void) | null) => {
     resetViewRef.current = reset;
   }, []);
@@ -285,6 +284,11 @@ export function DeviceStreamView(props: {
         : null;
 
   const keyboardSource = deviceKeyboard(props.platform, props.deviceName ?? "");
+  const resetView = useCallback(() => {
+    const orientation = keyboardAttached ? "landscape_right" : "portrait";
+    if (screen?.orientation !== orientation) clientRef.current?.setOrientation(orientation);
+    resetViewRef.current?.();
+  }, [keyboardAttached, screen?.orientation]);
   const profile = resolveDeviceShape({
     platform: props.platform,
     name: props.deviceName ?? "",
@@ -311,8 +315,8 @@ export function DeviceStreamView(props: {
                     attached: keyboardAttached,
                     toggle: () => {
                       cancelPhoneInput();
-                      if (!keyboardAttached && screen?.orientation.startsWith("portrait"))
-                        clientRef.current?.rotate();
+                      if (!keyboardAttached && screen?.orientation !== "landscape_right")
+                        clientRef.current?.setOrientation("landscape_right");
                       setKeyboardAttached(!keyboardAttached);
                     },
                   }

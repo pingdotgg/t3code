@@ -119,7 +119,7 @@ export function DeviceControlsRail(props: {
           <RailButton
             tooltipSide={popupSide}
             label="Rotate device"
-            disabled={inputDisabled}
+            disabled={inputDisabled || !!view.keyboard?.attached}
             onClick={() => handle?.rotate()}
           >
             <RotateCcw />
