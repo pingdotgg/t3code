@@ -225,6 +225,41 @@ export default defineConfig({
         rules: {
           // A className built at runtime on a ui component is one no-restyle cannot read.
           "shadcn/require-static-classes": "error",
+          // Appearance values come from the theme and Tailwind's scales. Layout stays free
+          // (placement belongs to the parent); the other entries are values no scale can hold.
+          "shadcn/no-arbitrary-values": [
+            "error",
+            {
+              allow: [
+                "layout",
+                // Which properties an element animates is per-element behaviour, like layout,
+                // not a design value; timing curves and durations still come from the theme.
+                "transition",
+                // Overlays that follow their frame's corner, which is set at runtime
+                // (floating preview) or by the element they decorate (composer outline).
+                "rounded-[inherit]",
+                // Inline chips size in em so they scale with the text they sit in
+                // (the composer honours the prompt font-size preference).
+                "gap-[0.33em]",
+                "px-[0.5em]",
+                "rounded-[0.5em]",
+                "text-[0.86em]",
+                // Project icons render from 14px to 48px and keep one proportional corner.
+                "rounded-[25%]",
+                // An emoji project icon fills its container, whatever size the parent gives it.
+                "text-[length:80cqh]",
+                // The platform's own selection colour on a selected composer chip.
+                "bg-[Highlight]",
+                // Brand marks keep their brand colours (Cursor, Grok, Claude).
+                "fill-[#26251E]",
+                "fill-[#EDECEC]",
+                "fill-[#0F0F0F]",
+                "fill-[#F5F5F5]",
+                "fill-[#d97757]",
+                "text-[#d97757]",
+              ],
+            },
+          ],
           "shadcn/no-restyle": [
             "error",
             {
@@ -241,6 +276,11 @@ export default defineConfig({
             },
           ],
         },
+      },
+      {
+        // The sign-in masthead is T3 brand artwork: fixed gradients, not theme surfaces.
+        files: ["apps/web/src/components/auth/AuthSurfaceShell.tsx"],
+        rules: { "shadcn/no-arbitrary-values": "off" },
       },
       {
         // Shared client code must not call APIs missing from Hermes. Our ESNext

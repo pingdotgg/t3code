@@ -311,7 +311,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                         <span className="block truncate text-sm font-medium text-sidebar-foreground">
                           {item.title}
                         </span>
-                        <span className="block truncate text-[11px] text-sidebar-muted-foreground/75">
+                        <span className="block truncate text-2xs text-sidebar-muted-foreground/75">
                           {SETTINGS_SECTION_LABELS[item.to]}
                         </span>
                       </span>

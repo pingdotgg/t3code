@@ -265,7 +265,7 @@ function OpenContentSearchDialog(props: {
                         {path.directory}
                       </span>
                     ) : null}
-                    <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 tabular-nums text-[10px] text-muted-foreground">
+                    <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 tabular-nums text-3xs text-muted-foreground">
                       {group.matches.length}
                     </span>
                   </div>

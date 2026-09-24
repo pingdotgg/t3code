@@ -297,7 +297,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
           ))}
         </div>
       </ScrollArea>
-      <footer className="flex items-center justify-between border-t border-border/60 px-2 py-1.5 text-[.7rem] text-muted-foreground">
+      <footer className="flex items-center justify-between border-t border-border/60 px-2 py-1.5 text-2xs text-muted-foreground">
         <span>
           {openCount} open · {links.length} linked
           {lastSynced ? ` · synced ${formatRelativeTimeLabel(lastSynced)}` : ""}

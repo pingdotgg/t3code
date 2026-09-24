@@ -269,7 +269,7 @@ function ComposerReviewCommentDetails({ comment }: { comment: ReviewCommentConte
     <div className="space-y-2 overflow-hidden rounded-lg border border-border/70 bg-background/70 p-3">
       <div className="space-y-1">
         <div className="truncate text-xs font-medium text-foreground">{comment.filePath}</div>
-        <div className="text-secondary-label text-[11px]">
+        <div className="text-secondary-label text-2xs">
           {comment.sectionTitle} · {comment.rangeLabel}
         </div>
       </div>

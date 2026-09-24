@@ -828,7 +828,7 @@ function PullRequestCodeTab({
         <PullRequestDiffStat
           additions={additions}
           deletions={deletions}
-          className="font-mono text-[11px]"
+          className="font-mono text-2xs"
         />
       );
       const viewedFiles = filesViewedRef.current;
@@ -842,7 +842,7 @@ function PullRequestCodeTab({
               attribute is what the header's capture listener looks for. */}
           <label
             data-viewed-toggle=""
-            className="flex cursor-pointer select-none items-center gap-1.5 text-[11px] text-muted-foreground"
+            className="flex cursor-pointer select-none items-center gap-1.5 text-2xs text-muted-foreground"
             onClick={(event) => event.stopPropagation()}
           >
             <Checkbox

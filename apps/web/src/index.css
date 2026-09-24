@@ -116,6 +116,17 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-titlebar-control-size: 1.75rem;
   --workspace-titlebar-control-gap: 0.75rem;
   --workspace-titlebar-scroll-fade-height: 1.5rem;
+  /* The prompt on phones: iOS zooms into any input under 16px on focus. */
+  --font-size-prompt-touch: max(var(--font-size-prompt, 1rem), 16px);
+  /* Horizontal gutter shared by the page header and the chat column, clear of
+     the device's safe area. */
+  --workspace-gutter: 0.75rem;
+  --workspace-gutter-start: calc(env(safe-area-inset-left) + var(--workspace-gutter));
+  --workspace-gutter-end: calc(env(safe-area-inset-right) + var(--workspace-gutter));
+
+  @variant sm {
+    --workspace-gutter: 1.25rem;
+  }
 
   @variant dark {
     --appearance-contrast-target: white;
@@ -148,6 +159,41 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 @theme inline {
+  /* Two steps below Tailwind's text-xs (12px) for dense UI: metadata rows,
+     badges, counters, keyboard hints and diagnostics tables. 2xs is 11px,
+     3xs is 10px and the floor of the scale. Registered with tailwind-merge in
+     lib/utils.ts so cn() treats them as font sizes, not colours. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: calc(1 / 0.6875);
+  --text-3xs: 0.625rem;
+  --text-3xs--line-height: calc(0.875 / 0.625);
+  /* Motion. drawer is the decelerating curve for surfaces that slide or pop in
+     (composer context, pills). */
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  /* The composer's elevation: a soft drop pulled in under the surface, shared
+     by the composer, its context strip and attached banners. */
+  --shadow-composer: 0 12px 28px -18px rgb(0 0 0 / 40%);
+  --shadow-composer-dark: 0 14px 32px -18px rgb(0 0 0 / 75%);
+  /* Dark-mode shade where an attached surface meets the composer: 10px of
+     shadow fading away from the seam. Inline, so the offsets resolve on the
+     element. below: the context strip under the composer (1rem seam, faint
+     white fill). above: an attached banner over it (its tint on top). */
+  --background-image-composer-seam-below:
+    linear-gradient(
+      to bottom,
+      transparent 0 1rem,
+      rgb(0 0 0 / 18%) 1rem,
+      transparent calc(1rem + 10px)
+    ),
+    linear-gradient(rgb(255 255 255 / 1%), rgb(255 255 255 / 1%));
+  --background-image-composer-seam-above:
+    linear-gradient(var(--chat-composer-attached-tint), var(--chat-composer-attached-tint)),
+    linear-gradient(
+      to top,
+      transparent 0 var(--chat-composer-attachment-overlap),
+      rgb(0 0 0 / 18%) var(--chat-composer-attachment-overlap),
+      transparent calc(var(--chat-composer-attachment-overlap) + 10px)
+    );
   --color-zinc-25: oklch(99.2% 0 0);
   --animate-skeleton: skeleton 2.4s infinite;
   /* Duty-cycled indicator animations: long holds with stepped ramps, so the
@@ -1934,40 +1980,6 @@ code {
 .chat-markdown .chat-markdown-table-container[data-expanded="true"] td {
   max-width: 24rem;
   overflow-wrap: anywhere;
-}
-
-/* Prompt-stash save acknowledgement: the new count fades up from just below
-   its resting position, once, then stops. One-shot and event-driven (React
-   remounts the element by key on each stash) — no continuous animation. */
-@keyframes prompt-stash-count-enter {
-  from {
-    opacity: 0;
-    transform: translateY(2px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* Expanded capture preview swaps between the screenshot and its extracted text.
-   One-shot fade on whichever panel mounts, so nothing repaints continuously. */
-@keyframes snap-shot-contents-enter {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes provider-update-pill-countdown {
-  from {
-    transform: scaleX(1);
-  }
-  to {
-    transform: scaleX(0);
-  }
 }
 
 :root {
