@@ -7,6 +7,7 @@
     "dev": "expo start",
     "dev:client": "APP_VARIANT=development expo start --dev-client --scheme t3code-dev --lan",
     "dev:client:reset": "APP_VARIANT=development expo start --dev-client --scheme t3code-dev --clear --lan",
+    "dev:client:preview-env": "eas env:exec preview 'EXPO_NO_DOTENV=1 APP_VARIANT=development expo start --dev-client --scheme t3code-dev --lan --port 0'",
     "dev:client:preview": "eas env:exec preview 'EXPO_NO_DOTENV=1 APP_VARIANT=preview expo start --dev-client --scheme t3code-preview --lan'",
     "start": "expo start",
     "start:dev": "APP_VARIANT=development expo start",
@@ -48,7 +49,6 @@
     "@clerk/expo": "catalog:",
     "@effect/atom-react": "catalog:",
     "@expo-google-fonts/dm-sans": "^0.4.2",
-    "@expo/metro-runtime": "~57.0.14",
     "@expo/ui": "~57.0.14",
     "@legendapp/list": "catalog:",
     "@material/material-color-utilities": "0.3.0",
@@ -135,9 +135,6 @@
     "babel-preset-expo": "~57.0.9",
     "tailwindcss": "^4.0.0",
     "typescript": "catalog:"
-  },
-  "overrides": {
-    "react-native-nitro-markdown": "file:deps/react-native-nitro-markdown-0.5.0.tgz"
   },
   "expo": {
     "install": {

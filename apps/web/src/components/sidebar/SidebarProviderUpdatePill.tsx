@@ -11,7 +11,6 @@ import {
   type ProviderUpdateSidebarPillView,
 } from "../ProviderUpdateLaunchNotification.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { Button } from "../ui/button";
 
 const PROVIDER_UPDATE_PILL_STYLES = {
   loading:
@@ -174,7 +173,7 @@ export function SidebarProviderUpdatePill() {
               onClick={openProviderSettings}
             >
               {displayedView.tone === "loading" ? (
-                <Spinner className="size-3.5 shrink-0" />
+                <Spinner size="sm" className="shrink-0" />
               ) : displayedView.tone === "success" ? (
                 <CircleCheckIcon className="size-3.5 shrink-0" />
               ) : displayedView.tone === "error" ? (
@@ -192,15 +191,14 @@ export function SidebarProviderUpdatePill() {
         <Tooltip>
           <TooltipTrigger
             render={
-              <Button
-                size="icon-micro"
-                variant="ghost"
+              <button
+                type="button"
                 aria-label="Dismiss provider update notice"
-                className="relative z-[1] mr-1 [--control-icon-color:currentColor] rounded-md text-inherit opacity-70 hover:bg-transparent hover:opacity-100"
+                className="relative z-[1] mr-1 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-70 outline-none hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => startExit(displayedView.key, null, displayedView.key)}
               >
                 <XIcon className="size-3.5 shrink-0" />
-              </Button>
+              </button>
             }
           />
           <TooltipPopup side="top">Dismiss until provider status changes</TooltipPopup>

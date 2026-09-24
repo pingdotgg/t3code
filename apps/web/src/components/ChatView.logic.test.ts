@@ -12,7 +12,7 @@ import {
   TurnId,
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { Atom, AsyncResult } from "effect/unstable/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
@@ -32,7 +32,6 @@ import {
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
 import {
-  MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   agentControlledBrowserCloseConfirmation,
   branchMismatchKey,
@@ -52,7 +51,6 @@ import {
   shouldRefocusComposerOnWindowFocus,
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
-  reconcileRetainedMountedThreadIds,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
   resolveBackgroundDraftWorkspaceOptions,
@@ -88,7 +86,6 @@ import {
   shouldShowBranchMismatchBanner,
   shouldShowPlanFollowUpPrompt,
   shouldWriteThreadErrorToCurrentServerThread,
-  toolGroupConsumesUpwardNavigation,
   waitForRevertedMessage,
   prepareRevertedMessageAttachments,
 } from "./ChatView.logic";
@@ -445,134 +442,6 @@ describe("proactive panels", () => {
         isGitRepo: undefined,
       }),
     ).toBe("defer");
-  });
-});
-
-describe("toolGroupConsumesUpwardNavigation", () => {
-  class ScrollElement extends EventTarget {
-    scrollTop = 0;
-    scrollHeight = 100;
-    clientHeight = 100;
-    overflowY = "visible";
-
-    constructor(
-      readonly parentElement: ScrollElement | null = null,
-      readonly isToolGroup = false,
-    ) {
-      super();
-    }
-
-    closest(selector: string): ScrollElement | null {
-      if (selector !== "[data-tool-group-scroll]") return null;
-      return this.isToolGroup ? this : (this.parentElement?.closest(selector) ?? null);
-    }
-  }
-
-  beforeEach(() => {
-    vi.stubGlobal("Element", ScrollElement);
-    vi.stubGlobal("getComputedStyle", (element: ScrollElement) => ({
-      overflowY: element.overflowY,
-    }));
-  });
-  afterEach(() => vi.unstubAllGlobals());
-
-  it("releases upward navigation when an overflowing group is at the top", () => {
-    const group = Object.assign(new ScrollElement(null, true), {
-      overflowY: "auto",
-      scrollHeight: 300,
-    });
-
-    expect(toolGroupConsumesUpwardNavigation(new ScrollElement(group))).toBe(false);
-  });
-
-  it.each([
-    { overflowY: "auto", scrollTop: 1 },
-    { overflowY: "auto", scrollTop: 0.25 },
-    { overflowY: "scroll", scrollTop: 80 },
-  ])("consumes upward navigation within a scrolled group: %j", (scroll) => {
-    const group = Object.assign(new ScrollElement(null, true), {
-      scrollHeight: 300,
-      ...scroll,
-    });
-
-    expect(toolGroupConsumesUpwardNavigation(group)).toBe(true);
-  });
-
-  it.each([100, 300])(
-    "consumes scrolling in a nested result with a group content height of %i",
-    (scrollHeight) => {
-      const group = Object.assign(new ScrollElement(null, true), {
-        overflowY: "auto",
-        scrollHeight,
-      });
-      const result = Object.assign(new ScrollElement(group), {
-        overflowY: "auto",
-        scrollHeight: 300,
-        scrollTop: 0.25,
-      });
-
-      expect(toolGroupConsumesUpwardNavigation(new ScrollElement(result))).toBe(true);
-    },
-  );
-
-  it("releases upward navigation when the group and nested result are both at the top", () => {
-    const group = Object.assign(new ScrollElement(null, true), {
-      overflowY: "auto",
-      scrollHeight: 300,
-    });
-    const result = Object.assign(new ScrollElement(group), {
-      overflowY: "scroll",
-      scrollHeight: 300,
-    });
-
-    expect(toolGroupConsumesUpwardNavigation(new ScrollElement(result))).toBe(false);
-  });
-
-  it("ignores targets outside a tool group and non-element targets", () => {
-    const outside = Object.assign(new ScrollElement(), {
-      overflowY: "auto",
-      scrollHeight: 300,
-      scrollTop: 40,
-    });
-
-    expect(toolGroupConsumesUpwardNavigation(outside)).toBe(false);
-    expect(toolGroupConsumesUpwardNavigation(new EventTarget())).toBe(false);
-    expect(toolGroupConsumesUpwardNavigation(null)).toBe(false);
-  });
-
-  it("does not consume scrolling from an ancestor beyond the tool group", () => {
-    const timeline = Object.assign(new ScrollElement(), {
-      overflowY: "auto",
-      scrollHeight: 300,
-      scrollTop: 40,
-    });
-    const group = new ScrollElement(timeline, true);
-
-    expect(toolGroupConsumesUpwardNavigation(new ScrollElement(group))).toBe(false);
-  });
-
-  it.each(["hidden", "clip", "visible"])(
-    "ignores a non-scrollable child with overflow-y %s",
-    (overflowY) => {
-      const group = new ScrollElement(null, true);
-      const result = Object.assign(new ScrollElement(group), {
-        overflowY,
-        scrollHeight: 300,
-        scrollTop: 40,
-      });
-
-      expect(toolGroupConsumesUpwardNavigation(new ScrollElement(result))).toBe(false);
-    },
-  );
-
-  it("does not consume programmatic scrolling on an overflow-hidden group", () => {
-    const group = Object.assign(new ScrollElement(null, true), {
-      overflowY: "hidden",
-      scrollHeight: 300,
-      scrollTop: 40,
-    });
-
-    expect(toolGroupConsumesUpwardNavigation(group)).toBe(false);
   });
 });
 
@@ -1884,50 +1753,6 @@ describe("reconcileMountedTerminalThreadIds", () => {
         activeThreadTerminalOpen: false,
       }),
     ).toEqual(ids.slice(-MAX_HIDDEN_MOUNTED_TERMINAL_THREADS));
-  });
-});
-
-describe("reconcileRetainedMountedThreadIds", () => {
-  it("retains hidden open threads and adds the active open thread", () => {
-    expect(
-      reconcileRetainedMountedThreadIds({
-        currentThreadIds: [ThreadId.make("thread-hidden")],
-        openThreadIds: [ThreadId.make("thread-hidden")],
-        activeThreadId: ThreadId.make("thread-active"),
-        activeThreadOpen: true,
-        maxHiddenThreadCount: MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
-      }),
-    ).toEqual([ThreadId.make("thread-hidden"), ThreadId.make("thread-active")]);
-  });
-
-  it("can retain the active thread as hidden when it is inactive", () => {
-    expect(
-      reconcileRetainedMountedThreadIds({
-        currentThreadIds: [ThreadId.make("thread-active")],
-        openThreadIds: [ThreadId.make("thread-active")],
-        activeThreadId: ThreadId.make("thread-active"),
-        activeThreadOpen: false,
-        maxHiddenThreadCount: MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
-        retainInactiveActiveThread: true,
-      }),
-    ).toEqual([ThreadId.make("thread-active")]);
-  });
-
-  it("evicts the oldest hidden threads beyond the configured cap", () => {
-    const currentThreadIds = Array.from(
-      { length: MAX_HIDDEN_MOUNTED_PREVIEW_THREADS + 2 },
-      (_, index) => ThreadId.make(`thread-${index + 1}`),
-    );
-
-    expect(
-      reconcileRetainedMountedThreadIds({
-        currentThreadIds,
-        openThreadIds: currentThreadIds,
-        activeThreadId: null,
-        activeThreadOpen: false,
-        maxHiddenThreadCount: MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
-      }),
-    ).toEqual(currentThreadIds.slice(-MAX_HIDDEN_MOUNTED_PREVIEW_THREADS));
   });
 });
 

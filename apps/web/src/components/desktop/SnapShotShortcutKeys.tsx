@@ -16,7 +16,7 @@ export function SnapShotShortcutKeys({
         const seen = seenLabels.get(label) ?? 0;
         seenLabels.set(label, seen + 1);
         return (
-          <Kbd aria-hidden className="min-w-6 justify-center px-1.5" key={`${label}-${seen}`}>
+          <Kbd aria-hidden key={`${label}-${seen}`}>
             {label}
           </Kbd>
         );

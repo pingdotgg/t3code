@@ -19,6 +19,7 @@ import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { MiddleTruncate } from "../ui/middle-truncate";
 
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
 
@@ -246,8 +247,8 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           theme={resolvedTheme}
           className="size-3.5 text-muted-foreground/70"
         />
-        <span className="truncate font-mono text-xs text-foreground/85 group-hover:text-foreground">
-          {node.name}
+        <span className="flex min-w-0 font-mono text-xs text-foreground/85 group-hover:text-foreground">
+          <MiddleTruncate value={node.name} />
         </span>
         {node.stat && (
           <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">

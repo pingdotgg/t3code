@@ -77,11 +77,20 @@ function FilesBrowserHeader(props: {
         value: props.searchQuery,
         onChangeText: props.onSearchQueryChange,
         placeholder: "Search files",
-        onRefresh: props.onRefresh,
-        refreshAccessibilityLabel: "Refresh files",
         closeAccessibilityLabel: "Close file search",
         clearAccessibilityLabel: "Clear file search",
       }}
+      menus={
+        Platform.OS === "android"
+          ? [
+              {
+                title: "File options",
+                icon: "ellipsis",
+                items: [{ id: "refresh", title: "Refresh files", onPress: props.onRefresh }],
+              },
+            ]
+          : undefined
+      }
     />
   );
 }
@@ -408,7 +417,6 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const { fileInspector, layout, showAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
-  const headerColor = useUniwindTheme()["--color-header"];
   const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
     props.route.params,
   );
@@ -545,13 +553,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     </>
   );
 
-  return Platform.OS === "android" ? (
-    <View className="flex-1" style={{ backgroundColor: headerColor }}>
-      {content}
-    </View>
-  ) : (
-    content
-  );
+  return Platform.OS === "android" ? <View className="flex-1 bg-header">{content}</View> : content;
 }
 
 export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {

@@ -15,7 +15,6 @@ allowBuilds:
   electron: true
   electron-winstaller: false
   esbuild: true
-  msgpackr-extract: set this to true or false
   msw: false
   node-pty: true
   sharp: true
@@ -50,8 +49,8 @@ catalog:
   lightningcss: 1.33.0
   tailwindcss: 4.3.3
   typescript: 7.0.2
-  vite: npm:@voidzero-dev/vite-plus-core@0.3.0
-  vite-plus: 0.3.0
+  vite: npm:@voidzero-dev/vite-plus-core@0.3.3
+  vite-plus: 0.3.3
   yaml: ^2.9.0
 
 minimumReleaseAgeExclude:
@@ -95,6 +94,8 @@ minimumReleaseAgeExclude:
   - "@distilled.cloud/prisma@1.0.0-rc.12"
   - "@distilled.cloud/railway@1.0.0-rc.12"
   - "@distilled.cloud/stripe@1.0.0-rc.12"
+  - "@shadcn/lint@0.1.5"
+  - cn@0.3.2
 
 overrides:
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.

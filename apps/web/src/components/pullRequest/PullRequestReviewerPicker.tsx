@@ -120,7 +120,7 @@ export function PullRequestReviewerPicker({
     >
       {(candidate) => (
         <>
-          <PullRequestActorLabel actor={candidate} className="min-w-0 flex-1 truncate" />
+          <PullRequestActorLabel actor={candidate} className="flex-1" />
           {candidate.kind === "team" ? (
             <span className="shrink-0 text-muted-foreground">team</span>
           ) : null}

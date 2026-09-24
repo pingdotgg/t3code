@@ -1,5 +1,10 @@
 import * as NetService from "@t3tools/shared/Net";
-import { OtlpHeadersFromString, OtlpProtocol } from "@t3tools/shared/observability";
+import {
+  OtlpHeadersFromString,
+  OtlpProtocol,
+  type SignalExport,
+} from "@t3tools/shared/observability";
+import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
 import * as Config from "effect/Config";
@@ -93,6 +98,10 @@ const EnvServerConfig = Config.all({
     Config.map(Option.getOrUndefined),
   ),
   otlpMetricsUrl: Config.String("T3CODE_OTLP_METRICS_URL").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  otlpLogsUrl: Config.String("T3CODE_OTLP_LOGS_URL").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
@@ -227,7 +236,7 @@ const loadPersistedObservabilitySettings = Effect.fn(function* (settingsPath: st
   const fs = yield* FileSystem.FileSystem;
   const exists = yield* fs.exists(settingsPath).pipe(Effect.orElseSucceed(() => false));
   if (!exists) {
-    return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined };
+    return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined, otlpLogsUrl: undefined };
   }
 
   const raw = yield* fs.readFileString(settingsPath).pipe(Effect.orElseSucceed(() => ""));
@@ -378,6 +387,16 @@ export const resolveServerConfig = (
     );
     const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 
+    const otel = yield* OtelEnvironment.load;
+
+    // T3 Code's own OTLP variables name no signal, so the one answer they give
+    // is the answer for all three.
+    const signalExport: SignalExport = {
+      protocol: env.otlpProtocol,
+      headers: env.otlpHeaders,
+      exportIntervalMs: env.otlpExportIntervalMs,
+    };
+
     const config: ServerConfig.ServerConfig["Service"] = {
       logLevel,
       traceMinLevel: env.traceMinLevel,
@@ -385,18 +404,24 @@ export const resolveServerConfig = (
       traceBatchWindowMs: env.traceBatchWindowMs,
       traceMaxBytes: env.traceMaxBytes,
       traceMaxFiles: env.traceMaxFiles,
-      otlpTracesUrl:
-        env.otlpTracesUrl ??
-        bootstrap?.otlpTracesUrl ??
-        persistedObservabilitySettings.otlpTracesUrl,
-      otlpMetricsUrl:
-        env.otlpMetricsUrl ??
-        bootstrap?.otlpMetricsUrl ??
-        persistedObservabilitySettings.otlpMetricsUrl,
-      otlpExportIntervalMs: env.otlpExportIntervalMs,
+      otlpTracesUrl: otel.disabled
+        ? undefined
+        : (env.otlpTracesUrl ??
+          bootstrap?.otlpTracesUrl ??
+          persistedObservabilitySettings.otlpTracesUrl),
+      otlpMetricsUrl: otel.disabled
+        ? undefined
+        : (env.otlpMetricsUrl ??
+          bootstrap?.otlpMetricsUrl ??
+          persistedObservabilitySettings.otlpMetricsUrl),
+      otlpLogsUrl: otel.disabled
+        ? undefined
+        : (env.otlpLogsUrl ?? bootstrap?.otlpLogsUrl ?? persistedObservabilitySettings.otlpLogsUrl),
+      otlpTracesExport: signalExport,
+      otlpMetricsExport: signalExport,
+      otlpLogsExport: signalExport,
       otlpServiceName: env.otlpServiceName,
-      otlpHeaders: env.otlpHeaders,
-      otlpProtocol: env.otlpProtocol,
+      otelEnvironment: otel,
       mode,
       port,
       cwd,
