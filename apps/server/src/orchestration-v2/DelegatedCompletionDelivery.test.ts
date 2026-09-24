@@ -8,16 +8,20 @@ import {
   type ModelSelection,
   NodeId,
   type OrchestrationV2Run,
+  type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
+  RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
@@ -38,6 +42,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
+import { makeSubagentChildThread } from "./SubagentProjection.ts";
 import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.testkit.ts";
 
 const layerPlatformTest = Layer.merge(
@@ -470,6 +475,304 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       assert.equal(
         accepted.subagents.find((row) => row.id === siblingId)?.completionDelivery?.state,
         "claimed",
+      );
+    }),
+  );
+
+  it.effect("tells the parent once when its child blocks on a request", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:delegated-task-blocked");
+      const runId = RunId.make("run:delegated-task-blocked");
+      const rootNodeId = NodeId.make("node:delegated-task-blocked-root");
+      const taskId = NodeId.make("node:delegated-task-blocked-task");
+      const secondTaskId = NodeId.make("node:delegated-task-blocked-second");
+      const childThreadId = ThreadId.make("thread:delegated-task-blocked-child");
+      const secondChildThreadId = ThreadId.make("thread:delegated-task-blocked-second-child");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        runId,
+        projectId: ProjectId.make("project:delegated-task-blocked"),
+        rootNodeId,
+        taskId,
+        deliveryState: "claimed",
+        completionWake: "always",
+        now,
+      });
+      const parent = yield* orchestrator.getThreadProjection(threadId);
+      const parentRun = parent.runs.find((run) => run.id === runId)!;
+      const providerThreadId = parentRun.providerThreadId!;
+      const attemptId = RunAttemptId.make("attempt:delegated-task-blocked");
+      const runningTask = (id: NodeId, child: ThreadId, title: string, taskRunId = runId) => [
+        {
+          id: EventId.make(`event:delegated-task-blocked:child:${id}`),
+          type: "thread.created" as const,
+          threadId: child,
+          driver,
+          providerInstanceId: modelSelection.instanceId,
+          occurredAt: now,
+          payload: makeSubagentChildThread({
+            parentThread: parent.thread,
+            childThreadId: child,
+            parentNodeId: id,
+            activeProviderThreadId: null,
+            providerInstanceId: modelSelection.instanceId,
+            modelSelection,
+            title,
+            now,
+            createdBy: "agent",
+            creationSource: "server",
+          }),
+        },
+        {
+          id: EventId.make(`event:delegated-task-blocked:task:${id}`),
+          type: "subagent.updated" as const,
+          threadId,
+          runId: taskRunId,
+          nodeId: id,
+          driver,
+          providerInstanceId: modelSelection.instanceId,
+          occurredAt: now,
+          payload: {
+            ...parent.subagents[0]!,
+            id,
+            runId: taskRunId,
+            title,
+            childThreadId: child,
+            status: "running" as const,
+            result: null,
+            completedAt: null,
+            completionDelivery: undefined,
+          },
+        },
+      ];
+      // Two running children, and a parent run that Stop can interrupt.
+      yield* sink.write({
+        commandId: CommandId.make("command:delegated-task-blocked:seed"),
+        events: [
+          ...runningTask(taskId, childThreadId, "Load test lane"),
+          // Spawned by an earlier parent turn, so Stop's cohort barrier alone
+          // would not reach its notices.
+          ...runningTask(
+            secondTaskId,
+            secondChildThreadId,
+            "Second lane",
+            RunId.make("run:delegated-task-blocked-earlier"),
+          ),
+          {
+            id: EventId.make("event:delegated-task-blocked:root"),
+            type: "node.updated",
+            threadId,
+            runId,
+            nodeId: rootNodeId,
+            occurredAt: now,
+            payload: {
+              id: rootNodeId,
+              threadId,
+              runId,
+              parentNodeId: null,
+              rootNodeId,
+              kind: "root_turn",
+              status: "running",
+              countsForRun: true,
+              providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: now,
+              completedAt: null,
+            },
+          },
+          {
+            id: EventId.make("event:delegated-task-blocked:attempt"),
+            type: "run-attempt.updated",
+            threadId,
+            runId,
+            nodeId: rootNodeId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: attemptId,
+              runId,
+              attemptOrdinal: 1,
+              rootNodeId,
+              providerInstanceId: modelSelection.instanceId,
+              providerThreadId,
+              providerTurnId: null,
+              reason: "initial",
+              status: "running",
+              startedAt: now,
+              completedAt: null,
+            },
+          },
+          {
+            id: EventId.make("event:delegated-task-blocked:active-attempt"),
+            type: "run.updated",
+            threadId,
+            runId,
+            nodeId: rootNodeId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: { ...parentRun, activeAttemptId: attemptId },
+          },
+        ],
+      });
+
+      // Records a pending request on a child. Returns the parent sequence to
+      // wait from for the notice that the blocked-child reactor queues.
+      const block = (
+        child: ThreadId,
+        nodeId: NodeId,
+        id: string,
+        kind: "user_input" | "command" | "auth_refresh",
+        attempt = 0,
+      ) =>
+        Effect.gen(function* () {
+          const afterSequence = yield* sink.latestSequence({ threadId });
+          yield* sink.write({
+            commandId: CommandId.make(`command:delegated-task-blocked:${id}:${attempt}`),
+            events: [
+              {
+                id: EventId.make(`event:delegated-task-blocked:${id}:${attempt}`),
+                type: "runtime-request.updated",
+                threadId: child,
+                nodeId,
+                occurredAt: now,
+                payload: {
+                  id: RuntimeRequestId.make(id),
+                  nodeId,
+                  providerTurnId: null,
+                  nativeRequestRef: null,
+                  kind,
+                  status: "pending",
+                  responseCapability: { type: "message" },
+                  createdAt: now,
+                  resolvedAt: null,
+                },
+              },
+            ],
+          });
+          return afterSequence;
+        });
+      const nextNotice = (afterSequence: number) =>
+        sink.stream({ threadId, afterSequence, eventType: "message.updated" }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "message.updated" &&
+              stored.event.payload.notification?.source.kind === "delegated_task",
+          ),
+          Stream.runHead,
+          Effect.map((stored) =>
+            Option.isSome(stored) && stored.value.event.type === "message.updated"
+              ? stored.value.event.payload
+              : undefined,
+          ),
+        );
+      const noticeRunStatus = (
+        projection: OrchestrationV2ThreadProjection,
+        messageId: MessageId | undefined,
+      ) => projection.runs.find((run) => run.userMessageId === messageId)?.status;
+
+      const question = yield* nextNotice(
+        yield* block(childThreadId, taskId, "request:question", "user_input"),
+      );
+      assert.deepEqual(question?.notification, {
+        source: { kind: "delegated_task", taskIds: [taskId] },
+        outcome: "updated",
+        summary: "Load test lane is waiting for an answer to a question",
+      });
+      assert.include(question?.text ?? "", "t3_pending_request_respond");
+      assert.include(question?.text ?? "", String(childThreadId));
+
+      // A repeated update for the same request must not queue a second notice.
+      // The reactor handles events in order, so the approval notice below
+      // arrives only after the repeat has been processed.
+      yield* block(childThreadId, taskId, "request:question", "user_input", 1);
+      const approval = yield* nextNotice(
+        yield* block(childThreadId, taskId, "request:approval", "command"),
+      );
+      assert.equal(
+        approval?.notification?.summary,
+        "Load test lane is waiting for approval (command)",
+      );
+      assert.include(approval?.text ?? "", "Only the user can resolve this");
+
+      const signIn = yield* nextNotice(
+        yield* block(childThreadId, taskId, "request:sign-in", "auth_refresh"),
+      );
+      assert.equal(
+        signIn?.notification?.summary,
+        "Load test lane is waiting for the user to sign in again",
+      );
+      assert.include(signIn?.text ?? "", "Only the user can resolve this");
+
+      // A rejected earlier attempt must not swallow a later update's notice.
+      yield* sink.commitRejectedCommand({
+        commandId: CommandId.make("command:delegated-task-blocked:request:retry"),
+        threadId,
+        commandType: "message.dispatch",
+        rejectedAt: now,
+        error: "Thread has a pending merge-back transfer.",
+      });
+      const retried = yield* nextNotice(
+        yield* block(childThreadId, taskId, "request:retry", "user_input"),
+      );
+      assert.equal(
+        retried?.notification?.summary,
+        "Load test lane is waiting for an answer to a question",
+      );
+
+      const blocked = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(
+        blocked.messages.filter(
+          (message) =>
+            message.notification?.source.kind === "delegated_task" &&
+            message.notification.source.taskIds.includes(taskId),
+        ).length,
+        4,
+      );
+      // The child is not finished: no result is published to the parent.
+      assert.equal(blocked.subagents.find((row) => row.id === taskId)?.status, "running");
+      assert.isFalse(blocked.contextTransfers.some((row) => row.type === "subagent_result"));
+      assert.equal(noticeRunStatus(blocked, question?.id), "queued");
+      assert.equal(noticeRunStatus(blocked, approval?.id), "queued");
+
+      // Once the parent drops a task (task_cancel), its queued notices must
+      // not start a parent turn.
+      yield* orchestrator.dispatch({
+        type: "delegated_task.completion-delivery.dispose",
+        commandId: CommandId.make("command:delegated-task-blocked:dispose"),
+        parentThreadId: threadId,
+        taskId,
+      });
+      const disposed = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(noticeRunStatus(disposed, question?.id), "cancelled");
+      assert.equal(noticeRunStatus(disposed, approval?.id), "cancelled");
+      assert.equal(noticeRunStatus(disposed, signIn?.id), "cancelled");
+      assert.equal(noticeRunStatus(disposed, retried?.id), "cancelled");
+
+      // Stop must not let any queued notice start a new parent turn either.
+      const second = yield* nextNotice(
+        yield* block(secondChildThreadId, secondTaskId, "request:second", "user_input"),
+      );
+      assert.equal(
+        noticeRunStatus(yield* orchestrator.getThreadProjection(threadId), second?.id),
+        "queued",
+      );
+      yield* orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make("command:delegated-task-blocked:stop-parent"),
+        threadId,
+        runId,
+        reason: "User stopped the parent.",
+        holdQueue: true,
+      });
+      assert.equal(
+        noticeRunStatus(yield* orchestrator.getThreadProjection(threadId), second?.id),
+        "cancelled",
       );
     }),
   );
