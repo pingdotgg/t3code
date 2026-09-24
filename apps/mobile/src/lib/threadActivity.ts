@@ -85,7 +85,6 @@ export interface ThreadFeedActivity {
     | "command"
     | "edit"
     | "eye"
-    | "file-text"
     | "globe"
     | "search"
     | "hammer"
@@ -448,7 +447,7 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
       data: { toolName: item.toolName ?? undefined, input: item.input },
     });
     if (classified === "read") {
-      return item.viewedImagePath !== undefined ? "eye" : "file-text";
+      return "eye";
     }
     if (classified === "search") return "search";
   }
