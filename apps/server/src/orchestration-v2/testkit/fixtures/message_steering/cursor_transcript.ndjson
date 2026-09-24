@@ -1,21 +1,25 @@
-{"type":"transcript_start","provider":"cursor","protocol":"cursor-agent-sdk.local","version":"1","scenario":"message_steering","metadata":{"generatedBy":"recordCursorAgentSdkReplayTranscript","nativeAgentId":"agent-95a210ed-ddf9-4b36-b265-9a2b02e46050"}}
+{"type":"transcript_start","provider":"cursor","protocol":"cursor-agent-sdk.local","version":"1","scenario":"message_steering","metadata":{"generatedBy":"recordCursorAgentSdkReplayTranscript","nativeAgentId":"agent-575fd75e-3fd7-412e-9b74-36f3a5aa5371"}}
 {"type":"expect_outbound","label":"agent.open","frame":{"type":"agent.open","operation":"create","options":{"model":{"id":"composer-2.5"},"hasName":true,"mode":"agent","local":{"hasCwd":true,"autoReview":false,"settingSources":["project","user","team","mdm","plugins"],"sandboxEnabled":false,"enableAgentRetries":true}}}}
-{"type":"emit_inbound","label":"agent.opened","frame":{"type":"agent.opened","agentId":"agent-95a210ed-ddf9-4b36-b265-9a2b02e46050"}}
+{"type":"emit_inbound","label":"agent.opened","frame":{"type":"agent.opened","agentId":"agent-575fd75e-3fd7-412e-9b74-36f3a5aa5371"}}
 {"type":"expect_outbound","label":"run.start:1","frame":{"type":"run.start","message":"Respond with exactly: steering fixture initial response","options":{"model":{"id":"composer-2.5"},"mode":"agent"}}}
-{"type":"emit_inbound","label":"run.started:1","frame":{"type":"run.started","runId":"run-c794f71d-f53a-47ba-b127-b9f26cf64ce1","agentId":"agent-95a210ed-ddf9-4b36-b265-9a2b02e46050"}}
-{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-c794f71d-f53a-47ba-b127-b9f26cf64ce1","update":{"type":"text-delta","text":"ste"}}}
-{"type":"expect_outbound","label":"run.cancel:1","frame":{"type":"run.cancel","runId":"run-c794f71d-f53a-47ba-b127-b9f26cf64ce1"}}
-{"type":"emit_inbound","label":"run.completed:1","frame":{"type":"run.completed","result":{"id":"run-c794f71d-f53a-47ba-b127-b9f26cf64ce1","requestId":"60f12d12-3cd5-47f1-a4dc-bda43dc5a136","status":"cancelled","model":{"id":"composer-2.5"},"durationMs":4219}}}
+{"type":"emit_inbound","label":"run.started:1","frame":{"type":"run.started","runId":"run-046488f0-f621-4d59-976c-c4c935ad1282","agentId":"agent-575fd75e-3fd7-412e-9b74-36f3a5aa5371"}}
+{"type":"emit_inbound","label":"thinking-delta","frame":{"type":"interaction.update","runId":"run-046488f0-f621-4d59-976c-c4c935ad1282","update":{"type":"thinking-delta","text":"The user requested the"}}}
+{"type":"expect_outbound","label":"run.cancel:1","frame":{"type":"run.cancel","runId":"run-046488f0-f621-4d59-976c-c4c935ad1282"}}
+{"type":"emit_inbound","label":"run.completed:1","frame":{"type":"run.completed","result":{"id":"run-046488f0-f621-4d59-976c-c4c935ad1282","requestId":"d3b97820-1cf3-448d-a4b1-5fa7edc21460","status":"cancelled","model":{"id":"composer-2.5"},"durationMs":3177}}}
 {"type":"expect_outbound","label":"run.start:2","frame":{"type":"run.start","message":"Actually, respond with exactly: steering fixture observed","options":{"model":{"id":"composer-2.5"},"mode":"agent"}}}
-{"type":"emit_inbound","label":"run.started:2","frame":{"type":"run.started","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","agentId":"agent-95a210ed-ddf9-4b36-b265-9a2b02e46050"}}
-{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","update":{"type":"text-delta","text":"ste"}}}
-{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","update":{"type":"text-delta","text":"ering"}}}
-{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","update":{"type":"token-delta","tokens":2}}}
-{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","update":{"type":"text-delta","text":" fixture"}}}
-{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","update":{"type":"token-delta","tokens":2}}}
-{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","update":{"type":"text-delta","text":" observed"}}}
-{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","update":{"type":"token-delta","tokens":2}}}
-{"type":"emit_inbound","label":"step-completed","frame":{"type":"interaction.update","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","update":{"type":"step-completed","stepId":1,"stepDurationMs":1055}}}
-{"type":"emit_inbound","label":"turn-ended","frame":{"type":"interaction.update","runId":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","update":{"type":"turn-ended","usage":{"inputTokens":10270,"outputTokens":42,"cacheReadTokens":7441,"cacheWriteTokens":0}}}}
-{"type":"emit_inbound","label":"run.completed:2","frame":{"type":"run.completed","result":{"id":"run-c93ec26d-f38b-4a58-9005-1ed91ad98b9c","requestId":"21e1995e-2649-4e30-aec6-d967e9bce64c","status":"finished","result":"steering fixture observed","model":{"id":"composer-2.5"},"durationMs":1465}}}
-{"type":"expect_outbound","label":"agent.close","frame":{"type":"agent.close","agentId":"agent-95a210ed-ddf9-4b36-b265-9a2b02e46050"}}
+{"type":"emit_inbound","label":"run.started:2","frame":{"type":"run.started","runId":"run-e3b66d77-b2d4-4791-be2b-1a35c8e997d1","agentId":"agent-575fd75e-3fd7-412e-9b74-36f3a5aa5371"}}
+{"type":"emit_inbound","label":"thinking-delta","frame":{"type":"interaction.update","runId":"run-e3b66d77-b2d4-4791-be2b-1a35c8e997d1","update":{"type":"thinking-delta","text":"The response will be"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-e3b66d77-b2d4-4791-be2b-1a35c8e997d1","update":{"type":"token-delta","tokens":5}}}
+{"type":"emit_inbound","label":"thinking-delta","frame":{"type":"interaction.update","runId":"run-e3b66d77-b2d4-4791-be2b-1a35c8e997d1","update":{"type":"thinking-delta","text":" exactly: \"steering "}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-e3b66d77-b2d4-4791-be2b-1a35c8e997d1","update":{"type":"token-delta","tokens":5}}}
+{"type":"emit_inbound","label":"thinking-delta","frame":{"type":"interaction.update","runId":"run-e3b66d77-b2d4-4791-be2b-1a35c8e997d1","update":{"type":"thinking-delta","text":"fixture observed\"."}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-e3b66d77-b2d4-4791-be2b-1a35c8e997d1","update":{"type":"token-delta","tokens":4}}}
+{"type":"emit_inbound","label":"thinking-completed","frame":{"type":"interaction.update","runId":"run-e3b66d77-b2d4-4791-be2b-1a35c8e997d1","update":{"type":"thinking-completed","thinkingDurationMs":2}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-e3b66d77-b2d4-4791-be2b-1a35c8e997d1","update":{"type":"text-delta","text":"ste"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-e3b66d77-b2d4-4791-be2b-1a35c8e997d1","update":{"type":"token-delta","tokens":1}}}
+{"type":"emit_inbound","label":"text-delta","frame":{"type":"interaction.update","runId":"run-e3b66d77-b2d4-4791-be2b-1a35c8e997d1","update":{"type":"text-delta","text":"ering fixture observed"}}}
+{"type":"emit_inbound","label":"token-delta","frame":{"type":"interaction.update","runId":"run-e3b66d77-b2d4-4791-be2b-1a35c8e997d1","update":{"type":"token-delta","tokens":5}}}
+{"type":"emit_inbound","label":"step-completed","frame":{"type":"interaction.update","runId":"run-e3b66d77-b2d4-4791-be2b-1a35c8e997d1","update":{"type":"step-completed","stepId":2,"stepDurationMs":789}}}
+{"type":"emit_inbound","label":"turn-ended","frame":{"type":"interaction.update","runId":"run-e3b66d77-b2d4-4791-be2b-1a35c8e997d1","update":{"type":"turn-ended","usage":{"inputTokens":11626,"outputTokens":38,"cacheReadTokens":11584,"cacheWriteTokens":0}}}}
+{"type":"emit_inbound","label":"run.completed:2","frame":{"type":"run.completed","result":{"id":"run-e3b66d77-b2d4-4791-be2b-1a35c8e997d1","requestId":"ed3603d4-2d59-409d-a131-da4a48002bed","status":"finished","result":"steering fixture observed","model":{"id":"composer-2.5"},"durationMs":1746,"usage":{"inputTokens":11626,"outputTokens":38,"cacheReadTokens":11584,"cacheWriteTokens":0,"totalTokens":23248}}}}
+{"type":"expect_outbound","label":"agent.close","frame":{"type":"agent.close","agentId":"agent-575fd75e-3fd7-412e-9b74-36f3a5aa5371"}}

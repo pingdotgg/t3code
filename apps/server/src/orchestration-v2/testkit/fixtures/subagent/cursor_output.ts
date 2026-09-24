@@ -42,7 +42,7 @@ export function assertCursorSubagentOutput(
   );
   assert.deepEqual(
     lifecycleItems.map((item) => item.type),
-    ["reasoning", "assistant_message", "subagent", "subagent", "assistant_message"],
+    ["reasoning", "assistant_message", "subagent", "subagent", "reasoning", "assistant_message"],
     "Cursor progress, subagents, and the final response must retain provider order",
   );
   const assistantMessages = lifecycleItems.filter((item) => item.type === "assistant_message");

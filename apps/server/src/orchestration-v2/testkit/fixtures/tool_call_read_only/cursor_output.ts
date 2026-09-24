@@ -32,8 +32,9 @@ export function assertToolCallReadOnlyCursorOutput(
     (item) => item.type === "assistant_message",
   );
   assert.deepEqual(
-    assistantMessages.map((item) => item.text),
-    ["Reading both files now.\n", "read only tool fixture complete"],
+    // Trailing newlines after the progress line vary between recordings.
+    assistantMessages.map((item) => item.text.trimEnd()),
+    ["Reading both files now.", "read only tool fixture complete"],
     "Cursor progress text and the final response must be separate messages",
   );
 

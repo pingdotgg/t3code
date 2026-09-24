@@ -40,17 +40,27 @@ export function assertTodoListCursorOutput(
   );
   assert.deepEqual(
     conversationalItems.map((item) => item.type),
-    ["assistant_message", "reasoning", "reasoning", "assistant_message", "assistant_message"],
+    [
+      "reasoning",
+      "assistant_message",
+      "reasoning",
+      "reasoning",
+      "reasoning",
+      "reasoning",
+      "assistant_message",
+      "reasoning",
+      "assistant_message",
+    ],
     "separate Cursor reasoning and assistant segments must not be concatenated",
   );
   const assistantMessages = conversationalItems.filter((item) => item.type === "assistant_message");
   assert.lengthOf(assistantMessages, 3);
-  assert.include(assistantMessages[0]?.text ?? "", "I'll use the update_plan tool");
-  assert.include(assistantMessages[1]?.text ?? "", "No `update_plan` tool is available");
+  assert.include(assistantMessages[0]?.text ?? "", "Checking for the `update_plan` tool");
+  assert.include(assistantMessages[1]?.text ?? "", "`update_plan` isn't available");
   assert.equal(assistantMessages[2]?.text, "todo list fixture complete");
   assert.lengthOf(
     conversationalItems.filter((item) => item.type === "reasoning"),
-    2,
+    6,
   );
 
   const todoLists = projection.plans.filter((plan) => plan.kind === "todo_list");
