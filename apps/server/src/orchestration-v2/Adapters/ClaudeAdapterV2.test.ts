@@ -2492,7 +2492,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         if (terminal.status !== "failed") return;
         assert.equal(
           terminal.failure.class,
-          apiErrorStatus === 429 ? "usage_limit" : "provider_error",
+          apiErrorStatus === 429
+            ? "usage_limit"
+            : apiErrorStatus === 529
+              ? "provider_busy"
+              : "provider_error",
         );
         if (apiErrorStatus !== 429)
           assert.notInclude(terminal.failure.message.toLowerCase(), "usage limit");
@@ -3082,7 +3086,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.isNotEmpty(terminal.failure.message);
           assert.equal(
             terminal.failure.class,
-            terminalReason === "blocking_limit" ? "usage_limit" : "provider_error",
+            terminalReason === "blocking_limit"
+              ? "usage_limit"
+              : terminalReason === "overloaded_status"
+                ? "provider_busy"
+                : "provider_error",
           );
           assert.isFalse(
             harness.events.some(
