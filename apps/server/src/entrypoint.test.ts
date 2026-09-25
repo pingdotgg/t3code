@@ -48,7 +48,10 @@ describe("isEntrypoint", () => {
   it.skipIf(!symlinksSupported)(
     "matches through a symlinked entrypoint, as npm and npx install it",
     () => {
-      const dir = makeTempDir();
+      // Node reports the entry module URL fully resolved, so resolve the
+      // fixture dir too: under a symlinked TMPDIR (macOS /var -> /private/var)
+      // an unresolved dir would test a URL Node never produces.
+      const dir = NodeFS.realpathSync(makeTempDir());
       const real = NodePath.join(dir, "bin.mjs");
       const link = NodePath.join(dir, "t3");
       NodeFS.writeFileSync(real, "");

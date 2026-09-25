@@ -24,6 +24,7 @@ import {
 } from "./ThreadStatusIndicators";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { isSubagentThreadId } from "./subagentThreads";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
@@ -1342,7 +1343,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       });
     };
     const visibleProjectThreads = sortThreads(
-      projectThreads.filter((thread) => thread.archivedAt === null),
+      // Child threads open from their parent's Agents panel, not the sidebar.
+      projectThreads.filter(
+        (thread) => thread.archivedAt === null && !isSubagentThreadId(thread.id),
+      ),
       threadSortOrder,
     );
     const projectStatus = resolveProjectStatusIndicator(
@@ -3409,7 +3413,11 @@ export default function LegacySidebar() {
   }, []);
 
   const visibleThreads = useMemo(
-    () => sidebarThreads.filter((thread) => thread.archivedAt === null),
+    // Child threads open from their parent's Agents panel, not the sidebar.
+    () =>
+      sidebarThreads.filter(
+        (thread) => thread.archivedAt === null && !isSubagentThreadId(thread.id),
+      ),
     [sidebarThreads],
   );
   const sortedProjects = useMemo(() => {
@@ -3449,7 +3457,8 @@ export default function LegacySidebar() {
       sortedProjects.flatMap((project) => {
         const projectThreads = sortThreads(
           (threadsByProjectKey.get(project.projectKey) ?? []).filter(
-            (thread) => thread.archivedAt === null,
+            // Child threads open from their parent's Agents panel, not the sidebar.
+            (thread) => thread.archivedAt === null && !isSubagentThreadId(thread.id),
           ),
           sidebarThreadSortOrder,
         );
