@@ -202,6 +202,24 @@ describe("rightPanelStore", () => {
     },
   );
 
+  it("follows a changed link to a pull request that is already a tab", () => {
+    const store = useRightPanelStore.getState();
+    const relinkedPullRequest = pullRequestSurface({
+      projectId: "project-a",
+      repository: "pingdotgg/t3code",
+      number: 43,
+    });
+    store.openProactive(refA, relinkedPullRequest, store.getUserActionRevision(refA));
+    store.openProactive(refA, linkedPullRequest, store.getUserActionRevision(refA));
+
+    expect(
+      store.openProactive(refA, relinkedPullRequest, store.getUserActionRevision(refA), true),
+    ).toBe(true);
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual(
+      relinkedPullRequest,
+    );
+  });
+
   it("still focuses an existing diff tab for a later completed turn", () => {
     const store = useRightPanelStore.getState();
     store.openProactive(refA, completedDiff, store.getUserActionRevision(refA));

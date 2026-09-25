@@ -120,12 +120,15 @@ interface RightPanelStoreState {
   getUserActionRevision: (ref: ScopedThreadRef) => number;
   /**
    * Open a surface on behalf of the app, not the user. Refused when the user
-   * made a panel choice after `expectedUserActionRevision` was read.
+   * made a panel choice after `expectedUserActionRevision` was read. A pull
+   * request that is already a tab is left alone unless `activateExisting` is
+   * set, which following a changed link uses to switch to that tab.
    */
   openProactive: (
     ref: ScopedThreadRef,
     surface: Extract<RightPanelSurface, { kind: "diff" | "pull-request" | "pull-requests" }>,
     expectedUserActionRevision: number,
+    activateExisting?: boolean,
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
@@ -483,7 +486,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       userActionRevisionByThreadKey: {},
       getUserActionRevision: (ref) =>
         get().userActionRevisionByThreadKey[scopedThreadKey(ref)] ?? 0,
-      openProactive: (ref, surface, expectedUserActionRevision) => {
+      openProactive: (ref, surface, expectedUserActionRevision, activateExisting = false) => {
         let opened = false;
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -495,6 +498,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           // A pull request that is already a tab stays where the user left it, so
           // returning to its thread does not reopen the panel or steal the selection.
           if (
+            !activateExisting &&
             surface.kind !== "diff" &&
             selectThreadRightPanelState(state.byThreadKey, ref).surfaces.some(
               (entry) => entry.id === surface.id,
