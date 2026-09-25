@@ -7,13 +7,9 @@ import {
   type StaticScreenProps,
 } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
-import {
-  buildChatProjectCreateCommand,
-  canCreateProjectInEnvironment,
-  findChatProject,
-} from "@t3tools/client-runtime/operations/projects";
+import { canCreateProjectInEnvironment } from "@t3tools/client-runtime/operations/projects";
+import { findProjectByPath } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { CommandId, type EnvironmentId, ProjectId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useEffect, useRef, useState } from "react";
@@ -25,7 +21,6 @@ import { MaterialButton } from "../../components/MaterialButton";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { AppText as Text } from "../../components/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import { uuidv4 } from "../../lib/uuid";
 import { useProjects, useServerConfigs, waitForProject } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -170,23 +165,32 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     : null;
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
-  const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
-  // "Just chat" needs a connected environment whose server offers a chat
-  // folder. When the list is scoped to selectedEnvironmentId only that
-  // environment qualifies; an unscoped list takes the first one that does.
-  const chatEnvironment =
+  const ensureScratch = useAtomCommand(projectEnvironment.ensureScratch, {
+    reportFailure: false,
+  });
+  // Scratch needs a connected environment whose server offers the folder.
+  // When the list is scoped to selectedEnvironmentId only that environment
+  // qualifies; an unscoped list takes the first one that does.
+  const scratchEnvironment =
     connectedEnvironments.find(
       (environment) =>
         (selectedEnvironmentId === null || environment.environmentId === selectedEnvironmentId) &&
         canCreateProjectInEnvironment(environment.connectionState) &&
-        serverConfigs.get(environment.environmentId)?.chatWorkspaceRoot !== undefined,
+        serverConfigs.get(environment.environmentId)?.scratchWorkspaceRoot !== undefined,
     ) ?? null;
-  const chatStartInFlightRef = useRef(false);
-  const chatWorkspaceRoot = chatEnvironment
-    ? (serverConfigs.get(chatEnvironment.environmentId)?.chatWorkspaceRoot ?? null)
+  const scratchWorkspaceRoot = scratchEnvironment
+    ? (serverConfigs.get(scratchEnvironment.environmentId)?.scratchWorkspaceRoot ?? null)
     : null;
-  const canJustChat =
-    chatEnvironment !== null && chatWorkspaceRoot !== null && reservedDestinationProject === null;
+  // Once the Scratch project exists it is an ordinary row in the list.
+  const scratchProjectExists =
+    scratchEnvironment !== null &&
+    scratchWorkspaceRoot !== null &&
+    findProjectByPath(
+      projects.filter((project) => project.environmentId === scratchEnvironment.environmentId),
+      scratchWorkspaceRoot,
+    ) !== undefined;
+  const canStartScratch = scratchWorkspaceRoot !== null && reservedDestinationProject === null;
+  const scratchStartInFlightRef = useRef(false);
 
   async function selectProject(project: EnvironmentProject): Promise<void> {
     if (incomingShare?.destination && !reservedDestinationProject) {
@@ -220,51 +224,32 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     );
   }
 
-  async function startChat(): Promise<void> {
-    if (!chatEnvironment || chatWorkspaceRoot === null || chatStartInFlightRef.current) return;
-    const environmentId = chatEnvironment.environmentId;
-    const existing = findChatProject({ projects, environmentId, chatWorkspaceRoot });
-    if (existing) {
-      await selectProject(existing);
-      return;
-    }
-    chatStartInFlightRef.current = true;
+  async function startScratch(): Promise<void> {
+    if (!scratchEnvironment || scratchStartInFlightRef.current) return;
+    const environmentId = scratchEnvironment.environmentId;
+    scratchStartInFlightRef.current = true;
     try {
-      await createChatProject(environmentId);
+      const result = await ensureScratch({ environmentId, input: {} });
+      if (AsyncResult.isFailure(result)) {
+        const error = Cause.squash(result.cause);
+        Alert.alert(
+          "Could not open Scratch",
+          error instanceof Error ? error.message : "The Scratch folder could not be created.",
+        );
+        return;
+      }
+      const project = await waitForProject({ environmentId, projectId: result.value.projectId });
+      if (project === null) {
+        Alert.alert(
+          "Could not open Scratch",
+          "Scratch has not reached this device yet. Pick it from the project list once it appears.",
+        );
+        return;
+      }
+      await selectProject(project);
     } finally {
-      chatStartInFlightRef.current = false;
+      scratchStartInFlightRef.current = false;
     }
-  }
-
-  async function createChatProject(environmentId: EnvironmentId): Promise<void> {
-    if (chatWorkspaceRoot === null) return;
-    const projectId = ProjectId.make(uuidv4());
-    const result = await createProject({
-      environmentId,
-      input: buildChatProjectCreateCommand({
-        commandId: CommandId.make(uuidv4()),
-        projectId,
-        chatWorkspaceRoot,
-        createdAt: new Date().toISOString(),
-      }),
-    });
-    if (AsyncResult.isFailure(result)) {
-      const error = Cause.squash(result.cause);
-      Alert.alert(
-        "Could not start chat",
-        error instanceof Error ? error.message : "The chat folder could not be created.",
-      );
-      return;
-    }
-    const project = await waitForProject({ environmentId, projectId });
-    if (project === null) {
-      Alert.alert(
-        "Could not start chat",
-        "The chat folder was created but has not reached this device yet. Pick Chats from the project list once it appears.",
-      );
-      return;
-    }
-    await selectProject(project);
   }
 
   useEffect(() => {
@@ -352,11 +337,11 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                         : navigation.navigate("ConnectionsNew")
                     }
                   />
-                  {canJustChat ? (
+                  {canStartScratch ? (
                     <MaterialButton
-                      label="Just chat"
+                      label="Start in Scratch"
                       tone="secondary"
-                      onPress={() => void startChat()}
+                      onPress={() => void startScratch()}
                     />
                   ) : null}
                 </>
@@ -379,12 +364,12 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                       Add new project
                     </Text>
                   </Pressable>
-                  {canJustChat ? (
+                  {canStartScratch ? (
                     <Pressable
                       className="rounded-full bg-subtle px-4 py-2.5 active:opacity-70"
-                      onPress={() => void startChat()}
+                      onPress={() => void startScratch()}
                     >
-                      <Text className="text-sm font-t3-bold text-foreground">Just chat</Text>
+                      <Text className="text-sm font-t3-bold text-foreground">Start in Scratch</Text>
                     </Pressable>
                   ) : null}
                 </>
@@ -487,16 +472,16 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               })}
             </View>
           )}
-          {canJustChat && projectScopes.length > 0 ? (
+          {canStartScratch && !scratchProjectExists && projectScopes.length > 0 ? (
             Platform.OS === "android" ? (
               <View collapsable={false} className="overflow-hidden rounded-[28px] bg-card">
                 <MaterialListRow
-                  title="Just chat"
+                  title="Scratch"
                   subtitle="Start a task without a repository"
-                  onPress={() => void startChat()}
+                  onPress={() => void startScratch()}
                   leading={
                     <SymbolView
-                      name="bubble.left"
+                      name="pencil"
                       size={22}
                       tintColorClassName="accent-icon-muted"
                       type="monochrome"
@@ -508,20 +493,20 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               <View collapsable={false} className="overflow-hidden rounded-[24px] bg-card">
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Just chat"
-                  onPress={() => void startChat()}
+                  accessibilityLabel="Scratch"
+                  onPress={() => void startScratch()}
                   className="flex-row items-center gap-3 bg-card px-4 py-3.5"
                 >
                   <View className="h-7 w-7 items-center justify-center">
                     <SymbolView
-                      name="bubble.left"
+                      name="pencil"
                       size={18}
                       tintColorClassName="accent-icon-muted"
                       type="monochrome"
                     />
                   </View>
                   <View className="min-w-0 flex-1">
-                    <Text className="text-base font-t3-bold leading-snug">Just chat</Text>
+                    <Text className="text-base font-t3-bold leading-snug">Scratch</Text>
                     <Text className="text-xs leading-snug text-foreground-muted" numberOfLines={1}>
                       Start a task without a repository
                     </Text>

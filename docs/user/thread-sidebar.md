@@ -13,15 +13,19 @@ an existing worktree, use **New thread in this worktree** from the branch toolba
 When you change a new thread's project, T3 Code stays in the current environment
 if that project exists there. Otherwise it selects an environment that has it.
 
-To talk to an agent without picking a repository, click **or just chat** under
-a new thread's heading, choose **Just chat** on the empty-state screen or in the
-add-project menu, or pick it from the project list on mobile. The heading then
-reads "What should we chat about?"; click **chat** to move the thread to a
-project. Chat threads share one **Chats** project rooted in a plain `chats`
-folder inside the T3 data directory. Branch, worktree, and diff controls stay
-hidden while that folder is not a Git repository. Any files the agent writes
-land in that folder. The option is unavailable when the data directory itself
-sits inside a Git checkout.
+### Scratch
+
+Scratch is for work that does not belong to a repository. To start there, click
+**or start in Scratch** under a new thread's heading, choose **New thread in
+Scratch** in the command palette, or press `mod+alt+n`. On mobile, pick
+**Scratch** from the project list. To move a draft to a repository, pick the
+project in the heading.
+
+Scratch is an ordinary project rooted in the `scratch` folder of your T3 data
+directory (`~/.t3/scratch` by default). All Scratch threads share that folder, and
+the files the agent writes stay there until you delete them. Branch, worktree, and
+diff controls stay hidden while the folder is not a Git repository. Scratch is
+unavailable when the data directory itself sits inside a Git checkout.
 
 ### Start in the background
 

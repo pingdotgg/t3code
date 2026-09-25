@@ -2,12 +2,12 @@ import type { DraftId } from "~/composerDraftStore";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { findChatProject } from "@t3tools/client-runtime/operations/projects";
+import { findProjectByPath } from "@t3tools/client-runtime/state/projects";
 import { FolderPlusIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
-import { useChatProject } from "~/hooks/useChatProject";
+import { useScratchProject } from "~/hooks/useScratchProject";
 import { useClientSettings } from "~/hooks/useSettings";
 import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
 import {
@@ -34,7 +34,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { Button, InlineButton } from "../ui/button";
+import { InlineButton } from "../ui/button";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
 interface DraftHeroHeadlineProps {
@@ -61,8 +61,7 @@ export function DraftHeroHeadline({
   const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
-  const { canStartChatIn, chatEnvironmentId, chatWorkspaceRootFor, ensureChatProject } =
-    useChatProject();
+  const { scratchEnvironmentId, scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
 
   const environmentLabelById = useMemo(
     () =>
@@ -146,35 +145,20 @@ export function DraftHeroHeadline({
             project.environmentId === activeProjectRef.environmentId &&
             project.id === activeProjectRef.projectId,
         ) ?? null);
-  const chatTargetEnvironmentId =
-    activeProjectRef?.environmentId ?? chatEnvironmentId(primaryEnvironmentId);
-  const chatWorkspaceRoot = chatWorkspaceRootFor(chatTargetEnvironmentId);
-  const chatProject =
-    chatTargetEnvironmentId !== null && chatWorkspaceRoot !== null
-      ? findChatProject({ projects, environmentId: chatTargetEnvironmentId, chatWorkspaceRoot })
-      : null;
-  const isChatDraft =
+  const scratchTargetEnvironmentId =
+    activeProjectRef?.environmentId ?? scratchEnvironmentId(primaryEnvironmentId);
+  const scratchWorkspaceRoot = scratchWorkspaceRootFor(scratchTargetEnvironmentId);
+  const isScratchDraft =
     activeProject !== null &&
-    chatProject !== null &&
-    chatProject.environmentId === activeProject.environmentId &&
-    chatProject.id === activeProject.id;
-  // On a chat draft the heading already says "chat", so its menu lists
-  // repositories only. Every other state keeps Chats as a way in.
-  const menuEntries = projectPickerEntries.filter(
-    ({ targetProject }) =>
-      !isChatDraft ||
-      chatProject === null ||
-      targetProject.environmentId !== chatProject.environmentId ||
-      targetProject.id !== chatProject.id,
-  );
-  const canJustChat = canStartChatIn(chatTargetEnvironmentId) && !isChatDraft;
+    scratchWorkspaceRoot !== null &&
+    findProjectByPath([activeProject], scratchWorkspaceRoot) !== undefined;
 
-  // The picker can change the draft's target while "Just chat" is still
-  // creating its project; a stale continuation must not retarget it again.
-  const latestTargetRef = useRef({ draftId, activeProjectKey, chatTargetEnvironmentId });
+  // The picker can change the draft's target while Scratch is still being
+  // opened; a stale continuation must not retarget it again.
+  const latestTargetRef = useRef({ draftId, activeProjectKey, scratchTargetEnvironmentId });
   useEffect(() => {
-    latestTargetRef.current = { draftId, activeProjectKey, chatTargetEnvironmentId };
-  }, [activeProjectKey, chatTargetEnvironmentId, draftId]);
+    latestTargetRef.current = { draftId, activeProjectKey, scratchTargetEnvironmentId };
+  }, [activeProjectKey, scratchTargetEnvironmentId, draftId]);
   // Project selection changes the target of the open draft in place. The
   // prompt stays in the same composer session, so the sidebar only gets a
   // draft row if the user later navigates away.
@@ -185,7 +169,7 @@ export function DraftHeroHeadline({
     latestTargetRef.current = {
       draftId,
       activeProjectKey: logicalProjectKey,
-      chatTargetEnvironmentId: project.environmentId,
+      scratchTargetEnvironmentId: project.environmentId,
     };
     const currentDraft = getComposerDraft(draftId);
     setLogicalProjectDraftThreadId(
@@ -209,18 +193,18 @@ export function DraftHeroHeadline({
       }
     }
   };
-  const startChat = async (): Promise<boolean> => {
-    if (chatTargetEnvironmentId === null || isChatDraft) {
+  const startScratch = async (): Promise<boolean> => {
+    if (scratchTargetEnvironmentId === null || isScratchDraft) {
       return false;
     }
-    const requested = { draftId, activeProjectKey, chatTargetEnvironmentId };
-    const project = await ensureChatProject(chatTargetEnvironmentId);
+    const requested = { draftId, activeProjectKey, scratchTargetEnvironmentId };
+    const project = await openScratchProject(scratchTargetEnvironmentId);
     const latest = latestTargetRef.current;
     if (
       !project ||
       latest.draftId !== requested.draftId ||
       latest.activeProjectKey !== requested.activeProjectKey ||
-      latest.chatTargetEnvironmentId !== requested.chatTargetEnvironmentId
+      latest.scratchTargetEnvironmentId !== requested.scratchTargetEnvironmentId
     ) {
       return false;
     }
@@ -244,11 +228,9 @@ export function DraftHeroHeadline({
             />
           }
         >
-          <span className="min-w-0 truncate">
-            {isChatDraft ? "chat" : (activeProjectDisplayName ?? "Choose a project")}
-          </span>
+          <span className="min-w-0 truncate">{activeProjectDisplayName ?? "Choose a project"}</span>
         </TooltipTrigger>
-        {activeProjectDisplayName && !isChatDraft ? (
+        {activeProjectDisplayName ? (
           <TooltipPopup side="top">{activeProjectDisplayName}</TooltipPopup>
         ) : null}
       </Tooltip>
@@ -263,7 +245,7 @@ export function DraftHeroHeadline({
             selectProject(entry.targetProject, entry.group.projectKey);
           }}
         >
-          {menuEntries.map(({ group }) => {
+          {projectPickerEntries.map(({ group }) => {
             return (
               <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>
                 <span className="flex min-w-0 items-center gap-2">
@@ -286,7 +268,7 @@ export function DraftHeroHeadline({
             );
           })}
         </MenuRadioGroup>
-        {menuEntries.length > 0 ? <MenuSeparator /> : null}
+        {projectPickerEntries.length > 0 ? <MenuSeparator /> : null}
         <MenuItem onClick={openAddProject}>
           <FolderPlusIcon />
           New project
@@ -308,31 +290,28 @@ export function DraftHeroHeadline({
   // in the h1; without an explicit label its widget state bleeds into the
   // announced phrase.
   const headingLabel = hasResolvedProject
-    ? isChatDraft
-      ? "What should we chat about?"
-      : `What should we build in ${activeProjectDisplayName}?`
+    ? `What should we build in ${activeProjectDisplayName}?`
     : canChooseProject
       ? `${activeProjectDisplayName ?? "Choose a project"} to start`
       : "Add a project to start";
 
-  // One click into chat, phrased as the alternative to the question above it.
-  // Focus moves to the mode word once this line has gone.
-  const orJustChat =
-    canJustChat && (hasResolvedProject || canChooseProject) ? (
-      <Button
-        variant="link-muted"
-        size="sm"
+  // One click into Scratch, phrased as the alternative to the question above
+  // it. Focus moves to the project picker once this line has gone.
+  const orStartInScratch =
+    scratchWorkspaceRoot !== null && !isScratchDraft && (hasResolvedProject || canChooseProject) ? (
+      <InlineButton
+        tone="muted"
         className="pointer-events-auto"
         onClick={() =>
-          void startChat().then((started) => {
+          void startScratch().then((started) => {
             if (started) {
               document.querySelector<HTMLElement>("[data-draft-project-trigger]")?.focus();
             }
           })
         }
       >
-        or just chat
-      </Button>
+        or start in Scratch
+      </InlineButton>
     ) : null;
 
   return (
@@ -342,19 +321,17 @@ export function DraftHeroHeadline({
         className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl"
       >
         {hasResolvedProject ? (
-          isChatDraft ? (
-            <>What should we {projectSelector} about?</>
-          ) : (
-            <>What should we build in {projectSelector}?</>
-          )
+          <>What should we build in {projectSelector}?</>
         ) : canChooseProject ? (
           <>{projectSelector} to start</>
         ) : (
           <>Add a project to start</>
         )}
       </h1>
-      {/* Always reserved so the heading does not move when the line goes. */}
-      <div className="mt-2 flex h-8 items-center sm:h-7">{orJustChat}</div>
+      {/* Reserved wherever Scratch exists so the heading does not move when the line goes. */}
+      {scratchWorkspaceRoot === null ? null : (
+        <p className="mt-2 flex h-6 items-center text-sm">{orStartInScratch}</p>
+      )}
     </div>
   );
 }

@@ -123,7 +123,10 @@ import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
-import { OrchestrationThreadSettleBlockedError } from "./orchestration/Errors.ts";
+import {
+  OrchestrationCommandInvariantError,
+  OrchestrationThreadSettleBlockedError,
+} from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
@@ -5160,29 +5163,116 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("offers a chats folder only when the data dir is outside a work tree", () =>
+  it.effect("creates the Scratch project on first request and reuses it after", () =>
     Effect.gen(function* () {
-      yield* buildAppUnderTest();
-      const outside = yield* Effect.scoped(
+      const fileSystem = yield* FileSystem.FileSystem;
+      const created: Array<{ readonly projectId: ProjectId; readonly workspaceRoot: string }> = [];
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                if (command.type === "project.create") {
+                  created.push({
+                    projectId: command.projectId,
+                    workspaceRoot: command.workspaceRoot,
+                  });
+                }
+                return { sequence: created.length };
+              }),
+          },
+          projectionSnapshotQuery: {
+            getActiveProjectByWorkspaceRoot: (workspaceRoot) =>
+              Effect.succeed(
+                Option.fromNullishOr(
+                  created.find((project) => project.workspaceRoot === workspaceRoot),
+                ).pipe(
+                  Option.map((project) => ({
+                    ...makeDefaultOrchestrationReadModel().projects[0]!,
+                    id: project.projectId,
+                    workspaceRoot,
+                  })),
+                ),
+              ),
+          },
+        },
+      });
+
+      yield* Effect.scoped(
         withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
-          client[WS_METHODS.serverGetConfig]({}),
+          Effect.gen(function* () {
+            const config = yield* client[WS_METHODS.serverGetConfig]({});
+            const first = yield* client[WS_METHODS.projectsEnsureScratch]({});
+            const second = yield* client[WS_METHODS.projectsEnsureScratch]({});
+
+            assert.isTrue(config.scratchWorkspaceRoot?.endsWith("scratch"));
+            assert.equal(created.length, 1);
+            assert.equal(created[0]?.workspaceRoot, config.scratchWorkspaceRoot);
+            assert.equal(first.projectId, created[0]?.projectId);
+            assert.equal(second.projectId, first.projectId);
+            assert.isTrue(yield* fileSystem.exists(config.scratchWorkspaceRoot ?? ""));
+          }),
         ),
       );
-      assert.isTrue(outside.chatWorkspaceRoot?.endsWith("chats"));
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("withholds the chats folder when the data dir sits inside a work tree", () =>
+  it.effect("resolves a lost Scratch create race to the winning project", () =>
+    Effect.gen(function* () {
+      const winnerId = ProjectId.make("project-scratch-winner");
+      let lookups = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.fail(
+                new OrchestrationCommandInvariantError({
+                  commandType: command.type,
+                  detail: "Active project already exists for workspace root.",
+                }),
+              ),
+          },
+          projectionSnapshotQuery: {
+            // Empty before the create, then the other client's project.
+            getActiveProjectByWorkspaceRoot: (workspaceRoot) =>
+              Effect.sync(() =>
+                lookups++ === 0
+                  ? Option.none()
+                  : Option.some({
+                      ...makeDefaultOrchestrationReadModel().projects[0]!,
+                      id: winnerId,
+                      workspaceRoot,
+                    }),
+              ),
+          },
+        },
+      });
+
+      const result = yield* Effect.scoped(
+        withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
+          client[WS_METHODS.projectsEnsureScratch]({}),
+        ),
+      );
+      assert.equal(result.projectId, winnerId);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("withholds Scratch when the data dir sits inside a work tree", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({
         layers: { vcsDriver: { isInsideWorkTree: () => Effect.succeed(true) } },
       });
-      const inside = yield* Effect.scoped(
+      yield* Effect.scoped(
         withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
-          client[WS_METHODS.serverGetConfig]({}),
+          Effect.gen(function* () {
+            const config = yield* client[WS_METHODS.serverGetConfig]({});
+            const ensure = yield* Effect.flip(client[WS_METHODS.projectsEnsureScratch]({}));
+
+            assert.isUndefined(config.scratchWorkspaceRoot);
+            assert.include(String(ensure.message), "Scratch is not available");
+          }),
         ),
       );
-      assert.isUndefined(inside.chatWorkspaceRoot);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
