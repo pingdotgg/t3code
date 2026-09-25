@@ -22,6 +22,16 @@ describe("speech custom words", () => {
     expect(applySpeechCustomWords("你好。", ["你号"])).toBe("你好。");
   });
 
+  it("preserves whitespace around fuzzy corrections", () => {
+    expect(applySpeechCustomWords("  hello\n\nhandee   friend\t", ["Handy"])).toBe(
+      "  hello\n\nHandy   friend\t",
+    );
+    expect(applySpeechCustomWords("first line\nsecond line", ["Handy"])).toBe(
+      "first line\nsecond line",
+    );
+    expect(applySpeechCustomWords("Chat\nG P T", ["ChatGPT"])).toBe("Chat\nG P T");
+  });
+
   it("normalizes, deduplicates, and removes unsafe prompt characters", () => {
     expect(
       normalizeSpeechCustomWords([

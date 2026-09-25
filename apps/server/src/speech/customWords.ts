@@ -100,14 +100,28 @@ const bestMatch = (candidate: string, keys: readonly CustomWordKey[]) => {
 export function applySpeechCustomWords(text: string, words: readonly string[]): string {
   const keys = customWordKeys(words);
   if (keys.length === 0) return text;
-  const tokens = text.split(/\s+/).filter(Boolean);
+  const tokens = [...text.matchAll(/\S+/g)].map((match) => ({
+    value: match[0],
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
   const output: string[] = [];
+  let cursor = 0;
   for (let index = 0; index < tokens.length;) {
     let best: { readonly count: number; readonly word: string; readonly score: number } | undefined;
     for (let count = Math.min(4, tokens.length - index); count >= 1; count -= 1) {
       const slice = tokens.slice(index, index + count);
-      if (slice.slice(0, -1).some((token) => punctuation(token).suffix)) continue;
-      const match = bestMatch(matchKey(slice.join("")), keys);
+      if (
+        slice
+          .slice(0, -1)
+          .some(
+            (token, offset) =>
+              punctuation(token.value).suffix ||
+              /[\r\n]/.test(text.slice(token.end, slice[offset + 1]!.start)),
+          )
+      )
+        continue;
+      const match = bestMatch(matchKey(slice.map(({ value }) => value).join("")), keys);
       if (
         match &&
         (!best || match.score < best.score || (match.score === best.score && count < best.count))
@@ -115,19 +129,21 @@ export function applySpeechCustomWords(text: string, words: readonly string[]): 
         best = { count, ...match };
     }
     if (!best) {
-      output.push(tokens[index]!);
       index += 1;
       continue;
     }
     const consumed = tokens.slice(index, index + best.count);
+    output.push(text.slice(cursor, consumed[0]!.start));
     output.push(
-      punctuation(consumed[0]!).prefix +
-        preserveCase(consumed[0]!, best.word) +
-        punctuation(consumed.at(-1)!).suffix,
+      punctuation(consumed[0]!.value).prefix +
+        preserveCase(consumed[0]!.value, best.word) +
+        punctuation(consumed.at(-1)!.value).suffix,
     );
+    cursor = consumed.at(-1)!.end;
     index += best.count;
   }
-  return output.join(" ");
+  output.push(text.slice(cursor));
+  return output.join("");
 }
 
 const normalizeWord = (word: string) =>
