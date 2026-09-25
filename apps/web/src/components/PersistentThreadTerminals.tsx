@@ -393,7 +393,7 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
         {
           id: surface.id,
           terminalIds: surface.terminalIds,
-          ...(surface.splitDirection === "vertical" ? { splitDirection: "vertical" as const } : {}),
+          layout: surface.layout,
         },
       ]}
       activeTerminalGroupId={surface.id}
