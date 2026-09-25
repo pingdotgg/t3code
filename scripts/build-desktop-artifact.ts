@@ -2776,9 +2776,6 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         "libxtst6",
         "xdg-utils",
       ],
-      // The default, single-threaded xz, adds minutes to the release. gzip
-      // takes seconds for a slightly larger file.
-      compression: "gz",
     };
   }
 
@@ -3767,6 +3764,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     if (value === "") {
       delete buildEnv[key];
     }
+  }
+  if (options.platform === "linux") {
+    // fpm compresses the .deb with the system xz through tar. Threaded mode
+    // takes seconds on a many-core runner instead of about two minutes.
+    buildEnv.XZ_DEFAULTS = "-T0";
   }
   if (!options.signed) {
     buildEnv.CSC_IDENTITY_AUTO_DISCOVERY = "false";
