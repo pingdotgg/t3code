@@ -21,6 +21,10 @@ describe("Android fold scene", () => {
     const creaseWidth =
       rightScreen.geometry.boundingBox!.min.x - leftScreen.geometry.boundingBox!.max.x;
     expect(creaseWidth).toBeLessThan(0.01);
+    const continuousScreen = scene.root.getObjectByName("continuous-inner-screen") as Mesh;
+    const positions = continuousScreen.geometry.getAttribute("position");
+    expect(continuousScreen.geometry.index).not.toBeNull();
+    expect(Array.from({ length: positions.count }, (_, i) => positions.getX(i))).toContain(0);
     scene.setAngle(90);
     expect(moving.rotation.y).toBeCloseTo(Math.PI / 2);
     expect(fixed.rotation.y).toBe(0);
