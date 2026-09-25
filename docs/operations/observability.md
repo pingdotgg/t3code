@@ -554,9 +554,9 @@ OTLP export:
 
 The server also reads the standard `OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_ENDPOINT` and generic
 `OTEL_EXPORTER_OTLP_ENDPOINT` (with `/v1/traces`, `/v1/metrics`, or `/v1/logs` appended), for a
-collector expecting those instead. A non-blank `T3CODE_OTLP_*_URL` wins over either, and a blank one
-counts as unset. A signal with an OTEL endpoint takes its headers from `OTEL_EXPORTER_OTLP_HEADERS`
-and its protocol from `OTEL_EXPORTER_OTLP_PROTOCOL` (default `http/protobuf`, read
+collector expecting those instead. A non-blank `T3CODE_OTLP_*_URL` wins over either, and a
+per-signal endpoint wins over the generic one for its signal. A blank value counts as unset. A
+signal with an OTEL endpoint takes its headers from `OTEL_EXPORTER_OTLP_HEADERS` and its protocol from `OTEL_EXPORTER_OTLP_PROTOCOL` (default `http/protobuf`, read
 case-insensitively), and a per-signal `OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_HEADERS` or
 `_PROTOCOL` wins over the generic one for its signal. `T3CODE_OTLP_HEADERS` and
 `T3CODE_OTLP_PROTOCOL` never apply to it. An endpoint that is not an `http` or `https` URL, a
