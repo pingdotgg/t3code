@@ -2606,6 +2606,8 @@ describe("ClaudeAdapterLive", () => {
   const usageLimitMessage =
     "Claude usage limit reached. Send the message again once the limit resets.";
   const genericApiErrorMessage = "Claude gave up after repeated API errors.";
+  const rateLimitText =
+    "API Error: Request rejected (429) · rate_limit_error: This request would exceed your account's rate limit.";
   const rateLimitAssistant = {
     type: "assistant",
     session_id: "sdk-session-limit",
@@ -2615,9 +2617,14 @@ describe("ClaudeAdapterLive", () => {
     message: {
       id: "assistant-message-limit",
       model: "<synthetic>",
-      content: [{ type: "text", text: "You've hit your session limit" }],
+      content: [{ type: "text", text: rateLimitText }],
     },
   };
+  const withAssistantText = (error: string, text: string) => ({
+    ...rateLimitAssistant,
+    error,
+    message: { ...rateLimitAssistant.message, content: [{ type: "text", text }] },
+  });
   const rateLimitResult = {
     type: "result",
     subtype: "success",
@@ -2628,10 +2635,38 @@ describe("ClaudeAdapterLive", () => {
   };
 
   it.effect.each([
+    // With no rejected usage window, a 429 is not a usage limit.
     {
       name: "an assistant-only rate limit",
       messages: [rateLimitAssistant],
-      expected: usageLimitMessage,
+      expected: rateLimitText,
+    },
+    {
+      name: "a refused request",
+      messages: [withAssistantText("invalid_request", "API Error: 400 example refusal")],
+      expected: "API Error: 400 example refusal",
+    },
+    {
+      name: "an overlong API error",
+      messages: [withAssistantText("unknown", `API Error: 500 ${"x".repeat(600)}`)],
+      expected: `API Error: 500 ${"x".repeat(485)}...`,
+    },
+    {
+      name: "an API error without text",
+      messages: [withAssistantText("server_error", "  ")],
+      expected: genericApiErrorMessage,
+    },
+    {
+      name: "an API error named only in the result",
+      messages: [],
+      result: { result: "API Error: 400 example refusal" },
+      expected: "API Error: 400 example refusal",
+    },
+    {
+      name: "a reply before an API error that is not flagged",
+      messages: [],
+      result: { is_error: false, result: "Here is the plan." },
+      expected: genericApiErrorMessage,
     },
     {
       name: "a normal parent response after a rate limit",
@@ -2640,8 +2675,8 @@ describe("ClaudeAdapterLive", () => {
     },
     {
       name: "a server error after a rate limit",
-      messages: [rateLimitAssistant, { ...rateLimitAssistant, error: "server_error" }],
-      expected: genericApiErrorMessage,
+      messages: [rateLimitAssistant, withAssistantText("server_error", "API Error: 500 boom")],
+      expected: "API Error: 500 boom",
     },
     {
       name: "a subagent rate limit",
@@ -2654,9 +2689,9 @@ describe("ClaudeAdapterLive", () => {
         rateLimitAssistant,
         { ...rateLimitAssistant, error: undefined, parent_tool_use_id: "nested-tool" },
       ],
-      expected: usageLimitMessage,
+      expected: rateLimitText,
     },
-  ])("classifies the terminal API failure after $name", ({ messages, expected }) => {
+  ])("classifies the terminal API failure after $name", ({ messages, result, expected }) => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -2674,7 +2709,7 @@ describe("ClaudeAdapterLive", () => {
       for (const [index, message] of messages.entries()) {
         harness.query.emit({ ...message, uuid: `assistant-${index}` } as unknown as SDKMessage);
       }
-      harness.query.emit(rateLimitResult as unknown as SDKMessage);
+      harness.query.emit({ ...rateLimitResult, ...result } as unknown as SDKMessage);
 
       const events = Array.from(yield* Fiber.join(eventsFiber));
       const errors = events.filter((event) => event.type === "runtime.error");
@@ -2688,7 +2723,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("names repeated usage limits without carrying them into a later turn", () => {
+  it.effect("names a rejected usage window without carrying it into a later turn", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -2697,9 +2732,10 @@ describe("ClaudeAdapterLive", () => {
         provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
+      // A retry that only repeats the assistant error keeps the CLI's text.
       for (const [index, expected] of [
         usageLimitMessage,
-        usageLimitMessage,
+        rateLimitText,
         genericApiErrorMessage,
       ].entries()) {
         const eventsFiber = yield* adapter.streamEvents.pipe(

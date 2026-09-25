@@ -277,7 +277,7 @@ interface ClaudeTurnState {
   nextSyntheticAssistantBlockIndex: number;
   authenticationFailureMessage: string | undefined;
   rejectedRateLimitTypes: Set<string>;
-  latestAssistantRateLimited: boolean;
+  latestAssistantErrorText: string | undefined;
   emittedThinkingText: boolean;
   readonly thinkingSnapshotIds: Set<string>;
 }
@@ -1695,7 +1695,7 @@ function resultOutcome(
   errorMessage: string | undefined;
 } {
   // A success result flagged is_error only fails when the turn already
-  // reported its cause (expired login, rejected usage window).
+  // reported its cause (expired login, rejected usage window, API error text).
   const successTaggedFailure = result.subtype === "success" && result.is_error === true;
   const structuredError = isOverloadedResult(result)
     ? "Claude API is overloaded (529). Try again shortly."
@@ -1782,6 +1782,17 @@ function extractAssistantContentBlocks(
 
 function extractAssistantTextBlocks(message: SDKMessage): Array<string> {
   return extractAssistantContentBlocks(message, "text", "text");
+}
+
+const MAX_CLAUDE_ASSISTANT_ERROR_CHARS = 500;
+
+/** The CLI's API error text, capped since it can embed a whole upstream response. */
+function claudeApiErrorText(value: string): string | undefined {
+  const text = value.trim();
+  if (text.length === 0) return undefined;
+  return text.length > MAX_CLAUDE_ASSISTANT_ERROR_CHARS
+    ? `${text.slice(0, MAX_CLAUDE_ASSISTANT_ERROR_CHARS).trimEnd()}...`
+    : text;
 }
 
 function extractAssistantThinkingBlocks(message: SDKMessage): Array<string> {
@@ -3388,7 +3399,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         nextSyntheticAssistantBlockIndex: -1,
         authenticationFailureMessage: undefined,
         rejectedRateLimitTypes: new Set(),
-        latestAssistantRateLimited: false,
+        latestAssistantErrorText: undefined,
         emittedThinkingText: false,
         thinkingSnapshotIds: new Set(),
       };
@@ -3450,9 +3461,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (context.turnState) {
-      // Limited retries may only carry an assistant error, without a new window
-      // event. Later parent responses replace this evidence if the turn recovers.
-      context.turnState.latestAssistantRateLimited = message.error === "rate_limit";
+      // The CLI names an API failure (`API Error: 400 ...`) in a synthetic
+      // assistant message that carries `error`. Later parent responses replace
+      // this evidence if the turn recovers.
+      context.turnState.latestAssistantErrorText = message.error
+        ? claudeApiErrorText(extractAssistantTextBlocks(message).join("\n"))
+        : undefined;
       // The CLI can report authentication failure before ending the turn as a
       // generic API error, so retain that evidence for the result fallback.
       if (message.error === "authentication_failed") {
@@ -3489,11 +3503,20 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     const turn = context.turnState;
+    // Only a rejected usage window is a usage limit; any other 429 (per-minute
+    // limits, a gateway behind ANTHROPIC_BASE_URL) reports the CLI's own text.
     const failureHint =
       turn?.authenticationFailureMessage ??
-      (turn && (turn.rejectedRateLimitTypes.size > 0 || turn.latestAssistantRateLimited)
+      (turn && turn.rejectedRateLimitTypes.size > 0
         ? "Claude usage limit reached. Send the message again once the limit resets."
-        : undefined);
+        : (turn?.latestAssistantErrorText ??
+          // A failed success result carries the error text in `result`.
+          (message.subtype === "success" &&
+          message.is_error &&
+          message.terminal_reason === "api_error" &&
+          typeof message.result === "string"
+            ? claudeApiErrorText(message.result)
+            : undefined)));
     const { status, errorMessage } = resultOutcome(message, failureHint);
 
     if (status === "failed") {
@@ -5215,7 +5238,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         nextSyntheticAssistantBlockIndex: -1,
         authenticationFailureMessage: undefined,
         rejectedRateLimitTypes: new Set(),
-        latestAssistantRateLimited: false,
+        latestAssistantErrorText: undefined,
         emittedThinkingText: false,
         thinkingSnapshotIds: new Set(),
       };
