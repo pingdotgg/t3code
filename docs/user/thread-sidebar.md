@@ -106,7 +106,7 @@ is disabled.
 
 Turn on **Auto-archive settled threads** to archive threads that stay settled for 30 days, or
 choose another number of days. It is off by default. Archived threads stay in **Settings → Archive**,
-where you can restore them.
+where you can restore them. A restored thread starts a new count.
 
 Change these rules in **Settings → General** on web and desktop, or **Settings → Thread behavior** on mobile.
 They continue to run when your apps are closed. On web and desktop, choose an environment at the

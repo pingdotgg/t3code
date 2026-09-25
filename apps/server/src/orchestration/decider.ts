@@ -485,7 +485,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.unarchive": {
-      yield* requireThreadArchived({
+      const thread = yield* requireThreadArchived({
         readModel,
         command,
         threadId: command.threadId,
@@ -501,6 +501,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.unarchived",
         payload: {
           threadId: command.threadId,
+          ...(thread.settledOverride === "settled" ? { settledAt: occurredAt } : {}),
           updatedAt: occurredAt,
         },
       };

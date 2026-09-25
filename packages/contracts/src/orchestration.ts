@@ -1800,6 +1800,9 @@ export const ThreadArchivedPayload = Schema.Struct({
 
 export const ThreadUnarchivedPayload = Schema.Struct({
   threadId: ThreadId,
+  // Present when a settled thread is restored: its settled clock restarts so
+  // auto-archive does not take it straight back. Absent from older servers.
+  settledAt: Schema.optional(IsoDateTime),
   updatedAt: IsoDateTime,
 });
 

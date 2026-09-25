@@ -161,7 +161,12 @@ export function applyThreadDetailEvent(
     case "thread.unarchived":
       return {
         kind: "updated",
-        thread: { ...thread, archivedAt: null, updatedAt: event.payload.updatedAt },
+        thread: {
+          ...thread,
+          archivedAt: null,
+          ...(event.payload.settledAt !== undefined ? { settledAt: event.payload.settledAt } : {}),
+          updatedAt: event.payload.updatedAt,
+        },
       };
 
     case "thread.settled":

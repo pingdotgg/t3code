@@ -298,6 +298,27 @@ describe("orchestration projector", () => {
       ),
     );
     expect(unarchived.threads[0]?.archivedAt).toBeNull();
+
+    // Restoring a settled thread restarts its settled clock.
+    const restoredSettled = await Effect.runPromise(
+      projectEvent(
+        archived,
+        makeEvent({
+          sequence: 3,
+          type: "thread.unarchived",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: later,
+          commandId: "cmd-thread-unarchive-settled",
+          payload: {
+            threadId: "thread-1",
+            settledAt: later,
+            updatedAt: later,
+          },
+        }),
+      ),
+    );
+    expect(restoredSettled.threads[0]?.settledAt).toBe(later);
   });
 
   it("keeps projector forward-compatible for unhandled event types", async () => {

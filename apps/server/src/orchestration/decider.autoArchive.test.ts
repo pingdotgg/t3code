@@ -73,6 +73,46 @@ it.layer(NodeServices.layer)("thread.auto-archive decider", (it) => {
     }),
   );
 
+  it.effect("restoring a settled thread restarts its settled clock", () =>
+    Effect.gen(function* () {
+      const event = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.unarchive",
+          commandId: CommandId.make("cmd-unarchive"),
+          threadId: ThreadId.make("thread-1"),
+        },
+        readModel: makeReadModel({
+          settledOverride: "settled",
+          settledAt: SETTLED_AT,
+          archivedAt: NOW,
+        }),
+      });
+      const [restored] = Array.isArray(event) ? event : [event];
+      expect(restored?.type).toBe("thread.unarchived");
+      if (restored?.type !== "thread.unarchived") return;
+      // A newer settledAt gives the thread a fresh window and fails the guard
+      // of any auto-archive queued with the old one.
+      expect(restored.payload.settledAt).toBe(restored.payload.updatedAt);
+      expect(restored.payload.settledAt).not.toBe(SETTLED_AT);
+    }),
+  );
+
+  it.effect("restoring an active thread leaves settledAt alone", () =>
+    Effect.gen(function* () {
+      const event = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.unarchive",
+          commandId: CommandId.make("cmd-unarchive-active"),
+          threadId: ThreadId.make("thread-1"),
+        },
+        readModel: makeReadModel({ settledOverride: null, settledAt: null, archivedAt: NOW }),
+      });
+      const [restored] = Array.isArray(event) ? event : [event];
+      expect(restored?.type).toBe("thread.unarchived");
+      expect(restored?.payload).not.toHaveProperty("settledAt");
+    }),
+  );
+
   it.effect.each([
     ["un-settled", { settledOverride: "active", settledAt: null }],
     ["cleared by activity", { settledOverride: null, settledAt: null }],
