@@ -465,27 +465,41 @@ export const make = Effect.gen(function* () {
   ) {
     let selected = yield* getDpopToken(input);
     if (selected.fromCache) {
+      const cachedToken = selected.token;
+      // A slow server does not mean the token is bad. Retry the same token with the
+      // default budget so a stall does not mint a new credential and auth session.
       const cachedSocket = yield* createDpopSocketUrl(
-        selected.token,
+        cachedToken,
         CACHED_ENDPOINT_SOCKET_TIMEOUT_MS,
-      ).pipe(Effect.result);
+      ).pipe(
+        Effect.catchTag("RemoteEnvironmentAuthTimeoutError", () =>
+          createDpopSocketUrl(cachedToken),
+        ),
+        Effect.result,
+      );
       if (Result.isSuccess(cachedSocket)) {
         yield* assertSession(selected.identity);
-        return { ...httpAuthorization(selected.token), socketUrl: cachedSocket.success };
+        return { ...httpAuthorization(cachedToken), socketUrl: cachedSocket.success };
       }
-      if (cachedSocket.failure._tag === "ConnectionBlockedError") {
+      if (
+        cachedSocket.failure._tag === "ConnectionBlockedError" ||
+        cachedSocket.failure._tag === "RemoteEnvironmentAuthTimeoutError"
+      ) {
         return yield* mapDpopSocketError(cachedSocket.failure);
       }
       selected = yield* getDpopToken({
         ...input,
-        rejectedAccessToken: selected.token.accessToken,
+        rejectedAccessToken: cachedToken.accessToken,
       });
     }
     const socket = yield* createDpopSocketUrl(selected.token).pipe(Effect.result);
     if (Result.isFailure(socket)) {
-      yield* tokenLock.withPermits(1)(
-        removeRejectedToken(input.expectedEnvironmentId, selected.token.accessToken),
-      );
+      // A timeout does not mean the new token is bad. Keep it so the next attempt does not mint again.
+      if (socket.failure._tag !== "RemoteEnvironmentAuthTimeoutError") {
+        yield* tokenLock.withPermits(1)(
+          removeRejectedToken(input.expectedEnvironmentId, selected.token.accessToken),
+        );
+      }
       return yield* mapDpopSocketError(socket.failure);
     }
     yield* assertSession(selected.identity);

@@ -46,12 +46,19 @@ const BOOTSTRAP: RelayEnvironmentConnectResponse = {
   expiresAt: "2026-06-06T01:00:00.000Z",
 };
 
-function recordedFetch(responses: ReadonlyArray<Response>) {
+/** A response slot for a request that a stalled server never answers. */
+const STALLED = "stalled";
+
+function recordedFetch(responses: ReadonlyArray<Response | typeof STALLED>, onStall: () => void) {
   const calls: Array<readonly [RequestInfo | URL, RequestInit]> = [];
   let responseIndex = 0;
   const fetchFn = ((input, init) => {
     calls.push([input, init ?? {}]);
     const response = responses[responseIndex++];
+    if (response === STALLED) {
+      onStall();
+      return new Promise<Response>(() => {});
+    }
     return response === undefined
       ? Promise.reject(new Error(`Unexpected fetch call to ${String(input)}`))
       : Promise.resolve(response);
@@ -105,7 +112,7 @@ const persistedToken = (
 
 const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (input: {
   readonly initialToken?: TokenStore.RemoteDpopAccessToken;
-  readonly responses: ReadonlyArray<Response>;
+  readonly responses: ReadonlyArray<Response | typeof STALLED>;
   readonly bootstrap?: RelayEnvironmentConnectResponse;
   readonly beforeBootstrap?: Effect.Effect<void, ManagedRelay.ManagedRelayClientError>;
   readonly beforePut?: Effect.Effect<void>;
@@ -134,7 +141,8 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
       readonly accessToken?: string;
     }>
   >([]);
-  const fetch = recordedFetch(input.responses);
+  const stalls = yield* Queue.unbounded<void>();
+  const fetch = recordedFetch(input.responses, () => Queue.offerUnsafe(stalls, undefined));
 
   const tokenStore = TokenStore.RemoteDpopAccessTokenStore.of({
     get: (environmentId) =>
@@ -224,6 +232,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
     fetch,
     relayInputs,
     session,
+    stalls,
     thumbprint,
     tokenReads,
   };
@@ -476,6 +485,89 @@ describe("RemoteEnvironmentAuthorization", () => {
         }),
       );
       expect(harness.fetch.calls).toHaveLength(4);
+    }),
+  );
+
+  it.effect("reuses a cached token when its first websocket ticket request times out", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        initialToken: persistedToken(),
+        responses: [STALLED, websocketTicket("slow-ticket")],
+      });
+
+      const authorized = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const pending = yield* remote
+          .authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID })
+          .pipe(Effect.forkChild);
+        yield* Queue.take(harness.stalls);
+        yield* TestClock.adjust("3 seconds");
+        return yield* Fiber.join(pending);
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(authorized.socketUrl).toContain("wsTicket=slow-ticket");
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+      expect(harness.fetch.calls.map(([url]) => String(url))).toEqual([
+        `${ENDPOINT.httpBaseUrl}/api/auth/websocket-ticket`,
+        `${ENDPOINT.httpBaseUrl}/api/auth/websocket-ticket`,
+      ]);
+    }),
+  );
+
+  it.effect("keeps a cached token when the server stays too slow to issue a ticket", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        initialToken: persistedToken(),
+        responses: [STALLED, STALLED],
+      });
+
+      const failure = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const pending = yield* remote
+          .authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID })
+          .pipe(Effect.flip, Effect.forkChild);
+        yield* Queue.take(harness.stalls);
+        yield* TestClock.adjust("3 seconds");
+        yield* Queue.take(harness.stalls);
+        // The retry gets the default 10 s budget, not another 3 s.
+        yield* TestClock.adjust("3 seconds");
+        expect(pending.pollUnsafe()).toBeUndefined();
+        yield* TestClock.adjust("7 seconds");
+        return yield* Fiber.join(pending);
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(failure).toMatchObject({ _tag: "ConnectionTransientError", reason: "timeout" });
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+      expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)?.accessToken).toBe(
+        "cached-access-token",
+      );
+    }),
+  );
+
+  it.effect("keeps a newly refreshed token when its websocket ticket request times out", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        responses: [
+          Response.json(DESCRIPTOR),
+          accessToken("fresh-access-token"),
+          STALLED,
+          websocketTicket("second-ticket"),
+        ],
+      });
+
+      const [failure, authorized] = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorize = () => remote.authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID });
+        const pending = yield* authorize().pipe(Effect.flip, Effect.forkChild);
+        yield* Queue.take(harness.stalls);
+        yield* TestClock.adjust("10 seconds");
+        return [yield* Fiber.join(pending), yield* authorize()] as const;
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(failure).toMatchObject({ _tag: "ConnectionTransientError", reason: "timeout" });
+      expect(authorized.socketUrl).toContain("wsTicket=second-ticket");
+      expect(authorized.httpAuthorization).toMatchObject({ accessToken: "fresh-access-token" });
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
     }),
   );
 
