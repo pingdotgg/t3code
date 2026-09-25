@@ -20,6 +20,7 @@ import {
   extractXAiBackgroundTaskCompletion,
   extractXAiKilledBackgroundTasks,
   extractXAiMonitorTaskId,
+  handleXAiSubagentFinished,
   isGenericAcpToolTitle,
   isXAiMonitorTool,
   isXAiPersistentMonitor,
@@ -30,6 +31,7 @@ import {
   resolveXAiAcpToolTitle,
   xAiBackgroundTaskLifecycleMutation,
   xAiPromptCompleteFromSessionUpdate,
+  xAiSubagentFinishedNotice,
   XAiAskUserQuestionRequest,
 } from "./XAiAcpExtension.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
@@ -1453,6 +1455,83 @@ describe("XAiAcpExtension", () => {
         code: -32003,
         errorMessage: "Grok usage limit reached. Try again later.",
       });
+    }),
+  );
+
+  it("maps subagent_finished to a notice only for statuses Grok defines", () => {
+    // Recorded from Grok 1.0.41 (ids normalized); statuses per grok-build
+    // xai-grok-tools/.../task/types.rs `status()`.
+    const finished = (update: Record<string, unknown>) =>
+      xAiSubagentFinishedNotice({
+        sessionId: "root-session",
+        update: {
+          sessionUpdate: "subagent_finished",
+          subagent_id: "child-session",
+          child_session_id: "child-session",
+          tool_calls: 2,
+          turns: 1,
+          duration_ms: 23734,
+          ...update,
+        } as never,
+      });
+    expect(finished({ status: "completed", output: "SUBAGENT_DONE", will_wake: true })).toEqual({
+      sessionId: "root-session",
+      childSessionId: "child-session",
+      status: "completed",
+      result: "SUBAGENT_DONE",
+    });
+    expect(finished({ status: "failed", error: "tool crashed" })).toMatchObject({
+      status: "failed",
+      result: "tool crashed",
+    });
+    expect(
+      finished({ status: "cancelled", error: "interrupted by process restart" }),
+    ).toMatchObject({ status: "cancelled", result: "interrupted by process restart" });
+    // A failed subagent's error is its result; `output` only accompanies success.
+    expect(finished({ status: "failed", output: "partial" })).toMatchObject({ result: null });
+    expect(finished({ status: "timed_out" })).toBeNull();
+    expect(finished({})).toBeNull();
+    expect(finished({ status: "completed", child_session_id: undefined })).toBeNull();
+  });
+
+  it.effect("forwards subagent_finished from the prompt runtime to its handler", () =>
+    Effect.gen(function* () {
+      const handlers = new Map<string, (notification: unknown) => Effect.Effect<void>>();
+      const baseRuntime = {
+        handleExtNotification: (
+          method: string,
+          _schema: unknown,
+          handler: (notification: unknown) => Effect.Effect<void>,
+        ) => {
+          handlers.set(method, handler);
+          return Effect.void;
+        },
+      } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
+      const runtime = yield* makeXAiPromptCompletionRuntime(baseRuntime);
+      const notices: Array<unknown> = [];
+      yield* handleXAiSubagentFinished(runtime, (notice) =>
+        Effect.sync(() => notices.push(notice)),
+      );
+      yield* handlers.get("_x.ai/session_notification")!({
+        sessionId: "root-session",
+        update: {
+          sessionUpdate: "subagent_finished",
+          child_session_id: "child-session",
+          status: "completed",
+          output: "SUBAGENT_DONE",
+        },
+      });
+      expect(notices).toEqual([
+        {
+          sessionId: "root-session",
+          childSessionId: "child-session",
+          status: "completed",
+          result: "SUBAGENT_DONE",
+        },
+      ]);
+      // Only a runtime that owns Grok's session notifications can route it.
+      const exit = yield* Effect.exit(handleXAiSubagentFinished(baseRuntime, () => Effect.void));
+      expect(exit._tag).toBe("Failure");
     }),
   );
 

@@ -49,6 +49,7 @@ const XAiSessionUpdateNotification = Schema.Struct({
     child_session_id: Schema.optional(Schema.String),
     status: Schema.optional(Schema.String),
     output: Schema.optional(Schema.NullOr(Schema.String)),
+    error: Schema.optional(Schema.NullOr(Schema.String)),
   }),
   _meta: Schema.optional(Schema.Unknown),
 });
@@ -453,11 +454,14 @@ export const registerXAiBackgroundTaskTracking = (
 
 /**
  * A background subagent's end, sent on its PARENT session as
- * `{ sessionUpdate: "subagent_finished", child_session_id, status, output }`
+ * `{ sessionUpdate: "subagent_finished", child_session_id, status, output, error }`
  * (grok-build `crates/codegen/xai-grok-shell/src/extensions/notification.rs`
- * `SessionUpdate::SubagentFinished`). `status` is "completed", "failed" or
- * "cancelled"; `output` is set only when it completed. Grok follows it with
- * its own `subagent-completed-<id>` wake turn when `will_wake` is true.
+ * `SessionUpdate::SubagentFinished`). `status` is exactly "completed",
+ * "failed" or "cancelled" (`SubagentResult::status()` in
+ * `crates/codegen/xai-grok-tools/src/implementations/grok_build/task/types.rs`);
+ * `output` is the final text of a completed subagent and `error` the message
+ * of a failed one. Grok follows it with its own `subagent-completed-<id>` wake
+ * turn when `will_wake` is true.
  */
 export interface XAiSubagentFinishedNotice {
   readonly sessionId: string;
@@ -466,22 +470,21 @@ export interface XAiSubagentFinishedNotice {
   readonly result: string | null;
 }
 
-function xAiSubagentFinishedNotice(
+/** Null for other session updates, and for a status Grok does not define. */
+export function xAiSubagentFinishedNotice(
   notification: XAiSessionUpdateNotification,
 ): XAiSubagentFinishedNotice | null {
   const update = notification.update;
   const childSessionId = nonEmptyString(update.child_session_id);
   if (update.sessionUpdate !== "subagent_finished" || childSessionId === undefined) return null;
+  const status = update.status;
+  if (status !== "completed" && status !== "failed" && status !== "cancelled") return null;
+  const text = status === "completed" ? update.output : update.error;
   return {
     sessionId: notification.sessionId,
     childSessionId,
-    status:
-      update.status === "failed"
-        ? "failed"
-        : update.status === "cancelled"
-          ? "cancelled"
-          : "completed",
-    result: nonEmptyString(update.output ?? undefined) ?? null,
+    status,
+    result: nonEmptyString(text ?? undefined) ?? null,
   };
 }
 
@@ -1566,12 +1569,23 @@ const xAiSubagentFinishedRegistrations = new WeakMap<
 
 /**
  * Handles Grok's `subagent_finished` on a runtime from
- * {@link makeXAiPromptCompletionRuntime}; a no-op for any other runtime.
+ * {@link makeXAiPromptCompletionRuntime}, which owns Grok's session
+ * notification handlers. Any other runtime is a wiring defect: its subagents
+ * would never finish, so this dies instead of silently dropping them.
  */
 export const handleXAiSubagentFinished = (
   runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
   handler: (notice: XAiSubagentFinishedNotice) => Effect.Effect<void>,
-): Effect.Effect<void> => xAiSubagentFinishedRegistrations.get(runtime)?.(handler) ?? Effect.void;
+): Effect.Effect<void> => {
+  const register = xAiSubagentFinishedRegistrations.get(runtime);
+  return register === undefined
+    ? Effect.die(
+        new Error(
+          "subagent_finished needs a runtime from makeXAiPromptCompletionRuntime, which owns Grok's session notifications.",
+        ),
+      )
+    : register(handler);
+};
 
 function promptResponseHasMissingXAiStopReason(response: EffectAcpSchema.PromptResponse): boolean {
   const meta = response._meta;

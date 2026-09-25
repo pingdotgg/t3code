@@ -183,13 +183,6 @@ export interface AcpAdapterV2ExtensionContext {
     readonly failure: OrchestrationV2ProviderFailure;
   }) => Effect.Effect<void>;
   /**
-   * Session-scoped background-task lifecycle reported via extension
-   * notifications (e.g. Grok `x.ai/task_backgrounded`; older builds use the
-   * underscore alias). Mutations for non-root sessions are ignored. A terminal
-   * mutation also finishes the tool that registered the task in a settled turn
-   * still held open for it, with `output` as its final text when given.
-   */
-  /**
    * A subagent's structured end on the root session (Grok `subagent_finished`),
    * keyed by its child session id. Finishes the subagent row, in the turn that
    * holds it or in the carryover of a settled one.
@@ -200,6 +193,13 @@ export interface AcpAdapterV2ExtensionContext {
     readonly status: "completed" | "failed" | "cancelled";
     readonly result: string | null;
   }) => Effect.Effect<void>;
+  /**
+   * Session-scoped background-task lifecycle reported via extension
+   * notifications (e.g. Grok `x.ai/task_backgrounded`; older builds use the
+   * underscore alias). Mutations for non-root sessions are ignored. A terminal
+   * mutation also finishes the tool that registered the task in a settled turn
+   * still held open for it, with `output` as its final text when given.
+   */
   readonly applyBackgroundTaskMutation: (mutation: {
     readonly sessionId: string;
     readonly taskId: string;
