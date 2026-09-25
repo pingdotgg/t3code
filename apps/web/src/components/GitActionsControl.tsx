@@ -976,6 +976,7 @@ export default function GitActionsControl({
     activeServerThreadShell ?? activeServerThreadProjection?.projection.thread ?? null;
   const isLocalDraftThread = activeDraftThread !== null && activeServerThread === null;
   const canChangeThreadBranch = canWriteSourceControl && (isLocalDraftThread || canOperateThread);
+  const draftRefreshKey = isLocalDraftThread ? (draftId ?? activeThreadRef?.threadId ?? null) : null;
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [isSplitCommitDialogOpen, setIsSplitCommitDialogOpen] = useState(false);
@@ -1083,6 +1084,12 @@ export default function GitActionsControl({
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
   });
+  useEffect(() => {
+    // A new draft can reuse a status snapshot from before an IDE checkout.
+    if (draftRefreshKey !== null) {
+      requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+    }
+  }, [activeEnvironmentId, draftRefreshKey, gitCwd, refreshVcsStatus]);
   const { data: gitStatus, error: gitStatusError } = gitStatusQuery;
   const sourceControlPresentation = getSourceControlPresentation(gitStatus?.sourceControlProvider);
   const changeRequestTerminology = sourceControlPresentation.terminology;
