@@ -1,6 +1,7 @@
 name: TEMP deb runner check
 
-# Temporary proof for #13575. Removed before merge.
+# Temporary proof for #13575: runs the release job's Linux build steps with
+# the real build script on the release runners. Removed before merge.
 
 on:
   pull_request:
@@ -11,102 +12,88 @@ permissions:
   contents: read
 
 jobs:
-  deb:
-    name: .deb on ${{ matrix.runner }}
+  linux:
+    name: Linux ${{ matrix.arch }} build on ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: blacksmith-16vcpu-ubuntu-2404-arm
             arch: arm64
-            appimage_arch: arm64
+            rust_target: aarch64-unknown-linux-gnu
+            resource_key: linux-arm64
           - runner: blacksmith-32vcpu-ubuntu-2404
             arch: x64
-            appimage_arch: x86_64
+            rust_target: x86_64-unknown-linux-gnu
+            resource_key: linux-x64
+    env:
+      VERSION: 0.0.99
     steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-          sparse-checkout: .github/actions
-
-      - name: Show host and apt sources before the mirror action
+      - name: Checkout
+        shell: bash
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+          CHECKOUT_REF: ${{ github.event.pull_request.head.sha }}
         run: |
-          echo "arch=$(dpkg --print-architecture) nproc=$(nproc) $(xz --version | head -1)"
-          cat /etc/apt/blacksmith-ubuntu-mirrors.txt 2>/dev/null || echo "no blacksmith mirror list"
-          grep -rhE '^(URIs|deb) ' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null | sort -u
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$CHECKOUT_REF"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git checkout --detach FETCH_HEAD
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install desktop dependencies
+        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust_target }}
+
+      - name: Align package versions
+        run: node scripts/update-release-package-versions.ts "$VERSION"
 
       - uses: ./.github/actions/setup-apt-mirrors
 
-      - name: Install Linux desktop build libraries (same as the release job)
+      - name: Install Linux desktop build libraries
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libsecret-1-dev pkg-config squashfs-tools
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          package-manager-cache: false
-
-      - name: Unpack the published v0.0.42 AppImage
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release download v0.0.42 --repo pingdotgg/t3code --pattern "T3-Code-0.0.42-${{ matrix.appimage_arch }}.AppImage" --dir "$RUNNER_TEMP"
-          f="$RUNNER_TEMP/T3-Code-0.0.42-${{ matrix.appimage_arch }}.AppImage"
-          shoff=$(od -An -t u8 -j 40 -N 8 "$f" | tr -d ' ')
-          es=$(od -An -t u2 -j 58 -N 2 "$f" | tr -d ' ')
-          n=$(od -An -t u2 -j 60 -N 2 "$f" | tr -d ' ')
-          unsquashfs -q -d "$RUNNER_TEMP/unpacked" -o $((shoff + es * n)) "$f"
-          mkdir -p "$RUNNER_TEMP/proj/build/icons"
-          for d in "$RUNNER_TEMP"/unpacked/usr/share/icons/hicolor/*/; do
-            cp "$d/apps/t3code.png" "$RUNNER_TEMP/proj/build/icons/$(basename "$d").png"
-          done
-          rm -rf "$RUNNER_TEMP"/unpacked/{AppRun,t3code.desktop,t3code.png,.DirIcon,usr} "$RUNNER_TEMP/unpacked/resources/app-update.yml"
-
-      - name: Build the .deb with threaded xz
-        working-directory: ${{ runner.temp }}/proj
-        run: |
-          cat > package.json <<'EOF'
-          {
-            "name": "t3code", "version": "0.0.42", "description": "T3 Code desktop build",
-            "homepage": "https://t3.codes", "author": "T3 Tools",
-            "build": {
-              "appId": "com.t3tools.t3code", "productName": "T3 Code (Alpha)", "electronVersion": "44.4.2",
-              "artifactName": "T3-Code-${version}-${arch}.${ext}",
-              "directories": { "output": "out", "buildResources": "build" },
-              "publish": [{ "provider": "github", "owner": "pingdotgg", "repo": "t3code", "releaseType": "release" }],
-              "linux": { "target": ["deb"], "executableName": "t3code", "icon": "icons", "category": "Development",
-                         "synopsis": "Desktop GUI for coding agents", "maintainer": "T3 Tools <hello@t3.codes>" },
-              "deb": { "depends": ["libasound2t64 | libasound2", "libatspi2.0-0t64 | libatspi2.0-0", "libgbm1",
-                                   "libgtk-3-0t64 | libgtk-3-0", "libnotify4", "libnss3", "libsecret-1-0", "libuuid1",
-                                   "libxss1", "libxtst6", "xdg-utils"] }
-            }
-          }
-          EOF
-          npm i -g electron-builder@26.15.6 >/dev/null
-          start=$(date +%s)
-          XZ_DEFAULTS=-T0 electron-builder --linux --${{ matrix.arch }} --prepackaged "$RUNNER_TEMP/unpacked" --publish never
-          echo "::notice::${{ matrix.runner }}: .deb built in $(( $(date +%s) - start ))s, $(( $(stat -c %s out/*.deb) / 1048576 )) MB, nproc=$(nproc)"
-          dpkg-deb -f out/*.deb Package Version Architecture
-          ar t out/*.deb
-          cat out/latest-linux*.yml
-
-  old-mirrors-on-arm:
-    name: Old apt mirror script on arm64
-    runs-on: blacksmith-16vcpu-ubuntu-2404-arm
-    timeout-minutes: 10
-    steps:
-      - name: Run the pre-change mirror script, then apt
-        run: |
-          printf '%s\tpriority:%s\n' \
-            https://archive.ubuntu.com/ubuntu 1 \
-            https://mirrors.edge.kernel.org/ubuntu 2 \
-            https://mirror.math.princeton.edu/pub/ubuntu 3 \
-            | sudo tee /etc/apt/blacksmith-ubuntu-mirrors.txt > /dev/null
-          sudo find /etc/apt -maxdepth 2 -type f \( -name '*.list' -o -name '*.sources' \) \
-            -exec sed -i -E \
-            's#https?://(([^/]+\.)?archive|security)\.ubuntu\.com/ubuntu/?#mirror+file:/etc/apt/blacksmith-ubuntu-mirrors.txt#g' {} +
           sudo apt-get update
           sudo apt-get install -y libsecret-1-dev pkg-config
+          if ! command -v magick >/dev/null 2>&1 && ! command -v convert >/dev/null 2>&1; then
+            sudo apt-get install -y imagemagick
+          fi
+
+      - name: Build desktop artifact
+        run: |
+          start=$(date +%s)
+          vp run dist:desktop:artifact --platform linux --target AppImage --arch ${{ matrix.arch }} --build-version "$VERSION" --verbose
+          echo "::notice::${{ matrix.runner }}: desktop artifact step took $(( $(date +%s) - start ))s, nproc=$(nproc)"
+          ls -la release
+          for f in release/*.deb; do
+            echo "::notice::$(basename "$f"): $(( $(stat -c %s "$f") / 1048576 )) MB, members: $(ar t "$f" | tr '\n' ' ')"
+            dpkg-deb -f "$f" Package Version Architecture Depends
+            dpkg-deb --fsys-tarfile "$f" | tar -tv | grep -E 'resources/(package-type|app-update.yml)|/t3code$'
+            dpkg-deb --fsys-tarfile "$f" | tar -xO --wildcards '*/resources/package-type'
+          done
+          cat release/*linux*.yml
+
+      - name: Build and smoke-test the CLI archive
+        env:
+          VP_NODE_VERSION: "26.8.2"
+        run: |
+          node apps/server/scripts/cli.ts build-exe --verbose
+          mkdir -p "$RUNNER_TEMP/cli-resource-monitor/${{ matrix.resource_key }}"
+          cp "native/resource-monitor/target/${{ matrix.rust_target }}/release/t3-resource-monitor" "$RUNNER_TEMP/cli-resource-monitor/${{ matrix.resource_key }}/"
+          node scripts/build-cli-archive.ts --platform linux --arch ${{ matrix.arch }} --version "$VERSION" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" --output-dir release-cli
+          node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "$VERSION"
