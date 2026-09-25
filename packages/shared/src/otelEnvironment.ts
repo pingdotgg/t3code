@@ -23,7 +23,7 @@ type OtlpSignalName = "TRACES" | "METRICS" | "LOGS";
 /**
  * What the OTEL variables say about one signal. `Off` is a signal they
  * claimed with an endpoint whose protocol or headers do not read, so it is
- * exported nowhere rather than to whatever collector is configured below it.
+ * exported nowhere rather than to the bootstrap or Settings collector.
  */
 export type OtelSignal =
   | { readonly _tag: "Unset" }

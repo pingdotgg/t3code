@@ -390,7 +390,7 @@ export const resolveServerConfig = (
     const otel = yield* OtelEnvironment.load;
 
     // T3 Code's own OTLP variables name no signal, so the one answer they give
-    // is the answer for all three, unless an OTEL endpoint claims one below.
+    // is the answer for all three.
     const signalExport: SignalExport = {
       protocol: env.otlpProtocol,
       headers: env.otlpHeaders,
