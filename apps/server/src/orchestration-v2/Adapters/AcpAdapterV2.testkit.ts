@@ -146,7 +146,7 @@ export function makeAcpReplayCompletenessAssertion(
   );
 }
 
-export function acpReplayAgentArgs(scriptPath: string): ReadonlyArray<string> {
+function acpReplayAgentArgs(scriptPath: string): ReadonlyArray<string> {
   return ["--experimental-strip-types", scriptPath];
 }
 

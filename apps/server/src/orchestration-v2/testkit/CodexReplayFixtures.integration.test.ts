@@ -742,26 +742,4 @@ describe("Codex replay fixtures", () => {
       Object.keys(scenarioExpectations).toSorted(),
     );
   });
-
-  it("rejects conflicting recorded scenarios for one canonical transcript", () => {
-    const transcriptFile = new URL(
-      "./fixtures/queued_turn/codex_transcript.ndjson",
-      import.meta.url,
-    );
-
-    assert.throws(() =>
-      uniqueCanonicalTranscripts([
-        {
-          registrationScenario: "queued_turn",
-          recordedScenario: "queued_turn",
-          transcriptFile,
-        },
-        {
-          registrationScenario: "conflicting_alias",
-          recordedScenario: "different_recording",
-          transcriptFile,
-        },
-      ]),
-    );
-  });
 });

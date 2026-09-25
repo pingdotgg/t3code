@@ -30,7 +30,7 @@ import {
   OpenCodeAdapterV2Driver,
 } from "./OpenCodeAdapterV2.ts";
 
-export const OPENCODE_SDK_REPLAY_PROTOCOL = OPENCODE_SDK_PROTOCOL;
+const OPENCODE_SDK_REPLAY_PROTOCOL = OPENCODE_SDK_PROTOCOL;
 
 const OpenCodeSdkReplayTranscript = Schema.Struct({
   provider: Schema.Literal(OPENCODE_PROVIDER),
@@ -133,7 +133,7 @@ function materializeMessageIds(value: unknown, messageIds: ReadonlyMap<string, s
   );
 }
 
-export class OpenCodeReplayController {
+class OpenCodeReplayController {
   private cursor = 0;
   private readonly waiters = new Set<() => void>();
   private failure: unknown = null;

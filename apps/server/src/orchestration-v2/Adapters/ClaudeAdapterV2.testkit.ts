@@ -455,7 +455,7 @@ function makeClaudeSessionForkFrame(
   };
 }
 
-export function makeReplayQueryRunner(
+function makeReplayQueryRunner(
   transcript: ClaudeAgentSdkReplayTranscript,
   replayOptions: { readonly replayGate?: ProviderReplayGate } = {},
 ): ClaudeQueryRunner {
@@ -1119,7 +1119,7 @@ async function recordMessagesUntilTurnResult(input: {
   }
 }
 
-export async function recordMessagesUntilTurnResultAndFinalize(input: {
+async function recordMessagesUntilTurnResultAndFinalize(input: {
   readonly iterator: AsyncIterator<SDKMessage>;
   readonly entries: Array<ProviderReplayEntry>;
   readonly scenario: string;
@@ -1269,21 +1269,21 @@ async function recordMessagesUntilFirstToolUse(input: {
 // executable discovery in place. A Windows launcher shim (`claude.cmd` and
 // friends) is not directly spawnable, so it only counts when
 // resolveClaudeSdkExecutablePath can follow it to a real package entry.
-export const resolveClaudeRecordingExecutablePath = Effect.fn(
-  "resolveClaudeRecordingExecutablePath",
-)(function* (environment: NodeJS.ProcessEnv) {
-  const resolveExecutable = yield* SpawnExecutableResolution;
-  const platform = yield* HostProcessPlatform;
-  const resolved = resolveExecutable("claude", platform, environment);
-  if (resolved === undefined) {
-    return undefined;
-  }
-  const executablePath = yield* resolveClaudeSdkExecutablePath(resolved, environment);
-  if (platform === "win32" && isWindowsClaudeLauncherShimPath(executablePath)) {
-    return undefined;
-  }
-  return executablePath;
-});
+const resolveClaudeRecordingExecutablePath = Effect.fn("resolveClaudeRecordingExecutablePath")(
+  function* (environment: NodeJS.ProcessEnv) {
+    const resolveExecutable = yield* SpawnExecutableResolution;
+    const platform = yield* HostProcessPlatform;
+    const resolved = resolveExecutable("claude", platform, environment);
+    if (resolved === undefined) {
+      return undefined;
+    }
+    const executablePath = yield* resolveClaudeSdkExecutablePath(resolved, environment);
+    if (platform === "win32" && isWindowsClaudeLauncherShimPath(executablePath)) {
+      return undefined;
+    }
+    return executablePath;
+  },
+);
 
 async function openRecordingQuery(input: Parameters<typeof query>[0]) {
   const executablePath = await Effect.runPromise(resolveClaudeRecordingExecutablePath(process.env));
@@ -2092,7 +2092,7 @@ async function recordClaudeForkSessionQuery(input: {
   }
 }
 
-export async function recordInterruptedClaudeQuery(input: {
+async function recordInterruptedClaudeQuery(input: {
   readonly scenario: string;
   readonly prompt: string;
   readonly modelSelection: ModelSelection;
