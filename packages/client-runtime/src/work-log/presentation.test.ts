@@ -323,12 +323,7 @@ describe("resolveWorkEntryToolPresentation", () => {
   });
 
   it("does not brand unknown tools or another server's matching tool name", () => {
-    for (const label of [
-      "mcp__github__preview_click",
-      "t3-code.unknown_tool",
-      "t3-code.toString",
-      "Search files",
-    ]) {
+    for (const label of ["t3-code.unknown_tool", "t3-code.toString", "Search files"]) {
       expect(resolveWorkEntryToolPresentation({ label })).toBeNull();
     }
     expect(
@@ -336,7 +331,7 @@ describe("resolveWorkEntryToolPresentation", () => {
         label: "preview_click",
         toolData: { server: "another-server", tool: "preview_click" },
       }),
-    ).toBeNull();
+    ).toEqual({ displayName: "another-server MCP · preview_click · called", icon: "wrench" });
   });
 });
 
@@ -657,7 +652,7 @@ describe("pull request tool presentation", () => {
     expect(summarizeToolGroup([list, list])).toBe("Checked linked pull requests 2 times");
     expect(
       resolveWorkEntryToolPresentation({ label: "mcp__another-server__link_pull_request" }),
-    ).toBeNull();
+    ).toEqual({ displayName: "another-server MCP · link_pull_request · called", icon: "wrench" });
   });
 });
 
@@ -708,5 +703,63 @@ describe("device group summaries", () => {
         },
       ]),
     ).toBe("Used 1 tool");
+  });
+});
+
+describe("MCP call visibility", () => {
+  it("preserves legacy T3 names stored only in tool data", () => {
+    expect(
+      resolveWorkEntryToolPresentation({
+        label: "MCP tool call",
+        toolData: { toolName: "preview_click" },
+      }),
+    ).toEqual({ displayName: "Clicking in the preview browser", icon: "browser" });
+  });
+  it.each([
+    ["inProgress", "running"],
+    ["completed", "called"],
+    ["failed", "failed"],
+    ["declined", "declined"],
+    ["stopped", "stopped"],
+  ])("keeps server and tool identity visible in the %s state", (status, label) => {
+    expect(
+      resolveWorkEntryToolPresentation({
+        label: "Tool call",
+        toolLifecycleStatus: status,
+        toolData: { server: "logfire", tool: "arbitrary_query", arguments: { query: "SELECT 1" } },
+      }),
+    ).toEqual({ displayName: `Pydantic Logfire MCP · arbitrary_query · ${label}`, icon: "wrench" });
+  });
+
+  it("recognizes Claude/OpenCode names without guessing from shell command text", () => {
+    expect(
+      resolveWorkEntryToolPresentation({
+        label: "MCP tool call",
+        toolData: {
+          toolName: "mcp__logfire__get_logfire_records_schema",
+        },
+      })?.displayName,
+    ).toBe("Pydantic Logfire MCP · get_logfire_records_schema · called");
+    expect(resolveWorkEntryToolPresentation({ label: "uvx logfire mcp query run" })).toBeNull();
+    expect(
+      resolveWorkEntryToolPresentation({ label: "mcp__not-logfire__query" })?.displayName,
+    ).toBe("not-logfire MCP · query · called");
+  });
+
+  it("names MCP services even in a collapsed mixed tool group", () => {
+    expect(
+      summarizeToolGroup([
+        {
+          label: "MCP",
+          tone: "tool",
+          toolSource: {
+            key: "mcp:logfire",
+            name: "Pydantic Logfire MCP",
+            kind: "integration",
+          },
+        },
+        { label: "Ran command", tone: "tool", command: "vp test run" },
+      ]),
+    ).toBe("Used Pydantic Logfire MCP and ran 1 command");
   });
 });

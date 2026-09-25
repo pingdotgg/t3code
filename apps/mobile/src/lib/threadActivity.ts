@@ -33,7 +33,10 @@ import {
   type ToolGroupSummaryKind,
   type WorkLogToolLifecycleStatus,
 } from "@t3tools/client-runtime/work-log/presentation";
-import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
+import {
+  extractMcpToolData,
+  extractToolActivityPresentation,
+} from "@t3tools/client-runtime/work-log/tool-presentation";
 import { commandProgramName } from "@t3tools/client-runtime/work-log/command-label";
 
 import * as Arr from "effect/Array";
@@ -171,7 +174,13 @@ export type ThreadFeedEntry =
       readonly summaryKind: ToolGroupSummaryKind;
       readonly toolSurface?: WorkLogEntry["toolSurface"];
       readonly toolIcon?: WorkLogEntry["toolIcon"];
-      readonly summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request" | "brain";
+      readonly summaryToolIcon?:
+        | "wrench"
+        | "browser"
+        | "device"
+        | "t3-code"
+        | "pull-request"
+        | "brain";
       readonly hasFailure: boolean;
       readonly live: boolean;
       readonly shimmer: boolean;
@@ -599,8 +608,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     entry.toolSource = toolPresentation.toolSource;
   }
   if (itemType === "mcp_tool_call") {
-    const data = asRecord(payload?.data);
-    const toolData = typeof data?.toolName === "string" ? (data.item ?? data) : data?.item;
+    const toolData = extractMcpToolData(payload);
     if (toolData !== undefined) {
       entry.toolData = toolData;
     }
@@ -2292,6 +2300,8 @@ function appendToolGroupRows(
 }
 
 function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boolean): string {
+  const nativeMcp = resolveWorkEntryToolPresentation(activity.workEntry);
+  if (nativeMcp?.icon === "wrench" && activity.lifecycleStatus) return nativeMcp.displayName;
   const status = liveActivityToolStatus(activity.lifecycleStatus, presentTense);
   const presentation = resolveWorkEntryToolPresentation({
     ...activity.workEntry,

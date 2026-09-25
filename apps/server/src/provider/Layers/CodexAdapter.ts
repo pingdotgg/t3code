@@ -997,6 +997,129 @@ function runtimeEventBase(
   };
 }
 
+interface CodexResponseTracker {
+  /** When the pending request's last input item was recorded. */
+  requestStartedAt: string | undefined;
+  firstChunkAt: string | undefined;
+}
+
+const CODEX_OUTPUT_ITEM_TYPES: ReadonlySet<string> = new Set(["reasoning", "agentMessage", "plan"]);
+
+function isCodexInputResponseItem(item: Record<string, unknown>): boolean {
+  const type = typeof item.type === "string" ? item.type : "";
+  if (type === "message") return item.role !== "assistant";
+  return type.endsWith("_output");
+}
+
+/**
+ * Follows one Codex thread's model requests and tool calls, from the raw
+ * events T3 enables on `thread/start`. Codex records each request's input
+ * items, streams output items, then reports `rawResponse/completed` with the
+ * response's exact usage. Codex does not report when it sends a request, so
+ * the start is the last input item.
+ *
+ * A model tool call (`exec`, `apply_patch`, ...) is reported when its raw item
+ * completes and again when Codex records its output. The commands it runs
+ * arrive separately as execution items, sometimes before the response ends.
+ */
+function trackCodexResponse(
+  tracker: CodexResponseTracker,
+  event: ProviderEvent,
+  canonicalThreadId: ThreadId,
+): ProviderRuntimeEvent | undefined {
+  const payload =
+    typeof event.payload === "object" && event.payload !== null
+      ? (event.payload as Record<string, unknown>)
+      : undefined;
+  switch (event.method) {
+    case "turn/started":
+      tracker.requestStartedAt = undefined;
+      tracker.firstChunkAt = undefined;
+      return undefined;
+    case "rawResponseItem/completed": {
+      const item =
+        typeof payload?.item === "object" && payload.item !== null
+          ? (payload.item as Record<string, unknown>)
+          : undefined;
+      if (!item) return undefined;
+      const callId =
+        typeof item.call_id === "string" && item.call_id.length > 0 ? item.call_id : undefined;
+      if (isCodexInputResponseItem(item)) {
+        if (tracker.firstChunkAt === undefined) tracker.requestStartedAt = event.createdAt;
+        if (!callId) return undefined;
+        return {
+          ...runtimeEventBase(event, canonicalThreadId),
+          type: "model.tool_call.completed",
+          payload: { callId, ...(item.output !== undefined ? { output: item.output } : {}) },
+        };
+      }
+      if (tracker.requestStartedAt !== undefined && tracker.firstChunkAt === undefined) {
+        tracker.firstChunkAt = event.createdAt;
+      }
+      const type = typeof item.type === "string" ? item.type : "";
+      if (!type.endsWith("_call") || !callId) return undefined;
+      const args = item.arguments ?? item.input ?? item.action;
+      return {
+        ...runtimeEventBase(event, canonicalThreadId),
+        type: "model.tool_call.started",
+        payload: {
+          callId,
+          name: typeof item.name === "string" && item.name.length > 0 ? item.name : type,
+          ...(args !== undefined ? { arguments: args } : {}),
+        },
+      };
+    }
+    case "item/started": {
+      const item = readPayload(EffectCodexSchema.V2ItemStartedNotification, event.payload)?.item;
+      if (
+        item &&
+        CODEX_OUTPUT_ITEM_TYPES.has(item.type) &&
+        tracker.requestStartedAt !== undefined &&
+        tracker.firstChunkAt === undefined
+      ) {
+        tracker.firstChunkAt = event.createdAt;
+      }
+      return undefined;
+    }
+    case "rawResponse/completed": {
+      const completed = readPayload(
+        EffectCodexSchema.V2RawResponseCompletedNotification,
+        event.payload,
+      );
+      const { requestStartedAt, firstChunkAt } = tracker;
+      tracker.requestStartedAt = undefined;
+      tracker.firstChunkAt = undefined;
+      if (!completed) return undefined;
+      const usage = completed.usage ?? undefined;
+      const cacheWrite = usage?.cacheWriteInputTokens ?? 0;
+      return {
+        ...runtimeEventBase(event, canonicalThreadId),
+        type: "model.response.completed",
+        payload: {
+          responseId: completed.responseId,
+          ...(requestStartedAt
+            ? { requestStartedAt, requestStartSource: "input_recorded" as const }
+            : {}),
+          ...(firstChunkAt ? { firstChunkAt } : {}),
+          ...(usage
+            ? {
+                usage: {
+                  inputTokens: usage.inputTokens + cacheWrite,
+                  outputTokens: usage.outputTokens,
+                  cachedInputTokens: usage.cachedInputTokens,
+                  ...(cacheWrite > 0 ? { cacheCreationTokens: cacheWrite } : {}),
+                  reasoningTokens: usage.reasoningOutputTokens,
+                },
+              }
+            : {}),
+        },
+      };
+    }
+    default:
+      return undefined;
+  }
+}
+
 function mapItemLifecycle(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
@@ -2343,6 +2466,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         // this a child of `startSession`, and Effect interrupts a fiber's
         // children when it completes, so the consumer died on return and every
         // runtime event the session emitted afterwards was dropped.
+        const responseTracker: CodexResponseTracker = {
+          requestStartedAt: undefined,
+          firstChunkAt: undefined,
+        };
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
@@ -2448,9 +2575,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               }
               return runtimeEvent;
             });
-            const runtimeEvents = usageLimitError
-              ? [usageLimitError, ...mappedEvents]
-              : mappedEvents;
+            const responseEvent = trackCodexResponse(responseTracker, event, event.threadId);
+            const runtimeEvents = [
+              ...(usageLimitError ? [usageLimitError] : []),
+              ...mappedEvents,
+              ...(responseEvent ? [responseEvent] : []),
+            ];
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,

@@ -330,3 +330,35 @@ describe("normalizeCliError", () => {
     expect(result.message).not.toContain("secret-token");
   });
 });
+
+describe("thread title demo instructions", () => {
+  it("replaces editorial instructions while preserving full context and references", () => {
+    const message = "USER: " + "context ".repeat(1200) + " preserve this ending";
+    const result = buildThreadTitlePrompt({
+      message,
+      previousTitle: "Old thread title",
+      linkedContext: "Issue concerns reconnects",
+      instructionsOverride: "Summarize the latest activity.",
+    });
+    expect(result.prompt).toContain(message);
+    expect(result.prompt).toContain('The previous title was "Old thread title".');
+    expect(result.prompt).toContain("Issue concerns reconnects");
+    expect(result.prompt).toContain("Summarize the latest activity.");
+    expect(result.prompt).not.toContain("Determine the title in this order");
+    expect(toJsonSchemaObject(result.outputSchema)).toEqual(
+      toJsonSchemaObject(buildThreadTitlePrompt({ message }).outputSchema),
+    );
+  });
+
+  it("does not alter production prompts when the override is absent", () => {
+    for (const previousTitle of [undefined, "Existing title"]) {
+      expect(
+        buildThreadTitlePrompt({
+          message: "Fix reconnects",
+          previousTitle,
+          instructionsOverride: undefined,
+        }).prompt,
+      ).toBe(buildThreadTitlePrompt({ message: "Fix reconnects", previousTitle }).prompt);
+    }
+  });
+});

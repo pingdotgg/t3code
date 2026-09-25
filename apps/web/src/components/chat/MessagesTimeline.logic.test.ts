@@ -734,11 +734,24 @@ describe("work entry labels", () => {
     );
   });
 
-  it("keeps custom titles and output for unrecognized tools", () => {
+  it("keeps MCP identity visible instead of replacing its label with output", () => {
     const unknownEntry = { ...entry, toolTitle: "mcp__github__search_issues" };
-    expect(liveWorkEntryLabel(unknownEntry, undefined, true)).toBe("Mcp__github__search_issues");
+    expect(liveWorkEntryLabel(unknownEntry, undefined, true)).toBe(
+      "github MCP · search_issues · running",
+    );
     expect(workEntryDisplayLabel({ ...unknownEntry, detail: "Found 3 issues" }, undefined)).toBe(
-      "Found 3 issues",
+      "github MCP · search_issues · called",
+    );
+  });
+
+  it("does not claim a completed MCP call is still running while the model thinks", () => {
+    const mcpEntry = {
+      ...entry,
+      toolTitle: "mcp__logfire__query_run",
+      toolLifecycleStatus: "completed" as const,
+    };
+    expect(liveWorkEntryLabel(mcpEntry, undefined, true)).toBe(
+      "Pydantic Logfire MCP · query_run · called",
     );
   });
 

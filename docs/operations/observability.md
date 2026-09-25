@@ -2,7 +2,13 @@
 
 > For maintainers. Using T3 Code? See [docs/user](../user/).
 
-T3 Code has one server-side observability model:
+On `demo/logfire-live`, use the [Logfire agent demo setup](logfire-demo.md). This
+branch disables background server/browser tracing, local trace files, and app
+metrics/log exports. Only the [agent spans](#agent-runs-genai-spans) are exported.
+The general instrumentation procedures below describe upstream T3 Code and are
+inactive in this demo branch.
+
+Upstream T3 Code has one server-side observability model:
 
 - pretty logs go to stdout for humans
 - completed spans go to a local NDJSON trace file
@@ -578,6 +584,42 @@ machine that sets `OTEL_SDK_DISABLED` for everything else. It accepts the usual 
 (`true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0`, `y`/`n`). `OTEL_SDK_DISABLED` follows the
 OpenTelemetry specification and only `true` disables export, so `OTEL_SDK_DISABLED=1` does not.
 Values are case-insensitive and trimmed. An unrecognized value is ignored with a startup warning.
+
+### Agent Runs (GenAI Spans)
+
+When `T3CODE_OTLP_TRACES_URL` is set, the server exports each provider turn as
+OpenTelemetry GenAI spans, which backends such as Pydantic Logfire read as agent runs. The mapping
+lives in `apps/server/src/observability/AgentTelemetry.ts` and reads only the canonical provider
+runtime events, so every adapter goes through the same code.
+
+- `invoke_agent T3 Code / <Provider>`: one per turn. `gen_ai.agent.name` is stable per provider
+  (`T3 Code / Claude`, `T3 Code / Codex`); thread, turn, model, workspace name, host, and app
+  version are attributes. `gen_ai.conversation.id` is the thread id.
+- `execute_tool <name>`: one per tool call the model made, with arguments, result, status, and
+  approval wait. Claude starts a tool item while the model streams the call; its span opens when
+  that response ends, and `t3.tool.call_streaming_ms` keeps the streaming time. Codex calls come
+  from `model.tool_call.started/completed` (keyed by the model's `call_…` id), and the commands a
+  call runs nest under it as `tool execution <type>` spans without `gen_ai.*` attributes. Codex can
+  keep a command's process alive after the call returned its output; such executions end with the
+  call and are marked `running_when_call_returned`.
+- `chat <model>`: one per model response, from the `model.response.completed` runtime event
+  (Claude and Codex). Claude's request start is the first chunk minus Claude Code's own
+  `ttft_ms`; Codex's is when it recorded the request's last input item, and its end is
+  `rawResponse/completed`, which T3 enables with `experimentalRawEvents` on `thread/start`.
+  `t3.genai.chat.start_source` says which, and `gen_ai.client.operation.time_to_first_chunk`
+  carries the time to first chunk. Codex sends no raw events after `thread/resume` (even with the
+  flag), so a resumed Codex thread falls back to usage snapshots, starts at the previous boundary,
+  and records its commands as top-level tool spans.
+
+Long runs and tools also get a zero-length Logfire pending span, so they show in the live view
+before they finish. Agent spans skip the local trace file.
+
+Message text, tool arguments, and tool results are exported only with
+`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true`. Structured tool arguments have
+sensitive-looking keys (Logfire's default patterns) redacted, and long text is truncated.
+
+For reproducible demo configuration and startup commands, use the
+[Logfire agent demo setup](logfire-demo.md).
 
 ### What Is Instrumented Today
 

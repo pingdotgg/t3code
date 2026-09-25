@@ -145,6 +145,25 @@ const withIdentity = <A, E, R>(
 };
 
 describe("DesktopAppIdentity", () => {
+  it.effect("isolates development browser state by T3 home", () =>
+    withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        assert.equal(yield* identity.resolveUserDataPath, "/recording/.t3/userdata/electron");
+      }),
+      {
+        environment: {
+          isPackaged: false,
+          env: {
+            VITE_DEV_SERVER_URL: "http://localhost:6202",
+            T3CODE_HOME: "/recording/.t3",
+          },
+        },
+        legacyPathExists: true,
+      },
+    ),
+  );
+
   it.effect("keeps using the legacy userData path when it already exists", () =>
     withIdentity(
       Effect.gen(function* () {

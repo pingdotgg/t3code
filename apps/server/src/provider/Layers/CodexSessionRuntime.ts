@@ -716,20 +716,21 @@ const decodeCodexThreadResumeMetadata = Schema.decodeUnknownEffect(CodexThreadRe
 
 interface CodexThreadOpenClient {
   readonly raw: {
-    readonly request: (
-      method: "thread/resume",
-      payload: CodexRpc.ClientRequestParamsByMethod["thread/resume"] & {
-        readonly excludeTurns?: boolean;
-      },
-    ) => Effect.Effect<unknown, CodexErrors.CodexAppServerError>;
+    readonly request: {
+      (
+        method: "thread/resume",
+        payload: CodexRpc.ClientRequestParamsByMethod["thread/resume"] & {
+          readonly excludeTurns?: boolean;
+        },
+      ): Effect.Effect<unknown, CodexErrors.CodexAppServerError>;
+      (
+        method: "thread/start",
+        payload: CodexRpc.ClientRequestParamsByMethod["thread/start"] & {
+          readonly experimentalRawEvents?: boolean;
+        },
+      ): Effect.Effect<unknown, CodexErrors.CodexAppServerError>;
+    };
   };
-  readonly request: (
-    method: "thread/start",
-    payload: CodexRpc.ClientRequestParamsByMethod["thread/start"],
-  ) => Effect.Effect<
-    CodexRpc.ClientRequestResponsesByMethod["thread/start"],
-    CodexErrors.CodexAppServerError
-  >;
 }
 
 export const openCodexThread = (input: {
@@ -749,8 +750,26 @@ export const openCodexThread = (input: {
     serviceTier: input.serviceTier,
   });
 
+  // Raw events add `rawResponse/completed`, the only per-response boundary
+  // Codex reports. The generated schema predates the flag, so send it raw.
+  const startThread = Effect.suspend(() =>
+    input.client.raw.request("thread/start", { ...startParams, experimentalRawEvents: true }),
+  ).pipe(
+    Effect.flatMap((response) =>
+      decodeCodexThreadResumeMetadata(response).pipe(
+        Effect.mapError((error) =>
+          CodexErrors.CodexAppServerRequestError.invalidPayload(
+            "thread/start",
+            "decode-payload",
+            error,
+          ),
+        ),
+      ),
+    ),
+  );
+
   if (resumeThreadId === undefined) {
-    return input.client.request("thread/start", startParams);
+    return startThread;
   }
 
   // Older providers may still return history despite excludeTurns. Only the
@@ -781,7 +800,7 @@ export const openCodexThread = (input: {
           resumeThreadId,
           recoverable: true,
           cause: error,
-        }).pipe(Effect.andThen(input.client.request("thread/start", startParams))),
+        }).pipe(Effect.andThen(startThread)),
       ),
     );
 };
@@ -810,6 +829,7 @@ function readNotificationThreadId(notification: CodexServerNotification): string
     case "item/autoApprovalReview/completed":
     case "item/completed":
     case "rawResponseItem/completed":
+    case "rawResponse/completed":
     case "item/agentMessage/delta":
     case "item/plan/delta":
     case "item/commandExecution/outputDelta":
@@ -1119,6 +1139,7 @@ const CHILD_CHATTER_METHODS: ReadonlySet<string> = new Set([
   "turn/diff/updated",
   "thread/name/updated",
   "rawResponseItem/completed",
+  "rawResponse/completed",
   // Child-owned thread lifecycle: the parent adapter maps these onto the
   // PARENT thread (archived/compacted state), so a child compacting would
   // rewrite the parent. Mirrors the v1 suppressor list — dropping them is

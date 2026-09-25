@@ -16,6 +16,7 @@ import * as Path from "effect/Path";
 import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
+import packageJson from "../package.json" with { type: "json" };
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
 import { DEFAULT_SIGNAL_EXPORT, type SignalExport } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
@@ -120,6 +121,7 @@ export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config)
  */
 export const otlpResource = (config: ServerConfig["Service"]) => ({
   serviceName: config.otlpServiceName,
+  serviceVersion: packageJson.version,
   attributes: {
     "service.runtime": "t3-server",
     "service.mode": config.mode,

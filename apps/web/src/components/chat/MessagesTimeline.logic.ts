@@ -75,6 +75,8 @@ export function liveWorkEntryLabel(
   workspaceRoot: string | undefined,
   active: boolean,
 ) {
+  const nativeMcp = resolveWorkEntryToolPresentation(entry);
+  if (nativeMcp?.icon === "wrench" && entry.toolLifecycleStatus) return nativeMcp.displayName;
   const status = liveActivityToolStatus(entry.toolLifecycleStatus, active);
   const toolPresentation = resolveWorkEntryToolPresentation({
     ...entry,
@@ -367,7 +369,7 @@ export type MessagesTimelineRow =
       summaryKind: ToolGroupSummaryKind;
       toolSurface?: WorkLogEntry["toolSurface"];
       toolIcon?: WorkLogEntry["toolIcon"];
-      summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request";
+      summaryToolIcon?: "wrench" | "browser" | "device" | "t3-code" | "pull-request";
       hasFailure: boolean;
     }
   | {

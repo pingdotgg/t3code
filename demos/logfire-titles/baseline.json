@@ -1,0 +1,62 @@
+{
+  "run_id": "initial-recording-ready-20260925",
+  "created_at": "2026-09-25T18:49:48.190385+00:00",
+  "model": "gpt-6-luna",
+  "reasoning_effort": "low",
+  "repeat": 1,
+  "prompt_source": "builtin",
+  "source_sha256": {
+    "demos/logfire-titles/title-prompt.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "apps/server/src/textGeneration/TextGenerationPrompts.ts": "3ba9c8868703e3a1a2f883cb821c2abb4197e9d9bafeba14658d66a1d2e1cd22",
+    "apps/server/src/textGeneration/CodexTextGeneration.ts": "0722a65979ae71630d8d77812942fd460cc5a2e87a9ff5fef0fb0b2f5fc5bbc5",
+    "apps/server/scripts/logfire-title-initial.mjs": "7724896d8225633ecf6442334daa6538f1ca9889dd89f78c628993453cfff6ec"
+  },
+  "corpus_sha256": "6da6c090c762533f857738a8f629c7c56ca12acabf9a034a57672bf8817771fd",
+  "cases": [
+    {
+      "case_id": "initial-offline-search",
+      "thread_id": "logfire-title-initial-offline-search",
+      "request_id": "86d1b58b-39a3-47ef-a081-23466a02c59e",
+      "title": "Fix Stale Label Palette Cache",
+      "checks": {
+        "identifies_subject": false
+      },
+      "format_observations": {
+        "characters": 29,
+        "words": 5
+      }
+    },
+    {
+      "case_id": "initial-draft-recovery",
+      "thread_id": "logfire-title-initial-draft-recovery",
+      "request_id": "397b80c2-16e0-4b71-aad4-0760af2158d8",
+      "title": "Fix Stale Connection Badge Status",
+      "checks": {
+        "identifies_subject": false
+      },
+      "format_observations": {
+        "characters": 33,
+        "words": 5
+      }
+    },
+    {
+      "case_id": "initial-checkout",
+      "thread_id": "logfire-title-initial-checkout",
+      "request_id": "396f92d5-bcb1-46f6-a408-5e9f99442e73",
+      "title": "Prevent Duplicate Checkout Charges",
+      "checks": {
+        "identifies_subject": true
+      },
+      "format_observations": {
+        "characters": 34,
+        "words": 4
+      }
+    }
+  ],
+  "notes": "Three constructed first messages, real T3 title generation through the production prompt builder and Codex adapter. No prior title or later messages. The demo branch deliberately reproduces a truncation regression. Subject checks use vocabulary groups; format counts are observations. This is not a model benchmark or an agent repair success-rate measurement.",
+  "eval_url": "https://logfire-us.pydantic.dev/sunken-in-time/starter-project/evals/T3%20first-message%20titles/compare?experiment=01a0d9e6f9a9e8bb16955e78c878f275-adba5be8a8a4e8e8",
+  "subject_passes": 1,
+  "total": 3,
+  "all_checks_passes": 1,
+  "task_errors": 0
+}

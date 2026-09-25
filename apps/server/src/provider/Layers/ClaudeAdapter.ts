@@ -280,6 +280,18 @@ interface ClaudeTurnState {
   latestAssistantRateLimited: boolean;
   emittedThinkingText: boolean;
   readonly thinkingSnapshotIds: Set<string>;
+  /** Main-agent response whose `message_start` arrived and whose end has not. */
+  openResponse: ClaudeOpenResponse | undefined;
+}
+
+interface ClaudeOpenResponse {
+  readonly firstChunkAt: string;
+  readonly firstChunkEpochMs: number;
+  /** Claude Code's own time from sending the request to `message_start`. */
+  readonly ttftMs: number | undefined;
+  readonly responseId: string | undefined;
+  readonly model: string | undefined;
+  readonly toolCalls: Array<{ readonly id: string; readonly name: string }>;
 }
 
 interface AssistantTextBlockState {
@@ -2533,6 +2545,72 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     });
   });
 
+  /**
+   * Reports one finished main-agent model response. The request start is the
+   * first chunk minus Claude Code's own `ttft_ms`, so no timing is guessed.
+   */
+  const emitModelResponseCompleted = Effect.fn("emitModelResponseCompleted")(function* (
+    context: ClaudeSessionContext,
+    message: SDKMessage,
+    event: { readonly usage: unknown; readonly delta: { readonly stop_reason?: string | null } },
+  ) {
+    const turnState = context.turnState;
+    if (!turnState) {
+      return;
+    }
+    const open = turnState.openResponse;
+    turnState.openResponse = undefined;
+    const usage =
+      typeof event.usage === "object" && event.usage !== null
+        ? (event.usage as Record<string, unknown>)
+        : undefined;
+    const cachedInputTokens = finiteNonNegativeInteger(usage?.cache_read_input_tokens);
+    const cacheCreationTokens = finiteNonNegativeInteger(usage?.cache_creation_input_tokens);
+    const reasoningTokens = finiteNonNegativeInteger(
+      (usage?.output_tokens_details as Record<string, unknown> | undefined)?.thinking_tokens,
+    );
+    const requestStartedAt =
+      open?.ttftMs !== undefined
+        ? DateTime.formatIso(DateTime.makeUnsafe(open.firstChunkEpochMs - open.ttftMs))
+        : undefined;
+    const stamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      type: "model.response.completed",
+      eventId: stamp.eventId,
+      provider: PROVIDER,
+      createdAt: stamp.createdAt,
+      threadId: context.session.threadId,
+      turnId: turnState.turnId,
+      payload: {
+        ...(open?.responseId ? { responseId: open.responseId } : {}),
+        ...(open?.model ? { model: open.model } : {}),
+        ...(requestStartedAt
+          ? { requestStartedAt, requestStartSource: "provider_ttft" as const }
+          : {}),
+        ...(open ? { firstChunkAt: open.firstChunkAt } : {}),
+        ...(event.delta.stop_reason ? { finishReason: event.delta.stop_reason } : {}),
+        ...(open && open.toolCalls.length > 0 ? { toolCalls: open.toolCalls } : {}),
+        ...(usage
+          ? {
+              usage: {
+                inputTokens: claudeUsageInputTokens(usage),
+                outputTokens: claudeUsageOutputTokens(usage),
+                ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+                ...(cacheCreationTokens !== undefined ? { cacheCreationTokens } : {}),
+                ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+              },
+            }
+          : {}),
+      },
+      providerRefs: nativeProviderRefs(context),
+      raw: {
+        source: "claude.sdk.message",
+        method: "claude/stream_event/message_delta",
+        payload: message,
+      },
+    });
+  });
+
   const emitThreadTokenUsage = Effect.fn("emitThreadTokenUsage")(function* (
     context: ClaudeSessionContext,
     usage: ThreadTokenUsageSnapshot | undefined,
@@ -2890,6 +2968,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     if (event.type === "message_start" && context.turnState && !streamParentToolUseId) {
       context.turnState.emittedThinkingText = false;
+      const ttftMs = (message as { ttft_ms?: unknown }).ttft_ms;
+      const firstChunk = yield* DateTime.now;
+      context.turnState.openResponse = {
+        firstChunkAt: DateTime.formatIso(firstChunk),
+        firstChunkEpochMs: DateTime.toEpochMillis(firstChunk),
+        ttftMs:
+          typeof ttftMs === "number" && Number.isFinite(ttftMs) && ttftMs >= 0 ? ttftMs : undefined,
+        responseId: event.message.id,
+        model: event.message.model,
+        toolCalls: [],
+      };
     }
 
     if (event.type === "message_delta") {
@@ -2897,6 +2986,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         return;
       }
 
+      yield* emitModelResponseCompleted(context, message, event);
       const snapshot = normalizeClaudeActiveTokenUsage(
         event.usage,
         context.lastKnownContextWindow,
@@ -3115,6 +3205,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(parentToolUseId ? { parentToolUseId } : {}),
       };
       context.inFlightTools.set(index, tool);
+      if (!parentToolUseId) {
+        context.turnState?.openResponse?.toolCalls.push({ id: itemId, name: toolName });
+      }
 
       const stamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
@@ -3389,6 +3482,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         authenticationFailureMessage: undefined,
         rejectedRateLimitTypes: new Set(),
         latestAssistantRateLimited: false,
+        openResponse: undefined,
         emittedThinkingText: false,
         thinkingSnapshotIds: new Set(),
       };
@@ -5216,6 +5310,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         authenticationFailureMessage: undefined,
         rejectedRateLimitTypes: new Set(),
         latestAssistantRateLimited: false,
+        openResponse: undefined,
         emittedThinkingText: false,
         thinkingSnapshotIds: new Set(),
       };

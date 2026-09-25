@@ -2576,6 +2576,91 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("reports Codex response boundaries, tool calls, and tool results", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const responsesFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type.startsWith("model.")),
+        Stream.take(4),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const emit = (second: number, method: string, payload: Record<string, unknown>) =>
+        runtime.emit({
+          id: asEventId(`evt-raw-${second}-${method}`),
+          kind: "notification",
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-1"),
+          turnId: asTurnId("turn-1"),
+          createdAt: `2026-01-01T00:00:0${second}.000Z`,
+          method,
+          payload: { threadId: "thread-1", turnId: "turn-1", ...payload },
+        } as ProviderEvent);
+      const usage = {
+        inputTokens: 100,
+        cachedInputTokens: 40,
+        outputTokens: 10,
+        reasoningOutputTokens: 2,
+        totalTokens: 110,
+      };
+
+      yield* emit(1, "rawResponseItem/completed", {
+        item: { type: "message", role: "user", content: [] },
+      });
+      yield* emit(3, "rawResponseItem/completed", {
+        item: {
+          type: "custom_tool_call",
+          id: "ctc_1",
+          call_id: "call_1",
+          name: "exec",
+          input: "run()",
+        },
+      });
+      yield* emit(4, "rawResponse/completed", { responseId: "resp_1", usage });
+      yield* emit(6, "rawResponseItem/completed", {
+        item: { type: "custom_tool_call_output", call_id: "call_1", output: "ok" },
+      });
+      yield* emit(8, "rawResponse/completed", { responseId: "resp_2", usage });
+
+      const events = Array.from(yield* Fiber.join(responsesFiber));
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        [
+          "model.tool_call.started",
+          "model.response.completed",
+          "model.tool_call.completed",
+          "model.response.completed",
+        ],
+      );
+      const [callStarted, first, callCompleted, second] = events;
+      if (
+        callStarted?.type !== "model.tool_call.started" ||
+        first?.type !== "model.response.completed" ||
+        callCompleted?.type !== "model.tool_call.completed" ||
+        second?.type !== "model.response.completed"
+      ) {
+        return;
+      }
+      NodeAssert.deepEqual(callStarted.payload, {
+        callId: "call_1",
+        name: "exec",
+        arguments: "run()",
+      });
+      NodeAssert.equal(callStarted.createdAt, "2026-01-01T00:00:03.000Z");
+      NodeAssert.deepEqual(callCompleted.payload, { callId: "call_1", output: "ok" });
+      NodeAssert.equal(first.payload.requestStartedAt, "2026-01-01T00:00:01.000Z");
+      NodeAssert.equal(first.payload.requestStartSource, "input_recorded");
+      NodeAssert.equal(first.payload.firstChunkAt, "2026-01-01T00:00:03.000Z");
+      NodeAssert.deepEqual(first.payload.usage, {
+        inputTokens: 100,
+        outputTokens: 10,
+        cachedInputTokens: 40,
+        reasoningTokens: 2,
+      });
+      NodeAssert.equal(second.payload.requestStartedAt, "2026-01-01T00:00:06.000Z");
+    }),
+  );
+
   // Production calls startSession from a request fiber that finishes as soon as
   // the session exists. `Effect.forkChild` made the runtime event consumer a
   // child of that fiber, and Effect interrupts a fiber's children when it

@@ -47,6 +47,10 @@ const normalizeCommitHash = (value: string): Option.Option<string> => {
 
 export const resolveUserDataPath = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  // Keep dev cookies, saved connections, and the single-instance lock with its T3 home.
+  if (environment.isDevelopment) {
+    return environment.path.join(environment.stateDir, "electron");
+  }
   const fileSystem = yield* FileSystem.FileSystem;
   const legacyPath = environment.path.join(
     environment.appDataDirectory,

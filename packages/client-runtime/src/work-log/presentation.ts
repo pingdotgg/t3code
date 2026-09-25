@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
+import { mcpToolSource, readMcpToolIdentity } from "./toolPresentation.ts";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 
@@ -194,29 +195,45 @@ export function liveActivityToolStatus(status: string | undefined, presentTense:
 
 /** Resolves tool identity before choosing labels or icons in either client. */
 export function resolveWorkEntryToolPresentation(
-  entry: Pick<WorkLogPresentationEntry, "label" | "toolTitle" | "toolData" | "toolLifecycleStatus">,
+  entry: Pick<
+    WorkLogPresentationEntry,
+    "label" | "toolTitle" | "toolData" | "toolLifecycleStatus" | "toolSource"
+  >,
   fallbackStatus?: "inProgress" | "completed",
 ) {
   const status = entry.toolLifecycleStatus ?? fallbackStatus;
   const data = entry.toolData;
-  if (data !== null && typeof data === "object") {
-    if (
-      "server" in data &&
-      typeof data.server === "string" &&
-      "tool" in data &&
-      typeof data.tool === "string"
-    ) {
-      return resolveT3McpToolPresentation(`${data.server}.${data.tool}`, status, data);
-    }
-    if ("toolName" in data && typeof data.toolName === "string") {
-      return resolveT3McpToolPresentation(data.toolName, status, data);
-    }
-  }
-
-  return (
-    resolveT3McpToolPresentation(entry.toolTitle, status, data) ??
-    resolveT3McpToolPresentation(entry.label, status, data)
-  );
+  const identity =
+    readMcpToolIdentity(data) ??
+    readMcpToolIdentity(entry.toolTitle) ??
+    readMcpToolIdentity(entry.label);
+  const t3Presentation = identity
+    ? resolveT3McpToolPresentation(`${identity.server}.${identity.tool}`, status, data)
+    : (resolveT3McpToolPresentation(
+        nonEmptyString(asRecord(data)?.toolName) ?? undefined,
+        status,
+        data,
+      ) ??
+      resolveT3McpToolPresentation(entry.toolTitle, status, data) ??
+      resolveT3McpToolPresentation(entry.label, status, data));
+  if (t3Presentation) return t3Presentation;
+  // Keep the richer browser/computer/integration presentation supplied by a provider.
+  if (!identity || (entry.toolSource && !entry.toolSource.key.startsWith("mcp:"))) return null;
+  const source = mcpToolSource(identity.server);
+  const state =
+    status === "inProgress"
+      ? "running"
+      : status === "failed"
+        ? "failed"
+        : status === "declined"
+          ? "declined"
+          : status === "stopped"
+            ? "stopped"
+            : "called";
+  return {
+    displayName: `${source.name} · ${identity.tool} · ${state}`,
+    icon: "wrench" as const,
+  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -470,7 +487,9 @@ export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
     return "update";
   }
   const presentation = resolveWorkEntryToolPresentation(entry);
-  if (presentation?.action !== undefined) return presentation.action;
+  if (presentation && "action" in presentation && presentation.action !== undefined) {
+    return presentation.action;
+  }
   if (presentation?.icon === "browser") return "browser";
   if (presentation?.icon === "device") return "device";
   if (
@@ -621,7 +640,9 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
         : sourceNames.length === 2
           ? sourceNames.join(" and ")
           : `${sourceNames.slice(0, -1).join(", ")}, and ${sourceNames.at(-1)}`;
-    const allIntegrations = sourceValues.every((source) => source.kind === "integration");
+    const allIntegrations = sourceValues.every(
+      (source) => source.kind === "integration" && !source.key.startsWith("mcp:"),
+    );
     labels.unshift(
       `Used ${formattedNames}${allIntegrations ? ` ${sources.size === 1 ? "integration" : "integrations"}` : ""}`,
     );
