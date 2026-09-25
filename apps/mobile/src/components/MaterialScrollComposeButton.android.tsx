@@ -1,9 +1,17 @@
 import { Box, ExtendedFloatingActionButton, Host, Icon, Text } from "@expo/ui/jetpack-compose";
-import { fillMaxWidth, onSizeChanged, size } from "@expo/ui/jetpack-compose/modifiers";
+import {
+  defaultMinSize,
+  fillMaxWidth,
+  graphicsLayer,
+  height,
+  onSizeChanged,
+  size,
+} from "@expo/ui/jetpack-compose/modifiers";
 import { useCallback, useState } from "react";
 import { Pressable, View, type StyleProp, type ViewStyle } from "react-native";
+import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
-import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
+import { resolveScaledTextRole } from "../lib/appearancePreferences";
 
 /** Keep the animated width and icon positioning entirely inside Compose, not Yoga. */
 export function MaterialScrollComposeButton(props: {
@@ -12,14 +20,23 @@ export function MaterialScrollComposeButton(props: {
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
 }) {
-  const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
-  const typography = useScaledTextRole("footnote");
-  const [expandedWidth, setExpandedWidth] = useState(56);
+  const { appearance, themeAppearance, themeVariables: colors } = useAppearancePreferences();
+  const typography = resolveScaledTextRole("footnote", appearance.baseFontSize);
+  const { iconSize, fabSize } = useAndroidControlSizing();
+  // Scale the native 56dp minimum; keep text and icons at their requested sizes.
+  const nativeSize = Math.max(56, fabSize);
+  const scale = fabSize / nativeSize;
+  const nativeIconSize = Math.round(iconSize / scale);
+  const [buttonWidth, setButtonWidth] = useState(nativeSize);
   const rememberWidth = useCallback(({ width }: { width: number }) => {
-    setExpandedWidth((previous) => Math.max(previous, width));
+    setButtonWidth((previous) => Math.max(previous, width));
   }, []);
   return (
-    <View pointerEvents="box-none" className={props.className} style={[props.style, { left: 20 }]}>
+    <View
+      pointerEvents="box-none"
+      className={props.className}
+      style={[props.style, { left: 20, height: fabSize }]}
+    >
       <View pointerEvents="none" importantForAccessibility="no-hide-descendants">
         <Host
           matchContents={{ vertical: true }}
@@ -31,13 +48,23 @@ export function MaterialScrollComposeButton(props: {
             <ExtendedFloatingActionButton
               expanded={props.expanded}
               containerColor={colors["--color-primary"]}
-              modifiers={[onSizeChanged(rememberWidth)]}
+              modifiers={[
+                defaultMinSize({ minWidth: nativeSize }),
+                height(nativeSize),
+                graphicsLayer({
+                  scaleX: scale,
+                  scaleY: scale,
+                  transformOriginX: 1,
+                  transformOriginY: 0,
+                }),
+                onSizeChanged(rememberWidth),
+              ]}
             >
               <ExtendedFloatingActionButton.Icon>
-                <Box modifiers={[size(24, 24)]}>
+                <Box modifiers={[size(nativeIconSize, nativeIconSize)]}>
                   <Icon
                     source={require("../../assets/icons/compose.xml")}
-                    size={24}
+                    size={nativeIconSize}
                     tint={colors["--color-primary-foreground"]}
                   />
                 </Box>
@@ -45,7 +72,11 @@ export function MaterialScrollComposeButton(props: {
               <ExtendedFloatingActionButton.Text>
                 <Text
                   color={colors["--color-primary-foreground"]}
-                  style={{ ...typography, fontWeight: "500" }}
+                  style={{
+                    fontSize: typography.fontSize / scale,
+                    lineHeight: typography.lineHeight / scale,
+                    fontWeight: "500",
+                  }}
                 >
                   New thread
                 </Text>
@@ -65,8 +96,9 @@ export function MaterialScrollComposeButton(props: {
           right: 0,
           top: 0,
           bottom: 0,
-          width: props.expanded ? expandedWidth : 56,
-          borderRadius: 16,
+          // Release the label area as soon as collapse starts, before native measurements arrive.
+          width: props.expanded ? buttonWidth * scale : fabSize,
+          borderRadius: 16 * scale,
           overflow: "hidden",
         }}
       />

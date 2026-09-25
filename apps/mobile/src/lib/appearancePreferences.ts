@@ -219,6 +219,16 @@ export function scaledTypographyLineHeight(
   return Math.max(10, Math.round(role.lineHeight * scale));
 }
 
+/** Text dimensions shared by React Native and Compose consumers of an appearance role. */
+export function resolveScaledTextRole(role: keyof typeof MOBILE_TYPOGRAPHY, baseFontSize: number) {
+  const typography = MOBILE_TYPOGRAPHY[role];
+  const scale = normalizeBaseFontSize(baseFontSize) / DEFAULT_BASE_FONT_SIZE;
+  return {
+    fontSize: Math.max(8, Math.round(typography.fontSize * scale)),
+    lineHeight: scaledTypographyLineHeight(typography, baseFontSize),
+  };
+}
+
 export function resolveNativeMarkdownTypography(baseFontSize: number): NativeMarkdownTypography {
   const fontSizes = resolveMarkdownFontSizes(baseFontSize);
   return {

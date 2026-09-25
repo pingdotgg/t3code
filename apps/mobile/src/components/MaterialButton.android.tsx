@@ -14,10 +14,12 @@ import { View } from "react-native";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import type { MaterialButtonProps } from "./MaterialButton";
+import { useAndroidControlSizing } from "./useAndroidControlSizing";
 
 export function MaterialButton(props: MaterialButtonProps) {
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const typography = useScaledTextRole("footnote");
+  const { scale, mediumIconSize } = useAndroidControlSizing();
   const tone = props.tone ?? "secondary";
   const Component =
     tone === "text" ? TextButton : tone === "secondary" ? FilledTonalButton : Button;
@@ -77,11 +79,11 @@ export function MaterialButton(props: MaterialButtonProps) {
               {props.loading ? (
                 <>
                   <CircularProgressIndicator
-                    modifiers={[size(18, 18)]}
+                    modifiers={[size(mediumIconSize, mediumIconSize)]}
                     strokeWidth={2}
                     color={colors["--color-foreground-muted"]}
                   />
-                  <Box modifiers={[size(8, 1)]} />
+                  <Box modifiers={[size(8 * scale, 1)]} />
                 </>
               ) : null}
               <Text style={{ ...typography, fontWeight: "500" }}>{props.label}</Text>

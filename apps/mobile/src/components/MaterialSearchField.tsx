@@ -2,6 +2,7 @@ import type { RefObject } from "react";
 import { Pressable, TextInput, View } from "react-native";
 
 import { SymbolView } from "./AppSymbol";
+import { useAndroidControlSizing } from "./useAndroidControlSizing";
 
 export function MaterialSearchField({
   inputRef,
@@ -18,9 +19,21 @@ export function MaterialSearchField({
   readonly value: string;
   readonly onChangeText: (value: string) => void;
 }) {
+  const { scale, mediumIconSize } = useAndroidControlSizing();
   return (
-    <View className="h-12 min-w-0 flex-1 flex-row items-center gap-2 rounded-full border border-input-border bg-input px-3">
-      <SymbolView name="magnifyingglass" size={18} tintColorClassName="accent-foreground-muted" />
+    <View
+      className="min-w-0 flex-1 flex-row items-center rounded-full border border-input-border bg-input"
+      style={{
+        minHeight: Math.max(48, 42 * scale),
+        gap: 7 * scale,
+        paddingHorizontal: 10.5 * scale,
+      }}
+    >
+      <SymbolView
+        name="magnifyingglass"
+        size={mediumIconSize}
+        tintColorClassName="accent-foreground-muted"
+      />
       <TextInput
         ref={inputRef}
         accessibilityLabel={accessibilityLabel}
@@ -33,7 +46,8 @@ export function MaterialSearchField({
         selectionColorClassName="accent-focus/32"
         cursorColorClassName="accent-focus"
         selectionHandleColorClassName="accent-focus"
-        className="min-w-0 flex-1 py-2 font-sans text-base text-foreground"
+        className="min-w-0 flex-1 font-sans text-base text-foreground"
+        style={{ paddingVertical: 7 * scale }}
         value={value}
         onChangeText={onChangeText}
       />
@@ -49,7 +63,7 @@ export function MaterialSearchField({
         >
           <SymbolView
             name="xmark.circle.fill"
-            size={18}
+            size={mediumIconSize}
             tintColorClassName="accent-foreground-muted"
           />
         </Pressable>
