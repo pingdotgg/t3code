@@ -11,16 +11,10 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("contentInlineWidth", () => {
   it("drops the inline padding clientWidth counts as room", () => {
+    // Asymmetric sides: a read of only one side, or of the physical props,
+    // answers for less than the full padding.
+    expect(box(724, { paddingInlineStart: "12px", paddingInlineEnd: "0px" })).toBe(712);
     expect(box(724, { paddingInlineStart: "4px", paddingInlineEnd: "8px" })).toBe(712);
-  });
-
-  it("keeps the whole width when the box has no inline padding", () => {
-    expect(box(724, { paddingInlineStart: "0px", paddingInlineEnd: "0px" })).toBe(724);
-  });
-
-  it("reads the logical sides so padding-only-one-side still counts", () => {
-    expect(box(100, { paddingInlineStart: "12px", paddingInlineEnd: "0px" })).toBe(88);
-    expect(box(100, { paddingInlineStart: "0px", paddingInlineEnd: "12px" })).toBe(88);
   });
 
   it("treats an unresolvable padding as none instead of answering NaN", () => {
@@ -30,9 +24,9 @@ describe("contentInlineWidth", () => {
     expect(box(100, {})).toBe(100);
   });
 
-  it("can go negative when padding exceeds the border-box content", () => {
-    // Callers compare against a needed width, so a squeezed box must read as
-    // having no usable room rather than a clipped zero.
+  it("goes negative rather than clipping a box whose padding exceeds it", () => {
+    // Callers compare against a needed width, so a squeezed box has to read as
+    // short of room.
     expect(box(10, { paddingInlineStart: "8px", paddingInlineEnd: "8px" })).toBe(-6);
   });
 });
