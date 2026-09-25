@@ -242,30 +242,51 @@ function normalizeReplayFrame(value: unknown): unknown {
     normalized.params = params;
   }
 
-  if (
-    (normalized.method === "thread/start" ||
-      normalized.method === "thread/resume" ||
-      normalized.method === "thread/fork") &&
-    typeof normalized.params === "object" &&
-    normalized.params !== null
-  ) {
-    // Runtime-scoped thread settings are supplied by the host and commonly
-    // contain machine-local cwd and short-lived MCP authorization headers.
-    // They are orthogonal to the recorded provider protocol behavior.
-    const params = { ...(normalized.params as Record<string, unknown>) };
-    delete params.cwd;
-    delete params.model;
-    delete params.config;
-    normalized.params = params;
-  }
-
   return normalized;
 }
 
-function sameFrame(left: unknown, right: unknown): boolean {
-  return (
-    stableStringify(normalizeReplayFrame(left)) === stableStringify(normalizeReplayFrame(right))
-  );
+/**
+ * `config` keys a recorder sent on thread requests that the client under test
+ * never sends, such as `agents.max_depth`. Recorders list them in the
+ * transcript header as `metadata.recorderThreadConfigKeys`.
+ */
+function recorderThreadConfigKeys(transcript: CodexAppServerReplayTranscript): ReadonlySet<string> {
+  const keys = transcript.metadata?.recorderThreadConfigKeys;
+  return new Set(Array.isArray(keys) ? keys.filter((key) => typeof key === "string") : []);
+}
+
+/**
+ * Thread requests must match on the `config` the client owns. `cwd`, `model`
+ * and host-supplied MCP servers (machine-local URLs, short-lived authorization
+ * headers) vary per machine, and recorder-only keys are not the client's.
+ */
+function normalizeThreadRequest(frame: unknown, ignoredConfigKeys: ReadonlySet<string>): unknown {
+  if (typeof frame !== "object" || frame === null) return frame;
+  const record = frame as Record<string, unknown>;
+  if (
+    (record.method !== "thread/start" &&
+      record.method !== "thread/resume" &&
+      record.method !== "thread/fork") ||
+    typeof record.params !== "object" ||
+    record.params === null
+  ) {
+    return frame;
+  }
+  const { cwd: _cwd, model: _model, config, ...params } = record.params as Record<string, unknown>;
+  if (typeof config !== "object" || config === null) return { ...record, params };
+  const { mcp_servers: _mcpServers, ...owned } = config as Record<string, unknown>;
+  for (const key of ignoredConfigKeys) delete owned[key];
+  return { ...record, params: { ...params, config: owned } };
+}
+
+function sameFrame(
+  left: unknown,
+  right: unknown,
+  ignoredConfigKeys: ReadonlySet<string> = new Set(),
+): boolean {
+  const normalize = (frame: unknown) =>
+    stableStringify(normalizeThreadRequest(normalizeReplayFrame(frame), ignoredConfigKeys));
+  return normalize(left) === normalize(right);
 }
 
 function normalizeLegacyInboundFrame(value: unknown): unknown {
@@ -381,6 +402,7 @@ const makeReplayClientWithState = Effect.fn(
   options: CodexClient.CodexAppServerClientOptions = {},
 ) {
   const transcript = driver.transcript;
+  const ignoredThreadConfigKeys = recorderThreadConfigKeys(transcript);
   const input = yield* Queue.unbounded<Uint8Array, Cause.Done<void>>();
   const state = driver.state;
   const outboundRemainder = yield* Ref.make("");
@@ -470,7 +492,7 @@ const makeReplayClientWithState = Effect.fn(
             return;
           }
 
-          if (!sameFrame(entry.frame, actual)) {
+          if (!sameFrame(entry.frame, actual, ignoredThreadConfigKeys)) {
             yield* failReplay(
               new CodexAppServerReplayFrameMismatchError({
                 scenario: transcript.scenario,

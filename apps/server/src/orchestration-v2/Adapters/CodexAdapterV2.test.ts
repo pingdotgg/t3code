@@ -73,6 +73,7 @@ import {
   canReuseCodexContextUsage,
   CODEX_DEFAULT_INSTANCE_ID,
   CODEX_DRIVER_KIND,
+  CODEX_THREAD_CONFIG,
   codexBackgroundCommandDetail,
   codexFileChangeApprovalPrompt,
   codexProviderTurnTokenUsage,
@@ -1493,7 +1494,7 @@ function codexReplayPreamble(input: {
     {
       type: "expect_outbound",
       label: "thread/start",
-      frame: { id: 2, method: "thread/start", params: {} },
+      frame: { id: 2, method: "thread/start", params: { config: CODEX_THREAD_CONFIG } },
     },
     {
       type: "emit_inbound",
@@ -1602,7 +1603,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   const makeCodexReplayHarness = (
     transcript: CodexReplay.CodexAppServerReplayTranscript,
     onEvent: (event: ProviderAdapterV2Event) => Effect.Effect<unknown> = () => Effect.void,
-    onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
+    onRequest: (method: string) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: (threadId: string) => Effect.Effect<unknown>,
   ) =>
     Effect.gen(function* () {
@@ -1630,17 +1631,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   (client) =>
                     ({
                       ...client,
-                      raw: {
-                        ...client.raw,
-                        request: (method, params) =>
-                          onRequest(method, params).pipe(
-                            Effect.andThen(client.raw.request(method, params)),
-                          ),
-                      },
                       request: (method, params) =>
-                        onRequest(method, params).pipe(
-                          Effect.andThen(client.request(method, params)),
-                        ),
+                        onRequest(method).pipe(Effect.andThen(client.request(method, params))),
                     }) satisfies CodexClient.CodexAppServerClient["Service"],
                 ),
                 Effect.provide(context),
@@ -2358,7 +2350,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               frame: {
                 id: 3,
                 method: "thread/resume",
-                params: { threadId: nativeThreadId, excludeTurns: true },
+                params: {
+                  threadId: nativeThreadId,
+                  excludeTurns: true,
+                  config: CODEX_THREAD_CONFIG,
+                },
               },
             },
             {
@@ -2403,7 +2399,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               frame: {
                 id: 3,
                 method: "thread/resume",
-                params: { threadId: nativeThreadId, excludeTurns: true },
+                params: {
+                  threadId: nativeThreadId,
+                  excludeTurns: true,
+                  config: CODEX_THREAD_CONFIG,
+                },
               },
             },
             {
@@ -6495,7 +6495,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             {
               type: "expect_outbound",
               label: "thread/fork",
-              frame: { id: 3, method: "thread/fork", params: { threadId: nativeThreadId } },
+              frame: {
+                id: 3,
+                method: "thread/fork",
+                params: { threadId: nativeThreadId, config: CODEX_THREAD_CONFIG },
+              },
             },
             {
               type: "emit_inbound",
@@ -6630,7 +6634,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             {
               type: "expect_outbound",
               label: "thread/fork",
-              frame: { id: 3, method: "thread/fork", params: { threadId: nativeThreadId } },
+              frame: {
+                id: 3,
+                method: "thread/fork",
+                params: { threadId: nativeThreadId, config: CODEX_THREAD_CONFIG },
+              },
             },
             {
               type: "emit_inbound",
@@ -6710,86 +6718,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
   );
 
-  // Replay matching drops `config` from thread/start, thread/resume and thread/fork,
-  // so no recorded fixture can notice if the adapter stops sending it.
-  it.effect("enables Codex's update_plan tool on every thread it starts, resumes or forks", () =>
-    Effect.gen(function* () {
-      const nativeThreadId = "update-plan-source-thread";
-      const forkThreadId = "update-plan-fork-thread";
-      const preamble = codexReplayPreamble({
-        nativeThreadId,
-        nativeTurnId: "update-plan-source-turn",
-        prompt: "unused",
-      });
-      const transcript = makeCodexReplayTranscript({
-        scenario: "codex-update-plan-config",
-        entries: [
-          ...preamble.slice(0, 5),
-          {
-            type: "expect_outbound",
-            label: "thread/resume",
-            frame: {
-              id: 3,
-              method: "thread/resume",
-              params: { threadId: nativeThreadId, excludeTurns: true },
-            },
-          },
-          {
-            type: "emit_inbound",
-            label: "thread/resume",
-            frame: { id: 3, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
-          },
-          {
-            type: "expect_outbound",
-            label: "thread/fork",
-            frame: { id: 4, method: "thread/fork", params: { threadId: nativeThreadId } },
-          },
-          {
-            type: "emit_inbound",
-            label: "thread/fork",
-            frame: {
-              id: 4,
-              result: codexReplayThreadResult({
-                nativeThreadId: forkThreadId,
-                forkedFromId: nativeThreadId,
-              }),
-            },
-          },
-        ],
-      });
-      const threadConfigs = new Map<string, unknown>();
-      const harness = yield* makeCodexReplayHarness(
-        transcript,
-        () => Effect.void,
-        (method, params) =>
-          Effect.sync(() => {
-            if (method.startsWith("thread/") && Predicate.isObject(params)) {
-              threadConfigs.set(method, params.config);
-            }
-          }),
-      );
-      yield* harness.runtime.resumeThread({
-        providerThread: harness.providerThread,
-        modelSelection: CODEX_TEST_MODEL_SELECTION,
-        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
-      });
-      yield* harness.runtime.forkThread({
-        sourceProviderThread: harness.providerThread,
-        targetThreadId: ThreadId.make("thread-update-plan-fork-target"),
-        modelSelection: CODEX_TEST_MODEL_SELECTION,
-        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
-      });
-
-      for (const method of ["thread/start", "thread/resume", "thread/fork"]) {
-        assert.deepInclude(
-          threadConfigs.get(method),
-          { "tools.update_plan.enabled": true },
-          `${method} must opt into update_plan`,
-        );
-      }
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
-  );
-
   it.effect("propagates native thread/fork failures as typed fork errors", () =>
     Effect.gen(function* () {
       const nativeThreadId = "fork-failure-source-thread";
@@ -6808,7 +6736,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             frame: {
               id: 3,
               method: "thread/fork",
-              params: { threadId: nativeThreadId, lastTurnId: "native-turn-first" },
+              params: {
+                threadId: nativeThreadId,
+                lastTurnId: "native-turn-first",
+                config: CODEX_THREAD_CONFIG,
+              },
             },
           },
           {

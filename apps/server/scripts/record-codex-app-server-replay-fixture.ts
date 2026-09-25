@@ -120,8 +120,11 @@ interface ReplayRun {
   readonly steps: ReadonlyArray<ReplayStep>;
   readonly turnDefaults?: Omit<TurnStartParams, "input" | "threadId">;
   readonly interactionMode?: "plan";
-  /** Extra `thread/start` config, merged over the adapter's; replay ignores `config` when matching frames. */
-  readonly threadConfig?: CodexSchema.V2ThreadStartParams["config"];
+  /**
+   * Recorder-only `thread/start` config merged over the adapter's. Its keys go in the
+   * transcript header as `recorderThreadConfigKeys`, which replay leaves out of matching.
+   */
+  readonly threadConfig?: Readonly<Record<string, boolean | number | string>>;
 }
 
 type ReplayStep =
@@ -946,6 +949,11 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
   ];
 }
 
+function recorderThreadConfigMetadata(scenario: ReplayScenario) {
+  const keys = [...new Set(scenario.runs.flatMap((run) => Object.keys(run.threadConfig ?? {})))];
+  return keys.length === 0 ? {} : { recorderThreadConfigKeys: keys };
+}
+
 function makeRecorder({
   outPath,
   scenario,
@@ -991,6 +999,7 @@ function makeRecorder({
               fileName: scenario.fileName,
               description: scenario.description,
               model: scenarioModel(scenario),
+              ...recorderThreadConfigMetadata(scenario),
             },
           },
           ...outputRecords,
