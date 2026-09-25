@@ -197,16 +197,23 @@ export async function startDesktopAppControlServer(input: {
     });
 
   // Closing a Unix socket server unlinks the path it was bound to, even when
-  // another app's socket lives there now. Bind a staging path and rename it over
-  // the address instead: the rename swaps sockets in one step, and a later close
-  // only unlinks the staging path, which is already gone.
-  const bindUnix = async (directory: string) => {
+  // another app's socket lives there now. Bind a staging path and move it onto
+  // the address instead, so a later close only unlinks the staging path, which
+  // is already gone. `rename` takes the address over in one step. `link` claims
+  // it only while it is free, and fails with EEXIST otherwise.
+  const bindUnix = async (directory: string, mode: "take-over" | "claim-free") => {
     const staging = NodePath.join(directory, `${NodeCrypto.randomBytes(6).toString("hex")}.tmp`);
     const server = await listen(staging);
     try {
       await NodeFSP.chmod(staging, 0o600);
-      await NodeFSP.rename(staging, input.address);
-      return { server, inode: await inodeAt(input.address) };
+      const inode = await inodeAt(staging);
+      if (mode === "take-over") {
+        await NodeFSP.rename(staging, input.address);
+      } else {
+        await NodeFSP.link(staging, input.address);
+        await NodeFSP.unlink(staging);
+      }
+      return { server, inode };
     } catch (error) {
       await closeServer(server);
       throw error;
@@ -220,7 +227,7 @@ export async function startDesktopAppControlServer(input: {
     server = await listen(input.address);
   } else {
     await prepareUnixDirectory({ directory: input.directory, userId: input.userId });
-    ({ server, inode } = await bindUnix(input.directory));
+    ({ server, inode } = await bindUnix(input.directory, "take-over"));
   }
 
   let closed = false;
@@ -228,8 +235,16 @@ export async function startDesktopAppControlServer(input: {
     // Never replace a socket that exists, so two apps cannot trade the path back and forth.
     if (closed || input.directory === null || (await inodeAt(input.address)) !== null) return;
     await prepareUnixDirectory({ directory: input.directory, userId: input.userId });
+    const next = await bindUnix(input.directory, "claim-free").catch(
+      (error: NodeJS.ErrnoException) => {
+        // Another app bound the address first.
+        if (error.code === "EEXIST") return null;
+        throw error;
+      },
+    );
+    if (next === null) return;
     const previous = server;
-    ({ server, inode } = await bindUnix(input.directory));
+    ({ server, inode } = next);
     previous.close();
   };
   let pendingReclaim = Promise.resolve();
@@ -245,6 +260,8 @@ export async function startDesktopAppControlServer(input: {
         reclaim().catch(input.onReclaimError);
       });
       watcher.on("error", input.onReclaimError);
+      // Catch a removal that happened before the watcher started.
+      reclaim().catch(input.onReclaimError);
     } catch (error) {
       // The socket still works without a watcher. It only cannot recover after removal.
       input.onReclaimError(error);
