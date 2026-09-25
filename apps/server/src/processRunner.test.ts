@@ -438,10 +438,19 @@ describe("processSpanAttributes", () => {
     expect(
       ProcessRunner.processSpanAttributes("git", ["--git-dir", "/repo/.git", "fetch"]),
     ).toEqual({ "process.command": "git", "process.subcommand": "fetch" });
+    expect(
+      ProcessRunner.processSpanAttributes("git", ["--namespace", "customer-a", "status"]),
+    ).toEqual({ "process.command": "git", "process.subcommand": "status" });
   });
 
-  it("never records a path or value as the git subcommand", () => {
+  it("records only known git subcommands", () => {
     expect(ProcessRunner.processSpanAttributes("git", ["--unknown", "/Users/me/secret"])).toEqual({
+      "process.command": "git",
+    });
+    expect(ProcessRunner.processSpanAttributes("git", ["--unknown", "private-repo"])).toEqual({
+      "process.command": "git",
+    });
+    expect(ProcessRunner.processSpanAttributes("git", ["customer-secret"])).toEqual({
       "process.command": "git",
     });
   });

@@ -286,7 +286,67 @@ function finalizeRunProcess<R>(
 }
 
 // Git global options that take the next argument as their value, as in `git -C <path> status`.
-const GIT_OPTIONS_WITH_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree"]);
+const GIT_OPTIONS_WITH_VALUE = new Set([
+  "-C",
+  "-c",
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--config-env",
+  "--shallow-file",
+  "--attr-source",
+]);
+
+// Git subcommands T3 runs, plus common ones. Only these are recorded, so a misread path,
+// option value, or unknown word never reaches the span.
+const GIT_SUBCOMMANDS = new Set([
+  "add",
+  "apply",
+  "branch",
+  "cat-file",
+  "check-ignore",
+  "checkout",
+  "cherry-pick",
+  "clean",
+  "clone",
+  "commit",
+  "commit-tree",
+  "config",
+  "diff",
+  "fetch",
+  "for-each-ref",
+  "hash-object",
+  "init",
+  "log",
+  "ls-files",
+  "ls-remote",
+  "ls-tree",
+  "merge",
+  "merge-base",
+  "pull",
+  "push",
+  "read-tree",
+  "rebase",
+  "remote",
+  "reset",
+  "restore",
+  "rev-list",
+  "rev-parse",
+  "show",
+  "show-ref",
+  "sparse-checkout",
+  "stash",
+  "status",
+  "submodule",
+  "switch",
+  "symbolic-ref",
+  "tag",
+  "update-index",
+  "update-ref",
+  "version",
+  "worktree",
+  "write-tree",
+]);
 
 function gitSubcommand(args: ReadonlyArray<string>): string | undefined {
   let skipNext = false;
@@ -296,8 +356,7 @@ function gitSubcommand(args: ReadonlyArray<string>): string | undefined {
     } else if (arg.startsWith("-")) {
       skipNext = GIT_OPTIONS_WITH_VALUE.has(arg);
     } else {
-      // Only a plain word counts, so a misread path or option value is never recorded.
-      return /^[a-z][a-z0-9-]*$/.test(arg) ? arg : undefined;
+      return GIT_SUBCOMMANDS.has(arg) ? arg : undefined;
     }
   }
   return undefined;
