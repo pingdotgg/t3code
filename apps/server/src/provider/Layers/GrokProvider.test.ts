@@ -564,7 +564,10 @@ describe("Grok usage limits", () => {
     for (const response of [{}, { config: {} }, { config: { creditUsagePercent: NaN } }]) {
       const limits = grokUsageResponseToLimits(response, checkedAt);
       expect(limits.windows).toEqual([]);
-      expect(limits.unavailable?.reason).toBe("unsupported");
+      // Nothing metered yet, which xAI reports by omitting the field until
+      // usage registers. Marking it `unsupported` would drop the account from
+      // the Limits view for good; leaving the marker off keeps it listed.
+      expect(limits.unavailable).toBeUndefined();
     }
     expect(
       grokUsageResponseToLimits({ config: { creditUsagePercent: 0 } }, checkedAt).windows,
