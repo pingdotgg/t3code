@@ -1,13 +1,11 @@
-// @effect-diagnostics nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { HttpClient } from "effect/unstable/http";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
@@ -47,9 +45,11 @@ it.layer(testLayer)("GrokDriver", (it) => {
   it.effect.skipIf(windowsHost)("updates through the configured executable's own updater", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-driver-" });
-      const binaryPath = NodePath.join(tempDir, "Grok Tools", "bin", "grok");
-      yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
+      const grokHome = path.join(tempDir, "Grok Home");
+      const binaryPath = path.join(grokHome, "bin", "grok");
+      yield* fs.makeDirectory(path.dirname(binaryPath), { recursive: true });
       yield* fs.writeFileString(binaryPath, "#!/bin/sh\n");
       yield* fs.chmod(binaryPath, 0o755);
 
@@ -57,7 +57,7 @@ it.layer(testLayer)("GrokDriver", (it) => {
         instanceId: ProviderInstanceId.make("grok-update"),
         displayName: "Grok test",
         enabled: false,
-        environment: [],
+        environment: [{ name: "GROK_HOME", value: grokHome, sensitive: false }],
         config: { ...GrokDriver.defaultConfig(), binaryPath },
       });
 
@@ -68,6 +68,8 @@ it.layer(testLayer)("GrokDriver", (it) => {
         executable: binaryPath,
         args: ["update"],
       });
+      // `grok update` installs under GROK_HOME, so it must target this instance's home.
+      expect(capabilities.update?.env?.GROK_HOME).toBe(grokHome);
     }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner),
       Effect.scoped,
@@ -76,15 +78,15 @@ it.layer(testLayer)("GrokDriver", (it) => {
 
   it.effect("stays manual-only when the configured executable does not exist", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-missing-" });
       const instance = yield* GrokDriver.create({
         instanceId: ProviderInstanceId.make("grok-missing"),
         displayName: "Grok test",
         enabled: false,
         environment: [],
-        config: {
-          ...GrokDriver.defaultConfig(),
-          binaryPath: NodePath.join(NodeOS.tmpdir(), "t3-grok-missing", "grok"),
-        },
+        config: { ...GrokDriver.defaultConfig(), binaryPath: path.join(tempDir, "grok") },
       });
       expect((yield* instance.snapshot.resolveMaintenance()).update).toBeNull();
     }).pipe(
