@@ -10,8 +10,13 @@ import { act, createRef, useLayoutEffect, type ReactNode, type Ref } from "react
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
+import {
+  LegendList,
+  type LegendListRef,
+  type MaintainScrollAtEndOptions,
+} from "@legendapp/list/react";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
+import { readTimelinePosition } from "./timelineScrollAnchoring";
 import { useComposerFocusState } from "./useComposerFocusState";
 
 vi.mock("@legendapp/list/react", async () => {
@@ -992,6 +997,72 @@ describe("MessagesTimeline", () => {
       flushFrame();
       flushFrame();
       expect(animatedAttr(renderer)).toBe(true);
+    } finally {
+      act(() => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("remembers a live-following thread at the end while the follow scroll trails output", () => {
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const threadKey = "env-1:thread-following";
+    const entries = [
+      {
+        id: "entry-follow-work",
+        kind: "work" as const,
+        createdAt: MESSAGE_CREATED_AT,
+        entry: {
+          id: "work-follow",
+          createdAt: MESSAGE_CREATED_AT,
+          toolCallId: "call-follow",
+          label: "Run lint",
+          tone: "tool" as const,
+          itemType: "command_execution" as const,
+          command: "pnpm lint",
+          toolLifecycleStatus: "completed" as const,
+        },
+      },
+    ];
+    let renderer!: ReactTestRenderer;
+    const list = () => renderer.root.findByType(LegendList);
+    const props = buildProps();
+    // Streamed output has grown the list 500px past the viewport, and the
+    // follow scroll has not caught up yet.
+    props.listRef.current = {
+      getState: () => ({
+        data: list().props.data,
+        isAtEnd: false,
+        contentLength: 2000,
+        scroll: 700,
+        scrollLength: 800,
+        positionAtIndex: () => 0,
+        indexByKey: () => 0,
+        elementAtIndex: () => ({ getBoundingClientRect: () => ({ top: -700 }) }),
+      }),
+      getScrollableNode: () => ({ scrollTop: 700, getBoundingClientRect: () => ({ top: 0 }) }),
+    } as unknown as LegendListRef;
+    const renderTimeline = (liveFollowEnabled: boolean) => (
+      <MessagesTimeline
+        {...props}
+        isWorking
+        liveFollowEnabled={liveFollowEnabled}
+        routeThreadKey={threadKey}
+        timelineEntries={entries}
+      />
+    );
+    try {
+      act(() => {
+        renderer = create(renderTimeline(true));
+      });
+      act(() => list().props.onScroll());
+      expect(readTimelinePosition(threadKey)?.atEnd).toBe(true);
+
+      // Once the user scrolls away, the same offset is a reading position.
+      act(() => renderer.update(renderTimeline(false)));
+      act(() => list().props.onScroll());
+      expect(readTimelinePosition(threadKey)).toMatchObject({ atEnd: false, scrollOffset: 700 });
     } finally {
       act(() => renderer?.unmount());
       vi.unstubAllGlobals();

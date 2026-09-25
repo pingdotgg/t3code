@@ -1029,7 +1029,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           // DOM geometry includes the header and the virtualizer's layout adjustment.
           offsetWithinRow: element.getBoundingClientRect().top - row.getBoundingClientRect().top,
           scrollOffset: element.scrollTop,
-          atEnd: isAtEnd,
+          // While live-following, a gap to the end is the follow scroll
+          // trailing streamed output, not a reading position to restore.
+          atEnd: isAtEnd || liveFollowEnabled,
           disclosures: {
             turns: paintedExpandedTurnIds,
             workGroups: paintedExpandedWorkGroupIds,
@@ -1087,6 +1089,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     workGroupViewState,
     rows,
     listIdentityKey,
+    liveFollowEnabled,
     restoringThreadPosition,
     listRef,
     minimapItems,
