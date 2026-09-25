@@ -121,6 +121,22 @@ it.effect("invalidate re-probes only that input", () =>
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
+it.effect("keeps every input cached across refreshes when there are many instances", () =>
+  Effect.gen(function* () {
+    const query = yield* mockSdk();
+    const cache = yield* ClaudeProbeCache.ClaudeProbeCache;
+    const homes = Array.from({ length: 100 }, (_, index) => `/homes/${index}`);
+    const refresh = Effect.forEach(homes, (home) => cache.capabilities(input(home)), {
+      concurrency: "unbounded",
+    });
+
+    yield* refresh;
+    yield* refresh;
+
+    assert.equal(query.mock.calls.length, homes.length);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
 it.effect("runs at most 3 SDK probes at once", () =>
   Effect.gen(function* () {
     const { promise: released, resolve: release } = Promise.withResolvers<void>();

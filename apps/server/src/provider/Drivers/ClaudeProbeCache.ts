@@ -33,6 +33,11 @@ const PROBE_TTL = Duration.minutes(5);
 // A failed probe marks every instance on that home as unverified, so retry soon.
 const FAILED_PROBE_TTL = Duration.seconds(30);
 const MAX_CONCURRENT_PROBES = 3;
+// Keep this far above any real instance count. The cache evicts the least
+// recently used key, and every refresh reads the keys in the same order, so a
+// cap below the live key count makes each refresh re-probe every instance.
+// Stale keys only come from instance edits, and entries are small.
+const MAX_CACHED_PROBES = 1024;
 
 export class ClaudeProbeCache extends Context.Service<
   ClaudeProbeCache,
@@ -62,7 +67,7 @@ export const layer = Layer.effect(
           ),
         ),
       {
-        capacity: 64,
+        capacity: MAX_CACHED_PROBES,
         timeToLive: (exit) =>
           Exit.isSuccess(exit) && exit.value !== undefined ? PROBE_TTL : FAILED_PROBE_TTL,
       },
