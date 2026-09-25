@@ -1,0 +1,50 @@
+---
+// Lays the docs header out like the marketing nav: wordmark on the left, search
+// leading the actions on the right. Starlight's default grid pins search to the
+// content column's edge instead.
+import Search from "@astrojs/starlight/components/Search.astro";
+
+import SiteTitle from "./SiteTitle.astro";
+import SocialIcons from "./SocialIcons.astro";
+---
+
+<div class="docs-header">
+  <div class="docs-header-title">
+    <SiteTitle />
+  </div>
+  <div class="docs-header-actions print:hidden">
+    <Search />
+    <div class="sl-hidden md:sl-flex docs-header-links">
+      <SocialIcons />
+    </div>
+  </div>
+</div>
+
+<style>
+  .docs-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sl-nav-gap);
+    height: 100%;
+  }
+
+  .docs-header-title {
+    /* Keeps a long title from covering the search and menu buttons. */
+    min-width: 0;
+    overflow: clip;
+    padding: 0.25rem;
+    margin: -0.25rem;
+  }
+
+  .docs-header-actions {
+    display: flex;
+  }
+
+  /* Display comes from Starlight's utility classes so the links hide on mobile. */
+  .docs-header-actions,
+  .docs-header-links {
+    align-items: center;
+    gap: 8px;
+  }
+</style>

@@ -81,14 +81,6 @@ body::after {
   backdrop-filter: blur(18px);
 }
 
-.header .social-icons {
-  gap: 8px;
-}
-
-.header .social-icons::after {
-  content: none;
-}
-
 site-search > button[data-open-modal] {
   height: 36px;
   border: 1px solid var(--t3-border);
@@ -101,6 +93,13 @@ site-search > button[data-open-modal] {
   transition:
     border-color 0.18s ease,
     color 0.18s ease;
+}
+
+@media (min-width: 50rem) {
+  site-search > button[data-open-modal] {
+    width: 15rem;
+    padding-inline: 14px 10px;
+  }
 }
 
 site-search > button[data-open-modal]:hover {
@@ -422,6 +421,12 @@ starlight-toc a[aria-current="true"] {
 
   .content-panel:has(> .sl-container > h1#_top) {
     padding-block: 2.25rem 1.75rem;
+  }
+
+  /* Match the menu button beside it. */
+  site-search > button[data-open-modal] {
+    width: var(--sl-menu-button-size);
+    justify-content: center;
   }
 
   /* Wide tables scroll inside their tile instead of the page. */

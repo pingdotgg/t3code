@@ -28,6 +28,7 @@ export default defineConfig({
       description: "Guides for installing, using, and running T3 Code.",
       favicon: "/favicon.ico",
       components: {
+        Header: "./src/components/docs/Header.astro",
         SiteTitle: "./src/components/docs/SiteTitle.astro",
         SocialIcons: "./src/components/docs/SocialIcons.astro",
         ThemeProvider: "./src/components/docs/ThemeProvider.astro",
