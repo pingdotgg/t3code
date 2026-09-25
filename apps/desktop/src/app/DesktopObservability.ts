@@ -3,6 +3,7 @@ import {
   makeLocalFileTracer,
   makeTraceSink,
   otlpSerializationLayer,
+  type SignalExport,
 } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import {
@@ -350,8 +351,10 @@ const readPersistedObservabilitySettings: Effect.Effect<
 });
 
 /**
- * Settings is read once for every signal, so the main process cannot
- * resolve traces against one revision of the file and logs against another.
+ * Resolved as the server resolves them, with persisted Settings as the
+ * fallback. Settings is read once for every signal, so the main process
+ * cannot resolve traces against one revision of the file and logs against
+ * another.
  */
 const resolveOtlpEndpoints = Effect.gen(function* () {
   const otel = yield* OtelEnvironment.load;
@@ -367,10 +370,34 @@ const resolveOtlpEndpoints = Effect.gen(function* () {
 
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const persisted = yield* readPersistedObservabilitySettings;
+  const signalExport: SignalExport = {
+    protocol: environment.otlpProtocol,
+    headers: Option.getOrUndefined(environment.otlpHeaders),
+    exportIntervalMs: environment.otlpExportIntervalMs,
+  };
+  const t3 = (url: Option.Option<string>) => ({
+    url: Option.getOrUndefined(url),
+    export: signalExport,
+  });
   return {
-    traces: Option.getOrUndefined(environment.otlpTracesUrl) ?? persisted.otlpTracesUrl,
-    metrics: Option.getOrUndefined(environment.otlpMetricsUrl) ?? persisted.otlpMetricsUrl,
-    logs: Option.getOrUndefined(environment.otlpLogsUrl) ?? persisted.otlpLogsUrl,
+    traces: OtelEnvironment.resolveSignalEndpoint(
+      otel,
+      "traces",
+      t3(environment.otlpTracesUrl),
+      persisted.otlpTracesUrl,
+    ),
+    metrics: OtelEnvironment.resolveSignalEndpoint(
+      otel,
+      "metrics",
+      t3(environment.otlpMetricsUrl),
+      persisted.otlpMetricsUrl,
+    ),
+    logs: OtelEnvironment.resolveSignalEndpoint(
+      otel,
+      "logs",
+      t3(environment.otlpLogsUrl),
+      persisted.otlpLogsUrl,
+    ),
     warnings: otel.warnings,
     resourceAttributes: otel.resourceAttributes,
   };
@@ -602,8 +629,6 @@ const telemetryLayer = Layer.unwrap(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const endpoints = yield* resolveOtlpEndpoints;
-    const headers = Option.getOrUndefined(environment.otlpHeaders);
-    const serializationLayer = otlpSerializationLayer(environment.otlpProtocol);
     const resource = {
       serviceName: "desktop",
       attributes: {
@@ -629,14 +654,19 @@ const telemetryLayer = Layer.unwrap(
         : [
             Logger.consolePretty(),
             OtlpLogger.make({
-              url: endpoints.logs,
-              exportInterval: `${environment.otlpExportIntervalMs} millis`,
-              headers,
+              url: endpoints.logs.url,
+              exportInterval: `${endpoints.logs.export.exportIntervalMs} millis`,
+              headers: endpoints.logs.export.headers,
               resource,
             }),
           ],
       { mergeWithExisting: false },
-    ).pipe(Layer.provide(OtlpExporter.layerFlusher), Layer.provide(serializationLayer));
+    ).pipe(
+      Layer.provide(OtlpExporter.layerFlusher),
+      Layer.provide(
+        otlpSerializationLayer(endpoints.logs?.export.protocol ?? environment.otlpProtocol),
+      ),
+    );
 
     const tracerLayer = Layer.unwrap(
       Effect.gen(function* () {
@@ -651,11 +681,11 @@ const telemetryLayer = Layer.unwrap(
           endpoints.traces === undefined
             ? undefined
             : yield* OtlpTracer.make({
-                url: endpoints.traces,
-                exportInterval: `${environment.otlpExportIntervalMs} millis`,
-                headers,
+                url: endpoints.traces.url,
+                exportInterval: `${endpoints.traces.export.exportIntervalMs} millis`,
+                headers: endpoints.traces.export.headers,
                 resource,
-              }).pipe(Effect.provide(serializationLayer));
+              }).pipe(Effect.provide(otlpSerializationLayer(endpoints.traces.export.protocol)));
         const tracer = yield* makeLocalFileTracer({
           filePath: tracePath,
           maxBytes: DESKTOP_LOG_FILE_MAX_BYTES,
@@ -679,11 +709,11 @@ const telemetryLayer = Layer.unwrap(
     //   endpoints.metrics === undefined
     //     ? Layer.empty
     //     : OtlpMetrics.layer({
-    //         url: endpoints.metrics,
-    //         exportInterval: `${environment.otlpExportIntervalMs} millis`,
-    //         headers,
+    //         url: endpoints.metrics.url,
+    //         exportInterval: `${endpoints.metrics.export.exportIntervalMs} millis`,
+    //         headers: endpoints.metrics.export.headers,
     //         resource,
-    //       }).pipe(Layer.provide(serializationLayer));
+    //       }).pipe(Layer.provide(otlpSerializationLayer(endpoints.metrics.export.protocol)));
 
     // Logged once the loggers above are installed, so the warnings use them.
     const otelWarningsLayer = Layer.effectDiscard(
