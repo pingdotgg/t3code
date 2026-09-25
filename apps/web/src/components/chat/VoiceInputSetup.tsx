@@ -1,6 +1,6 @@
 import type { EnvironmentSpeechModel, EnvironmentSpeechStatus } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { BookOpenIcon, MicIcon, RefreshCwIcon, SparklesIcon } from "lucide-react";
+import { BookOpenIcon, RefreshCwIcon, SparklesIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
@@ -195,13 +195,6 @@ export function VoiceInputSetup(props: {
                   <BookOpenIcon className="mt-0.5 size-4 shrink-0 text-primary" />
                   <span>
                     <strong>Dictionary</strong> helps recognize names and technical terms.
-                  </span>
-                </p>
-                <p className="flex gap-3">
-                  <MicIcon className="mt-0.5 size-4 shrink-0 text-primary" />
-                  <span>
-                    <strong>Correction word</strong> helps post-processing revise something you just
-                    said.
                   </span>
                 </p>
                 <p className="flex gap-3">

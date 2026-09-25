@@ -152,7 +152,7 @@ export function VoicePostProcessingSettings() {
         serverScoped
         settingKeys={["speechCorrectionWord"]}
         {...searchableSetting("speech-correction-word")}
-        description="A spoken cue for revising what you just said. Applied only when the sentence clearly contains a correction and post-processing is enabled."
+        description="If automatic cleanup misses your spoken corrections, enter a word or phrase you use to signal them. Transcription gets it as a hint; post-processing uses it only when context indicates a correction."
         control={
           <div className="w-40">
             <Input
@@ -160,7 +160,7 @@ export function VoicePostProcessingSettings() {
               defaultValue={settings.speechCorrectionWord}
               maxLength={50}
               placeholder="err"
-              aria-label="Correction word"
+              aria-label="Explicit correction cue"
               onBlur={(event) =>
                 updateSettings({ speechCorrectionWord: event.target.value.trim() })
               }

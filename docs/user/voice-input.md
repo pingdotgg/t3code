@@ -8,8 +8,8 @@ into the composer for editing and is never sent automatically.
 On web and desktop, the first microphone click opens voice setup if the selected
 environment has no transcription model. Download the recommended English model,
 or open Voice settings to choose another language or model. After the download,
-you can choose a microphone, review the dictionary, correction word, and
-post-processing options, or start recording immediately.
+you can choose a microphone, review the dictionary and post-processing options,
+or start recording immediately.
 
 On web and desktop, T3 Code transcribes every recording on the environment selected
 under Settings, then Voice. The primary environment is used by default, regardless
@@ -47,6 +47,8 @@ On web and desktop, **Voice post-processing** can polish a completed transcript
 with a provider configured on the current project environment. Its model and
 prompt are independent from the environment's general text generation model.
 Enable it and choose its model and prompt under Settings, then Voice.
+If automatic cleanup misses your spoken corrections, add the word or phrase you
+use to signal them as an **Explicit correction cue** in Voice settings.
 While it runs, the composer shows a post-processing state. Select **Skip** to
 stop processing and insert the original transcript instead. If processing fails,
 T3 Code preserves the original transcript.
