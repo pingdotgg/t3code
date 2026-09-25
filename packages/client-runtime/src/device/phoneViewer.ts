@@ -19,7 +19,11 @@ import {
 } from "./model.ts";
 import { createImportedPhoneScene, loadDeviceModel } from "./modelScene.ts";
 import { createPhoneScene, phoneDisplayLayout } from "./phoneScene.ts";
-import { createAndroidFoldScene } from "./androidFoldScene.ts";
+import {
+  createAndroidFoldScene,
+  DEFAULT_FOLD_INNER_ASPECT,
+  isFoldInnerAspect,
+} from "./androidFoldScene.ts";
 import { createRenderScheduler } from "./renderScheduler.ts";
 import { createDeviceMotion } from "./deviceMotion.ts";
 import { createDeviceFraming } from "./deviceFraming.ts";
@@ -102,9 +106,21 @@ export function createPhoneViewer(options: {
   let accessory: Awaited<ReturnType<typeof loadDeviceModel>> | null = null;
   let accessoryBounds: Box3 | null = null;
   let foldTurn: { from: number; to: number; startedAt: number } | null = null;
+  // The inner display's raw width over height. Cover frames leave the last unfolded shape.
+  const rawAspect = () => options.source.width / options.source.height;
+  let foldAspect = isFoldInnerAspect(rawAspect()) ? rawAspect() : DEFAULT_FOLD_INNER_ASPECT;
+  const createFoldScene = (angle: number, displayLayout = layout) =>
+    createAndroidFoldScene(texture, displayLayout, angle, foldAspect);
+  /** The hinge angle currently on screen, including an unfinished turn. */
+  const visibleFoldAngle = (fallback: number) => {
+    if (!foldTurn) return fallback;
+    const progress = Math.min(1, (performance.now() - foldTurn.startedAt) / ANDROID_FOLD_TURN_MS);
+    const eased = progress * progress * (3 - 2 * progress);
+    return foldTurn.from + (foldTurn.to - foldTurn.from) * eased;
+  };
   let phone: ReturnType<typeof createPhoneScene> | ReturnType<typeof createAndroidFoldScene> =
     foldAngle !== null && profile.id.startsWith("android")
-      ? createAndroidFoldScene(texture, layout, foldAngle)
+      ? createFoldScene(foldAngle)
       : createPhoneScene(texture, layout, profile);
   scene.add(phone.root);
   let disposed = false;
@@ -222,7 +238,18 @@ export function createPhoneViewer(options: {
         phone.setDisplay(texture, next);
         previous.dispose();
       }
-      if (
+      // Learn the inner display shape from any unfolded frame, including before fold mode.
+      const frameAspect = rawAspect();
+      const innerChanged = isFoldInnerAspect(frameAspect) && frameAspect !== foldAspect;
+      if (innerChanged) foldAspect = frameAspect;
+      if (!imported && "setAngle" in phone && innerChanged) {
+        // A new inner display shape resizes the body; the hinge keeps its visible angle.
+        const angle = visibleFoldAngle(foldAngle ?? 180);
+        scene.remove(phone.root);
+        phone.dispose();
+        phone = createFoldScene(angle, next);
+        scene.add(phone.root);
+      } else if (
         !imported &&
         !("setAngle" in phone) &&
         (nextProfile !== profile || next.aspect !== layout.aspect)
@@ -267,7 +294,7 @@ export function createPhoneViewer(options: {
         : model
           ? createImportedPhoneScene(model.asset, texture, layout)
           : foldAngle !== null && profile.id.startsWith("android")
-            ? createAndroidFoldScene(texture, layout, foldAngle)
+            ? createFoldScene(foldAngle)
             : createPhoneScene(texture, layout, profile);
       foldTurn = null;
       scene.remove(phone.root);
@@ -333,10 +360,7 @@ export function createPhoneViewer(options: {
       if (next === null || !("setAngle" in phone)) {
         scene.remove(phone.root);
         phone.dispose();
-        phone =
-          next === null
-            ? createPhoneScene(texture, layout, profile)
-            : createAndroidFoldScene(texture, layout, next);
+        phone = next === null ? createPhoneScene(texture, layout, profile) : createFoldScene(next);
         scene.add(phone.root);
         orientationTurn = null;
         orientationAngle = next === null ? layout.rotation : 0;
@@ -344,13 +368,7 @@ export function createPhoneViewer(options: {
         applyPose();
         fit(true);
       } else {
-        const progress = foldTurn
-          ? Math.min(1, (performance.now() - foldTurn.startedAt) / ANDROID_FOLD_TURN_MS)
-          : 1;
-        const eased = progress * progress * (3 - 2 * progress);
-        const from = foldTurn
-          ? foldTurn.from + (foldTurn.to - foldTurn.from) * eased
-          : (previous ?? next);
+        const from = visibleFoldAngle(previous ?? next);
         if (reducedMotion()) {
           foldTurn = null;
           phone.setAngle(next);

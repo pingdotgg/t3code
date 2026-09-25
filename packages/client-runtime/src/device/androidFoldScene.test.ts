@@ -54,4 +54,25 @@ describe("Android fold scene", () => {
     scene.dispose();
     texture.dispose();
   });
+
+  it("shapes the inner display to the raw frame, portrait or landscape", () => {
+    const texture = new Texture();
+    for (const [width, height] of [
+      [2076, 2152],
+      [2208, 1840],
+    ] as const) {
+      const scene = createAndroidFoldScene(
+        texture,
+        phoneDisplayLayout(null, width, height),
+        180,
+        width / height,
+      );
+      const screen = scene.root.getObjectByName("continuous-inner-screen") as Mesh;
+      screen.geometry.computeBoundingBox();
+      const size = screen.geometry.boundingBox!.getSize(new Vector3());
+      expect(size.x / size.y).toBeCloseTo(width / height, 2);
+      scene.dispose();
+    }
+    texture.dispose();
+  });
 });
