@@ -69,6 +69,7 @@ import {
   ProjectWriteFileError,
   ProjectMutationError,
   ProviderUploadFeedbackError,
+  ProviderVoiceSessionError,
   ProviderSetupError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
@@ -2287,6 +2288,53 @@ const makeWsRpcLayer = (
                   ? cause
                   : new ProviderUploadFeedbackError({
                       threadId: input.threadId,
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.providerVoiceSession]: (input) =>
+          observeRpcStream(
+            WS_METHODS.providerVoiceSession,
+            Stream.unwrap(
+              Effect.gen(function* () {
+                const voiceError = (detail: string) =>
+                  new ProviderVoiceSessionError({ threadId: input.threadId, detail });
+                const projection = yield* threadManagement.getThreadRecords(input.threadId, [
+                  "providerThreads",
+                ]);
+                const providerThread =
+                  projection.providerThreads.find(
+                    (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+                  ) ?? projection.providerThreads.at(-1);
+                const providerSessionId = providerThread?.providerSessionId ?? null;
+                if (providerThread === undefined || providerSessionId === null) {
+                  return yield* voiceError("Send a message before starting voice.");
+                }
+                const runtime = Option.getOrNull(yield* providerSessionsV2.get(providerSessionId));
+                if (runtime === null) {
+                  return yield* voiceError(
+                    "The provider session is no longer running. Send a message first.",
+                  );
+                }
+                if (runtime.startVoiceSession === undefined) {
+                  return yield* voiceError(
+                    `Provider '${runtime.driver}' does not support voice conversations.`,
+                  );
+                }
+                return runtime.startVoiceSession({ providerThread, offerSdp: input.offerSdp });
+              }),
+            ).pipe(
+              Stream.mapError((cause) =>
+                cause._tag === "ProviderVoiceSessionError"
+                  ? cause
+                  : new ProviderVoiceSessionError({
+                      threadId: input.threadId,
+                      detail:
+                        "detail" in cause && typeof cause.detail === "string"
+                          ? cause.detail
+                          : cause.message,
                       cause,
                     }),
               ),

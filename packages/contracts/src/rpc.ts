@@ -131,6 +131,9 @@ import {
   ProviderUploadFeedbackError,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
+  ProviderVoiceSessionError,
+  ProviderVoiceSessionEvent,
+  ProviderVoiceSessionInput,
 } from "./provider.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import {
@@ -349,6 +352,7 @@ export const WS_METHODS = {
 
   // Provider methods
   providerUploadFeedback: "provider.uploadFeedback",
+  providerVoiceSession: "provider.voice.session",
   providerAuthStart: "provider.auth.start",
   providerConsumeResetCredit: "provider.consumeResetCredit",
   providerAuthComplete: "provider.auth.complete",
@@ -1170,6 +1174,13 @@ const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, 
   error: Schema.Union([ProviderUploadFeedbackError, EnvironmentAuthorizationError]),
 });
 
+const WsProviderVoiceSessionRpc = Rpc.make(WS_METHODS.providerVoiceSession, {
+  payload: ProviderVoiceSessionInput,
+  success: ProviderVoiceSessionEvent,
+  error: Schema.Union([ProviderVoiceSessionError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
 const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusInput,
   success: VcsStatusStreamEvent,
@@ -1730,6 +1741,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsAttachmentsCreateUploadUrlRpc,
   WsAttachmentsDeleteRpc,
   WsProviderUploadFeedbackRpc,
+  WsProviderVoiceSessionRpc,
   WsSubscribeVcsStatusRpc,
   WsSubscribeWorktreeSetupRpc,
   WsWorktreeSetupCancelRpc,

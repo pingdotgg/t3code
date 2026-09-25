@@ -805,7 +805,12 @@ describe("parseStandaloneComposerSlashCommand", () => {
     expect(parseStandaloneComposerSlashCommand("/default")).toBe("default");
   });
 
+  it("parses standalone /voice command", () => {
+    expect(parseStandaloneComposerSlashCommand("/Voice ")).toBe("voice");
+  });
+
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
+    expect(parseStandaloneComposerSlashCommand("/voice please")).toBeNull();
   });
 });

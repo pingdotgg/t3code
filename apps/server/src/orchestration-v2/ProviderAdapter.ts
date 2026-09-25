@@ -1,4 +1,7 @@
-import type { OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
+import type {
+  OrchestrationV2HistoricalMessage,
+  ProviderVoiceSessionEvent,
+} from "@t3tools/contracts";
 import {
   ChatAttachment,
   CheckpointId,
@@ -555,6 +558,14 @@ export interface ProviderAdapterV2SessionRuntime {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly reason?: string;
   }) => Effect.Effect<{ readonly feedbackId: string }, ProviderAdapterV2Error>;
+  /**
+   * Providers with realtime voice (Codex) hold a voice conversation on the
+   * thread. Interrupting the stream ends the conversation.
+   */
+  readonly startVoiceSession?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly offerSdp: string;
+  }) => Stream.Stream<ProviderVoiceSessionEvent, ProviderAdapterV2Error>;
   readonly rollbackThread: (
     input: ProviderAdapterV2RollbackThreadInput,
   ) => Effect.Effect<ProviderAdapterV2ThreadSnapshot, ProviderAdapterV2Error>;

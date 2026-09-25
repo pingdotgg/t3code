@@ -224,6 +224,38 @@ describe("ProviderContinuationService", () => {
     });
   });
 
+  it.effect("resubmits a spoken voice request as the user's own message", () => {
+    return Effect.gen(function* () {
+      const dispatched = yield* Queue.unbounded<unknown>();
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests;
+        yield* requests.offer({
+          threadId,
+          providerThreadId,
+          driver,
+          detail: "run the tests",
+          delivery: "message_text",
+          origin: "voice",
+        });
+        const command = (yield* Queue.take(dispatched)) as {
+          readonly createdBy: string;
+          readonly creationSource: string;
+          readonly text: string;
+          readonly notification?: OrchestrationV2Notification;
+        };
+        assert.equal(command.createdBy, "user");
+        assert.equal(command.creationSource, "server");
+        assert.equal(command.text, "run the tests");
+        assert.isUndefined(command.notification);
+      }).pipe(
+        Effect.provide(
+          testLayer({ dispatched, getThreadRecords: () => Effect.succeed(projection) }),
+        ),
+        Effect.scoped,
+      );
+    });
+  });
+
   it.effect("dispatches a current delegated completion as one server-owned queued message", () => {
     return Effect.gen(function* () {
       const dispatched = yield* Queue.unbounded<unknown>();

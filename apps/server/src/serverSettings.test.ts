@@ -270,6 +270,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         shadowHomePath: "",
         launchArgs: "",
         customModels: [],
+        voice: "",
       });
       assert.deepEqual(next.providers.claudeAgent, {
         enabled: true,
@@ -1054,6 +1055,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         shadowHomePath: "",
         launchArgs: "",
         customModels: [],
+        voice: "",
       });
       assert.deepEqual(next.providers.claudeAgent, {
         enabled: true,

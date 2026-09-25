@@ -157,6 +157,8 @@ import {
   collapseExpandedComposerCursor,
   parseStandaloneComposerSlashCommand,
 } from "../composer-logic";
+import { resolveThreadVoiceAvailability } from "../voice/voiceAvailability";
+import { toggleThreadVoice, voiceMode } from "../voice/voiceMode";
 import {
   derivePendingApprovals,
   derivePendingUserInputs,
@@ -8299,18 +8301,32 @@ export default function ChatView(props: ChatViewProps) {
       }
       return;
     }
-    // Providers without the legacy toggle receive their native commands unchanged.
-    const standaloneSlashCommand =
-      sendInteractionModeEnabled &&
+    const parsedSlashCommand =
       composerImages.length === 0 &&
       composerFiles.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
       composerReviewComments.length === 0 &&
-      composerThreadContexts.length === 0
+      composerThreadContexts.length === 0 &&
+      multipleModelSelections === null
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
-    if (standaloneSlashCommand && multipleModelSelections === null) {
+    if (parsedSlashCommand === "voice") {
+      // Providers without voice receive "/voice" as a normal message.
+      const voiceAvailability = resolveThreadVoiceAvailability(activeThread, providerStatuses);
+      // An active conversation always stops, even if the provider stopped offering voice.
+      if (voiceAvailability.kind !== "unsupported" || voiceMode.isActiveFor(routeThreadRef)) {
+        toggleThreadVoice(routeThreadRef, voiceAvailability);
+        promptRef.current = "";
+        clearComposerDraftContent(composerDraftTarget);
+        composerRef.current?.resetCursorState();
+        return;
+      }
+    }
+    // Providers without the legacy toggle receive their native commands unchanged.
+    const standaloneSlashCommand =
+      sendInteractionModeEnabled && parsedSlashCommand !== "voice" ? parsedSlashCommand : null;
+    if (standaloneSlashCommand) {
       handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);

@@ -1709,6 +1709,128 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       };
     });
 
+  it.effect(
+    "resubmits a voice handoff Codex started only once its turn is interrupted or failed",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "voice-thread";
+          const delegation = (input: string) =>
+            `<realtime_delegation>\n  <input>${input}</input>\n</realtime_delegation>`;
+          const voiceTurn = (
+            turnId: string,
+            request: string,
+            id: number,
+            status: "completed" | "interrupted" | "failed",
+          ) => [
+            {
+              type: "emit_inbound" as const,
+              label: `turn/started/${turnId}`,
+              frame: {
+                method: "turn/started",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: turnId, status: "inProgress" }),
+                },
+              },
+            },
+            {
+              type: "emit_inbound" as const,
+              label: `item/started/${turnId}`,
+              frame: {
+                method: "item/started",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId,
+                  startedAtMs: 1782622440500,
+                  item: {
+                    type: "userMessage",
+                    id: `user-${turnId}`,
+                    content: [{ type: "text", text: delegation(request), text_elements: [] }],
+                  },
+                },
+              },
+            },
+            {
+              type: "expect_outbound" as const,
+              label: `turn/interrupt/${turnId}`,
+              frame: { id, method: "turn/interrupt", params: { threadId: nativeThreadId, turnId } },
+            },
+            {
+              type: "emit_inbound" as const,
+              label: `turn/interrupt/${turnId}`,
+              frame: { id, result: {} },
+            },
+            {
+              type: "emit_inbound" as const,
+              label: `turn/completed/${turnId}`,
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: turnId, status }),
+                },
+              },
+            },
+          ];
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario: "voice-handoff-resubmit",
+              entries: [
+                // Initialization and thread/start only; Codex, not T3, starts these turns.
+                ...codexReplayPreamble({
+                  nativeThreadId,
+                  nativeTurnId: "unused",
+                  prompt: "",
+                }).slice(0, -3),
+                {
+                  type: "expect_outbound",
+                  label: "thread/realtime/start",
+                  frame: {
+                    id: 3,
+                    method: "thread/realtime/start",
+                    params: {
+                      threadId: nativeThreadId,
+                      outputModality: "audio",
+                      transport: { type: "webrtc", sdp: "v=offer\r\n" },
+                      version: "v3",
+                      clientManagedHandoffs: true,
+                      includeStartupContext: false,
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "thread/realtime/start",
+                  frame: { id: 3, result: {} },
+                },
+                // The interrupt lost the race: Codex finished, so it must not run twice.
+                ...voiceTurn("voice-raced", "already done", 4, "completed"),
+                ...voiceTurn("voice-stopped", "run the tests", 5, "interrupted"),
+                // A failed turn never did the work either, so its request is kept.
+                ...voiceTurn("voice-failed", "open a pull request", 6, "failed"),
+              ],
+            }),
+          );
+          yield* harness.runtime.startVoiceSession!({
+            providerThread: harness.providerThread,
+            offerSdp: "v=offer\r\n",
+          }).pipe(Stream.runDrain, Effect.forkScoped);
+
+          yield* awaitUntil(() => harness.continuationRequests.length === 2, "voice resubmits");
+          assert.deepEqual(
+            harness.continuationRequests.map((entry) => entry.detail),
+            ["run the tests", "open a pull request"],
+          );
+          const request = harness.continuationRequests[0];
+          assert.equal(request?.origin, "voice");
+          assert.equal(request?.delivery, "message_text");
+          assert.equal(request?.detail, "run the tests");
+          assert.equal(request?.providerThreadId, harness.providerThread.id);
+        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      ),
+  );
+
   for (const response of ["supported", "unsupported", "invalid"] as const) {
     it.effect(`delivers native history with ${response} app-server protocol`, () =>
       Effect.gen(function* () {
