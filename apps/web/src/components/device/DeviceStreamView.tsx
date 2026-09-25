@@ -97,6 +97,7 @@ export function DeviceStreamView(props: {
   const [detail, setDetail] = useState<string | undefined>(undefined);
   const [showRestartNotice, setShowRestartNotice] = useState(false);
   const [screen, setScreen] = useState<DeviceScreenSize | null>(null);
+  const [foldAngle, setFoldAngle] = useState<number | null>(null);
   const [mjpegUrl, setMjpegUrl] = useState<string | null>(null);
   const [mjpegGeneration, setMjpegGeneration] = useState(0);
   const attachMjpegImage = useCallback((image: HTMLImageElement | null) => {
@@ -355,6 +356,7 @@ export function DeviceStreamView(props: {
                   enabled={status === "streaming"}
                   screenWidth={screen?.width}
                   screenHeight={screen?.height}
+                  onFoldAngle={setFoldAngle}
                 />
               ) : showPhone && isDuo && screen?.supportsHingeAngle ? (
                 <DeviceDuoControls
@@ -497,6 +499,7 @@ export function DeviceStreamView(props: {
             onInputCancel={onInputCancel}
             onResetReady={onResetReady}
             screen={screen}
+            foldAngle={foldAngle}
             onUnavailable={onPhoneUnavailable}
           />
         ) : null}

@@ -238,6 +238,27 @@ it("keeps the Android viewer while the resized framebuffer turns between fold po
   viewer.dispose();
 });
 
+it("animates the Android hinge on the same scene through an encoder resize", () => {
+  const openProfile = resolveDeviceShape({ platform: "android", portraitAspect: 0.96 });
+  const { viewer, draw, source, state } = fixture(openProfile);
+  viewer.setFoldAngle(180);
+  draw(0);
+  const shell = state.frames.at(-1)!.phone!;
+  const moving = shell.children[0]!.children[0]!;
+  viewer.setFoldAngle(0);
+  draw(425);
+  expect(moving.rotation.y).toBeCloseTo(Math.PI / 2);
+  source.width = 1080;
+  source.height = 2424;
+  viewer.setScreen({ width: 1080, height: 2424, orientation: "portrait" }, ANDROID_PHONE_SHAPE);
+  viewer.frameUpdated();
+  draw(850);
+  expect(moving.rotation.y).toBeCloseTo(Math.PI);
+  expect(state.frames.at(-1)!.phone).toBe(shell);
+  expect(gpu.instances).toHaveLength(1);
+  viewer.dispose();
+});
+
 it("retains the loaded model and pose through rotation and framebuffer resolution changes, then releases it once", async () => {
   const { viewer, draw, source, state } = fixture();
   viewer.orbit(0.08, 0.04);

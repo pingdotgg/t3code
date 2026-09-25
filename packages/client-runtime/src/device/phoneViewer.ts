@@ -19,6 +19,7 @@ import {
 } from "./model.ts";
 import { createImportedPhoneScene, loadDeviceModel } from "./modelScene.ts";
 import { createPhoneScene, phoneDisplayLayout } from "./phoneScene.ts";
+import { createAndroidFoldScene } from "./androidFoldScene.ts";
 import { createRenderScheduler } from "./renderScheduler.ts";
 import { createDeviceMotion } from "./deviceMotion.ts";
 import { createDeviceFraming } from "./deviceFraming.ts";
@@ -31,6 +32,7 @@ export interface PhoneViewer {
   readonly setAccessory: (source: DeviceAccessorySource | null) => void;
   readonly frameUpdated: () => void;
   readonly setScreen: (screen: DeviceScreenSize | null, profile?: DeviceShapeProfile) => void;
+  readonly setFoldAngle: (angle: number | null) => void;
   readonly resize: (width: number, height: number, pixelRatio: number) => void;
   readonly screenPoint: (
     x: number,
@@ -44,6 +46,7 @@ export interface PhoneViewer {
 }
 
 const ANDROID_ORIENTATION_TURN_MS = 450;
+const ANDROID_FOLD_TURN_MS = 850;
 
 /** Owns only presentation resources. The caller retains the decoded canvas and the stream connection. */
 export function createPhoneViewer(options: {
@@ -55,6 +58,7 @@ export function createPhoneViewer(options: {
   readonly profile?: DeviceShapeProfile;
   readonly model?: DeviceModelSource | null;
   readonly accessory?: DeviceAccessorySource | null;
+  readonly foldAngle?: number | null;
 }): PhoneViewer {
   const renderer = new WebGLRenderer({
     canvas: options.canvas,
@@ -95,7 +99,12 @@ export function createPhoneViewer(options: {
   let modelSource = options.model ?? null;
   let accessory: Awaited<ReturnType<typeof loadDeviceModel>> | null = null;
   let accessoryBounds: Box3 | null = null;
-  let phone = createPhoneScene(texture, layout, profile);
+  let foldAngle = options.foldAngle ?? null;
+  let foldTurn: { from: number; to: number; startedAt: number } | null = null;
+  let phone: ReturnType<typeof createPhoneScene> | ReturnType<typeof createAndroidFoldScene> =
+    foldAngle !== null && profile.id.startsWith("android")
+      ? createAndroidFoldScene(texture, layout, foldAngle)
+      : createPhoneScene(texture, layout, profile);
   scene.add(phone.root);
   let disposed = false;
   const rest = new Quaternion();
@@ -176,10 +185,18 @@ export function createPhoneViewer(options: {
         applyPose();
         fit(reducedMotion());
       }
+      if (foldTurn && "setAngle" in phone) {
+        const progress = Math.min(1, (now - foldTurn.startedAt) / ANDROID_FOLD_TURN_MS);
+        const eased = progress * progress * (3 - 2 * progress);
+        phone.setAngle(foldTurn.from + (foldTurn.to - foldTurn.from) * eased);
+        if (progress === 1) foldTurn = null;
+        fit(reducedMotion());
+      }
       framing.advance(now, reducedMotion());
       applyCamera();
       renderer.render(scene, camera);
-      if (motion.needsFrame() || framing.needsFrame() || orientationTurn) scheduler.invalidate();
+      if (motion.needsFrame() || framing.needsFrame() || orientationTurn || foldTurn)
+        scheduler.invalidate();
     } catch {
       options.onUnavailable();
     }
@@ -204,7 +221,11 @@ export function createPhoneViewer(options: {
         phone.setDisplay(texture, next);
         previous.dispose();
       }
-      if (!imported && (nextProfile !== profile || next.aspect !== layout.aspect)) {
+      if (
+        !imported &&
+        !("setAngle" in phone) &&
+        (nextProfile !== profile || next.aspect !== layout.aspect)
+      ) {
         scene.remove(phone.root);
         phone.dispose();
         phone = createPhoneScene(texture, next, nextProfile);
@@ -213,7 +234,7 @@ export function createPhoneViewer(options: {
         phone.setDisplay(texture, next);
       }
       if (next.rotation !== layout.rotation) {
-        if (nextProfile.id.startsWith("android") && !reducedMotion()) {
+        if (nextProfile.id.startsWith("android") && !("setAngle" in phone) && !reducedMotion()) {
           const difference = Math.atan2(
             Math.sin(next.rotation - orientationAngle),
             Math.cos(next.rotation - orientationAngle),
@@ -225,7 +246,7 @@ export function createPhoneViewer(options: {
           };
         } else {
           orientationTurn = null;
-          orientationAngle = next.rotation;
+          orientationAngle = "setAngle" in phone ? 0 : next.rotation;
         }
       }
       layout = next;
@@ -244,7 +265,9 @@ export function createPhoneViewer(options: {
         ? null
         : model
           ? createImportedPhoneScene(model.asset, texture, layout)
-          : createPhoneScene(texture, layout, profile);
+          : foldAngle !== null && profile.id.startsWith("android")
+            ? createAndroidFoldScene(texture, layout, foldAngle)
+            : createPhoneScene(texture, layout, profile);
       scene.remove(phone.root);
       phone.dispose();
       imported = model;
@@ -299,6 +322,38 @@ export function createPhoneViewer(options: {
       modelSlot.set(source);
     },
     setAccessory,
+    setFoldAngle(next) {
+      if (disposed || next === foldAngle) return;
+      const previous = foldAngle;
+      foldAngle = next;
+      if (next === null || !("setAngle" in phone)) {
+        scene.remove(phone.root);
+        phone.dispose();
+        phone =
+          next === null
+            ? createPhoneScene(texture, layout, profile)
+            : createAndroidFoldScene(texture, layout, next);
+        scene.add(phone.root);
+        orientationTurn = null;
+        orientationAngle = next === null ? layout.rotation : 0;
+        foldTurn = null;
+        applyPose();
+        fit(true);
+      } else {
+        const from = foldTurn
+          ? foldTurn.from +
+            (foldTurn.to - foldTurn.from) *
+              Math.min(1, (performance.now() - foldTurn.startedAt) / ANDROID_FOLD_TURN_MS)
+          : (previous ?? next);
+        if (reducedMotion()) {
+          phone.setAngle(next);
+          fit(true);
+        } else {
+          foldTurn = { from, to: next, startedAt: performance.now() };
+        }
+      }
+      scheduler.invalidate();
+    },
     frameUpdated() {
       if (disposed) return;
       updateLayout();

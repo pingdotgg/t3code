@@ -1,0 +1,150 @@
+import {
+  BoxGeometry,
+  CylinderGeometry,
+  Group,
+  Mesh,
+  MeshBasicMaterial,
+  MeshStandardMaterial,
+  PlaneGeometry,
+  Raycaster,
+  Vector2,
+  Vector3,
+  type Camera,
+  type Texture,
+} from "three";
+import type { PhoneDisplayLayout } from "./phoneScene.ts";
+
+const HALF_WIDTH = 1.04;
+const HEIGHT = 2.2;
+const DEPTH = 0.075;
+const INSET = 0.035;
+
+/** A deliberately simple foldable: one fixed half, one half rotating around a shared hinge. */
+export function createAndroidFoldScene(
+  texture: Texture,
+  layout: PhoneDisplayLayout,
+  initialAngle: number,
+) {
+  const root = new Group();
+  const orientation = new Group();
+  root.add(orientation);
+  const left = new Group();
+  const right = new Group();
+  orientation.add(left, right);
+  const shell = new MeshStandardMaterial({ color: 0x48545b, metalness: 0.65, roughness: 0.38 });
+  const bezel = new MeshStandardMaterial({ color: 0x14191c, metalness: 0.22, roughness: 0.5 });
+  const displayMaterial = new MeshBasicMaterial({ map: texture, toneMapped: false });
+  const coverMaterial = new MeshBasicMaterial({ map: texture, toneMapped: false });
+  const materials = [shell, bezel, displayMaterial, coverMaterial];
+
+  function half(group: Group, side: "left" | "right") {
+    const center = side === "left" ? -HALF_WIDTH / 2 : HALF_WIDTH / 2;
+    const body = new Mesh(new BoxGeometry(HALF_WIDTH - 0.012, HEIGHT, DEPTH), shell);
+    body.position.x = center;
+    group.add(body);
+    const frame = new Mesh(new PlaneGeometry(HALF_WIDTH - 0.026, HEIGHT - 0.026), bezel);
+    frame.position.set(center, 0, DEPTH / 2 + 0.001);
+    group.add(frame);
+    const geometry = new PlaneGeometry(HALF_WIDTH - INSET * 2, HEIGHT - INSET * 2);
+    const display = new Mesh(geometry, displayMaterial);
+    display.name = `${side}-inner-screen`;
+    display.position.set(center, 0, DEPTH / 2 + 0.003);
+    group.add(display);
+    return display;
+  }
+
+  const innerLeft = half(left, "left");
+  const innerRight = half(right, "right");
+  const hinge = new Mesh(new CylinderGeometry(0.044, 0.044, HEIGHT - 0.045, 18), shell);
+  hinge.position.z = -DEPTH / 2;
+  orientation.add(hinge);
+  const cover = new Mesh(
+    new PlaneGeometry(HALF_WIDTH - INSET * 2, HEIGHT - INSET * 2),
+    coverMaterial,
+  );
+  cover.name = "cover-screen";
+  cover.position.set(-HALF_WIDTH / 2, 0, -DEPTH / 2 - 0.003);
+  cover.rotation.y = Math.PI;
+  left.add(cover);
+
+  const raycaster = new Raycaster();
+  const pointer = new Vector2();
+  const local = new Vector3();
+  let activeLayout = layout;
+  let angle = initialAngle;
+  const updateVisibleScreen = () => {
+    const innerActive = angle >= 90;
+    innerLeft.visible = innerActive;
+    innerRight.visible = innerActive;
+    cover.visible = !innerActive;
+  };
+  const setAngle = (next: number) => {
+    angle = Math.max(0, Math.min(180, next));
+    left.rotation.y = Math.PI * (1 - angle / 180);
+    // Keep the cover slightly in front of the fixed half when closed.
+    left.position.z = 0.01 * (1 - angle / 180);
+    updateVisibleScreen();
+  };
+  const setDisplay = (nextTexture: Texture, nextLayout: PhoneDisplayLayout) => {
+    activeLayout = nextLayout;
+    displayMaterial.map = nextTexture;
+    coverMaterial.map = nextTexture;
+    // The raw Android framebuffer is landscape when the inner display is active.
+    // Each inner half samples its own half of that frame; the cover samples all of it.
+    for (const [mesh, start, end] of [
+      [innerLeft, 0, 0.5],
+      [innerRight, 0.5, 1],
+      [cover, 0, 1],
+    ] as const) {
+      const uv = mesh.geometry.getAttribute("uv");
+      for (let i = 0; i < uv.count; i++) {
+        const u = mesh.geometry.getAttribute("position").getX(i) / (HALF_WIDTH - INSET * 2) + 0.5;
+        uv.setX(i, start + u * (end - start));
+      }
+      uv.needsUpdate = true;
+    }
+    updateVisibleScreen();
+  };
+  setAngle(initialAngle);
+  setDisplay(texture, layout);
+
+  return {
+    root,
+    orientation,
+    width: HALF_WIDTH * 2,
+    height: HEIGHT,
+    setAngle,
+    setDisplay,
+    screenPoint(x: number, y: number, camera: Camera, captured = false) {
+      orientation.updateWorldMatrix(true, true);
+      camera.updateMatrixWorld(true);
+      pointer.set(x * 2 - 1, 1 - y * 2);
+      raycaster.setFromCamera(pointer, camera);
+      const screens = cover.visible ? [cover] : [innerLeft, innerRight];
+      const hit = raycaster.intersectObjects(screens, false)[0];
+      if (!hit && !captured) return null;
+      const display = hit?.object ?? screens[0];
+      if (!display) return null;
+      if (hit) local.copy(hit.point);
+      else {
+        const plane = new Vector3(0, 0, 1).transformDirection(display.matrixWorld);
+        const point = new Vector3().setFromMatrixPosition(display.matrixWorld);
+        const distance =
+          plane.dot(point.clone().sub(raycaster.ray.origin)) / plane.dot(raycaster.ray.direction);
+        if (!Number.isFinite(distance)) return null;
+        local.copy(raycaster.ray.direction).multiplyScalar(distance).add(raycaster.ray.origin);
+      }
+      display.worldToLocal(local);
+      const u = Math.max(0, Math.min(1, local.x / (HALF_WIDTH - INSET * 2) + 0.5));
+      const v = Math.max(0, Math.min(1, 0.5 - local.y / (HEIGHT - INSET * 2)));
+      const across = display === cover ? u : (display === innerLeft ? u : 1 + u) / 2;
+      return activeLayout.rotation === Math.PI ? { x: 1 - across, y: 1 - v } : { x: across, y: v };
+    },
+    dispose() {
+      root.traverse((object) => {
+        if (object instanceof Mesh) object.geometry.dispose();
+      });
+      for (const material of materials) material.dispose();
+    },
+  };
+}

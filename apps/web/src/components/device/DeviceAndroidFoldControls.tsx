@@ -18,12 +18,14 @@ export function DeviceAndroidFoldControls(props: {
   readonly enabled: boolean;
   readonly screenWidth: number | undefined;
   readonly screenHeight: number | undefined;
+  readonly onFoldAngle: (angle: number | null) => void;
 }) {
   const [fold, setFold] = useState<AndroidFoldState | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
   const mounted = useRef(true);
+  const { access, deviceId, visible, enabled, screenWidth, screenHeight, onFoldAngle } = props;
 
   useEffect(() => {
     mounted.current = true;
@@ -33,14 +35,18 @@ export function DeviceAndroidFoldControls(props: {
   }, []);
 
   useEffect(() => {
-    if (!props.visible || !props.enabled || pending || !props.screenWidth || !props.screenHeight)
-      return;
+    if (!visible || !enabled || pending || !screenWidth || !screenHeight) return;
     const controller = new AbortController();
     let retry: number | undefined;
     const read = () => {
-      void readAndroidFold(props.access, props.deviceId, controller.signal)
+      void readAndroidFold(access, deviceId, controller.signal)
         .then((next) => {
-          if (!controller.signal.aborted) setFold(next);
+          if (!controller.signal.aborted) {
+            setFold(next);
+            onFoldAngle(
+              next.supported ? (next.hingeAngle ?? (next.posture === "closed" ? 0 : 180)) : null,
+            );
+          }
         })
         .catch(() => {
           if (!controller.signal.aborted) retry = window.setTimeout(read, 3_000);
@@ -51,15 +57,7 @@ export function DeviceAndroidFoldControls(props: {
       controller.abort();
       window.clearTimeout(retry);
     };
-  }, [
-    props.access,
-    props.deviceId,
-    props.visible,
-    props.enabled,
-    props.screenWidth,
-    props.screenHeight,
-    pending,
-  ]);
+  }, [access, deviceId, visible, enabled, screenWidth, screenHeight, pending, onFoldAngle]);
 
   if (!fold?.supported || !props.visible) return null;
 
@@ -68,14 +66,19 @@ export function DeviceAndroidFoldControls(props: {
     busy.current = true;
     setPending(true);
     setError(null);
+    props.onFoldAngle(posture === "closed" ? 0 : 180);
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 12_000);
     void setAndroidFold(props.access, props.deviceId, posture, controller.signal)
       .then((next) => {
-        if (mounted.current) setFold(next);
+        if (mounted.current) {
+          setFold(next);
+          props.onFoldAngle(next.hingeAngle ?? (next.posture === "closed" ? 0 : 180));
+        }
       })
       .catch((cause: unknown) => {
-        if (mounted.current)
+        if (mounted.current) {
+          props.onFoldAngle(fold.hingeAngle ?? (fold.posture === "closed" ? 0 : 180));
           setError(
             controller.signal.aborted
               ? "Fold command timed out."
@@ -83,6 +86,7 @@ export function DeviceAndroidFoldControls(props: {
                 ? cause.message
                 : "Could not change fold posture.",
           );
+        }
       })
       .finally(() => {
         window.clearTimeout(timeout);
