@@ -76,16 +76,14 @@ az login
 ## Clone or publish a project
 
 Use **Add Project** in the command palette (`Cmd/Ctrl+K`) to clone a repository. Choose a hosting
-provider or paste a Git URL, then choose where to save it. For GitHub, type at least three
-characters to search: your own repositories are listed first, followed by matches from all of
-GitHub that your account can see. The project opens right away while the clone
+provider or paste a Git URL, then choose where to save it. For GitHub and GitLab, type at least three
+characters to search. GitHub lists your own repositories first, followed by matches from all of
+GitHub that your account can see. GitLab searches project names and group paths among projects you
+belong to, including personal and nested-group projects. You can also enter an exact project path
+directly. The project opens right away while the clone
 runs in the background: you can write your first prompt, and sending waits until the files are in
 place. A toast tracks progress and lets you cancel; if the clone fails, retry it from the
 toast or from the banner above the composer.
-
-GitLab repository search includes projects you are a member of, including personal and nested-group
-projects. In the GitLab clone flow, type at least three characters to search project names or group
-paths, then select a result. You can still enter an exact project path directly.
 
 For a local Git repository without a remote, **Publish Repository** creates a hosted repository,
 adds it as `origin`, and pushes your commits. If there are no commits yet, it creates the remote;
