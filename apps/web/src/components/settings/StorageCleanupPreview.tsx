@@ -167,7 +167,7 @@ export function StorageCleanupPreviewPanel({
               {initialLoading ? (
                 <Skeleton className="ml-auto h-7 w-24" />
               ) : (
-                <p className="text-lg font-semibold tabular-nums tracking-tight">
+                <p className="whitespace-nowrap text-lg font-semibold tabular-nums tracking-tight">
                   {space(data?.total, partialScan)}
                 </p>
               )}
@@ -268,7 +268,7 @@ export function StorageCleanupPreviewPanel({
                   />
                   <div className="min-w-0">
                     <dt className="whitespace-nowrap text-xs">{CATEGORIES[category.kind].label}</dt>
-                    <dd className="mt-0.5 text-xs tabular-nums text-muted-foreground">
+                    <dd className="mt-0.5 whitespace-nowrap text-xs tabular-nums text-muted-foreground">
                       {initialLoading || (recalculatingInactive && category.kind === "inactive") ? (
                         <Skeleton className="h-4 w-16" />
                       ) : (
@@ -292,7 +292,7 @@ export function StorageCleanupPreviewPanel({
             <div className="hidden items-center gap-8 border-b border-border/60 py-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground/70 @min-[32rem]/storage-headings:flex">
               <span className="min-w-0 flex-1">Category</span>
               <div className="flex shrink-0 gap-4 text-right">
-                <span className="w-20">Space used</span>
+                <span className="w-28">Space used</span>
                 <span className="w-44">Automatic cleanup</span>
               </div>
             </div>
@@ -318,7 +318,7 @@ export function StorageCleanupPreviewPanel({
               }
               control={
                 <div className="flex w-full items-center justify-between gap-4 @min-[32rem]/settings-row:w-auto">
-                  <div className="w-20 text-right text-sm tabular-nums">
+                  <div className="w-28 shrink-0 whitespace-nowrap text-right text-sm tabular-nums">
                     {initialLoading || (recalculatingInactive && kind === "inactive") ? (
                       <Skeleton className="ml-auto h-5 w-16" />
                     ) : (
