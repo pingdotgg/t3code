@@ -63,6 +63,9 @@ if [[ "$PENDING" -gt 0 ]]; then
   git log --oneline "$BASE".."$TARGET" | head -n 20 || true
 fi
 
+echo "fork-rebase: upstream overlap report (before absorption):"
+node "$(dirname "$0")/fork-features.mjs" report "$BASE" "$TARGET"
+
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "fork-rebase: dry run; nothing changed."
   exit 0

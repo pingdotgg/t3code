@@ -2,8 +2,8 @@
 # One repo-relative path per line. Lines starting with # and blank lines are ignored.
 # New fork-only files never need listing here; only modifications (or deletions)
 # of files that already exist on the upstream base must be listed.
-# scripts/fork-check.sh enforces this list; keep "Upstream edits" in docs/fork.md
-# describing the same files.
+# scripts/fork-check.sh enforces this list and exactly one primary feature owner
+# per path in docs/fork-features.md. Shared feature usage belongs in sharedFiles.
 
 # Chromeria branding (#12, #13)
 apps/desktop/package.json
@@ -55,3 +55,6 @@ packages/contracts/src/settings.ts
 apps/web/src/components/settings/SettingsSidebarNav.tsx
 apps/web/src/components/settings/settingsSearch.ts
 apps/web/src/routeTree.gen.ts
+
+# Fork maintenance script entry point (#20)
+knip.jsonc

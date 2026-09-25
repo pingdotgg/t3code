@@ -79,8 +79,10 @@ while IFS= read -r path; do
 done < <(git diff --name-only "$BASE"..HEAD)
 
 if [[ "$FAIL" -ne 0 ]]; then
-  echo "fork-check: FAIL: list the file in scripts/fork-upstream-edits.txt and docs/fork.md, or move the change to a new file." >&2
+  echo "fork-check: FAIL: list the file in scripts/fork-upstream-edits.txt and assign its owner in docs/fork-features.md, or move the change to a new file." >&2
   exit 1
 fi
+
+node "$(dirname "$0")/fork-features.mjs" check
 
 echo "fork-check: OK."

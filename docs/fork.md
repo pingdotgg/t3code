@@ -20,86 +20,26 @@ patch set further.
   and then lands with `--force-with-lease` (see Routine). That push is a
   human-approved step.
 - **New files first.** Features go in new files and new packages. Edits to
-  upstream-owned files stay minimal and every edited file is listed under
-  "Upstream edits" below and in the machine-checked allowlist
-  `scripts/fork-upstream-edits.txt` (one path per line).
+  upstream-owned files stay minimal and every edited file has a primary owner
+  in [the feature map](fork-features.md) and an entry in the machine-checked
+  allowlist `scripts/fork-upstream-edits.txt` (one path per line).
 - **Remotes.** `origin` is `toolboxmd/t3code`; `upstream` is
   `pingdotgg/t3code`. Never push to `upstream`, never send fork commits there
   (offering extension points upstream is a separate human decision, out of
   scope for routine maintenance).
 
-## Fork-only content
+## Feature inventory and upstream edits
 
-New files owned by the fork (no upstream counterpart, always allowed):
+[The feature map](fork-features.md) lists every fork feature, its Issue and PR,
+new files, edited upstream files, shared files and watch keywords. It is the
+canonical inventory used by the checks and the overlap report. Each path in
+`scripts/fork-upstream-edits.txt` has exactly one primary feature owner in the
+map, including historical entries for fork-new files. Shared edits are recorded
+under the other features so the report considers every affected capability.
 
-- `VISION.md`, `MISSION.md`, `OBJECTIVE.md`, `GLOSSARY.md`: Project Direction
-  and project language.
-- `assets/chromeria/`, `apps/web/public/chromeria-mark.png`: Chromeria icons.
-- `docs/fork.md`: this document.
-- `scripts/fork-rebase.sh`: the rebase routine.
-- `scripts/fork-check.sh`: the stack-model check run by CI.
-- `scripts/fork-maintenance.test.ts`: tests driving both scripts against
-  throwaway git fixtures (runs with upstream's own test suite).
-- `scripts/fork-upstream-edits.txt`: allowlist of upstream files the fork
-  may modify.
-- `.github/workflows/fork.yml`: fork CI (the stack check).
-
-## Upstream edits
-
-Upstream-owned files modified by the fork. `scripts/fork-check.sh` fails on
-any modified upstream file missing from `scripts/fork-upstream-edits.txt`.
-
-- Chromeria branding (#12, #13): `apps/desktop/package.json` (product
-  name), `apps/desktop/src/app/DesktopEnvironment.ts` (names, userData
-  directory), `scripts/build-desktop-artifact.ts` (app id, artifact name, no
-  update feed, icons), `scripts/lib/brand-assets.ts` (icon paths), and the
-  expectations in `apps/desktop/src/app/DesktopAppIdentity.test.ts`,
-  `apps/desktop/src/app/DesktopPreReadyPlatform.test.ts`,
-  `scripts/build-desktop-artifact.test.ts` and
-  `scripts/lib/brand-assets.test.ts`.
-- Chromeria name in the web UI (#14): `apps/web/index.html`,
-  `apps/web/src/branding.ts`, `apps/web/src/lib/bootError.ts`, and the
-  branding fixture in `apps/web/src/bundledDev.test.ts`, plus the
-  components `T3Wordmark.tsx`, `chat/MessagesTimeline.tsx`,
-  `onboarding/WelcomeWizard.tsx`, `settings/IntegrationsSettings.tsx`,
-  `settings/ThemePreviewCircles.tsx` and `sidebar/SidebarChrome.tsx` under
-  `apps/web/src/components/`, with expectations in
-  `apps/web/src/bootstrap.test.ts` and `apps/web/src/branding.test.ts`.
-- Child threads and project-scoped supervision (#8, #10, #15):
-  `apps/server/src/mcp/McpHttpServer.ts` registers the threads MCP toolkit;
-  `apps/server/src/mcp/toolkits/threads/childThreads.test.ts`, `handlers.ts`
-  and `tools.ts` implement and test child and same-project listing, reading and
-  messaging; `apps/web/src/components/AgentsPanel.tsx` links agents to their
-  child threads; `apps/web/src/components/Sidebar.tsx` and
-  `apps/web/src/components/LegacySidebar.tsx` hide child threads from the
-  sidebar.
-- Agents panel sections, child tree and breadcrumb (#17):
-  `apps/web/src/components/AgentsPanel.tsx` splits Prism spawns from direct
-  spawns and nests child threads under their row;
-  `apps/web/src/components/chat/ChatHeader.tsx` renders the parent crumb and
-  sibling menu for a child thread. The logic lives in the fork-owned
-  `AgentThreadTree.logic.ts`, `AgentThreadTree.tsx` and `chat/ThreadParentCrumbs.tsx`.
-- Prism settings (#21): `apps/web/src/components/settings/SettingsSidebarNav.tsx`
-  and `settingsSearch.ts` register the page below Providers and in settings search;
-  `apps/web/src/routeTree.gen.ts` is regenerated for the fork-owned route.
-  The page and its preference logic live in new `PrismSettings` files.
-- Prism toolkit and role kits (#19): `packages/contracts/src/settings.ts`
-  adds the `prismRoles` server setting (project-scoped, with its patch) and
-  `packages/contracts/src/index.ts` exports the fork-owned `prism.ts` and
-  `prismSnapshot.ts`; `apps/server/src/mcp/McpHttpServer.ts` registers the
-  fork-owned Prism toolkit (`toolkits/prism/`) and `GET /api/prism/snapshot`
-  (`apps/server/src/prism/`); the threads toolkit's `tools.ts` and
-  `handlers.ts` take `spawn_thread(role)` and enforce each role's thread-tool
-  scope (`toolkits/threads/roles.ts`);
-  `apps/server/src/provider/Drivers/OpenCodeDriver.ts` turns on interval
-  refresh so OpenCode usage windows stay current.
-- `scripts/build-desktop-artifact.ts` (#10): the packaged-bundle
-  self-containment probe clears an inherited `ELECTRON_RUN_AS_NODE`.
-- `apps/server/src/entrypoint.test.ts` (#10): resolves the fixture directory
-  so the test passes under macOS's symlinked `TMPDIR`.
-- `.github/workflows/ci.yml`, `.github/workflows/mobile-fingerprint-check.yml`:
-  `blacksmith-*-ubuntu-2404` runners become `ubuntu-24.04` and
-  `blacksmith-*-macos-*` becomes `macos-15` (see CI).
+When adding or removing a feature, update the map and allowlist in the same PR.
+`scripts/fork-check.sh` rejects unallowlisted upstream edits, unmapped allowlist
+entries, duplicate owners and malformed feature metadata.
 
 ## Chromeria desktop app
 
@@ -152,9 +92,28 @@ Gotchas:
 ## Routine
 
 `scripts/fork-rebase.sh` fetches `upstream`, rebases the current branch's
-stack onto `upstream/main`, runs the fork check, optionally runs the full
+stack onto `upstream/main` after printing an overlap report, runs the fork check, optionally runs the full
 proof, and optionally pushes. It reports conflicts per upstream file and never
 force-pushes a published branch without proof passing in the same run.
+
+Before any rebase, the routine scans every upstream commit from the current
+merge base (the last absorbed upstream commit) to the fetched target. It groups
+matches by feature, using exact touched paths and case-insensitive literal watch
+keywords in commit titles, touched paths and diffs. Shared paths are matched for
+each feature that uses them. Merge commits are compared with their first parent.
+The report includes full base, target and matching commit SHAs, match reasons and
+a decision placeholder for each feature/commit pair.
+
+Run `scripts/fork-rebase.sh --dry-run` first and retain its output in the
+absorption PR, before absorbing. For every match record one decision with a
+rationale: **keep ours**, **adopt upstream and delete ours**, or **merge both**.
+For adoption, name the fork paths removed; for a merge, describe the single
+combined behavior and its proof. Review the report even when Git finds no
+conflicts. No matches does not establish that no semantic overlap exists.
+Do not approve or land an absorption PR with pending decisions. After conflict
+resolution, retain the original report: recomputing from the new merge base
+would omit the just-absorbed commits. A report can also be reproduced without
+fetching or rebasing using `node scripts/fork-features.mjs report <base> <target>`.
 
 The proof runs in a host-neutral environment, because upstream's tests assume
 CI's Linux host. On a Mac, run from a T3 thread, about 50 upstream tests
@@ -242,7 +201,8 @@ runs `scripts/fork-check.sh`, which verifies:
 - the stack is small (at most 20 commits),
 - every modification to an upstream-owned file is allowlisted in
   `scripts/fork-upstream-edits.txt` (new fork-only files are always fine),
-- this document exists.
+- this document and a valid feature map exist, with exactly one feature owner
+  for every allowlisted upstream edit.
 
 ## Candidate upstream extension points
 
