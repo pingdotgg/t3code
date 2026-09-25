@@ -390,12 +390,34 @@ export const resolveServerConfig = (
     const otel = yield* OtelEnvironment.load;
 
     // T3 Code's own OTLP variables name no signal, so the one answer they give
-    // is the answer for all three.
+    // is the answer for all three, unless an OTEL endpoint claims one below.
     const signalExport: SignalExport = {
       protocol: env.otlpProtocol,
       headers: env.otlpHeaders,
       exportIntervalMs: env.otlpExportIntervalMs,
     };
+    const t3 = (url: string | undefined) => ({ url, export: signalExport });
+    const traces = OtelEnvironment.resolveSignalEndpoint(
+      otel,
+      "traces",
+      t3(env.otlpTracesUrl),
+      bootstrap?.otlpTracesUrl,
+      persistedObservabilitySettings.otlpTracesUrl,
+    );
+    const metrics = OtelEnvironment.resolveSignalEndpoint(
+      otel,
+      "metrics",
+      t3(env.otlpMetricsUrl),
+      bootstrap?.otlpMetricsUrl,
+      persistedObservabilitySettings.otlpMetricsUrl,
+    );
+    const logs = OtelEnvironment.resolveSignalEndpoint(
+      otel,
+      "logs",
+      t3(env.otlpLogsUrl),
+      bootstrap?.otlpLogsUrl,
+      persistedObservabilitySettings.otlpLogsUrl,
+    );
 
     const config: ServerConfig.ServerConfig["Service"] = {
       logLevel,
@@ -404,22 +426,12 @@ export const resolveServerConfig = (
       traceBatchWindowMs: env.traceBatchWindowMs,
       traceMaxBytes: env.traceMaxBytes,
       traceMaxFiles: env.traceMaxFiles,
-      otlpTracesUrl: otel.disabled
-        ? undefined
-        : (env.otlpTracesUrl ??
-          bootstrap?.otlpTracesUrl ??
-          persistedObservabilitySettings.otlpTracesUrl),
-      otlpMetricsUrl: otel.disabled
-        ? undefined
-        : (env.otlpMetricsUrl ??
-          bootstrap?.otlpMetricsUrl ??
-          persistedObservabilitySettings.otlpMetricsUrl),
-      otlpLogsUrl: otel.disabled
-        ? undefined
-        : (env.otlpLogsUrl ?? bootstrap?.otlpLogsUrl ?? persistedObservabilitySettings.otlpLogsUrl),
-      otlpTracesExport: signalExport,
-      otlpMetricsExport: signalExport,
-      otlpLogsExport: signalExport,
+      otlpTracesUrl: traces?.url,
+      otlpMetricsUrl: metrics?.url,
+      otlpLogsUrl: logs?.url,
+      otlpTracesExport: traces?.export ?? signalExport,
+      otlpMetricsExport: metrics?.export ?? signalExport,
+      otlpLogsExport: logs?.export ?? signalExport,
       otlpServiceName: env.otlpServiceName,
       otelEnvironment: otel,
       mode,

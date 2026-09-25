@@ -552,6 +552,16 @@ OTLP export:
   `OTEL_EXPORTER_OTLP_HEADERS`: comma-separated `key=value` pairs with percent-encoded values.
 - `T3CODE_OTLP_PROTOCOL`: `http/json` (default) or `http/protobuf`
 
+The standard `OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_ENDPOINT` and generic
+`OTEL_EXPORTER_OTLP_ENDPOINT` (with `/v1/traces`, `/v1/metrics`, or `/v1/logs` appended) also work,
+for a collector expecting those instead. A `T3CODE_OTLP_*_URL` wins over either when both are set.
+A signal an OTEL endpoint configured takes its headers from `OTEL_EXPORTER_OTLP_HEADERS` and its
+protocol from `OTEL_EXPORTER_OTLP_PROTOCOL` (default `http/protobuf`), and a per-signal
+`OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_HEADERS` or `_PROTOCOL` wins over the generic one for its
+signal. `T3CODE_OTLP_HEADERS` and `T3CODE_OTLP_PROTOCOL` never apply to it. A protocol other than
+`http/protobuf` or `http/json`, such as `grpc`, or headers that are not percent-encoded, turn that
+signal's export off with a startup warning, rather than sending it to the Settings endpoint.
+
 If the OTLP URLs are unset, local tracing still works, metrics stay in-process only, and logs stay
 on stdout only.
 

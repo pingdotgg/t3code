@@ -1,6 +1,7 @@
 /**
- * otelEnvironment: the OpenTelemetry kill switch, shared by the server and the
- * desktop main process so both agree on what turns export off.
+ * otelEnvironment: the OpenTelemetry kill switch and endpoint variables,
+ * shared by the server and the desktop main process so both agree on what
+ * turns export off and where it goes.
  *
  * `T3CODE_OTEL_SDK_DISABLED` is read first, so a machine that sets
  * `OTEL_SDK_DISABLED` for everything else can still opt T3 Code back in.
@@ -10,8 +11,32 @@
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
+
+import { OtlpProtocol, type SignalExport } from "./observability.ts";
+
+/** The signals T3 Code exports, spelled as the variable names spell them. */
+type OtlpSignalName = "TRACES" | "METRICS" | "LOGS";
+
+/**
+ * What the OTEL variables say about one signal. `Off` is a signal they
+ * claimed with an endpoint whose protocol or headers do not read, so it is
+ * exported nowhere rather than to whatever collector is configured below it.
+ */
+export type OtelSignal =
+  | { readonly _tag: "Unset" }
+  | { readonly _tag: "Off" }
+  | {
+      readonly _tag: "Export";
+      readonly url: string;
+      readonly protocol: OtlpProtocol;
+      readonly headers: Readonly<Record<string, string>> | undefined;
+    };
+
+const UNSET: OtelSignal = { _tag: "Unset" };
+const OFF: OtelSignal = { _tag: "Off" };
 
 export interface OtelEnvironment {
   /** Whether OTLP export is off, whatever endpoint is configured. */
@@ -20,7 +45,16 @@ export interface OtelEnvironment {
   readonly warnings: ReadonlyArray<string>;
   /** `OTEL_RESOURCE_ATTRIBUTES`, or nothing when it could not be read. */
   readonly resourceAttributes: Readonly<Record<string, string>>;
+  readonly traces: OtelSignal;
+  readonly metrics: OtelSignal;
+  readonly logs: OtelSignal;
 }
+
+/** A set but blank value reads as unset, so the source under it can answer. */
+const blankAsUnset = (value: string | undefined): string | undefined => {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed === "" ? undefined : trimmed;
+};
 
 interface Flag {
   /** `undefined` when the variable is unset, blank, or unreadable. */
@@ -93,6 +127,119 @@ const resourceAttributes = Config.Record(
   Config.withDefault<ResourceAttributes>({ value: {} }),
 );
 
+interface Setting<A> {
+  readonly value: A | undefined;
+  readonly warning?: string;
+}
+
+/** Reads one variable, warning rather than failing when it is set and unusable. */
+const setting = <A>(
+  config: Config.Config<A>,
+  name: string,
+  warning: (raw: string) => string,
+): Config.Config<Setting<A>> =>
+  config.pipe(
+    Config.map((value): Setting<A> => ({ value })),
+    Config.orElse(() =>
+      Config.String(name).pipe(
+        Config.option,
+        Config.map((raw): Setting<A> => {
+          const value = blankAsUnset(Option.getOrUndefined(raw));
+          return value === undefined
+            ? { value: undefined }
+            : { value: undefined, warning: warning(value) };
+        }),
+      ),
+    ),
+  );
+
+const endpoint = (name: string) =>
+  setting(
+    Config.URL(name),
+    name,
+    // The value is left out because an endpoint can carry an API key.
+    () => `${name} is not a URL and was ignored`,
+  );
+
+const protocol = (name: string) =>
+  setting(
+    Config.schema(OtlpProtocol, name),
+    name,
+    (raw) =>
+      `${name}=${raw} is not http/protobuf or http/json, so the signals it configures are not exported`,
+  );
+
+const headers = (name: string) =>
+  setting(
+    // The schema Effect's OTLP exporters read these variables with.
+    Config.Record(Schema.String, Schema.StringFromUriComponent, name),
+    name,
+    // The value is left out because headers carry credentials.
+    () =>
+      `${name} has a value that is not percent-encoded, so the signals it configures are not exported`,
+  );
+
+interface Settings {
+  readonly endpoint: Setting<URL>;
+  readonly protocol: Setting<OtlpProtocol>;
+  readonly headers: Setting<Readonly<Record<string, string>>>;
+}
+
+const settings = (prefix: string): Config.Config<Settings> =>
+  Config.all({
+    endpoint: endpoint(`${prefix}ENDPOINT`),
+    protocol: protocol(`${prefix}PROTOCOL`),
+    headers: headers(`${prefix}HEADERS`),
+  });
+
+/** The signal's own variable claims the signal once set, valid or not. */
+const isClaimed = (setting: Setting<unknown>) =>
+  setting.value !== undefined || setting.warning !== undefined;
+
+const claimed = <A>(own: Setting<A>, generic: Setting<A>) => (isClaimed(own) ? own : generic);
+
+/** Appends the signal's path, keeping the query an intake may take its API key in. */
+const withSignalPath = (signal: OtlpSignalName, base: URL) => {
+  const url = new URL(base);
+  const slash = url.pathname.endsWith("/") ? "" : "/";
+  url.pathname += `${slash}v1/${signal.toLowerCase()}`;
+  return url;
+};
+
+interface ResolvedSignal {
+  readonly signal: OtelSignal;
+  /** The settings this signal read, whose warnings are the signal's to report. */
+  readonly used: ReadonlyArray<Setting<unknown>>;
+}
+
+/**
+ * A signal whose protocol or headers do not read is not exported rather than
+ * sent in a format or without the credentials its collector expects.
+ */
+const signal = (name: OtlpSignalName, own: Settings, generic: Settings): ResolvedSignal => {
+  const ownEndpoint = isClaimed(own.endpoint);
+  const endpoint = ownEndpoint ? own.endpoint : generic.endpoint;
+  if (endpoint.value === undefined) {
+    return { signal: UNSET, used: [endpoint] };
+  }
+  const protocol = claimed(own.protocol, generic.protocol);
+  const headers = claimed(own.headers, generic.headers);
+  const used = [endpoint, protocol, headers];
+  if (protocol.warning !== undefined || headers.warning !== undefined) {
+    return { signal: OFF, used };
+  }
+  const url = ownEndpoint ? endpoint.value : withSignalPath(name, endpoint.value);
+  return {
+    signal: {
+      _tag: "Export",
+      url: url.toString(),
+      protocol: protocol.value ?? "http/protobuf",
+      headers: headers.value,
+    },
+    used,
+  };
+};
+
 export const load: Effect.Effect<OtelEnvironment> = Config.all({
   t3: flag(
     "T3CODE_OTEL_SDK_DISABLED",
@@ -111,12 +258,31 @@ export const load: Effect.Effect<OtelEnvironment> = Config.all({
       `OTEL_SDK_DISABLED=${value} was read as false; the OpenTelemetry specification recognizes only the string true, so use OTEL_SDK_DISABLED=true or T3CODE_OTEL_SDK_DISABLED to say it any other way`,
   ),
   resource: resourceAttributes,
+  generic: settings("OTEL_EXPORTER_OTLP_"),
+  traces: settings("OTEL_EXPORTER_OTLP_TRACES_"),
+  metrics: settings("OTEL_EXPORTER_OTLP_METRICS_"),
+  logs: settings("OTEL_EXPORTER_OTLP_LOGS_"),
 }).pipe(
-  Effect.map(({ t3, spec, resource }) => {
+  Effect.map(({ t3, spec, resource, generic, ...own }) => {
     const disabled = t3.value ?? spec.value ?? false;
-    const warnings = [t3.warning, spec.warning, resource.warning].filter(
-      (warning) => warning !== undefined,
+    // The kill switch wins outright, so the signals say nothing once it is set.
+    const signals = disabled
+      ? undefined
+      : {
+          traces: signal("TRACES", own.traces, generic),
+          metrics: signal("METRICS", own.metrics, generic),
+          logs: signal("LOGS", own.logs, generic),
+        };
+    // A generic variable read by several signals warns once.
+    const used = new Set(
+      signals === undefined ? [] : Object.values(signals).flatMap((resolved) => resolved.used),
     );
+    const warnings = [
+      t3.warning,
+      spec.warning,
+      resource.warning,
+      ...Array.from(used, (setting) => setting.warning),
+    ].filter((warning) => warning !== undefined);
     if (disabled) {
       warnings.push(
         t3.value
@@ -124,11 +290,64 @@ export const load: Effect.Effect<OtelEnvironment> = Config.all({
           : "OTEL_SDK_DISABLED is set, so no telemetry is exported, whatever configured it; set T3CODE_OTEL_SDK_DISABLED=false to export anyway",
       );
     }
-    return { disabled, warnings, resourceAttributes: resource.value };
+    return {
+      disabled,
+      warnings,
+      resourceAttributes: resource.value,
+      traces: signals?.traces.signal ?? UNSET,
+      metrics: signals?.metrics.signal ?? UNSET,
+      logs: signals?.logs.signal ?? UNSET,
+    };
   }),
   // Every read above falls back instead of failing, so this cannot happen.
   Effect.orDie,
 );
+
+export type SignalName = "traces" | "metrics" | "logs";
+
+export interface SignalEndpoint {
+  readonly url: string;
+  readonly export: SignalExport;
+}
+
+/**
+ * Where one signal exports and how. `T3CODE_OTLP_*_URL` wins outright with
+ * T3 Code's own export, then an OTEL endpoint with its own headers and
+ * protocol, since `T3CODE_OTLP_HEADERS` was written for a different
+ * collector, then the first of `fallbackUrls` with T3 Code's own export.
+ */
+export const resolveSignalEndpoint = (
+  otel: OtelEnvironment,
+  signal: SignalName,
+  t3: { readonly url: string | undefined; readonly export: SignalExport },
+  ...fallbackUrls: ReadonlyArray<string | undefined>
+): SignalEndpoint | undefined => {
+  if (otel.disabled) {
+    return undefined;
+  }
+  const t3Url = blankAsUnset(t3.url);
+  if (t3Url !== undefined) {
+    return { url: t3Url, export: t3.export };
+  }
+  const claimedByOtel = otel[signal];
+  switch (claimedByOtel._tag) {
+    case "Export":
+      return {
+        url: claimedByOtel.url,
+        export: {
+          protocol: claimedByOtel.protocol,
+          headers: claimedByOtel.headers,
+          exportIntervalMs: t3.export.exportIntervalMs,
+        },
+      };
+    case "Off":
+      return undefined;
+    case "Unset": {
+      const url = fallbackUrls.map(blankAsUnset).find((candidate) => candidate !== undefined);
+      return url === undefined ? undefined : { url, export: t3.export };
+    }
+  }
+};
 
 /**
  * Provide this around Effect's OTLP exporters, which read
@@ -154,4 +373,7 @@ export const none: OtelEnvironment = {
   disabled: false,
   warnings: [],
   resourceAttributes: {},
+  traces: UNSET,
+  metrics: UNSET,
+  logs: UNSET,
 };
