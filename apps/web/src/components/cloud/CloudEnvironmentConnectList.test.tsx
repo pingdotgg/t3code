@@ -1,6 +1,7 @@
 import type { Discovery } from "@t3tools/client-runtime/relay";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { EnvironmentId, ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
+import { REACT_ACT_SAFE_FAKE_TIMER_METHODS } from "@t3tools/shared/testing/reactActFakeTimers";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { act, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
@@ -122,7 +123,7 @@ async function advance(milliseconds: number) {
 }
 
 beforeEach(() => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({ toFake: [...REACT_ACT_SAFE_FAKE_TIMER_METHODS] });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   page = Object.assign(new EventTarget(), { visibilityState: "visible" as const });
   browserWindow = new EventTarget();
