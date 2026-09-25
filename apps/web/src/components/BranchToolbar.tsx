@@ -361,8 +361,15 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
   const measure = useCallback(() => {
     const { element: current, overflows: compact } = stateRef.current;
     if (!current) return;
-    const available = current.clientWidth;
-    if (available === 0) return;
+    if (current.clientWidth === 0) return;
+    // The strip's own padding is not room for its children. Counting it let
+    // labels expand while the composer controls hosted here had already
+    // collapsed to icons for lack of space.
+    const stripStyle = getComputedStyle(current);
+    const available =
+      current.clientWidth -
+      (Number.parseFloat(stripStyle.paddingInlineStart) || 0) -
+      (Number.parseFloat(stripStyle.paddingInlineEnd) || 0);
     // flex-1 stretches the groups to fill the strip, so their own boxes always
     // measure "full". Sum the laid-out content instead, skipping hidden form
     // artifacts and other out-of-flow nodes.
@@ -384,7 +391,7 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
       }
       return width + gap * Math.max(0, counted - 1);
     };
-    const stripGap = Number.parseFloat(getComputedStyle(current).columnGap) || 0;
+    const stripGap = Number.parseFloat(stripStyle.columnGap) || 0;
     let needed = 0;
     let groups = 0;
     for (const child of current.children) {
