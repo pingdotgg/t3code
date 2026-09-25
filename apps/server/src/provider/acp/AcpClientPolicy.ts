@@ -7,12 +7,11 @@ import * as NodePath from "node:path";
 /**
  * Runtime-policy decisions for ACP work that T3 mediates.
  *
- * ACP agents touch the machine two ways: provider-owned execution inside the
- * agent process, which T3 can only gate through `session/request_permission`,
- * and client-mediated `fs/*` and `terminal/*` requests, which run with the T3
- * server's own privileges. Both paths resolve through
- * {@link acpOperationDisposition} so a client-mediated request can never do
- * more than the equivalent permission request would be allowed to do.
+ * ACP agents run their own tools under their own permission model and ask
+ * through `session/request_permission`, which T3 answers by policy. The one
+ * client-mediated path left is Devin's `terminal/*`, which runs with the T3
+ * server's own privileges; it resolves through {@link acpOperationDisposition}
+ * so a client terminal can never do more than an execute permission request.
  */
 
 /** Structural subset of the adapter runtime policy that decisions read. */
@@ -256,116 +255,43 @@ export function acpMcpToolApprovalElicitationDisposition(
   return acpPolicyRequiresApproval(runtimePolicy) ? "ask" : "allow";
 }
 
-/** Disposition of a client-mediated `fs/write_text_file` to one path. */
-export function acpClientWriteDisposition(
-  runtimePolicy: AcpRuntimePolicy,
-  path: string,
-): AcpPermissionDisposition {
-  return acpOperationDisposition(runtimePolicy, { kind: "edit", locations: [{ path }] });
-}
-
-/** Disposition of a client-mediated `fs/read_text_file`. Reads never ask. */
-export function acpClientReadDisposition(runtimePolicy: AcpRuntimePolicy): "allow" | "deny" {
-  return acpReadDisposition(runtimePolicy);
-}
-
-/** Disposition of a client-mediated `terminal/create`. */
+/** Disposition of a client-mediated `terminal/create` (Devin's client terminals). */
 export function acpClientExecuteDisposition(
   runtimePolicy: AcpRuntimePolicy,
 ): AcpPermissionDisposition {
   return acpOperationDisposition(runtimePolicy, { kind: "execute", locations: undefined });
 }
 
-const MAX_GRANTED_WRITE_ROOTS = 128;
-
 export interface AcpApprovalGrantInput {
   readonly kind: ProviderRequestKind;
-  readonly locations: ReadonlyArray<string>;
-  readonly cwd: string | null;
   readonly scope: "session" | "turn";
   readonly turnKey: string;
 }
 
 export interface AcpClientPolicyGrants {
   readonly recordApproval: (input: AcpApprovalGrantInput) => void;
-  readonly allowsWrite: (input: {
-    readonly path: string;
-    readonly cwd: string | null;
-    readonly turnKey: string | null;
-  }) => boolean;
   readonly allowsExecute: (turnKey: string | null) => boolean;
 }
 
 /**
- * Approval grants recorded when the user accepts a `session/request_permission`,
- * so an "ask" disposition at the client fs/terminal boundary can honor what the
- * user already approved.
- *
- * ACP carries no linkage between an approved tool call and the client-mediated
- * requests the agent issues to carry it out, so grants are scoped as tightly as
- * the protocol allows: an accepted file change authorizes client writes to its
- * canonical reported locations (or the whole scope when the agent reported
- * none), and an accepted command authorizes client terminals. Reads need no
- * grant because they never ask. Grants last for the approving turn, or for the
- * session on accept-for-session.
+ * Command approvals recorded when the user accepts a `session/request_permission`,
+ * so an "ask" disposition at the client terminal boundary honors a command the
+ * user already approved. ACP does not link an approved tool call to the
+ * terminals the agent then creates, so an approved command authorizes client
+ * terminals for the approving turn, or for the session on accept-for-session.
  */
 export function makeAcpClientPolicyGrants(): AcpClientPolicyGrants {
-  interface ScopeGrants {
-    execute: boolean;
-    unscopedWrite: boolean;
-    writeRoots: Array<string>;
-  }
-  const emptyScope = (): ScopeGrants => ({
-    execute: false,
-    unscopedWrite: false,
-    writeRoots: [],
-  });
-  const session = emptyScope();
-  let turn: { readonly key: string; readonly grants: ScopeGrants } | null = null;
-
-  const scopeFor = (input: AcpApprovalGrantInput): ScopeGrants => {
-    if (input.scope === "session") return session;
-    if (turn === null || turn.key !== input.turnKey) {
-      turn = { key: input.turnKey, grants: emptyScope() };
-    }
-    return turn.grants;
-  };
-
-  const activeScopes = (turnKey: string | null): Array<ScopeGrants> =>
-    turn !== null && turnKey !== null && turn.key === turnKey ? [session, turn.grants] : [session];
-
+  let sessionExecute = false;
+  let turnExecute: string | null = null;
   return {
     recordApproval: (input) => {
-      const grants = scopeFor(input);
-      if (input.kind === "command") {
-        grants.execute = true;
-        return;
-      }
-      if (input.kind !== "file-change") return;
-      if (input.locations.length === 0) {
-        grants.unscopedWrite = true;
-        return;
-      }
-      for (const location of input.locations) {
-        const resolved = resolveAcpPermissionPath(location, input.cwd);
-        const canonical =
-          resolved === undefined ? undefined : acpCanonicalPathForContainment(resolved);
-        if (canonical === undefined) continue;
-        grants.writeRoots.push(canonical);
-        if (grants.writeRoots.length > MAX_GRANTED_WRITE_ROOTS) grants.writeRoots.shift();
+      if (input.kind !== "command") return;
+      if (input.scope === "session") {
+        sessionExecute = true;
+      } else {
+        turnExecute = input.turnKey;
       }
     },
-    allowsWrite: ({ path, cwd, turnKey }) => {
-      const scopes = activeScopes(turnKey);
-      if (scopes.some((scope) => scope.unscopedWrite)) return true;
-      const resolved = resolveAcpPermissionPath(path, cwd);
-      const canonical =
-        resolved === undefined ? undefined : acpCanonicalPathForContainment(resolved);
-      if (canonical === undefined) return false;
-      return scopes.some((scope) =>
-        scope.writeRoots.some((root) => acpPathIsWithinRoot(canonical, root)),
-      );
-    },
-    allowsExecute: (turnKey) => activeScopes(turnKey).some((scope) => scope.execute),
+    allowsExecute: (turnKey) => sessionExecute || (turnKey !== null && turnExecute === turnKey),
   };
 }

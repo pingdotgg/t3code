@@ -81,8 +81,6 @@ import type {
 } from "../../provider/acp/AcpSessionRuntime.ts";
 import {
   acpClientExecuteDisposition,
-  acpClientReadDisposition,
-  acpClientWriteDisposition,
   acpMcpToolApprovalElicitationDisposition,
   acpPermissionDisposition,
   makeAcpClientPolicyGrants,
@@ -623,8 +621,8 @@ export const AcpProviderCapabilitiesV2 = {
     nativeRequestIds: "weak",
   },
   runtimePolicy: {
-    // T3 policy-checks permission requests and its own client fs/terminal
-    // handlers, but ACP agents execute their own tools unconfined.
+    // ACP agents run their own tools; T3 only answers their permission
+    // requests by policy.
     enforcement: "client-boundary",
   },
 } satisfies OrchestrationV2ProviderCapabilities;
@@ -1564,9 +1562,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             embeddedTerminalsByToolCallId.delete(oldest);
           }
         };
-        // Client fs/terminal requests run with the T3 server's privileges, so
-        // they are policy-checked against the active turn policy; approvals the
-        // user already granted satisfy an "ask" disposition.
+        // Client terminals (Devin) run with the T3 server's privileges, so they
+        // are policy-checked against the active turn policy; a command the user
+        // already approved satisfies an "ask" disposition.
         const clientPolicyGrants = makeAcpClientPolicyGrants();
         let latestRuntimePolicy: ProviderAdapterV2RuntimePolicy = input.runtimePolicy;
         const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
@@ -5293,30 +5291,6 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             ),
           );
 
-        const guardClientFsWrite = (path: string) =>
-          clientPolicyContext.pipe(
-            Effect.flatMap(({ policy, turnKey }) => {
-              const disposition = acpClientWriteDisposition(policy, path);
-              if (
-                disposition === "allow" ||
-                (disposition === "ask" &&
-                  clientPolicyGrants.allowsWrite({ path, cwd: policy.cwd, turnKey }))
-              ) {
-                return Effect.void;
-              }
-              return denyClientRequest(`fs/write_text_file for '${path}'`, disposition);
-            }),
-          );
-
-        const guardClientFsRead = (path: string) =>
-          clientPolicyContext.pipe(
-            Effect.flatMap(({ policy }) =>
-              acpClientReadDisposition(policy) === "allow"
-                ? Effect.void
-                : denyClientRequest(`fs/read_text_file for '${path}'`, "deny"),
-            ),
-          );
-
         const guardClientTerminalCreate = clientPolicyContext.pipe(
           Effect.flatMap(({ policy, turnKey }) => {
             const disposition = acpClientExecuteDisposition(policy);
@@ -5402,20 +5376,18 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             );
           // Without the capability no fs handler is registered, so a stray
           // request (OpenCode and Kilo send one after approved edits) gets
-          // method-not-found and cannot touch the disk. Opted-in handlers
-          // confine requests to the workspace of the policy the guard checks
-          // at request time, not the one the session opened with.
+          // method-not-found and cannot touch the disk. A flavor that opts in
+          // serves requests itself, confined to the workspace of the policy
+          // active when the request arrives; the agent asks before its edits.
           const clientFileSystem = flavor.clientFileSystem;
           if (clientFileSystem !== undefined) {
             yield* targetRuntime.handleReadTextFile((request) =>
-              guardClientFsRead(request.path).pipe(
-                Effect.andThen(clientPolicyContext),
+              clientPolicyContext.pipe(
                 Effect.flatMap(({ policy }) => clientFileSystem.readTextFile(request, policy.cwd)),
               ),
             );
             yield* targetRuntime.handleWriteTextFile((request) =>
-              guardClientFsWrite(request.path).pipe(
-                Effect.andThen(clientPolicyContext),
+              clientPolicyContext.pipe(
                 Effect.flatMap(({ policy }) => clientFileSystem.writeTextFile(request, policy.cwd)),
               ),
             );
@@ -5539,8 +5511,6 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               ) {
                 clientPolicyGrants.recordApproval({
                   kind: providerRequestKind(parsedPermission.kind),
-                  locations: (params.toolCall.locations ?? []).map((location) => location.path),
-                  cwd: context.input.runtimePolicy.cwd,
                   scope: decision === "acceptForSession" ? "session" : "turn",
                   turnKey: String(context.providerTurnId),
                 });
