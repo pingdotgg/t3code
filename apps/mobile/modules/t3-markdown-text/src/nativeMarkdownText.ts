@@ -412,6 +412,43 @@ function decorateMentionRuns(runs: ReadonlyArray<NativeMarkdownTextRun>) {
   });
 }
 
+const WEB_URL_REGEX = /(^|[^\p{L}\p{N}])(https?:\/\/[\p{L}\p{N}_-][^\s<>]*)/gu;
+
+function trimUrlTrailingPunctuation(url: string): string {
+  let trimmed = url;
+  while (true) {
+    const unbalancedParen =
+      trimmed.endsWith(")") && trimmed.split(")").length > trimmed.split("(").length;
+    if (!unbalancedParen && !/[?!.,:*_~'"]$/.test(trimmed)) return trimmed;
+    trimmed = trimmed.slice(0, -1);
+  }
+}
+
+function decorateUrlRuns(runs: ReadonlyArray<NativeMarkdownTextRun>) {
+  return runs.flatMap((run) => {
+    if (run.code || run.href || run.skillName || run.role === "code-block") return [run];
+    const decorated: NativeMarkdownTextRun[] = [];
+    let cursor = 0;
+    for (const match of run.text.matchAll(WEB_URL_REGEX)) {
+      const start = match.index + (match[1]?.length ?? 0);
+      const url = trimUrlTrailingPunctuation(match[2] ?? "");
+      const presentation = resolveMarkdownLinkPresentation(url);
+      if (presentation.kind !== "external") continue;
+      if (start > cursor) decorated.push({ ...run, text: run.text.slice(cursor, start) });
+      decorated.push({
+        ...run,
+        text: url,
+        href: presentation.href,
+        externalHost: presentation.host,
+      });
+      cursor = start + url.length;
+    }
+    if (cursor === 0) return [run];
+    if (cursor < run.text.length) decorated.push({ ...run, text: run.text.slice(cursor) });
+    return decorated;
+  });
+}
+
 function appendChildren(
   runs: NativeMarkdownTextRun[],
   node: MarkdownNode,
@@ -960,5 +997,5 @@ export function nativeMarkdownDocumentRuns(
       runs[lastIndex] = { ...last, text };
     }
   }
-  return decorateMentionRuns(decorateSkillRuns(runs, skills));
+  return decorateMentionRuns(decorateSkillRuns(decorateUrlRuns(runs), skills));
 }

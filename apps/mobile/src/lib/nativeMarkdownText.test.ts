@@ -285,6 +285,70 @@ describe("nativeMarkdownDocumentRuns", () => {
     ]);
   });
 
+  it("links web URLs whose host has no dot", () => {
+    const runs = nativeMarkdownDocumentRuns({
+      type: "document",
+      children: [
+        {
+          type: "paragraph",
+          children: [
+            {
+              type: "text",
+              content: "Open http://localhost:3000/path?x=1. (Or https://devbox:8080)",
+            },
+            { type: "code_inline", content: "http://localhost:5173" },
+          ],
+        },
+      ],
+    });
+    expect(runs).toEqual([
+      { text: "Open ", role: "body" },
+      {
+        text: "http://localhost:3000/path?x=1",
+        role: "body",
+        href: "http://localhost:3000/path?x=1",
+        externalHost: "localhost",
+      },
+      { text: ". (Or ", role: "body" },
+      {
+        text: "https://devbox:8080",
+        role: "body",
+        href: "https://devbox:8080/",
+        externalHost: "devbox",
+      },
+      { text: ")", role: "body" },
+      { text: "http://localhost:5173", role: "body", code: true },
+    ]);
+  });
+
+  it("links a bold web URL with a port", () => {
+    const runs = nativeMarkdownDocumentRuns({
+      type: "document",
+      children: [
+        {
+          type: "paragraph",
+          children: [
+            { type: "text", content: "Install from " },
+            {
+              type: "bold",
+              children: [{ type: "text", content: "https://devbox.tail1234.ts.net:9443/" }],
+            },
+          ],
+        },
+      ],
+    });
+    expect(runs).toEqual([
+      { text: "Install from ", role: "body" },
+      {
+        text: "https://devbox.tail1234.ts.net:9443/",
+        role: "body",
+        bold: true,
+        href: "https://devbox.tail1234.ts.net:9443/",
+        externalHost: "devbox.tail1234.ts.net",
+      },
+    ]);
+  });
+
   it("copies collapsed skill and file chips back to their original references", () => {
     expect(
       nativeMarkdownContextCopyRanges([
