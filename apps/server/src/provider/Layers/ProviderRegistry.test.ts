@@ -2205,9 +2205,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             const registry = yield* ProviderRegistry.ProviderRegistry;
             const interruptedCaller = yield* registry.refresh().pipe(Effect.forkChild);
             yield* Deferred.await(probeStarted);
-            const joinedCaller = yield* registry.refresh().pipe(Effect.forkChild);
-            yield* Effect.yieldNow;
+            // The run must survive with no caller left.
             yield* Fiber.interrupt(interruptedCaller);
+            const joinedCaller = yield* registry.refresh().pipe(Effect.forkChild);
+            // Let the second caller join the run before the probe finishes.
+            yield* Effect.yieldNow;
             yield* Deferred.succeed(releaseProbe, undefined);
 
             const expected = [withBundledCompatibility(refreshedProvider)];
