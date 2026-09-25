@@ -2,7 +2,7 @@ import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect } from "react";
 
 /** Returns to the previous app page, or home when opened without app history. */
-export function useNavigateBack() {
+function useNavigateBack() {
   const navigate = useNavigate();
   const canGoBack = useCanGoBack();
 
@@ -16,8 +16,9 @@ export function useNavigateBack() {
 }
 
 /** Enables page-level Escape navigation, letting controls consume Escape first. */
-export function useEscapeToGoBack() {
+export function useEscapeToGoBack(onEscape?: () => void) {
   const navigateBack = useNavigateBack();
+  const handleEscape = onEscape ?? navigateBack;
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -30,10 +31,10 @@ export function useEscapeToGoBack() {
         activeElement.blur();
       }
 
-      navigateBack();
+      handleEscape();
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [navigateBack]);
+  }, [handleEscape]);
 }

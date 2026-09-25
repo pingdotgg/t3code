@@ -112,7 +112,8 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
 
 function SettingsContentLayout() {
   const location = useLocation();
-  useEscapeToGoBack();
+  const navigateToMainApp = useNavigateToMainApp();
+  useEscapeToGoBack(navigateToMainApp);
   const { search } = useSettingsScope();
   const [restoreSignal, setRestoreSignal] = useState(0);
 

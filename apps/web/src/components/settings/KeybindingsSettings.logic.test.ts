@@ -49,6 +49,7 @@ describe("KeybindingsSettings.logic", () => {
   it("orders Usage bindings and command choices like the page", () => {
     const expected = [
       "usage.cost",
+      "usage.open",
       "usage.tokens",
       "usage.limits",
       "usage.period.day",
