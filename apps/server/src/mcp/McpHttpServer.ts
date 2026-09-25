@@ -114,12 +114,14 @@ const McpAuthMiddlewareLive = HttpRouter.middleware<{
 }>()(makeMcpAuthMiddleware).layer;
 
 /**
- * Claude Code drops every MCP result above 25k tokens (~100 KB of text) and
- * hands the agent a truncation notice instead, so a snapshot that carries the
- * full accessibility tree and 20 KB of page text loses its locators too. Keep
- * the text under that ceiling and tell the agent what was cut.
+ * Claude Code moves an MCP result above its output limit to a file and hands
+ * the agent a notice instead, so a snapshot that carries the full
+ * accessibility tree and page text loses its locators too. Claude Code also
+ * shows the model `structuredContent` in place of the text blocks when a
+ * result has both, so both carry the same bounded snapshot. Keep it near 20k
+ * characters and tell the agent what was cut.
  */
-export const MAX_SNAPSHOT_TEXT_BYTES = 60_000;
+export const MAX_SNAPSHOT_TEXT_BYTES = 20_000;
 const MAX_SNAPSHOT_VISIBLE_TEXT_CHARS = 8_000;
 const MAX_SNAPSHOT_ELEMENT_NAME_CHARS = 200;
 const MAX_SNAPSHOT_LOG_ENTRIES = 40;
@@ -164,12 +166,11 @@ type SnapshotMetadata = {
 /**
  * Drops the accessibility tree, shortens page text, element names, identifiers,
  * and log strings, keeps only the newest log entries, and finally sheds
- * interactive elements until the JSON fits. Returns the text plus notes on
- * what is missing so the agent can reach for preview_evaluate.
+ * interactive elements until the JSON fits. Returns the bounded value, its
+ * text, and notes on what is missing so the agent can reach for
+ * preview_evaluate.
  */
-const boundSnapshotMetadata = (
-  metadata: SnapshotMetadata,
-): { readonly text: string; readonly omitted: ReadonlyArray<string> } => {
+const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
   const omitted: Array<string> = [];
   const { accessibilityTree, ...withoutTree } = metadata;
   if (accessibilityTree !== undefined) {
@@ -263,7 +264,7 @@ const boundSnapshotMetadata = (
       omitted.push(`${dropped[key]} of ${bounded[key].length} ${key}`);
     }
   }
-  return { text, omitted };
+  return { value: { ...bounded, ...lists }, text, omitted };
 };
 
 export class PreviewScreenshotSaveError extends Schema.TaggedError<PreviewScreenshotSaveError>()(
@@ -396,6 +397,18 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
               const png = new Uint8Array(Buffer.from(screenshot.data, "base64"));
               const screenshotPath =
                 payload?.save === true ? yield* saveScreenshot(snapshot.url, png) : undefined;
+              if (screenshotPath !== undefined && payload?.includeImage === false) {
+                // The agent only wants a file to show the user. The url keeps the site icon on the tool row.
+                const saved = {
+                  url: cutText(snapshot.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
+                  screenshotPath,
+                };
+                return new McpSchema.CallToolResult({
+                  isError: false,
+                  structuredContent: saved,
+                  content: [{ type: "text", text: encodeJsonText(saved) }],
+                });
+              }
               const metadata = {
                 ...page,
                 screenshot: {
@@ -408,7 +421,10 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
               const bounded = boundSnapshotMetadata(metadata);
               return new McpSchema.CallToolResult({
                 isError: false,
-                structuredContent: metadata,
+                structuredContent:
+                  bounded.omitted.length === 0
+                    ? bounded.value
+                    : { ...bounded.value, omitted: bounded.omitted },
                 content: [
                   // Keep the page identity readable even if a provider truncates the snapshot.
                   {
