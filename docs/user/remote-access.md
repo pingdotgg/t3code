@@ -62,6 +62,14 @@ created in Settings can only be copied from the client that created them while
 its Connections page stays open. If you leave or reload that page, create
 another link to share.
 
+### Open a pairing link in the desktop app
+
+The desktop app registers the `t3code://` link scheme. A link of the form
+`t3code://pair?host=<backend-url>&label=<name>#token=<pairing-token>` opens the
+desktop app directly from a browser, chat message, or terminal and asks you to
+confirm before adding that backend as a remote environment. The `host` and
+`token` values are the same ones a regular pairing link carries.
+
 ### Balance new threads across machines
 
 Auto balance is off by default. On web and desktop, enable it in
