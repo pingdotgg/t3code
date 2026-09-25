@@ -1904,6 +1904,168 @@ describe("deriveMessagesTimelineRows", () => {
     });
   });
 
+  it("folds each run of a provider-native subagent thread like a normal turn", () => {
+    // A Claude subagent's child thread, as projected: no runs, one runless
+    // root turn, and a user prompt for the launch and for a SendMessage resume.
+    const threadId = ThreadId.make("subagent-child");
+    const rootNodeId = NodeId.make("task-root");
+    const at = (second: number) =>
+      DateTime.makeUnsafe(new Date(Date.UTC(2026, 8, 25, 22, 51, second)).toISOString());
+    const base = (id: string, ordinal: number, second: number, endSecond = second) => ({
+      id: TurnItemId.make(id),
+      threadId,
+      runId: null,
+      nodeId: rootNodeId,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal,
+      status: "completed" as const,
+      title: null,
+      startedAt: at(second),
+      completedAt: at(endSecond),
+      updatedAt: at(endSecond),
+    });
+    const prompt = (id: string, ordinal: number, second: number) => ({
+      ...base(id, ordinal, second),
+      type: "user_message" as const,
+      messageId: MessageId.make(id),
+      text: `Prompt ${id}`,
+      attachments: [],
+      inputIntent: "turn_start" as const,
+      createdBy: "agent" as const,
+      creationSource: "provider" as const,
+    });
+    const answer = (id: string, ordinal: number, second: number) => ({
+      ...base(id, ordinal, second),
+      type: "assistant_message" as const,
+      messageId: MessageId.make(id),
+      text: `Answer ${id}`,
+      streaming: false,
+    });
+    type ResumeState = "running" | "completed" | "failed";
+    const items = (resume: ResumeState) =>
+      [
+        prompt("launch", 1, 0),
+        { ...base("launch-ls", 2, 4), type: "command_execution" as const, input: "ls src" },
+        {
+          ...base("launch-thinking", 3, 8),
+          type: "reasoning" as const,
+          title: "Thinking",
+          text: "Not there.",
+          streaming: false,
+        },
+        answer("launch-answer", 4, 8),
+        prompt("resume", 5, 72),
+        {
+          ...base("resume-ls", 6, 77),
+          type: "command_execution" as const,
+          input: "ls src",
+          status: resume === "running" ? ("running" as const) : ("completed" as const),
+          completedAt: resume === "running" ? null : at(77),
+        },
+        ...(resume === "failed"
+          ? [
+              {
+                ...base("resume-error", 7, 80),
+                type: "error" as const,
+                status: "failed" as const,
+                failure: {
+                  class: "provider_error" as const,
+                  message: "Subagent failed",
+                  code: null,
+                  retryable: null,
+                },
+              },
+            ]
+          : []),
+        ...(resume === "running" ? [] : [answer("resume-answer", 8, 80)]),
+      ].map((item, position) => ({
+        position,
+        visibility: "local" as const,
+        sourceThreadId: threadId,
+        sourceItemId: item.id,
+        item,
+      }));
+    const rows = (input: {
+      resume: ResumeState;
+      working: boolean;
+      expandedRunIds?: ReadonlySet<RunId>;
+    }) =>
+      deriveMessagesTimelineRows({
+        timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+          visibleTurnItems: items(input.resume),
+          optimisticMessages: [],
+        }),
+        latestRun: null,
+        isWorking: input.working,
+        runlessWorkActive: input.working,
+        ...(input.expandedRunIds === undefined ? {} : { expandedRunIds: input.expandedRunIds }),
+        activeTurnStartedAt: input.working ? DateTime.formatIso(at(72)) : null,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+    const shape = (timeline: ReadonlyArray<MessagesTimelineRow>) =>
+      timeline.map((row) =>
+        row.kind === "turn-fold"
+          ? `fold:${row.label}`
+          : row.kind === "message"
+            ? `${row.message.role}:${row.message.id}`
+            : row.kind,
+      );
+
+    // Settled: each run folds its work, keeping its prompt and final answer.
+    const settled = rows({ resume: "completed", working: false });
+    expect(shape(settled)).toEqual([
+      "user:launch",
+      "fold:Worked for 8.0s",
+      "assistant:launch-answer",
+      "user:resume",
+      "fold:Worked for 8.0s",
+      "assistant:resume-answer",
+    ]);
+
+    // Each fold opens on its own.
+    const launchFold = settled.find((row) => row.kind === "turn-fold");
+    if (launchFold?.kind !== "turn-fold") throw new Error("Expected the launch fold");
+    const expanded = rows({
+      resume: "completed",
+      working: false,
+      expandedRunIds: new Set([launchFold.runId]),
+    });
+    expect(shape(expanded)).toEqual([
+      "user:launch",
+      "fold:Worked for 8.0s",
+      "work-toggle",
+      "assistant:launch-answer",
+      "user:resume",
+      "fold:Worked for 8.0s",
+      "assistant:resume-answer",
+    ]);
+
+    // While the resume runs, only the settled launch folds.
+    expect(shape(rows({ resume: "running", working: true }))).toEqual([
+      "user:launch",
+      "fold:Worked for 8.0s",
+      "assistant:launch-answer",
+      "user:resume",
+      "working",
+      "work-live",
+    ]);
+
+    // A failed run stays open, as on a normal thread.
+    expect(shape(rows({ resume: "failed", working: false }))).toEqual([
+      "user:launch",
+      "fold:Worked for 8.0s",
+      "assistant:launch-answer",
+      "user:resume",
+      "work",
+      "work",
+      "assistant:resume-answer",
+    ]);
+  });
+
   it("shows a provider-native subagent's runless tools as live work while it works", () => {
     const entries = (commandStatus: "inProgress" | "completed") => [
       {
@@ -1954,9 +2116,9 @@ describe("deriveMessagesTimelineRows", () => {
       active: true,
     });
 
-    // Once the subagent settles, the same entries read as finished history.
+    // Once the subagent settles, the same entries fold as finished history.
     const settled = rows({ commandStatus: "completed", working: false });
-    expect(settled.map((row) => row.kind)).toEqual(["message", "work"]);
+    expect(settled.map((row) => row.kind)).toEqual(["message", "turn-fold"]);
   });
 
   it("does not treat runless entries as live work on a thread with runs", () => {
