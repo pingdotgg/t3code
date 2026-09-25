@@ -93,6 +93,20 @@ describe("resolveRemoteOpenState", () => {
     ).toEqual({ mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } });
   });
 
+  it("keeps the login of a Tailscale SSH host", () => {
+    expect(
+      resolveRemoteOpenState({
+        target: new RelayConnectionTarget({ environmentId, label: "sol" }),
+        sshAlias: null,
+        isDesktopRenderer: true,
+        remoteOpenTargets: [{ kind: "tailscale-ssh", host: "sol.tail1234.ts.net", user: "theo" }],
+      }),
+    ).toEqual({
+      mode: "remote-links",
+      host: { kind: "tailscale-ssh", host: "sol.tail1234.ts.net", user: "theo" },
+    });
+  });
+
   it("reports unavailable when a remote environment advertises no hosts", () => {
     for (const remoteOpenTargets of [[], undefined] as const) {
       expect(
@@ -149,6 +163,19 @@ describe("buildRemoteOpenUrl", () => {
         absolutePath: "/home/theo/code/my repo",
       }),
     ).toBe("zed://ssh/sol.tail1234.ts.net/home/theo/code/my%20repo");
+  });
+
+  it("names the login before the host when one is given", () => {
+    const target = { host: "sol.tail1234.ts.net", user: "theo", absolutePath: "/home/theo/x" };
+    expect(buildRemoteOpenUrl({ editor: "vscode", ...target })).toBe(
+      "vscode://vscode-remote/ssh-remote+theo@sol.tail1234.ts.net/home/theo/x",
+    );
+    expect(buildRemoteOpenUrl({ editor: "zed", ...target })).toBe(
+      "zed://ssh/theo@sol.tail1234.ts.net/home/theo/x",
+    );
+    expect(buildRemoteOpenUrl({ editor: "vscode", ...target, user: undefined })).toBe(
+      "vscode://vscode-remote/ssh-remote+sol.tail1234.ts.net/home/theo/x",
+    );
   });
 
   it("drops the Windows drive letter for Zed", () => {

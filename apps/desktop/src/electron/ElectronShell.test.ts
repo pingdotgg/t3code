@@ -106,6 +106,26 @@ describe("ElectronShell", () => {
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
+  it.effect("opens remote editor links that name an SSH login", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const results = yield* Effect.all([
+        electronShell.openExternal(
+          "vscode://vscode-remote/ssh-remote+theo@example.com/home/user/project",
+        ),
+        electronShell.openExternal("zed://ssh/theo@example.com/home/user/project"),
+      ]);
+
+      assert.deepEqual(results, [true, true]);
+      assert.deepEqual(openExternalMock.mock.calls, [
+        ["vscode://vscode-remote/ssh-remote+theo@example.com/home/user/project"],
+        ["zed://ssh/theo@example.com/home/user/project"],
+      ]);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
   it.effect("does not open editor URLs that mix up link shapes", () =>
     Effect.gen(function* () {
       openExternalMock.mockResolvedValue(undefined);
@@ -133,10 +153,29 @@ describe("ElectronShell", () => {
         electronShell.openExternal(
           "vscode://:secret@vscode-remote/ssh-remote+example.com/home/user/project",
         ),
-        electronShell.openExternal("zed://ssh/user@example.com/home/user/project"),
+        electronShell.openExternal("zed://user@ssh/example.com/home/user/project"),
+        electronShell.openExternal("zed://ssh/user:secret@example.com/home/user/project"),
       ]);
 
-      assert.deepEqual(results, [false, false, false]);
+      assert.deepEqual(results, [false, false, false, false]);
+      assert.equal(openExternalMock.mock.calls.length, 0);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
+  it.effect("does not open Zed links with anything beyond a plain login and host", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const results = yield* Effect.all([
+        electronShell.openExternal("zed://ssh/-oProxyCommand=calc@example.com/home/user/project"),
+        electronShell.openExternal("zed://ssh/@example.com/home/user/project"),
+        electronShell.openExternal("zed://ssh/theo@evil@example.com/home/user/project"),
+        electronShell.openExternal("zed://ssh/th%20eo@example.com/home/user/project"),
+        electronShell.openExternal("zed://ssh/example.com:2222/home/user/project"),
+      ]);
+
+      assert.deepEqual(results, [false, false, false, false, false]);
       assert.equal(openExternalMock.mock.calls.length, 0);
     }).pipe(Effect.provide(ElectronShell.layer)),
   );

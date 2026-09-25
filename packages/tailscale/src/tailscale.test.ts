@@ -17,11 +17,13 @@ import {
   isTailscaleIpv4Address,
   parseTailscaleMagicDnsName,
   parseTailscaleStatus,
+  readTailscaleSshEnabled,
   readTailscaleStatus,
   TAILSCALE_STATUS_TIMEOUT,
   TailscaleCommandExitError,
   TailscaleCommandSpawnError,
   TailscaleCommandTimeoutError,
+  TailscaleSettingParseError,
   TailscaleStatusParseError,
 } from "./tailscale.ts";
 
@@ -320,6 +322,44 @@ describe("tailscale", () => {
       assert.equal(error.message, "tailscale status timed out after 1500ms.");
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("reads the Tailscale SSH setting through tailscale get", () =>
+    Effect.gen(function* () {
+      for (const enabled of [true, false]) {
+        const layer = mockSpawnerLayer((command, args) => {
+          assert.equal(command, "tailscale");
+          assert.deepEqual(args, ["get", "--json", "ssh"]);
+          return { stdout: `{\n  "ssh": ${String(enabled)}\n}\n` };
+        });
+        assert.equal(yield* readTailscaleSshEnabled.pipe(Effect.provide(layer)), enabled);
+      }
+    }),
+  );
+
+  it.effect("fails the Tailscale SSH read on CLIs without tailscale get", () => {
+    const layer = mockSpawnerLayer(() => ({
+      code: 1,
+      stderr: 'tailscale: unknown subcommand "get"',
+    }));
+
+    return Effect.gen(function* () {
+      const error = yield* readTailscaleSshEnabled.pipe(Effect.flip, Effect.provide(layer));
+
+      assert.instanceOf(error, TailscaleCommandExitError);
+      assert.equal(error.subcommand, "get");
+      assert.equal(error.message, "tailscale get exited with code 1.");
+    });
+  });
+
+  it.effect("rejects tailscale get output without a boolean ssh setting", () =>
+    Effect.gen(function* () {
+      for (const stdout of ["true", "{}", '{"ssh":"true"}']) {
+        const layer = mockSpawnerLayer(() => ({ stdout }));
+        const error = yield* readTailscaleSshEnabled.pipe(Effect.flip, Effect.provide(layer));
+        assert.instanceOf(error, TailscaleSettingParseError);
+      }
+    }),
+  );
 
   it.effect("configures tailscale serve through the process spawner service", () => {
     const layer = mockSpawnerLayer((command, args) => {

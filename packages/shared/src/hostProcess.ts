@@ -115,4 +115,22 @@ export const HostProcessUserId = Context.Reference<number | undefined>(
   },
 );
 
+/**
+ * The account this process runs as. Undefined when the OS has no name for it:
+ * `os.userInfo()` throws for a uid without a passwd entry, as in some
+ * containers.
+ */
+export const HostProcessUsername = Context.Reference<string | undefined>(
+  "@t3tools/shared/hostProcess/HostProcessUsername",
+  {
+    defaultValue: () => {
+      try {
+        return NodeOS.userInfo().username;
+      } catch {
+        return undefined;
+      }
+    },
+  },
+);
+
 export const isHostWindows = Effect.map(HostProcessPlatform, (platform) => platform === "win32");

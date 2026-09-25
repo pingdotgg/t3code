@@ -106,12 +106,14 @@ export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
 /**
  * Builds a `<scheme>://vscode-remote/ssh-remote+<host><path>` deep link (Zed
  * takes `zed://ssh/<host><path>`) that opens `absolutePath` on `host` in the
- * local editor over SSH. Returns undefined for editors without remote
- * deep-link support.
+ * local editor over SSH. A `user` becomes `user@host`; without one the editor
+ * picks the login. Returns undefined for editors without remote deep-link
+ * support.
  */
 export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
   readonly host: string;
+  readonly user?: string | undefined;
   readonly absolutePath: string;
 }): string | undefined => {
   const scheme = remoteSchemeForEditor(input.editor);
@@ -122,6 +124,8 @@ export const buildRemoteOpenUrl = (input: {
   const posixPath = input.absolutePath.replaceAll("\\", "/");
   const rootedPath = posixPath.startsWith("/") ? posixPath : `/${posixPath}`;
   const encodedHost = encodeURIComponent(input.host);
+  const destination =
+    input.user === undefined ? encodedHost : `${encodeURIComponent(input.user)}@${encodedHost}`;
   if (input.editor === "zed") {
     // Zed's remote server resolves a rooted path on the system drive, so a
     // Windows `C:\Users\x` must become `/Users/x` (verified in #8938). Other
@@ -129,24 +133,42 @@ export const buildRemoteOpenUrl = (input: {
     // POSIX path that happens to start with `/C:` is left alone.
     const zedPath = /^[Cc]:[\\/]/.test(input.absolutePath) ? rootedPath.slice(3) : rootedPath;
     const encodedZedPath = zedPath.split("/").map(encodeURIComponent).join("/");
-    return `${scheme}://ssh/${encodedHost}${encodedZedPath}`;
+    return `${scheme}://ssh/${destination}${encodedZedPath}`;
   }
   const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");
-  return `${scheme}://vscode-remote/ssh-remote+${encodedHost}${encodedPath}`;
+  return `${scheme}://vscode-remote/ssh-remote+${destination}${encodedPath}`;
 };
 
 /**
  * SSH hostnames an environment advertises for remote open links. Reachability
- * is client-side; the server only advertises names that resolve to itself and
- * gates them on a local sshd listen check. Ordered most-reachable first
- * (tailnet MagicDNS name, then mDNS `<hostname>.local`).
+ * is client-side; the server only advertises names that resolve to itself.
+ * `tailscale` and `mdns` names are gated on a local sshd listen check and
+ * ordered most-reachable first (tailnet MagicDNS name, then mDNS
+ * `<hostname>.local`). Without sshd, a node running Tailscale SSH advertises
+ * its MagicDNS name as `tailscale-ssh`: Tailscale answers port 22 only for
+ * tailnet peers.
  */
-export const RemoteOpenTargetKind = Schema.Literals(["tailscale", "mdns"]);
+export const RemoteOpenTargetKind = Schema.Literals(["tailscale", "mdns", "tailscale-ssh"]);
 export type RemoteOpenTargetKind = typeof RemoteOpenTargetKind.Type;
+
+/**
+ * Logins a remote open link may carry: portable POSIX account names. Editors
+ * pass `user@host` to the local `ssh`, so a leading "-" would read as an
+ * option and ":" would smuggle a password.
+ */
+export const REMOTE_OPEN_USER_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
+
+export const RemoteOpenUser = Schema.String.check(Schema.isPattern(REMOTE_OPEN_USER_PATTERN));
 
 export const RemoteOpenTarget = Schema.Struct({
   kind: RemoteOpenTargetKind,
   host: TrimmedNonEmptyString,
+  /**
+   * Account to sign in as. Only `tailscale-ssh` targets carry one: Tailscale
+   * SSH maps it to a local account, and editors would otherwise send the
+   * viewing machine's own username.
+   */
+  user: Schema.optionalKey(RemoteOpenUser),
 });
 export type RemoteOpenTarget = typeof RemoteOpenTarget.Type;
 
