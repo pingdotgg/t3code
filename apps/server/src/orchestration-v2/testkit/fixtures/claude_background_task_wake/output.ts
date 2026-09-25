@@ -14,6 +14,7 @@ import {
 } from "./input.ts";
 
 const BACKGROUND_TASK_ID = "bdqirlcyw";
+const WAKE_SUMMARY = 'Background command "Background sleep test" completed (exit code 0)';
 
 function runAssistantTexts(
   projection: OrchestrationV2ThreadProjection,
@@ -55,6 +56,9 @@ export function assertClaudeBackgroundTaskWakeOutput(
     return `${message?.createdBy}:${message?.creationSource}`;
   });
   assert.deepEqual(creators, ["user:web", "agent:provider", "user:web"]);
+  // The continuation carries the notification summary as its detail.
+  const wakeMessage = projection.messages.find((message) => message.id === wakeRun?.userMessageId);
+  assert.equal(wakeMessage?.text, WAKE_SUMMARY);
 
   // The roster listed the task while it ran and cleared on completion.
   const rosterIndex = result.domainEvents.findIndex(
