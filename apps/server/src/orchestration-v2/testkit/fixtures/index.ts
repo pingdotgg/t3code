@@ -20,6 +20,8 @@ import { claudeLocalBashTaskInput } from "./claude_local_bash_task/input.ts";
 import { assertClaudeLocalBashTaskOutput } from "./claude_local_bash_task/output.ts";
 import { claudeResultIsErrorInput } from "./claude_result_is_error/input.ts";
 import { assertClaudeResultIsErrorOutput } from "./claude_result_is_error/output.ts";
+import { grokBackgroundSubagentInput } from "./grok_background_subagent/input.ts";
+import { assertGrokBackgroundSubagentOutput } from "./grok_background_subagent/output.ts";
 import { grokMonitorInput } from "./grok_monitor/input.ts";
 import { assertGrokMonitorOutput } from "./grok_monitor/output.ts";
 import { grokSubagentLineageInput } from "./grok_subagent_lineage/input.ts";
@@ -282,6 +284,22 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         ),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertClaudeResultIsErrorOutput,
+      },
+    ],
+  },
+  {
+    name: "grok_background_subagent",
+    buildInput: grokBackgroundSubagentInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("grok"),
+        transcriptFile: new URL(
+          "./grok_background_subagent/grok_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: GROK_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertGrokBackgroundSubagentOutput,
       },
     ],
   },

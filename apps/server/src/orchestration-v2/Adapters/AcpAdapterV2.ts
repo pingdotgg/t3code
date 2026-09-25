@@ -189,6 +189,17 @@ export interface AcpAdapterV2ExtensionContext {
    * mutation also finishes the tool that registered the task in a settled turn
    * still held open for it, with `output` as its final text when given.
    */
+  /**
+   * A subagent's structured end on the root session (Grok `subagent_finished`),
+   * keyed by its child session id. Finishes the subagent row, in the turn that
+   * holds it or in the carryover of a settled one.
+   */
+  readonly finishSubagent: (notice: {
+    readonly sessionId: string;
+    readonly childSessionId: string;
+    readonly status: "completed" | "failed" | "cancelled";
+    readonly result: string | null;
+  }) => Effect.Effect<void>;
   readonly applyBackgroundTaskMutation: (mutation: {
     readonly sessionId: string;
     readonly taskId: string;
@@ -5005,6 +5016,45 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           return true;
         });
 
+        const finishSubagentFromNotice = Effect.fnUntraced(function* (notice: {
+          readonly childSessionId: string;
+          readonly status: "completed" | "failed" | "cancelled";
+          readonly result: string | null;
+        }) {
+          const context = yield* Ref.get(activeTurn);
+          const subagent =
+            context === null ? undefined : context.subagentsBySessionId.get(notice.childSessionId);
+          if (context !== null && subagent !== undefined && !context.finalized) {
+            if (!acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) return;
+            yield* emitSubagent(context, {
+              nativeTaskId: subagent.task.nativeTaskRef?.nativeId ?? notice.childSessionId,
+              prompt: subagent.task.prompt,
+              title: subagent.task.title,
+              model: subagent.task.model,
+              status: notice.status,
+              childSessionId: notice.childSessionId,
+              result: notice.result,
+              suppressNormalTool: true,
+            });
+            yield* rearmDeferredFinalize(context);
+            return;
+          }
+          // The root turn already settled: the subagent is carryover. Project
+          // its end while the completed root still owns the run.
+          const carryover = yield* Ref.get(carryoverSubagents);
+          yield* updateCarryoverSubagentStatus(
+            notice.childSessionId,
+            notice.status,
+            notice.result,
+            {
+              project:
+                carryover !== null &&
+                carryover.sessionId === (yield* Ref.get(activeSessionId)) &&
+                carryover.rootTerminalStatus === "completed",
+            },
+          );
+        });
+
         applyFinalizedActiveTurnSubagentTerminal = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           notification: EffectAcpSchema.SessionNotification,
@@ -5631,6 +5681,17 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               requestUserInput,
               captureProposedPlan,
               lastProposedPlanMarkdown,
+              finishSubagent: (notice) =>
+                runRuntimeCallbackAtGeneration(
+                  handlerGeneration,
+                  Effect.gen(function* () {
+                    if (yield* Ref.get(stoppedRunQuarantine)) return;
+                    // Root-session notices only; nested subagents report to
+                    // their own parent session.
+                    if ((yield* Ref.get(activeSessionId)) !== notice.sessionId) return;
+                    yield* finishSubagentFromNotice(notice);
+                  }),
+                ).pipe(Effect.asVoid),
               applyBackgroundTaskMutation: (mutation) =>
                 runRuntimeCallbackAtGeneration(
                   handlerGeneration,
