@@ -118,8 +118,9 @@ const McpAuthMiddlewareLive = HttpRouter.middleware<{
  * the agent a notice instead, so a snapshot that carries the full
  * accessibility tree and page text loses its locators too. Claude Code also
  * shows the model `structuredContent` in place of the text blocks when a
- * result has both, so both carry the same bounded snapshot. Keep it near 20k
- * characters and tell the agent what was cut.
+ * result has both, so both carry the same bounded snapshot. Keep it near
+ * 20 KB and tell the agent what was cut. The short `omitted` notes may go a
+ * little over; the provider limit is far above this.
  */
 export const MAX_SNAPSHOT_TEXT_BYTES = 20_000;
 const MAX_SNAPSHOT_VISIBLE_TEXT_CHARS = 8_000;
