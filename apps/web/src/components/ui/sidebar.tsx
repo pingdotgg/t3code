@@ -233,7 +233,7 @@ function Sidebar({
   if (isMobile) {
     return (
       <SidebarInstanceContext value={instanceContextValue}>
-        <Sheet onOpenChange={setOpenMobile} open={openMobile} {...props}>
+        <Sheet onOpenChange={setOpenMobile} open={openMobile}>
           <SheetPopup
             className={cn(
               "w-(--sidebar-width) max-w-none bg-sidebar surface-grain p-0 text-sidebar-foreground",
@@ -259,6 +259,7 @@ function Sidebar({
                 "flex h-full w-full flex-col pb-safe pt-safe",
                 side === "left" ? "pl-safe" : "pr-safe",
               )}
+              {...props}
             >
               {children}
             </div>

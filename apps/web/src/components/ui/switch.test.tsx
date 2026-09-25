@@ -1,18 +1,24 @@
-import { act, type ReactElement, useState } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+// @vitest-environment jsdom
+
+import { act, useState } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { Switch } from "./switch";
 
-let renderer: ReactTestRenderer | undefined;
+let root: Root;
+let container: HTMLDivElement;
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
 });
 
 afterEach(async () => {
-  await act(async () => renderer?.unmount());
-  renderer = undefined;
+  await act(async () => root.unmount());
+  container.remove();
   vi.unstubAllGlobals();
 });
 
@@ -40,50 +46,18 @@ function ControlledSwitch({
 }
 
 function switchRoot() {
-  return renderer!.root.find((node) => node.type === "span" && node.props.role === "switch");
-}
-
-function hiddenInput() {
-  return renderer!.root.find((node) => node.type === "input" && node.props.type === "checkbox");
+  const element = container.querySelector<HTMLElement>('[role="switch"]');
+  if (!element) throw new Error("Switch was not rendered");
+  return element;
 }
 
 async function clickSwitch() {
-  await act(async () => {
-    switchRoot().props.onClick({
-      preventDefault() {},
-      shiftKey: false,
-      ctrlKey: false,
-      altKey: false,
-      metaKey: false,
-    });
-  });
+  await act(async () => switchRoot().click());
 }
 
 async function renderSwitch(initialChecked: boolean, initialMixed = false) {
-  const inputNode = {
-    checked: initialChecked,
-    ownerDocument: {
-      defaultView: {
-        PointerEvent: class PointerEvent {
-          constructor(readonly type: string) {}
-        },
-      },
-    },
-    dispatchEvent() {
-      const input = hiddenInput();
-      input.props.onChange({
-        nativeEvent: { defaultPrevented: false },
-        currentTarget: { checked: !input.props.checked },
-      });
-    },
-  };
-
   await act(async () => {
-    renderer = create(<ControlledSwitch {...{ initialChecked, initialMixed }} />, {
-      createNodeMock(element: ReactElement) {
-        return element.type === "input" ? inputNode : {};
-      },
-    });
+    root.render(<ControlledSwitch {...{ initialChecked, initialMixed }} />);
   });
 }
 
@@ -94,10 +68,13 @@ describe("Switch accessibility", () => {
     { initialChecked: false, initialMixed: true, before: "mixed", after: true },
   ])("exposes $before before activation and $after after activation", async (state) => {
     await renderSwitch(state.initialChecked, state.initialMixed);
-    expect(switchRoot().props["aria-checked"]).toBe(state.before);
+    expect(switchRoot().getAttribute("aria-checked")).toBe(String(state.before));
 
     await clickSwitch();
 
-    expect(switchRoot().props["aria-checked"]).toBe(state.after);
+    expect(switchRoot().getAttribute("aria-checked")).toBe(String(state.after));
+    expect(container.querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked).toBe(
+      state.after,
+    );
   });
 });
