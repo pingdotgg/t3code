@@ -50,3 +50,8 @@ packages/contracts/src/settings.ts
 # CI on GitHub-hosted runners (#6)
 .github/workflows/ci.yml
 .github/workflows/mobile-fingerprint-check.yml
+
+# Prism settings (#21)
+apps/web/src/components/settings/SettingsSidebarNav.tsx
+apps/web/src/components/settings/settingsSearch.ts
+apps/web/src/routeTree.gen.ts

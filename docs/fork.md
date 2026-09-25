@@ -79,6 +79,10 @@ any modified upstream file missing from `scripts/fork-upstream-edits.txt`.
   `apps/web/src/components/chat/ChatHeader.tsx` renders the parent crumb and
   sibling menu for a child thread. The logic lives in the fork-owned
   `AgentThreadTree.logic.ts`, `AgentThreadTree.tsx` and `chat/ThreadParentCrumbs.tsx`.
+- Prism settings (#21): `apps/web/src/components/settings/SettingsSidebarNav.tsx`
+  and `settingsSearch.ts` register the page below Providers and in settings search;
+  `apps/web/src/routeTree.gen.ts` is regenerated for the fork-owned route.
+  The page and its preference logic live in new `PrismSettings` files.
 - Prism toolkit and role kits (#19): `packages/contracts/src/settings.ts`
   adds the `prismRoles` server setting (project-scoped, with its patch) and
   `packages/contracts/src/index.ts` exports the fork-owned `prism.ts` and
