@@ -73,24 +73,21 @@ class SubscriptionUsageWidget : AppWidgetProvider() {
       val views = RemoteViews(context.packageName, R.layout.t3_subscription_widget)
       // Count limits only; "Open app to refresh" placeholders are not entries.
       val limits = rows.count { (_, window) -> window != null }
-      val title = if (limits == 0) {
-        context.getString(R.string.t3_subscription_widget_name)
-      } else {
-        context.getString(R.string.t3_subscription_widget_title_count, limits)
-      }
-      views.setTextViewText(R.id.t3_widget_title, title)
-      views.setContentDescription(
-        R.id.t3_widget_title,
-        if (limits == 0) {
-          title
-        } else {
+      // Without limits the layout's plain title stays.
+      if (limits > 0) {
+        views.setTextViewText(
+          R.id.t3_widget_title,
+          context.getString(R.string.t3_subscription_widget_title_count, limits)
+        )
+        views.setContentDescription(
+          R.id.t3_widget_title,
           context.resources.getQuantityString(
             R.plurals.t3_subscription_widget_title_description,
             limits,
             limits
           )
-        }
-      )
+        )
+      }
       openApp?.let { views.setOnClickPendingIntent(R.id.t3_widget_root, it) }
       openAppIntent(context, id, snapshot, forCollection = true)?.let {
         views.setPendingIntentTemplate(R.id.t3_widget_rows, it)
