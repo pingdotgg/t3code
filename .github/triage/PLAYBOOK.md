@@ -60,7 +60,7 @@ different code depending on it:
 Then work from evidence, not assumption. In rough order of value:
 
 - The trace file (`server.trace.ndjson`) around the time of the problem, plus the
-  service or desktop backend log from the context file if it exists. Recent
+  service log or desktop backend logs from the context file if they exist. Recent
   failures usually leave a trail here.
 - The provider event log, for problems with claude/codex/cursor sessions.
 - The SQLite database. Read it freely, but only write when a write is necessary

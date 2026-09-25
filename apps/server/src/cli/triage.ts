@@ -203,10 +203,10 @@ export const triageCommand = Command.make("triage", {
             settingsPath: paths.settingsPath,
             logsDir: paths.logsDir,
             // The server writes no plain log file. The boot service and the
-            // desktop app capture its output here; see bootService.ts and
-            // DesktopObservability.ts.
+            // desktop app capture its output here, with one desktop file per
+            // backend (such as WSL); see bootService.ts and DesktopObservability.ts.
             serviceLogPath: path.join(paths.logsDir, BootService.BOOT_SERVICE_LOG_FILE),
-            desktopBackendLogPath: path.join(paths.logsDir, "server-child.log"),
+            desktopBackendLogGlob: path.join(paths.logsDir, "server-child*.log"),
             serverTracePath: paths.serverTracePath,
             providerEventLogPath: paths.providerEventLogPath,
             terminalLogsDir: paths.terminalLogsDir,
