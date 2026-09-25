@@ -803,11 +803,10 @@ export function VoiceSettingsPanel() {
           </p>
         )}
       </SettingsSection>
-      <SettingsSection title="Dictionary">
+      <SettingsSection title="Transcription options">
         <SettingsRow
           {...searchableSetting("dictionary")}
-          title="Words and phrases"
-          description="Add preferred spellings for names and uncommon terms. Add common transcription mistakes under each word to correct them automatically."
+          description="Give the transcription model names and uncommon terms to recognize. Aliases correct common mis-transcriptions afterward."
           control={
             <div className="flex w-full max-w-80 items-center gap-1.5">
               <Input
@@ -847,7 +846,12 @@ export function VoiceSettingsPanel() {
           }
         >
           {customWords.length > 0 ? (
-            <div className="mt-3 border-t border-border/60 py-1">
+            <div
+              role="region"
+              aria-label="Dictionary entries"
+              tabIndex={0}
+              className="mt-3 max-h-64 overflow-y-auto overscroll-contain border-t border-border/60 py-1 focus-visible:outline-2 focus-visible:outline-ring"
+            >
               {customWords.map(({ term, aliases }) => {
                 const expanded = expandedDictionaryTerm === term;
                 const draft = (aliasDrafts[term] ?? "")
@@ -866,7 +870,7 @@ export function VoiceSettingsPanel() {
                         type="button"
                         className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-2 text-left text-sm outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                         aria-expanded={expanded}
-                        aria-label={`${expanded ? "Hide" : "Edit"} corrections for ${term}`}
+                        aria-label={`${expanded ? "Hide" : "Edit"} aliases for ${term}`}
                         onClick={() => setExpandedDictionaryTerm(expanded ? null : term)}
                       >
                         <ChevronDownIcon
@@ -874,7 +878,7 @@ export function VoiceSettingsPanel() {
                         />
                         <span className="truncate font-medium">{term}</span>
                         <span className="truncate text-xs text-muted-foreground">
-                          {aliases.length ? aliases.join(", ") : "Add corrections"}
+                          {aliases.length ? aliases.join(", ") : "Add aliases"}
                         </span>
                       </button>
                       <Button
@@ -893,7 +897,8 @@ export function VoiceSettingsPanel() {
                     {expanded ? (
                       <div className="space-y-2 pb-3 pl-5">
                         <p className="text-xs text-muted-foreground">
-                          When transcription writes one of these, replace it with {term}.
+                          The model receives {term} as a recognition hint. If it writes an alias,
+                          the transcript uses {term} instead.
                         </p>
                         {aliases.length > 0 ? (
                           <div className="flex flex-wrap gap-1.5">
@@ -930,7 +935,7 @@ export function VoiceSettingsPanel() {
                           <Input
                             value={aliasDrafts[term] ?? ""}
                             maxLength={50}
-                            placeholder="Transcribed as..."
+                            placeholder="Common mis-transcription"
                             aria-label={`Transcribed as for ${term}`}
                             disabled={operation !== null || aliases.length >= 8}
                             onChange={(event) =>
@@ -969,8 +974,6 @@ export function VoiceSettingsPanel() {
             </div>
           ) : null}
         </SettingsRow>
-      </SettingsSection>
-      <SettingsSection title="Transcription options">
         <SettingsRow
           {...searchableSetting("remove-filler-words")}
           description="Remove common hesitation words while preserving ambiguous words in multilingual transcription."

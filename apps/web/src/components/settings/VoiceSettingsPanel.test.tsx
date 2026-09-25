@@ -150,14 +150,14 @@ it("keeps dictionary corrections collapsed until a word is opened", async () => 
   });
 
   expect(root.root.findAllByProps({ "aria-label": "Transcribed as for T3 Code" })).toHaveLength(0);
-  expect(root.root.findByProps({ "aria-label": "Edit corrections for T3 Code" })).toBeDefined();
+  expect(root.root.findByProps({ "aria-label": "Edit aliases for T3 Code" })).toBeDefined();
   await act(async () =>
-    root.root.findByProps({ "aria-label": "Edit corrections for T3 Code" }).props.onClick(),
+    root.root.findByProps({ "aria-label": "Edit aliases for T3 Code" }).props.onClick(),
   );
   expect(root.root.findByProps({ "aria-label": "Transcribed as for T3 Code" })).toBeDefined();
   expect(root.root.findAllByProps({ "aria-label": "Transcribed as for Codex" })).toHaveLength(0);
   await act(async () =>
-    root.root.findByProps({ "aria-label": "Hide corrections for T3 Code" }).props.onClick(),
+    root.root.findByProps({ "aria-label": "Hide aliases for T3 Code" }).props.onClick(),
   );
   expect(root.root.findAllByProps({ "aria-label": "Transcribed as for T3 Code" })).toHaveLength(0);
 });
