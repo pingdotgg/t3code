@@ -12,6 +12,8 @@ import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
+import * as Hash from "effect/Hash";
 import * as Layer from "effect/Layer";
 
 import type { ClaudeCapabilitiesProbe } from "./ClaudeProvider.ts";
@@ -30,24 +32,38 @@ export class ClaudeCapabilitiesProbeCache extends Context.Service<
   }
 >()("t3/provider/Layers/claudeCapabilitiesProbeCache") {}
 
+/**
+ * Compares by `key` alone, so equal keys hit one entry, while the probe rides
+ * along for the lookup and is released when the bounded cache drops the entry.
+ */
+class ProbeKey implements Equal.Equal {
+  readonly key: string;
+  readonly probe: Probe;
+
+  constructor(key: string, probe: Probe) {
+    this.key = key;
+    this.probe = probe;
+  }
+
+  [Equal.symbol](that: unknown): boolean {
+    return that instanceof ProbeKey && that.key === this.key;
+  }
+  [Hash.symbol](): number {
+    return Hash.string(this.key);
+  }
+}
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  // Equal keys mean equivalent probes, so whichever instance asked last
-  // supplies the probe the lookup runs.
-  const probes = new Map<string, Probe>();
   const cache = yield* Cache.make({
     capacity: 256,
     timeToLive: CAPABILITIES_PROBE_TTL,
-    lookup: (key: string) => Effect.suspend(() => probes.get(key) ?? Effect.succeed(undefined)),
+    lookup: (key: ProbeKey) => key.probe,
   });
 
   return {
-    get: (key, probe) =>
-      Effect.suspend(() => {
-        probes.set(key, probe);
-        return Cache.get(cache, key);
-      }),
-    invalidate: (key) => Cache.invalidate(cache, key),
+    get: (key, probe) => Cache.get(cache, new ProbeKey(key, probe)),
+    invalidate: (key) => Cache.invalidate(cache, new ProbeKey(key, Effect.undefined)),
   } satisfies ClaudeCapabilitiesProbeCache["Service"];
 });
 
