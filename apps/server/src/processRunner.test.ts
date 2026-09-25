@@ -412,3 +412,37 @@ describe("isWindowsCommandNotFound", () => {
     }),
   );
 });
+
+describe("processSpanAttributes", () => {
+  it("keeps only the executable name from POSIX and Windows paths", () => {
+    expect(ProcessRunner.processSpanAttributes("/Users/me/.local/bin/claude", ["--print"])).toEqual(
+      { "process.command": "claude" },
+    );
+    expect(
+      ProcessRunner.processSpanAttributes("C:\\Program Files\\nodejs\\npx.cmd", ["tsx"]),
+    ).toEqual({ "process.command": "npx.cmd" });
+  });
+
+  it("finds the git subcommand after global options", () => {
+    expect(
+      ProcessRunner.processSpanAttributes("git", [
+        "-C",
+        "/Users/me/project",
+        "-c",
+        "core.fsmonitor=false",
+        "--literal-pathspecs",
+        "rev-parse",
+        "--show-toplevel",
+      ]),
+    ).toEqual({ "process.command": "git", "process.subcommand": "rev-parse" });
+    expect(
+      ProcessRunner.processSpanAttributes("git", ["--git-dir", "/repo/.git", "fetch"]),
+    ).toEqual({ "process.command": "git", "process.subcommand": "fetch" });
+  });
+
+  it("never records a path or value as the git subcommand", () => {
+    expect(ProcessRunner.processSpanAttributes("git", ["--unknown", "/Users/me/secret"])).toEqual({
+      "process.command": "git",
+    });
+  });
+});

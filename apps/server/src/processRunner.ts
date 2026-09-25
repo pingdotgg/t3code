@@ -285,10 +285,43 @@ function finalizeRunProcess<R>(
   );
 }
 
+// Git global options that take the next argument as their value, as in `git -C <path> status`.
+const GIT_OPTIONS_WITH_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree"]);
+
+function gitSubcommand(args: ReadonlyArray<string>): string | undefined {
+  let skipNext = false;
+  for (const arg of args) {
+    if (skipNext) {
+      skipNext = false;
+    } else if (arg.startsWith("-")) {
+      skipNext = GIT_OPTIONS_WITH_VALUE.has(arg);
+    } else {
+      // Only a plain word counts, so a misread path or option value is never recorded.
+      return /^[a-z][a-z0-9-]*$/.test(arg) ? arg : undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Span attributes that name a spawned command without user data: the executable
+ * name without its directory, plus the subcommand for git. Other arguments are
+ * never recorded.
+ */
+export function processSpanAttributes(command: string, args: ReadonlyArray<string>) {
+  const name = command.replace(/^.*[\\/]/, "");
+  const subcommand = /^git(\.exe)?$/i.test(name) ? gitSubcommand(args) : undefined;
+  return {
+    "process.command": name,
+    ...(subcommand !== undefined ? { "process.subcommand": subcommand } : {}),
+  };
+}
+
 const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   input: ProcessRunInput,
 ): Effect.fn.Return<ProcessRunOutput, ProcessRunError, Scope.Scope> {
+  yield* Effect.annotateCurrentSpan(processSpanAttributes(input.command, input.args));
   const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   const outputMode = input.outputMode ?? "error";
   const truncatedMarker = input.truncatedMarker ?? "";
