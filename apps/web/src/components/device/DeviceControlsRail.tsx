@@ -254,8 +254,8 @@ export function DeviceControlsRail(props: {
             <Keyboard />
           </RailButton>
         ) : null}
-        {view.phone && !view.foldingControls ? (
-          <RailButton tooltipSide={popupSide} label="Reset phone view" onClick={view.resetView}>
+        {view.phone ? (
+          <RailButton tooltipSide={popupSide} label="Restore 3D view" onClick={view.resetView}>
             <Maximize />
           </RailButton>
         ) : null}
