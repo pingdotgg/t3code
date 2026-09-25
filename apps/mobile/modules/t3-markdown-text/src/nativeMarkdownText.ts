@@ -415,13 +415,20 @@ function decorateMentionRuns(runs: ReadonlyArray<NativeMarkdownTextRun>) {
 const WEB_URL_REGEX = /(^|[^\p{L}\p{N}])(https?:\/\/[\p{L}\p{N}_-][^\s<>]*)/gu;
 
 function trimUrlTrailingPunctuation(url: string): string {
-  let trimmed = url;
-  while (true) {
-    const unbalancedParen =
-      trimmed.endsWith(")") && trimmed.split(")").length > trimmed.split("(").length;
-    if (!unbalancedParen && !/[?!.,:*_~'"]$/.test(trimmed)) return trimmed;
-    trimmed = trimmed.slice(0, -1);
+  let open = 0;
+  let close = 0;
+  for (const char of url) {
+    if (char === "(") open += 1;
+    else if (char === ")") close += 1;
   }
+  let end = url.length;
+  while (end > 0) {
+    const char = url.charAt(end - 1);
+    if (char === ")" && close > open) close -= 1;
+    else if (!`?!.,:;*_~'"`.includes(char)) break;
+    end -= 1;
+  }
+  return url.slice(0, end);
 }
 
 function decorateUrlRuns(runs: ReadonlyArray<NativeMarkdownTextRun>) {

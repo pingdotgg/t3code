@@ -321,6 +321,40 @@ describe("nativeMarkdownDocumentRuns", () => {
     ]);
   });
 
+  it("keeps trailing semicolons and unmatched parentheses out of a web URL", () => {
+    const runs = nativeMarkdownDocumentRuns({
+      type: "document",
+      children: [
+        {
+          type: "paragraph",
+          children: [
+            {
+              type: "text",
+              content: "Try http://localhost:3000; see http://devbox:8080/A_(b)). Done",
+            },
+          ],
+        },
+      ],
+    });
+    expect(runs).toEqual([
+      { text: "Try ", role: "body" },
+      {
+        text: "http://localhost:3000",
+        role: "body",
+        href: "http://localhost:3000/",
+        externalHost: "localhost",
+      },
+      { text: "; see ", role: "body" },
+      {
+        text: "http://devbox:8080/A_(b)",
+        role: "body",
+        href: "http://devbox:8080/A_(b)",
+        externalHost: "devbox",
+      },
+      { text: "). Done", role: "body" },
+    ]);
+  });
+
   it("links a bold web URL with a port", () => {
     const runs = nativeMarkdownDocumentRuns({
       type: "document",
