@@ -19,7 +19,6 @@ import {
 } from "three";
 import type { PhoneDisplayLayout } from "./phoneScene.ts";
 
-const HALF_WIDTH = 1.04;
 const HEIGHT = 2.2;
 const DEPTH = 0.075;
 const INSET = 0.026;
@@ -28,10 +27,20 @@ const BEVEL = 0.008;
 // The hinge axis sits just above the inner screens so closed halves meet face to face.
 const PIVOT_Z = DEPTH / 2 + 0.005;
 const SPINE_RADIUS = PIVOT_Z + DEPTH / 2 - 0.002;
+/** Width over height of the unfolded inner display until a live frame reports its own. */
+export const DEFAULT_FOLD_INNER_ASPECT = 2076 / 2152;
+/** Cover displays are tall phones; unfolded inner displays are near square or landscape. */
+export const isFoldInnerAspect = (aspect: number) => Number.isFinite(aspect) && aspect > 0.75;
 
-function panelPath(side: "left" | "right", inset: number, radius: number, hingeInset = 0) {
-  const left = side === "left" ? -HALF_WIDTH + inset : CREASE / 2 + hingeInset;
-  const right = side === "left" ? -CREASE / 2 - hingeInset : HALF_WIDTH - inset;
+function panelPath(
+  halfWidth: number,
+  side: "left" | "right",
+  inset: number,
+  radius: number,
+  hingeInset = 0,
+) {
+  const left = side === "left" ? -halfWidth + inset : CREASE / 2 + hingeInset;
+  const right = side === "left" ? -CREASE / 2 - hingeInset : halfWidth - inset;
   const bottom = -HEIGHT / 2 + inset;
   const top = HEIGHT / 2 - inset;
   const path = new Shape();
@@ -70,16 +79,22 @@ function roundedRectPath(width: number, height: number, radius: number) {
   return path;
 }
 
-function coverPath() {
-  return roundedRectPath(HALF_WIDTH - INSET * 2 - 0.02, HEIGHT - INSET * 2 - 0.04, 0.07);
+function coverPath(halfWidth: number) {
+  return roundedRectPath(halfWidth - INSET * 2 - 0.02, HEIGHT - INSET * 2 - 0.04, 0.07);
 }
 
-/** A procedural book-style foldable: one fixed half, one half rotating around a shared hinge. */
+/**
+ * A procedural book-style foldable: one fixed half, one half rotating around a shared hinge.
+ * The inner display keeps the raw framebuffer's native aspect, portrait or landscape.
+ */
 export function createAndroidFoldScene(
   texture: Texture,
   layout: PhoneDisplayLayout,
   initialAngle: number,
+  innerAspect = DEFAULT_FOLD_INNER_ASPECT,
 ) {
+  const screenHeight = HEIGHT - 2 * INSET;
+  const halfWidth = (innerAspect * screenHeight) / 2 + INSET;
   const root = new Group();
   const orientation = new Group();
   root.add(orientation);
@@ -146,7 +161,7 @@ export function createAndroidFoldScene(
 
   function half(group: Group, side: "left" | "right", back: MeshPhysicalMaterial) {
     const body = new Mesh(
-      new ExtrudeGeometry(panelPath(side, BEVEL, 0.1, BEVEL), {
+      new ExtrudeGeometry(panelPath(halfWidth, side, BEVEL, 0.1, BEVEL), {
         depth: DEPTH - BEVEL * 2,
         bevelEnabled: true,
         bevelSize: BEVEL,
@@ -158,19 +173,25 @@ export function createAndroidFoldScene(
     );
     body.position.z = -DEPTH / 2 + BEVEL;
     group.add(body);
-    const frame = new Mesh(new ShapeGeometry(panelPath(side, 0.01, 0.095, 0.002), 12), bezel);
+    const frame = new Mesh(
+      new ShapeGeometry(panelPath(halfWidth, side, 0.01, 0.095, 0.002), 12),
+      bezel,
+    );
     frame.position.z = DEPTH / 2 + 0.001;
     group.add(frame);
     // A back-facing shape mirrors X, so it is drawn from the opposite side's outline.
     const rear = new Mesh(
-      new ShapeGeometry(panelPath(side === "left" ? "right" : "left", 0.01, 0.095, 0.002), 12),
+      new ShapeGeometry(
+        panelPath(halfWidth, side === "left" ? "right" : "left", 0.01, 0.095, 0.002),
+        12,
+      ),
       back,
     );
     rear.name = `${side}-back`;
     rear.rotation.y = Math.PI;
     rear.position.set(0, 0, -DEPTH / 2 - 0.001);
     group.add(rear);
-    const geometry = new ShapeGeometry(panelPath(side, INSET, 0.076));
+    const geometry = new ShapeGeometry(panelPath(halfWidth, side, INSET, 0.076));
     geometry.computeBoundingBox();
     const display = new Mesh(geometry, hitMaterial);
     display.name = `${side}-inner-screen`;
@@ -183,8 +204,7 @@ export function createAndroidFoldScene(
   const innerRight = half(right, "right", backGlass);
   // One indexed surface keeps adjacent pixels joined at the crease. The
   // physical halves move separately underneath it.
-  const screenWidth = 2 * (HALF_WIDTH - INSET);
-  const screenHeight = HEIGHT - 2 * INSET;
+  const screenWidth = 2 * (halfWidth - INSET);
   const screenGeometry = new PlaneGeometry(screenWidth, screenHeight, 40, 48);
   const screenPositions = screenGeometry.getAttribute("position");
   const screenUvs = screenGeometry.getAttribute("uv");
@@ -224,9 +244,9 @@ export function createAndroidFoldScene(
   spine.position.z = PIVOT_Z;
   orientation.add(spine);
 
-  const cover = new Mesh(new ShapeGeometry(coverPath()), coverMaterial);
+  const cover = new Mesh(new ShapeGeometry(coverPath(halfWidth)), coverMaterial);
   cover.name = "cover-screen";
-  cover.position.set(-HALF_WIDTH / 2, 0, -DEPTH / 2 - 0.003);
+  cover.position.set(-halfWidth / 2, 0, -DEPTH / 2 - 0.003);
   cover.rotation.y = Math.PI;
   leftBody.add(cover);
 
@@ -236,7 +256,7 @@ export function createAndroidFoldScene(
   const islandWidth = 0.46;
   const islandHeight = 0.2;
   rearCamera.position.set(
-    HALF_WIDTH - 0.07 - islandWidth / 2,
+    halfWidth - 0.07 - islandWidth / 2,
     HEIGHT / 2 - 0.08 - islandHeight / 2,
     -DEPTH / 2 - 0.002,
   );
@@ -284,7 +304,7 @@ export function createAndroidFoldScene(
     [0.2, 0.3],
   ] as const) {
     const key = new Mesh(new BoxGeometry(0.02, length, DEPTH * 0.45), frameMetal);
-    key.position.set(HALF_WIDTH + 0.008, y, 0);
+    key.position.set(halfWidth + 0.008, y, 0);
     right.add(key);
   }
 
@@ -349,8 +369,9 @@ export function createAndroidFoldScene(
   return {
     root,
     orientation,
-    width: HALF_WIDTH * 2,
+    width: halfWidth * 2,
     height: HEIGHT,
+    innerAspect,
     setAngle,
     setDisplay,
     screenPoint(x: number, y: number, camera: Camera, captured = false) {

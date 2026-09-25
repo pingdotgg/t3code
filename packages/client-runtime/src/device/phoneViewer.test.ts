@@ -80,7 +80,16 @@ vi.mock("./modelScene.ts", async () => {
   };
 });
 
-import { BoxGeometry, Group, Mesh, MeshBasicMaterial, PlaneGeometry, Quaternion } from "three";
+import {
+  Box3,
+  BoxGeometry,
+  Group,
+  Mesh,
+  MeshBasicMaterial,
+  PlaneGeometry,
+  Quaternion,
+  Vector3,
+} from "three";
 import { disposeDeviceModel } from "./modelScene.ts";
 import { createPhoneViewer } from "./phoneViewer.ts";
 import {
@@ -255,6 +264,32 @@ it("animates the Android hinge on the same scene through an encoder resize", () 
   draw(850);
   expect(moving.rotation.y).toBeCloseTo(Math.PI);
   expect(state.frames.at(-1)!.phone).toBe(shell);
+  expect(gpu.instances).toHaveLength(1);
+  viewer.dispose();
+});
+
+it("resizes the fold body for a landscape inner display and keeps it through the cover frame", () => {
+  const openProfile = resolveDeviceShape({ platform: "android", portraitAspect: 0.83 });
+  const { viewer, draw, source, state } = fixture(openProfile);
+  viewer.setFoldAngle(180);
+  draw(0);
+  const portraitWidth = new Box3()
+    .setFromObject(state.frames.at(-1)!.phone!)
+    .getSize(new Vector3()).x;
+  source.width = 2208;
+  source.height = 1840;
+  viewer.setScreen({ width: 2208, height: 1840, orientation: "portrait" });
+  viewer.frameUpdated();
+  draw(10);
+  const landscape = state.frames.at(-1)!.phone!;
+  const landscapeWidth = new Box3().setFromObject(landscape).getSize(new Vector3()).x;
+  expect(landscapeWidth / portraitWidth).toBeGreaterThan(1.15);
+  source.width = 1080;
+  source.height = 2092;
+  viewer.setScreen({ width: 1080, height: 2092, orientation: "portrait" }, ANDROID_PHONE_SHAPE);
+  viewer.frameUpdated();
+  draw(20);
+  expect(state.frames.at(-1)!.phone).toBe(landscape);
   expect(gpu.instances).toHaveLength(1);
   viewer.dispose();
 });
