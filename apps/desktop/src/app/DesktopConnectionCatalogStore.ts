@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
@@ -52,6 +53,7 @@ const DesktopConnectionCatalogStoreWriteOperation = Schema.Literals([
   "create-directory",
   "write-temporary-file",
   "replace-catalog-file",
+  "preserve-undecryptable-catalog",
 ]);
 
 const DesktopConnectionCatalogStoreMigrationOperation = Schema.Literals([
@@ -151,6 +153,7 @@ export class DesktopConnectionCatalogStore extends Context.Service<
   {
     readonly get: Effect.Effect<
       Option.Option<string>,
+      | DesktopConnectionCatalogStoreWriteError
       | DesktopConnectionCatalogStoreReadError
       | DesktopConnectionCatalogStoreDocumentDecodeError
       | DesktopConnectionCatalogStoreDecodeError
@@ -385,6 +388,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
   const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
+  const mutex = yield* Semaphore.make(1);
   const encryptionAvailable = safeStorage.isEncryptionAvailable.pipe(
     Effect.mapError(
       (cause) =>
@@ -495,14 +499,46 @@ export const make = Effect.gen(function* () {
         ),
       );
       return Option.some(decrypted);
-    }).pipe(Effect.withSpan("desktop.connectionCatalogStore.get")),
-    set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog) {
+    }).pipe(
+      Effect.catchTag(
+        "DesktopConnectionCatalogStoreProtectionError",
+        (
+          error,
+        ): Effect.Effect<
+          Option.Option<string>,
+          DesktopConnectionCatalogStoreProtectionError | DesktopConnectionCatalogStoreWriteError
+        > =>
+          error.operation !== "decrypt-catalog"
+            ? Effect.fail(error)
+            : Effect.gen(function* () {
+                const backupPath = `${catalogPath}.${yield* crypto.randomUUIDv4}.undecryptable`;
+                yield* fileSystem.rename(catalogPath, backupPath);
+                yield* Effect.logWarning(
+                  "Saved connections could not be decrypted. Preserved the catalog; reconnect saved remote environments.",
+                  { catalogPath, backupPath },
+                );
+                return Option.none<string>();
+              }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new DesktopConnectionCatalogStoreWriteError({
+                      operation: "preserve-undecryptable-catalog",
+                      path: catalogPath,
+                      cause,
+                    }),
+                ),
+              ),
+      ),
+      mutex.withPermits(1),
+      Effect.withSpan("desktop.connectionCatalogStore.get"),
+    ),
+    set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog: string) {
       if (!(yield* encryptionAvailable)) {
         return false;
       }
       yield* writeCatalog(catalog);
       return true;
-    }),
+    }, mutex.withPermits(1)),
     clear: fileSystem.remove(catalogPath, { force: true }).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Could not clear the desktop connection catalog.", {
@@ -510,6 +546,7 @@ export const make = Effect.gen(function* () {
           error,
         }),
       ),
+      mutex.withPermits(1),
       Effect.withSpan("desktop.connectionCatalogStore.clear"),
     ),
   });
