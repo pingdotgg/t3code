@@ -80,7 +80,7 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
             <span class="nav-brand-name">T3 Code</span>
           </a>
           <div class="nav-right">
-            <a class="nav-link" href="/docs/">Docs</a>
+            <a class="nav-link nav-link-docs" href="/docs/">Docs</a>
             <a class="nav-link" href="/download">Download</a>
             <a
               class="nav-stars"
@@ -514,6 +514,13 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
       width: 100%;
       gap: 14px 20px;
       justify-content: initial;
+    }
+  }
+
+  /* No room on phones, up to the 428px Pro Max; the footer links to the docs. */
+  @media (max-width: 440px) {
+    .nav-link-docs {
+      display: none;
     }
   }
 
