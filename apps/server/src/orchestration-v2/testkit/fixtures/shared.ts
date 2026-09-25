@@ -54,6 +54,8 @@ export const SUBAGENT_V2_PROMPT =
   "Spawn one subagent whose only task is to reply with exactly: Hello. Wait for it to finish, then reply with exactly what it said.";
 export const SUBAGENT_V2_APPROVAL_PROMPT =
   "Do not run any commands yourself. Spawn one subagent whose only task is to run this exact shell command: printf 'subagent approval fixture' > subagent-approval.txt and then reply with exactly: Written. Wait for it to finish, then reply with exactly what it said.";
+export const SUBAGENT_V2_NESTED_APPROVAL_PROMPT =
+  "Do not run any commands yourself. Spawn one subagent and tell it not to run any commands itself but to spawn its own subagent, whose only task is to run this exact shell command: printf 'nested approval fixture' > nested-approval.txt and then reply with exactly: Written. Each agent waits for its child and replies with exactly what the child said. Wait for your subagent, then reply with exactly what it said.";
 export const OPENCODE_SUBAGENT_PROMPT =
   "Use the task tool exactly once. Delegate to the general subagent with this prompt: Respond exactly CHILD_OK. After the task completes, respond exactly PARENT_OK.";
 export const SUBAGENT_CONTINUE_PROMPT =

@@ -173,6 +173,18 @@ const scenarioExpectations = {
     turnCompletedCount: 4,
     approvalRequestCount: 0,
   },
+  subagent_v2_nested_approval: {
+    outgoing: ["initialize", "initialized", "thread/start", "turn/start"],
+    incoming: [
+      "item/commandExecution/requestApproval",
+      "serverRequest/resolved",
+      "item/completed",
+      "turn/completed",
+    ],
+    turnStartCount: 1,
+    turnCompletedCount: 3,
+    approvalRequestCount: 1,
+  },
   multi_turn: {
     outgoing: ["initialize", "initialized", "thread/start", "turn/start"],
     incoming: ["turn/started", "turn/completed", "item/agentMessage/delta"],

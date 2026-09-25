@@ -77,6 +77,8 @@ import {
   subagentV2ApprovalInput,
 } from "./subagent_v2_approval/input.ts";
 import { assertSubagentV2NestedOutput } from "./subagent_v2_nested/codex_output.ts";
+import { assertSubagentV2NestedApprovalOutput } from "./subagent_v2_nested_approval/codex_output.ts";
+import { subagentV2NestedApprovalInput } from "./subagent_v2_nested_approval/input.ts";
 import { assertClaudeThreadRollbackOutput } from "./thread_rollback/claude_output.ts";
 import { assertThreadRollbackOutput } from "./thread_rollback/codex_output.ts";
 import { threadRollbackInput } from "./thread_rollback/input.ts";
@@ -637,6 +639,22 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         transcriptFile: new URL("./subagent_v2_nested/codex_transcript.ndjson", import.meta.url),
         modelSelection: CODEX_MODEL_SELECTION,
         assertOutput: assertSubagentV2NestedOutput,
+      },
+    ],
+  },
+  {
+    name: "subagent_v2_nested_approval",
+    buildInput: subagentV2NestedApprovalInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("codex"),
+        transcriptFile: new URL(
+          "./subagent_v2_nested_approval/codex_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CODEX_MODEL_SELECTION,
+        runtimePolicyOverride: SUBAGENT_V2_APPROVAL_POLICY,
+        assertOutput: assertSubagentV2NestedApprovalOutput,
       },
     ],
   },
