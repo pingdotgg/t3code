@@ -26,7 +26,8 @@ export function useVoiceModePhase(target: VoiceSessionTarget): VoiceModePhase {
 
 /**
  * Ties a conversation to the screen showing its thread: leaving the thread
- * ends it, so the microphone is never live without its controls on screen.
+ * ends it. Screens pushed over the thread (files, review, settings) keep it
+ * running, like a call; its controls return with the thread.
  * Also reports failures and remote endings for this thread, once.
  */
 export function useVoiceModeThreadLifecycle(target: VoiceSessionTarget): void {
