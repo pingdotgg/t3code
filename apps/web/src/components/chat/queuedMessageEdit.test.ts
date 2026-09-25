@@ -7,7 +7,11 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
 } from "../../composerDraftStore";
-import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./queuedMessageEdit";
+import {
+  hasUnsavedQueuedMessageEdit,
+  prepareQueuedEditAttachments,
+  recoverQueuedMessageEdit,
+} from "./queuedMessageEdit";
 
 const environmentId = EnvironmentId.make("remote-environment");
 const threadTarget = scopeThreadRef(environmentId, ThreadId.make("thread:edit"));
@@ -119,5 +123,39 @@ describe("queued message file edits", () => {
     );
     expect(store.getComposerDraft(threadTarget)?.prompt).toBe("Separate draft");
     expect(store.getComposerDraft(editTarget)).toBeNull();
+  });
+});
+
+describe("unsaved edits block queue navigation", () => {
+  beforeEach(() => {
+    useComposerDraftStore.setState({ draftsByThreadKey: {}, draftThreadsByThreadKey: {} });
+    useComposerDraftStore.getState().setPrompt(editTarget, "original");
+  });
+  const dirty = (existingAttachments = [uploadedFile]) =>
+    hasUnsavedQueuedMessageEdit({
+      draft: useComposerDraftStore.getState().getComposerDraft(editTarget),
+      originalText: "original",
+      originalAttachments: [uploadedFile],
+      existingAttachments,
+    });
+  it("allows unchanged content and undoing a text change", () => {
+    expect(dirty()).toBe(false);
+    useComposerDraftStore.getState().setPrompt(editTarget, "changed");
+    expect(dirty()).toBe(true);
+    useComposerDraftStore.getState().setPrompt(editTarget, "original");
+    expect(dirty()).toBe(false);
+  });
+  it("blocks deleting all text or removing a saved attachment", () => {
+    expect(dirty([])).toBe(true);
+    useComposerDraftStore.getState().setPrompt(editTarget, "");
+    expect(dirty()).toBe(true);
+  });
+  it("blocks newly attached files and images", () => {
+    useComposerDraftStore.getState().addFiles(editTarget, [file]);
+    expect(dirty()).toBe(true);
+    useComposerDraftStore.getState().clearComposerContent(editTarget);
+    useComposerDraftStore.getState().setPrompt(editTarget, "original");
+    useComposerDraftStore.getState().addImages(editTarget, [image]);
+    expect(dirty()).toBe(true);
   });
 });

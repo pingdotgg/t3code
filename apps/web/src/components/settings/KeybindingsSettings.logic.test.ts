@@ -24,6 +24,7 @@ describe("KeybindingsSettings.logic", () => {
       "composer.sendBackground",
       "thread.steerQueuedMessage",
       "thread.editQueuedMessage",
+      "thread.editNextQueuedMessage",
       "composer.host",
       "composer.effort",
       "composer.mode",

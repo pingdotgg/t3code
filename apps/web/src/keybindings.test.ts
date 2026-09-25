@@ -1318,14 +1318,17 @@ describe("composer and pull request shortcuts", () => {
   }
 
   for (const platform of ["MacIntel", "Win32", "Linux"]) {
-    it(`edits the last queued message with Alt+ArrowUp from the composer on ${platform}`, () => {
-      const input = event({ key: "ArrowUp", altKey: true });
+    it.each([
+      ["ArrowUp", "thread.editQueuedMessage"],
+      ["ArrowDown", "thread.editNextQueuedMessage"],
+    ])(`resolves queue navigation %s from the composer on ${platform}`, (key, command) => {
+      const input = event({ key, altKey: true });
       assert.strictEqual(
         resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
           platform,
           context: { composerFocus: true },
         }),
-        "thread.editQueuedMessage",
+        command,
       );
       assert.isNull(
         resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {

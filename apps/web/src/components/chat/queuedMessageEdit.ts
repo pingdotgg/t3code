@@ -5,7 +5,22 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type ComposerThreadTarget,
+  type ComposerThreadDraftState,
 } from "../../composerDraftStore";
+
+/** Includes attachment removals and context-only changes, not just typed text. */
+export function hasUnsavedQueuedMessageEdit(input: {
+  readonly draft: ComposerThreadDraftState | null;
+  readonly originalText: string;
+  readonly originalAttachments: ReadonlyArray<ChatAttachment>;
+  readonly existingAttachments: ReadonlyArray<ChatAttachment>;
+}): boolean {
+  return (
+    (input.draft?.prompt ?? "") !== input.originalText ||
+    (input.draft !== null && composerDraftHasUserContent({ ...input.draft, prompt: "" })) ||
+    input.existingAttachments.length !== input.originalAttachments.length
+  );
+}
 
 /** Keep an unsaved edit when its queued run starts or is removed remotely. */
 export function recoverQueuedMessageEdit(input: {

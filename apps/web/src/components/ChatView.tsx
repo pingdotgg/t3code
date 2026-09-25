@@ -10,7 +10,11 @@ import {
 import * as DateTime from "effect/DateTime";
 import { restorePlanFollowUpComposer } from "./ChatView.logic";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
-import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./chat/queuedMessageEdit";
+import {
+  hasUnsavedQueuedMessageEdit,
+  prepareQueuedEditAttachments,
+  recoverQueuedMessageEdit,
+} from "./chat/queuedMessageEdit";
 import {
   isPaintOnlyThreadTimeline,
   peekHeldThreadTimeline,
@@ -1571,6 +1575,7 @@ export default function ChatView(props: ChatViewProps) {
     readonly runId: RunId;
     readonly messageId: MessageId;
     readonly originalText: string;
+    readonly originalAttachments: ReadonlyArray<ContractChatAttachment>;
     readonly existingAttachments: ReadonlyArray<ContractChatAttachment>;
     readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
   } | null>(null);
@@ -4299,9 +4304,34 @@ export default function ChatView(props: ChatViewProps) {
       url: urlByAttachmentId.get(attachment.id) ?? null,
     }));
   }, [editingQueuedRun, queuedEditImageResources, queuedEditImageUrls]);
+  const canLeaveQueuedEdit = useCallback(() => {
+    if (queuedEditSaveInFlightRef.current) return false;
+    if (editingQueuedRun === null) return true;
+    const draft = useComposerDraftStore
+      .getState()
+      .getComposerDraft(queuedEditDraftTargetFor(editingQueuedRun.runId));
+    if (
+      hasUnsavedQueuedMessageEdit({
+        draft,
+        originalText: editingQueuedRun.originalText,
+        originalAttachments: editingQueuedRun.originalAttachments,
+        existingAttachments: editingQueuedRun.existingAttachments,
+      })
+    ) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "info",
+          title: "Save or cancel before switching messages",
+          description: "Your queued message has unsaved changes.",
+        }),
+      );
+      return false;
+    }
+    return true;
+  }, [editingQueuedRun, queuedEditDraftTargetFor]);
   const beginEditingQueuedRun = useCallback(
     (request: EditQueuedRunRequest) => {
-      if (!activeThread) return;
+      if (!activeThread || !canLeaveQueuedEdit()) return;
       if (editingQueuedRun !== null && editingQueuedRun.runId !== request.runId) {
         clearComposerDraftContent(queuedEditDraftTargetFor(editingQueuedRun.runId));
       }
@@ -4313,6 +4343,7 @@ export default function ChatView(props: ChatViewProps) {
         runId: request.runId,
         messageId: request.messageId,
         originalText: request.text,
+        originalAttachments: request.attachments,
         existingAttachments: request.attachments,
         context: serverProjection?.messages.find((message) => message.id === request.messageId)
           ?.context,
@@ -4322,6 +4353,7 @@ export default function ChatView(props: ChatViewProps) {
     [
       activeThread,
       clearComposerDraftContent,
+      canLeaveQueuedEdit,
       editingQueuedRun,
       queuedEditDraftTargetFor,
       serverProjection,
@@ -7418,12 +7450,18 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
-      if (command === "thread.editQueuedMessage") {
+      if (command === "thread.editQueuedMessage" || command === "thread.editNextQueuedMessage") {
         if (routeKind === "draft") return;
-        // Anywhere else in the draft the key keeps moving the caret, so a
-        // second press from the first paragraph reaches the queue.
-        if (!composerRef.current?.isCaretAtStart()) return;
-        if (!queuedRunsControlRef.current?.editLatest(event.repeat)) return;
+        // Enter the queue only at the start of the normal draft. While editing,
+        // both shortcuts navigate without requiring another caret movement.
+        if (editingQueuedRun === null && !composerRef.current?.isCaretAtStart()) return;
+        if (
+          !queuedRunsControlRef.current?.navigateEdit(
+            command === "thread.editQueuedMessage" ? "previous" : "next",
+            event.repeat,
+          )
+        )
+          return;
         event.preventDefault();
         event.stopPropagation();
         return;
@@ -7485,6 +7523,8 @@ export default function ChatView(props: ChatViewProps) {
     toggleThreadPanel,
     toggleTerminalVisibility,
     composerRef,
+    editingQueuedRun,
+    routeKind,
   ]);
 
   // Paste-to-focus: the resting composer blurs on a click into the timeline,
@@ -10669,6 +10709,9 @@ export default function ChatView(props: ChatViewProps) {
                                   editingRunId={editingQueuedRun?.runId ?? null}
                                   onEditQueuedRun={beginEditingQueuedRun}
                                   onCancelEdit={cancelEditingQueuedRun}
+                                  onReturnToDraft={() => {
+                                    if (canLeaveQueuedEdit()) cancelEditingQueuedRun();
+                                  }}
                                 />
                               ) : null
                             }
@@ -10766,6 +10809,7 @@ export default function ChatView(props: ChatViewProps) {
                             onFileOpen={openFileAttachment}
                             editingQueuedAttachments={composerEditingQueuedAttachments}
                             onRemoveEditingQueuedAttachment={removeEditingQueuedAttachment}
+                            onCancelEditingQueuedMessage={cancelEditingQueuedRun}
                           />
                         </div>
                       </ComposerSurface.Host>

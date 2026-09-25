@@ -25,6 +25,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { isImageAttachment, type ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
+import { queuedMessageNavigationTarget } from "./queuedMessageNavigation";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -45,7 +46,7 @@ const QUEUED_RUN_DRAG_TYPE = "application/x-t3code-queued-run";
 
 export interface QueuedRunsControlHandle {
   steerNext: (repeat: boolean) => boolean;
-  editLatest: (repeat: boolean) => boolean;
+  navigateEdit: (direction: "previous" | "next", repeat: boolean) => boolean;
 }
 
 export function QueuedRunsControl({
@@ -64,6 +65,7 @@ export function QueuedRunsControl({
   readonly editingRunId: RunId | null;
   readonly onEditQueuedRun: (request: EditQueuedRunRequest) => void;
   readonly onCancelEdit: () => void;
+  readonly onReturnToDraft?: () => void;
 }) {
   const projection = useThreadProjection(
     scopeThreadRef(props.environmentId, props.threadId),
@@ -214,20 +216,28 @@ export function QueuedRunsControl({
       if (!repeat && busyRunId === null) void steer(next.run.id);
       return true;
     },
-    // Declines while a queued message is already being edited so the key keeps
-    // moving the caret inside that draft.
-    editLatest(repeat) {
-      const latest = queued.at(-1);
-      if (!latest || props.editingRunId !== null || busyRunId !== null) return false;
-      if (!repeat) {
-        setExpanded(true);
-        props.onEditQueuedRun({
-          runId: latest.run.id,
-          messageId: latest.run.userMessageId,
-          text: latest.text,
-          attachments: latest.attachments,
-        });
+    navigateEdit(direction, repeat) {
+      const target = queuedMessageNavigationTarget(
+        queued.map(({ run }) => run.id),
+        props.editingRunId,
+        direction,
+      );
+      if (target === null) return false;
+      if (repeat || busyRunId !== null) return true;
+      if (target === "draft") {
+        props.onReturnToDraft?.();
+        return true;
       }
+      if (target === props.editingRunId) return true;
+      const entry = queued.find(({ run }) => run.id === target);
+      if (!entry) return false;
+      setExpanded(true);
+      props.onEditQueuedRun({
+        runId: entry.run.id,
+        messageId: entry.run.userMessageId,
+        text: entry.text,
+        attachments: entry.attachments,
+      });
       return true;
     },
   }));
@@ -401,7 +411,7 @@ export function QueuedRunsControl({
                       />
                     ) : null}
                     {item.thumbnails.length > 0 ? (
-                      <span className="flex shrink-0 items-center gap-0.5">
+                      <span className="flex shrink-0 -translate-y-px items-center gap-0.5">
                         {item.thumbnails.map((thumbnail) => (
                           <span
                             key={thumbnail.key}
