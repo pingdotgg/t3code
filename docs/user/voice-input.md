@@ -15,7 +15,7 @@ On web and desktop, press Mod+Shift+D to start dictation and Esc to discard it.
 The default **Auto** shortcut mode lets you tap to keep recording until the next
 press, or hold the keys and release to finish. In Voice settings, choose **Hold**
 to record only while the keys are down, or **Toggle** to start and finish with
-separate presses. You can change either shortcut in Keybindings settings.
+separate presses. You can change the dictation shortcut in Keybindings settings.
 
 On web and desktop, T3 Code transcribes every recording on the environment selected
 under Settings, then Voice. The primary environment is used by default, regardless

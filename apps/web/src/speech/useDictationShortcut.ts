@@ -56,6 +56,14 @@ export function useDictationShortcut(input: {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.isComposing || event.keyCode === 229) return;
       const { speech } = current.current;
+      if (event.key === "Escape" && (pressed.current !== null || speech.state.phase !== "idle")) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        pressed.current = null;
+        speech.cancel();
+        return;
+      }
+      if (event.defaultPrevented || isCommandPaletteOpen()) return;
       const { keybindings, terminalOpen, modelPickerOpen, disabled } = current.current;
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
@@ -64,17 +72,6 @@ export function useDictationShortcut(input: {
           modelPickerOpen,
         },
       });
-      if (
-        command === "composer.dictationCancel" &&
-        (pressed.current !== null || speech.state.phase !== "idle")
-      ) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        pressed.current = null;
-        speech.cancel();
-        return;
-      }
-      if (event.defaultPrevented || isCommandPaletteOpen()) return;
       if (command !== "composer.dictation") return;
       event.preventDefault();
       event.stopPropagation();
@@ -104,10 +101,7 @@ export function useDictationShortcut(input: {
     };
   }, [mode]);
 
-  return {
-    dictation: shortcutLabelForCommand(input.keybindings, "composer.dictation", {
-      context: { terminalFocus: false, terminalOpen: input.terminalOpen },
-    }),
-    cancel: shortcutLabelForCommand(input.keybindings, "composer.dictationCancel"),
-  };
+  return shortcutLabelForCommand(input.keybindings, "composer.dictation", {
+    context: { terminalFocus: false, terminalOpen: input.terminalOpen },
+  });
 }

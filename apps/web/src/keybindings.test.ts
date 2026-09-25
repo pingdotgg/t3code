@@ -783,10 +783,6 @@ describe("composer and pull request shortcuts", () => {
       }),
       "terminal.splitVertical",
     );
-    assert.strictEqual(
-      resolveShortcutCommand(event({ key: "Escape" }), DEFAULT_RESOLVED_KEYBINDINGS),
-      "composer.dictationCancel",
-    );
   });
   it("fills missing number shortcuts without replacing the saved URL binding", () => {
     const olderServerBindings = DEFAULT_RESOLVED_KEYBINDINGS.filter(

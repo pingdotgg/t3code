@@ -584,7 +584,7 @@ export function VoiceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("dictation-shortcut-mode")}
-          description="Choose how the dictation shortcut starts and finishes recording. Change the keys in Keybindings settings."
+          description="Choose how the dictation shortcut starts and finishes recording. Change the shortcut in Keybindings settings."
           control={
             <Select
               value={voiceShortcutMode}
