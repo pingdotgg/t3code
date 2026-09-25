@@ -4,6 +4,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Deferred from "effect/Deferred";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -53,6 +54,12 @@ const waitForResumeRelease = process.env.T3_ACP_WAIT_FOR_RESUME_RELEASE === "1";
 const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
 const floodStderr = process.env.T3_ACP_FLOOD_STDERR === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
+// Sends fs/write_text_file for this path, then fs/read_text_file, at the start of
+// each prompt whatever the client advertised, and appends each outcome as a JSON
+// line to T3_ACP_CLIENT_FS_PROBE_LOG_PATH.
+const clientFsProbePath = process.env.T3_ACP_CLIENT_FS_PROBE_PATH;
+const clientFsProbeLogPath = process.env.T3_ACP_CLIENT_FS_PROBE_LOG_PATH;
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const hangAfterPermission = process.env.T3_ACP_HANG_AFTER_PERMISSION === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
 const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL === "1";
@@ -866,6 +873,28 @@ const program = Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
       promptCount += 1;
+
+      if (clientFsProbePath !== undefined && clientFsProbeLogPath !== undefined) {
+        const probes = [
+          [
+            "fs/write_text_file",
+            { sessionId: requestedSessionId, path: clientFsProbePath, content: "probe" },
+          ],
+          ["fs/read_text_file", { sessionId: requestedSessionId, path: clientFsProbePath }],
+        ] as const;
+        for (const [method, params] of probes) {
+          const outcome = yield* agent.raw.request(method, params).pipe(
+            Effect.map((result) => ({ method, result })),
+            Effect.catch((error) =>
+              Effect.succeed({
+                method,
+                errorCode: error._tag === "AcpRequestError" ? error.code : error._tag,
+              }),
+            ),
+          );
+          NodeFS.appendFileSync(clientFsProbeLogPath, `${encodeJson(outcome)}\n`, "utf8");
+        }
+      }
 
       if (vibeRetryOutcome !== undefined) {
         if (vibeRetryOutcome === "recovered") {

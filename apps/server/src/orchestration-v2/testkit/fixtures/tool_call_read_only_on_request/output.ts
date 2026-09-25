@@ -4,9 +4,9 @@ import type { OrchestrationV2TurnItem, ProviderReplayTranscript } from "@t3tools
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
 import {
   assertBaseProjection,
+  assertNoAcpClientFileOrTerminalRequests,
   assertSemanticProjectionIntegrity,
   assertUserMessagesInclude,
-  assertNoAcpClientFileOrTerminalRequests,
   assertVisibleTurnItemsMirrorLocalTurnItems,
   projectionFor,
   TOOL_CALL_WRITE_PROMPT,

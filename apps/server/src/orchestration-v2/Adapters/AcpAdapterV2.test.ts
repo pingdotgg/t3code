@@ -2133,6 +2133,105 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
+  it.effect(
+    "answers fs requests method-not-found when the flavor does not opt into client fs",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocatorV2;
+        const path = yield* Path.Path;
+        const serverConfig = yield* ServerConfig;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-no-client-fs-",
+        });
+        const probePath = path.join(workspace, "planted.txt");
+        const probeLogPath = path.join(workspace, "fs-probe.jsonl");
+        const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+        const instanceId = ProviderInstanceId.make("acp-test-no-client-fs");
+        const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              protocolEvents,
+              environment: {
+                T3_ACP_CLIENT_FS_PROBE_PATH: probePath,
+                T3_ACP_CLIENT_FS_PROBE_LOG_PATH: probeLogPath,
+              },
+            }),
+          },
+          fileSystem,
+          idAllocator,
+          serverConfig,
+          selfInvocation,
+        });
+        const threadId = ThreadId.make("thread-acp-no-client-fs");
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-no-client-fs"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        );
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runDrain,
+        );
+
+        const initialize = Option.getOrThrow(
+          yield* Stream.fromQueue(protocolEvents).pipe(
+            Stream.filter(
+              (event) =>
+                event.direction === "outgoing" && rawProtocolMethod(event) === "initialize",
+            ),
+            Stream.runHead,
+          ),
+        );
+        assert.deepInclude(
+          (rawProtocolRequest(initialize)?.params as { clientCapabilities?: unknown })
+            ?.clientCapabilities,
+          { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+        );
+        const outcomes = (yield* fileSystem.readFileString(probeLogPath))
+          .trim()
+          .split("\n")
+          .map((line) => Option.getOrThrow(decodeUnknownJson(line)));
+        assert.deepEqual(outcomes, [
+          { method: "fs/write_text_file", errorCode: -32601 },
+          { method: "fs/read_text_file", errorCode: -32601 },
+        ]);
+        assert.isFalse(yield* fileSystem.exists(probePath));
+      }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
   it.effect("confines client-mediated writes under an explicit workspace-write sandbox", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

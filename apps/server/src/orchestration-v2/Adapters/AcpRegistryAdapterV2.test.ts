@@ -20,6 +20,7 @@ import type {
   AcpRegistryLiveConfiguration,
 } from "../../provider/acp/AcpRegistryProbe.ts";
 import { makeAcpRegistryCatalog } from "../../provider/acp/AcpRegistrySupport.ts";
+import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
 import { BUILT_IN_PROVIDER_ADAPTER_DRIVER_KINDS_V2 } from "../builtInProviderAdapterDrivers.ts";
@@ -122,6 +123,82 @@ describe("AcpRegistryAdapterV2", () => {
       customModels: [],
     });
   });
+
+  it.effect("offers client terminals to Devin only and client fs to no registry agent", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const advertisedCapabilities = Effect.fn("advertisedCapabilities")(function* (
+        agentId: string,
+      ) {
+        let clientCapabilities: unknown;
+        const instanceId = ProviderInstanceId.make(`acp-registry-capabilities-${agentId}`);
+        const adapter = makeAcpRegistryAdapterV2({
+          crypto: yield* Crypto.Crypto,
+          selfInvocation: yield* resolveSelfInvocation(),
+          instanceId,
+          settings: yield* decodeAcpRegistryAdapterSettings({ agentId, authMethodId: "test" }),
+          environment: {},
+          childProcessSpawner,
+          fileSystem,
+          idAllocator,
+          resolver: { resolve: () => Effect.die("the runtime is injected") },
+          serverConfig,
+          makeRuntime: (input) =>
+            Effect.gen(function* () {
+              clientCapabilities = input.clientCapabilities;
+              const { processEnvironment: _processEnvironment, ...runtimeInput } = input;
+              const context = yield* Layer.build(
+                AcpSessionRuntime.layer({
+                  ...runtimeInput,
+                  spawn: {
+                    command: process.execPath,
+                    args: [mockAgentPath],
+                    cwd: input.cwd,
+                    env: { T3_ACP_SESSION_LIFECYCLE: "1" },
+                  },
+                  authMethodId: "test",
+                }).pipe(
+                  Layer.provide(
+                    Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+                  ),
+                ),
+              );
+              return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+                Effect.provide(context),
+              );
+            }),
+        });
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        yield* adapter.openSession({
+          threadId: ThreadId.make(`thread-acp-registry-capabilities-${agentId}`),
+          providerSessionId: ProviderSessionId.make(`provider-session-capabilities-${agentId}`),
+          modelSelection: { instanceId, model: "default" },
+          runtimePolicy,
+        });
+        return clientCapabilities;
+      });
+
+      assert.deepInclude(yield* advertisedCapabilities("devin"), {
+        fs: { readTextFile: false, writeTextFile: false },
+        terminal: true,
+      });
+      assert.deepInclude(yield* advertisedCapabilities("gemini"), {
+        fs: { readTextFile: false, writeTextFile: false },
+        terminal: false,
+      });
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
 
   it.effect("opens a real ACP child process resolved from registry configuration", () =>
     Effect.gen(function* () {
