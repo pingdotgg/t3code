@@ -8,6 +8,9 @@ import { createCanvasFrameSink } from "@t3tools/client-runtime/device/frame";
 import { resolveDeviceShape } from "@t3tools/client-runtime/device/shape-profile";
 import { deviceKeyboard, deviceModel } from "./deviceModels";
 import { fitDeviceFrame } from "./deviceFrameLayout";
+import { DeviceDuoViewport } from "./DeviceDuoViewport";
+import { DeviceDuoControls } from "./DeviceDuoControls";
+import type { DuoControlState } from "@t3tools/client-runtime/device/duo-control";
 import { DevicePhoneViewport } from "./DevicePhoneViewport";
 import { DeviceLoadingView } from "./DeviceLoadingView";
 import { type DeviceAxElement, fetchDeviceAxTree } from "./deviceHubApi";
@@ -29,6 +32,7 @@ export interface DeviceViewControls {
   readonly showPhone: () => void;
   readonly showFlat: () => void;
   readonly resetView: () => void;
+  readonly foldingControls?: ReactNode;
   readonly keyboard: { readonly attached: boolean; readonly toggle: () => void } | null;
 }
 
@@ -61,6 +65,13 @@ export function DeviceStreamView(props: {
   readonly onHandle?: (handle: DeviceStreamHandle | null) => void;
   readonly onScreen?: (screen: DeviceScreenSize | null) => void;
 }) {
+  const [duoControl, setDuoControl] = useState<DuoControlState>({
+    pending: false,
+    requested: null,
+    error: null,
+  });
+  const model = deviceModel(props.platform, props.deviceName ?? "");
+  const isDuo = model?.id === "iphone-duo";
   const [presentation, setPresentation] = useState<"phone" | "flat">("phone");
   const [keyboardAttached, setKeyboardAttached] = useState(false);
   const [phoneUnavailable, setPhoneUnavailable] = useState(false);
@@ -105,6 +116,8 @@ export function DeviceStreamView(props: {
       { platform: props.platform, deviceId: props.deviceId, access },
       createCanvasFrameSink(canvas, () => frameListenerRef.current?.()),
       {
+        onDuoControl: setDuoControl,
+        onDuoUnavailable: onPhoneUnavailable,
         onStatus: (next, nextDetail) => {
           setStatus(next);
           setDetail(nextDetail);
@@ -148,6 +161,7 @@ export function DeviceStreamView(props: {
     access,
     cancelPhoneInput,
     onHandle,
+    onPhoneUnavailable,
     onScreen,
     props.deviceId,
     props.environmentId,
@@ -176,7 +190,8 @@ export function DeviceStreamView(props: {
     presentation === "phone" &&
     !phoneUnavailable &&
     !mjpegUrl &&
-    !props.axOverlay;
+    !props.axOverlay &&
+    (!isDuo || screen?.supportsHingeAngle === true);
   const controlsInset = props.renderControls && !showPhone ? CONTROLS_RAIL_WIDTH : 0;
 
   // The frame is the largest box at `aspect` that fits the container, so a
@@ -275,20 +290,25 @@ export function DeviceStreamView(props: {
     return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
   };
 
-  const phoneUnavailableReason = phoneUnavailable
-    ? "3D is unavailable on this browser"
-    : mjpegUrl
-      ? "3D requires the H.264 stream"
-      : props.axOverlay
-        ? "Turn off accessibility frames to use 3D"
-        : null;
+  const phoneUnavailableReason =
+    isDuo && !screen?.supportsHingeAngle
+      ? "iPhone Duo 3D requires Device Hub 0.11.0 or newer"
+      : phoneUnavailable
+        ? "3D is unavailable on this browser"
+        : mjpegUrl
+          ? "3D requires the H.264 stream"
+          : props.axOverlay
+            ? "Turn off accessibility frames to use 3D"
+            : null;
 
   const keyboardSource = deviceKeyboard(props.platform, props.deviceName ?? "");
   const resetView = useCallback(() => {
-    const orientation = keyboardAttached ? "landscape_right" : "portrait";
-    if (screen?.orientation !== orientation) clientRef.current?.setOrientation(orientation);
+    if (!isDuo) {
+      const orientation = keyboardAttached ? "landscape_right" : "portrait";
+      if (screen?.orientation !== orientation) clientRef.current?.setOrientation(orientation);
+    }
     resetViewRef.current?.();
-  }, [keyboardAttached, screen?.orientation]);
+  }, [isDuo, keyboardAttached, screen?.orientation]);
   const profile = resolveDeviceShape({
     platform: props.platform,
     name: props.deviceName ?? "",
@@ -309,6 +329,18 @@ export function DeviceStreamView(props: {
             phone: !!showPhone,
             streaming: status === "streaming",
             phoneUnavailableReason,
+            foldingControls:
+              showPhone && isDuo && screen?.supportsHingeAngle ? (
+                <DeviceDuoControls
+                  screen={screen}
+                  state={duoControl}
+                  enabled={inputState.connected}
+                  onCommand={(command) => {
+                    cancelPhoneInput();
+                    clientRef.current?.controlDuo(command);
+                  }}
+                />
+              ) : null,
             keyboard:
               showPhone && keyboardSource
                 ? {
@@ -413,7 +445,22 @@ export function DeviceStreamView(props: {
             </div>
           ) : null}
         </div>
-        {showPhone ? (
+        {showPhone && isDuo && model ? (
+          <DeviceDuoViewport
+            onFrameListener={onFrameListener}
+            model={model}
+            controlError={duoControl.error}
+            hingePreview={
+              duoControl.requested?.control === "angle" ? duoControl.requested.value : null
+            }
+            source={canvasRef}
+            client={clientRef}
+            onInputCancel={onInputCancel}
+            onResetReady={onResetReady}
+            screen={screen}
+            onUnavailable={onPhoneUnavailable}
+          />
+        ) : showPhone ? (
           <DevicePhoneViewport
             profile={profile}
             model={deviceModel(props.platform, props.deviceName ?? "")}
@@ -433,16 +480,8 @@ export function DeviceStreamView(props: {
               variant={showPhone ? "secondary" : "ghost"}
               size="xs"
               aria-pressed={!!showPhone}
-              disabled={phoneUnavailable || !!mjpegUrl || !!props.axOverlay}
-              title={
-                phoneUnavailable
-                  ? "3D is unavailable on this browser"
-                  : mjpegUrl
-                    ? "3D requires the H.264 stream"
-                    : props.axOverlay
-                      ? "Turn off accessibility frames to use 3D"
-                      : "Show 3D phone"
-              }
+              disabled={!!phoneUnavailableReason}
+              title={phoneUnavailableReason ?? "Show 3D phone"}
               onClick={() => setPresentation("phone")}
             >
               3D

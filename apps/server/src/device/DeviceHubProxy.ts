@@ -42,6 +42,7 @@ const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
   /^\/vendor\/serve-sim\/api\/screenshot$/,
   /^\/vendor\/serve-sim\/api\/event-log(\/events)?$/,
   /^\/vendor\/serve-sim\/helper\/[^/]+\/(stream\.mjpeg|stream\.avcc|config|health|ax|foreground)$/,
+  /^\/vendor\/serve-sim\/helper\/[^/]+\/panel\/(1|3)\/stream\.avcc$/,
   /^\/vendor\/serve-sim\/appstate$/,
   /^\/vendor\/serve-emu\/api\/(devices|screenshot|stream-mode|stream-settings|accessibility)$/,
   /^\/vendor\/serve-emu\/health$/,

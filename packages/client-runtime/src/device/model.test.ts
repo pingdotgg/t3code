@@ -24,6 +24,7 @@ function fixture() {
 it("matches only exact supported hardware, including iPad size and generation", () => {
   expect(resolveDeviceModelId("ios", "iPhone 18 Pro")).toBe(pro.id);
   expect(resolveDeviceModelId("ios", "iPhone 18 Pro Max")).toBe(max.id);
+  expect(resolveDeviceModelId("ios", "iPhone Duo")).toBe("iphone-duo");
   expect(resolveDeviceModelId("ios", "iPad Pro 13-inch (M5)")).toBe("ipad-pro-13-m5");
   for (const name of [
     "iPhone 17 Pro",
