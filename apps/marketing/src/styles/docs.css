@@ -13,7 +13,8 @@
   --sl-color-gray-1: #e4e4e7;
   --sl-color-gray-2: #d4d4d8;
   --sl-color-gray-3: #a1a1aa;
-  --sl-color-gray-4: #71717a;
+  /* Lighter than zinc-500 so muted text clears 4.5:1 on gray-6 and black. */
+  --sl-color-gray-4: #80808a;
   --sl-color-gray-5: #3f3f46;
   --sl-color-gray-6: #18181b;
   --sl-color-black: #09090b;
