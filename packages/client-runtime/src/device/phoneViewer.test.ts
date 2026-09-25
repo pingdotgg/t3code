@@ -11,6 +11,7 @@ const gpu = vi.hoisted(() => ({
       scene: Scene;
       phone: Object3D | undefined;
       rotation: Quaternion | undefined;
+      displayAngle: number | undefined;
       yaw: number | undefined;
       cameraZ: number;
     }[];
@@ -50,6 +51,7 @@ vi.mock("three", async () => {
           scene,
           phone,
           rotation: phone?.quaternion.clone(),
+          displayAngle: phone?.children[0]?.rotation.z,
           yaw: phone?.rotation.y,
           cameraZ: camera.position.z,
         });
@@ -81,7 +83,12 @@ vi.mock("./modelScene.ts", async () => {
 import { BoxGeometry, Group, Mesh, MeshBasicMaterial, PlaneGeometry, Quaternion } from "three";
 import { disposeDeviceModel } from "./modelScene.ts";
 import { createPhoneViewer } from "./phoneViewer.ts";
-import { IOS_TABLET_SHAPE } from "./shapeProfile.ts";
+import {
+  ANDROID_PHONE_SHAPE,
+  IOS_TABLET_SHAPE,
+  resolveDeviceShape,
+  type DeviceShapeProfile,
+} from "./shapeProfile.ts";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -90,7 +97,7 @@ afterEach(() => {
   models.pending.length = 0;
 });
 
-function fixture() {
+function fixture(profile?: DeviceShapeProfile) {
   const pending = new Map<number, FrameRequestCallback>();
   let id = 0;
   let now = 0;
@@ -104,7 +111,7 @@ function fixture() {
   const source = { width: 1206, height: 2622 } as HTMLCanvasElement;
   const onUnavailable = vi.fn();
   const onFramingAspect = vi.fn();
-  const viewer = createPhoneViewer({ canvas, source, onUnavailable, onFramingAspect });
+  const viewer = createPhoneViewer({ canvas, source, onUnavailable, onFramingAspect, profile });
   const draw = (time = now) => {
     now = time;
     const callbacks = [...pending.values()];
@@ -191,6 +198,37 @@ it("changes device shape without replacing the renderer, decoded source or pose"
   viewer.frameUpdated();
   draw();
   expect(state.frames.at(-1)?.phone).toBe(tablet);
+  viewer.dispose();
+});
+
+it("keeps the Android viewer while the resized framebuffer turns between fold postures", () => {
+  const openProfile = resolveDeviceShape({ platform: "android", portraitAspect: 0.96 });
+  const { viewer, draw, source, state } = fixture(openProfile);
+  const scene = state.frames.at(-1)!.scene;
+  source.width = 2076;
+  source.height = 2152;
+  viewer.setScreen({ width: 2076, height: 2152, orientation: "landscape_left" });
+  viewer.frameUpdated();
+  draw(0);
+  expect(state.frames.at(-1)!.displayAngle).toBeCloseTo(0);
+  draw(225);
+  expect(state.frames.at(-1)!.displayAngle).toBeCloseTo(-Math.PI / 4);
+  draw(450);
+  expect(state.frames.at(-1)!.displayAngle).toBeCloseTo(-Math.PI / 2);
+  expect(state.frames.at(-1)!.scene).toBe(scene);
+  expect(gpu.instances).toHaveLength(1);
+
+  source.width = 1080;
+  source.height = 2424;
+  viewer.setScreen({ width: 1080, height: 2424, orientation: "portrait" }, ANDROID_PHONE_SHAPE);
+  viewer.frameUpdated();
+  draw(450);
+  expect(state.frames.at(-1)!.displayAngle).toBeCloseTo(-Math.PI / 2);
+  draw(675);
+  expect(state.frames.at(-1)!.displayAngle).toBeCloseTo(-Math.PI / 4);
+  draw(900);
+  expect(state.frames.at(-1)!.displayAngle).toBeCloseTo(0);
+  expect(state.frames.at(-1)!.scene).toBe(scene);
   viewer.dispose();
 });
 

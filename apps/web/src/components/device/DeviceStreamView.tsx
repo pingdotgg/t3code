@@ -184,9 +184,16 @@ export function DeviceStreamView(props: {
     return w / h;
   }, [props.platform, screen]);
 
+  // Android restarts its encoder when a fold changes the framebuffer size.
+  // Keep the last decoded frame and viewer mounted while the next keyframe arrives.
+  const retainingAndroidFrame =
+    props.platform === "android" &&
+    status === "connecting" &&
+    inputState.connected &&
+    screen !== null;
   const showPhone =
     props.allowPhoneView &&
-    status === "streaming" &&
+    (status === "streaming" || retainingAndroidFrame) &&
     props.visible &&
     presentation === "phone" &&
     !phoneUnavailable &&
@@ -514,7 +521,7 @@ export function DeviceStreamView(props: {
             </span>
           </div>
         ) : null}
-        {status !== "streaming" ? (
+        {status !== "streaming" && !(retainingAndroidFrame && showPhone) ? (
           <div className="absolute inset-0">
             <DeviceLoadingView
               name={props.deviceName ?? "Device"}

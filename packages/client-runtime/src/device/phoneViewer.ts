@@ -43,6 +43,8 @@ export interface PhoneViewer {
   readonly dispose: () => void;
 }
 
+const ANDROID_ORIENTATION_TURN_MS = 450;
+
 /** Owns only presentation resources. The caller retains the decoded canvas and the stream connection. */
 export function createPhoneViewer(options: {
   readonly canvas: HTMLCanvasElement;
@@ -87,6 +89,8 @@ export function createPhoneViewer(options: {
   let screen: DeviceScreenSize | null = null;
   let layout = phoneDisplayLayout(screen, options.source.width, options.source.height);
   let profile = options.profile ?? IOS_PHONE_SHAPE;
+  let orientationAngle = layout.rotation;
+  let orientationTurn: { from: number; to: number; startedAt: number } | null = null;
   let imported: Awaited<ReturnType<typeof loadDeviceModel>> | null = null;
   let modelSource = options.model ?? null;
   let accessory: Awaited<ReturnType<typeof loadDeviceModel>> | null = null;
@@ -116,7 +120,7 @@ export function createPhoneViewer(options: {
       new Vector3(phone.width / 2, phone.height / 2, 0),
     );
     if (imported && accessoryBounds) bounds.union(accessoryBounds);
-    bounds.applyMatrix4(new Matrix4().makeRotationZ(layout.rotation));
+    bounds.applyMatrix4(new Matrix4().makeRotationZ(orientationAngle));
     const size = bounds.getSize(new Vector3());
     const aspect = size.x / size.y;
     if (aspect !== framingAspect) {
@@ -140,7 +144,7 @@ export function createPhoneViewer(options: {
   };
   const applyPose = () => {
     phone.root.quaternion.copy(motion.rotation);
-    phone.orientation.rotation.z = layout.rotation;
+    phone.orientation.rotation.z = orientationAngle;
   };
   const scheduler = createRenderScheduler(() => {
     if (disposed || !viewport.width || !viewport.height) return;
@@ -160,10 +164,22 @@ export function createPhoneViewer(options: {
         applyPose();
         fit(reducedMotion());
       }
+      if (orientationTurn) {
+        const progress = Math.min(
+          1,
+          (now - orientationTurn.startedAt) / ANDROID_ORIENTATION_TURN_MS,
+        );
+        const eased = progress * progress * (3 - 2 * progress);
+        orientationAngle =
+          orientationTurn.from + (orientationTurn.to - orientationTurn.from) * eased;
+        if (progress === 1) orientationTurn = null;
+        applyPose();
+        fit(reducedMotion());
+      }
       framing.advance(now, reducedMotion());
       applyCamera();
       renderer.render(scene, camera);
-      if (motion.needsFrame() || framing.needsFrame()) scheduler.invalidate();
+      if (motion.needsFrame() || framing.needsFrame() || orientationTurn) scheduler.invalidate();
     } catch {
       options.onUnavailable();
     }
@@ -196,10 +212,26 @@ export function createPhoneViewer(options: {
       } else {
         phone.setDisplay(texture, next);
       }
+      if (next.rotation !== layout.rotation) {
+        if (nextProfile.id.startsWith("android") && !reducedMotion()) {
+          const difference = Math.atan2(
+            Math.sin(next.rotation - orientationAngle),
+            Math.cos(next.rotation - orientationAngle),
+          );
+          orientationTurn = {
+            from: orientationAngle,
+            to: orientationAngle + difference,
+            startedAt: performance.now(),
+          };
+        } else {
+          orientationTurn = null;
+          orientationAngle = next.rotation;
+        }
+      }
       layout = next;
       profile = nextProfile;
       applyPose();
-      fit(true);
+      fit(!orientationTurn);
     }
     applyPose();
   };
