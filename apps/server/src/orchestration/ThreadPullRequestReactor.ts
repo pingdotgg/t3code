@@ -131,8 +131,18 @@ export const make = Effect.gen(function* () {
       (group) =>
         Effect.gen(function* () {
           const first = group[0]!;
-          const project = projects.get(first.projectId);
-          if (project === undefined) return finishBackfill(group);
+          const snapshotProject = projects.get(first.projectId);
+          if (snapshotProject === undefined) return finishBackfill(group);
+          // A finished turn may have added the remote this PR lives on.
+          const project = request.refresh
+            ? {
+                ...snapshotProject,
+                repositoryIdentity: yield* repositoryIdentities.resolve(
+                  snapshotProject.workspaceRoot,
+                  { refresh: true },
+                ),
+              }
+            : snapshotProject;
           const repository = sourceControlRepositorySelector(project.repositoryIdentity);
           if (first.branch !== null && repository === null) return finishBackfill(group);
           const worktreeExists =

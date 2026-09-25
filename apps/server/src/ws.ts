@@ -1871,6 +1871,9 @@ const makeWsRpcLayer = (
         vcsStatusBroadcaster
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
+      // Publish and init add a remote or a repository the cached identity has not seen.
+      const refreshRepositoryIdentity = (cwd: string) =>
+        repositoryIdentityResolver.resolve(cwd, { refresh: true }).pipe(Effect.asVoid);
 
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
@@ -3038,9 +3041,10 @@ const makeWsRpcLayer = (
         [WS_METHODS.sourceControlPublishRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlPublishRepository,
-            sourceControlRepositories
-              .publishRepository(input)
-              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            sourceControlRepositories.publishRepository(input).pipe(
+              Effect.tap(() => refreshRepositoryIdentity(input.cwd)),
+              Effect.tap(() => refreshGitStatus(input.cwd)),
+            ),
             {
               "rpc.aggregate": "source-control",
             },
@@ -3396,9 +3400,10 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsInit]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsInit,
-            vcsProvisioning
-              .initRepository(input)
-              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            vcsProvisioning.initRepository(input).pipe(
+              Effect.tap(() => refreshRepositoryIdentity(input.cwd)),
+              Effect.tap(() => refreshGitStatus(input.cwd)),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.reviewGetDiffPreview]: (input) =>

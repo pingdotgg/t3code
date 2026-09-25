@@ -170,6 +170,41 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(resolverLayer));
   });
 
+  it.effect("retries a failed remote lookup instead of caching no repository", () => {
+    let remoteAttempts = 0;
+    const processRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+      run: (input) =>
+        Effect.sync(() => {
+          const rootLookup = input.args.includes("rev-parse");
+          const failed = !rootLookup && remoteAttempts++ === 0;
+          return {
+            stdout: rootLookup
+              ? "/repo\n"
+              : failed
+                ? ""
+                : "origin\tgit@github.com:T3Tools/t3code.git (fetch)\n",
+            stderr: failed ? "temporary Git failure" : "",
+            code: ChildProcessSpawner.ExitCode(failed ? 1 : 0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          };
+        }),
+    });
+    const resolverLayer = Layer.effect(
+      RepositoryIdentityResolver.RepositoryIdentityResolver,
+      RepositoryIdentityResolver.make(),
+    ).pipe(Layer.provide(processRunner));
+
+    return Effect.gen(function* () {
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      expect(yield* resolver.resolve("/repo")).toBeNull();
+      expect((yield* resolver.resolve("/repo"))?.canonicalKey).toBe("github.com/t3tools/t3code");
+    }).pipe(Effect.provide(resolverLayer));
+  });
+
   it.effect("caches non-git roots until refreshed", () => {
     const calls: Array<ReadonlyArray<string>> = [];
     const processRunner = Layer.succeed(ProcessRunner.ProcessRunner, {

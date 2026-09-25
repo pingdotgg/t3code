@@ -132,7 +132,11 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   "RepositoryIdentityResolver.resolveFromCacheKey",
 )(function* (
   cacheKey: string,
-): Effect.fn.Return<RepositoryIdentity | null, never, ProcessRunner.ProcessRunner> {
+): Effect.fn.Return<
+  RepositoryIdentity | null,
+  Cause.NoSuchElementError,
+  ProcessRunner.ProcessRunner
+> {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const remoteResult = yield* processRunner
     .run({
@@ -142,7 +146,8 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     })
     .pipe(Effect.option);
   if (remoteResult._tag === "None" || remoteResult.value.code !== 0) {
-    return null;
+    // A repository without remotes exits 0 with no output; failures retry.
+    return yield* new Cause.NoSuchElementError("Git remote lookup failed");
   }
 
   const remote = pickPrimaryRemote(parseRemoteFetchUrls(remoteResult.value.stdout));
@@ -177,7 +182,11 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     },
   );
 
-  const repositoryIdentityCache = yield* Cache.makeWith<string, RepositoryIdentity | null>(
+  const repositoryIdentityCache = yield* Cache.makeWith<
+    string,
+    RepositoryIdentity | null,
+    Cause.NoSuchElementError
+  >(
     (cacheKey) =>
       resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
@@ -207,7 +216,9 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     );
     if (cacheKey === null) return null;
     if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
-    return yield* Cache.get(repositoryIdentityCache, cacheKey);
+    return yield* Cache.get(repositoryIdentityCache, cacheKey).pipe(
+      Effect.orElseSucceed(() => null),
+    );
   });
 
   return RepositoryIdentityResolver.of({ resolve });
