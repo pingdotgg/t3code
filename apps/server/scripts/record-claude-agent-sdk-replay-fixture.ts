@@ -68,6 +68,7 @@ import {
   CLAUDE_BACKGROUND_SUBAGENT_LIFECYCLE_STOP_PROMPT,
 } from "../src/orchestration-v2/testkit/fixtures/claude_background_subagent_lifecycle/input.ts";
 import { CLAUDE_BACKGROUND_TASK_INTERRUPT_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_background_task_interrupt/input.ts";
+import { CLAUDE_BACKGROUND_WAKE_BEFORE_QUEUED_PROMPT_LAUNCH_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_background_wake_before_queued_prompt/input.ts";
 import {
   CLAUDE_BACKGROUND_TASK_WAKE_FOLLOW_UP_PROMPT,
   CLAUDE_BACKGROUND_TASK_WAKE_PROMPT,
@@ -202,6 +203,23 @@ const CLAUDE_RECORDINGS = {
     queryMode: "streaming",
     enableTools: true,
     backgroundWakeCounts: [1, 0, 1, 0],
+  },
+  // Each prompt is offered as soon as its turn and the wakes counted here
+  // settle, so a wake queued during a turn (Agent B's "stopped" notice) is
+  // still pending in the CLI when the next prompt arrives, and runs first.
+  claude_background_wake_before_queued_prompt: {
+    prompts: [
+      CLAUDE_BACKGROUND_WAKE_BEFORE_QUEUED_PROMPT_LAUNCH_PROMPT,
+      CLAUDE_BACKGROUND_SUBAGENT_LIFECYCLE_STOP_PROMPT,
+      CLAUDE_BACKGROUND_SUBAGENT_LIFECYCLE_RESUME_PROMPT,
+      CLAUDE_BACKGROUND_SUBAGENT_LIFECYCLE_FINAL_PROMPT,
+    ],
+    defaultTranscriptFile:
+      "fixtures/claude_background_wake_before_queued_prompt/claude_transcript.ndjson",
+    queryMode: "streaming",
+    enableTools: true,
+    backgroundWakeCounts: [1, 0, 1, 0],
+    offerNextPromptImmediately: true,
   },
   claude_background_task_interrupt: {
     prompts: [CLAUDE_BACKGROUND_TASK_INTERRUPT_PROMPT],
@@ -518,6 +536,9 @@ try {
       : {}),
     ...("backgroundWakeCounts" in recording
       ? { backgroundWakeCounts: recording.backgroundWakeCounts }
+      : {}),
+    ...("offerNextPromptImmediately" in recording
+      ? { offerNextPromptImmediately: recording.offerNextPromptImmediately }
       : {}),
   });
   await assertWorkspacePathsAbsent("after");

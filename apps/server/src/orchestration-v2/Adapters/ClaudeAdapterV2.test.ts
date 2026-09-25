@@ -73,6 +73,7 @@ import {
   ClaudeAgentSdkQueryRunner,
   ClaudeAgentSdkQueryRunnerError,
   claudeEffectiveQueryPolicyKey,
+  claudePromptUuid,
   claudeProviderTurnTokenUsage,
   claudeMcpQueryOverrides,
   claudeQueryMessages,
@@ -3473,6 +3474,82 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.isFalse(yield* hasPendingBackgroundWork);
         }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
       ),
+  );
+
+  it.effect("releases output held for a prompt echo when the stream ends", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        });
+        const now = yield* DateTime.now;
+        const firstAttempt = RunAttemptId.make("attempt-claude-echo-1");
+        const secondAttempt = RunAttemptId.make("attempt-claude-echo-2");
+        const stamp = (frame: SDKMessage, attemptId: RunAttemptId) =>
+          claudeSdkFrame({ ...frame, user_message_uuid: claudePromptUuid(attemptId) });
+        const assistantTexts = () =>
+          harness.events.flatMap((event) =>
+            event.type === "message.updated" && event.message.role === "assistant"
+              ? [event.message.text]
+              : [],
+          );
+
+        // The first turn echoes its prompt uuid on its first frame, so this
+        // CLI process is known to echo early.
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: firstAttempt,
+            text: "First.",
+            attachments: [],
+          }),
+        );
+        assert.equal(harness.offeredMessages[0]?.uuid, claudePromptUuid(firstAttempt));
+        yield* Queue.offer(
+          harness.sdkMessages,
+          stamp(
+            makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000701", text: "One." }),
+            firstAttempt,
+          ),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          stamp(
+            makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000702", result: "One." }),
+            firstAttempt,
+          ),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+
+        // The second turn's first frame carries no echo, so it is held; the
+        // stream then dies before any result.
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: secondAttempt,
+            text: "Second.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000703", text: "Two." }),
+        );
+        let heldYields = 0;
+        yield* awaitUntil(() => heldYields++ >= 50, "unechoed frame to be held");
+        assert.deepEqual(assistantTexts(), ["One."]);
+
+        yield* Queue.shutdown(harness.sdkMessages);
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "second turn terminal");
+        assert.deepEqual(assistantTexts(), ["One.", "Two."]);
+        assert.equal(harness.terminalEvents()[1]?.status, "failed");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
   );
 
   it.effect("buffers wake output and requests a single continuation run", () =>

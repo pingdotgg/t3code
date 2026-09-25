@@ -35,6 +35,7 @@ import {
   ClaudeAdapterV2Driver,
   ClaudeAgentSdkQueryRunner,
   ClaudeAgentSdkQueryRunnerError,
+  claudePromptUuid,
   makeClaudeUserMessage,
   makeClaudeQueryOptions,
   type ClaudeAgentSdkSessionForkInput,
@@ -310,7 +311,10 @@ function isClaudeSdkReplayMessage(frame: unknown): frame is SDKMessage {
     type === "result" ||
     type === "system" ||
     type === "stream_event" ||
-    type === "rate_limit_event"
+    type === "rate_limit_event" ||
+    // Undeclared in the SDK types: queued/started/completed for each prompt
+    // that carries a uuid.
+    type === "command_lifecycle"
   );
 }
 
@@ -566,7 +570,7 @@ function makeReplayQueryRunner(
           continue;
         }
         advance();
-        yield sdkMessageFromReplayFrame(entry.frame);
+        yield sdkMessageFromReplayFrame(withReplayedPromptUuids(entry.frame));
         continue;
       }
 
@@ -629,6 +633,54 @@ function makeReplayQueryRunner(
     },
   });
 
+  // Prompt uuids are derived from ids that differ between the recording and
+  // a replay run, so a matched prompt offer maps the recorded uuid to the
+  // replayed one, and inbound frames echoing it are rewritten to match.
+  const promptUuidReplacements = new Map<string, string>();
+  const replayedPromptUuid = (value: string): string => promptUuidReplacements.get(value) ?? value;
+  const withReplayedPromptUuids = (frame: unknown): unknown => {
+    if (promptUuidReplacements.size === 0 || typeof frame !== "object" || frame === null) {
+      return frame;
+    }
+    const uuid: unknown = Reflect.get(frame, "user_message_uuid");
+    const uuids: unknown = Reflect.get(frame, "user_message_uuids");
+    if (typeof uuid !== "string" && !Array.isArray(uuids)) {
+      return frame;
+    }
+    return {
+      ...frame,
+      ...(typeof uuid === "string" ? { user_message_uuid: replayedPromptUuid(uuid) } : {}),
+      ...(Array.isArray(uuids)
+        ? {
+            user_message_uuids: uuids.map((entry) =>
+              typeof entry === "string" ? replayedPromptUuid(entry) : entry,
+            ),
+          }
+        : {}),
+    };
+  };
+  const promptOfferUuid = (frame: unknown): string | undefined => {
+    if (
+      typeof frame !== "object" ||
+      frame === null ||
+      Reflect.get(frame, "type") !== "prompt.offer"
+    ) {
+      return undefined;
+    }
+    const message: unknown = Reflect.get(frame, "message");
+    const uuid: unknown =
+      typeof message === "object" && message !== null ? Reflect.get(message, "uuid") : undefined;
+    return typeof uuid === "string" ? uuid : undefined;
+  };
+  const withoutPromptOfferUuid = (frame: unknown): unknown => {
+    if (promptOfferUuid(frame) === undefined || typeof frame !== "object" || frame === null) {
+      return frame;
+    }
+    const message = Reflect.get(frame, "message") as Record<string, unknown>;
+    const { uuid: _uuid, ...rest } = message;
+    return { ...frame, message: rest };
+  };
+
   const assertNextOutboundFrame = (actual: ClaudeOutboundFrame) => {
     if (failure !== null) {
       throw failure;
@@ -655,7 +707,13 @@ function makeReplayQueryRunner(
     }
 
     const expected = entry.frame;
-    if (!sameFrame(expected, actual)) {
+    const expectedUuid = promptOfferUuid(expected);
+    const actualUuid = promptOfferUuid(actual);
+    // Recordings made before prompts carried a uuid simply lack one.
+    if (
+      !sameFrame(withoutPromptOfferUuid(expected), withoutPromptOfferUuid(actual)) ||
+      (expectedUuid !== undefined && actualUuid === undefined)
+    ) {
       fail(
         new ClaudeReplayFrameMismatchError({
           scenario: transcript.scenario,
@@ -665,6 +723,9 @@ function makeReplayQueryRunner(
           actual,
         }),
       );
+    }
+    if (expectedUuid !== undefined && actualUuid !== undefined) {
+      promptUuidReplacements.set(expectedUuid, actualUuid);
     }
 
     advance();
@@ -1378,6 +1439,9 @@ async function recordClaudeStreamingQuery(input: {
   // Setting it also records any further wake turn that starts within a short
   // quiet window, so the next prompt is not offered while one is queued.
   readonly backgroundWakeCounts?: ReadonlyArray<number>;
+  // Skip that quiet window: offer the next prompt while a wake may still be
+  // queued in the CLI, which then runs the wake turn first.
+  readonly offerNextPromptImmediately?: boolean;
 }): Promise<void> {
   const promptQueue = new RecordingPromptQueue();
   const canUseTool: CanUseTool | undefined =
@@ -1469,7 +1533,11 @@ async function recordClaudeStreamingQuery(input: {
   };
   try {
     for (const [index, prompt] of input.prompts.entries()) {
-      const message = makeClaudeUserMessage({ text: prompt });
+      // Like the adapter, give each prompt a uuid Claude echoes on its turn.
+      const message = makeClaudeUserMessage({
+        text: prompt,
+        uuid: claudePromptUuid(`${input.sessionId}:prompt:${index + 1}`),
+      });
       input.entries.push({
         type: "expect_outbound",
         label: `prompt.offer:${index + 1}`,
@@ -1489,7 +1557,7 @@ async function recordClaudeStreamingQuery(input: {
           wakes += 1;
         }
       }
-      if (input.backgroundWakeCounts !== undefined) {
+      if (input.backgroundWakeCounts !== undefined && input.offerNextPromptImmediately !== true) {
         // Every turn opens with system:init; frames from still-running
         // subagents are left for the next prompt's recording.
         while (isSystemInitFrame(await iterator.peekWithin(CLAUDE_RECORDING_WAKE_QUIET_MS))) {
@@ -2468,6 +2536,7 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
   readonly enablePermissionCallback?: boolean;
   readonly permissionDecision?: ProviderApprovalDecision;
   readonly backgroundWakeCounts?: ReadonlyArray<number>;
+  readonly offerNextPromptImmediately?: boolean;
   readonly interruptAfter?: "prompt_offer" | "tool_use";
   readonly interruptAfterToolUses?: number;
 }): Promise<ClaudeAgentSdkReplayTranscript> {
@@ -2503,6 +2572,9 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
       ...(input.backgroundWakeCounts === undefined
         ? {}
         : { backgroundWakeCounts: input.backgroundWakeCounts }),
+      ...(input.offerNextPromptImmediately === undefined
+        ? {}
+        : { offerNextPromptImmediately: input.offerNextPromptImmediately }),
       ...(input.permissionDecision === undefined
         ? {}
         : { permissionDecision: input.permissionDecision }),
@@ -2676,6 +2748,7 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
       ...(input.backgroundWakeCounts === undefined
         ? {}
         : { backgroundWakeCounts: [...input.backgroundWakeCounts] }),
+      ...(input.offerNextPromptImmediately === true ? { offerNextPromptImmediately: true } : {}),
       ...(input.interruptAfter === undefined ? {} : { interruptAfter: input.interruptAfter }),
       ...(input.interruptAfterToolUses === undefined
         ? {}
