@@ -84,7 +84,18 @@ rl.on("line", (line) => {
     return;
   }
   if (method === "account/read") {
-    write({ id, result: { account: { type: "apiKey" }, requiresOpenaiAuth: false } });
+    write({
+      id,
+      result: { account: script.account ?? { type: "apiKey" }, requiresOpenaiAuth: false },
+    });
+    return;
+  }
+  if (method === "account/rateLimits/read" && script.failRateLimitsRead) {
+    write({ id, error: { code: -32000, message: "usage unavailable" } });
+    return;
+  }
+  if (method === "account/rateLimitResetCredit/consume" && script.resetCreditOutcome) {
+    write({ id, result: { outcome: script.resetCreditOutcome } });
     return;
   }
   if (method === "skills/list" || method === "model/list") {
@@ -93,6 +104,14 @@ rl.on("line", (line) => {
   }
   if (method === "thread/start") {
     write({ id, result: fixture.responses.threadStart });
+    return;
+  }
+  if (method === "thread/inject_items" && script.recordRequests) {
+    NodeFS.appendFileSync(
+      `${process.env.T3_CODEX_COLLAB_SCRIPT}.requests`,
+      `${JSON.stringify({ method, params: message.params })}\n`,
+    );
+    write({ id, result: {} });
     return;
   }
   if (method === "thread/resume") {

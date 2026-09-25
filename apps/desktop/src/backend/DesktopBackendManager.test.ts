@@ -162,7 +162,7 @@ function makeTestInstance(input: MakeInstanceInput) {
       forInstance: () => Effect.succeed(stubLog),
     } satisfies DesktopObservability.DesktopBackendOutputLogFactory["Service"]),
     Layer.succeed(DesktopTelemetryPublisher.DesktopTelemetryPublisher, {
-      latest: Effect.succeed(Option.none()),
+      latest: Effect.succeedNone,
       changes: Stream.empty,
       encoded: input.desktopTelemetryStream ?? Stream.empty,
       handleControlForSource: () => Effect.void,
@@ -1545,7 +1545,7 @@ describe("DesktopBackendManager", () => {
 
         const mockPool = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
           list: Effect.succeed([instance1, instance2]),
-          get: () => Effect.succeed(Option.none()),
+          get: () => Effect.succeedNone,
           primary: Effect.die(new Error("primary not implemented")),
           register: () => Effect.die(new Error("register not implemented")),
           unregister: () => Effect.die(new Error("unregister not implemented")),

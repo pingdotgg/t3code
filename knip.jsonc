@@ -13,8 +13,9 @@
       "vitest": { "entry": [".github/**/*.test.cjs"] },
     },
     "scripts": {
-      // Knip loads its preprocessor through a CLI option; native verification runs directly.
-      "entry": ["knip-schemas.ts", "mobile-native-client.ts"],
+      // Knip loads its preprocessor through a CLI option; native verification and
+      // worktree setup (from t3.json) run directly.
+      "entry": ["knip-schemas.ts", "mobile-native-client.ts", "setup-worktree.ts"],
     },
     "apps/server": {
       // Vite+ pack entries and the launcher used by installed background services.
@@ -38,6 +39,8 @@
         "src/snapShot/GlobalShiftShortcutWorker.ts!",
         "src/snapShot/RegionSnapShotWorker.ts!",
         "src/snapShot/SnapShotAccessibilityWorker.ts!",
+        "src/boot.ts!",
+        "src/compileCache.ts!",
         "src/main.ts!",
         "src/preload.ts!",
         "src/preview-pick-preload.ts!",
@@ -50,7 +53,7 @@
       "ignoreDependencies": ["playwright-core", "electron-builder"],
     },
     "apps/web": {
-      // Worktree setup invokes this directly from t3.json.
+      // Worktree setup (scripts/setup-worktree.ts) runs this directly.
       "entry": ["scripts/warm-dep-cache.ts"],
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still

@@ -396,6 +396,27 @@ export const resolveServerConfig = (
       headers: env.otlpHeaders,
       exportIntervalMs: env.otlpExportIntervalMs,
     };
+    const traces = OtelEnvironment.resolveSignalEndpoint(
+      otel,
+      "traces",
+      { url: env.otlpTracesUrl, export: signalExport },
+      bootstrap?.otlpTracesUrl,
+      persistedObservabilitySettings.otlpTracesUrl,
+    );
+    const metrics = OtelEnvironment.resolveSignalEndpoint(
+      otel,
+      "metrics",
+      { url: env.otlpMetricsUrl, export: signalExport },
+      bootstrap?.otlpMetricsUrl,
+      persistedObservabilitySettings.otlpMetricsUrl,
+    );
+    const logs = OtelEnvironment.resolveSignalEndpoint(
+      otel,
+      "logs",
+      { url: env.otlpLogsUrl, export: signalExport },
+      bootstrap?.otlpLogsUrl,
+      persistedObservabilitySettings.otlpLogsUrl,
+    );
 
     const config: ServerConfig.ServerConfig["Service"] = {
       logLevel,
@@ -404,22 +425,12 @@ export const resolveServerConfig = (
       traceBatchWindowMs: env.traceBatchWindowMs,
       traceMaxBytes: env.traceMaxBytes,
       traceMaxFiles: env.traceMaxFiles,
-      otlpTracesUrl: otel.disabled
-        ? undefined
-        : (env.otlpTracesUrl ??
-          bootstrap?.otlpTracesUrl ??
-          persistedObservabilitySettings.otlpTracesUrl),
-      otlpMetricsUrl: otel.disabled
-        ? undefined
-        : (env.otlpMetricsUrl ??
-          bootstrap?.otlpMetricsUrl ??
-          persistedObservabilitySettings.otlpMetricsUrl),
-      otlpLogsUrl: otel.disabled
-        ? undefined
-        : (env.otlpLogsUrl ?? bootstrap?.otlpLogsUrl ?? persistedObservabilitySettings.otlpLogsUrl),
-      otlpTracesExport: signalExport,
-      otlpMetricsExport: signalExport,
-      otlpLogsExport: signalExport,
+      otlpTracesUrl: traces?.url,
+      otlpMetricsUrl: metrics?.url,
+      otlpLogsUrl: logs?.url,
+      otlpTracesExport: traces?.export ?? signalExport,
+      otlpMetricsExport: metrics?.export ?? signalExport,
+      otlpLogsExport: logs?.export ?? signalExport,
       otlpServiceName: env.otlpServiceName,
       otelEnvironment: otel,
       mode,

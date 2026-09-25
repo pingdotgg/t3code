@@ -1,49 +1,44 @@
 /**
- * Redeeming a Codex reset credit is an account-level action: instances that
- * share the directory holding `auth.json` share the credit, so their
+ * Redeeming a reset credit is an account-level action: instances that share
+ * the directory holding a provider's login share the credit, so their
  * redemptions must serialise on that directory, not the instance. This
  * service keeps one lock and one pending idempotency key per account key so
  * overlapping confirmations from any instance queue rather than spending two
  * credits, and a retry after a timeout re-sends the same attempt.
  *
- * @module provider/Layers/codexResetCredit
+ * @module provider/Layers/resetCreditCoordinator
  */
 import type { ProviderConsumeResetCreditOutcome } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 
-/**
- * Bounded so a hung app-server cannot hold the account lock forever; the
- * timeout interrupts the scoped request, which kills the process, and the
- * kept idempotency key makes the user's retry safe.
- */
-export const CODEX_RESET_CREDIT_TIMEOUT = Duration.seconds(20);
-
 interface AccountRedemptionState {
   readonly lock: Semaphore.Semaphore;
   readonly pendingKey: Ref.Ref<string | null>;
 }
 
-export class CodexResetCreditCoordinator extends Context.Service<
-  CodexResetCreditCoordinator,
+export class ResetCreditCoordinator extends Context.Service<
+  ResetCreditCoordinator,
   {
     /**
      * Run `consume` under the account's lock with a stable idempotency key.
-     * The key is cleared only when Codex reports an outcome; a failure
-     * (timeout included) keeps it so the next attempt is the same attempt.
+     * The key is cleared when the provider reports an outcome, or when
+     * `isSettled` says a failure was a final answer (such as a cooldown).
+     * Any other failure (timeout included) keeps it so the next attempt is
+     * the same attempt.
      */
     readonly redeem: <E, R>(
       accountKey: string,
       consume: (idempotencyKey: string) => Effect.Effect<ProviderConsumeResetCreditOutcome, E, R>,
+      isSettled?: (error: E) => boolean,
     ) => Effect.Effect<ProviderConsumeResetCreditOutcome, E | PlatformError.PlatformError, R>;
   }
->()("t3/provider/Layers/codexResetCredit/CodexResetCreditCoordinator") {}
+>()("t3/provider/Layers/resetCreditCoordinator") {}
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
@@ -52,9 +47,7 @@ export const make = Effect.gen(function* () {
 
   // Get-or-create through one Ref.modify so two first redemptions for the
   // same account cannot each install their own lock.
-  const stateFor = Effect.fn("CodexResetCreditCoordinator.stateFor")(function* (
-    accountKey: string,
-  ) {
+  const stateFor = Effect.fn("ResetCreditCoordinator.stateFor")(function* (accountKey: string) {
     const existing = (yield* Ref.get(statesRef)).get(accountKey);
     if (existing) return existing;
     const candidate = {
@@ -70,7 +63,7 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  const redeem: CodexResetCreditCoordinator["Service"]["redeem"] = (accountKey, consume) =>
+  const redeem: ResetCreditCoordinator["Service"]["redeem"] = (accountKey, consume, isSettled) =>
     Effect.gen(function* () {
       const state = yield* stateFor(accountKey);
       return yield* state.lock.withPermits(1)(
@@ -78,24 +71,28 @@ export const make = Effect.gen(function* () {
           const existing = yield* Ref.get(state.pendingKey);
           const idempotencyKey = existing ?? (yield* crypto.randomUUIDv4);
           yield* Ref.set(state.pendingKey, idempotencyKey);
-          const outcome = yield* consume(idempotencyKey);
+          const outcome = yield* consume(idempotencyKey).pipe(
+            Effect.tapError((error) =>
+              isSettled?.(error) ? Ref.set(state.pendingKey, null) : Effect.void,
+            ),
+          );
           yield* Ref.set(state.pendingKey, null);
           return outcome;
         }),
       );
     });
 
-  return { redeem } satisfies CodexResetCreditCoordinator["Service"];
+  return { redeem } satisfies ResetCreditCoordinator["Service"];
 });
 
-export const layer = Layer.effect(CodexResetCreditCoordinator, make);
+export const layer = Layer.effect(ResetCreditCoordinator, make);
 
 /**
  * Self-contained for tests: a counter-backed Crypto so keys are deterministic
  * and distinct without the platform layer.
  */
 export const layerTest = Layer.effect(
-  CodexResetCreditCoordinator,
+  ResetCreditCoordinator,
   Effect.gen(function* () {
     let counter = 0;
     return yield* make.pipe(

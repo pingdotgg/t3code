@@ -87,7 +87,7 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
       updateCurrentTab: false,
       ...(statusTabId === undefined ? {} : { tabId: statusTabId }),
     })
-    .pipe(Effect.catch(() => Effect.succeed(null)));
+    .pipe(Effect.orElseSucceed(() => null));
   return {
     result,
     ...(page?.url && /^https?:\/\//i.test(page.url) && page.url.length <= 4096
@@ -175,10 +175,11 @@ export const claimPreviewRecording = Effect.fn("PreviewToolkit.claimRecording")(
     yield* fileSystem.rename(currentPath, finalPath);
   }).pipe(
     // Another stop may already have claimed this exact upload for this thread.
-    Effect.catch((cause) =>
-      cause._tag !== "PreviewAutomationRecordingTransferError" && cause.reason._tag === "NotFound"
-        ? validateFile(finalPath)
-        : Effect.fail(cause),
+    Effect.catchIf(
+      (cause) =>
+        cause._tag !== "PreviewAutomationRecordingTransferError" &&
+        cause.reason._tag === "NotFound",
+      () => validateFile(finalPath),
     ),
     Effect.mapError((cause) => new PreviewAutomationRecordingTransferError({ threadId, cause })),
   );
