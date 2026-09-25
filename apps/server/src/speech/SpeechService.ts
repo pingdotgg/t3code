@@ -2,6 +2,7 @@ import type {
   EnvironmentSpeechModel,
   EnvironmentSpeechStatus,
   SpeechAcceleration,
+  SpeechCustomWords,
   SpeechLanguage,
   SpeechModelUnloadTimeout,
 } from "@t3tools/contracts";
@@ -29,6 +30,8 @@ import {
 } from "./model.ts";
 import {
   applySpeechCustomWords,
+  applySpeechAliases,
+  makeSpeechAliasReplacer,
   normalizeSpeechCustomWords,
   transcriptionCustomWords,
 } from "./customWords.ts";
@@ -151,7 +154,7 @@ export class SpeechService extends Context.Service<
     readonly transcribe: (pcmBytes: Uint8Array) => Effect.Effect<string, SpeechError>;
     readonly prepareModel: Effect.Effect<void, SpeechError>;
     readonly updateCustomWords: (
-      words: readonly string[],
+      words: SpeechCustomWords,
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly updateFillerWordRemoval: (
       enabled: boolean,
@@ -492,6 +495,9 @@ export const make = Effect.gen(function* () {
       let loaded: LoadedModel | undefined;
       const settings = yield* readSettings("custom words loading");
       const customWords = transcriptionCustomWords(settings);
+      const dictionary = normalizeSpeechCustomWords(settings.speechCustomWords);
+      const replaceAliases = makeSpeechAliasReplacer(dictionary);
+      const correct = (text: string) => replaceAliases(applySpeechCustomWords(text, customWords));
       const removeFillerWords = settings.speechRemoveFillerWords;
       const definition =
         getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
@@ -563,8 +569,8 @@ export const make = Effect.gen(function* () {
                 ...update,
                 text: update.text
                   ? {
-                      committed: applySpeechCustomWords(update.text.committed, customWords),
-                      tentative: applySpeechCustomWords(update.text.tentative, customWords),
+                      committed: correct(update.text.committed),
+                      tentative: correct(update.text.tentative),
                     }
                   : null,
               };
@@ -593,8 +599,8 @@ export const make = Effect.gen(function* () {
                 ...update,
                 text: update.text
                   ? {
-                      committed: applySpeechCustomWords(update.text.committed, customWords),
-                      tentative: applySpeechCustomWords(update.text.tentative, customWords),
+                      committed: correct(update.text.committed),
+                      tentative: correct(update.text.tentative),
                     }
                   : null,
               };
@@ -602,7 +608,7 @@ export const make = Effect.gen(function* () {
           }),
         finish: run(async () => {
           const startedAt = performance.now();
-          const corrected = applySpeechCustomWords(await streamModel.finish(), customWords);
+          const corrected = correct(await streamModel.finish());
           const text = removeFillerWords
             ? removeSpeechFillerWords(
                 corrected,
@@ -697,6 +703,7 @@ export const make = Effect.gen(function* () {
               const inferenceStartedAt = performance.now();
               let inferenceModel = loaded;
               const customWords = transcriptionCustomWords(settings);
+              const dictionary = normalizeSpeechCustomWords(settings.speechCustomWords);
               const removeFillerWords = settings.speechRemoveFillerWords;
               const fillerWordLanguage = language === "auto" ? undefined : language;
               const options = {
@@ -740,9 +747,12 @@ export const make = Effect.gen(function* () {
                   throw new SpeechOperationError({ operation: "inference", cause: fallbackCause });
                 });
               }
-              const corrected = loaded.supportsInitialPrompt
-                ? result.text
-                : applySpeechCustomWords(result.text, customWords);
+              const corrected = applySpeechAliases(
+                loaded.supportsInitialPrompt
+                  ? result.text
+                  : applySpeechCustomWords(result.text, customWords),
+                dictionary,
+              );
               return {
                 text: (removeFillerWords
                   ? removeSpeechFillerWords(

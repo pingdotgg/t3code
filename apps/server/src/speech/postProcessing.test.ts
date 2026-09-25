@@ -111,4 +111,22 @@ describe("postProcessTranscript", () => {
       ).toBe("raw text");
     }),
   );
+
+  it.effect("reapplies dictionary aliases after AI cleanup", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* runPostProcess(
+          {
+            transcript: "Use MiniMax.",
+            cwd: "C:/neutral",
+            settings: {
+              ...DEFAULT_SERVER_SETTINGS,
+              speechCustomWords: [{ term: "MiniMax", aliases: ["mini max"] }],
+            },
+          },
+          () => Effect.succeed({ transcription: "Use mini max." }),
+        ),
+      ).toBe("Use MiniMax.");
+    }),
+  );
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   applySpeechCustomWords,
+  applySpeechAliases,
   normalizeSpeechCustomWords,
   transcriptionCustomWords,
 } from "./customWords.ts";
@@ -22,23 +23,43 @@ describe("speech custom words", () => {
   });
 
   it("normalizes, deduplicates, and removes unsafe prompt characters", () => {
-    expect(normalizeSpeechCustomWords(["  T3   Code ", "T3 Code", "<Effect>"])).toEqual([
-      "T3 Code",
-      "Effect",
+    expect(
+      normalizeSpeechCustomWords([
+        { term: "  T3   Code ", aliases: ["T three code"] },
+        { term: "T3 Code", aliases: [] },
+        { term: "<Effect>", aliases: [] },
+      ]),
+    ).toEqual([
+      { term: "T3 Code", aliases: ["T three code"] },
+      { term: "Effect", aliases: [] },
     ]);
   });
 
+  it("replaces aliases as complete phrases without changing punctuation", () => {
+    const words = [{ term: "MiniMax", aliases: ["mini max", "minimum max"] }];
+    expect(applySpeechAliases("Use mini max, not mini maximum.", words)).toBe(
+      "Use MiniMax, not mini maximum.",
+    );
+    expect(applySpeechAliases("Use minimum max!", words)).toBe("Use MiniMax!");
+  });
+
   it("prioritizes the correction word without changing saved dictionary words", () => {
-    const speechCustomWords = Array.from({ length: 100 }, (_, index) => `word${index}`);
+    const speechCustomWords = Array.from({ length: 100 }, (_, index) => ({
+      term: `word${index}`,
+      aliases: [],
+    }));
     const settings = {
       speechCustomWords,
       speechCorrectionWord: "err",
       speechPostProcessingEnabled: true,
     };
-    expect(transcriptionCustomWords(settings)).toEqual(["err", ...speechCustomWords.slice(0, 99)]);
+    expect(transcriptionCustomWords(settings)).toEqual([
+      "err",
+      ...speechCustomWords.slice(0, 99).map(({ term }) => term),
+    ]);
     expect(settings.speechCustomWords).toEqual(speechCustomWords);
     expect(transcriptionCustomWords({ ...settings, speechPostProcessingEnabled: false })).toEqual(
-      speechCustomWords,
+      speechCustomWords.map(({ term }) => term),
     );
   });
 });

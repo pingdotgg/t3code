@@ -16,7 +16,7 @@ describe("environment speech contracts", () => {
         model: "Moonshine Tiny",
         size: 35_466_912,
         supportsStreaming: false,
-        customWords: ["T3 Code"],
+        customWords: [{ term: "T3 Code", aliases: ["T3 codes"] }],
         removeFillerWords: false,
       }),
     ).toEqual({
@@ -31,7 +31,7 @@ describe("environment speech contracts", () => {
       effectiveLanguage: "auto",
       modelUnloadTimeout: "min_15",
       gpuDevices: [],
-      customWords: ["T3 Code"],
+      customWords: [{ term: "T3 Code", aliases: ["T3 codes"] }],
       removeFillerWords: false,
     });
     expect(decodeStatus({ supported: false, reason: "unsupported platform" })).toEqual({
@@ -59,7 +59,21 @@ describe("environment speech contracts", () => {
         model: "Model",
         size: 1,
         supportsStreaming: false,
-        customWords: ["x".repeat(51)],
+        customWords: [{ term: "x".repeat(51), aliases: [] }],
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeStatus({
+        supported: true,
+        state: "ready",
+        modelId: "model",
+        model: "Model",
+        size: 1,
+        supportsStreaming: false,
+        customWords: [
+          { term: "MiniMax", aliases: ["mini max"] },
+          { term: "Other", aliases: ["MINI MAX"] },
+        ],
       }),
     ).toThrow();
   });

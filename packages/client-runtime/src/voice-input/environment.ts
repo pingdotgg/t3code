@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import { SPEECH_STREAM_PATH } from "@t3tools/contracts";
 import type {
   SpeechAcceleration,
+  SpeechCustomWords,
   SpeechLanguage,
   SpeechModelUnloadTimeout,
 } from "@t3tools/contracts";
@@ -169,7 +170,7 @@ export const postProcessEnvironmentTranscript = (
 
 export const updateEnvironmentSpeechCustomWords = (
   prepared: PreparedConnection,
-  words: readonly string[],
+  words: SpeechCustomWords,
 ) =>
   request({
     group: "voice",

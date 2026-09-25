@@ -5,7 +5,21 @@ export const SpeechModelId = Schema.String.check(Schema.isMinLength(1), Schema.i
 export type SpeechModelId = typeof SpeechModelId.Type;
 
 export const SpeechCustomWord = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(50));
-export const SpeechCustomWords = Schema.Array(SpeechCustomWord).check(Schema.isMaxLength(100));
+export const SpeechCustomWords = Schema.Array(
+  Schema.Struct({
+    term: SpeechCustomWord,
+    aliases: Schema.Array(SpeechCustomWord).check(Schema.isMaxLength(8)),
+  }),
+).check(
+  Schema.isMaxLength(100),
+  Schema.makeFilter((entries) => {
+    const spellings = entries.flatMap(({ term, aliases }) => [term, ...aliases]);
+    const keys = spellings.map((spelling) => spelling.trim().normalize("NFC").toLocaleLowerCase());
+    return keys.every(Boolean) && new Set(keys).size === keys.length
+      ? true
+      : "Dictionary terms and aliases must be unique and nonempty.";
+  }),
+);
 export type SpeechCustomWords = typeof SpeechCustomWords.Type;
 export const SpeechAcceleration = Schema.Union([
   Schema.Literal("auto"),

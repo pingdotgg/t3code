@@ -1,4 +1,4 @@
-import type { ServerSettings } from "@t3tools/contracts";
+import type { ServerSettings, SpeechCustomWords } from "@t3tools/contracts";
 
 const MATCH_THRESHOLD = 0.18;
 
@@ -130,16 +130,52 @@ export function applySpeechCustomWords(text: string, words: readonly string[]): 
   return output.join(" ");
 }
 
-export function normalizeSpeechCustomWords(words: readonly string[]): string[] {
-  const normalized = words.map((word) =>
-    word
-      .replace(/[<>"']/g, "")
-      .replace(/\s+/g, " ")
-      .trim(),
-  );
-  return [...new Set(normalized)]
-    .filter((word) => word.length > 0 && word.length <= 50)
+const normalizeWord = (word: string) =>
+  word
+    .replace(/[<>"']/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+export function normalizeSpeechCustomWords(words: SpeechCustomWords): SpeechCustomWords {
+  const seen = new Set<string>();
+  return words
+    .flatMap(({ term, aliases }) => {
+      const preferred = normalizeWord(term);
+      const key = preferred.toLocaleLowerCase();
+      if (!preferred || preferred.length > 50 || seen.has(key)) return [];
+      seen.add(key);
+      const normalizedAliases = aliases.flatMap((alias) => {
+        const value = normalizeWord(alias);
+        const aliasKey = value.toLocaleLowerCase();
+        if (!value || value.length > 50 || seen.has(aliasKey)) return [];
+        seen.add(aliasKey);
+        return [value];
+      });
+      return [{ term: preferred, aliases: normalizedAliases.slice(0, 8) }];
+    })
     .slice(0, 100);
+}
+
+const escapePattern = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+export function makeSpeechAliasReplacer(words: SpeechCustomWords): (text: string) => string {
+  const spellings = words
+    .flatMap(({ term, aliases }) => [term, ...aliases].map((spelling) => ({ spelling, term })))
+    .sort((left, right) => right.spelling.length - left.spelling.length);
+  if (spellings.length === 0) return (text) => text;
+  const lookup = new Map(
+    spellings.map(({ spelling, term }) => [spelling.toLocaleLowerCase(), term]),
+  );
+  const word = "[\\p{L}\\p{M}\\p{N}\\p{Pc}]";
+  const pattern = new RegExp(
+    `(?<!${word})(?:${spellings.map(({ spelling }) => escapePattern(spelling)).join("|")})(?!${word})`,
+    "giu",
+  );
+  return (text) => text.replace(pattern, (match) => lookup.get(match.toLocaleLowerCase()) ?? match);
+}
+
+export function applySpeechAliases(text: string, words: SpeechCustomWords): string {
+  return makeSpeechAliasReplacer(words)(text);
 }
 
 export function transcriptionCustomWords(
@@ -150,7 +186,7 @@ export function transcriptionCustomWords(
 ): string[] {
   return normalizeSpeechCustomWords(
     settings.speechPostProcessingEnabled
-      ? [settings.speechCorrectionWord, ...settings.speechCustomWords]
+      ? [{ term: settings.speechCorrectionWord, aliases: [] }, ...settings.speechCustomWords]
       : settings.speechCustomWords,
-  );
+  ).map(({ term }) => term);
 }

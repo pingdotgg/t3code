@@ -16,6 +16,7 @@ import type {
   EnvironmentSpeechModel,
   EnvironmentSpeechStatus,
   SpeechAcceleration,
+  SpeechCustomWords,
   SpeechModelUnloadTimeout,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -237,6 +238,7 @@ export function VoiceSettingsPanel() {
     modelIds: ReadonlySet<string>;
   } | null>(null);
   const [customWordDraft, setCustomWordDraft] = useState("");
+  const [aliasDrafts, setAliasDrafts] = useState<Record<string, string>>({});
   const [languageSearch, setLanguageSearch] = useState("");
   const [modelSearch, setModelSearch] = useState("");
   const [selectedLanguage, setSelectedLanguage] = useState<{
@@ -379,7 +381,7 @@ export function VoiceSettingsPanel() {
     .replace(/[<>"']/g, "")
     .replace(/\s+/g, " ")
     .trim();
-  const updateCustomWords = (words: readonly string[]) => {
+  const updateCustomWords = (words: SpeechCustomWords) => {
     if (!prepared) return;
     setOperation("custom-words");
     void runtime
@@ -398,10 +400,14 @@ export function VoiceSettingsPanel() {
     if (
       !normalizedCustomWord ||
       normalizedCustomWord.length > 50 ||
-      customWords.includes(normalizedCustomWord)
+      customWords.some(({ term, aliases }) =>
+        [term, ...aliases].some(
+          (spelling) => spelling.toLocaleLowerCase() === normalizedCustomWord.toLocaleLowerCase(),
+        ),
+      )
     )
       return;
-    updateCustomWords([...customWords, normalizedCustomWord]);
+    updateCustomWords([...customWords, { term: normalizedCustomWord, aliases: [] }]);
     setCustomWordDraft("");
   };
   const currentModels = currentStatus?.supported ? models : [];
@@ -803,7 +809,12 @@ export function VoiceSettingsPanel() {
                   disabled={
                     !normalizedCustomWord ||
                     normalizedCustomWord.length > 50 ||
-                    customWords.includes(normalizedCustomWord) ||
+                    customWords.some(({ term, aliases }) =>
+                      [term, ...aliases].some(
+                        (spelling) =>
+                          spelling.toLocaleLowerCase() === normalizedCustomWord.toLocaleLowerCase(),
+                      ),
+                    ) ||
                     customWords.length >= 100 ||
                     operation !== null
                   }
@@ -813,21 +824,96 @@ export function VoiceSettingsPanel() {
                 </Button>
               </div>
               {customWords.length > 0 ? (
-                <div className="flex flex-wrap justify-end gap-1">
-                  {customWords.map((word) => (
-                    <Button
-                      key={word}
-                      type="button"
-                      size="xs"
-                      variant="secondary"
-                      disabled={operation !== null}
-                      aria-label={`Remove ${word}`}
-                      onClick={() => updateCustomWords(customWords.filter((item) => item !== word))}
-                    >
-                      {word}
-                      <XIcon className="ml-1 size-3" />
-                    </Button>
-                  ))}
+                <div className="space-y-2">
+                  {customWords.map(({ term, aliases }) => {
+                    const draft = (aliasDrafts[term] ?? "")
+                      .replace(/[<>"']/g, "")
+                      .replace(/\s+/g, " ")
+                      .trim();
+                    const used = customWords.some((entry) =>
+                      [entry.term, ...entry.aliases].some(
+                        (spelling) => spelling.toLocaleLowerCase() === draft.toLocaleLowerCase(),
+                      ),
+                    );
+                    return (
+                      <div key={term} className="space-y-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span>{term}</span>
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="secondary"
+                            disabled={operation !== null}
+                            aria-label={`Remove ${term}`}
+                            onClick={() =>
+                              updateCustomWords(customWords.filter((item) => item.term !== term))
+                            }
+                          >
+                            <XIcon className="size-3" />
+                          </Button>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {aliases.map((alias) => (
+                            <Button
+                              key={alias}
+                              type="button"
+                              size="xs"
+                              variant="secondary"
+                              disabled={operation !== null}
+                              aria-label={`Remove alias ${alias} from ${term}`}
+                              onClick={() =>
+                                updateCustomWords(
+                                  customWords.map((entry) =>
+                                    entry.term === term
+                                      ? {
+                                          ...entry,
+                                          aliases: entry.aliases.filter((value) => value !== alias),
+                                        }
+                                      : entry,
+                                  ),
+                                )
+                              }
+                            >
+                              {alias}
+                              <XIcon className="ml-1 size-3" />
+                            </Button>
+                          ))}
+                        </div>
+                        <div className="flex gap-1">
+                          <Input
+                            value={aliasDrafts[term] ?? ""}
+                            maxLength={50}
+                            placeholder={`Alias for ${term}`}
+                            aria-label={`Alias for ${term}`}
+                            disabled={operation !== null || aliases.length >= 8}
+                            onChange={(event) =>
+                              setAliasDrafts((drafts) => ({
+                                ...drafts,
+                                [term]: event.target.value,
+                              }))
+                            }
+                          />
+                          <Button
+                            type="button"
+                            size="xs"
+                            disabled={!draft || used || aliases.length >= 8 || operation !== null}
+                            onClick={() => {
+                              updateCustomWords(
+                                customWords.map((entry) =>
+                                  entry.term === term
+                                    ? { ...entry, aliases: [...entry.aliases, draft] }
+                                    : entry,
+                                ),
+                              );
+                              setAliasDrafts((drafts) => ({ ...drafts, [term]: "" }));
+                            }}
+                          >
+                            Add
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : null}
             </div>

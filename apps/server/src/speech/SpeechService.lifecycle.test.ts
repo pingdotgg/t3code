@@ -102,7 +102,10 @@ beforeEach(() => {
 const customWordsLayer = SpeechService.layer.pipe(
   Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-custom-words-" })),
   Layer.provide(
-    ServerSettings.layerTest({ speechModelId: "test-model", speechCustomWords: ["T3 Code"] }),
+    ServerSettings.layerTest({
+      speechModelId: "test-model",
+      speechCustomWords: [{ term: "T3 Code", aliases: [] }],
+    }),
   ),
   Layer.provide(NodeServices.layer),
 );
@@ -112,7 +115,7 @@ const correctionWordLayer = SpeechService.layer.pipe(
   Layer.provide(
     ServerSettings.layerTest({
       speechModelId: "test-model",
-      speechCustomWords: ["T3 Code"],
+      speechCustomWords: [{ term: "T3 Code", aliases: [] }],
       speechCorrectionWord: "err",
     }),
   ),
@@ -196,7 +199,7 @@ it.effect("recognizes the correction word without showing it in the dictionary",
     native.transcribe.mockResolvedValueOnce({ text: "I want orange, er, yellow." });
     const speech = yield* SpeechService.SpeechService;
     expect(yield* speech.transcribe(pcm())).toBe("I want orange, err, yellow.");
-    expect(yield* speech.status).toMatchObject({ customWords: ["T3 Code"] });
+    expect(yield* speech.status).toMatchObject({ customWords: [{ term: "T3 Code", aliases: [] }] });
   }).pipe(Effect.provide(correctionWordLayer)),
 );
 
@@ -263,6 +266,31 @@ it.effect("passes custom words as an initial prompt when the model supports it",
       family: { kind: "whisper", initialPrompt: "T3 Code" },
     });
   }).pipe(Effect.provide(customWordsLayer)),
+);
+
+it.effect("applies aliases even when the model accepts a vocabulary prompt", () =>
+  Effect.gen(function* () {
+    native.supportsInitialPrompt = true;
+    native.transcribe.mockResolvedValueOnce({ text: "open t three code" });
+    const speech = yield* SpeechService.SpeechService;
+    expect(yield* speech.transcribe(pcm())).toBe("open T3 Code");
+    expect(native.transcribe.mock.calls[0]?.[1]).toMatchObject({
+      family: { kind: "whisper", initialPrompt: "T3 Code" },
+    });
+  }).pipe(
+    Effect.provide(
+      SpeechService.layer.pipe(
+        Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-aliases-" })),
+        Layer.provide(
+          ServerSettings.layerTest({
+            speechModelId: "test-model",
+            speechCustomWords: [{ term: "T3 Code", aliases: ["t three code"] }],
+          }),
+        ),
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  ),
 );
 
 it.effect("removes filler words from batch transcription", () =>

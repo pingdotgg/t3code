@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { buildTranscriptionPostProcessingPrompt } from "../textGeneration/TranscriptionPostProcessing.ts";
+import { applySpeechAliases } from "./customWords.ts";
 
 const quoteCorrectionWord = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
@@ -32,5 +33,7 @@ export const postProcessTranscript = Effect.fn("speech.postProcessTranscript")(f
     modelSelection: input.settings.speechPostProcessingModelSelection,
   });
   const text = generated.transcription.trim();
-  return text.length > 0 ? text : input.transcript;
+  return text.length > 0
+    ? applySpeechAliases(text, input.settings.speechCustomWords)
+    : input.transcript;
 });
