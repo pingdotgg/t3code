@@ -924,6 +924,93 @@ describe("ThreadSettlementReactor", () => {
       ),
   );
 
+  it.effect("settles a keep-active branch only when its pull request merges", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const state = yield* Ref.make<"open" | "merged">("open");
+        const mergedThreadSettled = yield* Deferred.make<void>();
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("keep-active-branch", {
+              branch: "saved-feature",
+              settledOverride: "active",
+              latestUserMessageAt: "2026-08-27T00:00:00.000Z",
+            }),
+          ]),
+          branchPullRequest: () =>
+            Ref.get(state).pipe(
+              Effect.map((pullRequestState) => makeBranchPullRequest(pullRequestState)),
+            ),
+          onDispatch: () => Deferred.succeed(mergedThreadSettled, undefined),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+
+          yield* Ref.set(state, "merged");
+          yield* fixture.publishMerge;
+          yield* Deferred.await(mergedThreadSettled);
+
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => ({
+              threadId: command.threadId,
+              reason: command.reason,
+            })),
+            [{ threadId: ThreadId.make("keep-active-branch"), reason: "pull-request-merged" }],
+          );
+          yield* reactor.drain;
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("settles a keep-active thread with only a linked PR reference", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const mergedThreadSettled = yield* Deferred.make<void>();
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("keep-active-linked", {
+              branch: null,
+              pullRequests: [],
+              settledOverride: "active",
+              linkedPullRequest: {
+                projectId: PROJECT_ID,
+                repository: "owner/repository",
+                number: 42,
+                url: "https://example.test/owner/repository/pull/42",
+              },
+              latestUserMessageAt: "2026-08-27T00:00:00.000Z",
+            }),
+          ]),
+          onDispatch: () => Deferred.succeed(mergedThreadSettled, undefined),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+
+          yield* fixture.publishMerge;
+          yield* Deferred.await(mergedThreadSettled);
+
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => ({
+              threadId: command.threadId,
+              reason: command.reason,
+            })),
+            [{ threadId: ThreadId.make("keep-active-linked"), reason: "pull-request-merged" }],
+          );
+          yield* reactor.drain;
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("a merge does not settle threads linked to an unrelated pull request", () =>
     Effect.scoped(
       Effect.gen(function* () {

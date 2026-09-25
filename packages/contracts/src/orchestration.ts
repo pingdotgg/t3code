@@ -1163,6 +1163,8 @@ const ThreadAutoSettleCommand = Schema.Struct({
   threadId: ThreadId,
   snapshotSequence: NonNegativeInt,
   settledAt: IsoDateTime,
+  // Only the server's confirmed PR-merge path may settle a keep-active thread.
+  reason: Schema.optional(Schema.Literal("pull-request-merged")),
 });
 
 const ThreadUnsettleCommand = Schema.Struct({

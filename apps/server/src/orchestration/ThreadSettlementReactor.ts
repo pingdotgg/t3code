@@ -103,7 +103,13 @@ export const make = Effect.gen(function* () {
     const candidates = snapshot.threads.filter(
       (thread) =>
         (threadId === undefined || thread.id === threadId) &&
-        isAutoSettlementCandidate(thread, now),
+        (thread.settledOverride !== "active" ||
+          (resolveProjectSettings(settings, thread.projectId).settings.sidebarAutoSettleOnMerge &&
+            (thread.branch !== null ||
+              thread.pullRequests.length > 0 ||
+              thread.linkedPullRequest != null ||
+              thread.branchPullRequest != null))) &&
+        isAutoSettlementCandidate(thread, now, { allowActiveOnMerge: true }),
     );
 
     // Return the thread when it still needs a pull request decision. A rejected
@@ -132,6 +138,9 @@ export const make = Effect.gen(function* () {
           threadId: thread.id,
           snapshotSequence: snapshot.snapshotSequence,
           settledAt,
+          ...(thread.settledOverride === "active"
+            ? { reason: "pull-request-merged" as const }
+            : {}),
         });
         return null;
       },
