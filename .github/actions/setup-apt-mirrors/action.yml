@@ -5,12 +5,6 @@ runs:
   steps:
     - shell: bash
       run: |
-        # These mirrors only carry amd64. arm64 packages come from
-        # ports.ubuntu.com, so arm64 runners keep their own sources.
-        if [[ "$(dpkg --print-architecture)" != amd64 ]]; then
-          exit 0
-        fi
-
         # Replace the existing Blacksmith mirror list as well as direct sources.
         printf '%s\tpriority:%s\n' \
           https://archive.ubuntu.com/ubuntu 1 \
