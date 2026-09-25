@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
   cancel: vi.fn(),
   listModels: vi.fn(),
+  customWords: [] as { term: string; aliases: string[] }[],
   connection: {},
   settings: {
     voiceTranscriptionEnvironmentId: null as string | null,
@@ -20,6 +21,7 @@ vi.mock("@t3tools/client-runtime/voice-input", () => ({
       language: "auto",
       effectiveLanguage: "en",
       gpuDevices: [{ id: '["vulkan","gpu-1"]', name: "Test GPU" }],
+      customWords: mocks.customWords,
     }),
   updateEnvironmentSpeechFillerWordRemoval: () => Promise.resolve({ supported: true }),
   getEnvironmentSpeechModels: () =>
@@ -71,8 +73,15 @@ vi.mock("./VoicePostProcessingSettings", () => ({ VoicePostProcessingSettings: (
 vi.mock("./settingsLayout", () => ({
   SettingsPageContainer: "div",
   SettingsSection: "section",
-  SettingsRow: ({ control, description }: { control: ReactNode; description?: string }) =>
-    createElement("div", null, createElement("p", null, description), control),
+  SettingsRow: ({
+    control,
+    description,
+    children,
+  }: {
+    control: ReactNode;
+    description?: string;
+    children?: ReactNode;
+  }) => createElement("div", null, createElement("p", null, description), control, children),
 }));
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 
@@ -81,6 +90,7 @@ afterEach(async () => {
   if (root) await act(async () => root.unmount());
   vi.unstubAllGlobals();
   mocks.listModels.mockReset();
+  mocks.customWords = [];
   mocks.settings.voiceTranscriptionEnvironmentId = null;
   mocks.settings.voiceMicrophone = "";
 });
@@ -126,6 +136,30 @@ it("shows friendly labels for default voice options", async () => {
   );
   expect(labels).not.toContain("primary-environment");
   expect(labels).not.toContain("system-default");
+});
+it("keeps dictionary corrections collapsed until a word is opened", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("navigator", {});
+  vi.stubGlobal("window", { setInterval, clearInterval });
+  mocks.customWords = [
+    { term: "T3 Code", aliases: ["tea three code"] },
+    { term: "Codex", aliases: [] },
+  ];
+  await act(async () => {
+    root = create(createElement(VoiceSettingsPanel));
+  });
+
+  expect(root.root.findAllByProps({ "aria-label": "Transcribed as for T3 Code" })).toHaveLength(0);
+  expect(root.root.findByProps({ "aria-label": "Edit corrections for T3 Code" })).toBeDefined();
+  await act(async () =>
+    root.root.findByProps({ "aria-label": "Edit corrections for T3 Code" }).props.onClick(),
+  );
+  expect(root.root.findByProps({ "aria-label": "Transcribed as for T3 Code" })).toBeDefined();
+  expect(root.root.findAllByProps({ "aria-label": "Transcribed as for Codex" })).toHaveLength(0);
+  await act(async () =>
+    root.root.findByProps({ "aria-label": "Hide corrections for T3 Code" }).props.onClick(),
+  );
+  expect(root.root.findAllByProps({ "aria-label": "Transcribed as for T3 Code" })).toHaveLength(0);
 });
 it("shows models for the selected language while keeping the active model summary", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
