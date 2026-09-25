@@ -6,6 +6,7 @@ import type {
 import { isLoopbackHost, normalizePreviewUrl } from "@t3tools/shared/preview";
 import { isLocalLoopbackHost, isPrivateNetworkHost } from "@t3tools/shared/hostClassification";
 
+import { isWslConnectionTarget } from "~/connection/desktopLocal";
 import { readPreparedConnection } from "~/state/session";
 
 export {
@@ -18,6 +19,10 @@ export {
 const readEnvironmentUrl = (environmentId: EnvironmentId): URL => {
   const connection = readPreparedConnection(environmentId);
   if (!connection) throw new Error(`Environment ${environmentId} is not connected.`);
+  // The desktop WSL backend in NAT mode is reached at the distro's eth0
+  // address, but loopback-bound dev servers inside the distro are reachable
+  // only through WSL's Windows localhost forwarding.
+  if (isWslConnectionTarget(connection.target)) return new URL("http://localhost");
   return new URL(connection.httpBaseUrl);
 };
 
