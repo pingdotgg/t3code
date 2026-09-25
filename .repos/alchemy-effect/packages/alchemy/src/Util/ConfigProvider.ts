@@ -18,8 +18,8 @@ export const loadConfigProvider = (envFile: Option.Option<string>) => {
       return ConfigProvider.fromEnv();
     }
     return ConfigProvider.orElse(
-      yield* ConfigProvider.fromDotEnv({ path: ".env" }),
       ConfigProvider.fromEnv(),
+      yield* ConfigProvider.fromDotEnv({ path: ".env" }),
     );
   });
 };

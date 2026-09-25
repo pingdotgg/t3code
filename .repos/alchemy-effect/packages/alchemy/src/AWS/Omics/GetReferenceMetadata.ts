@@ -15,15 +15,16 @@ export interface GetReferenceMetadataRequest extends Omit<
  * store/workflow id is injected automatically and the action is granted on the
  * bound resource. Provide the implementation with
  * `Effect.provide(AWS.Omics.GetReferenceMetadataHttp)`.
- * @binding
- * @section References
- * @example Bind GetReferenceMetadata to a ReferenceStore
+ * ### References
+ * **Example:** Bind GetReferenceMetadata to a ReferenceStore
  * ```typescript
  * // init
  * const getReferenceMetadata = yield* AWS.Omics.GetReferenceMetadata(store);
  * // runtime
  * const result = yield* getReferenceMetadata({});
  * ```
+ *
+ * @binding
  */
 export interface GetReferenceMetadata extends Binding.Service<
   GetReferenceMetadata,

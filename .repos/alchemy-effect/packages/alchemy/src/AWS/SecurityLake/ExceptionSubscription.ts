@@ -51,8 +51,8 @@ export interface ExceptionSubscription extends Resource<
  * like email, SQS, or HTTPS) whenever Security Lake hits an exception it
  * cannot resolve automatically.
  *
- * @section Subscribing to exceptions
- * @example Email notifications
+ * ### Subscribing to exceptions
+ * **Example:** Email notifications
  * ```typescript
  * const exceptions = yield* SecurityLake.ExceptionSubscription("Exceptions", {
  *   subscriptionProtocol: "email",
@@ -60,7 +60,7 @@ export interface ExceptionSubscription extends Resource<
  * });
  * ```
  *
- * @example SQS notifications with a 30-day exception TTL
+ * **Example:** SQS notifications with a 30-day exception TTL
  * ```typescript
  * const exceptions = yield* SecurityLake.ExceptionSubscription("Exceptions", {
  *   subscriptionProtocol: "sqs",

@@ -10,9 +10,8 @@ import type { Detector } from "./Detector.ts";
  * The detector id is injected from the bound {@link Detector}.
  * Provide the implementation with
  * `Effect.provide(AWS.GuardDuty.ArchiveFindingsHttp)`.
- * @binding
- * @section Working with Findings
- * @example Archive Triaged Findings
+ * ### Working with Findings
+ * **Example:** Archive Triaged Findings
  * ```typescript
  * // init
  * const archiveFindings = yield* AWS.GuardDuty.ArchiveFindings(detector);
@@ -20,6 +19,8 @@ import type { Detector } from "./Detector.ts";
  * // runtime
  * yield* archiveFindings({ FindingIds: findingIds });
  * ```
+ *
+ * @binding
  */
 export interface ArchiveFindings extends Binding.Service<
   ArchiveFindings,

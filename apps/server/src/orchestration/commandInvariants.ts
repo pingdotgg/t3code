@@ -25,7 +25,7 @@ function findThreadById(
   return readModel.threads.find((thread) => thread.id === threadId);
 }
 
-export function findProjectById(
+function findProjectById(
   readModel: OrchestrationReadModel,
   projectId: ProjectId,
 ): OrchestrationProject | undefined {
@@ -119,15 +119,13 @@ export function requireThreadArchived(input: {
   readonly threadId: ThreadId;
 }): Effect.Effect<OrchestrationThread, OrchestrationCommandInvariantError> {
   return requireThread(input).pipe(
-    Effect.flatMap((thread) =>
-      thread.archivedAt !== null
-        ? Effect.succeed(thread)
-        : Effect.fail(
-            invariantError(
-              input.command.type,
-              `Thread '${input.threadId}' is not archived for command '${input.command.type}'.`,
-            ),
-          ),
+    Effect.filterOrFail(
+      (thread) => thread.archivedAt !== null,
+      () =>
+        invariantError(
+          input.command.type,
+          `Thread '${input.threadId}' is not archived for command '${input.command.type}'.`,
+        ),
     ),
   );
 }
@@ -138,15 +136,13 @@ export function requireThreadNotArchived(input: {
   readonly threadId: ThreadId;
 }): Effect.Effect<OrchestrationThread, OrchestrationCommandInvariantError> {
   return requireThread(input).pipe(
-    Effect.flatMap((thread) =>
-      thread.archivedAt === null
-        ? Effect.succeed(thread)
-        : Effect.fail(
-            invariantError(
-              input.command.type,
-              `Thread '${input.threadId}' is already archived and cannot handle command '${input.command.type}'.`,
-            ),
-          ),
+    Effect.filterOrFail(
+      (thread) => thread.archivedAt === null,
+      () =>
+        invariantError(
+          input.command.type,
+          `Thread '${input.threadId}' is already archived and cannot handle command '${input.command.type}'.`,
+        ),
     ),
   );
 }

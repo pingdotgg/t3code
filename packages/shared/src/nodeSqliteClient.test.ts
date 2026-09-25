@@ -9,7 +9,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as SqliteClient from "./nodeSqliteClient.ts";
 
-const layer = it.layer(SqliteClient.layerMemory());
+const layer = it.layer(SqliteClient.layer({ filename: ":memory:" }));
 
 layer("NodeSqliteClient", (it) => {
   it.effect("retries preparing a query after the missing schema becomes available", () =>

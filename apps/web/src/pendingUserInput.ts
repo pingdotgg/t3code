@@ -3,6 +3,8 @@ import type { UserInputQuestion } from "@t3tools/contracts";
 export interface PendingUserInputDraftAnswer {
   selectedOptionValues?: string[];
   customAnswer?: string;
+  attachmentCount?: number;
+  attachmentsBlocked?: boolean;
 }
 
 export interface PendingUserInputProgress {
@@ -41,6 +43,7 @@ export function resolvePendingUserInputAnswer(
   question: UserInputQuestion,
   draft: PendingUserInputDraftAnswer | undefined,
 ): string | string[] | null {
+  if (draft?.attachmentsBlocked) return null;
   const customAnswer =
     question.allowCustomAnswer === false ? null : normalizeDraftAnswer(draft?.customAnswer);
   if (customAnswer) {
@@ -51,10 +54,17 @@ export function resolvePendingUserInputAnswer(
     (value) => question.options.some((option) => (option.value ?? option.label) === value),
   );
   if (question.multiSelect) {
-    return selectedOptionValues.length > 0 ? selectedOptionValues : null;
+    return selectedOptionValues.length > 0
+      ? selectedOptionValues
+      : question.allowCustomAnswer !== false && (draft?.attachmentCount ?? 0) > 0
+        ? ""
+        : null;
   }
 
-  return selectedOptionValues[0] ?? null;
+  return (
+    selectedOptionValues[0] ??
+    (question.allowCustomAnswer !== false && (draft?.attachmentCount ?? 0) > 0 ? "" : null)
+  );
 }
 
 export function setPendingUserInputCustomAnswer(
@@ -70,6 +80,28 @@ export function setPendingUserInputCustomAnswer(
     customAnswer,
     ...(selectedOptionValues && selectedOptionValues.length > 0 ? { selectedOptionValues } : {}),
   };
+}
+
+const DISPLACED_ANSWER_SEPARATOR = "\n\n";
+
+/**
+ * Selecting an option replaces the custom answer, because a non-empty custom
+ * answer outranks selected options in `resolvePendingUserInputAnswer`. Text the
+ * user typed into the answer field must not vanish on that click: it moves back
+ * into the thread draft, after whatever was already waiting there.
+ */
+export function carryDisplacedCustomAnswerIntoPrompt(
+  prompt: string,
+  customAnswer: string | undefined,
+): string {
+  const displaced = customAnswer?.trim() ?? "";
+  if (displaced.length === 0) {
+    return prompt;
+  }
+  if (prompt.trim().length === 0) {
+    return displaced;
+  }
+  return `${prompt.trimEnd()}${DISPLACED_ANSWER_SEPARATOR}${displaced}`;
 }
 
 export function togglePendingUserInputOptionSelection(

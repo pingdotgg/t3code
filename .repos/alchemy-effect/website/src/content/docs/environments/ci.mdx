@@ -169,6 +169,24 @@ credentials your CI needs — a scoped Cloudflare API token, an AWS
 IAM role for OIDC, etc. — and write them straight into the repo as
 encrypted secrets.
 
+## Preflight: verify the environment
+
+Every auth provider declares the environment variables its CI resolution
+consumes, and `alchemy provider check-env` validates them against that
+contract. It prints one line per registered provider and exits with code 1
+when a required variable is missing:
+
+```sh
+$ bun alchemy provider check-env
+ok Cloudflare
+MISSING AWS: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION | AWS_DEFAULT_REGION
+```
+
+Run it as the first step of a deploy job to fail fast with a list of
+missing secrets instead of failing minutes later inside a provider API
+call. `--provider <name>` (repeatable) checks a subset; `--env-file`
+includes a dotenv file in resolution.
+
 ## How PR previews work
 
 Open a PR. Alchemy does the rest.
@@ -313,7 +331,8 @@ Rather than hand those rights to your default
 [profile](/environments/profiles), create a separate `admin` profile:
 
 ```sh
-alchemy login --profile admin
+alchemy profile create admin
+alchemy profile edit --profile admin
 ```
 
 :::danger[Heads up]
@@ -328,7 +347,7 @@ After creating the file, deploy it once locally under the admin
 profile:
 
 ```sh
-alchemy deploy stacks/github.ts --profile admin
+alchemy deploy --config stacks/github.ts --profile admin
 ```
 
 You only need to re-run this stack when you want to rotate
@@ -361,7 +380,6 @@ token-management token.
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as GitHub from "alchemy/GitHub";
-import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -376,7 +394,7 @@ export default Alchemy.Stack(
     state: Cloudflare.state(),
   },
   Effect.gen(function* () {
-    const accountId = yield* Config.string("CLOUDFLARE_ACCOUNT_ID");
+    const { accountId } = yield* yield* Cloudflare.CloudflareEnvironment;
 
     const apiToken = yield* Cloudflare.ApiToken.AccountApiToken("CIToken", {
       accountId,
@@ -420,6 +438,13 @@ export default Alchemy.Stack(
 
 A few details worth knowing:
 
+- `Cloudflare.CloudflareEnvironment` resolves the credentials of the
+  profile you're deploying with, account ID included — no
+  `CLOUDFLARE_ACCOUNT_ID` env var needed for this local deploy. The
+  double `yield*` is because the service's value is itself an Effect:
+  credentials are cached and can refresh themselves (OAuth tokens
+  expire), so you yield once for the service and once to resolve the
+  current credentials.
 - `Cloudflare.ApiToken.AccountApiToken` calls
   `POST /accounts/{account_id}/tokens` and Cloudflare returns the
   freshly minted token value exactly once. Alchemy captures it,
@@ -473,6 +498,11 @@ Cloudflare account and production on another. Mint two tokens from
 the same `stacks/github.ts` and prefix the secrets so the workflow
 can pick the right pair based on `STAGE`.
 
+Your profile resolves a single account ID, so this is the one case
+where you pass the account IDs in explicitly — set
+`TEST_CLOUDFLARE_ACCOUNT_ID` and `PROD_CLOUDFLARE_ACCOUNT_ID` in
+your environment when deploying this stack.
+
 ```typescript
 // stacks/github.ts
 import * as Alchemy from "alchemy";
@@ -493,8 +523,8 @@ export default Alchemy.Stack(
     state: Cloudflare.state(),
   },
   Effect.gen(function* () {
-    const testAccountId = yield* Config.string("TEST_CLOUDFLARE_ACCOUNT_ID");
-    const prodAccountId = yield* Config.string("PROD_CLOUDFLARE_ACCOUNT_ID");
+    const testAccountId = yield* Config.String("TEST_CLOUDFLARE_ACCOUNT_ID");
+    const prodAccountId = yield* Config.String("PROD_CLOUDFLARE_ACCOUNT_ID");
 
     const policies = (accountId: string) => [
       {
@@ -573,7 +603,7 @@ not sensitive).
 
 Your `--profile admin` AWS credentials need IAM admin rights for
 this stack: it creates an `OpenIDConnectProvider` and an IAM `Role`.
-Run `alchemy login --profile admin` and choose a credential
+Run `alchemy profile edit --profile admin --add AWS` and choose a credential
 (SSO/OIDC, access keys, etc.) that's authorized for IAM
 administration.
 
@@ -723,8 +753,8 @@ export default Alchemy.Stack(
     providers: GitHub.providers(),
   },
   Effect.gen(function* () {
-    const accessKeyId = yield* Config.string("AWS_ACCESS_KEY_ID");
-    const secretAccessKey = yield* Config.redacted("AWS_SECRET_ACCESS_KEY");
+    const accessKeyId = yield* Config.String("AWS_ACCESS_KEY_ID");
+    const secretAccessKey = yield* Config.Redacted("AWS_SECRET_ACCESS_KEY");
 
     yield* GitHub.Secret("aws-access-key-id", {
       owner: "your-org",
@@ -777,6 +807,6 @@ Then add the secrets to your workflow's deploy and cleanup steps:
 ## Where next
 
 - [Stages](/environments/stages) — how `pr-42` and `prod` stay isolated.
-- [Profiles](/environments/profiles) — one credential bundle per environment.
+- [Profiles](/environments/profiles) documents local credentials and the CI environment-variable matrix.
 - [Secrets & env on Cloudflare](/cloudflare/security/secrets-env) — wire app secrets into a Worker.
 - [Secrets & env on AWS](/aws/security/secrets-env) — the same walk for Lambda.

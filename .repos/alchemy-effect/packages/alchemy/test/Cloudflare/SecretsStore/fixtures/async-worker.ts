@@ -18,7 +18,7 @@ export default class AsyncSecretWorker extends Cloudflare.Worker<AsyncSecretWork
   "AsyncSecretBindingWorker",
   {
     main: import.meta.url,
-    subdomain: { enabled: true, previewsEnabled: false },
+    workersDev: { enabled: true, previewsEnabled: false },
     env: {
       MY_SECRET: ApiKey,
     },

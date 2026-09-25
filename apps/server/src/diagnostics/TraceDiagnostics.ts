@@ -41,7 +41,7 @@ export interface TraceDiagnosticsOptions {
   readonly readAt?: DateTime.Utc;
 }
 
-export class TraceFileReadError extends Schema.TaggedErrorClass<TraceFileReadError>()(
+export class TraceFileReadError extends Schema.TaggedError<TraceFileReadError>()(
   "TraceFileReadError",
   {
     traceFilePath: Schema.String,
@@ -411,6 +411,7 @@ function readTraceFile(
   );
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
 
@@ -419,8 +420,9 @@ export const make = Effect.gen(function* () {
       const readAt = options.readAt ?? (yield* DateTime.now);
       const slowSpanThresholdMs = options.slowSpanThresholdMs ?? DEFAULT_SLOW_SPAN_THRESHOLD_MS;
       const paths = toRotatedTracePaths(options.traceFilePath, options.maxFiles);
-      const results = yield* Effect.all(
-        paths.map((path) =>
+      const results = yield* Effect.forEach(
+        paths,
+        (path) =>
           readTraceFile(fileSystem, path).pipe(
             Effect.tapError((cause) =>
               Effect.logWarning("Failed to read local trace file.").pipe(
@@ -433,7 +435,6 @@ export const make = Effect.gen(function* () {
             ),
             Effect.result,
           ),
-        ),
         {
           concurrency: 1,
         },

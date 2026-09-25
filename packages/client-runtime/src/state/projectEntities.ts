@@ -9,7 +9,7 @@ import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentProject } from "./models.ts";
 import { scopeProject } from "./models.ts";
-import type { EnvironmentCatalogState } from "./connections.ts";
+import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
 import { arrayElementsEqual, parseProjectKey, projectKey, projectRefsEqual } from "./entities.ts";
 
 const EMPTY_PROJECTS: ReadonlyArray<OrchestrationProjectShell> = Object.freeze([]);
@@ -71,7 +71,7 @@ export function createEnvironmentProjectAtoms(input: {
   let previousProjectRefs: ReadonlyArray<ScopedProjectRef> = [];
   const projectRefsAtom = Atom.make((get) => {
     const refs: ScopedProjectRef[] = [];
-    for (const environmentId of get(input.catalogValueAtom).entries.keys()) {
+    for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
       refs.push(...get(environmentProjectRefsAtom(environmentId)));
     }
     if (projectRefsEqual(previousProjectRefs, refs)) {

@@ -1,19 +1,19 @@
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import { Client } from "pg";
-import type { SqlFile } from "../SQL/SqlFile.ts";
+import type { Client } from "pg";
+import {
+  makePgMigrationExecutor,
+  runMigrations,
+  type NormalizedMigrationsInput,
+  type StampedMigrationsState,
+} from "../SQL/Migrations/index.ts";
+import { importPg } from "../SQL/PostgresDriver.ts";
 
 export class PgError extends Data.TaggedError("PgError")<{
   message: string;
   cause?: unknown;
 }> {}
-
-export interface ApplyMigrationsOptions {
-  connectionUri: Redacted.Redacted<string>;
-  migrationsTable: string;
-  migrationsFiles: ReadonlyArray<SqlFile>;
-}
 
 /**
  * Strip query-string SSL flags from a Neon connection URI. Neon's URIs
@@ -38,91 +38,58 @@ const stripSslQueryParams = (uri: string): string => {
   }
 };
 
-const withClient = <A, E>(
-  connectionUri: Redacted.Redacted<string>,
-  fn: (client: Client) => Promise<A>,
-): Effect.Effect<A, PgError | E> =>
-  Effect.tryPromise({
-    try: async () => {
-      const client = new Client({
-        connectionString: stripSslQueryParams(Redacted.value(connectionUri)),
-        ssl: { rejectUnauthorized: false },
-      });
-      await client.connect();
-      try {
-        return await fn(client);
-      } finally {
-        await client.end().catch(() => {});
-      }
-    },
-    catch: (cause) =>
-      new PgError({
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
+const toPgError = (cause: unknown) =>
+  new PgError({
+    message: cause instanceof Error ? cause.message : String(cause),
+    cause,
   });
 
-const ensureMigrationsTable = (client: Client, migrationsTable: string) =>
-  client.query(
-    `CREATE TABLE IF NOT EXISTS "${migrationsTable}" (
-       id TEXT PRIMARY KEY,
-       name TEXT NOT NULL,
-       applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-     );`,
+/** Open a pg client for the scope of `use`, closing it afterwards. */
+export const withPgClient = <A, E, R>(
+  connectionUri: Redacted.Redacted<string>,
+  use: (client: Client) => Effect.Effect<A, E, R>,
+): Effect.Effect<A, PgError | E, R> =>
+  Effect.acquireUseRelease(
+    Effect.tryPromise({
+      try: async () => {
+        const { Client } = await importPg();
+        const client = new Client({
+          connectionString: stripSslQueryParams(Redacted.value(connectionUri)),
+          ssl: { rejectUnauthorized: false },
+        });
+        await client.connect();
+        return client;
+      },
+      catch: toPgError,
+    }),
+    use,
+    (client) => Effect.promise(() => client.end().catch(() => {})),
   );
 
-const getApplied = (client: Client, migrationsTable: string) =>
-  client
-    .query<{ name: string }>(`SELECT name FROM "${migrationsTable}";`)
-    .then((r) => new Set(r.rows.map((row) => row.name)));
-
-const getNextSeq = (client: Client, migrationsTable: string) =>
-  client
-    .query<{ id: string }>(`SELECT id FROM "${migrationsTable}";`)
-    .then((r) => {
-      let max = 0;
-      for (const { id } of r.rows) {
-        if (/^\d+$/.test(id)) {
-          max = Math.max(max, Number.parseInt(id, 10));
-        }
-      }
-      return max + 1;
-    });
-
 /**
- * Apply pending Postgres migrations in order, tracked in `migrationsTable`.
- * Each migration runs inside a transaction together with the bookkeeping
- * INSERT so partial application is impossible.
+ * Neon's migration adaptation is exactly this: the shared pipeline with a
+ * connection-URI-scoped pg client as its executor.
  */
-export const applyMigrations = (options: ApplyMigrationsOptions) =>
-  withClient(options.connectionUri, async (client) => {
-    await ensureMigrationsTable(client, options.migrationsTable);
-    const applied = await getApplied(client, options.migrationsTable);
-    let nextSeq = await getNextSeq(client, options.migrationsTable);
-
-    for (const file of options.migrationsFiles) {
-      if (applied.has(file.id)) continue;
-      const migrationId = nextSeq.toString().padStart(5, "0");
-      nextSeq += 1;
-      await client.query("BEGIN");
-      try {
-        await client.query(file.sql);
-        await client.query(
-          `INSERT INTO "${options.migrationsTable}" (id, name) VALUES ($1, $2);`,
-          [migrationId, file.id],
-        );
-        await client.query("COMMIT");
-      } catch (err) {
-        await client.query("ROLLBACK").catch(() => {});
-        throw err;
-      }
-    }
+export const runPgMigrations = (options: {
+  connectionUri: Redacted.Redacted<string>;
+  input: NormalizedMigrationsInput;
+  stamped: StampedMigrationsState;
+}) =>
+  runMigrations({
+    ...options,
+    withExecutor: (apply) =>
+      withPgClient(options.connectionUri, (client) =>
+        apply(makePgMigrationExecutor(client)),
+      ),
   });
 
 /**
  * Run a single SQL script against the database (used for `importFiles`).
  */
 export const runSql = (connectionUri: Redacted.Redacted<string>, sql: string) =>
-  withClient(connectionUri, async (client) => {
-    await client.query(sql);
-  });
+  withPgClient(connectionUri, (client) =>
+    Effect.tryPromise({
+      try: () => client.query(sql),
+      catch: toPgError,
+    }),
+  ).pipe(Effect.asVoid);

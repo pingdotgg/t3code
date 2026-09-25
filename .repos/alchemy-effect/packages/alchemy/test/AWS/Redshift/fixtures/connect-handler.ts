@@ -28,7 +28,7 @@ const summarize = (info: Redshift.ClusterConnectionInfo) => ({
 export default RedshiftConnectFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(60),
   },
   Effect.gen(function* () {

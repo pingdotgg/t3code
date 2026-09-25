@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Shell marker: proves a response is the SPA app shell (served for /
+         and, via `single-page-application` not-found handling, for deep
+         links) rather than anything server-rendered. -->
+    <meta name="fixture" content="octane-spa-shell" />
+    <title>Octane SPA fixture</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

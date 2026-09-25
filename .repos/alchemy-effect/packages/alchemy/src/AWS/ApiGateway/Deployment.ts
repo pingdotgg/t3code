@@ -74,15 +74,14 @@ export interface DeploymentType extends Resource<
 /**
  * A point-in-time snapshot of a REST API, ready to be served through a
  * `Stage`.
- * @resource
- * @section Creating a deployment
+ * ### Creating a deployment
  * A Deployment captures whatever methods, integrations, resources, and
  * authorizers currently exist on the REST API and produces an immutable
  * `deploymentId` that a `Stage` can point at. Pass the `RestApi` value on
  * `restApi` and Alchemy handles all the ordering for you — the deployment
  * will run after every method bound to the API.
  *
- * @example Deployment of a REST API
+ * **Example:** Deployment of a REST API
  * ```typescript
  * const api = yield* ApiGateway.RestApi("Api", {
  *   endpointConfiguration: { types: ["REGIONAL"] },
@@ -101,14 +100,14 @@ export interface DeploymentType extends Resource<
  * });
  * ```
  *
- * @section Forcing a redeploy
+ * ### Forcing a redeploy
  * Usually you do not have to: `restApi` already makes the Deployment
  * depend on every method, so any change to a method re-plans a new
  * deployment. Use `triggers` when you want to couple the deployment to a
  * signal Alchemy cannot see — for example, a manual version bump or a
  * hash of configuration computed outside the stack.
  *
- * @example Force redeploy on a version bump
+ * **Example:** Force redeploy on a version bump
  * ```typescript
  * const deployment = yield* ApiGateway.Deployment("Release", {
  *   restApi: api,
@@ -116,11 +115,13 @@ export interface DeploymentType extends Resource<
  * });
  * ```
  *
- * @section Why no DependsOn?
+ * ### Why no DependsOn?
  * CloudFormation's `AWS::ApiGateway::Deployment` famously requires a
  * hand-written `DependsOn: [Method1, Method2, ...]` listing every method.
  * Alchemy derives that list automatically from the bindings registered on
  * the `RestApi`, so adding a method never requires editing the deployment.
+ *
+ * @resource
  */
 export const DeploymentResource = Resource<DeploymentType>(
   "AWS.ApiGateway.Deployment",

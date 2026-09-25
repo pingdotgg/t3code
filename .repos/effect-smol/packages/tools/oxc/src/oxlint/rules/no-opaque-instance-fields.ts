@@ -1,4 +1,4 @@
-import type { CreateRule, ESTree, Visitor } from "oxlint"
+import type { CreateRule, ESTree, Visitor } from "@oxlint/plugins"
 
 const SCHEMA_SOURCES = new Set(["effect", "effect/Schema"])
 const SCHEMA_NAMESPACE_SOURCES = new Set(["effect/Schema"])

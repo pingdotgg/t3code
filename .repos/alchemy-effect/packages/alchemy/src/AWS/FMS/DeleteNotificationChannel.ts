@@ -13,9 +13,8 @@ export interface DeleteNotificationChannelRequest
  *
  * Deletes the Firewall Manager association with the IAM role and SNS topic used to record SNS logs. Provide the
  * implementation with `Effect.provide(AWS.FMS.DeleteNotificationChannelHttp)`.
- * @binding
- * @section Notification Channel
- * @example Delete the Notification Channel
+ * ### Notification Channel
+ * **Example:** Delete the Notification Channel
  * ```typescript
  * // init — account-level binding takes no resource
  * const deleteNotificationChannel = yield* AWS.FMS.DeleteNotificationChannel();
@@ -23,6 +22,8 @@ export interface DeleteNotificationChannelRequest
  * // runtime
  * yield* deleteNotificationChannel();
  * ```
+ *
+ * @binding
  */
 export interface DeleteNotificationChannel extends Binding.Service<
   DeleteNotificationChannel,

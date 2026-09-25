@@ -12,13 +12,12 @@ import * as Binding from "../../Binding.ts";
  * `geo-routes:CalculateRoutes`. Requests and responses are raw distilled types
  * (`Origin`/`Destination` are `[longitude, latitude]` pairs).
  *
- * @binding
- * @section Calculating Routes
+ * ### Calculating Routes
  * Provide the `CalculateRoutesHttp` implementation layer on the Function
  * effect (`.pipe(Effect.provide(AWS.GeoRoutes.CalculateRoutesHttp))`), bind in
  * the init phase, then call the client at runtime.
  *
- * @example Calculate a route between two points
+ * **Example:** Calculate a route between two points
  * ```typescript
  * // init
  * const calculateRoutes = yield* AWS.GeoRoutes.CalculateRoutes();
@@ -31,6 +30,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const distanceMeters = result.Routes?.[0]?.Summary?.Distance;
  * ```
+ *
+ * @binding
  */
 export interface CalculateRoutes extends Binding.Service<
   CalculateRoutes,

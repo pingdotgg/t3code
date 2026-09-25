@@ -15,9 +15,8 @@ export interface BatchCreateMemoryRecordsRequest extends Omit<
  * AgentCore data-plane API against it. Provide `AgentCore.BatchCreateMemoryRecordsHttp`
  * on the Function effect to implement the binding.
  *
- * @binding
- * @section Writing Memory Records
- * @example Insert a Record Directly
+ * ### Writing Memory Records
+ * **Example:** Insert a Record Directly
  * ```typescript
  * // init
  * const batchCreateMemoryRecords = yield* AgentCore.BatchCreateMemoryRecords(memory);
@@ -41,6 +40,8 @@ export interface BatchCreateMemoryRecordsRequest extends Omit<
  *   }),
  * };
  * ```
+ *
+ * @binding
  */
 export interface BatchCreateMemoryRecords extends Binding.Service<
   BatchCreateMemoryRecords,

@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * tests started with {@link TestConnection} — filter by `endpoint-arn` or
  * `replication-instance-arn`. Provide the implementation with
  * `Effect.provide(AWS.DMS.DescribeConnectionsHttp)`.
- * @binding
- * @section Polling Connection Tests
- * @example Poll a Test Result for an Endpoint
+ * ### Polling Connection Tests
+ * **Example:** Poll a Test Result for an Endpoint
  * ```typescript
  * // init — account-level, no target resource
  * const describeConnections = yield* AWS.DMS.DescribeConnections();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // Connections[0].Status: "testing" | "successful" | "failed"
  * ```
+ *
+ * @binding
  */
 export interface DescribeConnections extends Binding.Service<
   DescribeConnections,

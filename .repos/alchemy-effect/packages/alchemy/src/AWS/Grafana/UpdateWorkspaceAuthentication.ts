@@ -13,9 +13,8 @@ import type { Workspace } from "./Workspace.ts";
  * `Admin` and `Editor` roles. Changes can take a few minutes to apply.
  * Provide the implementation with
  * `Effect.provide(AWS.Grafana.UpdateWorkspaceAuthenticationHttp)`.
- * @binding
- * @section Managing Authentication
- * @example Configure a SAML Identity Provider
+ * ### Managing Authentication
+ * **Example:** Configure a SAML Identity Provider
  * ```typescript
  * const updateAuth = yield* Grafana.UpdateWorkspaceAuthentication(workspace);
  *
@@ -28,6 +27,8 @@ import type { Workspace } from "./Workspace.ts";
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateWorkspaceAuthentication extends Binding.Service<
   UpdateWorkspaceAuthentication,

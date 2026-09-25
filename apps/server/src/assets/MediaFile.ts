@@ -7,37 +7,28 @@ import * as NodeStream from "@effect/platform-node/NodeStream";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-class MediaFileOpenError extends Schema.TaggedErrorClass<MediaFileOpenError>()(
-  "MediaFileOpenError",
-  {
-    path: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {
+class MediaFileOpenError extends Schema.TaggedError<MediaFileOpenError>()("MediaFileOpenError", {
+  path: Schema.String,
+  cause: Schema.Defect(),
+}) {
   override get message(): string {
     return `Failed to open media file '${this.path}'.`;
   }
 }
 
-class MediaFileReadError extends Schema.TaggedErrorClass<MediaFileReadError>()(
-  "MediaFileReadError",
-  {
-    path: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {
+class MediaFileReadError extends Schema.TaggedError<MediaFileReadError>()("MediaFileReadError", {
+  path: Schema.String,
+  cause: Schema.Defect(),
+}) {
   override get message(): string {
     return `Failed to read media file '${this.path}'.`;
   }
 }
 
-class MediaFileStatError extends Schema.TaggedErrorClass<MediaFileStatError>()(
-  "MediaFileStatError",
-  {
-    path: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {
+class MediaFileStatError extends Schema.TaggedError<MediaFileStatError>()("MediaFileStatError", {
+  path: Schema.String,
+  cause: Schema.Defect(),
+}) {
   override get message(): string {
     return `Failed to read metadata for media file '${this.path}'.`;
   }

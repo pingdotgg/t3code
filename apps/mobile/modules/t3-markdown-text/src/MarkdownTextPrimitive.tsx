@@ -1,5 +1,15 @@
 import React, { type Ref } from "react";
-import { Platform, StyleSheet, Text as RNText, type TextProps, type ViewStyle } from "react-native";
+import {
+  findNodeHandle,
+  Platform,
+  processColor,
+  StyleSheet,
+  Text as RNText,
+  type ColorValue,
+  type TextProps,
+  type ViewStyle,
+} from "react-native";
+import { setMarkdownSelectionHandleColor } from "./T3MarkdownTextSelectionModule";
 import T3MarkdownTextRunNativeComponent from "./T3MarkdownTextRunNativeComponent";
 import T3MarkdownTextNativeComponent from "./T3MarkdownTextNativeComponent";
 import { flattenStyles } from "./util";
@@ -34,8 +44,10 @@ export type ContextMenuActionEvent = {
  */
 export type MarkdownTextPrimitiveProps = Omit<TextProps, "onTextLayout"> & {
   nativeTextRef?: Ref<RNText>;
+  selectionHandleColor?: ColorValue;
   uiTextView?: boolean;
   contextMenuConfig?: string;
+  contextClipboardConfig?: string;
   onContextMenuAction?: (event: ContextMenuActionEvent) => void;
   /**
    * Fired when the native text selection changes. Only fires on iOS when
@@ -115,9 +127,47 @@ function MarkdownTextPrimitiveInner({ nativeTextRef, ...props }: MarkdownTextPri
   return <MarkdownTextPrimitiveChild {...props} />;
 }
 
-export function MarkdownTextPrimitive(props: MarkdownTextPrimitiveProps) {
+function AndroidMarkdownText({
+  nativeTextRef,
+  selectionHandleColor,
+  onLayout,
+  contextClipboardConfig: _contextClipboardConfig,
+  ...props
+}: MarkdownTextPrimitiveProps) {
+  const textRef = React.useRef<RNText | null>(null);
+  React.useImperativeHandle<RNText | null, RNText | null>(nativeTextRef, () => textRef.current, []);
+  const color = processColor(selectionHandleColor);
+  const applyHandleColor = React.useCallback(() => {
+    if (!textRef.current || typeof color !== "number") return;
+    const reactTag = findNodeHandle(textRef.current);
+    if (reactTag !== null) setMarkdownSelectionHandleColor(reactTag, color);
+  }, [color]);
+
+  // RN's selectionColor only sets the highlight. Retint mounted handles when
+  // the theme changes, and after layout when the native view first exists.
+  React.useEffect(applyHandleColor, [applyHandleColor]);
+
+  return (
+    <RNText
+      ref={textRef}
+      {...props}
+      onLayout={(event) => {
+        applyHandleColor();
+        onLayout?.(event);
+      }}
+    />
+  );
+}
+
+export function MarkdownTextPrimitive({
+  selectionHandleColor,
+  ...props
+}: MarkdownTextPrimitiveProps) {
+  if (Platform.OS === "android" && selectionHandleColor !== undefined) {
+    return <AndroidMarkdownText {...props} selectionHandleColor={selectionHandleColor} />;
+  }
   if (Platform.OS !== "ios") {
-    const { nativeTextRef, ...textProps } = props;
+    const { nativeTextRef, contextClipboardConfig: _contextClipboardConfig, ...textProps } = props;
     return <RNText ref={nativeTextRef} {...textProps} />;
   }
   return <MarkdownTextPrimitiveInner {...props} />;

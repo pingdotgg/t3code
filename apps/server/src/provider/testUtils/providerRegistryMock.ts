@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 
-export const makeProviderRegistryMock = (
+const makeProviderRegistryMock = (
   providers: ReadonlyArray<ServerProvider> = [],
 ): ProviderRegistryShape => ({
   getProviders: Effect.succeed(providers),

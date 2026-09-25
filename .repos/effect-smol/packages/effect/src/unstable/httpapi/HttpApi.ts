@@ -15,7 +15,6 @@ import { type Pipeable, pipeArguments } from "../../Pipeable.ts"
 import * as Predicate from "../../Predicate.ts"
 import * as Record from "../../Record.ts"
 import type * as Schema from "../../Schema.ts"
-import type * as SchemaAST from "../../SchemaAST.ts"
 import type { PathInput } from "../http/HttpRouter.ts"
 import * as HttpApiEndpoint from "./HttpApiEndpoint.ts"
 import type * as HttpApiGroup from "./HttpApiGroup.ts"
@@ -290,11 +289,11 @@ export const reflect = <Id extends string, Groups extends HttpApiGroup.Constrain
         mergedAnnotations: Context.merge(groupAnnotations, endpoint.annotations),
         successes: extractResponseContent(
           HttpApiEndpoint.getSuccessSchemas(endpoint),
-          HttpApiSchema.getStatusSuccess
+          HttpApiSchema.getStatusSuccessSchema
         ),
         errors: extractResponseContent(
           HttpApiEndpoint.getErrorSchemas(endpoint),
-          HttpApiSchema.getStatusError
+          HttpApiSchema.getStatusErrorSchema
         )
       })
     }
@@ -305,7 +304,7 @@ export const reflect = <Id extends string, Groups extends HttpApiGroup.Constrain
 
 const extractResponseContent = (
   schemas: Array<Schema.Top>,
-  getStatus: (ast: SchemaAST.AST) => number
+  getStatus: (schema: Schema.Constraint) => number
 ): ReadonlyMap<number, [Schema.Top, ...Array<Schema.Top>]> => {
   const map = new Map<number, [Schema.Top, ...Array<Schema.Top>]>()
 
@@ -314,9 +313,9 @@ const extractResponseContent = (
   return map
 
   function add(schema: Schema.Top) {
-    if (HttpApiSchema.isStreamSchema(schema)) return
-    const ast = schema.ast
-    const status = getStatus(ast)
+    const body = HttpApiSchema.isWithHeaders(schema) ? schema.schema : schema
+    if (HttpApiSchema.isStreamSchema(body)) return
+    const status = getStatus(schema)
     const schemas = map.get(status)
     if (schemas === undefined) {
       map.set(status, [schema])

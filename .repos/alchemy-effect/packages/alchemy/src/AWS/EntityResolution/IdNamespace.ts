@@ -80,9 +80,8 @@ export interface IdNamespace extends Resource<
  * translated; a `TARGET` namespace holds the dataset (and the rule-based
  * matching configuration) they are mapped onto.
  *
- * @resource
- * @section Creating ID Namespaces
- * @example Source namespace over a Glue table
+ * ### Creating ID Namespaces
+ * **Example:** Source namespace over a Glue table
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -96,7 +95,7 @@ export interface IdNamespace extends Resource<
  * });
  * ```
  *
- * @example Target namespace with matching rules
+ * **Example:** Target namespace with matching rules
  * ```typescript
  * const target = yield* AWS.EntityResolution.IdNamespace("Target", {
  *   type: "TARGET",
@@ -117,6 +116,8 @@ export interface IdNamespace extends Resource<
  *   roleArn: role.roleArn,
  * });
  * ```
+ *
+ * @resource
  */
 export const IdNamespace = Resource<IdNamespace>(
   "AWS.EntityResolution.IdNamespace",

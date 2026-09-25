@@ -605,6 +605,108 @@ describe("CodexSessionRuntime collab integration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  // it.live: the runtime talks to a real child process; under it.effect's
+  // TestClock the internal timers freeze and the join never completes.
+  it.live("Stop answers a parked app-permission approval with a withheld grant", () =>
+    Effect.gen(function* () {
+      // Interrupting a turn whose app-permission prompt is still parked must
+      // settle that prompt: the handler resumes with "cancel", the peer gets
+      // an empty grant (permission withheld), and nothing hangs until close.
+      const script = {
+        rootThreadId: ROOT,
+        holdTurnOpen: true,
+        notifications: [],
+        serverRequests: [
+          {
+            method: "item/permissions/requestApproval",
+            label: "perm-1",
+            params: {
+              cwd: "/tmp/project",
+              itemId: "app_1",
+              permissions: { network: { enabled: true } },
+              reason: "Fetch data from api.example.com",
+              startedAtMs: 1_778_000_000_000,
+              threadId: "${threadId}",
+              turnId: "${turnId}",
+            },
+          },
+        ],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      const responsesPath = `${scriptPath}.approvalResponses`;
+      NodeFS.rmSync(responsesPath, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(responsesPath, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-codex-permission-stop"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      // One consumer for the whole stream: `events` is a plain queue stream,
+      // so two forks would compete for events and each could starve the
+      // other's filter. Signal the two milestones through Deferreds instead.
+      const requestedReady = yield* Deferred.make<ProviderEvent>();
+      const settledReady = yield* Deferred.make<ProviderEvent>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => {
+          if (event.method === "item/permissions/requestApproval") {
+            return Deferred.succeed(requestedReady, event);
+          }
+          if (event.method === "serverRequest/resolved" && event.requestKind === "permission") {
+            return Deferred.succeed(settledReady, event);
+          }
+          return Effect.void;
+        }),
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "use the connected app" });
+      const requested = yield* Deferred.await(requestedReady).pipe(
+        Effect.timeoutOption("15 seconds"),
+      );
+      assert.isTrue(requested._tag === "Some", "permission approval request never arrived");
+
+      yield* runtime.interruptTurn();
+
+      // The peer emits serverRequest/resolved only AFTER recording the
+      // runtime's answer, so awaiting this receipt makes reading the sidecar
+      // race-free. The runtime correlates that receipt back to the canonical
+      // request (requestKind + requestId) — the same event chain the adapter
+      // folds into approval.resolved, so the card actually closes.
+      const settled = yield* Deferred.await(settledReady).pipe(Effect.timeoutOption("15 seconds"));
+      assert.isTrue(settled._tag === "Some", "interrupt did not settle the parked approval");
+      const settledEvent = settled._tag === "Some" ? settled.value : undefined;
+      assert.isDefined(settledEvent);
+      assert.isDefined(
+        settledEvent?.requestId,
+        "receipt must correlate back to the canonical approval request",
+      );
+
+      const recorded = NodeFS.readFileSync(responsesPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { id: number; label: string; result: unknown });
+      assert.equal(recorded.length, 1);
+      const answer = recorded[0];
+      assert.isDefined(answer);
+      assert.equal(answer.label, "perm-1");
+      // Cancelled approvals withhold the grant: an empty permission profile.
+      assert.deepEqual(answer.result, { permissions: {} });
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.live("Stop targets the active turn when Codex has accepted a queued follow-up", () =>
     Effect.gen(function* () {
       const activeTurnId = "019fe3e8-f908-7f31-8d51-283f4a47897a";
@@ -765,4 +867,77 @@ describe("CodexSessionRuntime collab integration", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   }
+});
+
+describe("CodexSessionRuntime compaction", () => {
+  it.effect("restores T3 context after the root thread compacts", () =>
+    Effect.gen(function* () {
+      const compacted = (threadId: string) => ({
+        method: "item/completed",
+        params: {
+          threadId,
+          turnId: `${threadId}-turn`,
+          completedAtMs: 0,
+          item: { type: "contextCompaction", id: `compaction-${threadId}` },
+        },
+      });
+      const script = {
+        rootThreadId: ROOT,
+        recordRequests: true,
+        // A child's compaction must not inject into the root thread.
+        notifications: [compacted(CHILD_A), compacted(ROOT)],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-compaction-context"),
+        binaryPath: peerPath,
+        cwd: NodeOS.tmpdir(),
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+        models: Effect.succeed([
+          { slug: "gpt-5.6-sol", name: "GPT-5.6 Sol", isCustom: false, capabilities: null },
+        ]),
+      });
+      const completedFiber = yield* runtime.events.pipe(
+        Stream.filter((event) => event.method === "turn/completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "keep going", interactionMode: "default" });
+      yield* Fiber.join(completedFiber);
+
+      // The restore is awaited before later notifications, so it has landed.
+      const requests = readRecordedRequests();
+      assert.lengthOf(requests, 1);
+      const [inject] = requests;
+      assert.isDefined(inject);
+      assert.equal(inject.method, "thread/inject_items");
+      assert.equal(inject.params.threadId, ROOT);
+      const texts = (
+        inject.params.items as ReadonlyArray<{ role: string; content: [{ text: string }] }>
+      ).map((item) => {
+        assert.equal(item.role, "developer");
+        return item.content[0].text;
+      });
+      assert.lengthOf(texts, 1);
+      assert.match(
+        texts[0] ?? "",
+        /^<t3_code_runtime><runtime_info>.*as GPT-5\.6 Sol \(model slug: gpt-5\.6-sol\).*<\/t3_code_runtime>$/s,
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });

@@ -1,21 +1,21 @@
-import { readConnectAuthorizeRequest } from "@t3tools/shared/connectAuth";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
-import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Terminal from "effect/Terminal";
+import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import * as CliTokenManager from "./CliTokenManager.ts";
-import type { OutOfBandOAuthPromptInput } from "./CliTokenManager.ts";
 
 // pk_test_<base64 of "clerk.example.test$">
 const TEST_ENV = {
@@ -54,44 +54,11 @@ const TestTokenResponseJson = Schema.fromJsonString(
 );
 const encodeTestTokenResponse = Schema.encodeSync(TestTokenResponseJson);
 
-const makeTokenEndpointLayer = (
-  requests: Array<RecordedTokenRequest>,
-  options?: { readonly idToken?: string },
-) =>
-  Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make((request) =>
-      Effect.sync(() => {
-        const body =
-          request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
-        requests.push({ url: request.url, params: new URLSearchParams(body) });
-        return HttpClientResponse.fromWeb(
-          request,
-          new Response(
-            encodeTestTokenResponse({
-              access_token: "access-token-1",
-              refresh_token: "refresh-token-1",
-              id_token: options?.idToken ?? idTokenWithEmail,
-              expires_in: 3600,
-              token_type: "bearer",
-            }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          ),
-        );
-      }),
-    ),
-  );
-
 const provideTestEnv = Effect.provide(
   ConfigProvider.layer(ConfigProvider.fromEnv({ env: TEST_ENV })),
 );
 
 const isAuthorizationError = Schema.is(CliTokenManager.CloudCliAuthorizationError);
-
-class PromptRejectedError extends Schema.TaggedErrorClass<PromptRejectedError>()(
-  "PromptRejectedError",
-  { message: Schema.String },
-) {}
 
 const makeTestTerminal = (queue: Queue.Queue<Terminal.UserInput>) =>
   Terminal.make({
@@ -145,106 +112,215 @@ it.effect("finishes normally when the browser callback wins", () =>
   }),
 );
 
-it.layer(NodeServices.layer)("CliTokenManager.outOfBandOAuthLogin", (it) => {
-  it.effect("prints a hosted authorize URL and exchanges the out-of-band code with PKCE", () =>
-    Effect.gen(function* () {
-      const requests: Array<RecordedTokenRequest> = [];
-      let seenAuthorizeUrl = "";
+interface DeviceFlowServer {
+  readonly requests: Array<RecordedTokenRequest>;
+  /** Token endpoint replies, consumed in order; the last one repeats. */
+  readonly tokenReplies: Array<{ readonly status: number; readonly body: string }>;
+}
 
-      const { token, identity } = yield* CliTokenManager.outOfBandOAuthLogin(
-        ({ authorizeUrl, validate }: OutOfBandOAuthPromptInput) =>
-          Effect.gen(function* () {
-            seenAuthorizeUrl = authorizeUrl;
-            const request = readConnectAuthorizeRequest(new URL(authorizeUrl));
-            assert.isNotNull(request);
-            return yield* validate(`clerk-code-123.${request!.state}`).pipe(
-              Effect.mapError((message) => new PromptRejectedError({ message })),
-            );
+const DEVICE_AUTHORIZATION_BODY = JSON.stringify({
+  device_code: "device-code-1",
+  user_code: "BCDF-GHJK",
+  verification_uri: "https://accounts.example.test/device",
+  verification_uri_complete: "https://accounts.example.test/device?user_code=BCDF-GHJK",
+  expires_in: 600,
+  interval: 5,
+});
+
+const oauthError = (error: string) => ({ status: 400, body: JSON.stringify({ error }) });
+const tokenGranted = {
+  status: 200,
+  body: encodeTestTokenResponse({
+    access_token: "access-token-1",
+    refresh_token: "refresh-token-1",
+    id_token: idTokenWithEmail,
+    expires_in: 3600,
+    token_type: "bearer",
+  }),
+};
+
+const makeDeviceFlowLayer = (server: DeviceFlowServer) =>
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.sync(() => {
+        const body =
+          request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
+        server.requests.push({ url: request.url, params: new URLSearchParams(body) });
+        const reply = request.url.endsWith("/oauth/device_authorization")
+          ? { status: 200, body: DEVICE_AUTHORIZATION_BODY }
+          : ((server.tokenReplies.length > 1
+              ? server.tokenReplies.shift()
+              : server.tokenReplies[0]) ?? oauthError("invalid_grant"));
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response(reply.body, {
+            status: reply.status,
+            headers: { "content-type": "application/json" },
           }),
-      ).pipe(Effect.provide(makeTokenEndpointLayer(requests)), provideTestEnv);
+        );
+      }),
+    ),
+  );
 
-      const authorizeUrl = new URL(seenAuthorizeUrl);
-      assert.equal(authorizeUrl.origin, "https://hosted.example.test");
-      assert.equal(authorizeUrl.pathname, "/connect");
-      const request = readConnectAuthorizeRequest(authorizeUrl);
-      assert.isNotNull(request);
-      assert.match(request!.state, /^[A-Za-z0-9_-]{22}$/);
+const tokenRequests = (requests: ReadonlyArray<RecordedTokenRequest>) =>
+  requests.filter((request) => request.url.endsWith("/oauth/token"));
 
+it.layer(NodeServices.layer)("CliTokenManager.deviceAuthorizationLogin", (it) => {
+  it.effect("requests a device code, shows it, and polls until Clerk grants the token", () =>
+    Effect.gen(function* () {
+      const server: DeviceFlowServer = {
+        requests: [],
+        tokenReplies: [oauthError("authorization_pending"), tokenGranted],
+      };
+      const prompts: Array<CliTokenManager.DeviceAuthorizationPrompt> = [];
+
+      const fiber = yield* CliTokenManager.deviceAuthorizationLogin((prompt) =>
+        Effect.sync(() => {
+          prompts.push(prompt);
+        }),
+      ).pipe(Effect.provide(makeDeviceFlowLayer(server)), provideTestEnv, Effect.forkChild);
+
+      yield* TestClock.adjust(Duration.seconds(10));
+      const { token, identity } = yield* Fiber.join(fiber);
+
+      assert.deepEqual(prompts, [
+        {
+          verificationUri: "https://accounts.example.test/device",
+          verificationUriComplete: "https://accounts.example.test/device?user_code=BCDF-GHJK",
+          userCode: "BCDF-GHJK",
+          expiresIn: Duration.seconds(600),
+        },
+      ]);
       assert.equal(token.accessToken, "access-token-1");
       assert.equal(token.refreshToken, "refresh-token-1");
       assert.equal(token.identity, "theo@example.test");
-      // The id_token's email claim is surfaced so connect can show the account.
       assert.equal(identity, "theo@example.test");
 
-      assert.lengthOf(requests, 1);
-      const exchange = requests[0]!;
-      assert.equal(exchange.url, "https://clerk.example.test/oauth/token");
-      assert.equal(exchange.params.get("grant_type"), "authorization_code");
-      assert.equal(exchange.params.get("code"), "clerk-code-123");
-      assert.equal(
-        exchange.params.get("redirect_uri"),
-        "https://hosted.example.test/connect/callback",
-      );
-      assert.equal(exchange.params.get("client_id"), "oauth_client_test");
-      // The verifier must hash to the challenge advertised in the authorize URL.
-      const verifier = exchange.params.get("code_verifier");
-      assert.isNotNull(verifier);
-      const crypto = yield* Crypto.Crypto;
-      const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(verifier!));
-      assert.equal(Encoding.encodeBase64Url(digest), request!.challenge);
+      const authorization = server.requests[0]!;
+      assert.equal(authorization.url, "https://clerk.example.test/oauth/device_authorization");
+      assert.equal(authorization.params.get("client_id"), "oauth_client_test");
+      assert.equal(authorization.params.get("scope"), "openid profile email offline_access");
+
+      const polls = tokenRequests(server.requests);
+      assert.lengthOf(polls, 2);
+      for (const poll of polls) {
+        assert.equal(poll.url, "https://clerk.example.test/oauth/token");
+        assert.equal(poll.params.get("grant_type"), "urn:ietf:params:oauth:grant-type:device_code");
+        assert.equal(poll.params.get("device_code"), "device-code-1");
+        assert.equal(poll.params.get("client_id"), "oauth_client_test");
+      }
     }),
   );
 
-  it.effect("rejects out-of-band codes whose state does not match the request", () =>
+  it.effect("waits the advertised interval between polls and backs off on slow_down", () =>
     Effect.gen(function* () {
-      const requests: Array<RecordedTokenRequest> = [];
+      const server: DeviceFlowServer = {
+        requests: [],
+        tokenReplies: [oauthError("slow_down"), oauthError("authorization_pending")],
+      };
 
-      const validationErrors: Array<string> = [];
-      const result = yield* CliTokenManager.outOfBandOAuthLogin(
-        ({ validate }: OutOfBandOAuthPromptInput) =>
-          validate("clerk-code-123.wrong-state").pipe(
-            Effect.tapError((message) => Effect.sync(() => validationErrors.push(message))),
-            Effect.mapError((message) => new PromptRejectedError({ message })),
-          ),
-      ).pipe(Effect.provide(makeTokenEndpointLayer(requests)), provideTestEnv, Effect.flip);
-
-      assert.lengthOf(requests, 0);
-      assert.lengthOf(validationErrors, 1);
-      assert.include(validationErrors[0], "different connect request");
-      assert.instanceOf(result, PromptRejectedError);
-    }),
-  );
-
-  it.effect("ignores an id_token whose claims are not valid JSON", () =>
-    Effect.gen(function* () {
-      const requests: Array<RecordedTokenRequest> = [];
-      const malformedIdToken = `header.${Encoding.encodeBase64Url("not-json")}.signature`;
-
-      const { identity } = yield* CliTokenManager.outOfBandOAuthLogin(
-        ({ authorizeUrl }: OutOfBandOAuthPromptInput) => {
-          const request = readConnectAuthorizeRequest(new URL(authorizeUrl));
-          assert.isNotNull(request);
-          return Effect.succeed(`clerk-code-123.${request!.state}`);
-        },
-      ).pipe(
-        Effect.provide(makeTokenEndpointLayer(requests, { idToken: malformedIdToken })),
+      const fiber = yield* CliTokenManager.deviceAuthorizationLogin(() => Effect.void).pipe(
+        Effect.provide(makeDeviceFlowLayer(server)),
         provideTestEnv,
+        Effect.forkChild,
       );
 
-      assert.isNull(identity);
-      assert.lengthOf(requests, 1);
+      yield* TestClock.adjust(Duration.seconds(4));
+      assert.lengthOf(tokenRequests(server.requests), 0);
+      yield* TestClock.adjust(Duration.seconds(1));
+      assert.lengthOf(tokenRequests(server.requests), 1);
+      // slow_down widens the 5s interval to 10s.
+      yield* TestClock.adjust(Duration.seconds(9));
+      assert.lengthOf(tokenRequests(server.requests), 1);
+      yield* TestClock.adjust(Duration.seconds(1));
+      assert.lengthOf(tokenRequests(server.requests), 2);
+      yield* Fiber.interrupt(fiber);
     }),
   );
 
-  it.effect("fails without touching the token endpoint when the prompt returns garbage", () =>
+  it.effect("backs off after a transient upstream failure and keeps polling", () =>
     Effect.gen(function* () {
-      const requests: Array<RecordedTokenRequest> = [];
+      const server: DeviceFlowServer = {
+        requests: [],
+        tokenReplies: [{ status: 503, body: "upstream unavailable" }, tokenGranted],
+      };
 
-      const result = yield* CliTokenManager.outOfBandOAuthLogin(() =>
-        Effect.succeed("not-a-connect-code"),
-      ).pipe(Effect.provide(makeTokenEndpointLayer(requests)), provideTestEnv, Effect.flip);
+      const fiber = yield* CliTokenManager.deviceAuthorizationLogin(() => Effect.void).pipe(
+        Effect.provide(makeDeviceFlowLayer(server)),
+        provideTestEnv,
+        Effect.forkChild,
+      );
 
-      assert.lengthOf(requests, 0);
+      yield* TestClock.adjust(Duration.seconds(5));
+      assert.lengthOf(tokenRequests(server.requests), 1);
+      // The 5xx widens the 5s interval to 10s before the retry.
+      yield* TestClock.adjust(Duration.seconds(9));
+      assert.lengthOf(tokenRequests(server.requests), 1);
+      yield* TestClock.adjust(Duration.seconds(1));
+      const { token } = yield* Fiber.join(fiber);
+      assert.lengthOf(tokenRequests(server.requests), 2);
+      assert.equal(token.accessToken, "access-token-1");
+    }),
+  );
+
+  it.effect("fails with a denied error when the user rejects the request", () =>
+    Effect.gen(function* () {
+      const server: DeviceFlowServer = {
+        requests: [],
+        tokenReplies: [oauthError("access_denied")],
+      };
+
+      const fiber = yield* CliTokenManager.deviceAuthorizationLogin(() => Effect.void).pipe(
+        Effect.provide(makeDeviceFlowLayer(server)),
+        provideTestEnv,
+        Effect.flip,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust(Duration.seconds(5));
+      const result = yield* Fiber.join(fiber);
+
+      assert.instanceOf(result, CliTokenManager.CloudCliAuthorizationDeniedError);
+      assert.lengthOf(tokenRequests(server.requests), 1);
+    }),
+  );
+
+  it.effect("times out once the device code lifetime elapses", () =>
+    Effect.gen(function* () {
+      const server: DeviceFlowServer = {
+        requests: [],
+        tokenReplies: [oauthError("authorization_pending")],
+      };
+
+      const fiber = yield* CliTokenManager.deviceAuthorizationLogin(() => Effect.void).pipe(
+        Effect.provide(makeDeviceFlowLayer(server)),
+        provideTestEnv,
+        Effect.flip,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust(Duration.seconds(600));
+      const result = yield* Fiber.join(fiber);
+
+      assert.instanceOf(result, CliTokenManager.CloudCliAuthorizationTimeoutError);
+    }),
+  );
+
+  it.effect("surfaces other OAuth errors as authorization failures", () =>
+    Effect.gen(function* () {
+      const server: DeviceFlowServer = {
+        requests: [],
+        tokenReplies: [oauthError("invalid_client")],
+      };
+
+      const fiber = yield* CliTokenManager.deviceAuthorizationLogin(() => Effect.void).pipe(
+        Effect.provide(makeDeviceFlowLayer(server)),
+        provideTestEnv,
+        Effect.flip,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust(Duration.seconds(5));
+      const result = yield* Fiber.join(fiber);
+
       assert.isTrue(isAuthorizationError(result));
     }),
   );

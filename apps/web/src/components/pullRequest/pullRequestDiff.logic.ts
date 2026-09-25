@@ -30,8 +30,8 @@ export type DiffFoldOverride = "expanded" | "folded" | null;
  * A diff arrives a slice at a time, so the reader's own choices are kept as the difference from
  * what the toolbar last said rather than as the set of folded files: a file that has not loaded
  * yet cannot be in a set, and would otherwise land expanded moments after the reader folded
- * everything. Files start expanded so opening the Code tab immediately shows the change; the
- * reader can still fold individual files or the whole diff from the toolbar.
+ * everything. The caller supplies the saved default until the toolbar overrides it; individual
+ * files can still be toggled independently.
  */
 export function isFileDiffCollapsed(
   fileKey: string,
@@ -40,4 +40,25 @@ export function isFileDiffCollapsed(
 ): boolean {
   const foldedByDefault = foldOverride === "folded";
   return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
+}
+
+/**
+ * The reader's fold choices after a file was ticked off, or put back.
+ *
+ * Clearing a file puts it away and un-clearing brings it back, so the tick moves the fold as if
+ * the reader had pressed the chevron themselves, which keeps folding a difference from what the
+ * toolbar last asked, and so keeps "collapse all" from ticking anything off.
+ */
+export function toggleFileDiffFoldForViewed(
+  fileKey: string,
+  viewed: boolean,
+  foldOverride: DiffFoldOverride,
+  toggledFileKeys: ReadonlySet<string>,
+): ReadonlySet<string> {
+  if (isFileDiffCollapsed(fileKey, foldOverride, toggledFileKeys) === viewed)
+    return toggledFileKeys;
+  const next = new Set(toggledFileKeys);
+  if (next.has(fileKey)) next.delete(fileKey);
+  else next.add(fileKey);
+  return next;
 }

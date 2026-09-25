@@ -11,9 +11,8 @@ import type { Graph } from "./Graph.ts";
  * The graph ARN is injected from the bound {@link Graph}.
  * Provide the implementation with
  * `Effect.provide(AWS.Detective.ListMembersHttp)`.
- * @binding
- * @section Administering Member Accounts
- * @example List Member Accounts
+ * ### Administering Member Accounts
+ * **Example:** List Member Accounts
  * ```typescript
  * // init
  * const listMembers = yield* AWS.Detective.ListMembers(graph);
@@ -21,6 +20,8 @@ import type { Graph } from "./Graph.ts";
  * // runtime
  * const { MemberDetails } = yield* listMembers();
  * ```
+ *
+ * @binding
  */
 export interface ListMembers extends Binding.Service<
   ListMembers,

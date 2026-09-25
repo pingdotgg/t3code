@@ -31,7 +31,6 @@ This document maps v3 Schema APIs to their v4 equivalents. Simple renames and ar
 | `EitherFromSelf`                                | `Result`                                                                      | rename            |
 | `DateFromNumber`                                | `DateFromMillis`                                                              | rename            |
 | `Date`                                          | `DateFromString`                                                              | restructure       |
-| `TaggedError`                                   | `TaggedErrorClass`                                                            | rename            |
 | `decodeUnknown`                                 | `decodeUnknownEffect`                                                         | rename            |
 | `decode`                                        | `decodeEffect`                                                                | rename            |
 | `decodeUnknownEither`                           | `decodeUnknownExit`                                                           | rename            |
@@ -60,7 +59,7 @@ This document maps v3 Schema APIs to their v4 equivalents. Simple renames and ar
 | `required(schema)`                              | `schema.mapFields(Struct.map(Schema.requiredKey))`                            | restructure       |
 | `extend(structB)`                               | `mapFields(Struct.assign(fieldsB))` or `fieldsAssign(fieldsB)`                | restructure       |
 | `transform(from, to, { decode, encode })`       | `from.pipe(decodeTo(to, SchemaTransformation.transform({ decode, encode })))` | restructure       |
-| `transformOrFail(from, to, { decode, encode })` | `from.pipe(decodeTo(to, { decode: SchemaGetter.transformOrFail(...), ... }))` | restructure       |
+| `transformOrFail(from, to, { decode, encode })` | `from.pipe(decodeTo(to, { decode: SchemaGetter.transformEffect(...), ... }))` | restructure       |
 | `transformLiteral(from, to)`                    | `Literal(from).transform(to)`                                                 | restructure       |
 | `transformLiterals([0,"a"], [1,"b"])`           | `Literals([0, 1]).transform(["a", "b"])`                                      | restructure       |
 | `attachPropertySignature("k", "v")`             | `mapFields(f => ({...f, k: tagDefaultOmit("v")}))`                            | restructure       |
@@ -898,14 +897,14 @@ const NumberFromString = Schema.transformOrFail(Schema.String, Schema.Number, {
 v4
 
 ```ts
-import { Effect, Number, Option, Schema, SchemaGetter, SchemaIssue } from "effect"
+import { Effect, Number, Schema, SchemaGetter, SchemaIssue } from "effect"
 
 const NumberFromString = Schema.String.pipe(
   Schema.decodeTo(Schema.Number, {
-    decode: SchemaGetter.transformOrFail((s) => {
+    decode: SchemaGetter.transformEffect((s) => {
       const n = Number.parse(s)
       if (n === undefined) {
-        return Effect.fail(new SchemaIssue.InvalidValue(Option.some(s)))
+        return Effect.fail(new SchemaIssue.InvalidValue())
       }
       return Effect.succeed(n)
     }),

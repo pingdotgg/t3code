@@ -6,9 +6,8 @@ import * as Binding from "../../Binding.ts";
  * Runtime binding for `servicequotas:ListAWSDefaultServiceQuotas` — list the
  * AWS default values for every quota of a service from inside a Function.
  *
- * @binding
- * @section Listing Quotas
- * @example List Lambda's default quotas
+ * ### Listing Quotas
+ * **Example:** List Lambda's default quotas
  * ```typescript
  * // init
  * const listAWSDefaultServiceQuotas =
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  *   ServiceCode: "lambda",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListAWSDefaultServiceQuotas extends Binding.Service<
   ListAWSDefaultServiceQuotas,

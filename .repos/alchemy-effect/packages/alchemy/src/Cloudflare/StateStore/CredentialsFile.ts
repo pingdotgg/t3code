@@ -1,4 +1,4 @@
-import type { HttpStateStoreCredentials } from "../../State/HttpStateStore.ts";
+import * as Schema from "effect/Schema";
 
 /**
  * Filename (under `~/.alchemy/credentials/{profile}/`) used to cache the
@@ -6,7 +6,7 @@ import type { HttpStateStoreCredentials } from "../../State/HttpStateStore.ts";
  *
  * Kept in this leaf module (rather than `StateStore/State.ts`) so the
  * Cloudflare auth provider can invalidate the cache on
- * `login --configure` / `logout` without importing the heavy state-store
+ * `profile edit` / provider logout without importing the heavy state-store
  * module and creating an import cycle
  * (`StateStore/State.ts` -> `Providers.ts` -> `Auth/AuthProvider.ts`).
  */
@@ -15,7 +15,7 @@ export const CREDENTIALS_FILE = "cloudflare-state-store";
 /**
  * On-disk shape of the cached Cloudflare state-store credentials.
  *
- * Extends the generic {@link HttpStateStoreCredentials} (`{ url, authToken }`)
+ * Extends the generic `HttpStateStoreCredentials` (`{ url, authToken }`)
  * with the `accountId` the credentials were minted against. The `url` already
  * encodes the account (via the `*.workers.dev` subdomain), so a cache written
  * while logged into account A keeps pointing at account A's state store even
@@ -26,10 +26,15 @@ export const CREDENTIALS_FILE = "cloudflare-state-store";
  * still parse — they are treated as stale (see
  * {@link isStateStoreCredentialsStale}) and re-derived on next use.
  */
-export interface StoredStateStoreCredentials extends HttpStateStoreCredentials {
+export const StoredStateStoreCredentials = Schema.Struct({
+  url: Schema.String,
+  /** Bearer token used to authenticate every request. */
+  authToken: Schema.String,
   /** Cloudflare account ID the `url`/`authToken` were minted against. */
-  accountId?: string;
-}
+  accountId: Schema.optional(Schema.String),
+});
+export type StoredStateStoreCredentials =
+  typeof StoredStateStoreCredentials.Type;
 
 /**
  * `true` when cached state-store credentials must not be trusted for the

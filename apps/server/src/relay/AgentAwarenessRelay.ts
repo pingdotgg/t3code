@@ -211,7 +211,7 @@ const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
 });
 
 // Compact, log-safe view of the fields the awareness phase ladder reads.
-export function describeThreadShellForAwareness(
+function describeThreadShellForAwareness(
   thread: Option.Option<OrchestrationThreadShell>,
 ): Record<string, unknown> {
   if (Option.isNone(thread)) {
@@ -267,8 +267,13 @@ export function resolveAgentAwarenessRelayPublishSnapshot(input: {
   };
 }
 
+function terminalWorkSinceStart(thread: OrchestrationThreadShell, startedAt: number): boolean {
+  return Date.parse(thread.latestTurn?.completedAt ?? "") > startedAt;
+}
+
 export function resolveAgentAwarenessRelayActiveThreadIds(input: {
   readonly environmentId: EnvironmentId;
+  readonly startedAt: number;
   readonly projects: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "title">>;
   readonly threads: ReadonlyArray<OrchestrationThreadShell>;
 }): ReadonlyArray<ThreadId> {
@@ -279,17 +284,22 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
       if (!project) {
         return false;
       }
+      const state = projectThreadAwareness({
+        environmentId: input.environmentId,
+        project,
+        thread,
+      });
       return (
-        projectThreadAwareness({
-          environmentId: input.environmentId,
-          project,
-          thread,
-        }) !== null
+        state !== null &&
+        (state.phase !== "completed" && state.phase !== "failed"
+          ? true
+          : terminalWorkSinceStart(thread, input.startedAt))
       );
     })
     .map((thread) => thread.id);
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
@@ -297,6 +307,7 @@ export const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
   const crypto = yield* Crypto.Crypto;
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
+  const startedAt = (yield* DateTime.now).epochMilliseconds;
   const activeSnapshotPublishedRef = yield* Ref.make(false);
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
 
@@ -416,6 +427,14 @@ export const make = Effect.gen(function* () {
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
+    if (
+      (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
+      !publishedStateByThread.has(threadId)
+    ) {
+      // Startup has no publish history. Only work from this server process may
+      // produce an initial terminal alert; historical threads remain quiet.
+      if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
+    }
     if (publishedStateByThread.get(threadId) === publishIdentity) {
       // The projection is back at (or never left) the last published state, so
       // any pending deferred confirmation is moot. Leaving the deadline in
@@ -494,7 +513,11 @@ export const make = Effect.gen(function* () {
     });
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) => {
       const nextPublishedStates = new Map(publishedStates);
-      nextPublishedStates.set(threadId, publishIdentity);
+      if (snapshot.state === null) {
+        nextPublishedStates.delete(threadId);
+      } else {
+        nextPublishedStates.set(threadId, publishIdentity);
+      }
       return nextPublishedStates;
     });
   });
@@ -528,6 +551,7 @@ export const make = Effect.gen(function* () {
     const snapshot = yield* snapshotQuery.getShellSnapshot();
     const activeThreadIds = resolveAgentAwarenessRelayActiveThreadIds({
       environmentId,
+      startedAt,
       projects: snapshot.projects,
       threads: snapshot.threads,
     });

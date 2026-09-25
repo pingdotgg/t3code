@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * with {@link ResetLandingZone} to poll a drift-remediation run to
  * completion. Provide the implementation with
  * `Effect.provide(AWS.ControlTower.GetLandingZoneOperationHttp)`.
- * @binding
- * @section Polling Asynchronous Operations
- * @example Poll a Landing Zone Operation
+ * ### Polling Asynchronous Operations
+ * **Example:** Poll a Landing Zone Operation
  * ```typescript
  * // init — account-level binding takes no resource
  * const getLandingZoneOperation =
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * console.log(operationDetails.status);
  * ```
+ *
+ * @binding
  */
 export interface GetLandingZoneOperation extends Binding.Service<
   GetLandingZoneOperation,

@@ -218,10 +218,13 @@ test.provider("replaces branch when project is replaced", (stack) =>
 // out-of-band so recovery must recreate it, redeploy, and assert convergence.
 
 /** Rewrite the deployed branch's state row into a wedged `creating` row. */
-const wedgeBranchRow = (stack: { name: string }, project: unknown) =>
+const wedgeBranchRow = (
+  stack: { name: string; stage: string },
+  project: unknown,
+) =>
   Effect.gen(function* () {
     const state = yield* yield* State;
-    const stage = "test"; // scratch stacks default to the "test" stage
+    const stage = stack.stage;
     const fqns = yield* state.list({ stack: stack.name, stage });
     const rows = yield* Effect.forEach(fqns, (fqn) =>
       state

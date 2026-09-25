@@ -58,9 +58,8 @@ export interface UserPoolDomain extends Resource<
  * authorization server. Cognito-prefix domains
  * (`<prefix>.auth.<region>.amazoncognito.com`) provision in seconds; custom
  * domains require an ACM certificate in us-east-1 and can take 15-60 minutes.
- * @resource
- * @section Creating a Domain
- * @example Cognito-Prefix Domain
+ * ### Creating a Domain
+ * **Example:** Cognito-Prefix Domain
  * ```typescript
  * import * as Cognito from "alchemy/AWS/Cognito";
  *
@@ -70,7 +69,7 @@ export interface UserPoolDomain extends Resource<
  * });
  * ```
  *
- * @example Explicit Prefix
+ * **Example:** Explicit Prefix
  * ```typescript
  * const domain = yield* Cognito.UserPoolDomain("AuthDomain", {
  *   userPoolId: pool.userPoolId,
@@ -78,8 +77,8 @@ export interface UserPoolDomain extends Resource<
  * });
  * ```
  *
- * @section Custom Domains
- * @example Custom Domain with an ACM Certificate
+ * ### Custom Domains
+ * **Example:** Custom Domain with an ACM Certificate
  * ```typescript
  * const domain = yield* Cognito.UserPoolDomain("AuthDomain", {
  *   userPoolId: pool.userPoolId,
@@ -87,6 +86,8 @@ export interface UserPoolDomain extends Resource<
  *   certificateArn: certificate.certificateArn, // must be us-east-1
  * });
  * ```
+ *
+ * @resource
  */
 export const UserPoolDomain = Resource<UserPoolDomain>(
   "AWS.Cognito.UserPoolDomain",

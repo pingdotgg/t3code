@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * arguments and grants `comprehendmedical:StopPHIDetectionJob` on `*`. Provide the
  * implementation with `Effect.provide(AWS.ComprehendMedical.StopPHIDetectionJobHttp)`.
  *
- * @binding
- * @section Batch PHI Detection Jobs
- * @example Stop a Running Job
+ * ### Batch PHI Detection Jobs
+ * **Example:** Stop a Running Job
  * ```typescript
  * // init
  * const stopPHIDetectionJob = yield* AWS.ComprehendMedical.StopPHIDetectionJob();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* stopPHIDetectionJob({ JobId: jobId });
  * ```
+ *
+ * @binding
  */
 export interface StopPHIDetectionJob extends Binding.Service<
   StopPHIDetectionJob,

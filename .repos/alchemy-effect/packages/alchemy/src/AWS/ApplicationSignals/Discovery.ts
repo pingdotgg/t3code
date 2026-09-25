@@ -35,14 +35,15 @@ export interface Discovery extends Resource<
  * provision-only: deleting it from the stack leaves discovery enabled
  * (the delete is a no-op, matching CloudFormation's behavior).
  *
- * @resource
- * @section Enabling Application Signals
- * @example Enable Discovery for the Account
+ * ### Enabling Application Signals
+ * **Example:** Enable Discovery for the Account
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
  * const discovery = yield* AWS.ApplicationSignals.Discovery("Discovery", {});
  * ```
+ *
+ * @resource
  */
 export const Discovery = Resource<Discovery>(
   "AWS.ApplicationSignals.Discovery",

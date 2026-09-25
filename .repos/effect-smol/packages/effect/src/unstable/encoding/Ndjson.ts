@@ -73,7 +73,15 @@ export const encodeString = <IE = never, Done = unknown>(): Channel.Channel<
   Channel.fromTransform((upstream, _scope) =>
     Effect.succeed(Effect.flatMap(upstream, (input) => {
       try {
-        return Effect.succeed(Arr.of(input.map((item) => JSON.stringify(item)).join("\n") + "\n"))
+        return Effect.succeed(Arr.of(
+          input.map((item) => {
+            const output = JSON.stringify(item)
+            if (output === undefined) {
+              throw new TypeError("Value cannot be represented as JSON")
+            }
+            return output
+          }).join("\n") + "\n"
+        ))
       } catch (cause) {
         return Effect.fail(new NdjsonError({ kind: "Pack", cause }))
       }

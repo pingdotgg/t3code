@@ -111,7 +111,7 @@ export type DataCatalogAttributes = {
   /**
    * Whether a maintenance credential is registered for this catalog.
    */
-  credentialStatus: "present" | "absent";
+  credentialStatus: "present" | "absent" | (string & {});
   /**
    * Observed compaction maintenance configuration.
    */
@@ -154,11 +154,8 @@ export type DataCatalog = Resource<
  * Iceberg tables stored in R2. The catalog is a singleton per bucket: this
  * resource enables it, keeps its maintenance configuration in sync, and
  * disables it on destroy (table data in the bucket is never deleted).
- * @resource
- * @product R2 Data Catalog
- * @category Storage & Databases
- * @section Enabling a catalog
- * @example Enable the catalog on an R2 bucket
+ * ### Enabling a catalog
+ * **Example:** Enable the catalog on an R2 bucket
  * ```typescript
  * const bucket = yield* Cloudflare.R2.Bucket("LakehouseBucket");
  *
@@ -171,8 +168,8 @@ export type DataCatalog = Resource<
  * const warehouse = catalog.name;
  * ```
  *
- * @section Maintenance
- * @example Configure compaction and snapshot expiration
+ * ### Maintenance
+ * **Example:** Configure compaction and snapshot expiration
  * ```typescript
  * const catalog = yield* Cloudflare.R2.R2DataCatalog("Lakehouse", {
  *   bucketName: bucket.bucketName,
@@ -185,7 +182,7 @@ export type DataCatalog = Resource<
  * });
  * ```
  *
- * @example Register a maintenance credential
+ * **Example:** Register a maintenance credential
  * ```typescript
  * // Maintenance jobs need an API token with R2 read/write on the bucket.
  * const catalog = yield* Cloudflare.R2.R2DataCatalog("Lakehouse", {
@@ -196,6 +193,10 @@ export type DataCatalog = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/r2/data-catalog/
+ *
+ * @resource
+ * @product R2 Data Catalog
+ * @category Storage & Databases
  */
 export const DataCatalog = Resource<DataCatalog>(TypeId);
 
@@ -294,6 +295,28 @@ export const DataCatalogProvider = () =>
           );
       }
 
+      // Sync credential before maintenance — Cloudflare rejects maintenance
+      // updates when the warehouse has no credential registered.
+      // The API exposes only present/absent, so `olds` serves as the rotation
+      // hint: re-push when the token value changed or no credential is
+      // registered (adoption re-pushes; idempotent).
+      let credentialStatus = (observed.credentialStatus ?? "absent") as
+        | "present"
+        | "absent";
+      if (news.token !== undefined) {
+        const rotated =
+          olds?.token === undefined ||
+          Redacted.value(olds.token) !== Redacted.value(news.token);
+        if (credentialStatus !== "present" || rotated) {
+          yield* rdc.createCredential({
+            accountId: acct,
+            bucketName,
+            token: Redacted.value(news.token),
+          });
+          credentialStatus = "present";
+        }
+      }
+
       // Sync maintenance — diff observed config against the fields the user
       // actually specified; skip the API entirely on a no-op.
       let maintenance = observed.maintenanceConfig ?? undefined;
@@ -326,26 +349,6 @@ export const DataCatalogProvider = () =>
           compaction: updated.compaction,
           snapshotExpiration: updated.snapshotExpiration,
         };
-      }
-
-      // Sync credential — the API exposes only present/absent, so `olds`
-      // serves as the rotation hint: re-push when the token value changed
-      // or no credential is registered (adoption re-pushes; idempotent).
-      let credentialStatus = (observed.credentialStatus ?? "absent") as
-        | "present"
-        | "absent";
-      if (news.token !== undefined) {
-        const rotated =
-          olds?.token === undefined ||
-          Redacted.value(olds.token) !== Redacted.value(news.token);
-        if (credentialStatus !== "present" || rotated) {
-          yield* rdc.createCredential({
-            accountId: acct,
-            bucketName,
-            token: Redacted.value(news.token),
-          });
-          credentialStatus = "present";
-        }
       }
 
       return toAttributes(

@@ -13,9 +13,8 @@ export interface ListProtocolsListsRequest
  *
  * Returns an array of `ProtocolsListDataSummary` objects for the protocols lists in the administrator's account. Provide the
  * implementation with `Effect.provide(AWS.FMS.ListProtocolsListsHttp)`.
- * @binding
- * @section Protocols Lists
- * @example List Protocols Lists
+ * ### Protocols Lists
+ * **Example:** List Protocols Lists
  * ```typescript
  * // init — account-level binding takes no resource
  * const listProtocolsLists = yield* AWS.FMS.ListProtocolsLists();
@@ -24,6 +23,8 @@ export interface ListProtocolsListsRequest
  * const result = yield* listProtocolsLists({ MaxResults: 25 });
  * console.log(result.ProtocolsLists?.length);
  * ```
+ *
+ * @binding
  */
 export interface ListProtocolsLists extends Binding.Service<
   ListProtocolsLists,

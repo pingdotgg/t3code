@@ -167,9 +167,8 @@ export interface Table extends Resource<
  * `ACTIVE`), usually within a minute; the provider waits for `ACTIVE`
  * (bounded) before returning. Schema mutations (adding columns, changing
  * capacity/TTL/PITR) are applied in place; changing keys replaces the table.
- * @resource
- * @section Creating a Table
- * @example Simple Key-Value Table
+ * ### Creating a Table
+ * **Example:** Simple Key-Value Table
  * ```typescript
  * const table = yield* Table("Sessions", {
  *   keyspaceName: keyspace.keyspaceName,
@@ -181,7 +180,7 @@ export interface Table extends Resource<
  * });
  * ```
  *
- * @example Table with a Clustering Key and TTL
+ * **Example:** Table with a Clustering Key and TTL
  * ```typescript
  * const table = yield* Table("Events", {
  *   keyspaceName: keyspace.keyspaceName,
@@ -197,8 +196,8 @@ export interface Table extends Resource<
  * });
  * ```
  *
- * @section Change Data Capture
- * @example CDC-Enabled Table
+ * ### Change Data Capture
+ * **Example:** CDC-Enabled Table
  * ```typescript
  * const table = yield* Table("Orders", {
  *   keyspaceName: keyspace.keyspaceName,
@@ -214,6 +213,8 @@ export interface Table extends Resource<
  * });
  * // table.latestStreamArn → consume via the TableStreams binding
  * ```
+ *
+ * @resource
  */
 export const Table = Resource<Table>("AWS.Keyspaces.Table");
 

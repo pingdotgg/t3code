@@ -341,7 +341,12 @@ export const layerMemory: Layer.Layer<KeyValueStore> = Layer.sync(KeyValueStore)
  *
  * **Details**
  *
- * The directory is created if needed, and each key is encoded as a file name.
+ * The directory is created if needed, and each key is percent-encoded as a
+ * single file name. Empty keys, `.` and `..` are rejected. Keys are only
+ * guaranteed to be distinct on case-sensitive file systems.
+ *
+ * `clear` removes the directory recursively, so it must not be shared with
+ * unrelated data.
  *
  * @category layers
  * @since 4.0.0
@@ -352,7 +357,20 @@ export const layerFileSystem = (
   Layer.effect(KeyValueStore)(Effect.gen(function*() {
     const fs = yield* FileSystem.FileSystem
     const path = yield* Path.Path
-    const keyPath = (key: string) => path.join(directory, encodeURIComponent(key))
+    const withKeyPath = <A>(
+      method: string,
+      key: string,
+      f: (path: string) => Effect.Effect<A, KeyValueStoreError>
+    ): Effect.Effect<A, KeyValueStoreError> =>
+      key.length === 0 || key === "." || key === ".."
+        ? Effect.fail(
+          new KeyValueStoreError({
+            method,
+            key,
+            message: `Invalid key ${key}`
+          })
+        )
+        : f(path.join(directory, encodeURIComponent(key)))
 
     if (!(yield* fs.exists(directory))) {
       yield* fs.makeDirectory(directory, { recursive: true })
@@ -360,60 +378,65 @@ export const layerFileSystem = (
 
     return make({
       get: (key: string) =>
-        Effect.catchTag(
-          fs.readFileString(keyPath(key)),
-          "PlatformError",
-          (cause) =>
-            cause.reason._tag === "NotFound" ? Effect.undefined : Effect.fail(
-              new KeyValueStoreError({
-                method: "get",
-                key,
-                message: `Unable to get item with key ${key}`,
-                cause
-              })
-            )
-        ),
+        withKeyPath("get", key, (path) =>
+          Effect.catchTag(
+            fs.readFileString(path),
+            "PlatformError",
+            (cause) =>
+              cause.reason._tag === "NotFound" ? Effect.undefined : Effect.fail(
+                new KeyValueStoreError({
+                  method: "get",
+                  key,
+                  message: `Unable to get item with key ${key}`,
+                  cause
+                })
+              )
+          )),
       getUint8Array: (key: string) =>
-        Effect.catchTag(
-          fs.readFile(keyPath(key)),
-          "PlatformError",
-          (cause) =>
-            cause.reason._tag === "NotFound" ? Effect.undefined : Effect.fail(
+        withKeyPath("getUint8Array", key, (path) =>
+          Effect.catchTag(
+            fs.readFile(path),
+            "PlatformError",
+            (cause) =>
+              cause.reason._tag === "NotFound" ? Effect.undefined : Effect.fail(
+                new KeyValueStoreError({
+                  method: "getUint8Array",
+                  key,
+                  message: `Unable to get item with key ${key}`,
+                  cause
+                })
+              )
+          )),
+      set: (key: string, value: string | Uint8Array) =>
+        withKeyPath("set", key, (path) =>
+          Effect.mapError(
+            typeof value === "string" ? fs.writeFileString(path, value) : fs.writeFile(path, value),
+            (cause) =>
               new KeyValueStoreError({
-                method: "getUint8Array",
+                method: "set",
                 key,
-                message: `Unable to get item with key ${key}`,
+                message: `Unable to set item with key ${key}`,
                 cause
               })
-            )
-        ),
-      set: (key: string, value: string | Uint8Array) =>
-        Effect.mapError(
-          typeof value === "string" ? fs.writeFileString(keyPath(key), value) : fs.writeFile(keyPath(key), value),
-          (cause) =>
-            new KeyValueStoreError({
-              method: "set",
-              key,
-              message: `Unable to set item with key ${key}`,
-              cause
-            })
-        ),
+          )),
       remove: (key: string) =>
-        Effect.mapError(fs.remove(keyPath(key)), (cause) =>
-          new KeyValueStoreError({
-            method: "remove",
-            key,
-            message: `Unable to remove item with key ${key}`,
-            cause
-          })),
+        withKeyPath("remove", key, (path) =>
+          Effect.mapError(fs.remove(path), (cause) =>
+            new KeyValueStoreError({
+              method: "remove",
+              key,
+              message: `Unable to remove item with key ${key}`,
+              cause
+            }))),
       has: (key: string) =>
-        Effect.mapError(fs.exists(keyPath(key)), (cause) =>
-          new KeyValueStoreError({
-            method: "has",
-            key,
-            message: `Unable to check existence of item with key ${key}`,
-            cause
-          })),
+        withKeyPath("has", key, (path) =>
+          Effect.mapError(fs.exists(path), (cause) =>
+            new KeyValueStoreError({
+              method: "has",
+              key,
+              message: `Unable to check existence of item with key ${key}`,
+              cause
+            }))),
       clear: Effect.mapError(
         Effect.andThen(
           fs.remove(directory, { recursive: true }),
@@ -678,7 +701,7 @@ const SchemaStoreTypeId = "~effect/persistence/KeyValueStore/SchemaStore" as con
 /**
  * Schema-aware view of a `KeyValueStore` that stores values as encoded JSON.
  *
- * @category SchemaStore
+ * @category models
  * @since 4.0.0
  */
 export interface SchemaStore<S extends Schema.Constraint> {
@@ -739,7 +762,7 @@ export interface SchemaStore<S extends Schema.Constraint> {
 /**
  * Adapts a `KeyValueStore` into a `SchemaStore` using the schema's JSON codec.
  *
- * @category SchemaStore
+ * @category converting
  * @since 4.0.0
  */
 export const toSchemaStore = <S extends Schema.Constraint>(self: KeyValueStore, schema: S): SchemaStore<S> => {

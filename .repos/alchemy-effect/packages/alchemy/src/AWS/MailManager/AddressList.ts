@@ -57,9 +57,8 @@ export interface AddressList extends Resource<
  * data managed at runtime via the member capabilities
  * ({@link RegisterMemberToAddressList}, {@link ListMembersOfAddressList},
  * ...) or bulk import jobs.
- * @resource
- * @section Creating Address Lists
- * @example Block List
+ * ### Creating Address Lists
+ * **Example:** Block List
  * ```typescript
  * import * as MailManager from "alchemy/AWS/MailManager";
  *
@@ -68,8 +67,8 @@ export interface AddressList extends Resource<
  * });
  * ```
  *
- * @section Managing Members at Runtime
- * @example Register and List Members from a Lambda
+ * ### Managing Members at Runtime
+ * **Example:** Register and List Members from a Lambda
  * ```typescript
  * // init — bind the member capabilities to the list
  * const registerMember = yield* MailManager.RegisterMemberToAddressList(blockList);
@@ -79,6 +78,8 @@ export interface AddressList extends Resource<
  * yield* registerMember({ Address: "spammer@example.com" });
  * const { Addresses } = yield* listMembers({});
  * ```
+ *
+ * @resource
  */
 export const AddressList = Resource<AddressList>("AWS.MailManager.AddressList");
 

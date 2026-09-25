@@ -15,9 +15,8 @@ export interface GetMetricStreamRequest extends Omit<
  *
  * Provide `CloudWatch.GetMetricStreamHttp` on the hosting Lambda Function
  * to satisfy the requirement.
- * @binding
- * @section Reading Metric Streams
- * @example Read a Bound Metric Stream
+ * ### Reading Metric Streams
+ * **Example:** Read a Bound Metric Stream
  * ```typescript
  * // init — grants cloudwatch:GetMetricStream on the stream
  * const getMetricStream = yield* AWS.CloudWatch.GetMetricStream(metricStream);
@@ -26,6 +25,8 @@ export interface GetMetricStreamRequest extends Omit<
  * const result = yield* getMetricStream();
  * const state = result.State; // "running" | "stopped"
  * ```
+ *
+ * @binding
  */
 export interface GetMetricStream extends Binding.Service<
   GetMetricStream,

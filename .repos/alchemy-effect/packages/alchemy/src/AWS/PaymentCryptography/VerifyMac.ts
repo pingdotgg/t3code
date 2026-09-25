@@ -13,9 +13,8 @@ export interface VerifyMacRequest extends Omit<
  * Authentication Code against hex-encoded message data under a {@link Key}.
  * A mismatched MAC fails with the typed `VerificationFailedException`.
  * Provide `VerifyMacHttp` on the Function to satisfy this service.
- * @binding
- * @section Verifying MACs
- * @example Verify an HMAC
+ * ### Verifying MACs
+ * **Example:** Verify an HMAC
  * ```typescript
  * // init
  * const verifyMac = yield* PaymentCryptography.VerifyMac(macKey);
@@ -27,6 +26,8 @@ export interface VerifyMacRequest extends Omit<
  *   VerificationAttributes: { Algorithm: "HMAC" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface VerifyMac extends Binding.Service<
   VerifyMac,

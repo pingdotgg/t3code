@@ -37,16 +37,15 @@ export interface TrustedServiceAccess extends Resource<
  * Typically paired with a {@link DelegatedAdministrator} that hands day-to-day
  * administration of the service to a member account. Existence-only resource:
  * changing `servicePrincipal` replaces it.
- * @resource
- * @section Enabling Trusted Access
- * @example Enable IAM Identity Center
+ * ### Enabling Trusted Access
+ * **Example:** Enable IAM Identity Center
  * ```typescript
  * yield* TrustedServiceAccess("SsoTrustedAccess", {
  *   servicePrincipal: "sso.amazonaws.com",
  * });
  * ```
  *
- * @example Trusted Access Plus a Delegated Administrator
+ * **Example:** Trusted Access Plus a Delegated Administrator
  * ```typescript
  * const guardDutyAccess = yield* TrustedServiceAccess("GuardDutyAccess", {
  *   servicePrincipal: "guardduty.amazonaws.com",
@@ -57,6 +56,8 @@ export interface TrustedServiceAccess extends Resource<
  *   servicePrincipal: guardDutyAccess.servicePrincipal,
  * });
  * ```
+ *
+ * @resource
  */
 export const TrustedServiceAccess = Resource<TrustedServiceAccess>(
   "AWS.Organizations.TrustedServiceAccess",

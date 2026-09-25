@@ -5,7 +5,7 @@ import { resolveElectronLaunchCommand } from "./electron-launcher.mjs";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const desktopDir = NodePath.resolve(__dirname, "..");
-const mainJs = NodePath.resolve(desktopDir, "dist-electron/main.cjs");
+const mainJs = NodePath.resolve(desktopDir, "dist-electron/boot.cjs");
 
 console.log("\nLaunching Electron smoke test...");
 

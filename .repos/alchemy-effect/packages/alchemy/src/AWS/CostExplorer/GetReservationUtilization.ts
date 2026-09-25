@@ -14,9 +14,8 @@ export interface GetReservationUtilizationRequest
  * Retrieve how fully your reservations were utilized over a time
  * range, optionally grouped by subscription. Provide the implementation with
  * `Effect.provide(AWS.CostExplorer.GetReservationUtilizationHttp)`.
- * @binding
- * @section Reservations
- * @example Check Reservation Utilization
+ * ### Reservations
+ * **Example:** Check Reservation Utilization
  * ```typescript
  * // init — account-level binding takes no resource
  * const getReservationUtilization = yield* AWS.CostExplorer.GetReservationUtilization();
@@ -27,6 +26,8 @@ export interface GetReservationUtilizationRequest
  * });
  * const utilization = result.Total?.UtilizationPercentage;
  * ```
+ *
+ * @binding
  */
 export interface GetReservationUtilization extends Binding.Service<
   GetReservationUtilization,

@@ -29,7 +29,10 @@ Alchemy.Stack(
 The type system enforces this — using a Cloudflare resource without
 `Cloudflare.providers()` raises a compile-time error.
 
-To mix clouds, merge the layers:
+## Multiple providers
+
+A stack can use any number of providers. Because providers are
+Layers, combining them is just `Layer.mergeAll`:
 
 ```typescript
 import * as Layer from "effect/Layer";
@@ -45,6 +48,25 @@ Alchemy.Stack(
   }),
 );
 ```
+
+This works for as many providers as you need — built-in ones
+(`Cloudflare`, `AWS`, `Neon`, `Planetscale`, `Docker`, …) and
+[custom providers](/infrastructure-as-code/custom-provider) merge
+the same way:
+
+```typescript
+providers: Layer.mergeAll(
+  Cloudflare.providers(),
+  AWS.providers(),
+  Neon.providers(),
+  StripeProviders, // your own custom provider layer
+),
+```
+
+The type system tracks the requirements per resource: each resource
+you `yield*` demands its own provider from the merged layer, so a
+missing provider is a compile-time error, never a deploy-time
+surprise.
 
 ## Lifecycle operations
 
@@ -62,30 +84,12 @@ A reconciler is a single observe → ensure → sync → return flow:
 
 ```typescript
 reconcile: Effect.fn(function* ({ news, output }) {
-  const stripe = yield* StripeClient;
-
-  // Observe — fetch live state if we have a cached id.
-  let product = output?.productId
-    ? yield* Effect.tryPromise(() =>
-        stripe.products.retrieve(output.productId),
-      ).pipe(Effect.catchAll(() => Effect.succeed(undefined)))
-    : undefined;
-
-  // Ensure — create if missing.
-  if (!product) {
-    product = yield* Effect.tryPromise(() =>
-      stripe.products.create({ name: news.name }),
-    );
+  let live = yield* observe(output);          // read live cloud state
+  if (!live) live = yield* create(news);      // ensure it exists
+  if (drifted(live, news)) {
+    live = yield* update(live.id, news);      // sync only the delta
   }
-
-  // Sync — patch any field that drifted from desired.
-  if (product.name !== news.name) {
-    product = yield* Effect.tryPromise(() =>
-      stripe.products.update(product!.id, { name: news.name }),
-    );
-  }
-
-  return { productId: product.id, name: product.name };
+  return toAttributes(live);                  // fresh attributes
 }),
 ```
 
@@ -107,8 +111,9 @@ state persistence failure. Deterministic physical names plus the
 observe step ensure a retry finds the existing resource and re-syncs
 any drifted fields.
 
-See the [custom provider guide](/infrastructure-as-code/custom-provider#implement-reconcile)
-for the full walkthrough.
+For a real reconciler built up step by step — observe, ensure,
+sync, return, against the Stripe API — see the
+[custom provider guide](/infrastructure-as-code/custom-provider#implement-reconcile).
 
 ### `delete`
 
@@ -249,7 +254,7 @@ or `nuke.skip` (the resource can never actually be deleted).
 
 ### `tail` / `logs`
 
-Optional. Power `alchemy tail` (live log streaming) and
+Optional. Powers `alchemy logs --tail` (live log streaming) and
 `alchemy logs` (historical fetch). Each returns a `Stream` or
 `Effect` of `LogLine` values respectively.
 

@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide `Config.DescribeComplianceByResourceHttp` on the hosting Lambda Function to
  * satisfy the requirement.
- * @binding
- * @section Reading Compliance
- * @example Check Resource Compliance
+ * ### Reading Compliance
+ * **Example:** Check Resource Compliance
  * ```typescript
  * // init — grants config:DescribeComplianceByResource
  * const describeComplianceByResource = yield* AWS.Config.DescribeComplianceByResource();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * console.log(result.ComplianceByResources);
  * ```
+ *
+ * @binding
  */
 export interface DescribeComplianceByResource extends Binding.Service<
   DescribeComplianceByResource,

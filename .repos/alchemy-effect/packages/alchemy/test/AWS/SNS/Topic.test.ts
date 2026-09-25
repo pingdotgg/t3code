@@ -171,7 +171,7 @@ describe("AWS.SNS.Topic", () => {
             const state = yield* yield* State;
             yield* state.delete({
               stack: stack.name,
-              stage: "test",
+              stage: stack.stage,
               fqn: "AdoptableTopic",
             });
           }).pipe(Effect.provide(stack.state));
@@ -215,7 +215,7 @@ describe("AWS.SNS.Topic", () => {
             const state = yield* yield* State;
             yield* state.delete({
               stack: stack.name,
-              stage: "test",
+              stage: stack.stage,
               fqn: "Original",
             });
           }).pipe(Effect.provide(stack.state));

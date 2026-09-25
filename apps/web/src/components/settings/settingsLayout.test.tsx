@@ -1,30 +1,27 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import {
-  scrollToSettingsTarget,
-  SettingsRow,
-  SettingsSearchTargetProvider,
-} from "./settingsLayout";
+import { scrollToSettingsTarget, SettingsRow, SettingsUnavailableGroup } from "./settingsLayout";
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("settings search targets", () => {
-  it("does not persist destination styling in the rendered row", () => {
+describe("unavailable settings", () => {
+  it("groups disabled controls under one reason", () => {
     const markup = renderToStaticMarkup(
-      <SettingsSearchTargetProvider targetId="word-wrap">
-        <SettingsRow id="word-wrap" title="Word wrap" description="Wrap long lines." />
-        <SettingsRow id="time-format" title="Time format" description="Choose a clock." />
-      </SettingsSearchTargetProvider>,
+      <SettingsUnavailableGroup message="Only available in the desktop app.">
+        <SettingsRow title="Window capture" description="Capture a window." />
+      </SettingsUnavailableGroup>,
     );
 
-    expect(markup).toContain('id="word-wrap" tabindex="-1"');
-    expect(markup).not.toContain("data-settings-search-target");
-    expect(markup).not.toContain("settings-search-target-pulse");
+    expect(markup).toContain("Only available in the desktop app.");
+    expect(markup).toContain("border-border/60");
+    expect(markup).toContain("[&amp;_h3]:opacity-64");
   });
+});
 
+describe("settings search targets", () => {
   it("scrolls directly to a section header and restarts the destination pulse", () => {
     const sectionScrollIntoView = vi.fn();
     const headerScrollIntoView = vi.fn();

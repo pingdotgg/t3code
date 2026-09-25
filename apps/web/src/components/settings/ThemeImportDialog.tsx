@@ -111,12 +111,12 @@ function ThemeJsonEditor({
   }, []);
 
   return (
-    <div className="relative overflow-hidden rounded-xl border border-input bg-background shadow-xs/5 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/24">
+    <div className="relative overflow-hidden rounded-xl border border-input bg-background shadow-xs/5 focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/24">
       {isPlainText ? null : (
         <pre
           ref={highlightRef}
           aria-hidden
-          className="pointer-events-none absolute inset-0 m-0 overflow-hidden whitespace-pre-wrap break-words p-3 font-mono text-[12px] leading-5 text-foreground"
+          className="pointer-events-none absolute inset-0 m-0 overflow-hidden whitespace-pre-wrap break-words p-3 font-mono text-xs leading-5 text-foreground"
         >
           <code dangerouslySetInnerHTML={{ __html: highlightedJson }} />
         </pre>
@@ -124,7 +124,7 @@ function ThemeJsonEditor({
       <textarea
         aria-label="Theme JSON"
         className={cn(
-          "relative z-10 block min-h-44 w-full resize-y overflow-auto bg-transparent p-3 font-mono text-[12px] leading-5 caret-foreground outline-none placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground",
+          "relative z-10 block min-h-44 w-full resize-y overflow-auto bg-transparent p-3 font-mono text-xs leading-5 caret-foreground outline-none placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground",
           isPlainText ? "text-foreground" : "text-transparent",
         )}
         id={id}
@@ -427,7 +427,7 @@ export function ThemeImportDialog({
         <DialogHeader>
           <DialogTitle>Add a theme</DialogTitle>
         </DialogHeader>
-        <DialogPanel className="space-y-5">
+        <DialogPanel>
           <ThemeSearchSection
             onInstalled={(themes, context) => {
               onImportedMany(themes, context);
@@ -438,7 +438,7 @@ export function ThemeImportDialog({
 
           <div className="flex items-center gap-3" aria-hidden>
             <div className="h-px flex-1 bg-border" />
-            <span className="text-muted-foreground text-[11px] uppercase tracking-wider">
+            <span className="text-muted-foreground text-2xs uppercase tracking-wider">
               or import a file
             </span>
             <div className="h-px flex-1 bg-border" />

@@ -1,6 +1,6 @@
 ---
 title: Multiple Stacks
-description: Each package owns its own alchemy.run.ts — the frontend reads the backend's deployed outputs through a typed cross-stack reference, so each package deploys and destroys independently.
+description: Each package owns its own alchemy.run.ts. The frontend consumes the backend's deployed outputs through a typed Stack handle, resolved from the state store at plan time, so each package deploys and destroys independently.
 ---
 
 Each package owns its own `alchemy.run.ts`
@@ -11,30 +11,26 @@ Each package owns its own `alchemy.run.ts`
 ├── package.json           # workspaces: ["frontend", "backend"]
 ├── backend/
 │   ├── alchemy.run.ts     # Backend Stack — deploys the Worker
-│   ├── package.json       # exports "." and "./Client"
+│   ├── package.json       # name: "backend"
 │   └── src/
-│       ├── Spec.ts        # HttpApi schema
 │       ├── Service.ts     # the Worker
-│       ├── Client.ts      # typed HttpApiClient factory
-│       ├── Stack.ts       # typed Stack handle — { url: string }
-│       └── index.ts       # re-exports Spec + Client + Stack
+│       └── Stack.ts       # typed handle — outputs { url: string }
 └── frontend/
-    ├── alchemy.run.ts     # Frontend Stack — yield* Backend
+    ├── alchemy.run.ts     # Frontend Stack — references Backend
     ├── package.json       # depends on "backend": "workspace:*"
     └── src/
-        └── main.tsx       # React app — calls BackendClient(VITE_API_URL)
+        └── main.tsx       # reads import.meta.env.VITE_API_URL
 ```
 
-The packages themselves — workspace root, `Spec.ts`,
-`Service.ts`, `Client.ts`, the `./Client` subpath, the React
-entry — are identical to the
-[Single Stack](/project-structure/monorepo-single-stack) layout. This page
-covers what changes: two Stacks wired by a typed reference,
-resolved at plan time against the state store. When to reach for
-this shape is covered in
-[References](/infrastructure-as-code/references).
+There is no shared plan and no live connection between the Stacks. The
+backend deploys and persists its outputs to the state store; the frontend's
+plan reads those persisted outputs back through a **typed Stack handle**.
+That one indirection is what buys independent deploys, independent destroys,
+and independent CI — at the cost of a deploy order.
 
-## Declare the typed Stack handle
+Three small files make it work.
+
+## The typed Stack handle
 
 ```typescript
 // backend/src/Stack.ts
@@ -48,25 +44,12 @@ export class Backend extends Alchemy.Stack<
 >()("Backend") {}
 ```
 
-`Alchemy.Stack<Self, Outputs>()(name)` names the Stack, declares
-its output shape (TypeScript enforces it on both sides), and
-exposes `.make(...)` to deploy plus `.stage[name]` to reference a
-deployed stage.
+The handle is the contract between the two Stacks: it names the Stack
+(`"Backend"`) and declares its output shape (`{ url: string }`). Both sides
+import this class — the backend to deploy against it, the frontend to
+reference it — so TypeScript enforces the contract in both directions.
 
-## Re-export the handle
-
-```diff lang="typescript"
- // backend/src/index.ts
- export * from "./Client.ts";
- export * from "./Spec.ts";
-+export * from "./Stack.ts";
-```
-
-`import { Backend } from "backend"` now resolves the typed
-handle. The browser still imports through `"backend/Client"`, so
-adding `Stack.ts` to the barrel does not affect the React bundle.
-
-## Deploy the backend with `Backend.make`
+## The backend Stack
 
 ```typescript
 // backend/alchemy.run.ts
@@ -89,11 +72,12 @@ export default Backend.make(
 );
 ```
 
-`Backend.make` is a typed shorthand for `Alchemy.Stack` — if the
-returned object doesn't match `{ url: string }`, the file fails
-to typecheck.
+`Backend.make` is `Alchemy.Stack` bound to the handle: if the returned
+object doesn't match `{ url: string }`, this file fails to typecheck. On
+deploy, the resolved `url` is persisted to the state store as the Stack's
+output.
 
-## Reference it from the frontend
+## The frontend Stack
 
 ```typescript
 // frontend/alchemy.run.ts
@@ -124,11 +108,15 @@ export default Alchemy.Stack(
 );
 ```
 
-`yield* Backend` resolves to the **same stage** of the named
-Stack that the frontend is being deployed to — `sam` frontend
-reads `sam` backend, `pr-42` reads `pr-42`. Under the hood it's
-[`Output.stackRef`](/infrastructure-as-code/references) reading the backend's
-persisted output from the state store.
+`yield* Backend` reads the backend's persisted outputs from the state store
+at plan time and returns them fully typed — `backend.url` is the `string`
+the handle declared. It resolves the **same stage** the frontend is being
+deployed to: the `sam` frontend reads the `sam` backend, `pr-42` reads
+`pr-42`.
+
+The import works because `frontend/package.json` depends on
+`"backend": "workspace:*"` — the handle travels through the workspace like
+any other export.
 
 ## Deploy in order
 
@@ -137,15 +125,20 @@ cd backend && alchemy deploy --stage sam
 cd frontend && alchemy deploy --stage sam
 ```
 
-The backend must be deployed to the same stage first; otherwise
-the frontend's plan fails with `InvalidReferenceError`. Destroy
-in reverse — frontend first, then backend.
+The backend must be deployed to the stage first — if it isn't, the
+frontend's plan fails with `InvalidReferenceError` because there are no
+persisted outputs to read. Destroy in reverse: frontend first, then backend.
+
+Each `alchemy.run.ts` runs from its own package directory, so relative paths
+(`main`, `rootDir`) resolve against the package — the
+[root-relative path trap](/project-structure/monorepo-single-stack#anchor-every-path)
+of the single-stack layout doesn't apply here.
 
 ## Pin to a specific stage
 
-The bare `yield* Backend` is the right default. To break stage
-symmetry — e.g. every frontend stage points at the production
-backend — pin with `Backend.stage.<name>`:
+The bare `yield* Backend` (same stage on both sides) is the right default.
+To break stage symmetry — for example, every frontend preview points at the
+production backend — pin with `Backend.stage.<name>`:
 
 ```diff lang="typescript"
    Effect.gen(function* () {
@@ -155,17 +148,14 @@ backend — pin with `Backend.stage.<name>`:
    })
 ```
 
-`Backend.stage` is a proxy keyed by stage name — any string
-works (`Backend.stage.staging`, `Backend.stage["pr-42"]`). Which
-form to use when:
-[References](/infrastructure-as-code/references#depend-on-a-stacks-outputs).
+`Backend.stage` is a proxy keyed by stage name — any string works
+(`Backend.stage.staging`, `Backend.stage["pr-42"]`).
 
 ## Where next
 
 - [Monorepo](/project-structure/monorepo) — the high-level chooser.
-- [Single Stack](/project-structure/monorepo-single-stack) — the shared
-  package layout and the one-Stack alternative.
-- [References](/infrastructure-as-code/references) — when to split
-  Stacks, stage pinning, and the pattern → tool table.
-- [References](/infrastructure-as-code/references) — how a reference resolves:
-  typing, plan-time state reads, `InvalidReferenceError`.
+- [Single Stack](/project-structure/monorepo-single-stack) — the one-Stack
+  alternative: one plan, one state file, paths anchored to the root.
+- [References](/infrastructure-as-code/references) — when to split Stacks,
+  how a reference resolves (typing, plan-time state reads,
+  `InvalidReferenceError`), and stage pinning in depth.

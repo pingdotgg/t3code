@@ -39,7 +39,7 @@ const ALLOWED_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set([
   // picker runs in the main window session, which is unaffected by this list.
 ]);
 
-export class BrowserSessionPartitionDerivationError extends Schema.TaggedErrorClass<BrowserSessionPartitionDerivationError>()(
+export class BrowserSessionPartitionDerivationError extends Schema.TaggedError<BrowserSessionPartitionDerivationError>()(
   "BrowserSessionPartitionDerivationError",
   {
     scope: Schema.String,
@@ -51,7 +51,7 @@ export class BrowserSessionPartitionDerivationError extends Schema.TaggedErrorCl
   }
 }
 
-export class BrowserSessionCreationError extends Schema.TaggedErrorClass<BrowserSessionCreationError>()(
+export class BrowserSessionCreationError extends Schema.TaggedError<BrowserSessionCreationError>()(
   "BrowserSessionCreationError",
   {
     scope: Schema.String,
@@ -64,7 +64,7 @@ export class BrowserSessionCreationError extends Schema.TaggedErrorClass<Browser
   }
 }
 
-export class BrowserSessionStorageClearError extends Schema.TaggedErrorClass<BrowserSessionStorageClearError>()(
+export class BrowserSessionStorageClearError extends Schema.TaggedError<BrowserSessionStorageClearError>()(
   "BrowserSessionStorageClearError",
   {
     partition: Schema.String,
@@ -76,7 +76,7 @@ export class BrowserSessionStorageClearError extends Schema.TaggedErrorClass<Bro
   }
 }
 
-export class BrowserSessionCacheClearError extends Schema.TaggedErrorClass<BrowserSessionCacheClearError>()(
+export class BrowserSessionCacheClearError extends Schema.TaggedError<BrowserSessionCacheClearError>()(
   "BrowserSessionCacheClearError",
   {
     partition: Schema.String,
@@ -159,6 +159,7 @@ const encodeScopeForDigest = (scope: string): Uint8Array =>
       ),
   );
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* BrowserSessionMake() {
   const crypto = yield* Crypto.Crypto;
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
@@ -196,11 +197,12 @@ export const make = Effect.gen(function* BrowserSessionMake() {
       return Effect.try({
         try: () => {
           const browserSession = session.fromPartition(partition);
-          const userAgent = browserSession
-            .getUserAgent()
-            .replace(/Electron\/[\d.]+ /, "")
-            .replace(/\s*t3code\/[\d.]+/, "");
-          browserSession.setUserAgent(userAgent);
+          // The guest keeps Electron's native User-Agent. Rewriting it in any
+          // form — even variants that keep the Electron token — makes Cloudflare
+          // Turnstile fail its integrity check with error 600010 and recreate
+          // the challenge every few seconds, so logins behind it never complete
+          // (#5002). Re-setting the unchanged native string is harmless, so it
+          // is the rewritten string itself that trips the check.
           browserSession.setPermissionRequestHandler((_webContents, permission, callback) => {
             callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission));
           });
@@ -229,8 +231,9 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     getSession,
     clearCookies: Effect.fn("BrowserSession.clearCookies")(function* (partitions?) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
-      yield* Effect.all(
-        selectSessions(sessions, partitions).map(([partition, browserSession]) =>
+      yield* Effect.forEach(
+        selectSessions(sessions, partitions),
+        ([partition, browserSession]) =>
           Effect.tryPromise({
             try: () =>
               browserSession.clearStorageData({
@@ -242,14 +245,14 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 cause,
               }),
           }),
-        ),
         { concurrency: "unbounded", discard: true },
       );
     }),
     clearCache: Effect.fn("BrowserSession.clearCache")(function* (partitions?) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
-      yield* Effect.all(
-        selectSessions(sessions, partitions).map(([partition, browserSession]) =>
+      yield* Effect.forEach(
+        selectSessions(sessions, partitions),
+        ([partition, browserSession]) =>
           Effect.tryPromise({
             try: () => browserSession.clearCache(),
             catch: (cause) =>
@@ -258,7 +261,6 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 cause,
               }),
           }),
-        ),
         { concurrency: "unbounded", discard: true },
       );
     }),

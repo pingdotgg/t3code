@@ -4,6 +4,7 @@ import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@t3t
 import {
   createOpencodeClient,
   type Agent,
+  type Command,
   type FilePartInput,
   type Model,
   type OpencodeClient,
@@ -187,7 +188,23 @@ export interface OpenCodeInventory {
   readonly providerList: ProviderListResponse;
   readonly agents: ReadonlyArray<Agent>;
   readonly skills: ReadonlyArray<OpenCodeSkill>;
+  readonly commands?: ReadonlyArray<OpenCodeSlashCommand>;
 }
+
+export type OpenCodeSlashCommand = Pick<Command, "name" | "description" | "source" | "hints">;
+
+/** Command templates stay in OpenCode, which expands arguments and runs MCP prompts. */
+export const loadOpenCodeCommands = (client: OpencodeClient) =>
+  runOpenCodeSdk("command.list", (signal) => client.command.list(undefined, { signal })).pipe(
+    Effect.map((result): ReadonlyArray<OpenCodeSlashCommand> =>
+      (result.data ?? []).map(({ name, description, source, hints }) => ({
+        name,
+        ...(description === undefined ? {} : { description }),
+        ...(source === undefined ? {} : { source }),
+        hints,
+      })),
+    ),
+  );
 
 export interface ParsedOpenCodeModelSlug {
   readonly providerID: string;
@@ -438,9 +455,9 @@ export function openCodeQuestionId(
  * puts in the prompt.
  */
 const OPENCODE_NATIVE_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-export const OPENCODE_NATIVE_FILE_PART_MAX_BYTES = 20 * 1024 * 1024;
+const OPENCODE_NATIVE_FILE_PART_MAX_BYTES = 20 * 1024 * 1024;
 
-export function isOpenCodeNativeFilePart(input: {
+function isOpenCodeNativeFilePart(input: {
   readonly mimeType: string;
   readonly sizeBytes: number;
 }): boolean {
@@ -462,6 +479,13 @@ export function toOpenCodeFileParts(input: {
   const parts: Array<FilePartInput> = [];
 
   for (const attachment of input.attachments ?? []) {
+    if (
+      attachment.type === "file" &&
+      "source" in attachment &&
+      attachment.source?._tag === "pasted-text"
+    ) {
+      continue;
+    }
     if (!isOpenCodeNativeFilePart(attachment)) {
       continue;
     }
@@ -916,9 +940,24 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     loadOpenCodeSkills(client).pipe(Effect.orElseSucceed((): ReadonlyArray<OpenCodeSkill> => []));
 
   const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client) =>
-    Effect.all([loadProviders(client), loadAgents(client), loadSkills(client)], {
-      concurrency: "unbounded",
-    }).pipe(Effect.map(([providerList, agents, skills]) => ({ providerList, agents, skills })));
+    Effect.all(
+      [
+        loadProviders(client),
+        loadAgents(client),
+        loadSkills(client),
+        loadOpenCodeCommands(client).pipe(Effect.orElseSucceed(() => [])),
+      ],
+      {
+        concurrency: "unbounded",
+      },
+    ).pipe(
+      Effect.map(([providerList, agents, skills, commands]) => ({
+        providerList,
+        agents,
+        skills,
+        commands,
+      })),
+    );
 
   const loadInventoryFromCli: OpenCodeRuntimeShape["loadInventoryFromCli"] = (input) =>
     Effect.gen(function* () {

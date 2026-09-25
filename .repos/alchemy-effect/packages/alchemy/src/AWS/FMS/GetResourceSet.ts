@@ -12,9 +12,8 @@ export interface GetResourceSetRequest extends fms.GetResourceSetRequest {}
  *
  * Returns the specified Firewall Manager resource set. Provide the
  * implementation with `Effect.provide(AWS.FMS.GetResourceSetHttp)`.
- * @binding
- * @section Resource Sets
- * @example Read a Resource Set
+ * ### Resource Sets
+ * **Example:** Read a Resource Set
  * ```typescript
  * // init — account-level binding takes no resource
  * const getResourceSet = yield* AWS.FMS.GetResourceSet();
@@ -23,6 +22,8 @@ export interface GetResourceSetRequest extends fms.GetResourceSetRequest {}
  * const result = yield* getResourceSet({ Identifier: resourceSetId });
  * console.log(result.ResourceSet.Name);
  * ```
+ *
+ * @binding
  */
 export interface GetResourceSet extends Binding.Service<
   GetResourceSet,

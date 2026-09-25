@@ -136,7 +136,7 @@ export interface HttpApiGroup<
  * id and the group identifier so the relationship between an API and its
  * implemented groups is checked at compile time.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export interface Service<ApiId extends string, Identifier extends string> {
@@ -154,7 +154,7 @@ export interface Service<ApiId extends string, Identifier extends string> {
  * When given an API id and a group or union of groups, this type maps each group
  * to the `Service` identity that must be provided by `HttpApiBuilder.group`.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type ToService<ApiId extends string, Group extends Constraint> = Group extends Constraint ?
@@ -187,7 +187,7 @@ export interface Top extends HttpApiGroup<string, HttpApiEndpoint.Top, boolean> 
 /**
  * Selects the group with the specified identifier from a union of groups.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type WithIdentifier<Group, Identifier extends string> = Extract<Group, { readonly identifier: Identifier }>
@@ -195,7 +195,7 @@ export type WithIdentifier<Group, Identifier extends string> = Extract<Group, { 
 /**
  * Extracts the identifier literal from an `HttpApiGroup`.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type Identifier<Group> = Group extends Constraint ? Group["identifier"] : never
@@ -203,7 +203,7 @@ export type Identifier<Group> = Group extends Constraint ? Group["identifier"] :
 /**
  * Extracts the endpoint union contained in an `HttpApiGroup`.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type Endpoints<Group> = Group extends HttpApiGroup<infer _Identifier, infer _Endpoints, infer _TopLevel> ?
@@ -214,7 +214,7 @@ export type Endpoints<Group> = Group extends HttpApiGroup<infer _Identifier, inf
  * Computes the services required to encode error responses for every endpoint in a
  * group.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type ErrorServicesEncode<Group> = HttpApiEndpoint.ErrorServicesEncode<Endpoints<Group>>
@@ -223,7 +223,7 @@ export type ErrorServicesEncode<Group> = HttpApiEndpoint.ErrorServicesEncode<End
  * Computes the services required to decode error responses for every endpoint in a
  * group.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type ErrorServicesDecode<Group> = HttpApiEndpoint.ErrorServicesDecode<Endpoints<Group>>
@@ -231,7 +231,7 @@ export type ErrorServicesDecode<Group> = HttpApiEndpoint.ErrorServicesDecode<End
 /**
  * Computes the middleware error union for every endpoint in a group.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type MiddlewareError<Group> = HttpApiEndpoint.MiddlewareError<Endpoints<Group>>
@@ -240,7 +240,7 @@ export type MiddlewareError<Group> = HttpApiEndpoint.MiddlewareError<Endpoints<G
  * Computes the services provided by middleware attached to any endpoint in a
  * group.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type MiddlewareProvides<Group> = HttpApiEndpoint.MiddlewareProvides<Endpoints<Group>>
@@ -248,7 +248,7 @@ export type MiddlewareProvides<Group> = HttpApiEndpoint.MiddlewareProvides<Endpo
 /**
  * Computes the client-side middleware services required by endpoints in a group.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type MiddlewareClient<Group> = HttpApiEndpoint.MiddlewareClient<Endpoints<Group>>
@@ -256,7 +256,7 @@ export type MiddlewareClient<Group> = HttpApiEndpoint.MiddlewareClient<Endpoints
 /**
  * Extracts the runtime services required by middleware attached to the endpoints in an `HttpApiGroup`.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type MiddlewareServices<Group> = HttpApiEndpoint.MiddlewareServices<Endpoints<Group>>
@@ -264,7 +264,7 @@ export type MiddlewareServices<Group> = HttpApiEndpoint.MiddlewareServices<Endpo
 /**
  * Extracts the endpoint union from the group with the specified identifier.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type EndpointsWithIdentifier<Group extends Constraint, Identifier extends string> = Endpoints<
@@ -274,7 +274,7 @@ export type EndpointsWithIdentifier<Group extends Constraint, Identifier extends
 /**
  * Computes the schema encoding and decoding services required by clients for all endpoints in a group.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type ClientServices<Group> = Group extends HttpApiGroup<infer _Identifier, infer _Endpoints, infer _TopLevel> ?
@@ -284,7 +284,7 @@ export type ClientServices<Group> = Group extends HttpApiGroup<infer _Identifier
 /**
  * Returns the type of a group after adding the supplied path prefix to each endpoint in the group.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type AddPrefix<Group, Prefix extends PathInput> = Group extends
@@ -295,7 +295,7 @@ export type AddPrefix<Group, Prefix extends PathInput> = Group extends
 /**
  * Returns the type of a group after applying a middleware identifier to every endpoint in the group.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type AddMiddleware<Group, Id extends HttpApiMiddleware.AnyId> = Group extends

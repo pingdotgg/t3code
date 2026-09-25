@@ -1,0 +1,26 @@
+---
+// Zero-config sessions: no session driver is configured anywhere in this
+// fixture — the integration defaults to the Cloudflare KV driver (binding
+// "SESSION"), auto-injects a local KV namespace in dev, and the live preview
+// provides a miniflare KV namespace.
+// The stylesheet import produces a content-hashed /_astro/ asset for the
+// immutable Cache-Control smoke test.
+// oxlint-disable-next-line import/no-unassigned-import
+import "../styles/session.css";
+
+export const prerender = false;
+
+const count = ((await Astro.session?.get("count")) ?? 0) + 1;
+Astro.session?.set("count", count);
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Session</title>
+  </head>
+  <body>
+    <h1>Session</h1>
+    <p id="count">{count}</p>
+  </body>
+</html>

@@ -151,9 +151,8 @@ export interface UserPoolClient extends Resource<
  * An app client of an Amazon Cognito user pool. Applications authenticate
  * against the pool through a client, which controls the allowed auth flows,
  * token lifetimes, and OAuth settings.
- * @resource
- * @section Creating an App Client
- * @example Public Client with Password Auth
+ * ### Creating an App Client
+ * **Example:** Public Client with Password Auth
  * ```typescript
  * import * as Cognito from "alchemy/AWS/Cognito";
  *
@@ -164,7 +163,7 @@ export interface UserPoolClient extends Resource<
  * });
  * ```
  *
- * @example Confidential Client with a Secret
+ * **Example:** Confidential Client with a Secret
  * ```typescript
  * const server = yield* Cognito.UserPoolClient("Server", {
  *   userPoolId: pool.userPoolId,
@@ -173,8 +172,8 @@ export interface UserPoolClient extends Resource<
  * });
  * ```
  *
- * @section Token Configuration
- * @example Short-Lived Access Tokens
+ * ### Token Configuration
+ * **Example:** Short-Lived Access Tokens
  * ```typescript
  * const client = yield* Cognito.UserPoolClient("Web", {
  *   userPoolId: pool.userPoolId,
@@ -189,8 +188,8 @@ export interface UserPoolClient extends Resource<
  * });
  * ```
  *
- * @section OAuth
- * @example Authorization Code Flow
+ * ### OAuth
+ * **Example:** Authorization Code Flow
  * ```typescript
  * const client = yield* Cognito.UserPoolClient("Web", {
  *   userPoolId: pool.userPoolId,
@@ -201,6 +200,8 @@ export interface UserPoolClient extends Resource<
  *   supportedIdentityProviders: ["COGNITO"],
  * });
  * ```
+ *
+ * @resource
  */
 export const UserPoolClient = Resource<UserPoolClient>(
   "AWS.Cognito.UserPoolClient",

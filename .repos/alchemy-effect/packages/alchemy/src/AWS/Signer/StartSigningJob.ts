@@ -15,9 +15,8 @@ import type { SigningProfile } from "./SigningProfile.ts";
  * destination. Returns the `jobId` for use with `DescribeSigningJob` /
  * `RevokeSignature`. Provide the implementation with
  * `Effect.provide(AWS.Signer.StartSigningJobHttp)`.
- * @binding
- * @section Signing Code
- * @example Sign an S3 Object
+ * ### Signing Code
+ * **Example:** Sign an S3 Object
  * ```typescript
  * // init — bind the operation to the profile
  * const startSigningJob = yield* AWS.Signer.StartSigningJob(profile);
@@ -28,6 +27,8 @@ import type { SigningProfile } from "./SigningProfile.ts";
  *   destination: { s3: { bucketName: "dst", prefix: "signed/" } },
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartSigningJob extends Binding.Service<
   StartSigningJob,

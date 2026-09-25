@@ -1,30 +1,47 @@
 import type { ProviderInteractionMode } from "@t3tools/contracts";
+import type { V2TurnStartParams__AdditionalContextEntry } from "effect-codex-app-server/schema";
 import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
 
-const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
-
-## T3 Code collaborative browser
+const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `## T3 Code collaborative browser
 
 You are running inside T3 Code. The \`t3-code\` MCP server is the product-native collaborative browser shared with the user. When it exposes \`preview_*\` tools, prefer those tools for browser navigation, inspection, interaction, screenshots, and recordings.
 
 For browser work, first call \`preview_status\`. If no automation-capable preview is attached, call \`preview_open\` before concluding that the browser is unavailable. Then use \`preview_navigate\`, \`preview_snapshot\`, and the focused interaction tools. Prefer snapshot-provided locators over coordinates.
 
-Do not switch to global browser skills, Chrome, Node REPL browser automation, standalone Playwright, or agent-browser merely because the preview is initially closed or a first call fails. Use an alternative browser system only when the T3 preview tools are absent, the user explicitly requests another browser, or \`preview_open\` returns an explicit unsupported/unavailable error. A failed T3 preview tool call should be inspected and retried with corrected arguments when the error is actionable.
-`;
+Do not switch to global browser skills, Chrome, Node REPL browser automation, standalone Playwright, or agent-browser merely because the preview is initially closed or a first call fails. Use an alternative browser system only when the T3 preview tools are absent, the user explicitly requests another browser, or \`preview_open\` returns an explicit unsupported/unavailable error. A failed T3 preview tool call should be inspected and retried with corrected arguments when the error is actionable.`;
+
+const T3_CODE_DEVICE_TOOL_INSTRUCTIONS = `## T3 Code devices
+
+The \`t3-code\` MCP server also exposes \`device_*\` tools for iOS Simulators and Android Emulators on this environment. For mobile verification, call \`device_list\`, then \`device_open\` so the user can watch the device in their Device panel; its result explains how to drive the device. Driving happens through the \`agent-device\` CLI, which is on PATH. Keep the host config and session flags returned by \`device_open\` on every command so concurrent devices stay independent: prefer \`agent-device snapshot -i\` refs over coordinates, and use \`device_screenshot\` when you need to see the screen. Do not call simctl, adb, xcrun, or serve-sim directly while these tools are present. If \`device_list\` reports a platform as unavailable, say so instead of trying another route.`;
+
+export interface T3CodeToolAvailability {
+  readonly browser: boolean;
+  readonly device: boolean;
+}
+
+const normalizeAvailability = (
+  availability: boolean | T3CodeToolAvailability,
+): T3CodeToolAvailability =>
+  typeof availability === "boolean" ? { browser: availability, device: false } : availability;
 
 /**
- * The browser block is omitted entirely when the preview tools aren't attached.
- * Describing `preview_*` tools that aren't in the turn's tool list would be
+ * Each block is omitted entirely when its tools aren't attached. Describing
+ * `preview_*` or `device_*` tools that aren't in the turn's tool list would be
  * worse than saying nothing: the instructions actively steer the model away
- * from Playwright and agent-browser, so leaving them in would talk it out of
- * the only browser automation it still has.
+ * from Playwright, agent-browser, and raw simctl/adb, so leaving them in would
+ * talk it out of the only automation it still has.
  */
-const browserToolInstructions = (browserToolsAvailable: boolean): string =>
-  browserToolsAvailable ? T3_CODE_BROWSER_TOOL_INSTRUCTIONS : "";
+const toolInstructions = (availability: boolean | T3CodeToolAvailability): string => {
+  const tools = normalizeAvailability(availability);
+  return [
+    tools.browser ? T3_CODE_BROWSER_TOOL_INSTRUCTIONS : "",
+    tools.device ? T3_CODE_DEVICE_TOOL_INSTRUCTIONS : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+};
 
-const codexPlanModeDeveloperInstructions = (
-  browserToolsAvailable: boolean,
-): string => `<collaboration_mode># Plan Mode (Conversational)
+const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Plan Mode (Conversational)
 
 You work in 3 phases, and you should *chat your way* to a great plan before finalizing it. A great plan is very detailed-intent- and implementation-wise-so that it can be handed to another engineer or agent to be implemented right away. It must be **decision complete**, where the implementer does not need to make any decisions.
 
@@ -152,12 +169,9 @@ Do not ask "should I proceed?" in the final output. The user can easily switch o
 Only produce at most one \`<proposed_plan>\` block per turn, and only when you are presenting a complete spec.
 
 If the user stays in Plan mode and asks for revisions after a prior \`<proposed_plan>\`, any new \`<proposed_plan>\` must be a complete replacement. If the user indicates that the prior plan is not acceptable but does not provide enough information to produce a complete replacement, address the concern and continue planning without producing a \`<proposed_plan>\` block. If the follow-up neither requires changes nor calls the plan into question (e.g. clarifying question), answer it before the block, then reproduce the prior \`<proposed_plan>\` unchanged.
-${browserToolInstructions(browserToolsAvailable)}
 </collaboration_mode>`;
 
-const codexDefaultModeDeveloperInstructions = (
-  browserToolsAvailable: boolean,
-): string => `<collaboration_mode># Collaboration Mode: Default
+const CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Collaboration Mode: Default
 
 You are now in Default mode. Any previous instructions for other modes (e.g. Plan mode) are no longer active.
 
@@ -168,29 +182,46 @@ Your active mode changes only when new developer instructions with a different \
 Use the \`request_user_input\` tool only when it is listed in the available tools for this turn.
 
 In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
-${browserToolInstructions(browserToolsAvailable)}
 </collaboration_mode>`;
 
 export interface CodexRuntimeInfo {
   readonly model: string;
+  readonly modelName?: string | undefined;
   readonly reasoningEffort: string;
 }
 
-export function buildCodexDeveloperInstructions(
-  interactionMode: ProviderInteractionMode,
+/** Mode prompt for `turn/start.collaborationMode.settings.developer_instructions`. */
+export function buildCodexDeveloperInstructions(interactionMode: ProviderInteractionMode): string {
+  return interactionMode === "plan"
+    ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
+    : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS;
+}
+
+/**
+ * T3 Code context for `turn/start.additionalContext`. Codex renders each entry
+ * as a `<key>value</key>` developer message and resends it only when the value
+ * changes.
+ *
+ * This must stay out of the collaboration mode: when the model catalog ships
+ * its own text for a mode, as newer models do, Codex uses that text and drops
+ * the client's `developer_instructions` entirely.
+ */
+export function buildCodexAdditionalContext(
   runtime: CodexRuntimeInfo,
   /**
    * Whether the `t3-code` MCP server is attached to this turn. Callers derive
    * it from the session's actual MCP configuration rather than re-reading the
    * setting, so the prompt cannot claim tools the turn doesn't have.
    */
-  browserToolsAvailable = true,
-): string {
-  const base =
-    interactionMode === "plan"
-      ? codexPlanModeDeveloperInstructions(browserToolsAvailable)
-      : codexDefaultModeDeveloperInstructions(browserToolsAvailable);
-  return `${base}
-
-${buildRuntimeInstructions({ harness: "Codex", ...runtime })}`;
+  toolsAvailable: boolean | T3CodeToolAvailability = true,
+): Record<string, V2TurnStartParams__AdditionalContextEntry> {
+  const tools = toolInstructions(toolsAvailable);
+  // Separate keys keep each value under Codex's per-entry token cap.
+  return {
+    t3_code_runtime: {
+      kind: "application",
+      value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),
+    },
+    ...(tools ? { t3_code_tools: { kind: "application", value: tools } } : {}),
+  };
 }

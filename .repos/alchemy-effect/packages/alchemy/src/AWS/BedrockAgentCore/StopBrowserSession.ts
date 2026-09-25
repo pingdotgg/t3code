@@ -15,9 +15,8 @@ export interface StopBrowserSessionRequest extends Omit<
  * AgentCore data-plane API against it. Provide `AgentCore.StopBrowserSessionHttp`
  * on the Function effect to implement the binding.
  *
- * @binding
- * @section Browser Sessions
- * @example Stop a Session
+ * ### Browser Sessions
+ * **Example:** Stop a Session
  * ```typescript
  * // init
  * const stopBrowserSession = yield* AgentCore.StopBrowserSession(browser);
@@ -30,6 +29,8 @@ export interface StopBrowserSessionRequest extends Omit<
  *   }),
  * };
  * ```
+ *
+ * @binding
  */
 export interface StopBrowserSession extends Binding.Service<
   StopBrowserSession,

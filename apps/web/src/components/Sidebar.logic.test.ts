@@ -23,11 +23,10 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
-  resolveThreadRowClassName,
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
-  searchSidebarThreadsByTitle,
+  searchSidebarThreads,
   formatWorkingDurationLabel,
   shouldClearThreadSelectionOnMouseDown,
   shouldRecedeSidebarThread,
@@ -44,12 +43,14 @@ import {
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
   shouldCreateNewThreadInCurrentProject,
+  shouldNavigateAfterThreadPark,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
   resolveSidebarDropVerb,
 } from "./Sidebar.logic";
+import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
   EnvironmentId,
   OrchestrationLatestTurn,
@@ -394,6 +395,18 @@ describe("shouldRecedeSidebarThread", () => {
 
     expect(shouldRecedeSidebarThread({ ...input, isActive: true })).toBe(false);
     expect(shouldRecedeSidebarThread({ ...input, isSelected: true })).toBe(false);
+  });
+
+  it.each([false, true])("keeps input-required threads prominent with unread=%s", (isUnread) => {
+    expect(
+      shouldRecedeSidebarThread({
+        status: "input",
+        isUnread,
+        isWoke: false,
+        isActive: false,
+        isSelected: false,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -802,23 +815,57 @@ describe("resolveSidebarThreadStatus", () => {
   });
 });
 
-describe("searchSidebarThreadsByTitle", () => {
+describe("searchSidebarThreads", () => {
+  const searchThread = (id: string, title: string, project: string) => ({
+    environmentId: localEnvironmentId,
+    id: ThreadId.make(id),
+    title,
+    project,
+  });
   const threads = [
-    { id: "thread-1", title: "Fix workspace search", project: "Alpha" },
-    { id: "thread-2", title: "Review providers", project: "Workspace" },
-    { id: "thread-3", title: "WORKTREE cleanup", project: "Beta" },
+    searchThread("thread-1", "Fix workspace search", "Alpha"),
+    searchThread("thread-2", "Review providers", "Workspace"),
+    searchThread("thread-3", "WORKTREE cleanup", "Beta"),
   ];
+  const contentKeys = (...ids: ReadonlyArray<string>) =>
+    new Set(
+      ids.map((id) =>
+        threadSearchMatchKey({ environmentId: localEnvironmentId, threadId: ThreadId.make(id) }),
+      ),
+    );
 
   it("matches thread titles case-insensitively and preserves their order", () => {
-    expect(searchSidebarThreadsByTitle(threads, "work")).toEqual([threads[0], threads[2]]);
+    expect(searchSidebarThreads(threads, "work")).toEqual([threads[0], threads[2]]);
   });
 
   it("does not match project metadata", () => {
-    expect(searchSidebarThreadsByTitle(threads, "workspace")).toEqual([threads[0]]);
+    expect(searchSidebarThreads(threads, "workspace")).toEqual([threads[0]]);
   });
 
   it("returns no results for an empty query", () => {
-    expect(searchSidebarThreadsByTitle(threads, "   ")).toEqual([]);
+    expect(searchSidebarThreads(threads, "   ")).toEqual([]);
+  });
+
+  it("appends content-only matches after every title match", () => {
+    expect(searchSidebarThreads(threads, "work", contentKeys("thread-2"))).toEqual([
+      threads[0],
+      threads[2],
+      threads[1],
+    ]);
+  });
+
+  it("lists a thread matching both title and content once", () => {
+    expect(searchSidebarThreads(threads, "work", contentKeys("thread-1"))).toEqual([
+      threads[0],
+      threads[2],
+    ]);
+  });
+
+  it("ignores content matches for threads outside the sidebar collection", () => {
+    expect(searchSidebarThreads(threads, "work", contentKeys("thread-missing"))).toEqual([
+      threads[0],
+      threads[2],
+    ]);
   });
 });
 
@@ -828,30 +875,26 @@ describe("filterSidebarProjectScopeItems", () => {
     { value: "alpha", label: "Alpha workspace" },
     { value: "beta", label: "Beta tools" },
   ] as const;
-  const filter = (activeScopeKey: string | null, query: string) =>
+  const filter = (query: string) =>
     filterSidebarProjectScopeItems({
       items,
-      activeScopeKey,
       query,
       matches: (item, candidate) =>
         item.label.toLocaleLowerCase().includes(candidate.toLocaleLowerCase()),
     });
 
-  it("omits the reset row when the sidebar is already unscoped", () => {
-    expect(filter(null, "")).toEqual(items.slice(1));
+  it("shows the default row first while the query is empty", () => {
+    expect(filter("")).toEqual(items);
+    expect(filter("   ")).toEqual(items);
   });
 
-  it("shows the reset row first while a project scope is active", () => {
-    expect(filter("alpha", "")).toEqual(items);
-  });
-
-  it("hides the reset row while filtering an active scope", () => {
-    expect(filter("alpha", "all")).toEqual([]);
+  it("hides the default row while filtering", () => {
+    expect(filter("all")).toEqual([]);
   });
 
   it("returns matching projects in source order and supports no-match results", () => {
-    expect(filter(null, "WORK")).toEqual([items[1]]);
-    expect(filter(null, "missing")).toEqual([]);
+    expect(filter("WORK")).toEqual([items[1]]);
+    expect(filter("missing")).toEqual([]);
   });
 });
 
@@ -2015,28 +2058,6 @@ describe("resolveThreadStatusPill", () => {
   });
 });
 
-describe("resolveThreadRowClassName", () => {
-  it("uses the active sidebar surface when a thread is both selected and active", () => {
-    const className = resolveThreadRowClassName({ isActive: true, isSelected: true });
-    expect(className).toContain("bg-sidebar-row-active");
-    expect(className).toContain("text-sidebar-foreground");
-    expect(className).not.toContain("bg-primary");
-  });
-
-  it("uses selected hover colors for selected threads", () => {
-    const className = resolveThreadRowClassName({ isActive: false, isSelected: true });
-    expect(className).toContain("bg-sidebar-row-selected");
-    expect(className).toContain("hover:bg-sidebar-row-active");
-    expect(className).not.toContain("bg-primary");
-  });
-
-  it("uses the active sidebar surface for active-only threads", () => {
-    const className = resolveThreadRowClassName({ isActive: true, isSelected: false });
-    expect(className).toContain("bg-sidebar-row-active");
-    expect(className).toContain("hover:bg-sidebar-row-active");
-  });
-});
-
 describe("resolveProjectStatusIndicator", () => {
   it("returns null when no threads have a notable status", () => {
     expect(resolveProjectStatusIndicator([null, null])).toBeNull();
@@ -2133,6 +2154,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     branch: null,
     worktreePath: null,
     checkpoints: [],
+    pullRequests: [],
     activities: [],
     ...overrides,
   };
@@ -2490,4 +2512,45 @@ describe("resolveSidebarDropVerb", () => {
     expect(resolveSidebarDropVerb("active", null)).toBeNull();
     expect(resolveSidebarDropVerb("active", "snoozed")).toBeNull();
   });
+});
+
+describe("navigation after parking a thread", () => {
+  it.each([
+    ["settle", "settled", null, "thread", true],
+    ["settle", "active", null, "thread", false],
+    ["settle", "settled", null, "other-thread", false],
+    ["snooze", null, "2099-01-01T00:00:00.000Z", "thread", true],
+    ["snooze", null, null, "thread", false],
+    ["snooze", null, "2026-09-12T09:00:00.000Z", "thread", false],
+    ["snooze", null, "2099-01-01T00:00:00.000Z", "thread", false, true],
+    ["snooze", null, "2099-01-01T00:00:00.000Z", "other-thread", false],
+  ] as const)(
+    "%s with state %s / %s on %s navigates: %s",
+    (
+      action,
+      settledOverride,
+      snoozedUntil,
+      currentThreadKey,
+      expected,
+      hasPendingApprovals: boolean = false,
+    ) => {
+      expect(
+        shouldNavigateAfterThreadPark({
+          threadKey: "thread",
+          currentThreadKey,
+          action,
+          now: "2026-09-12T10:00:00.000Z",
+          thread: {
+            settledOverride,
+            snoozedUntil,
+            snoozedAt: null,
+            session: null,
+            latestTurn: null,
+            hasPendingApprovals,
+            hasPendingUserInput: false,
+          },
+        }),
+      ).toBe(expected);
+    },
+  );
 });

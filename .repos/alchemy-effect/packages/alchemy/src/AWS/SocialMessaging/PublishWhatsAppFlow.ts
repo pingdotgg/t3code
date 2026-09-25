@@ -23,9 +23,8 @@ export interface PublishWhatsAppFlowRequest extends Omit<
  * into every request.
  * Provide the implementation with
  * `Effect.provide(AWS.SocialMessaging.PublishWhatsAppFlowHttp)`.
- * @binding
- * @section Managing WhatsApp Flows
- * @example Publish a Flow
+ * ### Managing WhatsApp Flows
+ * **Example:** Publish a Flow
  * ```typescript
  * // init — bind the operation to the linked WABA
  * const publishFlow = yield* AWS.SocialMessaging.PublishWhatsAppFlow(account);
@@ -33,6 +32,8 @@ export interface PublishWhatsAppFlowRequest extends Omit<
  * // runtime
  * yield* publishFlow({ flowId: "1234567890" });
  * ```
+ *
+ * @binding
  */
 export interface PublishWhatsAppFlow extends Binding.Service<
   PublishWhatsAppFlow,

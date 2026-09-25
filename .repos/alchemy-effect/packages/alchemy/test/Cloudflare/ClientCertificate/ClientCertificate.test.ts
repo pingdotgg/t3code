@@ -263,7 +263,10 @@ test.provider(
       expect(found).toBeDefined();
       expect(found?.zoneId).toEqual(zoneId);
       expect(found?.status).not.toEqual("revoked");
-    }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
+    }).pipe(
+      Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
+      logLevel,
+    ),
   // `list()` fans out over every zone in the account and exhaustively
   // paginates each, plus a deploy on the per-zone-serialized client-cert API
   // — give headroom under a full concurrent `./test/Cloudflare` run.

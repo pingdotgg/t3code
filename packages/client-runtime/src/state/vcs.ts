@@ -15,7 +15,11 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 
-import { createEnvironmentRpcCommand, createEnvironmentSubscriptionAtomFamily } from "./runtime.ts";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcSubscriptionAtomFamily,
+  createEnvironmentSubscriptionAtomFamily,
+} from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
@@ -310,6 +314,18 @@ export function createVcsEnvironmentAtoms<R, E>(
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
       onSettled: invalidateRefs,
+    }),
+    // Live stages of a bootstrap worktree setup. Null until the server begins
+    // tracking, then a snapshot per change, then null again after the setup
+    // is dropped. Short TTL so a closed thread releases its subscription.
+    worktreeSetup: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:vcs:worktree-setup",
+      tag: WS_METHODS.subscribeWorktreeSetup,
+      idleTtlMs: VCS_STATUS_IDLE_TTL_MS,
+    }),
+    cancelWorktreeSetup: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:cancel-worktree-setup",
+      tag: WS_METHODS.worktreeSetupCancel,
     }),
     removeWorktree: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:remove-worktree",

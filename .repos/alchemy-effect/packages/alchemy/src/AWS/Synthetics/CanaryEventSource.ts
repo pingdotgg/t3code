@@ -81,8 +81,8 @@ export interface CanaryEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Canary Events
- * @example Page on Failed Canary Runs
+ * ### Consuming Canary Events
+ * **Example:** Page on Failed Canary Runs
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

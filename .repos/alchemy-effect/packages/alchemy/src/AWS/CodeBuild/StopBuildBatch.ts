@@ -6,14 +6,15 @@ import type { Project } from "./Project.ts";
 /**
  * Runtime binding for `codebuild:StopBuildBatch` — stops an in-progress
  * batch build of the bound project by batch id.
- * @binding
- * @section Batch Builds
- * @example Stop a Batch Build
+ * ### Batch Builds
+ * **Example:** Stop a Batch Build
  * ```typescript
  * const stopBuildBatch = yield* AWS.CodeBuild.StopBuildBatch(project);
  *
  * yield* stopBuildBatch({ id: batchId });
  * ```
+ *
+ * @binding
  */
 export interface StopBuildBatch extends Binding.Service<
   StopBuildBatch,

@@ -20,7 +20,7 @@ export class FleetWiseBindingsFunction extends Lambda.Function<Lambda.Function>(
 export default FleetWiseBindingsFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const catalog = yield* IoTFleetWise.SignalCatalog("BindingsSignals", {

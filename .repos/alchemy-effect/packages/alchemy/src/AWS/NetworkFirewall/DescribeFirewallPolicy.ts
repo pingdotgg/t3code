@@ -15,9 +15,8 @@ export interface DescribeFirewallPolicyRequest extends Omit<
  *
  * Provide `NetworkFirewall.DescribeFirewallPolicyHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Reading Policy State
- * @example Read the Policy Definition
+ * ### Reading Policy State
+ * **Example:** Read the Policy Definition
  * ```typescript
  * // init — grants network-firewall:DescribeFirewallPolicy on the policy
  * const describeFirewallPolicy =
@@ -26,6 +25,8 @@ export interface DescribeFirewallPolicyRequest extends Omit<
  * // runtime
  * const { FirewallPolicy } = yield* describeFirewallPolicy();
  * ```
+ *
+ * @binding
  */
 export interface DescribeFirewallPolicy extends Binding.Service<
   DescribeFirewallPolicy,

@@ -10,8 +10,9 @@
  */
 import type { NonEmptyArray, NonEmptyReadonlyArray } from "../../Array.ts"
 import type { Brand } from "../../Brand.ts"
+import * as Predicate from "../../Predicate.ts"
 import * as Schema from "../../Schema.ts"
-import * as Msgpack from "../encoding/Msgpack.ts"
+import * as SchemaBinary from "../encoding/SchemaBinary.ts"
 import * as Rpc from "../rpc/Rpc.ts"
 import * as RpcGroup from "../rpc/RpcGroup.ts"
 import * as RpcMiddleware from "../rpc/RpcMiddleware.ts"
@@ -39,7 +40,7 @@ export const StoreIdTypeId: StoreIdTypeId = "effect/eventlog/EventLog/StoreId"
 /**
  * Branded string identifying a logical event-log store.
  *
- * @category StoreId
+ * @category models
  * @since 4.0.0
  */
 export type StoreId = string & Brand<StoreIdTypeId>
@@ -47,7 +48,7 @@ export type StoreId = string & Brand<StoreIdTypeId>
 /**
  * Schema for branded event-log store ids.
  *
- * @category StoreId
+ * @category schemas
  * @since 4.0.0
  */
 export const StoreId = Schema.String.pipe(Schema.brand(StoreIdTypeId))
@@ -63,7 +64,7 @@ export const StoreId = Schema.String.pipe(Schema.brand(StoreIdTypeId))
  * @category protocols
  * @since 4.0.0
  */
-export class EventLogProtocolError extends Schema.TaggedErrorClass<EventLogProtocolError>(
+export class EventLogProtocolError extends Schema.TaggedError<EventLogProtocolError>(
   "effect/eventlog/EventLogRemote/ProtocolError"
 )("EventLogProtocolError", {
   requestTag: Schema.String,
@@ -71,7 +72,16 @@ export class EventLogProtocolError extends Schema.TaggedErrorClass<EventLogProto
   storeId: Schema.optional(StoreId),
   code: Schema.Literals(["Unauthorized", "Forbidden", "NotFound", "InvalidRequest", "InternalServerError"]),
   message: Schema.String
-}) {}
+}) {
+  /**
+   * Returns `true` when the value is an `EventLogProtocolError`.
+   *
+   * @since 4.0.0
+   */
+  static is(u: unknown): u is EventLogProtocolError {
+    return Predicate.isTagged(u, "EventLogProtocolError")
+  }
+}
 
 /**
  * RPC middleware that authenticates event-log requests and provides the client
@@ -188,7 +198,7 @@ export class ChunkedMessage
    * @since 4.0.0
    */
   static split(id: number, data: Uint8Array): NonEmptyReadonlyArray<ChunkedMessage> {
-    const parts = Math.ceil(data.byteLength / ChunkedMessage.chunkSize)
+    const parts = Math.max(1, Math.ceil(data.byteLength / ChunkedMessage.chunkSize))
     const result: NonEmptyArray<ChunkedMessage> = new Array(parts) as any
     for (let i = 0; i < parts; i++) {
       const start = i * ChunkedMessage.chunkSize
@@ -261,8 +271,8 @@ export class WriteChunkedRpc extends Rpc.make("EventLog.WriteChunked", {
  *
  * **Details**
  *
- * It includes the client public key, target store id, AES-GCM initialization
- * vector, and encrypted entries.
+ * It includes the client public key, target store id, and encrypted entries
+ * with their AES-GCM initialization vectors.
  *
  * @category protocols
  * @since 4.0.0
@@ -270,12 +280,11 @@ export class WriteChunkedRpc extends Rpc.make("EventLog.WriteChunked", {
 export class WriteEntries extends Schema.Class<WriteEntries>("effect/eventlog/EventLogRemote/WriteEntries")({
   publicKey: Schema.String,
   storeId: StoreId,
-  iv: Transferable.Uint8Array,
   encryptedEntries: Schema.Array(EncryptedEntry)
 }) {
-  static FromMsgpack = Msgpack.schema(WriteEntries)
-  static encode = Schema.encodeEffect(this.FromMsgpack)
-  static decode = Schema.decodeEffect(this.FromMsgpack)
+  static FromSchemaBinary = SchemaBinary.toCodec(WriteEntries)
+  static encode = Schema.encodeEffect(this.FromSchemaBinary)
+  static decode = Schema.decodeEffect(this.FromSchemaBinary)
   get encoded() {
     return WriteEntries.encode(this)
   }
@@ -294,9 +303,9 @@ export class WriteEntriesUnencrypted
     entries: Schema.Array(Entry)
   })
 {
-  static FromMsgpack = Msgpack.schema(WriteEntriesUnencrypted)
-  static encode = Schema.encodeEffect(this.FromMsgpack)
-  static decode = Schema.decodeEffect(this.FromMsgpack)
+  static FromSchemaBinary = SchemaBinary.toCodec(WriteEntriesUnencrypted)
+  static encode = Schema.encodeEffect(this.FromSchemaBinary)
+  static decode = Schema.decodeEffect(this.FromSchemaBinary)
   get encoded() {
     return WriteEntriesUnencrypted.encode(this)
   }
@@ -337,12 +346,12 @@ export class ChangesRpc extends Rpc.make("EventLog.Changes", {
   error: EventLogProtocolError,
   stream: true
 }).middleware(EventLogAuthentication) {
-  static EncryptedFromMsgpack = Msgpack.schema(Schema.NonEmptyArray(EncryptedRemoteEntry))
-  static UnencryptedFromMsgpack = Msgpack.schema(Schema.NonEmptyArray(RemoteEntry))
-  static encodeEncrypted = Schema.encodeEffect(ChangesRpc.EncryptedFromMsgpack)
-  static decodeEncrypted = Schema.decodeEffect(ChangesRpc.EncryptedFromMsgpack)
-  static encodeUnencrypted = Schema.encodeEffect(ChangesRpc.UnencryptedFromMsgpack)
-  static decodeUnencrypted = Schema.decodeEffect(ChangesRpc.UnencryptedFromMsgpack)
+  static EncryptedFromSchemaBinary = SchemaBinary.toCodec(Schema.NonEmptyArray(EncryptedRemoteEntry))
+  static UnencryptedFromSchemaBinary = SchemaBinary.toCodec(Schema.NonEmptyArray(RemoteEntry))
+  static encodeEncrypted = Schema.encodeEffect(ChangesRpc.EncryptedFromSchemaBinary)
+  static decodeEncrypted = Schema.decodeEffect(ChangesRpc.EncryptedFromSchemaBinary)
+  static encodeUnencrypted = Schema.encodeEffect(ChangesRpc.UnencryptedFromSchemaBinary)
+  static decodeUnencrypted = Schema.decodeEffect(ChangesRpc.UnencryptedFromSchemaBinary)
 }
 
 /**

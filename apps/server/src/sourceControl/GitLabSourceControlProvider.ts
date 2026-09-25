@@ -1,5 +1,5 @@
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
@@ -16,6 +16,12 @@ import {
   type SourceControlUnknownRemoteRefinementInput,
 } from "./SourceControlProviderDiscovery.ts";
 import { findAuthenticatedGitLabHost, parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
+
+const decodeLinkSubject = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ title: Schema.String, description: Schema.NullOr(Schema.String) }),
+  ),
+);
 
 function toChangeRequest(summary: GitLabCli.GitLabMergeRequestSummary): ChangeRequest {
   return {
@@ -106,8 +112,58 @@ export const discovery = {
 export const make = Effect.gen(function* () {
   const gitlab = yield* GitLabCli.GitLabCli;
 
+  const readLinkSubject = Effect.fn("GitLabSourceControlProvider.readLinkSubject")(function* (
+    input: { readonly cwd: string; readonly url: URL },
+    endpoint: string,
+  ) {
+    const result = yield* gitlab
+      .execute({
+        cwd: input.cwd,
+        args: ["api", "--hostname", input.url.host, endpoint],
+        timeoutMs: 3_000,
+        maxOutputBytes: 32_000,
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new SourceControlProviderError({
+              provider: "gitlab",
+              operation: "resolveLink",
+              cwd: input.cwd,
+              detail: "The linked subject could not be read.",
+              cause,
+            }),
+        ),
+      );
+    const subject = yield* decodeLinkSubject(result.stdout).pipe(
+      Effect.mapError(
+        (cause) =>
+          new SourceControlProviderError({
+            provider: "gitlab",
+            operation: "resolveLink.decode",
+            cwd: input.cwd,
+            detail: "The linked subject could not be read.",
+            cause,
+          }),
+      ),
+    );
+    return { title: subject.title, body: subject.description };
+  });
+
   return SourceControlProvider.SourceControlProvider.of({
     kind: "gitlab",
+    resolveLink: (input) => {
+      // Automatic enrichment must not send ambient CLI credentials to a host from message text.
+      if (input.url.host !== "gitlab.com") return undefined;
+      const match = /^\/(.+)\/-\/(merge_requests|issues)\/([1-9]\d*)(?:\/.*)?$/.exec(
+        input.url.pathname,
+      );
+      if (!match) return undefined;
+      return readLinkSubject(
+        input,
+        `projects/${encodeURIComponent(match[1]!)}/${match[2]}/${match[3]}`,
+      );
+    },
     listChangeRequests: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
       return gitlab
@@ -250,5 +306,3 @@ export const make = Effect.gen(function* () {
       ),
   });
 });
-
-export const layer = Layer.effect(SourceControlProvider.SourceControlProvider, make);

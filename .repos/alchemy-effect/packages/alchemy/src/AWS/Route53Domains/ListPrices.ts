@@ -18,9 +18,8 @@ export interface ListPricesRequest extends route53domains.ListPricesRequest {}
  * Provide the implementation with
  * `Effect.provide(AWS.Route53Domains.ListPricesHttp)`.
  *
- * @binding
- * @section Looking Up Prices
- * @example Get the Registration Price for .com
+ * ### Looking Up Prices
+ * **Example:** Get the Registration Price for .com
  * ```typescript
  * // init
  * const listPrices = yield* AWS.Route53Domains.ListPrices();
@@ -29,6 +28,8 @@ export interface ListPricesRequest extends route53domains.ListPricesRequest {}
  * const result = yield* listPrices({ Tld: "com" });
  * const price = result.Prices?.[0]?.RegistrationPrice?.Price;
  * ```
+ *
+ * @binding
  */
 export interface ListPrices extends Binding.Service<
   ListPrices,

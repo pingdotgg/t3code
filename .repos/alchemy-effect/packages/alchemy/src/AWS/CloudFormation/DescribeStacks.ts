@@ -12,9 +12,8 @@ import type { Stack } from "./Stack.ts";
  * service-discovery pattern of resolving endpoints/ARNs from a stack's
  * outputs. Provide the implementation with
  * `Effect.provide(AWS.CloudFormation.DescribeStacksHttp)`.
- * @binding
- * @section Reading Stacks
- * @example Read a Stack's Outputs
+ * ### Reading Stacks
+ * **Example:** Read a Stack's Outputs
  * ```typescript
  * // init — bind the operation to the stack
  * const describeStacks = yield* AWS.CloudFormation.DescribeStacks(stack);
@@ -23,6 +22,8 @@ import type { Stack } from "./Stack.ts";
  * const { Stacks } = yield* describeStacks();
  * const outputs = Stacks?.[0]?.Outputs ?? [];
  * ```
+ *
+ * @binding
  */
 export interface DescribeStacks extends Binding.Service<
   DescribeStacks,

@@ -15,9 +15,8 @@ export interface DeleteJobRequest extends Omit<
  * deletes a build job from a branch's history — e.g. a maintenance function
  * pruning old build records. Provide the implementation with
  * `Effect.provide(AWS.Amplify.DeleteJobHttp)`.
- * @binding
- * @section Controlling Jobs
- * @example Prune an Old Build Record
+ * ### Controlling Jobs
+ * **Example:** Prune an Old Build Record
  * ```typescript
  * // init — bind the operation to the app
  * const deleteJob = yield* AWS.Amplify.DeleteJob(app);
@@ -25,6 +24,8 @@ export interface DeleteJobRequest extends Omit<
  * // runtime — remove the job from the branch's history
  * yield* deleteJob({ branchName: "main", jobId: "42" });
  * ```
+ *
+ * @binding
  */
 export interface DeleteJob extends Binding.Service<
   DeleteJob,

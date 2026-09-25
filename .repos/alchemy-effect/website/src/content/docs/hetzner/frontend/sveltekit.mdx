@@ -1,0 +1,201 @@
+---
+title: SvelteKit
+description: Deploy a SvelteKit app to Hetzner with Hetzner.Website.SvelteKit — kit SSR as a systemd unit on port 3000, prerendered assets baked into the unit, and Kit's own dev server under alchemy dev.
+sidebar:
+  order: 12
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`Hetzner.Website.SvelteKit` deploys a
+[SvelteKit](https://svelte.dev/docs/kit) app to a Hetzner Cloud
+Server. It builds the app with SvelteKit's own Vite pipeline and an
+in-memory Node adapter. Client assets and prerendered pages bake into
+the systemd unit; dynamic routes run in the kit handler on port 3000.
+Alchemy creates a `cpx12` / `ubuntu-24.04` Server in `fsn1` if you
+omit `server`, then a `Hetzner.Service` on that Server. The live URL
+is `http://{ipv4}:3000`. Your `vite.config.ts` loads natively; there
+is no `svelte.config.js` to write (kit v3 dropped it) and no adapter
+to install.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its
+`/sveltekit` and `/sveltekit/node` exports from your project at
+deploy time. It is only used at build time, so a dev dependency is
+enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure SvelteKit
+
+Your project's `vite.config.ts` loads natively — your Vite plugins
+and the kit options in your `sveltekit(...)` call all apply as usual.
+Alchemy injects its Node adapter (replacing any adapter you declare,
+with a warning), so a fresh SvelteKit project deploys as-is.
+Deploy-specific kit overrides can also be passed via the `kit` prop,
+which merges over your `sveltekit(...)` options — see
+[Kit options](#kit-options) below. A project without a
+`vite.config.*` works too: the resource falls back to a fully
+programmatic build.
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as Hetzner from "alchemy/Hetzner";
+
+export const Website = Hetzner.Website.SvelteKit("Website");
+```
+
+Omit `server` to create a `cpx12` in `fsn1`. Pass an existing Server
+so several sites or APIs share the VM.
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MySvelteKitSite",
+  {
+    providers: Hetzner.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+Routes with `export const prerender = true` are baked into the unit
+and served as static files first; server routes (`+server.ts`) and
+server load functions run in the kit handler on the Server.
+
+## Add environment variables
+
+Process environment is a top-level `env` map:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = Hetzner.Website.SvelteKit("Website", {
++  env: {
++    GREETING: "Hello from alchemy",
++    API_BASE: "https://api.example.com",
++  },
+});
+```
+
+The values are copied onto `process.env` before the build (and the
+dev server) and onto the systemd unit at deploy time, so server code
+reads the same keys in both modes.
+
+## Read the environment in server code
+
+The Kit server runs in Node on the Server, so server routes read the
+environment from `process.env` (or kit's `$env/dynamic/private`,
+which is initialized from it):
+
+```typescript
+// src/routes/+page.server.ts
+export const load = () => {
+  return { greeting: process.env.GREETING ?? "hello" };
+};
+```
+
+## Kit options
+
+Since kit v3 there is no `svelte.config.js` — kit options live in the
+`sveltekit(...)` call in your `vite.config.ts`, which loads natively:
+
+```typescript
+// vite.config.ts
+import { sveltekit } from "@sveltejs/kit/vite";
+import tailwindcss from "@tailwindcss/vite";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [
+    tailwindcss(),
+    sveltekit({
+      alias: { $lib: "src/lib" },
+    }),
+  ],
+});
+```
+
+The `kit` prop on the resource is a deploy-time override layer merged
+over those options (the override wins). It must be JSON-serializable:
+
+```typescript
+// alchemy.run.ts
+export const Website = Hetzner.Website.SvelteKit("Website", {
+  kit: {
+    paths: { base: "/docs" },
+  },
+});
+```
+
+Don't set `kit.adapter` — Alchemy injects its Node adapter (an
+adapter declared in your `sveltekit(...)` call is replaced with a
+warning).
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs SvelteKit's own Vite dev server — Node SSR with
+full HMR — instead of deploying; `site.url` is the local address and
+no Hetzner resources are created (`server` and `service` are
+`undefined`). Wrap the site in `Alchemy.remote()` to deploy the live
+Server even during dev.
+
+## Custom domain
+
+`domain` requires an existing [`Hetzner.Zone`](/hetzner/networking/dns).
+Alchemy creates an A RecordSet pointing at the Server's public IPv4.
+There is no TLS on the Service — `url` is `http://{domain}:3000`.
+
+```typescript
+const zone = yield* Hetzner.Zone("dns", { name: "example.com" });
+
+const site = yield* Hetzner.Website.SvelteKit("Web", {
+  domain: "app.example.com",
+  zone,
+});
+```
+
+Passing `domain` without `zone` fails.
+
+## Where next
+
+- [`SvelteKit` API](/providers/hetzner/website/sveltekit)
+- [Servers](/hetzner/compute/servers) and
+  [Services](/hetzner/compute/services)
+- [DNS](/hetzner/networking/dns)

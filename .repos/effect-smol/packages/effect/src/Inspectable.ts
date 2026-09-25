@@ -28,7 +28,7 @@ import { redact } from "./Redactable.ts"
  *
  * **Example** (Defining custom Node inspection)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Inspectable } from "effect"
  *
  * class CustomObject {
@@ -40,7 +40,7 @@ import { redact } from "./Redactable.ts"
  * }
  *
  * const obj = new CustomObject("hello")
- * console.log(obj) // Displays: CustomObject(hello)
+ * obj[Inspectable.NodeInspectSymbol]() // => "CustomObject(hello)"
  * ```
  *
  * @category symbols
@@ -59,7 +59,7 @@ export const NodeInspectSymbol = Symbol.for("nodejs.util.inspect.custom")
  *
  * **Example** (Typing custom Node inspection)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Inspectable } from "effect"
  *
  * class CustomObject {
@@ -71,7 +71,7 @@ export const NodeInspectSymbol = Symbol.for("nodejs.util.inspect.custom")
  * }
  *
  * const obj = new CustomObject("test")
- * console.log(obj) // CustomObject(test)
+ * obj[Inspectable.NodeInspectSymbol]() // => "CustomObject(test)"
  * ```
  *
  * @category symbols
@@ -94,7 +94,7 @@ export type NodeInspectSymbol = typeof NodeInspectSymbol
  *
  * **Example** (Implementing inspectable objects)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Formatter, Inspectable } from "effect"
  *
  * class Result implements Inspectable.Inspectable {
@@ -117,7 +117,7 @@ export type NodeInspectSymbol = typeof NodeInspectSymbol
  * }
  *
  * const success = new Result("Success", 42)
- * console.log(success.toString()) // Pretty formatted JSON
+ * success.toString() // => "{\"_tag\":\"Success\",\"value\":42}"
  * ```
  *
  * @category models
@@ -130,19 +130,20 @@ export interface Inspectable {
 }
 
 /**
- * Converts a value to a JSON-serializable representation safely.
+ * Converts a value to its structured inspection representation.
  *
  * **When to use**
  *
- * Use when you need a safe, JSON-serializable representation of a value
+ * Use when you need the structured representation of an inspectable value
  * without risking unhandled errors.
  *
  * **Details**
  *
- * This function attempts to extract JSON data from objects that implement the
- * `toJSON` method, recursively processes arrays, and handles errors gracefully.
- * For objects that don't have a `toJSON` method, it applies redaction to
- * protect sensitive information.
+ * This function applies redaction before extracting data from objects that
+ * implement `toJSON`, recursively processes arrays, and handles errors
+ * gracefully. Plain objects are returned unchanged, so the result is not
+ * guaranteed to be accepted by `JSON.stringify`; it may still contain values
+ * such as `BigInt`, functions, or circular references.
  *
  * @see {@link toStringUnknown} for converting unknown values to strings
  *
@@ -151,6 +152,7 @@ export interface Inspectable {
  */
 export const toJson = (input: unknown): unknown => {
   try {
+    input = redact(input)
     if (
       Predicate.hasProperty(input, "toJSON") &&
       Predicate.isFunction(input["toJSON"]) &&
@@ -160,10 +162,10 @@ export const toJson = (input: unknown): unknown => {
     } else if (Array.isArray(input)) {
       return input.map(toJson)
     }
+    return input
   } catch {
     return "[toJSON threw]"
   }
-  return redact(input)
 }
 
 /**
@@ -187,7 +189,7 @@ export const toStringUnknown = (u: unknown, whitespace: number | string | undefi
     return u
   }
   try {
-    return typeof u === "object" ? formatJson(u, { space: whitespace }) : String(u)
+    return typeof u === "object" ? formatJson(u, { space: whitespace }) : format(u, { space: whitespace })
   } catch {
     return String(u)
   }
@@ -208,7 +210,7 @@ export const toStringUnknown = (u: unknown, whitespace: number | string | undefi
  *
  * **Example** (Using the base inspectable prototype)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Inspectable } from "effect"
  *
  * // Use as prototype
@@ -216,7 +218,7 @@ export const toStringUnknown = (u: unknown, whitespace: number | string | undefi
  * myObject.name = "example"
  * myObject.value = 42
  *
- * console.log(myObject.toString()) // Pretty printed representation
+ * myObject.toString() // => "\"[toJSON threw]\""
  *
  * // Or extend in a constructor
  * function MyClass(this: any, name: string) {
@@ -256,7 +258,7 @@ export const BaseProto: Inspectable = {
  *
  * **Example** (Extending the inspectable base class)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Inspectable } from "effect"
  *
  * class User extends Inspectable.Class {
@@ -279,11 +281,11 @@ export const BaseProto: Inspectable = {
  * }
  *
  * const user = new User(1, "Alice", "alice@example.com")
- * console.log(user.toString()) // Pretty printed JSON with _tag, id, name, email
- * console.log(user) // In Node.js, shows the same formatted output
+ * user.toString() // => "{\"_tag\":\"User\",\"id\":1,\"name\":\"Alice\",\"email\":\"alice@example.com\"}"
+ * user[Inspectable.NodeInspectSymbol]() // => { _tag: "User", id: 1, name: "Alice", email: "alice@example.com" }
  * ```
  *
- * @category classes
+ * @category models
  * @since 2.0.0
  */
 export abstract class Class {

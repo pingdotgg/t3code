@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * state-changing activities) for a specific entity. Provide the
  * implementation with
  * `Effect.provide(AWS.ApplicationSignals.ListEntityEventsHttp)`.
- * @binding
- * @section Tracking Changes
- * @example List an Entity's Change Events
+ * ### Tracking Changes
+ * **Example:** List an Entity's Change Events
  * ```typescript
  * // init — account-level, no resource argument
  * const listEntityEvents = yield* AWS.ApplicationSignals.ListEntityEvents();
@@ -27,6 +26,8 @@ import * as Binding from "../../Binding.ts";
  *   EndTime: new Date(),
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListEntityEvents extends Binding.Service<
   ListEntityEvents,

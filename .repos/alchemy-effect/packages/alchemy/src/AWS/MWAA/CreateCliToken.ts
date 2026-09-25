@@ -12,9 +12,8 @@ import type { Environment } from "./Environment.ts";
  * The `CliToken` is `Redacted` — unwrap it with `Redacted.value` when
  * building the request. Provide the implementation with
  * `Effect.provide(AWS.MWAA.CreateCliTokenHttp)`.
- * @binding
- * @section Creating CLI Tokens
- * @example Mint a CLI Token and Run an Airflow Command
+ * ### Creating CLI Tokens
+ * **Example:** Mint a CLI Token and Run an Airflow Command
  * ```typescript
  * // init — bind the operation to the environment
  * const createCliToken = yield* AWS.MWAA.CreateCliToken(environment);
@@ -33,6 +32,8 @@ import type { Environment } from "./Environment.ts";
  *   ),
  * );
  * ```
+ *
+ * @binding
  */
 export interface CreateCliToken extends Binding.Service<
   CreateCliToken,

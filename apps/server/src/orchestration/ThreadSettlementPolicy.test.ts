@@ -5,6 +5,7 @@ import {
   ProjectId,
   TurnId,
   type OrchestrationThreadShell,
+  type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { type SettlementPullRequest, resolveAutoSettlementAt } from "./ThreadSettlementPolicy.ts";
 
@@ -18,6 +19,7 @@ const makeThread = (
   modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
   runtimeMode: "full-access",
   interactionMode: "default",
+  pullRequests: [],
   branch: "feature",
   worktreePath: "/repo",
   latestTurn: null,
@@ -169,6 +171,15 @@ describe("resolveAutoSettlementAt", () => {
 
   it("blocks pins, snooze, pending work, live sessions, and queued starts", () => {
     expect(decide(makeThread({ settledOverride: "active" }))).toBe(false);
+  });
+
+  it("never settles a thread whose auto-settle is turned off, by inactivity or merge", () => {
+    const held = makeThread({ autoSettleDisabledAt: "2026-08-21T00:00:00.000Z" });
+    expect(decide(held)).toBe(false);
+    expect(
+      decide(held, { state: "merged", mergedAt: "2026-08-21T00:00:00.000Z", closedAt: null }),
+    ).toBe(false);
+    expect(decide(makeThread({ autoSettleDisabledAt: null }))).toBe(true);
     expect(decide(makeThread({ snoozedUntil: "2026-08-29T00:00:00.000Z" }))).toBe(false);
     expect(decide(makeThread({ hasPendingApprovals: true }))).toBe(false);
     expect(decide(makeThread({ hasPendingUserInput: true }))).toBe(false);
@@ -211,5 +222,92 @@ describe("resolveAutoSettlementAt", () => {
         }),
       ),
     ).toBe(true);
+  });
+});
+
+function linkedRequest(
+  number: number,
+  snapshot: ThreadPullRequestLink["snapshot"],
+): ThreadPullRequestLink {
+  return {
+    host: "github.com",
+    repository: "org/repo",
+    number,
+    url: `https://github.com/org/repo/pull/${number}`,
+    source: "manual",
+    linkedAt: NOW,
+    stack: null,
+    snapshot,
+  };
+}
+
+const terminalSnapshot = (
+  state: "closed" | "merged",
+  terminalAt: string,
+  updatedAt = terminalAt,
+) => ({
+  state,
+  title: "Change",
+  headBranch: "feature",
+  baseBranch: "main",
+  isDraft: false,
+  closedAt: terminalAt,
+  mergedAt: state === "merged" ? terminalAt : null,
+  updatedAt,
+  syncedAt: NOW,
+});
+
+describe("per-thread auto-settle opt out", () => {
+  it("blocks both inactivity and merge settlement while auto-settle is off", () => {
+    const merged = linkedRequest(1, terminalSnapshot("merged", NOW));
+    expect(decide(makeThread({ latestUserMessageAt: "2026-08-01T00:00:00.000Z" }))).toBe(true);
+    expect(decide(makeThread({ pullRequests: [merged] }), null, { days: null })).toBe(true);
+    const held = { autoSettleDisabledAt: NOW };
+    expect(decide(makeThread({ ...held, latestUserMessageAt: "2026-08-01T00:00:00.000Z" }))).toBe(
+      false,
+    );
+    expect(decide(makeThread({ ...held, pullRequests: [merged] }), null, { days: null })).toBe(
+      false,
+    );
+  });
+});
+
+describe("linked request settlement", () => {
+  it.each(["closed", "merged"] as const)(
+    "uses the latest actual %s transition despite later comments on another PR",
+    (state) => {
+      const old = linkedRequest(1, terminalSnapshot(state, "2026-08-19T00:00:00.000Z", NOW));
+      const recent = linkedRequest(2, terminalSnapshot(state, "2026-08-21T00:00:00.000Z"));
+      expect(decide(makeThread({ pullRequests: [old, recent] }), null, { days: null })).toBe(true);
+      expect(decide(makeThread({ pullRequests: [recent, old] }), null, { days: null })).toBe(true);
+      expect(decide(makeThread({ pullRequests: [old] }), null, { days: null })).toBe(false);
+    },
+  );
+
+  it("keeps unknown and open links active even after the inactivity window", () => {
+    const merged = linkedRequest(1, terminalSnapshot("merged", NOW));
+    const unknown = linkedRequest(2, null);
+    const open = linkedRequest(3, {
+      ...terminalSnapshot("closed", NOW),
+      state: "open",
+      closedAt: null,
+    });
+    expect(decide(makeThread({ pullRequests: [merged, unknown] }))).toBe(false);
+    expect(decide(makeThread({ pullRequests: [merged, open] }))).toBe(false);
+    expect(
+      decide(makeThread({ pullRequests: [merged, { ...unknown, source: "stack-dismissed" }] })),
+    ).toBe(true);
+  });
+
+  it("honors merge settings and ignores missing terminal timestamps", () => {
+    const merged = linkedRequest(1, terminalSnapshot("merged", NOW));
+    expect(decide(makeThread({ pullRequests: [merged] }), null, { days: null, merge: false })).toBe(
+      false,
+    );
+    const missing = linkedRequest(2, { ...terminalSnapshot("merged", NOW), mergedAt: null });
+    expect(decide(makeThread({ pullRequests: [missing] }), null, { days: null })).toBe(false);
+    expect(decide(makeThread({ pullRequests: [missing, merged] }), null, { days: null })).toBe(
+      true,
+    );
   });
 });

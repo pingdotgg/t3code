@@ -91,9 +91,8 @@ export type UserPoolTriggerEventSourceService = <
  * {@link onPreTokenGeneration}, {@link onCustomMessage}) rather than the
  * service directly, and provide `Lambda.UserPoolTriggerEventSource` on the
  * hosting function.
- * @binding
- * @section Handling User Pool Triggers
- * @example Auto-confirm Sign-ups from a Lambda Function
+ * ### Handling User Pool Triggers
+ * **Example:** Auto-confirm Sign-ups from a Lambda Function
  * ```typescript
  * export default AuthFunction.make(
  *   { main: import.meta.url },
@@ -110,6 +109,8 @@ export type UserPoolTriggerEventSourceService = <
  *   }).pipe(Effect.provide(Lambda.UserPoolTriggerEventSource)),
  * );
  * ```
+ *
+ * @binding
  */
 export interface UserPoolTriggerEventSource extends Binding.Service<
   UserPoolTriggerEventSource,

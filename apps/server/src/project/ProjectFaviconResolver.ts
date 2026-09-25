@@ -90,7 +90,7 @@ const LINK_ICON_HTML_RE =
 const ICON_REL_RE = /\brel\s*:\s*["'](?:icon|shortcut icon)["']/i;
 const ICON_HREF_RE = /\bhref\s*:\s*["']([^"'?]+)/i;
 
-export class ProjectFaviconResolutionError extends Schema.TaggedErrorClass<ProjectFaviconResolutionError>()(
+export class ProjectFaviconResolutionError extends Schema.TaggedError<ProjectFaviconResolutionError>()(
   "ProjectFaviconResolutionError",
   {
     operation: Schema.Literals([
@@ -143,7 +143,7 @@ const optionOnNotFound = <A, R>(
   effect: Effect.Effect<A, PlatformError.PlatformError, R>,
 ): Effect.Effect<Option.Option<A>, PlatformError.PlatformError, R> =>
   effect.pipe(
-    Effect.map(Option.some),
+    Effect.asSome,
     Effect.catchTags({
       PlatformError: (error) =>
         error.reason._tag === "NotFound" ? Effect.succeed(Option.none<A>()) : Effect.fail(error),
@@ -175,7 +175,7 @@ export const make = Effect.gen(function* () {
               relativePath,
             })
       ).pipe(
-        Effect.map(Option.some),
+        Effect.asSome,
         Effect.catchTags({
           WorkspacePathOutsideRootError: () =>
             Effect.succeed(

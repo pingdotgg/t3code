@@ -71,12 +71,11 @@ export interface Secret extends Resource<
  * by `GitHub.providers()` (which uses the Alchemy AuthProvider — env,
  * stored PAT, `gh` CLI, or OAuth). The token needs `repo` scope for
  * private repositories or `public_repo` for public ones.
- * @resource
- * @section Repository Secrets
+ * ### Repository Secrets
  * Store secrets accessible to all GitHub Actions workflows in the
  * repository.
  *
- * @example Create a Repository Secret
+ * **Example:** Create a Repository Secret
  * ```typescript
  * yield* GitHub.Secret("aws-role", {
  *   owner: "my-org",
@@ -86,12 +85,12 @@ export interface Secret extends Resource<
  * });
  * ```
  *
- * @section Environment Secrets
+ * ### Environment Secrets
  * Scope a secret to a specific GitHub Actions environment (e.g.
  * `production`, `staging`). Environment secrets require environment
  * protection rules to be satisfied before workflows can access them.
  *
- * @example Create an Environment Secret
+ * **Example:** Create an Environment Secret
  * ```typescript
  * yield* GitHub.Secret("deploy-key", {
  *   owner: "my-org",
@@ -102,12 +101,12 @@ export interface Secret extends Resource<
  * });
  * ```
  *
- * @section Wiring with Other Resources
+ * ### Wiring with Other Resources
  * A common pattern is wiring the output of another resource — like an
  * IAM role ARN or a database URL — directly into a GitHub secret so
  * that CI workflows can use it.
  *
- * @example Store an IAM Role ARN for CI
+ * **Example:** Store an IAM Role ARN for CI
  * ```typescript
  * const role = yield* AWS.IAM.Role("ci-role", { ... });
  *
@@ -119,7 +118,7 @@ export interface Secret extends Resource<
  * });
  * ```
  *
- * @example Store Multiple Secrets
+ * **Example:** Store Multiple Secrets
  * ```typescript
  * yield* GitHub.Secret("db-url", {
  *   owner: "my-org",
@@ -137,6 +136,8 @@ export interface Secret extends Resource<
  *   value: Redacted.make(apiKey),
  * });
  * ```
+ *
+ * @resource
  */
 export const Secret = Resource<Secret>("GitHub.Secret");
 

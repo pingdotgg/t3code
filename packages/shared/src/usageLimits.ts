@@ -15,7 +15,6 @@ import {
   type ServerProvider,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
-  type UsageLimitSourceSnapshot,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 
@@ -24,6 +23,33 @@ import * as DateTime from "effect/DateTime";
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
+
+export const CURSOR_USAGE_WINDOWS = [
+  {
+    id: "totalPercentUsed",
+    label: "Overall",
+    description: "Combined usage across both allowances, not a third quota.",
+  },
+  {
+    id: "autoPercentUsed",
+    label: "Cursor Models",
+    description: "Grok and Composer use this first. Auto can use either pool.",
+  },
+  {
+    id: "apiPercentUsed",
+    label: "Other Models",
+    description: "Claude, GPT, and Gemini use this pool. Grok and Composer fall back here.",
+  },
+] as const;
+
+export function cursorUsageWindowDetails(id: string) {
+  return CURSOR_USAGE_WINDOWS.find((window) => window.id === id);
+}
+
+function cursorUsageWindowRank(id: string): number {
+  const rank = CURSOR_USAGE_WINDOWS.findIndex((window) => window.id === id);
+  return rank < 0 ? CURSOR_USAGE_WINDOWS.length : rank;
+}
 
 /**
  * Providers that belong on the Limits view: enabled, installed, and one whose
@@ -42,108 +68,16 @@ export function providersWithLimits(
   );
 }
 
-export interface LimitsGroup {
-  readonly environmentId: EnvironmentId;
-  /** Null while only one environment is connected; there is nothing to tell apart. */
-  readonly environmentLabel: string | null;
-  readonly providers: readonly ServerProvider[];
-}
-
-/**
- * One group per connected environment with a provider reporting limits.
- * Provider snapshots come from the config stream every client already holds,
- * so opening the view costs no extra request.
- */
-export function collectLimitsGroups(
-  presentations: ReadonlyMap<
-    EnvironmentId,
-    {
-      readonly entry: { readonly target: { readonly label: string } };
-      readonly serverConfig: {
-        readonly providers?: readonly ServerProvider[] | undefined;
-      } | null;
-    }
-  >,
-): readonly LimitsGroup[] {
-  const groups: LimitsGroup[] = [];
-  for (const [environmentId, presentation] of presentations) {
-    const providers = providersWithLimits(presentation.serverConfig?.providers ?? []);
-    if (providers.length === 0) continue;
-    groups.push({ environmentId, environmentLabel: presentation.entry.target.label, providers });
+export type LimitPresentations = ReadonlyMap<
+  EnvironmentId,
+  {
+    readonly entry: { readonly target: { readonly label: string } };
+    readonly serverConfig: {
+      readonly providers?: readonly ServerProvider[] | undefined;
+      readonly usageLimitSources?: UsageLimitSourceSnapshots | undefined;
+    } | null;
   }
-  return groups.length > 1 ? groups : groups.map((group) => ({ ...group, environmentLabel: null }));
-}
-
-/**
- * Every usage-limit source across connected environments, keyed so two
- * environments pointing at the same hub still get their own rows. The label
- * carries the environment only when more than one environment has sources.
- * A native provider with usable limits takes precedence over the same account
- * in a source, even when it belongs to another connected environment.
- */
-export function collectLimitSources(
-  presentations: ReadonlyMap<
-    EnvironmentId,
-    {
-      readonly entry: { readonly target: { readonly label: string } };
-      readonly serverConfig: {
-        readonly providers?: readonly ServerProvider[] | undefined;
-        readonly usageLimitSources?: UsageLimitSourceSnapshots | undefined;
-      } | null;
-    }
-  >,
-): ReadonlyArray<
-  UsageLimitSourceSnapshot & {
-    readonly key: string;
-    readonly environmentId: EnvironmentId;
-    readonly hiddenAccountCount: number;
-  }
-> {
-  const nativeAccounts = new Set<string>();
-  for (const presentation of presentations.values()) {
-    for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
-      const key = accountKey(provider.driver, provider.auth.email);
-      if (
-        key !== null &&
-        provider.usageLimits?.windows.length &&
-        !provider.usageLimits.unavailable
-      ) {
-        nativeAccounts.add(key);
-      }
-    }
-  }
-  const perEnvironment: Array<{
-    readonly environmentId: EnvironmentId;
-    readonly environmentLabel: string;
-    readonly sources: UsageLimitSourceSnapshots;
-  }> = [];
-  for (const [environmentId, presentation] of presentations) {
-    const sources = presentation.serverConfig?.usageLimitSources ?? [];
-    if (sources.length === 0) continue;
-    perEnvironment.push({
-      environmentId,
-      environmentLabel: presentation.entry.target.label,
-      sources,
-    });
-  }
-  const labelEnvironment = perEnvironment.length > 1;
-  return perEnvironment.flatMap(({ environmentId, environmentLabel, sources }) =>
-    sources.map((source) => {
-      const accounts = source.accounts.filter((account) => {
-        const key = accountKey(account.driver, account.email);
-        return key === null || !nativeAccounts.has(key);
-      });
-      return {
-        ...source,
-        accounts,
-        hiddenAccountCount: source.accounts.length - accounts.length,
-        environmentId,
-        key: `${environmentId}:${source.id}`,
-        label: labelEnvironment ? `${environmentLabel} · ${source.label}` : source.label,
-      };
-    }),
-  );
-}
+>;
 
 function accountKey(driver: ServerProvider["driver"], email: string | undefined): string | null {
   const normalizedEmail = email?.trim().toLowerCase();
@@ -184,9 +118,7 @@ export interface LimitAccount {
  * entry per distinct account. The freshest reads supply windows and credits;
  * native instances supply names and environment labels.
  */
-export function collectLimitAccounts(
-  presentations: Parameters<typeof collectLimitSources>[0],
-): readonly LimitAccount[] {
+export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
@@ -315,9 +247,7 @@ export function collectLimitAccounts(
  * are left out; there is nothing for the user to act on. The environment
  * is named only when more than one is connected.
  */
-export function collectLimitNotices(
-  presentations: Parameters<typeof collectLimitSources>[0],
-): readonly string[] {
+export function collectLimitNotices(presentations: LimitPresentations): readonly string[] {
   const label = (environmentLabel: string, subject: string) =>
     presentations.size > 1 ? `${environmentLabel} · ${subject}` : subject;
   const notices: string[] = [];
@@ -357,6 +287,11 @@ export interface LimitPoolWindow {
   readonly kind: ServerProviderUsageWindow["kind"];
   readonly label: string;
   readonly members: readonly LimitPoolMember[];
+  /** Fixed account positions across rows; a null window leaves a gap. */
+  readonly columns: ReadonlyArray<{
+    readonly account: LimitAccount;
+    readonly window: ServerProviderUsageWindow | null;
+  }>;
   readonly remainingPercent: number;
   readonly usedPercent: number;
   readonly pace: LimitPace | null;
@@ -374,6 +309,17 @@ export interface LimitPool {
   readonly windows: readonly LimitPoolWindow[];
 }
 
+/** Show Cursor's two usable pools instead of a combined percentage when both are available. */
+export function displayLimitWindows(pool: LimitPool) {
+  if (pool.driver !== "cursor") return pool.windows;
+  const hasAuto = pool.windows.some((window) => window.id === "autoPercentUsed");
+  const hasApi = pool.windows.some((window) => window.id === "apiPercentUsed");
+  const hasBothPools = hasAuto && hasApi;
+  return pool.windows
+    .filter((window) => !hasBothPools || window.id !== "totalPercentUsed")
+    .sort((left, right) => cursorUsageWindowRank(left.id) - cursorUsageWindowRank(right.id));
+}
+
 const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
   session: 0,
   weekly: 1,
@@ -389,10 +335,10 @@ const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
  * a month on Free/Go), and a monthly allowance must not average into a
  * five-hour pool. Pools order by kind, then first appearance.
  *
- * `accounts` is the table order: instances the user can act on (native,
- * named) before hub-only accounts, each group alphabetical. Each window's
- * `members` sort by reset instead, soonest first, so a bar reads left to
- * right as "who refills next" and matches the reset list under it.
+ * Accounts and columns share the session reset order, soonest first. When
+ * no account reports a session window, use the first window by kind instead.
+ * Missing reset times sort last, with account names and keys breaking ties.
+ * Each window's reset list still follows its own clock.
  */
 export function collectLimitPools(
   accounts: readonly LimitAccount[],
@@ -405,10 +351,20 @@ export function collectLimitPools(
     else byDriver.set(account.driver, [account]);
   }
   return [...byDriver].map(([driver, members]) => {
+    const orderWindow = members
+      .flatMap((account) => account.limits.windows)
+      .sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind])[0];
+    const orderReset = (account: LimitAccount) => {
+      const window = account.limits.windows.find(
+        (window) => window.kind === orderWindow?.kind && window.id === orderWindow.id,
+      );
+      return (window ? resetMillis(window) : null) ?? Number.POSITIVE_INFINITY;
+    };
     const sorted = [...members].sort(
       (left, right) =>
-        Number(left.redeem === null) - Number(right.redeem === null) ||
-        accountSortName(left).localeCompare(accountSortName(right)),
+        orderReset(left) - orderReset(right) ||
+        accountSortName(left).localeCompare(accountSortName(right)) ||
+        left.key.localeCompare(right.key),
     );
     return { driver, accounts: sorted, windows: poolWindows(sorted, now) };
   });
@@ -428,12 +384,8 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       else byKey.set(key, [{ account, window }]);
     }
   }
-  const pools = [...byKey.values()].map((unordered): LimitPoolWindow => {
-    const members = [...unordered].sort(
-      (left, right) =>
-        (resetMillis(left.window) ?? Number.POSITIVE_INFINITY) -
-        (resetMillis(right.window) ?? Number.POSITIVE_INFINITY),
-    );
+  const pools = [...byKey.values()].map((members): LimitPoolWindow => {
+    const memberByAccount = new Map(members.map((member) => [member.account.key, member]));
     const first = members[0]!.window;
     const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
     // Pace compares spend against the clock, so it is judged only over the
@@ -465,6 +417,9 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       kind: first.kind,
       label: first.label,
       members,
+      columns: accounts.map(
+        (account) => memberByAccount.get(account.key) ?? { account, window: null },
+      ),
       usedPercent: Math.round(usedPercent),
       remainingPercent: Math.round(100 - usedPercent),
       pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),

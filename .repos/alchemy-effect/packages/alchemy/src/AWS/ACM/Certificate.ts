@@ -7,7 +7,7 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import { deepEqual, isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
-import { Resource } from "../../Resource.ts";
+import { Resource, type ResourceBinding } from "../../Resource.ts";
 import {
   createInternalTags,
   createTagsList,
@@ -15,6 +15,7 @@ import {
   hasAlchemyTags,
 } from "../../Tags.ts";
 import type { Providers } from "../Providers.ts";
+import { findPublicHostedZoneId } from "../Route53/HostedZoneLookup.ts";
 
 export interface CertificateProps {
   /**
@@ -33,8 +34,12 @@ export interface CertificateProps {
   /**
    * Route 53 hosted zone used to auto-create DNS validation records.
    *
-   * When provided together with `validationMethod: "DNS"`, the certificate
-   * provider will upsert the validation records and wait for issuance.
+   * With `validationMethod: "DNS"` the certificate provider upserts the
+   * validation records into this zone and waits for issuance. When
+   * omitted, the most specific PUBLIC hosted zone in the account
+   * containing `domainName` is inferred; if none matches, validation is
+   * left to the caller (external DNS) and the certificate is returned
+   * pending.
    */
   hostedZoneId?: string;
   /**
@@ -74,6 +79,22 @@ export interface CertificateProps {
    */
   tags?: Record<string, string>;
 }
+
+/**
+ * Binding contract of {@link Certificate}: composites contribute additional
+ * subject alternative names without a circular input prop (e.g. a site
+ * attached to an `AWS.Website.Router` binds its hostnames onto the Router's
+ * certificate). ACM certificates are immutable — a change in the bound SAN
+ * set plans a REPLACEMENT (new certificate requested and validated first,
+ * consumers re-pointed, old certificate deleted last).
+ */
+export type CertificateBinding = {
+  /**
+   * Additional subject alternative names merged into the certificate's SAN
+   * set at reconcile time.
+   */
+  subjectAlternativeNames?: string[];
+};
 
 export interface Certificate extends Resource<
   "AWS.ACM.Certificate",
@@ -134,9 +155,33 @@ export interface Certificate extends Resource<
      */
     notAfter: Date | undefined;
   },
-  never,
+  CertificateBinding,
   Providers
 > {}
+
+/**
+ * Effective SAN set: declared props plus bound SANs (see
+ * {@link CertificateBinding}), deduped. Tolerates both `{ sid, data }` rows
+ * (provider lifecycle) and bare binding payloads.
+ * @internal
+ */
+const resolveEffectiveSans = (
+  declared: string[] | undefined,
+  bindings:
+    | ReadonlyArray<CertificateBinding | ResourceBinding<CertificateBinding>>
+    | undefined,
+): string[] | undefined => {
+  const bound = (bindings ?? []).flatMap((binding) =>
+    "data" in binding && binding.data !== undefined
+      ? ((binding as ResourceBinding<CertificateBinding>).data
+          .subjectAlternativeNames ?? [])
+      : ((binding as CertificateBinding).subjectAlternativeNames ?? []),
+  );
+  if (bound.length === 0) {
+    return declared;
+  }
+  return [...new Set([...(declared ?? []), ...bound])];
+};
 
 /**
  * An ACM certificate for CloudFront and other AWS endpoints.
@@ -145,9 +190,8 @@ export interface Certificate extends Resource<
  * region required for CloudFront viewer certificates. When `hostedZoneId` is
  * provided for DNS validation, the provider creates or updates the Route 53
  * validation records and waits for the certificate to be issued.
- * @resource
- * @section Requesting Certificates
- * @example DNS-Validated Certificate
+ * ### Requesting Certificates
+ * **Example:** DNS-Validated Certificate
  * ```typescript
  * const cert = yield* Certificate("WebsiteCertificate", {
  *   domainName: "www.example.com",
@@ -155,7 +199,7 @@ export interface Certificate extends Resource<
  * });
  * ```
  *
- * @example Certificate With SANs
+ * **Example:** Certificate With SANs
  * ```typescript
  * const cert = yield* Certificate("WebsiteCertificate", {
  *   domainName: "example.com",
@@ -164,7 +208,7 @@ export interface Certificate extends Resource<
  * });
  * ```
  *
- * @example Exportable Certificate
+ * **Example:** Exportable Certificate
  * ```typescript
  * // `export: "ENABLED"` lets the ExportCertificate binding retrieve the
  * // certificate together with its (encrypted) private key at runtime.
@@ -175,8 +219,8 @@ export interface Certificate extends Resource<
  * });
  * ```
  *
- * @section Certificate Expiry Events
- * @example React to Approaching Expiration
+ * ### Certificate Expiry Events
+ * **Example:** React to Approaching Expiration
  * ```typescript
  * // ACM emits "ACM Certificate Approaching Expiration" events through
  * // EventBridge — consume them with the ACM expiry event source, scoped
@@ -191,6 +235,8 @@ export interface Certificate extends Resource<
  *     ),
  * );
  * ```
+ *
+ * @resource
  */
 export const Certificate = Resource<Certificate>("AWS.ACM.Certificate");
 
@@ -430,18 +476,38 @@ export const CertificateProvider = () =>
               (row): row is ReturnType<typeof toAttrs> => row !== undefined,
             );
           }),
-        diff: Effect.fn(function* ({ olds, news: _news }) {
-          if (!isResolved(_news)) return undefined;
+        diff: Effect.fn(function* ({
+          olds,
+          news: _news,
+          oldBindings,
+          newBindings: _newBindings,
+        }) {
+          if (!isResolved(_news) || !isResolved(_newBindings)) {
+            return undefined;
+          }
           const news = _news as typeof olds;
+          const newBindings =
+            _newBindings as ResourceBinding<CertificateBinding>[];
           if (
             olds.domainName !== news.domainName ||
+            // ACM certificates are immutable: the SAN set — declared props
+            // plus SANs contributed through the binding contract — cannot
+            // change in place, so any delta plans a replacement.
             !deepEqual(
-              normalizeSanList(olds.subjectAlternativeNames),
-              normalizeSanList(news.subjectAlternativeNames),
+              normalizeSanList(
+                resolveEffectiveSans(olds.subjectAlternativeNames, oldBindings),
+              ),
+              normalizeSanList(
+                resolveEffectiveSans(news.subjectAlternativeNames, newBindings),
+              ),
             ) ||
             (olds.validationMethod ?? defaultValidationMethod) !==
               (news.validationMethod ?? defaultValidationMethod) ||
-            olds.hostedZoneId !== news.hostedZoneId ||
+            // An undefined side means "inferred" — only two explicit,
+            // differing zones are a replacement.
+            (olds.hostedZoneId !== undefined &&
+              news.hostedZoneId !== undefined &&
+              olds.hostedZoneId !== news.hostedZoneId) ||
             olds.keyAlgorithm !== news.keyAlgorithm ||
             // Certificates cannot move regions — a region change replaces.
             (olds.region ?? ACM_REGION) !== (news.region ?? ACM_REGION) ||
@@ -482,10 +548,21 @@ export const CertificateProvider = () =>
         reconcile: Effect.fn(function* ({
           id,
           instanceId,
-          news,
+          news: _news,
           output,
           session,
+          bindings,
         }) {
+          // Fold bound SANs (see `CertificateBinding`) into the desired
+          // props up front so every downstream step — managed-certificate
+          // lookup, request, attrs — sees the effective SAN set.
+          const news: typeof _news = {
+            ..._news,
+            subjectAlternativeNames: resolveEffectiveSans(
+              _news.subjectAlternativeNames,
+              bindings,
+            ),
+          };
           const internalTags = yield* createInternalTags(id);
           const desiredTags = { ...internalTags, ...news.tags };
 
@@ -552,18 +629,27 @@ export const CertificateProvider = () =>
           const certificateArn = certificate.CertificateArn;
           yield* session.note(certificateArn);
 
-          // Sync DNS validation. If the user wired a hostedZoneId, ensure
-          // validation records are upserted and the cert reaches `ISSUED`.
-          // For an already-issued cert this is mostly a fast-path: we only
-          // wait for validation records when the cert isn't already issued.
-          const shouldAutoValidate =
+          // Sync DNS validation: ensure validation records are upserted and
+          // the cert reaches `ISSUED`. The zone is the explicit
+          // `hostedZoneId` when given; otherwise the most specific public
+          // zone containing `domainName` is inferred. When neither yields a
+          // zone, validation is left to the caller (external DNS) and the
+          // certificate is returned pending — the pre-inference behavior.
+          // For an already-issued cert this is a fast-path: we only wait
+          // for validation records when the cert isn't already issued.
+          if (
             (news.validationMethod ?? defaultValidationMethod) === "DNS" &&
-            news.hostedZoneId !== undefined;
-
-          if (shouldAutoValidate && certificate.Status !== "ISSUED") {
-            const withRecords = yield* waitForValidationRecords(certificateArn);
-            yield* upsertValidationRecords(news.hostedZoneId!, withRecords);
-            certificate = yield* waitForIssued(certificateArn);
+            certificate.Status !== "ISSUED"
+          ) {
+            const validationZoneId =
+              news.hostedZoneId ??
+              (yield* findPublicHostedZoneId(news.domainName));
+            if (validationZoneId !== undefined) {
+              const withRecords =
+                yield* waitForValidationRecords(certificateArn);
+              yield* upsertValidationRecords(validationZoneId, withRecords);
+              certificate = yield* waitForIssued(certificateArn);
+            }
           }
 
           // Sync options — only the CT logging preference is mutable in
@@ -624,11 +710,18 @@ export const CertificateProvider = () =>
                 CertificateArn: output.certificateArn,
               })
               .pipe(
+                // `ResourceInUseException` covers the certificate-swap path:
+                // when a SAN change replaces the certificate, CloudFront can
+                // keep reporting the detached old certificate as in-use for a
+                // few minutes after the distribution update deploys — ride
+                // that out with a bounded wait instead of failing the delete.
                 Effect.retry({
-                  while: (e) => e._tag === "ConflictException",
+                  while: (e): boolean =>
+                    e._tag === "ConflictException" ||
+                    e._tag === "ResourceInUseException",
                   schedule: Schedule.max([
-                    Schedule.fixed("2 seconds"),
-                    Schedule.recurs(15),
+                    Schedule.fixed("10 seconds"),
+                    Schedule.recurs(30),
                   ]),
                 }),
                 Effect.catchTag("ResourceNotFoundException", () => Effect.void),

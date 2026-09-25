@@ -16,7 +16,7 @@ export class GeoMapsTestFunction extends Lambda.Function<Lambda.Function>()(
 export default GeoMapsTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Map renders / tile fetches can take a few seconds; the AWS default
     // 3s Lambda timeout is too tight.
     timeout: Duration.seconds(30),

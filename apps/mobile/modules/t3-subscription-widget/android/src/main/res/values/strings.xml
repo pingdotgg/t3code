@@ -1,0 +1,15 @@
+<resources>
+  <string name="t3_subscription_widget_unknown_check">Last checked unavailable</string>
+  <string name="t3_subscription_widget_name">Subscription usage</string>
+  <string name="t3_subscription_widget_title_count">Subscription usage (%1$d)</string>
+  <plurals name="t3_subscription_widget_title_description">
+    <item quantity="one">Subscription usage, %1$d entry</item>
+    <item quantity="other">Subscription usage, %1$d entries</item>
+  </plurals>
+  <string name="t3_subscription_widget_description">Saved subscription quotas from your T3 Code environments. Tap to refresh in the app.</string>
+  <string name="t3_subscription_widget_empty">No subscription limits available. Open T3 Code to connect.</string>
+  <string name="t3_subscription_widget_open">Tap to open Usage</string>
+  <string name="t3_subscription_widget_refresh">Open app to refresh</string>
+  <string name="t3_subscription_widget_remaining">%1$d%% remaining</string>
+  <string name="t3_subscription_widget_last_checked">Last checked %1$s</string>
+</resources>

@@ -90,9 +90,8 @@ export interface IdentityPool extends Resource<
  * An Amazon Cognito identity pool (federated identities) — exchanges tokens
  * from user pools, social providers, OIDC/SAML IdPs, or developer backends
  * for temporary AWS credentials.
- * @resource
- * @section Creating an Identity Pool
- * @example Identity Pool Federating a User Pool
+ * ### Creating an Identity Pool
+ * **Example:** Identity Pool Federating a User Pool
  * ```typescript
  * import * as Cognito from "alchemy/AWS/Cognito";
  * import * as Output from "alchemy/Output";
@@ -111,21 +110,23 @@ export interface IdentityPool extends Resource<
  * });
  * ```
  *
- * @example Guest (Unauthenticated) Access
+ * **Example:** Guest (Unauthenticated) Access
  * ```typescript
  * const identities = yield* Cognito.IdentityPool("Identities", {
  *   allowUnauthenticatedIdentities: true,
  * });
  * ```
  *
- * @section Roles
- * @example Attach Authenticated/Unauthenticated Roles
+ * ### Roles
+ * **Example:** Attach Authenticated/Unauthenticated Roles
  * ```typescript
  * yield* Cognito.IdentityPoolRoleAttachment("Roles", {
  *   identityPoolId: identities.identityPoolId,
  *   roles: { authenticated: role.roleArn },
  * });
  * ```
+ *
+ * @resource
  */
 export const IdentityPool = Resource<IdentityPool>("AWS.Cognito.IdentityPool");
 

@@ -6,4 +6,4 @@ const schema = Schema.Struct({
   c: Schema.Array(Schema.String)
 })
 
-Schema.toRepresentation(schema)
+export const representation = Schema.toRepresentation(schema)

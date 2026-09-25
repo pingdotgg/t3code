@@ -101,9 +101,8 @@ export interface CollectionGroup extends Resource<
  * share the group's capacity limits instead of each collection scaling
  * independently.
  *
- * @resource
- * @section Creating Collection Groups
- * @example Capacity-Bounded Collection Group
+ * ### Creating Collection Groups
+ * **Example:** Capacity-Bounded Collection Group
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -116,6 +115,8 @@ export interface CollectionGroup extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const CollectionGroup = Resource<CollectionGroup>(
   "AWS.OpenSearchServerless.CollectionGroup",

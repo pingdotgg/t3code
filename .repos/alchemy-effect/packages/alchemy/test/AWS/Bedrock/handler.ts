@@ -31,7 +31,7 @@ export class BedrockTestFunction extends Lambda.Function<Lambda.Function>()(
 export default BedrockTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Model inference (and agent orchestration especially) regularly
     // exceeds Lambda's 3s default timeout.
     timeout: Duration.seconds(60),

@@ -14,13 +14,14 @@ export interface GetEvidenceRequest extends Omit<
  *
  * Gets a single evidence item from the bound assessment. Provide the
  * implementation with `Effect.provide(AWS.AuditManager.GetEvidenceHttp)`.
- * @binding
- * @section Reading Evidence
- * @example Get a Single Evidence Item
+ * ### Reading Evidence
+ * **Example:** Get a Single Evidence Item
  * ```typescript
  * const getEvidence = yield* AWS.AuditManager.GetEvidence(assessment);
  * const result = yield* getEvidence({ controlSetId, evidenceFolderId, evidenceId });
  * ```
+ *
+ * @binding
  */
 export interface GetEvidence extends Binding.Service<
   GetEvidence,

@@ -294,7 +294,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
          break;
        }
        case RNSScreenStackHeaderSubviewTypeCenter:
-@@ -648,10 +693,470 @@ + (void)updateViewController:(UIViewController *)vc
+@@ -648,10 +693,479 @@ + (void)updateViewController:(UIViewController *)vc
    // This assignment should be done after `navitem.titleView = ...` assignment (iOS 16.0 bug).
    // See: https://github.com/software-mansion/react-native-screens/issues/1570 (comments)
    navitem.title = config.title;
@@ -584,6 +584,15 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
 +          [searchField.centerYAnchor constraintEqualToAnchor:glassView.contentView.centerYAnchor],
 +          [searchField.heightAnchor constraintEqualToConstant:searchFieldHeight],
 +        ]];
++      }
++
++      // A bare UISearchTextField keeps UITextField defaults (sentence
++      // capitalization, autocorrect), unlike UISearchBar. Search queries are
++      // identifiers, so match the autoCapitalize "none" the JS fallbacks use.
++      if (resolvedSearchTextField != nil) {
++        resolvedSearchTextField.autocapitalizationType = UITextAutocapitalizationTypeNone;
++        resolvedSearchTextField.autocorrectionType = UITextAutocorrectionTypeNo;
++        resolvedSearchTextField.spellCheckingType = UITextSpellCheckingTypeNo;
 +      }
 +
 +      NSString *searchTextChangeId = mailSearchToolbarConfig[@"searchTextChangeId"];

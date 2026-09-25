@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Shell marker: app.html is the template for EVERY response kit
+         renders (SSR pages, kit's own error page, and the generated
+         `404.html` app-shell fallback), so this marker alone proves only
+         "this came through app.html". The tests combine it with the
+         error-page marker (below) to tell the fallback shell apart from a
+         kit-rendered 404. -->
+    <meta name="fixture" content="sveltekit-404-shell" />
+    %sveltekit.head%
+  </head>
+  <body>
+    <div style="display: contents">%sveltekit.body%</div>
+  </body>
+</html>

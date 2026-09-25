@@ -7,6 +7,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { beforeEach, vi } from "vite-plus/test";
 
 import {
   ChromiumKeyError,
@@ -16,6 +17,18 @@ import {
   unwrapWindowsDpapiKey,
 } from "./ChromiumKeys.ts";
 import { LinuxBrowserSecretPath } from "./LinuxBrowserSecret.ts";
+
+const { getPassword } = vi.hoisted(() => ({ getPassword: vi.fn<() => string | null>() }));
+
+vi.mock("@napi-rs/keyring", () => ({
+  Entry: class {
+    getPassword = getPassword;
+  },
+}));
+
+beforeEach(() => {
+  getPassword.mockReset();
+});
 
 type CapturedCommand = {
   readonly command: string;
@@ -62,6 +75,47 @@ const helperLayer = (input: {
       ),
     ),
   );
+
+describe("macOS Chromium secrets", () => {
+  const request = {
+    platform: "darwin",
+    keychainService: "Chrome Safe Storage",
+    keychainAccount: "Chrome",
+    linuxSecretApplication: undefined,
+  } as const;
+  const noProcesses = Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make(() => Effect.die("must not spawn")),
+  );
+
+  it.effect("derives the cookie key from the keychain secret", () =>
+    Effect.gen(function* () {
+      getPassword.mockReturnValue("macos-secret");
+      const keys = yield* resolveChromiumKeys(request);
+      expect(keys.cbcV10?.toString("hex")).toBe("3df7306fb1eac353289565a2f6b64f74");
+    }).pipe(Effect.provide(noProcesses)),
+  );
+
+  it.effect("reports a missing keychain entry", () =>
+    Effect.gen(function* () {
+      getPassword.mockReturnValue(null);
+      const error = yield* resolveChromiumKeys(request).pipe(Effect.flip);
+      expect(error.reason).toBe("keychainItemMissing");
+    }).pipe(Effect.provide(noProcesses)),
+  );
+
+  it.effect("preserves a denied keychain approval", () =>
+    Effect.gen(function* () {
+      const denied = new Error("User denied access");
+      getPassword.mockImplementation(() => {
+        throw denied;
+      });
+      const error = yield* resolveChromiumKeys(request).pipe(Effect.flip);
+      expect(error.reason).toBe("needsKeychainApproval");
+      expect(error.cause).toBe(denied);
+    }).pipe(Effect.provide(noProcesses)),
+  );
+});
 
 describe("Linux Chromium secrets", () => {
   it.effect("retains a missing helper failure alongside the keyring-free fallback", () =>

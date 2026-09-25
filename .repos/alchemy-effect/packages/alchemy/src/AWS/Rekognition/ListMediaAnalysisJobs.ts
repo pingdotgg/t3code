@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.ListMediaAnalysisJobsHttp)`.
  *
- * @binding
- * @section Media Analysis Jobs
- * @example List Media Analysis Jobs
+ * ### Media Analysis Jobs
+ * **Example:** List Media Analysis Jobs
  * ```typescript
  * // init
  * const listMediaAnalysisJobs = yield* AWS.Rekognition.ListMediaAnalysisJobs();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * const page = yield* listMediaAnalysisJobs({ MaxResults: 10 });
  * // page.MediaAnalysisJobs
  * ```
+ *
+ * @binding
  */
 export interface ListMediaAnalysisJobs extends Binding.Service<
   ListMediaAnalysisJobs,

@@ -17,7 +17,7 @@ export class TimestreamSinkFunction extends Lambda.Function<Lambda.Function>()(
 export default TimestreamSinkFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // The sink drains fully (multiple sequential WriteRecords calls behind
     // endpoint discovery) before the handler returns.
     timeout: Duration.seconds(60),

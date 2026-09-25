@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * `iam:GenerateCredentialReport` on `*`. Provide the implementation with
  * `Effect.provide(AWS.IAM.GenerateCredentialReportHttp)`.
  *
- * @binding
- * @section Credential Reports
- * @example Start a Credential Report
+ * ### Credential Reports
+ * **Example:** Start a Credential Report
  * ```typescript
  * // init
  * const generateCredentialReport = yield* IAM.GenerateCredentialReport();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  * const { State } = yield* generateCredentialReport();
  * // "STARTED" | "INPROGRESS" | "COMPLETE"
  * ```
+ *
+ * @binding
  */
 export interface GenerateCredentialReport extends Binding.Service<
   GenerateCredentialReport,

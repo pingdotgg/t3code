@@ -58,7 +58,7 @@ const SkillFrontmatter = Schema.Struct({
 });
 const decodeSkillFrontmatter = Schema.decodeUnknownSync(SkillFrontmatter);
 
-export class AntigravitySkillsProbeError extends Schema.TaggedErrorClass<AntigravitySkillsProbeError>()(
+export class AntigravitySkillsProbeError extends Schema.TaggedError<AntigravitySkillsProbeError>()(
   "AntigravitySkillsProbeError",
   {
     reason: Schema.Literals(["scan-budget-exhausted", "filesystem-error"]),
@@ -86,7 +86,7 @@ const readIfPresent = <A, R>(
     Effect.catchTags({
       PlatformError: (cause) =>
         cause.reason._tag === "NotFound"
-          ? Effect.succeed(undefined)
+          ? Effect.undefined
           : Effect.fail(
               new AntigravitySkillsProbeError({ reason: "filesystem-error", path, cause }),
             ),

@@ -10,14 +10,15 @@ import * as Binding from "../../Binding.ts";
  * for the workspace stop working until it is re-authorized via the console
  * OAuth flow. Provide the implementation with
  * `Effect.provide(AWS.Chatbot.DeleteSlackWorkspaceAuthorizationHttp)`.
- * @binding
- * @section Slack Identity Management
- * @example Revoke a Slack workspace authorization
+ * ### Slack Identity Management
+ * **Example:** Revoke a Slack workspace authorization
  * ```typescript
  * const deleteSlackWorkspaceAuthorization =
  *   yield* AWS.Chatbot.DeleteSlackWorkspaceAuthorization();
  * yield* deleteSlackWorkspaceAuthorization({ SlackTeamId: "T012ABCDEFG" });
  * ```
+ *
+ * @binding
  */
 export interface DeleteSlackWorkspaceAuthorization extends Binding.Service<
   DeleteSlackWorkspaceAuthorization,

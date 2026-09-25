@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * account-level (`Resource: "*"`).
  * Provide the implementation with
  * `Effect.provide(AWS.SSMIncidents.UpdateTimelineEventHttp)`.
- * @binding
- * @section Timeline Events
- * @example Amend A Timeline Event
+ * ### Timeline Events
+ * **Example:** Amend A Timeline Event
  * ```typescript
  * // init
  * const updateTimelineEvent = yield* AWS.SSMIncidents.UpdateTimelineEvent();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  *   eventData: JSON.stringify({ note: "mitigation confirmed" }),
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateTimelineEvent extends Binding.Service<
   UpdateTimelineEvent,

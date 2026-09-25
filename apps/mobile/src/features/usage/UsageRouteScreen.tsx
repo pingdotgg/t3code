@@ -1,7 +1,9 @@
+import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { EnvironmentId, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
-import { useNavigation } from "@react-navigation/native";
+import { type RouteProp, useIsFocused, useNavigation, useRoute } from "@react-navigation/native";
 import {
   isCompatibleUsageContractVersion,
+  isModelCostUnknown,
   type DailyTotals,
   type MergedUsage,
 } from "@t3tools/shared/usageMerge";
@@ -17,15 +19,18 @@ import {
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
-import Animated, { Easing, FadeIn, LinearTransition, ReduceMotion } from "react-native-reanimated";
+import { Platform, Pressable, RefreshControl, View } from "react-native";
+import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { SegmentedControl } from "../../components/SegmentedControl";
 import { AppText as Text } from "../../components/AppText";
+import { ProviderIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
@@ -57,6 +62,7 @@ const METRIC_OPTIONS = [
 ] as const satisfies readonly { value: UsageChartMetric; label: string }[];
 
 const CHART_HEIGHT = 180;
+const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keychain.";
 
 /**
  * Two tabs over one screen. Usage is the transcript-derived spend for a
@@ -64,9 +70,22 @@ const CHART_HEIGHT = 180;
  * pull to refresh, each refreshing its own data.
  */
 export function UsageRouteScreen() {
+  const route = useRoute<RouteProp<{ Usage: { tab?: string } | undefined }, "Usage">>();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const [tab, setTab] = useState<UsageTab>("usage");
+  // Preserve the Limits default while honoring explicit widget/navigation links.
+  const [selection, setSelection] = useState(() => ({
+    params: route.params,
+    tab: (route.params?.tab === "usage" ? "usage" : "limits") as UsageTab,
+  }));
+  if (selection.params !== route.params) {
+    setSelection({
+      params: route.params,
+      tab: route.params?.tab === "usage" ? "usage" : "limits",
+    });
+  }
+  const { tab } = selection;
+  const setTab = (tab: UsageTab) => setSelection({ params: route.params, tab });
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
     window: makeWindow(30),
@@ -80,7 +99,31 @@ export function UsageRouteScreen() {
     window,
     selectedEnvironmentIds,
   );
-  const limits = useRefreshLimits(selectedEnvironmentIds);
+  const isFocused = useIsFocused();
+  const limits = useRefreshLimits(selectedEnvironmentIds, isFocused && tab === "limits");
+  const cursorAccessEnvironments = selectedEnvironments.filter((environment) =>
+    environment.summary?.sources.some((source) => source.action === "enableCursorKeychain"),
+  );
+  const refreshAfterCursorEnable = () => {
+    void refresh();
+    void limits.refreshAfterEnable();
+  };
+  const sourceMessages = [
+    ...new Set(
+      selectedEnvironments.flatMap(
+        (environment) =>
+          environment.summary?.sources.flatMap((source) =>
+            source.message &&
+            !source.action &&
+            (source.status === "partial" ||
+              source.status === "failed" ||
+              source.fingerprint.provider === "cursor")
+              ? [source.message]
+              : [],
+          ) ?? [],
+      ),
+    ),
+  ];
 
   const days = useMemo(
     () => enumerateDays(window.sinceDay, window.untilDay),
@@ -220,17 +263,7 @@ export function UsageRouteScreen() {
   }, [navigation, environmentFilter]);
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      {Platform.OS === "android" ? (
-        <>
-          <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader
-            title="Usage"
-            onBack={() => navigation.goBack()}
-            trailing={environmentFilter}
-          />
-        </>
-      ) : null}
+    <SettingsScreen title="Usage" trailing={environmentFilter}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -245,7 +278,6 @@ export function UsageRouteScreen() {
         }
       >
         <SegmentedControl options={TAB_OPTIONS} selected={tab} onSelect={setTab} role="tab" />
-
         <Animated.View
           key={tab}
           entering={FadeIn.duration(160).reduceMotion(ReduceMotion.System)}
@@ -256,25 +288,33 @@ export function UsageRouteScreen() {
               now={limits.now}
               failedLabels={limits.failedLabels}
               selectedEnvironmentIds={selectedEnvironmentIds}
+              cursorPrompt={
+                cursorAccessEnvironments.length > 0 ? (
+                  <CursorEnableLimits
+                    environments={cursorAccessEnvironments}
+                    onEnabled={refreshAfterCursorEnable}
+                  />
+                ) : null
+              }
             />
           ) : (
             <>
               {/* Period and metric together: neither applies to Limits, and
                 both change every number below, so they share one bar. */}
-              <View className="flex-row items-center gap-3">
+              <View className="gap-3 ios:flex-row ios:items-center">
                 <SegmentedControl
                   options={WINDOW_OPTIONS}
                   selected={windowDays}
                   onSelect={selectWindow}
                   size="compact"
-                  className="flex-1"
+                  className="w-full ios:flex-1"
                 />
                 <SegmentedControl
                   options={METRIC_OPTIONS}
                   selected={metric}
                   onSelect={setMetric}
                   size="compact"
-                  className="w-36"
+                  className="w-full ios:w-36"
                 />
               </View>
               {merged.duplicateSources.length > 0 ? (
@@ -295,6 +335,11 @@ export function UsageRouteScreen() {
                 </Text>
               ) : (
                 <>
+                  {sourceMessages.map((message) => (
+                    <Text key={message} className="text-sm text-foreground-muted">
+                      {message}
+                    </Text>
+                  ))}
                   <ChartCard
                     merged={merged}
                     days={chartDays}
@@ -305,7 +350,13 @@ export function UsageRouteScreen() {
                     isPast24Hours={isPast24Hours}
                     timeZone={window.timeZone}
                   />
-                  <ProviderSection merged={merged} metric={metric} />
+                  <ProviderSection
+                    merged={merged}
+                    metric={metric}
+                    cursorAccessEnvironments={cursorAccessEnvironments}
+                    showCursorEnvironment={selectedEnvironments.length > 1}
+                    onCursorEnabled={refreshAfterCursorEnable}
+                  />
                   <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
                   <ModelsSection merged={merged} />
                 </>
@@ -314,76 +365,110 @@ export function UsageRouteScreen() {
           )}
         </Animated.View>
       </ScrollView>
+    </SettingsScreen>
+  );
+}
+
+function CursorEnableAction({
+  environmentId,
+  label,
+  onEnabled,
+  buttonText = "Enable",
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly onEnabled: () => void;
+  readonly buttonText?: string;
+}) {
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "enable Cursor account usage",
+  });
+  const [pending, setPending] = useState(false);
+  const enable = async () => {
+    setPending(true);
+    try {
+      const result = await updateSettings({
+        environmentId,
+        input: { patch: { cursorKeychainUsageEnabled: true } },
+      });
+      if (result._tag === "Success") onEnabled();
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Enable Cursor usage from ${label}`}
+      accessibilityHint={CURSOR_KEYCHAIN_COPY}
+      disabled={pending}
+      onPress={() => void enable()}
+      className="rounded-full bg-primary px-4 py-2"
+    >
+      <Text className="text-sm font-medium text-primary-foreground">{buttonText}</Text>
+    </Pressable>
+  );
+}
+
+function CursorEnableRow({
+  environmentId,
+  label,
+  showEnvironment,
+  bordered,
+  onEnabled,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly showEnvironment: boolean;
+  readonly bordered: boolean;
+  readonly onEnabled: () => void;
+}) {
+  const colors = useProviderColors();
+  return (
+    <View
+      className={cn(
+        "flex-row items-center justify-between gap-3 p-4",
+        bordered && "border-t border-border-subtle",
+      )}
+    >
+      <View className="min-w-0 flex-1 flex-row items-center gap-2">
+        <View className="size-2.5 rounded-full" style={{ backgroundColor: colors.cursor }} />
+        <Text className="shrink text-lg text-foreground">
+          Cursor{showEnvironment ? ` · ${label}` : ""}
+        </Text>
+      </View>
+      <CursorEnableAction environmentId={environmentId} label={label} onEnabled={onEnabled} />
     </View>
   );
 }
 
-function SegmentedControl<Value extends number | string>(props: {
-  readonly options: readonly {
-    readonly value: Value;
-    readonly label: string;
-    readonly accessibilityLabel?: string;
-  }[];
-  readonly selected: Value;
-  readonly onSelect: (value: Value) => void;
-  /** The tab bar is full height; filters under it are shorter so it stays primary. */
-  readonly size?: "default" | "compact";
-  /** "tab" for the view switcher; filters stay plain buttons. */
-  readonly role?: "tab" | "button";
-  readonly className?: string;
+function CursorEnableLimits({
+  environments,
+  onEnabled,
+}: {
+  readonly environments: readonly EnvironmentUsageStatus[];
+  readonly onEnabled: () => void;
 }) {
-  const compact = props.size === "compact";
   return (
-    <View
-      accessible={false}
-      className={cn(
-        "flex-row overflow-hidden rounded-full border-continuous bg-card",
-        props.className,
-      )}
-    >
-      <Animated.View
-        pointerEvents="none"
-        layout={LinearTransition.duration(200)
-          .easing(Easing.out(Easing.cubic))
-          .reduceMotion(ReduceMotion.System)}
-        className="absolute bottom-0 top-0 rounded-full bg-subtle-strong"
-        style={{
-          width: `${100 / props.options.length}%`,
-          start: `${
-            (Math.max(
-              0,
-              props.options.findIndex((option) => option.value === props.selected),
-            ) *
-              100) /
-            props.options.length
-          }%`,
-        }}
-      />
-      {props.options.map((option) => {
-        const active = option.value === props.selected;
-        return (
-          <Pressable
-            key={String(option.value)}
-            accessibilityRole={Platform.OS === "ios" ? "button" : (props.role ?? "button")}
-            accessibilityLabel={option.accessibilityLabel ?? option.label}
-            accessibilityState={{ selected: active }}
-            onPress={() => props.onSelect(option.value)}
-            className={cn(
-              "flex-1 items-center justify-center rounded-full",
-              compact ? "h-9" : "h-11",
-            )}
-          >
-            <Text
-              className={cn(
-                compact ? "text-xs" : "text-sm",
-                active ? "font-t3-medium text-foreground" : "text-foreground-muted",
-              )}
-            >
-              {option.label}
-            </Text>
-          </Pressable>
-        );
-      })}
+    <View className="gap-3">
+      <View className="flex-row items-center gap-2 px-1">
+        <ProviderIcon provider="cursor" size={18} />
+        <Text className="text-base font-t3-medium text-foreground">Cursor</Text>
+      </View>
+      <View className="items-start gap-3 rounded-[24px] border-continuous bg-card p-4">
+        <Text className="text-xs text-foreground-muted">{CURSOR_KEYCHAIN_COPY}</Text>
+        <View className="flex-row flex-wrap gap-2">
+          {environments.map((environment) => (
+            <CursorEnableAction
+              key={environment.environmentId}
+              environmentId={environment.environmentId}
+              label={environment.label}
+              buttonText={environments.length > 1 ? `Enable on ${environment.label}` : "Enable"}
+              onEnabled={onEnabled}
+            />
+          ))}
+        </View>
+      </View>
     </View>
   );
 }
@@ -464,20 +549,53 @@ function ChartCard(props: {
 function ProviderSection(props: {
   readonly merged: MergedUsage;
   readonly metric: UsageChartMetric;
+  readonly cursorAccessEnvironments: readonly EnvironmentUsageStatus[];
+  readonly showCursorEnvironment: boolean;
+  readonly onCursorEnabled: () => void;
 }) {
   const { merged, metric } = props;
   const colors = useProviderColors();
-  if (merged.providers.length === 0) return null;
+  if (merged.providers.length === 0 && props.cursorAccessEnvironments.length === 0) return null;
 
   // Ranked by whatever the toggle is showing, so the rows always descend.
   // .sort() on a copy, not .toSorted(): Hermes doesn't ship the ES2023 method.
   const ordered = [...merged.providers].sort((a, b) =>
     metric === "cost" ? b.costUsd - a.costUsd : b.totalTokens - a.totalTokens,
   );
+  const rows: Array<
+    | { readonly kind: "usage"; readonly provider: (typeof ordered)[number] }
+    | { readonly kind: "enable"; readonly environment: EnvironmentUsageStatus }
+  > = ordered.map((provider) => ({ kind: "usage", provider }));
+  const cursorInsertAt =
+    Math.max(
+      ordered.findIndex((provider) => provider.provider === "codex"),
+      ordered.findIndex((provider) => provider.provider === "claude"),
+    ) + 1;
+  rows.splice(
+    cursorInsertAt,
+    0,
+    ...props.cursorAccessEnvironments.map((environment) => ({
+      kind: "enable" as const,
+      environment,
+    })),
+  );
 
   return (
-    <SettingsSection title="Providers" card>
-      {ordered.map((provider, index) => {
+    <SettingsSection title="Providers">
+      {rows.map((row, index) => {
+        if (row.kind === "enable") {
+          return (
+            <CursorEnableRow
+              key={`enable:${row.environment.environmentId}`}
+              environmentId={row.environment.environmentId}
+              label={row.environment.label}
+              showEnvironment={props.showCursorEnvironment}
+              bordered={index > 0}
+              onEnabled={props.onCursorEnabled}
+            />
+          );
+        }
+        const provider = row.provider;
         const share = metric === "cost" ? provider.costShare : provider.tokenShare;
         return (
           <View
@@ -527,7 +645,7 @@ function TotalsSection(props: { readonly merged: MergedUsage; readonly isPast24H
   const cachedShare = observedInput === 0 ? 0 : merged.cachedInputTokens / observedInput;
 
   return (
-    <SettingsSection title="Totals" card>
+    <SettingsSection title="Totals">
       <View className="flex-row flex-wrap">
         <MetricCell
           label="Processed tokens"
@@ -588,7 +706,7 @@ function ModelsSection(props: { readonly merged: MergedUsage }) {
   if (merged.models.length === 0) return null;
 
   return (
-    <SettingsSection title="By model" card>
+    <SettingsSection title="By model">
       {merged.models.map((model, index) => (
         <View
           key={`${model.provider}:${model.model}`}
@@ -607,10 +725,14 @@ function ModelsSection(props: { readonly merged: MergedUsage }) {
               {model.model}
             </Text>
             <Text className="text-sm text-foreground-muted">
-              {formatPercent(model.costShare)} of cost · {formatTokens(model.totalTokens)} tokens
+              {isModelCostUnknown(model)
+                ? `no known rates · ${formatTokens(model.totalTokens)} tokens`
+                : `${formatPercent(model.costShare)} of cost · ${formatTokens(model.totalTokens)} tokens`}
             </Text>
           </View>
-          <Text className="text-base tabular-nums text-foreground">{formatUsd(model.costUsd)}</Text>
+          <Text className="text-base tabular-nums text-foreground">
+            {isModelCostUnknown(model) ? "Unpriced" : formatUsd(model.costUsd)}
+          </Text>
         </View>
       ))}
     </SettingsSection>

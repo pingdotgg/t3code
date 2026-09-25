@@ -42,6 +42,33 @@ function providerModelPickerMinimumWidth(picker: HTMLElement): number {
   return minWidth + elementInlineMarginWidth(picker);
 }
 
+function controlBlockWidths(block: HTMLElement): { natural: number; iconOnly: number } {
+  const compact = block.dataset.composerBlockIconOnly === "true";
+  let natural = elementOuterWidth(block);
+  let iconOnly = natural;
+  for (const label of block.querySelectorAll<HTMLElement>("[data-composer-control-label]")) {
+    // Labels remain mounted at natural width when icons replace them. Reading
+    // both variants from one tree avoids duplicate controls or write/read probes.
+    const labelStyle = getComputedStyle(label);
+    const inFlow = labelStyle.position !== "absolute";
+    // Phone widths already hide the build label with sr-only. Its clipping
+    // remains in effect even when compact styles replace its one-pixel width.
+    if (!inFlow && (!compact || labelStyle.clip !== "auto")) continue;
+    const labelWidth = label.scrollWidth;
+    const renderedWidth = inFlow ? label.getBoundingClientRect().width : 0;
+    const gap = Number.parseFloat(getComputedStyle(label.parentElement!).columnGap) || 0;
+    natural += labelWidth - renderedWidth + (inFlow ? 0 : gap);
+    iconOnly -= renderedWidth + (inFlow ? gap : 0);
+  }
+  for (const icon of block.querySelectorAll<HTMLElement>("[data-composer-control-compact-icon]")) {
+    const width = elementOuterWidth(icon);
+    const gap = Number.parseFloat(getComputedStyle(icon.parentElement!).columnGap) || 0;
+    natural -= compact ? width + gap : 0;
+    iconOnly += compact ? 0 : width + gap;
+  }
+  return { natural, iconOnly: Math.min(natural, iconOnly) };
+}
+
 /**
  * Read the natural widths of the resting composer controls from the DOM.
  *
@@ -67,6 +94,7 @@ export function measureRestingComposerControls(
   const overflow = controls.querySelector<HTMLElement>("[data-resting-controls-overflow]");
   const separatorAndGapWidth = separatorWidth > 0 ? separatorWidth + gap : 0;
   const blocks = Array.from(controls.querySelectorAll<HTMLElement>("[data-resting-block]"));
+  const widths = blocks.map(controlBlockWidths);
   return {
     gap,
     naturalFixedWidth:
@@ -75,7 +103,8 @@ export function measureRestingComposerControls(
     minimumFixedWidth:
       (picker ? providerModelPickerMinimumWidth(picker) : elementOuterWidth(leadingControl)) +
       separatorAndGapWidth,
-    blockWidths: blocks.map(elementOuterWidth),
+    blockWidths: widths.map((width) => width.natural),
+    iconOnlyBlockWidths: widths.map((width) => width.iconOnly),
     overflowWidth: overflow ? elementOuterWidth(overflow) : 0,
   };
 }

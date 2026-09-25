@@ -12,15 +12,16 @@ import type { ManagedThing } from "./ManagedThing.ts";
  * device (e.g. whether a smart plug is on). Provide the implementation with
  * `Effect.provide(AWS.IoTManagedIntegrations.GetManagedThingStateHttp)`.
  *
- * @binding
- * @section Reading Device State
- * @example Read the Current Device State
+ * ### Reading Device State
+ * **Example:** Read the Current Device State
  * ```typescript
  * const getState = yield* IoTManagedIntegrations.GetManagedThingState(thing);
  *
  * const { Endpoints } = yield* getState();
  * // Endpoints[0].capabilities[0].properties
  * ```
+ *
+ * @binding
  */
 export interface GetManagedThingState extends Binding.Service<
   GetManagedThingState,

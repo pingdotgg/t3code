@@ -1,4 +1,3 @@
-import jsdocs from "./rules/jsdocs.ts"
 import noBigIntLiterals from "./rules/no-bigint-literals.ts"
 import noImportFromBarrelPackage from "./rules/no-import-from-barrel-package.ts"
 import noJsExtensionImports from "./rules/no-js-extension-imports.ts"
@@ -14,7 +13,6 @@ export default {
     "no-import-from-barrel-package": noImportFromBarrelPackage,
     "no-js-extension-imports": noJsExtensionImports,
     "no-opaque-instance-fields": noOpaqueInstanceFields,
-    "no-unused-internal": noUnusedInternal,
-    "jsdocs": jsdocs
+    "no-unused-internal": noUnusedInternal
   }
 }

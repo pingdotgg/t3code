@@ -46,7 +46,7 @@ export class AppSyncBindingsFunction extends Lambda.Function<Lambda.Function>()(
 export default AppSyncBindingsFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // The GraphQL round-trip fans out a signed HTTP call; AWS's 3s default
     // intermittently times out on a cold start.
     timeout: Duration.seconds(30),

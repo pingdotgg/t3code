@@ -17,9 +17,8 @@ export interface GenerateMacEmvPinChangeRequest extends Omit<
  * (PEK) the changed PIN is encrypted under, and the secure-messaging
  * integrity and confidentiality issuer master keys. Provide
  * `GenerateMacEmvPinChangeHttp` on the Function to satisfy this service.
- * @binding
- * @section EMV PIN Change
- * @example Generate the issuer-script MAC for a PIN change
+ * ### EMV PIN Change
+ * **Example:** Generate the issuer-script MAC for a PIN change
  * ```typescript
  * // init
  * const generatePinChangeMac = yield* PaymentCryptography.GenerateMacEmvPinChange(
@@ -36,6 +35,8 @@ export interface GenerateMacEmvPinChangeRequest extends Omit<
  *   DerivationMethodAttributes: { Emv2000: { ... } },
  * });
  * ```
+ *
+ * @binding
  */
 export interface GenerateMacEmvPinChange extends Binding.Service<
   GenerateMacEmvPinChange,

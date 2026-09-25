@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * arguments and grants `comprehendmedical:DescribeSNOMEDCTInferenceJob` on `*`. Provide the
  * implementation with `Effect.provide(AWS.ComprehendMedical.DescribeSNOMEDCTInferenceJobHttp)`.
  *
- * @binding
- * @section Batch SNOMED CT Inference Jobs
- * @example Poll a Job's Status
+ * ### Batch SNOMED CT Inference Jobs
+ * **Example:** Poll a Job's Status
  * ```typescript
  * // init
  * const describeSNOMEDCTInferenceJob = yield* AWS.ComprehendMedical.DescribeSNOMEDCTInferenceJob();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * const status = yield* describeSNOMEDCTInferenceJob({ JobId: jobId });
  * console.log(status.ComprehendMedicalAsyncJobProperties?.JobStatus);
  * ```
+ *
+ * @binding
  */
 export interface DescribeSNOMEDCTInferenceJob extends Binding.Service<
   DescribeSNOMEDCTInferenceJob,

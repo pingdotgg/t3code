@@ -9,7 +9,7 @@
  *
  * @since 4.0.0
  */
-import * as JsonSchema from "../../JsonSchema.ts"
+import type * as JsonSchema from "../../JsonSchema.ts"
 import * as Rec from "../../Record.ts"
 import * as Schema from "../../Schema.ts"
 import * as InternalStructuredOutput from "./internal/structured-output.ts"
@@ -48,7 +48,7 @@ import * as OpenAiStructuredOutput from "./OpenAiStructuredOutput.ts"
  * @see {@link LanguageModel.CodecTransformer} for the structured-output transformer contract
  * @see {@link OpenAiStructuredOutput.toCodecOpenAI} for the OpenAI-specific transformer
  *
- * @category Codec Transformation
+ * @category transforming
  * @since 4.0.0
  */
 export function toCodecAnthropic<T, E, RD, RE>(
@@ -58,11 +58,14 @@ export function toCodecAnthropic<T, E, RD, RE>(
   readonly jsonSchema: JsonSchema.JsonSchema
 } {
   const codec = InternalStructuredOutput.toCodec(schema)
-  const unresolvedDocument = Schema.toJsonSchemaDocument(codec, { generateDescriptions: true })
+  const unresolvedDocument = Schema.toJsonSchemaDocument(codec, {
+    generateDescriptions: true,
+    onExcessProperty: "error"
+  })
   if (hasReferenceCycle(unresolvedDocument.schema, unresolvedDocument.definitions)) {
     throw new Error("AnthropicStructuredOutput: Recursive schemas are not supported")
   }
-  const document = JsonSchema.resolveTopLevel$ref(unresolvedDocument)
+  const document = InternalStructuredOutput.resolveTopLevelReference(unresolvedDocument)
   const jsonSchema = rewriteAnthropic(document.schema)
   if (Object.keys(document.definitions).length > 0) {
     jsonSchema.$defs = Rec.map(document.definitions, rewriteAnthropic)
@@ -85,8 +88,8 @@ function hasReferenceCycle(
     let cycle = false
     InternalStructuredOutput.walkJsonSchema(schema, (node) => {
       if (!cycle && typeof node.$ref === "string") {
-        const target = node.$ref === "#" ? root : JsonSchema.resolve$ref(node.$ref, definitions)
-        if (target !== undefined && visit(target)) cycle = true
+        const target = node.$ref === "#" ? root : InternalStructuredOutput.resolveReference(node.$ref, definitions)
+        if (visit(target)) cycle = true
       }
       return node
     })

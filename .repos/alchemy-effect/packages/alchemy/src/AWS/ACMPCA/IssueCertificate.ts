@@ -19,9 +19,8 @@ export interface IssueCertificateRequest extends Omit<
  * `ACMPCA.IssueCertificateHttp` on the Function effect to implement the
  * binding.
  *
- * @binding
- * @section Issuing Certificates
- * @example Sign a CSR
+ * ### Issuing Certificates
+ * **Example:** Sign a CSR
  * ```typescript
  * // init
  * const issueCertificate = yield* ACMPCA.IssueCertificate(ca);
@@ -34,6 +33,8 @@ export interface IssueCertificateRequest extends Omit<
  * });
  * // issued.CertificateArn
  * ```
+ *
+ * @binding
  */
 export interface IssueCertificate extends Binding.Service<
   IssueCertificate,

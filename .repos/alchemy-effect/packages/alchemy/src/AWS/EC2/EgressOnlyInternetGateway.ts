@@ -1,4 +1,5 @@
 import * as ec2 from "@distilled.cloud/aws/ec2";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
@@ -77,13 +78,12 @@ export interface EgressOnlyInternetGateway extends Resource<
  * VPC (`vpcId` is required); the gateway must be paired with an IPv6
  * {@link Route} to actually carry traffic.
  *
- * @resource
- * @section Creating an Egress-Only Internet Gateway
+ * ### Creating an Egress-Only Internet Gateway
  * The gateway is created and attached to `vpcId` in a single step. Because the
  * attachment is intrinsic, changing `vpcId` replaces the gateway rather than
  * moving it.
  *
- * @example Basic Egress-Only Internet Gateway
+ * **Example:** Basic Egress-Only Internet Gateway
  * ```typescript
  * const egressOnlyIgw = yield* AWS.EC2.EgressOnlyInternetGateway("EgressOnlyIgw", {
  *   vpcId: myVpc.vpcId,
@@ -93,7 +93,7 @@ export interface EgressOnlyInternetGateway extends Resource<
  * `egressOnlyInternetGatewayId` (prefixed `eigw-`) is referenced from a
  * route's `egressOnlyInternetGatewayId` target.
  *
- * @example Egress-Only Internet Gateway with Tags
+ * **Example:** Egress-Only Internet Gateway with Tags
  * ```typescript
  * const egressOnlyIgw = yield* AWS.EC2.EgressOnlyInternetGateway("EgressOnlyIgw", {
  *   vpcId: myVpc.vpcId,
@@ -103,12 +103,12 @@ export interface EgressOnlyInternetGateway extends Resource<
  * The `tags` map is merged with the alchemy auto-tags and can be updated in
  * place without replacing the gateway.
  *
- * @section Routing IPv6 Egress Traffic
+ * ### Routing IPv6 Egress Traffic
  * A gateway alone does nothing until a private route table sends IPv6 traffic
  * to it. Pair it with a `::/0` {@link Route} so private, IPv6-addressed
  * instances can reach the internet outbound-only.
  *
- * @example IPv6 Default Route to the Egress-Only Gateway
+ * **Example:** IPv6 Default Route to the Egress-Only Gateway
  * ```typescript
  * const egressOnlyIgw = yield* AWS.EC2.EgressOnlyInternetGateway("EgressOnlyIgw", {
  *   vpcId: myVpc.vpcId,
@@ -123,10 +123,22 @@ export interface EgressOnlyInternetGateway extends Resource<
  * Instances in subnets associated with `privateRouteTable` can now make
  * outbound IPv6 connections (updates, API calls) while remaining unreachable
  * from the public internet.
+ *
+ * @resource
  */
 export const EgressOnlyInternetGateway = Resource<EgressOnlyInternetGateway>(
   "AWS.EC2.EgressOnlyInternetGateway",
 );
+
+/** `DeleteEgressOnlyInternetGateway` returned `ReturnCode: false` (no error). */
+class EigwDeleteFailed extends Data.TaggedError("EigwDeleteFailed")<{
+  readonly eigwId: string;
+}> {}
+
+/** The gateway is still observable after a successful delete call. */
+class EigwStillExists extends Data.TaggedError("EigwStillExists")<{
+  readonly eigwId: string;
+}> {}
 
 export const EgressOnlyInternetGatewayProvider = () =>
   Provider.effect(
@@ -338,6 +350,18 @@ export const EgressOnlyInternetGatewayProvider = () =>
             })
             .pipe(
               Effect.tapError(Effect.logDebug),
+              // `DeleteEgressOnlyInternetGateway` reports failure as
+              // `ReturnCode: false` with NO error. Treating that as success
+              // orphans the gateway: the engine drops the state row while the
+              // gateway stays attached, wedging the parent VPC's delete on
+              // DependencyViolation forever. Surface it so the retry below
+              // re-drives the call (and the delete fails loudly if it never
+              // takes).
+              Effect.flatMap((result) =>
+                result.ReturnCode === false
+                  ? Effect.fail(new EigwDeleteFailed({ eigwId }))
+                  : Effect.void,
+              ),
               Effect.catchTag("InvalidGatewayID.NotFound", () => Effect.void),
               Effect.catchTag(
                 "InvalidEgressOnlyInternetGatewayId.NotFound",
@@ -345,8 +369,9 @@ export const EgressOnlyInternetGatewayProvider = () =>
               ),
               // Retry on dependency violations (e.g., routes still using the EIGW)
               Effect.retry({
-                while: (e: { _tag: string }) =>
-                  e._tag === "DependencyViolation",
+                while: (e) =>
+                  e._tag === "DependencyViolation" ||
+                  e._tag === "EigwDeleteFailed",
                 schedule: Schedule.max([
                   Schedule.fixed(5000),
                   Schedule.recurs(30),
@@ -358,6 +383,32 @@ export const EgressOnlyInternetGatewayProvider = () =>
                   ),
                 ),
               }),
+            );
+
+          // Deletion is asynchronous: wait until the gateway is actually gone
+          // before reporting success, so the parent VPC's delete (which the
+          // engine runs next) never races a still-attached gateway.
+          yield* ec2
+            .describeEgressOnlyInternetGateways({
+              EgressOnlyInternetGatewayIds: [eigwId],
+            })
+            .pipe(
+              Effect.flatMap((r) =>
+                (r.EgressOnlyInternetGateways ?? []).length === 0
+                  ? Effect.void
+                  : Effect.fail(new EigwStillExists({ eigwId })),
+              ),
+              Effect.retry({
+                while: (e) => e._tag === "EigwStillExists",
+                schedule: Schedule.max([
+                  Schedule.fixed(2000),
+                  Schedule.recurs(15),
+                ]),
+              }),
+              Effect.catchTag(
+                "InvalidEgressOnlyInternetGatewayId.NotFound",
+                () => Effect.void,
+              ),
             );
 
           yield* session.note(`Egress-Only Internet Gateway ${eigwId} deleted`);

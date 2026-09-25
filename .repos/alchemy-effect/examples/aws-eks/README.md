@@ -7,18 +7,18 @@ A "guestbook" app on EKS Auto Mode, fully TypeScript-driven — no YAML, no
   `AWS.EKS.Cluster` with `compute: "auto"` (the provider creates and owns the
   cluster + node IAM roles and enables managed compute, storage, and load
   balancing), a DynamoDB table, and a namespace applied as a raw manifest via
-  `AWS.EKS.Manifest` + the typed `alchemy/Kubernetes` builders.
-- [`src/Api.ts`](./src/Api.ts) — an effectful `AWS.EKS.Deployment` in the
+  `Kubernetes.Manifest`.
+- [`src/Api.ts`](./src/Api.ts) — an effectful `Kubernetes.Deployment` in the
   tagged form (`Api.make(props, impl)`): an Effect HTTP server bundled into a
   generated image, exposed through an internet-facing NLB, with DynamoDB
   bindings that land IAM on the pod-identity role and inject the table name
   into the pod. Includes the typed `podTemplate` escape hatch.
 - [`src/SeedJob.ts`](./src/SeedJob.ts) — an inline-effect one-shot
-  `AWS.EKS.Job` (`{ run }`) that seeds the guestbook table when the Job is
+  `Kubernetes.Job` (`{ run }`) that seeds the guestbook table when the Job is
   applied on deploy.
 - [`alchemy.run.ts`](./alchemy.run.ts) — thin composition: yields the shared
   infra, the tagged `Api` (via `Effect.provide(ApiLive)`), an EXTERNAL
-  nginx `AWS.EKS.Deployment` (registry `image:` source), and the `SeedJob`.
+  nginx `Kubernetes.Deployment` (registry `image:` source), and the `SeedJob`.
 
 ## Commands
 

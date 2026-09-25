@@ -16,9 +16,8 @@ export interface ListApplicationsRequest extends SVC.ListApplicationsRequest {}
  * that audit which applications exist and whether they are RUNNING.
  * Provide the implementation with
  * `Effect.provide(AWS.KinesisAnalyticsV2.ListApplicationsHttp)`.
- * @binding
- * @section Inspecting the Application
- * @example List the Account's Applications
+ * ### Inspecting the Application
+ * **Example:** List the Account's Applications
  * ```typescript
  * // init — account-level binding takes no resource
  * const listApplications = yield* AWS.KinesisAnalyticsV2.ListApplications();
@@ -29,6 +28,8 @@ export interface ListApplicationsRequest extends SVC.ListApplicationsRequest {}
  *   (app) => app.ApplicationStatus === "RUNNING",
  * );
  * ```
+ *
+ * @binding
  */
 export interface ListApplications extends Binding.Service<
   ListApplications,

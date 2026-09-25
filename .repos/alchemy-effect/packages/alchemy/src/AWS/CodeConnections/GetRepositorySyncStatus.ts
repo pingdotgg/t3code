@@ -21,9 +21,8 @@ export interface GetRepositorySyncStatusRequest extends Omit<
  * whether a stack is in sync with its repository. Provide the
  * implementation with
  * `Effect.provide(AWS.CodeConnections.GetRepositorySyncStatusHttp)`.
- * @binding
- * @section Monitoring Git Sync
- * @example Read a Branch's Latest Sync Attempt
+ * ### Monitoring Git Sync
+ * **Example:** Read a Branch's Latest Sync Attempt
  * ```typescript
  * // init — bind the operation to the repository link
  * const getRepositorySyncStatus =
@@ -35,6 +34,8 @@ export interface GetRepositorySyncStatusRequest extends Omit<
  *   SyncType: "CFN_STACK_SYNC",
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetRepositorySyncStatus extends Binding.Service<
   GetRepositorySyncStatus,

@@ -111,8 +111,10 @@ export const TaskRpcsLive = TaskRpcs.toLayer({
 ```
 
 `toLayer` is pure construction — it builds a value and never runs the
-server, so it is safe inside a host's Init phase (which also executes
-at plan time); each handler receives the decoded payload and returns
+server, so it is safe inside a host's Construction phase, which also
+executes at plan time
+([Phases](/infrastructure-as-effects/phases)); each handler receives
+the decoded payload and returns
 an `Effect` that succeeds or fails with the declared schemas, and the
 storage-backed bodies live on the hub pages — R2 in
 [Effect RPC on Workers](/cloudflare/apis/effect-rpc), DynamoDB in
@@ -138,7 +140,7 @@ host serves — it imports nothing cloud-specific. `layerJson` buffers
 one body per request and suits plain request/response; streaming
 rpcs require `RpcSerialization.layerNdjson` — whichever you pick,
 the client's serialization layer must match the server's. A Lambda
-Function with `url: true` or a Cloudflare Worker returns it as
+Function with `functionUrl: true` or a Cloudflare Worker returns it as
 `{ fetch }` — host wiring, storage binding Layers, and deploy live
 on [Workers](/cloudflare/apis/effect-rpc) and
 [Lambda](/aws/apis/effect-rpc).

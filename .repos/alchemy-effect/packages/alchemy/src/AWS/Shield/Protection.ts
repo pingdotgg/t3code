@@ -94,15 +94,15 @@ export interface Protection extends Resource<
  * commitment); without one every call fails with the typed
  * `SubscriptionNotFound` error.
  *
- * @section Protecting Resources
- * @example Protect a CloudFront Distribution
+ * ### Protecting Resources
+ * **Example:** Protect a CloudFront Distribution
  * ```typescript
  * const protection = yield* Shield.Protection("SiteProtection", {
  *   resourceArn: distribution.distributionArn,
  * });
  * ```
  *
- * @example Protection with Health-Based Detection
+ * **Example:** Protection with Health-Based Detection
  * ```typescript
  * const protection = yield* Shield.Protection("ApiProtection", {
  *   name: "api-protection",
@@ -112,8 +112,8 @@ export interface Protection extends Resource<
  * });
  * ```
  *
- * @section Automatic Application-Layer Mitigation
- * @example Block Layer-7 Attacks Automatically
+ * ### Automatic Application-Layer Mitigation
+ * **Example:** Block Layer-7 Attacks Automatically
  * ```typescript
  * // Requires an AWS WAF web ACL associated with the CloudFront distribution
  * // or Application Load Balancer.

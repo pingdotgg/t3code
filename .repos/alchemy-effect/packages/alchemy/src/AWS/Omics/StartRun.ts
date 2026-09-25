@@ -15,15 +15,16 @@ export interface StartRunRequest extends Omit<
  * store/workflow id is injected automatically and the action is granted on the
  * bound resource. Provide the implementation with
  * `Effect.provide(AWS.Omics.StartRunHttp)`.
- * @binding
- * @section Runs
- * @example Bind StartRun to a Workflow
+ * ### Runs
+ * **Example:** Bind StartRun to a Workflow
  * ```typescript
  * // init
  * const startRun = yield* AWS.Omics.StartRun(workflow);
  * // runtime
  * const result = yield* startRun({});
  * ```
+ *
+ * @binding
  */
 export interface StartRun extends Binding.Service<
   StartRun,

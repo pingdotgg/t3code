@@ -1,4 +1,4 @@
-import * as ops from "@distilled.cloud/planetscale/Operations";
+import * as ps from "@distilled.cloud/planetscale";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import { PlanetscaleConflict, pollUntil } from "../Util.ts";
@@ -46,7 +46,7 @@ export const waitForKeyspaceReady = Effect.fn(function* (
 ) {
   yield* pollUntil(
     `keyspace "${keyspace}" not resizing`,
-    ops.listKeyspaces({ organization, database, branch }),
+    ps.listKeyspaces({ organization, database, branch }),
     (page) => {
       const ks = page.data.find((x) => x.name === keyspace);
       // If keyspace is missing, treat as ready (caller will re-check)
@@ -66,7 +66,7 @@ const observeDefaultKeyspace = Effect.fn(function* (
   database: string,
   branch: string,
 ) {
-  const keyspaces = yield* ops.listKeyspaces({
+  const keyspaces = yield* ps.listKeyspaces({
     organization,
     database,
     branch,
@@ -116,7 +116,7 @@ export const ensureMySQLProductionBranchClusterSize = Effect.fn(function* (
   yield* waitForKeyspaceReady(organization, database, branch, keyspace.name);
 
   if (keyspace.cluster_name !== expectedClusterSize) {
-    yield* ops.updateBranchClusterConfig({
+    yield* ps.updateBranchClusterConfig({
       organization,
       database,
       branch,
@@ -154,7 +154,7 @@ export const ensureMySQLProductionBranchClusterSize = Effect.fn(function* (
       );
     }
 
-    const resize = yield* ops
+    const resize = yield* ps
       .createKeyspaceResizeRequest({
         organization,
         database,
@@ -179,7 +179,7 @@ export const ensureMySQLProductionBranchClusterSize = Effect.fn(function* (
 
     yield* pollUntil(
       `keyspace "${keyspace.name}" resize completed`,
-      ops.listKeyspaceResizeRequests({
+      ps.listKeyspaceResizeRequests({
         organization,
         database,
         branch,

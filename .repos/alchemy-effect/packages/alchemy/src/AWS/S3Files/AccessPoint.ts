@@ -120,9 +120,8 @@ export interface AccessPoint extends Resource<
  * {@link FileSystem} with POSIX user identity and root directory
  * enforcement, for managing shared datasets in multi-tenant scenarios.
  *
- * @resource
- * @section Creating an Access Point
- * @example Basic Access Point
+ * ### Creating an Access Point
+ * **Example:** Basic Access Point
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -131,7 +130,7 @@ export interface AccessPoint extends Resource<
  * });
  * ```
  *
- * @example Access Point with POSIX Identity and Root Directory
+ * **Example:** Access Point with POSIX Identity and Root Directory
  * ```typescript
  * const accessPoint = yield* AWS.S3Files.AccessPoint("AppAccess", {
  *   fileSystemId: fs.fileSystemId,
@@ -142,6 +141,8 @@ export interface AccessPoint extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const AccessPoint = Resource<AccessPoint>("AWS.S3Files.AccessPoint");
 

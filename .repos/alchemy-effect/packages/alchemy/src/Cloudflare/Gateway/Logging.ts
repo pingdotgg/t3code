@@ -85,11 +85,8 @@ export type Logging = Resource<
  * declare (merging them over the observed state before the PUT, since the
  * API is PUT-only). The pre-management snapshot is captured on first touch
  * and restored on destroy (capture-and-restore).
- * @resource
- * @product Gateway
- * @category Cloudflare One (Zero Trust)
- * @section Managing logging settings
- * @example Log everything, keep PII
+ * ### Managing logging settings
+ * **Example:** Log everything, keep PII
  * ```typescript
  * yield* Cloudflare.Gateway.Logging("Logging", {
  *   redactPii: false,
@@ -101,7 +98,7 @@ export type Logging = Resource<
  * });
  * ```
  *
- * @example Only log blocked DNS queries, redacting PII
+ * **Example:** Only log blocked DNS queries, redacting PII
  * ```typescript
  * yield* Cloudflare.Gateway.Logging("Logging", {
  *   redactPii: true,
@@ -112,6 +109,10 @@ export type Logging = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/cloudflare-one/insights/logs/gateway-logs/
+ *
+ * @resource
+ * @product Gateway
+ * @category Cloudflare One (Zero Trust)
  */
 export const Logging = Resource<Logging>(TypeId);
 

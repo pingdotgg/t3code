@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * The binding takes no arguments and grants the action on `*` (the action
  * has no resource-level IAM).
  *
- * @binding
- * @section Real-Time Analysis
- * @example Parse Parts of Speech
+ * ### Real-Time Analysis
+ * **Example:** Parse Parts of Speech
  * ```typescript
  * // init
  * const detectSyntax = yield* AWS.Comprehend.DetectSyntax();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // result.SyntaxTokens: [{ Text: "cat", PartOfSpeech: { Tag: "NOUN" } }, …]
  * ```
+ *
+ * @binding
  */
 export interface DetectSyntax extends Binding.Service<
   DetectSyntax,

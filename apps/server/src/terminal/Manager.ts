@@ -6,6 +6,7 @@
  *
  * @module TerminalManager
  */
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
   DEFAULT_TERMINAL_ID,
   TerminalCwdError,
@@ -105,7 +106,7 @@ const MAX_TERMINAL_LABEL_LENGTH = 128;
 const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
 const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
 
-class TerminalSubprocessCheckError extends Schema.TaggedErrorClass<TerminalSubprocessCheckError>()(
+class TerminalSubprocessCheckError extends Schema.TaggedError<TerminalSubprocessCheckError>()(
   "TerminalSubprocessCheckError",
   {
     cause: Schema.optional(Schema.Defect()),
@@ -127,7 +128,7 @@ class TerminalSubprocessCheckError extends Schema.TaggedErrorClass<TerminalSubpr
   }
 }
 
-class TerminalProcessSignalError extends Schema.TaggedErrorClass<TerminalProcessSignalError>()(
+class TerminalProcessSignalError extends Schema.TaggedError<TerminalProcessSignalError>()(
   "TerminalProcessSignalError",
   {
     cause: Schema.optional(Schema.Defect()),
@@ -1385,6 +1386,7 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
   );
 });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("TerminalManager.make")(function* () {
   const { terminalLogsDir } = yield* ServerConfig.ServerConfig;
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
@@ -1932,16 +1934,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     terminalId: string,
   ): Effect.fn.Return<TerminalSessionState, TerminalSessionLookupError> {
     return yield* Effect.flatMap(getSession(threadId, terminalId), (session) =>
-      Option.match(session, {
-        onNone: () =>
-          Effect.fail(
-            new TerminalSessionLookupError({
-              threadId,
-              terminalId,
-            }),
-          ),
-        onSome: Effect.succeed,
-      }),
+      Effect.fromOption(session, () => new TerminalSessionLookupError({ threadId, terminalId })),
     );
   });
 
@@ -2365,7 +2358,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
 
     const inspectorOption = yield* acquireSubprocessInspector.pipe(
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.catch((reason) =>
         Effect.logWarning("failed to snapshot processes for terminal subprocess polling", {
           reason,
@@ -2391,7 +2384,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     ) {
       const terminalPid = session.pid;
       const inspectResult = yield* subprocessInspector(terminalPid).pipe(
-        Effect.map(Option.some),
+        Effect.asSome,
         Effect.catch((reason) =>
           Effect.logWarning("failed to check terminal subprocess activity", {
             threadId: session.threadId,
@@ -2515,7 +2508,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }).pipe(Effect.ignoreCause({ log: true })),
   );
 
-  const openLocked = Effect.fn("terminal.openLocked")(function* (input: TerminalOpenInput) {
+  const openWithWorkspaceLease = Effect.fn("terminal.openLocked")(function* (
+    input: TerminalOpenInput,
+  ) {
     const terminalId = input.terminalId;
     yield* assertValidCwd(input.cwd);
 
@@ -2637,6 +2632,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
     return snapshot(liveSession);
   });
+
+  const openLocked = (input: TerminalOpenInput) =>
+    withWorkspaceLease(
+      path.resolve(input.worktreePath ?? input.cwd),
+      openWithWorkspaceLease(input),
+    );
 
   const open: TerminalManager["Service"]["open"] = (input) =>
     withThreadLock(
@@ -3009,7 +3010,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const restart: TerminalManager["Service"]["restart"] = (input) =>
     withThreadLock(
       input.threadId,
-      resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(restartResolved)),
+      resolveLaunchInputEnvironment(input).pipe(
+        Effect.flatMap((resolved) =>
+          withWorkspaceLease(
+            path.resolve(resolved.worktreePath ?? resolved.cwd),
+            restartResolved(resolved),
+          ),
+        ),
+      ),
     );
 
   const close: TerminalManager["Service"]["close"] = (input) =>

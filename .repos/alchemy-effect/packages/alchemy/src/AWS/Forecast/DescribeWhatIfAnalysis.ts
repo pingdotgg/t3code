@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * implementation with
  * `Effect.provide(AWS.Forecast.DescribeWhatIfAnalysisHttp)`.
  *
- * @binding
- * @section What-If Scenarios
- * @example Poll a What-If Analysis
+ * ### What-If Scenarios
+ * **Example:** Poll a What-If Analysis
  * ```typescript
  * // init
  * const describeWhatIfAnalysis = yield* AWS.Forecast.DescribeWhatIfAnalysis();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  *   WhatIfAnalysisArn: analysisArn,
  * });
  * ```
+ *
+ * @binding
  */
 export interface DescribeWhatIfAnalysis extends Binding.Service<
   DescribeWhatIfAnalysis,

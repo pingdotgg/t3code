@@ -1,6 +1,7 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  ProviderDriverKind,
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
   type UsageProviderKind,
@@ -11,10 +12,12 @@ import {
   CircleDashedIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 
 import {
   isCompatibleUsageContractVersion,
+  isModelCostUnknown,
   type DailyTotals,
   type HourlyTotals,
 } from "@t3tools/shared/usageMerge";
@@ -37,7 +40,8 @@ import {
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import {
   Menu,
   MenuCheckboxItem,
@@ -51,6 +55,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { SidebarInset } from "../ui/sidebar";
 import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
@@ -61,6 +66,7 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
+import { sortModelsByTokens } from "./usageBreakdown";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
 import {
   readUsagePagePreferences,
@@ -103,6 +109,7 @@ export function UsagePage() {
   const metric = preferences.metric;
   const showingLimits = metric === "limits";
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const refreshingRef = useRef(false);
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
@@ -114,6 +121,25 @@ export function UsagePage() {
     selectedEnvironmentIds,
   );
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const cursorAccessEnvironments = selectedEnvironments.filter((environment) =>
+    environment.summary?.sources.some((source) => source.action === "enableCursorKeychain"),
+  );
+  const sourceMessages = [
+    ...new Set(
+      selectedEnvironments.flatMap(
+        (environment) =>
+          environment.summary?.sources.flatMap((source) =>
+            source.message &&
+            !source.action &&
+            (source.status === "partial" ||
+              source.status === "failed" ||
+              source.fingerprint.provider === "cursor")
+              ? [source.message]
+              : [],
+          ) ?? [],
+      ),
+    ),
+  ];
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -138,13 +164,22 @@ export function UsagePage() {
   const breakdownModels = useMemo(
     () =>
       breakdown === "model" && metric === "tokens"
-        ? merged.models.toSorted(
-            (left, right) => right.totalTokens - left.totalTokens || right.costUsd - left.costUsd,
-          )
+        ? sortModelsByTokens(merged.models)
         : merged.models,
     [breakdown, merged.models, metric],
   );
   const activeProviders = useMemo(() => providersWithUsage(merged.providers), [merged.providers]);
+  const summaryRows: Array<
+    | { readonly kind: "usage"; readonly provider: UsageProviderKind }
+    | { readonly kind: "enable"; readonly environment: EnvironmentUsageStatus }
+  > = activeProviders.map((provider) => ({ kind: "usage", provider }));
+  const cursorInsertAt =
+    Math.max(activeProviders.indexOf("codex"), activeProviders.indexOf("claude")) + 1;
+  summaryRows.splice(
+    cursorInsertAt,
+    0,
+    ...cursorAccessEnvironments.map((environment) => ({ kind: "enable" as const, environment })),
+  );
   const timeValueColumnWidth = `${60 / (activeProviders.length + 2)}%`;
 
   const selectWindow = (days: number) => {
@@ -158,9 +193,29 @@ export function UsagePage() {
     });
   };
   const selectMetric = (nextMetric: UsageMetric) => {
+    if (nextMetric === "limits") setLimitsNow(Date.now());
     const nextPreferences = { metric: nextMetric, windowDays };
     setPreferences(nextPreferences);
     saveUsagePagePreferences(nextPreferences);
+  };
+  const refreshLimits = async (automatic = false, afterPending = false) => {
+    try {
+      await Promise.all(
+        Array.from(presentations, ([environmentId, presentation]) => {
+          if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) return;
+          if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
+            return refreshUsageLimits(
+              environmentId,
+              () => refreshProviders({ environmentId, input: {} }),
+              automatic,
+              afterPending,
+            );
+          }
+        }),
+      );
+    } finally {
+      setLimitsNow(Date.now());
+    }
   };
   const refreshWindow = () => {
     if (refreshingRef.current) return;
@@ -168,14 +223,7 @@ export function UsagePage() {
     if (showingLimits) {
       refreshingRef.current = true;
       setIsRefreshing(true);
-      void Promise.all(
-        Array.from(presentations, ([environmentId, presentation]) => {
-          if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) return;
-          if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
-            return refreshProviders({ environmentId, input: {} });
-          }
-        }),
-      ).finally(() => {
+      void refreshLimits().finally(() => {
         refreshingRef.current = false;
         setIsRefreshing(false);
       });
@@ -197,6 +245,23 @@ export function UsagePage() {
       setIsRefreshing(false);
     });
   };
+  const connectedLimitsEnvironments = [...presentations]
+    .filter(
+      ([environmentId, presentation]) =>
+        presentation.connection.phase === "connected" &&
+        presentation.serverConfig !== null &&
+        (selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId)),
+    )
+    .map(([environmentId]) => environmentId)
+    .sort()
+    .join(",");
+  const autoRefreshLimits = useEffectEvent(() => {
+    void refreshLimits(true);
+  });
+  useEffect(() => {
+    if (showingLimits && connectedLimitsEnvironments) autoRefreshLimits();
+  }, [showingLimits, connectedLimitsEnvironments]);
+
   const windowLabel =
     isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
       ? `${formatDateTimeShort(window.sinceTime, window.timeZone)} to ${formatDateTimeShort(window.untilTime, window.timeZone)}`
@@ -268,7 +333,7 @@ export function UsagePage() {
           size="icon-sm"
           variant="ghost"
         >
-          <RefreshIcon className="size-3.5" refreshing={isRefreshing} />
+          <RefreshIcon size="sm" refreshing={isRefreshing} />
         </Button>
       </div>
       <div className="col-span-2 ms-auto flex min-w-0 items-center justify-end gap-1 xl:hidden">
@@ -327,14 +392,14 @@ export function UsagePage() {
           size="icon-sm"
           variant="ghost"
         >
-          <RefreshIcon className="size-3.5" refreshing={isRefreshing} />
+          <RefreshIcon size="sm" refreshing={isRefreshing} />
         </Button>
       </div>
     </div>
   );
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
         <WorkspacePageHeader electron={isElectron} className="h-auto">
           {topbarContent}
@@ -349,11 +414,30 @@ export function UsagePage() {
                   : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`}
               </p>
             ) : showingLimits ? (
-              <UsageLimitsSection selectedEnvironmentIds={selectedEnvironmentIds} />
+              <UsageLimitsSection
+                selectedEnvironmentIds={selectedEnvironmentIds}
+                now={limitsNow}
+                cursorPrompt={
+                  cursorAccessEnvironments.length > 0 ? (
+                    <CursorEnableLimits
+                      environments={cursorAccessEnvironments}
+                      onEnabled={() => {
+                        void refresh();
+                        void refreshLimits(false, true);
+                      }}
+                    />
+                  ) : null
+                }
+              />
             ) : isPending ? (
               <UsageSkeleton />
             ) : (
               <>
+                {sourceMessages.map((message) => (
+                  <p key={message} className="mb-4 text-sm text-muted-foreground">
+                    {message}
+                  </p>
+                ))}
                 <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
                   <div className="flex min-w-0 flex-col gap-5">
                     <div className="flex flex-col gap-1">
@@ -363,13 +447,32 @@ export function UsagePage() {
                           : formatTokens(merged.totalTokens)}
                       </span>
                       <span className="text-xs text-muted-foreground">
-                        {metric === "cost"
-                          ? `${formatCount(merged.sessions)} sessions · API estimate`
-                          : `${formatCount(merged.sessions)} sessions`}
+                        {metric !== "cost"
+                          ? `${formatCount(merged.sessions)} sessions`
+                          : merged.costQuality.unpricedShare > 0
+                            ? `${formatCount(merged.sessions)} sessions · API estimate excludes ${formatPercent(
+                                merged.costQuality.unpricedShare,
+                              )} unpriced records`
+                            : `${formatCount(merged.sessions)} sessions · API estimate`}
                       </span>
                     </div>
 
-                    {activeProviders.map((provider) => {
+                    {summaryRows.map((row) => {
+                      if (row.kind === "enable") {
+                        return (
+                          <CursorEnableRow
+                            key={`enable:${row.environment.environmentId}`}
+                            environmentId={row.environment.environmentId}
+                            label={row.environment.label}
+                            showEnvironment={selectedEnvironments.length > 1}
+                            onEnabled={() => {
+                              void refresh();
+                              void refreshLimits(false, true);
+                            }}
+                          />
+                        );
+                      }
+                      const provider = row.provider;
                       const totals = merged.providers.find((entry) => entry.provider === provider);
                       const share =
                         metric === "cost" ? (totals?.costShare ?? 0) : (totals?.tokenShare ?? 0);
@@ -393,7 +496,7 @@ export function UsagePage() {
                                 <span className="truncate">
                                   {PROVIDER_PRESENTATION[provider].label}
                                 </span>
-                                <span className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground tabular-nums">
+                                <span className="shrink-0 whitespace-nowrap text-2xs text-muted-foreground tabular-nums">
                                   {sessionLabel}
                                 </span>
                               </span>
@@ -511,10 +614,14 @@ export function UsagePage() {
                                 </span>
                               </td>
                               <td className="py-2 text-right text-foreground tabular-nums">
-                                {formatUsd(model.costUsd)}
+                                {isModelCostUnknown(model) ? (
+                                  <span className="text-muted-foreground">Unpriced</span>
+                                ) : (
+                                  formatUsd(model.costUsd)
+                                )}
                               </td>
                               <td className="py-2 text-right text-muted-foreground tabular-nums">
-                                {formatPercent(model.costShare)}
+                                {isModelCostUnknown(model) ? "—" : formatPercent(model.costShare)}
                               </td>
                               <td className="py-2 text-right text-muted-foreground tabular-nums">
                                 {formatTokens(model.totalTokens)}
@@ -594,6 +701,137 @@ export function UsagePage() {
         </ScrollArea>
       </div>
     </SidebarInset>
+  );
+}
+
+const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keychain.";
+
+function CursorEnableButton({
+  environmentId,
+  label,
+  onEnabled,
+  tooltip,
+  buttonText = "Enable",
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly onEnabled: () => void;
+  readonly tooltip: boolean;
+  readonly buttonText?: string;
+}) {
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "enable Cursor account usage",
+  });
+  const [pending, setPending] = useState(false);
+  const enable = async () => {
+    setPending(true);
+    try {
+      const result = await updateSettings({
+        environmentId,
+        input: { patch: { cursorKeychainUsageEnabled: true } },
+      });
+      if (result._tag === "Success") onEnabled();
+    } finally {
+      setPending(false);
+    }
+  };
+  const button = tooltip ? (
+    <InlineButton
+      disabled={pending}
+      aria-busy={pending}
+      aria-label={`Enable Cursor usage from ${label}`}
+      onClick={() => void enable()}
+    >
+      {buttonText}
+    </InlineButton>
+  ) : (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={pending}
+      aria-busy={pending}
+      aria-label={`Enable Cursor usage from ${label}`}
+      onClick={() => void enable()}
+    >
+      {buttonText}
+    </Button>
+  );
+  if (!tooltip) return button;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={button} />
+      <TooltipPopup>{CURSOR_KEYCHAIN_COPY}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function CursorEnableRow({
+  environmentId,
+  label,
+  showEnvironment,
+  onEnabled,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly showEnvironment: boolean;
+  readonly onEnabled: () => void;
+}) {
+  return (
+    <div className="flex min-w-0 items-baseline justify-between gap-4 text-sm">
+      <span className="flex min-w-0 items-center gap-2 text-sm text-foreground">
+        <span
+          aria-hidden
+          className="size-2 shrink-0 rounded-full"
+          style={{ backgroundColor: PROVIDER_PRESENTATION.cursor.color }}
+        />
+        <ProviderMark provider="cursor" className="size-4" />
+        <span className="truncate">Cursor{showEnvironment ? ` · ${label}` : ""}</span>
+      </span>
+      <CursorEnableButton
+        environmentId={environmentId}
+        label={label}
+        onEnabled={onEnabled}
+        tooltip
+      />
+    </div>
+  );
+}
+
+function CursorEnableLimits({
+  environments,
+  onEnabled,
+}: {
+  readonly environments: readonly EnvironmentUsageStatus[];
+  readonly onEnabled: () => void;
+}) {
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
+        <ProviderInstanceIcon
+          driverKind={ProviderDriverKind.make("cursor")}
+          displayName="Cursor"
+          indicatorBackground="var(--background)"
+          className="size-5"
+          iconClassName="size-4 text-foreground/80"
+        />
+        Cursor
+      </h2>
+      <div className="flex flex-col items-start gap-3 rounded-lg border border-border/60 p-4">
+        <p className="text-xs text-muted-foreground">{CURSOR_KEYCHAIN_COPY}</p>
+        <div className="flex flex-wrap gap-2">
+          {environments.map((environment) => (
+            <CursorEnableButton
+              key={environment.environmentId}
+              environmentId={environment.environmentId}
+              label={environment.label}
+              buttonText={environments.length > 1 ? `Enable on ${environment.label}` : "Enable"}
+              onEnabled={onEnabled}
+              tooltip={false}
+            />
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -697,7 +935,10 @@ function UsageEnvironmentFilter({
   return (
     <>
       <Menu>
-        <MenuTrigger className="group/usage-environment inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1 rounded-sm text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
+        <MenuTrigger
+          render={<InlineButton />}
+          className="group/usage-environment min-w-0 max-w-full"
+        >
           <span className="min-w-0 truncate">{label}</span>
           <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
             {showUsageStatus && pendingCount > 0 ? (
@@ -711,7 +952,7 @@ function UsageEnvironmentFilter({
               </>
             ) : showUsageStatus && hasIssue ? (
               <CircleAlertIcon
-                className="size-3.5 text-amber-600 dark:text-amber-400"
+                className="size-3.5 text-warning-foreground"
                 aria-label="Some environments could not report usage"
               />
             ) : (
@@ -722,7 +963,7 @@ function UsageEnvironmentFilter({
             )}
           </span>
         </MenuTrigger>
-        <MenuPopup align="start" className="w-80 max-w-[calc(100vw-2rem)]">
+        <MenuPopup align="start">
           <MenuCheckboxItem
             checked={allSelected}
             closeOnClick={false}
@@ -754,7 +995,6 @@ function UsageEnvironmentFilter({
                 key={environment.environmentId}
                 checked={checked}
                 closeOnClick={false}
-                className="grid-cols-[1rem_minmax(0,1fr)]"
                 onCheckedChange={(nextChecked) => {
                   const next = new Set(selectedEnvironments.map((entry) => entry.environmentId));
                   if (nextChecked) next.add(environment.environmentId);
@@ -829,8 +1069,8 @@ function UsageSkeleton() {
             <div key={provider} className="flex flex-col gap-1">
               <div className="flex min-h-5 items-center justify-between gap-4">
                 <span className="flex items-center gap-2">
-                  <Skeleton className="size-2 shrink-0 rounded-full" />
-                  <Skeleton className="size-4 shrink-0 rounded-full" />
+                  <Skeleton shape="pill" className="size-2 shrink-0" />
+                  <Skeleton shape="pill" className="size-4 shrink-0" />
                   <Skeleton className="h-3.5 w-20" />
                 </span>
                 <Skeleton className="h-3.5 w-14" />
@@ -843,8 +1083,8 @@ function UsageSkeleton() {
         <div className="flex flex-col gap-3">
           <Skeleton className="h-5 w-24" />
           <div className="flex flex-col gap-1">
-            <Skeleton className="ml-16 h-56 bg-muted-foreground/10" />
-            <Skeleton className="ml-16 h-4 bg-muted-foreground/10" />
+            <Skeleton className="ml-16 h-56" />
+            <Skeleton className="ml-16 h-4" />
           </div>
         </div>
       </section>
@@ -866,9 +1106,9 @@ function UsageSkeleton() {
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-medium text-foreground">Breakdown</h2>
-          <Skeleton className="h-7 w-28 rounded-lg" />
+          <Skeleton shape="card" className="h-7 w-28" />
         </div>
-        <Skeleton className="h-44 bg-muted-foreground/10" />
+        <Skeleton className="h-44" />
       </section>
     </>
   );

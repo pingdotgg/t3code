@@ -57,8 +57,10 @@ test.provider(
             namespace: namespace.name,
             sourceParams: {
               webCrawler: {
-                parseType: "crawl",
-                crawlOptions: { source: "links" },
+                // Cloudflare renamed `crawl` → `discover` and removed
+                // `crawlOptions` from the API. The fixture serves a
+                // sitemap, so discovery always finds content.
+                parseType: "discover",
               },
             },
           });

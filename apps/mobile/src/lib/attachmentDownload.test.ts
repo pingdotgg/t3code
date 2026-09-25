@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   share: vi.fn(),
   shareFromSource: vi.fn(),
   available: vi.fn(),
+  open: vi.fn(),
   uuid: vi.fn(),
 }));
 
@@ -60,6 +61,8 @@ vi.mock("expo-file-system", () => {
   return { Directory, File, Paths: { cache: "file:///cache" } };
 });
 
+vi.mock("expo", () => ({ requireNativeModule: () => ({ openFile: mocks.open }) }));
+
 vi.mock("expo-sharing", () => ({
   isAvailableAsync: mocks.available,
   shareAsync: mocks.share,
@@ -69,6 +72,7 @@ vi.mock("./uuid", () => ({ uuidv4: mocks.uuid }));
 vi.mock("./shareFileFromSource", () => ({ shareFileFromSource: mocks.shareFromSource }));
 
 import {
+  openAttachmentInViewer,
   downloadAndShareAttachment,
   downloadAttachmentForPreview,
   shareLocalAttachment,
@@ -84,6 +88,8 @@ const input = {
 };
 
 beforeEach(() => {
+  mocks.open.mockReset();
+  mocks.open.mockResolvedValue(undefined);
   mocks.directories.clear();
   mocks.deleted.mockReset();
   mocks.download.mockReset();
@@ -396,5 +402,31 @@ describe("attachment preview files", () => {
     await task;
     expect(mocks.share).not.toHaveBeenCalled();
     expect(mocks.deleted).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("document viewer handoff", () => {
+  it("opens a cache copy with its MIME type and retains it for the viewer", async () => {
+    await openAttachmentInViewer({
+      uri: "file:///documents/report.pdf",
+      attachment: input.attachment,
+      signal: new AbortController().signal,
+    });
+    expect(mocks.open).toHaveBeenCalledWith(mocks.copy.mock.calls[0]![1], "application/pdf");
+    expect(mocks.share).not.toHaveBeenCalled();
+    expect(mocks.deleted).not.toHaveBeenCalled();
+  });
+  it("cleans up when no viewer handles the document", async () => {
+    mocks.open.mockRejectedValue(new Error("No viewer"));
+    await expect(
+      openAttachmentInViewer({
+        uri: input.url,
+        attachment: input.attachment,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("No viewer");
+    expect(mocks.download).toHaveBeenCalledTimes(1);
+    expect(mocks.deleted).toHaveBeenCalledTimes(1);
+    expect(isForegroundHandoffActive()).toBe(false);
   });
 });

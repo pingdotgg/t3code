@@ -67,14 +67,13 @@ function SearchOptionButton(props: {
           <Toggle
             aria-label={props.label}
             pressed={props.active}
-            className="size-8 rounded-[5px] font-mono text-muted-foreground data-pressed:text-foreground sm:size-7"
-            size="compact"
-            variant="ghost"
+            size="segmented"
+            variant="segmented"
             onClick={props.onClick}
           />
         }
       >
-        {props.children}
+        <span className="font-mono">{props.children}</span>
       </TooltipTrigger>
       <TooltipPopup side="top">{props.label}</TooltipPopup>
     </Tooltip>
@@ -89,11 +88,13 @@ function EmptyContentSearchDialog() {
       footerActionLabel="Open file"
       inputProps={{ disabled: true, placeholder: "Search project contents…" }}
       mode="none"
-      panelClassName="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground"
+      panelSize="fill"
       testId="project-content-search"
       value=""
     >
-      Open a project to search its files.
+      <p className="m-auto px-6 text-center text-muted-foreground text-sm">
+        Open a project to search its files.
+      </p>
     </CommandPaletteContent>
   );
 }
@@ -218,7 +219,7 @@ function OpenContentSearchDialog(props: {
       }}
       mode="none"
       onValueChange={setQuery}
-      panelClassName="flex min-h-0 flex-1 flex-col"
+      panelSize="fill"
       testId="project-content-search"
       value={query}
     >
@@ -226,7 +227,7 @@ function OpenContentSearchDialog(props: {
         <div className="flex h-9 shrink-0 items-center border-b px-3 text-xs text-muted-foreground">
           {search.isPending ? (
             <span className="flex items-center gap-2">
-              <Spinner className="size-3.5" /> Searching…
+              <Spinner size="sm" /> Searching…
             </span>
           ) : search.error ? (
             <span className="text-destructive">{search.error}</span>
@@ -264,7 +265,7 @@ function OpenContentSearchDialog(props: {
                         {path.directory}
                       </span>
                     ) : null}
-                    <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 tabular-nums text-[10px] text-muted-foreground">
+                    <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 tabular-nums text-3xs text-muted-foreground">
                       {group.matches.length}
                     </span>
                   </div>

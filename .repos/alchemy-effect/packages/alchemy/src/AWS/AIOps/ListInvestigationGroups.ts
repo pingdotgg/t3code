@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * per Region, so this doubles as an existence probe. Provide the
  * implementation with
  * `Effect.provide(AWS.AIOps.ListInvestigationGroupsHttp)`.
- * @binding
- * @section Listing Investigation Groups
- * @example Discover the Region's Investigation Group
+ * ### Listing Investigation Groups
+ * **Example:** Discover the Region's Investigation Group
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listInvestigationGroups = yield* AWS.AIOps.ListInvestigationGroups();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   yield* Effect.log(`${group.name}: ${group.arn}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface ListInvestigationGroups extends Binding.Service<
   ListInvestigationGroups,

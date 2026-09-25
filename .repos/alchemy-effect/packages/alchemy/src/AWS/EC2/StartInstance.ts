@@ -20,9 +20,8 @@ export interface StartInstanceRequest extends Omit<
  * boxes on in the morning. Starting an already-running instance succeeds
  * without effect. Provide the implementation with
  * `Effect.provide(AWS.EC2.StartInstanceHttp)`.
- * @binding
- * @section Instance Lifecycle Control
- * @example Start the bound instance
+ * ### Instance Lifecycle Control
+ * **Example:** Start the bound instance
  * ```typescript
  * // init — bind the operation to the instance
  * const startInstance = yield* AWS.EC2.StartInstance(instance);
@@ -31,6 +30,8 @@ export interface StartInstanceRequest extends Omit<
  * const result = yield* startInstance();
  * console.log(result.StartingInstances?.[0]?.CurrentState?.Name);
  * ```
+ *
+ * @binding
  */
 export interface StartInstance extends Binding.Service<
   StartInstance,

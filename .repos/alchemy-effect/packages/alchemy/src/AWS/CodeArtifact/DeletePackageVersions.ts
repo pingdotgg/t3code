@@ -17,9 +17,8 @@ export interface DeletePackageVersionsRequest extends Omit<
  *
  * Deletes specific versions of a package from the bound repository. Provide the implementation with
  * `Effect.provide(AWS.CodeArtifact.DeletePackageVersionsHttp)`.
- * @binding
- * @section Deleting Packages
- * @example Delete Package Versions
+ * ### Deleting Packages
+ * **Example:** Delete Package Versions
  * ```typescript
  * const deleteVersions = yield* AWS.CodeArtifact.DeletePackageVersions(repo);
  *
@@ -31,6 +30,8 @@ export interface DeletePackageVersionsRequest extends Omit<
  * });
  * console.log(res.successfulVersions);
  * ```
+ *
+ * @binding
  */
 export interface DeletePackageVersions extends Binding.Service<
   DeletePackageVersions,

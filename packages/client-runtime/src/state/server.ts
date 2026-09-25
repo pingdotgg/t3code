@@ -88,7 +88,7 @@ const serverUpdateStateAtom = Atom.family((environmentId: EnvironmentId) =>
   ),
 );
 
-export class ServerUpdateResumeTimeoutError extends Schema.TaggedErrorClass<ServerUpdateResumeTimeoutError>()(
+export class ServerUpdateResumeTimeoutError extends Schema.TaggedError<ServerUpdateResumeTimeoutError>()(
   "ServerUpdateResumeTimeoutError",
   {
     environmentId: Schema.String,
@@ -100,7 +100,7 @@ export class ServerUpdateResumeTimeoutError extends Schema.TaggedErrorClass<Serv
   }
 }
 
-export class ServerUpdateProgressIncompleteError extends Schema.TaggedErrorClass<ServerUpdateProgressIncompleteError>()(
+export class ServerUpdateProgressIncompleteError extends Schema.TaggedError<ServerUpdateProgressIncompleteError>()(
   "ServerUpdateProgressIncompleteError",
   {
     targetVersion: Schema.String,
@@ -111,7 +111,7 @@ export class ServerUpdateProgressIncompleteError extends Schema.TaggedErrorClass
   }
 }
 
-export class ServerUpdateTerminalError extends Schema.TaggedErrorClass<ServerUpdateTerminalError>()(
+export class ServerUpdateTerminalError extends Schema.TaggedError<ServerUpdateTerminalError>()(
   "ServerUpdateTerminalError",
   {
     targetVersion: Schema.String,
@@ -933,6 +933,14 @@ export function createServerEnvironmentAtoms<R, E>(
       );
     }).pipe(Atom.withLabel(`environment-data:server:usage-prices:${environmentId}`)),
   );
+  const usageScanSettingsAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) =>
+      JSON.stringify([
+        get(usagePricesAtom(environmentId)),
+        get(settingsValueAtom(environmentId))?.cursorKeychainUsageEnabled ?? false,
+      ]),
+    ).pipe(Atom.withLabel(`environment-data:server:usage-scan-settings:${environmentId}`)),
+  );
   const providersValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => get(configValueAtom(environmentId))?.providers ?? null).pipe(
       Atom.withLabel(`environment-data:server:providers:${environmentId}`),
@@ -977,6 +985,10 @@ export function createServerEnvironmentAtoms<R, E>(
         mode: "singleFlight",
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input]),
       },
+    }),
+    respondProviderAuth: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:provider:auth-respond",
+      tag: WS_METHODS.providerAuthRespond,
     }),
     completeProviderAuth: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:provider:auth-complete",
@@ -1046,7 +1058,7 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:usage-summary",
       tag: WS_METHODS.serverGetUsageSummary,
       staleTimeMs: 60_000,
-      refreshTrigger: ({ environmentId }) => usagePricesAtom(environmentId),
+      refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
     }),
     configProjection,
     welcome,

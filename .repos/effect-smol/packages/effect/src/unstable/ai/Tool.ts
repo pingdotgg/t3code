@@ -22,7 +22,7 @@ import * as Schema from "../../Schema.ts"
 import * as SchemaAST from "../../SchemaAST.ts"
 import type * as Struct from "../../Struct.ts"
 import type * as Types from "../../Types.ts"
-import type * as AiError from "./AiError.ts"
+import * as AiError from "./AiError.ts"
 import type { CodecTransformer } from "./LanguageModel.ts"
 import type * as Prompt from "./Prompt.ts"
 
@@ -171,7 +171,7 @@ export type NeedsApproval<Params extends Schema.Constraint> =
  *
  * **Example** (Defining a weather lookup tool)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { Tool } from "effect/unstable/ai"
  *
@@ -188,6 +188,7 @@ export type NeedsApproval<Params extends Schema.Constraint> =
  *     humidity: Schema.Number
  *   })
  * })
+ * const result = [GetWeather.name, GetWeather.failureMode] // => ["GetWeather", "error"]
  * ```
  *
  * @category models
@@ -365,7 +366,7 @@ export interface Tool<
  *
  * **Example** (Defining a provider-defined web search tool)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { Tool } from "effect/unstable/ai"
  *
@@ -384,7 +385,8 @@ export interface Tool<
  *       snippet: Schema.String
  *     }))
  *   })
- * })
+ * })({ query: "Effect" })
+ * const result = [WebSearch.name, WebSearch.providerName] // => ["OpenAiWebSearch", "web_search"]
  * ```
  *
  * @category models
@@ -457,7 +459,7 @@ export interface ProviderDefined<
  *
  * **Example** (Defining dynamic tools)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { Tool } from "effect/unstable/ai"
  *
@@ -480,6 +482,8 @@ export interface ProviderDefined<
  *     required: ["query"]
  *   }
  * })
+ *
+ * const result = [Calculator.name, McpTool.name] // => ["Calculator", "McpTool"]
  * ```
  *
  * @category models
@@ -524,7 +528,7 @@ export interface Dynamic<
  *
  * **Example** (Checking for user-defined tools)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { Tool } from "effect/unstable/ai"
  *
@@ -554,8 +558,7 @@ export interface Dynamic<
  *   })
  * })
  *
- * console.log(Tool.isUserDefined(UserDefinedTool)) // true
- * console.log(Tool.isUserDefined(ProviderDefinedTool)) // false
+ * const result = [Tool.isUserDefined(UserDefinedTool), Tool.isUserDefined(ProviderDefinedTool)] // => [true, false]
  * ```
  *
  * @category guards
@@ -569,7 +572,7 @@ export const isUserDefined = (u: unknown): u is Tool<string, any, any> =>
  *
  * **Example** (Checking for provider-defined tools)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { Tool } from "effect/unstable/ai"
  *
@@ -599,8 +602,7 @@ export const isUserDefined = (u: unknown): u is Tool<string, any, any> =>
  *   })
  * })
  *
- * console.log(Tool.isProviderDefined(UserDefinedTool)) // false
- * console.log(Tool.isProviderDefined(ProviderDefinedTool)) // true
+ * const result = [Tool.isProviderDefined(UserDefinedTool), Tool.isProviderDefined(ProviderDefinedTool)] // => [false, false]
  * ```
  *
  * @category guards
@@ -615,7 +617,7 @@ export const isProviderDefined = (
  *
  * **Example** (Checking for dynamic tools)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { Tool } from "effect/unstable/ai"
  *
@@ -628,8 +630,7 @@ export const isProviderDefined = (
  *   success: Schema.Number
  * })
  *
- * console.log(Tool.isDynamic(DynamicTool)) // true
- * console.log(Tool.isDynamic(UserDefinedTool)) // false
+ * const result = [Tool.isDynamic(DynamicTool), Tool.isDynamic(UserDefinedTool)] // => [true, false]
  * ```
  *
  * @category guards
@@ -817,9 +818,8 @@ export type FailureEncoded<T> = T extends Tool<
   : never
 
 /**
- * A utility type for the actual failure value that can appear in tool results.
- * When `failureMode` is `"return"`, this includes both user-defined failures
- * and `AiError`.
+ * A tool's failure type, plus {@link ExecutionFailure} in both failure modes
+ * and `AiError` in `"return"` mode.
  *
  * @category utility types
  * @since 4.0.0
@@ -828,8 +828,11 @@ export type FailureResult<T> = T extends Tool<
   infer _Name,
   infer _Config,
   infer _Requirements
-> ? _Config["failureMode"] extends "return" ? _Config["failure"]["Type"] | AiError.AiError
-  : _Config["failure"]["Type"]
+> ? _Config["failureMode"] extends "return" ?
+      | _Config["failure"]["Type"]
+      | typeof ExecutionFailure.Type
+      | AiError.AiError
+  : _Config["failure"]["Type"] | typeof ExecutionFailure.Type
   : never
 
 /**
@@ -842,47 +845,28 @@ export type FailureResultEncoded<T> = T extends Tool<
   infer _Name,
   infer _Config,
   infer _Requirements
-> ? _Config["failureMode"] extends "return" ? _Config["failure"]["Encoded"] | AiError.AiErrorEncoded
-  : _Config["failure"]["Encoded"]
+> ? _Config["failureMode"] extends "return" ?
+      | _Config["failure"]["Encoded"]
+      | typeof ExecutionFailure.Encoded
+      | AiError.AiErrorEncoded
+  : _Config["failure"]["Encoded"] | typeof ExecutionFailure.Encoded
   : never
 
 /**
- * A utility type to extract the type of the tool call result whether it
- * succeeds or fails.
- *
- * **Details**
- *
- * When `failureMode` is `"return"`, the result may also be an `AiError`.
+ * A tool's success or {@link FailureResult} type.
  *
  * @category utility types
  * @since 4.0.0
  */
-export type Result<T> = T extends Tool<
-  infer _Name,
-  infer _Config,
-  infer _Requirements
-> ? _Config["failureMode"] extends "return" ? Success<T> | Failure<T> | AiError.AiError
-  : Success<T> | Failure<T>
-  : never
+export type Result<T> = Success<T> | FailureResult<T>
 
 /**
- * A utility type to extract the encoded type of the tool call result whether
- * it succeeds or fails.
- *
- * **Details**
- *
- * When `failureMode` is `"return"`, the result may also be an encoded `AiError`.
+ * The encoded form of {@link Result}.
  *
  * @category utility types
  * @since 4.0.0
  */
-export type ResultEncoded<T> = T extends Tool<
-  infer _Name,
-  infer _Config,
-  infer _Requirements
-> ? _Config["failureMode"] extends "return" ? SuccessEncoded<T> | FailureEncoded<T> | AiError.AiErrorEncoded
-  : SuccessEncoded<T> | FailureEncoded<T>
-  : never
+export type ResultEncoded<T> = SuccessEncoded<T> | FailureResultEncoded<T>
 
 /**
  * A utility type to extract the requirements of a `Tool` call handler.
@@ -929,6 +913,19 @@ export type ResultDecodingServices<T> = T extends Tool<
   infer _Config,
   infer _Requirements
 > ? _Config["success"]["DecodingServices"] | _Config["failure"]["DecodingServices"]
+  : never
+
+/**
+ * Extracts the services required to encode tool parameters.
+ *
+ * @category utility types
+ * @since 4.0.0
+ */
+export type ParametersEncodingServices<T> = T extends Tool<
+  infer _Name,
+  infer _Config,
+  infer _Requirements
+> ? _Config["parameters"]["EncodingServices"]
   : never
 
 /**
@@ -1050,7 +1047,7 @@ const Proto = {
     return clone(this)
   },
   setParameters(this: Any, parametersSchema: Schema.Constraint) {
-    return clone(this, { parametersSchema })
+    return clone(this, { parametersSchema, jsonSchema: undefined })
   },
   setSuccess(this: Any, successSchema: Schema.Constraint) {
     return clone(this, { successSchema })
@@ -1185,7 +1182,7 @@ const dynamicProto = <
  *
  * **Example** (Creating a tool without parameters)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { Tool } from "effect/unstable/ai"
  *
@@ -1194,6 +1191,7 @@ const dynamicProto = <
  *   description: "Returns the current timestamp",
  *   success: Schema.Number
  * })
+ * GetCurrentTime.name // => "GetCurrentTime"
  * ```
  *
  * @category constructors
@@ -1291,7 +1289,7 @@ export const make = <
  *
  * **Example** (Creating a dynamic tool)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { Tool } from "effect/unstable/ai"
  *
@@ -1314,6 +1312,8 @@ export const make = <
  *     required: ["query"]
  *   }
  * })
+ *
+ * const result = [Calculator.name, McpTool.name] // => ["Calculator", "McpTool"]
  * ```
  *
  * @category constructors
@@ -1389,7 +1389,7 @@ export const dynamic: {
  *
  * **Example** (Creating a provider-defined tool)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { Tool } from "effect/unstable/ai"
  *
@@ -1408,7 +1408,8 @@ export const dynamic: {
  *       content: Schema.String
  *     }))
  *   })
- * })
+ * })({ query: "Effect" })
+ * const result = [WebSearch.name, WebSearch.providerName] // => ["OpenAiWebSearch", "web_search"]
  * ```
  *
  * @category constructors
@@ -1586,7 +1587,7 @@ export class NameMapper<Tools extends ReadonlyArray<Any>> {
  *
  * **Example** (Reading a tool description)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Tool } from "effect/unstable/ai"
  *
  * const myTool = Tool.make("example", {
@@ -1594,7 +1595,7 @@ export class NameMapper<Tools extends ReadonlyArray<Any>> {
  * })
  *
  * const description = Tool.getDescription(myTool)
- * console.log(description) // "This is an example tool"
+ * description // => "This is an example tool"
  * ```
  *
  * @category getters
@@ -1625,7 +1626,7 @@ export const getDescription = <Tool extends Any>(tool: Tool): string | undefined
  *
  * **Example** (Generating a tool JSON schema)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { Tool } from "effect/unstable/ai"
  *
@@ -1637,15 +1638,10 @@ export const getDescription = <Tool extends Any>(tool: Tool): string | undefined
  * })
  *
  * const jsonSchema = Tool.getJsonSchema(weatherTool)
- * console.log(jsonSchema)
- * // {
- * //   type: "object",
- * //   properties: {
- * //     location: { type: "string" },
- * //     units: { type: "string", enum: ["celsius", "fahrenheit"] }
- * //   },
- * //   required: ["location", "units"]
- * // }
+ * jsonSchema.type // => "object"
+ * if (typeof jsonSchema.properties === "object" && jsonSchema.properties !== null) {
+ *   Object.keys(jsonSchema.properties) // => ["location", "units"]
+ * }
  * ```
  *
  * @category getters
@@ -1703,14 +1699,16 @@ const getJsonSchemaFromSchemaWith = <S extends Schema.Constraint>(
  *
  * **Example** (Annotating a tool title)
  *
- * ```ts
+ * ```ts import.meta.vitest
+ * import { Context } from "effect"
  * import { Tool } from "effect/unstable/ai"
  *
  * const myTool = Tool.make("calculate_tip")
  *   .annotate(Tool.Title, "Tip Calculator")
+ * Context.getUnsafe(myTool.annotations, Tool.Title) // => "Tip Calculator"
  * ```
  *
- * @category annotations
+ * @category services
  * @since 4.0.0
  */
 export class Title extends Context.Service<Title, string>()("effect/ai/Tool/Title") {}
@@ -1720,14 +1718,16 @@ export class Title extends Context.Service<Title, string>()("effect/ai/Tool/Titl
  *
  * **Example** (Annotating MCP metadata)
  *
- * ```ts
+ * ```ts import.meta.vitest
+ * import { Context } from "effect"
  * import { Tool } from "effect/unstable/ai"
  *
  * const myCalculatorUi = Tool.make("calculator_ui", {})
  *   .annotate(Tool.Meta, { ui: { resourceUri: "ui://example/calculator-ui" } })
+ * "ui" in Context.getUnsafe(myCalculatorUi.annotations, Tool.Meta) // => true
  * ```
  *
- * @category annotations
+ * @category services
  * @since 4.0.0
  */
 export class Meta extends Context.Service<Meta, Record<string, unknown>>()("effect/ai/Tool/Meta") {}
@@ -1742,14 +1742,16 @@ export class Meta extends Context.Service<Meta, Record<string, unknown>>()("effe
  *
  * **Example** (Marking a tool as read-only)
  *
- * ```ts
+ * ```ts import.meta.vitest
+ * import { Context } from "effect"
  * import { Tool } from "effect/unstable/ai"
  *
  * const readOnlyTool = Tool.make("get_user_info")
  *   .annotate(Tool.Readonly, true)
+ * Context.get(readOnlyTool.annotations, Tool.Readonly) // => true
  * ```
  *
- * @category annotations
+ * @category services
  * @since 4.0.0
  */
 export const Readonly = Context.Reference<boolean>("effect/ai/Tool/Readonly", {
@@ -1766,14 +1768,16 @@ export const Readonly = Context.Reference<boolean>("effect/ai/Tool/Readonly", {
  *
  * **Example** (Marking a tool as non-destructive)
  *
- * ```ts
+ * ```ts import.meta.vitest
+ * import { Context } from "effect"
  * import { Tool } from "effect/unstable/ai"
  *
  * const safeTool = Tool.make("search_database")
  *   .annotate(Tool.Destructive, false)
+ * Context.get(safeTool.annotations, Tool.Destructive) // => false
  * ```
  *
- * @category annotations
+ * @category services
  * @since 4.0.0
  */
 export const Destructive = Context.Reference<boolean>("effect/ai/Tool/Destructive", {
@@ -1791,14 +1795,16 @@ export const Destructive = Context.Reference<boolean>("effect/ai/Tool/Destructiv
  *
  * **Example** (Marking a tool as idempotent)
  *
- * ```ts
+ * ```ts import.meta.vitest
+ * import { Context } from "effect"
  * import { Tool } from "effect/unstable/ai"
  *
  * const idempotentTool = Tool.make("get_current_time")
  *   .annotate(Tool.Idempotent, true)
+ * Context.get(idempotentTool.annotations, Tool.Idempotent) // => true
  * ```
  *
- * @category annotations
+ * @category services
  * @since 4.0.0
  */
 export const Idempotent = Context.Reference<boolean>("effect/ai/Tool/Idempotent", {
@@ -1816,14 +1822,16 @@ export const Idempotent = Context.Reference<boolean>("effect/ai/Tool/Idempotent"
  *
  * **Example** (Disabling open-world access)
  *
- * ```ts
+ * ```ts import.meta.vitest
+ * import { Context } from "effect"
  * import { Tool } from "effect/unstable/ai"
  *
  * const restrictedTool = Tool.make("internal_operation")
  *   .annotate(Tool.OpenWorld, false)
+ * Context.get(restrictedTool.annotations, Tool.OpenWorld) // => false
  * ```
  *
- * @category annotations
+ * @category services
  * @since 4.0.0
  */
 export const OpenWorld = Context.Reference<boolean>("effect/ai/Tool/OpenWorld", {
@@ -1845,14 +1853,15 @@ export const OpenWorld = Context.Reference<boolean>("effect/ai/Tool/OpenWorld", 
  *
  * **Example** (Disabling strict JSON schema mode)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Tool } from "effect/unstable/ai"
  *
  * const flexibleTool = Tool.make("search")
  *   .annotate(Tool.Strict, false)
+ * Tool.getStrictMode(flexibleTool) // => false
  * ```
  *
- * @category annotations
+ * @category services
  * @since 4.0.0
  */
 export const Strict = Context.Reference<boolean | undefined>("effect/ai/Tool/Strict", {
@@ -1982,6 +1991,33 @@ export const unsafeSecureJsonParse = (text: string): unknown => {
     StackTraceLimit.setStackTraceLimit(prevLimit)
   }
 }
+
+/**
+ * Schema for denied or interrupted tool calls.
+ *
+ * @category schemas
+ * @since 4.0.0
+ */
+export const ExecutionFailure = Schema.Struct({
+  type: Schema.Literals(["execution-denied", "execution-interrupted"]),
+  reason: Schema.String
+}).annotate({ identifier: "ToolExecutionFailure" })
+
+/**
+ * Returns the failure schema shared by `Toolkit` and `Response`.
+ *
+ * **Details**
+ *
+ * `AiError` comes first to restore error instances. The user schema precedes
+ * {@link ExecutionFailure} to preserve user fields.
+ *
+ * @category schemas
+ * @since 4.0.0
+ */
+export const failureResultSchema = <T extends Any>(
+  tool: T
+): Schema.Union<readonly [typeof AiError.AiError, T["failureSchema"], typeof ExecutionFailure]> =>
+  Schema.Union([AiError.AiError, tool.failureSchema, ExecutionFailure])
 
 /**
  * Type of the `EmptyParams` schema used for tools with no parameters.

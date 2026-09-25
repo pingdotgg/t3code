@@ -12,13 +12,14 @@ browser.
 
 You can add more computers before continuing:
 
-- **T3 Connect** connects computers that are signed in to your account. Run
-  `npx t3 connect` on each computer you want to add, then start T3 Code or run
-  `npx t3 serve` so the computer stays available.
+- **T3 Connect** connects computers that are signed in to your account.
+  [Install the CLI](./install.md#command-line) and run `t3 connect` on each
+  computer you want to add, then start T3 Code or run `t3 serve` so the
+  computer stays available.
 - **Add a computer** connects directly to a server on your network or tailnet.
-  Start the server with `npx t3 serve`, then run `npx t3 pair --tailscale` and
-  paste the pairing link. You can also run `npx t3 serve --host <address>` and
-  use `npx t3 pair` when the server is already reachable on your network.
+  Start the server with `t3 serve`, then run `t3 pair --tailscale` and paste
+  the pairing link. You can also run `t3 serve --host <address>` and use
+  `t3 pair` when the server is already reachable on your network.
 
 Saved computers and computers discovered through T3 Connect are selected by
 default. Uncheck any you do not want to set up; this does not disconnect them.
@@ -36,9 +37,9 @@ unreadable settings with defaults.
 
 T3 Code checks each selected computer for Claude Code and Codex. If an agent is
 not installed or signed in, select its action to open a terminal with the
-correct command ready to run. Install uses the vendor's standalone installer,
-which does not need Node or npm and keeps **Update now** working in Settings.
-Other providers can be enabled in Settings.
+correct command ready to run. Install uses the vendor's own installer, which
+keeps **Update now** working in Settings. Other providers can be enabled in
+Settings.
 
 The setup terminal uses the home directory and environment configured for the
 selected provider instance. Sensitive values remain redacted in Settings and

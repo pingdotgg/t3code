@@ -22,7 +22,7 @@ export class MediaTailorTestFunction extends Lambda.Function<Lambda.Function>()(
 export default MediaTailorTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // MediaTailor control-plane calls routinely take a few seconds; AWS's
     // default 3s Lambda timeout is too tight under cold starts.
     timeout: Duration.seconds(30),

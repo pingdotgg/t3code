@@ -248,11 +248,8 @@ export type Preset = Resource<
  * the preset to a different app forces a replacement. The create API
  * requires the full config / UI / permissions objects, so the resource fills
  * unspecified sections with sensible defaults.
- * @resource
- * @product Realtime Kit
- * @category Media
- * @section Creating a Preset
- * @example Default group-call preset
+ * ### Creating a Preset
+ * **Example:** Default group-call preset
  * ```typescript
  * const app = yield* Cloudflare.RealtimeKit.App("Meetings", {});
  *
@@ -262,7 +259,7 @@ export type Preset = Resource<
  * });
  * ```
  *
- * @example Host preset with moderation permissions
+ * **Example:** Host preset with moderation permissions
  * ```typescript
  * const host = yield* Cloudflare.RealtimeKit.Preset("Host", {
  *   appId: app.appId,
@@ -277,8 +274,8 @@ export type Preset = Resource<
  * });
  * ```
  *
- * @section Updating a Preset
- * @example Switch to a webinar layout
+ * ### Updating a Preset
+ * **Example:** Switch to a webinar layout
  * ```typescript
  * const preset = yield* Cloudflare.RealtimeKit.Preset("Guest", {
  *   appId: app.appId,
@@ -291,6 +288,10 @@ export type Preset = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/realtime/realtimekit/
+ *
+ * @resource
+ * @product Realtime Kit
+ * @category Media
  */
 export const Preset = Resource<Preset>(TypeId);
 

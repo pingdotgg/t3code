@@ -105,7 +105,9 @@ describe("DynamoDB Bindings", () => {
     { timeout: 240_000 },
   );
 
-  afterAll(sharedStack.destroy(), { timeout: 60_000 });
+  // Lambda cleanup watches for late log flushes before the dependent tables
+  // can be deleted. Allow time for both phases to confirm deletion.
+  afterAll(sharedStack.destroy(), { timeout: 120_000 });
 
   describe("PutItem", () => {
     test.provider("puts an item into the table", (_stack) =>
@@ -612,6 +614,80 @@ describe("DynamoDB Bindings", () => {
         expect((response as any).count).toBe(2);
         expect((response as any).items.length).toBe(2);
       }),
+    );
+
+    test.provider(
+      "queries the multi-attribute-key GSI by composite partition key",
+      (_stack) =>
+        Effect.gen(function* () {
+          // Items carry natural attributes — the GSI indexes them without
+          // synthetic concatenated keys. The third item differs only in
+          // `subcategory`, so the composite partition key must exclude it.
+          const items = [
+            {
+              pk: "multi-query#1",
+              sk: "item1",
+              category: "electronics",
+              subcategory: "audio",
+              rank: "featured",
+            },
+            {
+              pk: "multi-query#2",
+              sk: "item2",
+              category: "electronics",
+              subcategory: "audio",
+              rank: "standard",
+            },
+            {
+              pk: "multi-query#3",
+              sk: "item3",
+              category: "electronics",
+              subcategory: "video",
+              rank: "featured",
+            },
+          ];
+          yield* Effect.forEach(items, (item) =>
+            send(
+              HttpClientRequest.bodyJsonUnsafe(
+                HttpClientRequest.post(`${baseUrl}/put`),
+                item,
+              ),
+            ),
+          );
+
+          // Both HASH attributes must be equality conditions; poll through
+          // the GSI's asynchronous propagation.
+          const byPartition = yield* Effect.gen(function* () {
+            const r = yield* HttpClient.get(
+              `${baseUrl}/query-multi?category=electronics&subcategory=audio`,
+            ).pipe(Effect.flatMap((r) => r.json));
+            if ((r as any).count !== 2) {
+              return yield* Effect.fail(new QueryNotConsistent());
+            }
+            return r;
+          }).pipe(
+            Effect.retry({
+              while: (e) => e._tag === "QueryNotConsistent",
+              schedule: Schedule.max([
+                Schedule.fixed("500 millis"),
+                Schedule.recurs(30),
+              ]),
+            }),
+          );
+          expect((byPartition as any).count).toBe(2);
+          expect(
+            ((byPartition as any).items as any[])
+              .map((item) => item.pk.S)
+              .sort(),
+          ).toEqual(["multi-query#1", "multi-query#2"]);
+
+          // Narrow by the first RANGE attribute (left-to-right).
+          const byRank = yield* HttpClient.get(
+            `${baseUrl}/query-multi?category=electronics&subcategory=audio&rank=featured`,
+          ).pipe(Effect.flatMap((r) => r.json));
+          expect((byRank as any).count).toBe(1);
+          expect((byRank as any).items[0].pk.S).toBe("multi-query#1");
+        }),
     );
   });
 

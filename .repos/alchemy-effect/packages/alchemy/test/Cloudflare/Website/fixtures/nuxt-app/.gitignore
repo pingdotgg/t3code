@@ -1,0 +1,4 @@
+.nuxt/
+.output/
+.data/
+dist/

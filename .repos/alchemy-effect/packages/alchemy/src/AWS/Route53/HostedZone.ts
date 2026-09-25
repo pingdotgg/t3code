@@ -81,9 +81,8 @@ export interface HostedZone extends Resource<
  * `HostedZone` manages the lifecycle of a public or private hosted zone,
  * including its comment and tags. For public zones, the four authoritative
  * name servers are exposed as `nameServers`.
- * @resource
- * @section Creating a Hosted Zone
- * @example Public Hosted Zone
+ * ### Creating a Hosted Zone
+ * **Example:** Public Hosted Zone
  * ```typescript
  * const zone = yield* HostedZone("MyZone", {
  *   name: "example.com",
@@ -92,13 +91,15 @@ export interface HostedZone extends Resource<
  * // zone.nameServers -> the 4 NS records to set at your registrar
  * ```
  *
- * @example Force Destroy
+ * **Example:** Force Destroy
  * ```typescript
  * const zone = yield* HostedZone("MyZone", {
  *   name: "example.com",
  *   forceDestroy: true, // delete leftover records on destroy
  * });
  * ```
+ *
+ * @resource
  */
 export const HostedZone = Resource<HostedZone>("AWS.Route53.HostedZone");
 

@@ -7,9 +7,8 @@ import type { Pipeline } from "./Pipeline.ts";
  * Runtime binding for `codepipeline:GetPipelineState` — returns the current
  * state of every stage and action in the pipeline, including in-flight
  * executions, transition states, and manual-approval tokens.
- * @binding
- * @section Observing Pipelines
- * @example Read the Pipeline State
+ * ### Observing Pipelines
+ * **Example:** Read the Pipeline State
  * ```typescript
  * const getState = yield* AWS.CodePipeline.GetPipelineState(pipeline);
  *
@@ -18,6 +17,8 @@ import type { Pipeline } from "./Pipeline.ts";
  *   ?.find((s) => s.stageName === "Approve")
  *   ?.actionStates?.find((a) => a.actionName === "ManualApproval");
  * ```
+ *
+ * @binding
  */
 export interface GetPipelineState extends Binding.Service<
   GetPipelineState,
