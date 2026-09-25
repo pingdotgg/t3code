@@ -143,6 +143,10 @@
       "types": "./src/state/models.ts",
       "default": "./src/state/models.ts"
     },
+    "./state/thread-status": {
+      "types": "./src/state/threadStatus.ts",
+      "default": "./src/state/threadStatus.ts"
+    },
     "./state/orchestration": {
       "types": "./src/state/orchestration.ts",
       "default": "./src/state/orchestration.ts"

@@ -43,6 +43,9 @@ export interface Preferences {
   /** Fresh keys reset both shelves to collapsed when users update. */
   readonly threadListSettledShelfExpanded?: boolean;
   readonly threadListSnoozedShelfExpanded?: boolean;
+  /** When each thread was last opened, stamped at the completion the reader saw. Drives the
+      list's Done label the same way the web sidebar's local store does. */
+  readonly threadLastVisitedAtById?: Readonly<Record<string, string>>;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
@@ -103,7 +106,16 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     modelFavorites?: Preferences["modelFavorites"];
     threadListSettledShelfExpanded?: boolean;
     threadListSnoozedShelfExpanded?: boolean;
+    threadLastVisitedAtById?: Readonly<Record<string, string>>;
   } = {};
+
+  if (parsed.threadLastVisitedAtById && typeof parsed.threadLastVisitedAtById === "object") {
+    const visits: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed.threadLastVisitedAtById)) {
+      if (typeof value === "string" && !Number.isNaN(Date.parse(value))) visits[key] = value;
+    }
+    preferences.threadLastVisitedAtById = visits;
+  }
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;

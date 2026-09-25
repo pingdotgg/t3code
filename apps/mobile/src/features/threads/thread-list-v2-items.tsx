@@ -18,6 +18,11 @@ import type {
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  formatWorkingDurationLabel,
+  hasUnseenCompletion,
+  resolveWorkingStartedAt,
+} from "@t3tools/client-runtime/state/thread-status";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import { Alert, Pressable, useWindowDimensions, View } from "react-native";
@@ -35,6 +40,8 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
+import { scopedThreadKey } from "../../lib/scopedEntities";
+import { useThreadLastVisitedAtById } from "./use-thread-visits";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import {
@@ -64,8 +71,26 @@ const STATUS_LABEL_BY_STATUS: Partial<
   approval: { label: "Approval", className: "text-warning-foreground" },
   input: { label: "Input", className: "text-adaptive-indigo-600-300" },
   working: { label: "Working", className: "text-adaptive-sky-600-400" },
+  // Monitoring is calm background presence, not active progress, so it keeps
+  // the label at full strength.
+  monitoring: { label: "Monitoring", className: "text-foreground" },
   failed: { label: "Failed", className: "text-danger-foreground" },
 };
+// Done is not a status: a ready thread whose latest turn the reader has not opened yet.
+const DONE_LABEL = { label: "Done", className: "text-adaptive-emerald-700-300" };
+
+// Self-ticking so only this span re-renders each second, not the whole row.
+function WorkingDuration(props: { startedAt: string | null }) {
+  const startedMs = props.startedAt !== null ? Date.parse(props.startedAt) : Number.NaN;
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (Number.isNaN(startedMs)) return;
+    const id = setInterval(() => setNowMs(Date.now()), 1_000);
+    return () => clearInterval(id);
+  }, [startedMs]);
+  if (Number.isNaN(startedMs)) return null;
+  return <Text> {formatWorkingDurationLabel(nowMs - startedMs)}</Text>;
+}
 
 // Menus keep lifecycle and title regeneration together. Archive keeps its
 // own surface (thread screen / settings) rather than crowding v2 rows.
@@ -554,7 +579,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
 
   const status = resolveThreadListV2Status(thread);
-  const statusLabel = STATUS_LABEL_BY_STATUS[status];
+  const lastVisitedAt =
+    useThreadLastVisitedAtById()[scopedThreadKey(thread.environmentId, thread.id)];
+  const isUnread = status === "ready" && hasUnseenCompletion(thread, lastVisitedAt);
+  const statusLabel = STATUS_LABEL_BY_STATUS[status] ?? (isUnread ? DONE_LABEL : undefined);
   // The timestamp is precomputed on the list item (same stamps the settled
   // tail sorts by) so a minute tick only re-renders rows that draw it.
   const timeLabel = props.timeLabel;
@@ -927,6 +955,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           )}
         >
           {statusLabel?.label ?? timeLabel}
+          {status === "working" ? (
+            <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
+          ) : null}
         </Text>
       </View>
       <Text

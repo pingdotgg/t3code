@@ -54,6 +54,7 @@ import { readPastedComposerContext } from "./composerInlineTokenPaste";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { type CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import { resolveThreadVisitStamp } from "@t3tools/client-runtime/state/thread-status";
 import {
   parseCodexFeedbackCommand,
   submitCodexFeedback,
@@ -2108,24 +2109,18 @@ export default function ChatView(props: ChatViewProps) {
   const activeRunningTurnId =
     (activeThread?.session?.status === "running" ? activeThread.session.activeTurnId : null) ??
     (activeLatestTurn?.state === "running" ? activeLatestTurn.turnId : null);
-  // Reading a finished thread clears the sidebar's Done badge. The visit is
-  // stamped at the turn's completion time — not now/updatedAt — so it clears
-  // exactly the completion the user is looking at: a wake or completion that
-  // lands later still gets its signal (markThreadVisited never moves the
-  // timestamp backwards).
+  // Opening a thread stamps a visit so the sidebar's Done badge clears, and so
+  // a completion that lands after the user leaves still signals. See
+  // resolveThreadVisitStamp for what is stamped; markThreadVisited never moves
+  // the timestamp backwards.
+  const serverThreadVisitedAt = serverThread ? resolveThreadVisitStamp(serverThread) : null;
   useEffect(() => {
-    const completedAt = serverThread?.latestTurn?.completedAt;
-    if (!serverThread?.id || !completedAt) return;
+    if (!serverThread?.id || serverThreadVisitedAt === null) return;
     markThreadVisited(
       scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
-      completedAt,
+      serverThreadVisitedAt,
     );
-  }, [
-    markThreadVisited,
-    serverThread?.environmentId,
-    serverThread?.id,
-    serverThread?.latestTurn?.completedAt,
-  ]);
+  }, [markThreadVisited, serverThread?.environmentId, serverThread?.id, serverThreadVisitedAt]);
   useEffect(() => {
     setMountedTerminalThreadKeys((currentThreadIds) => {
       const nextThreadIds = reconcileMountedTerminalThreadIds({

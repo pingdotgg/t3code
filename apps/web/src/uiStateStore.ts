@@ -1,4 +1,8 @@
 import { Debouncer } from "@tanstack/react-pacer";
+import {
+  withThreadMarkedUnread,
+  withThreadVisited,
+} from "@t3tools/client-runtime/state/thread-status";
 import type { PullRequestMergeMethod } from "@t3tools/contracts";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
@@ -248,26 +252,10 @@ export function persistState(state: UiState): void {
 const debouncedPersistState = new Debouncer(persistState, { wait: 500 });
 
 export function markThreadVisited(state: UiState, threadId: string, visitedAt: string): UiState {
-  const visitedAtMs = Date.parse(visitedAt);
-  if (!Number.isFinite(visitedAtMs)) {
-    return state;
-  }
-  const previousVisitedAt = state.threadLastVisitedAtById[threadId];
-  const previousVisitedAtMs = previousVisitedAt ? Date.parse(previousVisitedAt) : NaN;
-  if (
-    Number.isFinite(previousVisitedAtMs) &&
-    Number.isFinite(visitedAtMs) &&
-    previousVisitedAtMs >= visitedAtMs
-  ) {
-    return state;
-  }
-  return {
-    ...state,
-    threadLastVisitedAtById: {
-      ...state.threadLastVisitedAtById,
-      [threadId]: visitedAt,
-    },
-  };
+  const next = withThreadVisited(state.threadLastVisitedAtById, threadId, visitedAt);
+  return next === state.threadLastVisitedAtById
+    ? state
+    : { ...state, threadLastVisitedAtById: next };
 }
 
 export function markThreadUnread(
@@ -275,24 +263,14 @@ export function markThreadUnread(
   threadId: string,
   latestTurnCompletedAt: string | null | undefined,
 ): UiState {
-  if (!latestTurnCompletedAt) {
-    return state;
-  }
-  const latestTurnCompletedAtMs = Date.parse(latestTurnCompletedAt);
-  if (Number.isNaN(latestTurnCompletedAtMs)) {
-    return state;
-  }
-  const unreadVisitedAt = new Date(latestTurnCompletedAtMs - 1).toISOString();
-  if (state.threadLastVisitedAtById[threadId] === unreadVisitedAt) {
-    return state;
-  }
-  return {
-    ...state,
-    threadLastVisitedAtById: {
-      ...state.threadLastVisitedAtById,
-      [threadId]: unreadVisitedAt,
-    },
-  };
+  const next = withThreadMarkedUnread(
+    state.threadLastVisitedAtById,
+    threadId,
+    latestTurnCompletedAt,
+  );
+  return next === state.threadLastVisitedAtById
+    ? state
+    : { ...state, threadLastVisitedAtById: next };
 }
 
 export function setThreadChangedFilesExpanded(

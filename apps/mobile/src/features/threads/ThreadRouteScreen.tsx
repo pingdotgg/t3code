@@ -1,3 +1,6 @@
+import { resolveThreadVisitStamp } from "@t3tools/client-runtime/state/thread-status";
+
+import { useMarkThreadVisited } from "./use-thread-visits";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import {
@@ -336,6 +339,22 @@ function ThreadRouteContent(
   } = useThreadSelection();
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
+  // Opening a thread stamps a visit so the list's Done label clears, and so a completion that
+  // lands after the reader leaves still signals. See resolveThreadVisitStamp for what is stamped.
+  // Focus-gated: this screen stays mounted under Files and Terminal, and a completion that lands
+  // while the reader is there has not been seen.
+  const markThreadVisited = useMarkThreadVisited();
+  const visitedThreadKey =
+    selectedThread === null
+      ? null
+      : scopedThreadKey(selectedThread.environmentId, selectedThread.id);
+  const visitedAt = selectedThread === null ? null : resolveThreadVisitStamp(selectedThread);
+  useFocusEffect(
+    useCallback(() => {
+      if (visitedThreadKey === null || visitedAt === null) return;
+      markThreadVisited(visitedThreadKey, visitedAt);
+    }, [markThreadVisited, visitedThreadKey, visitedAt]),
+  );
   // "Load earlier turns" header state for windowed (paginated) thread loads.
   const loadEarlierTurns = useMemo(() => {
     if (selectedThread === null || !threadHasOlderTurns(selectedThreadDetailState)) {
