@@ -23,6 +23,15 @@ export const BRAND_ASSET_PATHS = {
   nightlyWebFavicon32Png: "assets/nightly/nightly-web-favicon-32x32.png",
   nightlyWebAppleTouchIconPng: "assets/nightly/nightly-web-apple-touch-180.png",
 
+  // Chromeria (toolboxmd fork) brand, used by stable desktop and web builds.
+  // The 1024px source is the macOS rounded-square icon; the rest derive from it.
+  chromeriaIconPng: "assets/chromeria/chromeria-icon-1024.png",
+  chromeriaWindowsIconIco: "assets/chromeria/chromeria-windows.ico",
+  chromeriaWebFaviconIco: "assets/chromeria/chromeria-web-favicon.ico",
+  chromeriaWebFavicon16Png: "assets/chromeria/chromeria-web-favicon-16x16.png",
+  chromeriaWebFavicon32Png: "assets/chromeria/chromeria-web-favicon-32x32.png",
+  chromeriaWebAppleTouchIconPng: "assets/chromeria/chromeria-web-apple-touch-180.png",
+
   developmentDesktopIconPng: "assets/dev/blueprint-macos-1024.png",
   developmentWindowsIconIco: "assets/dev/blueprint-windows.ico",
   developmentWebFaviconIco: "assets/dev/blueprint-web-favicon.ico",
@@ -71,10 +80,10 @@ const WEB_ICON_SOURCE_PATHS_BY_BRAND = {
     appleTouchIconPng: BRAND_ASSET_PATHS.nightlyWebAppleTouchIconPng,
   },
   production: {
-    faviconIco: BRAND_ASSET_PATHS.productionWebFaviconIco,
-    favicon16Png: BRAND_ASSET_PATHS.productionWebFavicon16Png,
-    favicon32Png: BRAND_ASSET_PATHS.productionWebFavicon32Png,
-    appleTouchIconPng: BRAND_ASSET_PATHS.productionWebAppleTouchIconPng,
+    faviconIco: BRAND_ASSET_PATHS.chromeriaWebFaviconIco,
+    favicon16Png: BRAND_ASSET_PATHS.chromeriaWebFavicon16Png,
+    favicon32Png: BRAND_ASSET_PATHS.chromeriaWebFavicon32Png,
+    appleTouchIconPng: BRAND_ASSET_PATHS.chromeriaWebAppleTouchIconPng,
   },
 } as const satisfies Record<WebAssetBrand, Record<keyof typeof WEB_ICON_TARGET_FILENAMES, string>>;
 

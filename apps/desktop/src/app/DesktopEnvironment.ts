@@ -95,7 +95,9 @@ export class DesktopEnvironment extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopEnvironment") {}
 
-const APP_BASE_NAME = "T3 Code";
+// Chromeria (toolboxmd fork): product name shown in window titles, menus and
+// the About panel. The stable build shows the bare name without "(Alpha)".
+const APP_BASE_NAME = "Chromeria";
 
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
@@ -116,7 +118,7 @@ export function resolveDesktopAppBranding(input: {
   return {
     baseName: APP_BASE_NAME,
     stageLabel,
-    displayName: `${APP_BASE_NAME} (${stageLabel})`,
+    displayName: stageLabel === "Alpha" ? APP_BASE_NAME : `${APP_BASE_NAME} (${stageLabel})`,
   };
 }
 
@@ -188,8 +190,11 @@ const make = Effect.fn("desktop.environment.make")(function* (
     joinPath: path.join,
     t3Home: config.t3Home,
   });
-  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+  // Chromeria keeps its own Electron userData directory so it can run beside
+  // upstream T3 Code, which holds a single-instance lock on "t3code". Threads
+  // and settings live in the shared T3 home (stateDir), not here.
+  const userDataDirName = isDevelopment ? "t3code-dev" : "chromeria";
+  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "Chromeria";
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
     "applications",

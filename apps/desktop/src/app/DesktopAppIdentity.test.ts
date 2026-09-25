@@ -129,9 +129,7 @@ const withIdentity = <A, E, R>(
             exists: (path) =>
               input.legacyPathProbeError
                 ? Effect.fail(input.legacyPathProbeError)
-                : Effect.succeed(
-                    input.legacyPathExists === true && path.includes("T3 Code (Alpha)"),
-                  ),
+                : Effect.succeed(input.legacyPathExists === true && path.includes("Chromeria")),
             readFileString: () =>
               Effect.succeed(input.packageJson ?? '{"t3codeCommitHash":"abcdef1234567890"}'),
           }),
@@ -151,14 +149,14 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         const userDataPath = yield* identity.resolveUserDataPath;
 
-        assert.equal(userDataPath, "/Users/alice/Library/Application Support/T3 Code (Alpha)");
+        assert.equal(userDataPath, "/Users/alice/Library/Application Support/Chromeria");
       }),
       { legacyPathExists: true },
     ),
   );
 
   it.effect("preserves failures while inspecting the legacy userData path", () => {
-    const legacyPath = "/Users/alice/Library/Application Support/T3 Code (Alpha)";
+    const legacyPath = "/Users/alice/Library/Application Support/Chromeria";
     const cause = PlatformError.systemError({
       _tag: "PermissionDenied",
       module: "FileSystem",
@@ -196,8 +194,8 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         yield* identity.configure;
 
-        assert.deepEqual(calls.setName, ["T3 Code (Alpha)"]);
-        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "T3 Code (Alpha)");
+        assert.deepEqual(calls.setName, ["Chromeria"]);
+        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "Chromeria");
         assert.equal(calls.setAboutPanelOptions[0]?.applicationVersion, "1.2.3");
         assert.equal(calls.setAboutPanelOptions[0]?.version, "0123456789ab");
         // Packaged: the bundle's own icon stands, so a custom one the user
