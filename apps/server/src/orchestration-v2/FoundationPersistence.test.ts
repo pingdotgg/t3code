@@ -2802,6 +2802,232 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
+  it.effect("settles a native subagent's child thread when its provider process is gone", () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const parentId = ThreadId.make("thread:foundation-native-subagent-parent");
+      const childId = ThreadId.make("thread:foundation-native-subagent-child");
+      const runId = RunId.make("run:foundation-native-subagent");
+      const subagentId = NodeId.make("node:foundation-native-subagent");
+      const childRootId = NodeId.make("node:foundation-native-subagent-child-root");
+      const parent = makeThread(parentId, now);
+      const child: OrchestrationV2AppThread = {
+        ...makeThread(childId, now),
+        createdBy: "agent",
+        creationSource: "provider",
+        lineage: {
+          parentThreadId: parentId,
+          relationshipToParent: "subagent",
+          rootThreadId: parentId,
+        },
+        forkedFrom: { type: "node", nodeId: subagentId },
+      };
+      const node = (input: {
+        readonly id: NodeId;
+        readonly threadId: ThreadId;
+        readonly runId: RunId | null;
+        readonly kind: "root_turn" | "subagent";
+      }) => ({
+        ...input,
+        parentNodeId: null,
+        rootNodeId: input.id,
+        status: "running" as const,
+        countsForRun: false,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: null,
+      });
+      // The parent run settled while its background subagent kept working,
+      // then the server died. Recovery already cancels the parent's subagent
+      // item, entity, and node; the child's runless root turn lives on another
+      // thread and must be settled too.
+      yield* eventSink.commitCommand({
+        commandId: CommandId.make("command:foundation-native-subagent"),
+        threadId: parentId,
+        commandType: "foundation.native-subagent",
+        acceptedAt: now,
+        events: [
+          threadCreatedEvent({
+            id: "event:foundation-native-subagent:parent",
+            thread: parent,
+            now,
+          }),
+          threadCreatedEvent({ id: "event:foundation-native-subagent:child", thread: child, now }),
+          {
+            id: EventId.make("event:foundation-native-subagent:run"),
+            type: "run.created",
+            threadId: parentId,
+            runId,
+            providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: runId,
+              threadId: parentId,
+              ordinal: 1,
+              providerInstanceId,
+              modelSelection,
+              providerThreadId: null,
+              userMessageId: MessageId.make("message:foundation-native-subagent"),
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "completed",
+              queuePosition: null,
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          },
+          {
+            id: EventId.make("event:foundation-native-subagent:subagent-node"),
+            type: "node.updated",
+            threadId: parentId,
+            runId,
+            nodeId: subagentId,
+            occurredAt: now,
+            payload: node({ id: subagentId, threadId: parentId, runId, kind: "subagent" }),
+          },
+          {
+            id: EventId.make("event:foundation-native-subagent:child-root"),
+            type: "node.updated",
+            threadId: childId,
+            nodeId: childRootId,
+            occurredAt: now,
+            payload: node({ id: childRootId, threadId: childId, runId: null, kind: "root_turn" }),
+          },
+          {
+            // Claude's live "Subagent progress" item in the child, as the
+            // adapter writes it while task_progress frames arrive.
+            id: EventId.make("event:foundation-native-subagent:child-progress"),
+            type: "turn-item.updated",
+            threadId: childId,
+            nodeId: childRootId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make("item:foundation-native-subagent:progress"),
+              threadId: childId,
+              runId: null,
+              nodeId: childRootId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 101,
+              type: "reasoning",
+              status: "running",
+              title: "Subagent progress",
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+              text: "Running git diff --stat",
+              streaming: true,
+            },
+          },
+          {
+            id: EventId.make("event:foundation-native-subagent:subagent"),
+            type: "subagent.updated",
+            threadId: parentId,
+            runId,
+            nodeId: subagentId,
+            driver: providerDriver,
+            providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: subagentId,
+              threadId: parentId,
+              runId,
+              parentNodeId: subagentId,
+              origin: "provider_native",
+              createdBy: "agent",
+              driver: providerDriver,
+              providerInstanceId,
+              providerThreadId: null,
+              childThreadId: childId,
+              nativeTaskRef: null,
+              prompt: "Audit the adapters",
+              title: null,
+              model: null,
+              status: "running",
+              result: null,
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+            },
+          },
+          {
+            id: EventId.make("event:foundation-native-subagent:item"),
+            type: "turn-item.updated",
+            threadId: parentId,
+            runId,
+            nodeId: subagentId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make("item:foundation-native-subagent"),
+              threadId: parentId,
+              runId,
+              nodeId: subagentId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              type: "subagent",
+              status: "running",
+              title: null,
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+              subagentId,
+              origin: "provider_native",
+              driver: providerDriver,
+              providerInstanceId,
+              childThreadId: childId,
+              prompt: "Audit the adapters",
+              result: null,
+            },
+          },
+        ],
+        effects: [],
+      });
+
+      const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+        Effect.provide(ServerSettings.layerTest()),
+        Effect.provideService(
+          OrchestrationEffectWorkerV2,
+          OrchestrationEffectWorkerV2.of({
+            awaitWork: Effect.void,
+            runRecoveryOnce: Effect.succeed(false),
+            runOnce: Effect.succeed(false),
+            nextClaimableAt: Effect.succeed(Option.none()),
+            drain: () => Effect.succeed(0),
+          }),
+        ),
+      );
+      assert.include(yield* projectionStore.getRecoveryThreadIds("runtime"), childId);
+      yield* recovery.recover;
+
+      const parentProjection = yield* projectionStore.getThreadProjection(parentId);
+      assert.equal(parentProjection.subagents[0]?.status, "cancelled");
+      const childProjection = yield* projectionStore.getThreadProjection(childId);
+      const childRoot = childProjection.nodes.find((candidate) => candidate.id === childRootId);
+      assert.equal(childRoot?.status, "cancelled");
+      assert.isNotNull(childRoot?.completedAt ?? null);
+      // Nothing inside the child keeps reading as live work either.
+      const progress = childProjection.turnItems.find((item) => item.type === "reasoning");
+      assert.equal(progress?.status, "cancelled");
+      assert.isFalse(progress?.type === "reasoning" && progress.streaming);
+      assert.isNotNull(progress?.completedAt ?? null);
+      assert.notInclude(yield* projectionStore.getRecoveryThreadIds("runtime"), childId);
+    }),
+  );
+
   it.effect("allocates collision-free positions beyond 100 items and rebuilds equivalently", () =>
     Effect.gen(function* () {
       const eventSink = yield* EventSinkV2;

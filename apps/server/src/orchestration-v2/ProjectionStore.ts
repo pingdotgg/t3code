@@ -3363,6 +3363,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 CROSS JOIN orchestration_v2_projection_subagents AS subagents
                   ON subagents.provider_thread_id = pending_provider_threads.provider_thread_id
                 UNION
+                SELECT subagents.child_thread_id FROM orchestration_v2_projection_subagents AS subagents
+                WHERE subagents.child_thread_id IS NOT NULL
+                  AND EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_nodes AS node
+                    WHERE node.thread_id = subagents.child_thread_id
+                      AND node.run_id IS NULL
+                      AND node.kind = 'root_turn'
+                      AND node.status IN ('pending', 'running', 'waiting')
+                  )
+                UNION
                 SELECT item.thread_id FROM orchestration_v2_projection_turn_items AS item
                 WHERE NOT EXISTS (
                     SELECT 1 FROM orchestration_v2_projection_runs AS run
@@ -3730,7 +3740,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE node.thread_id = ${threadId}
                 AND node.status IN ('pending', 'starting', 'running', 'waiting')
                 AND (
-                  node.run_id IN (
+                  (node.run_id IS NULL AND node.kind = 'root_turn')
+                  OR node.run_id IN (
                     SELECT run_id FROM orchestration_v2_projection_runs
                     WHERE thread_id = ${threadId}
                       AND status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
@@ -3867,6 +3878,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
                   )
                   OR item.type IN ('command_execution', 'dynamic_tool', 'subagent')
+                  OR (
+                    item.run_id IS NULL
+                    AND item.node_id IN (
+                      SELECT node_id FROM orchestration_v2_projection_nodes
+                      WHERE thread_id = ${threadId}
+                        AND run_id IS NULL
+                        AND kind = 'root_turn'
+                        AND status IN ('pending', 'running', 'waiting')
+                    )
+                  )
                 )
               ORDER BY item.ordinal ASC, item.turn_item_id ASC
             `,
