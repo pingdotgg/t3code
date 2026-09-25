@@ -161,12 +161,17 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 @theme inline {
   /* Two steps below Tailwind's text-xs (12px) for dense UI: metadata rows,
      badges, counters, keyboard hints and diagnostics tables. 2xs is 11px,
-     3xs is 10px and the floor of the scale. Registered with tailwind-merge in
+     3xs is 10px. Provider icon overlays use 4xs (8px) and 5xs (7px) to fit
+     their smaller badges. Registered with tailwind-merge in
      lib/utils.ts so cn() treats them as font sizes, not colours. */
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: calc(1 / 0.6875);
   --text-3xs: 0.625rem;
   --text-3xs--line-height: calc(0.875 / 0.625);
+  --text-4xs: 0.5rem;
+  --text-4xs--line-height: 1;
+  --text-5xs: 0.4375rem;
+  --text-5xs--line-height: 1;
   /* Motion. drawer is the decelerating curve for surfaces that slide or pop in
      (composer context, pills). */
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
