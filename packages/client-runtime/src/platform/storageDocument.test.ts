@@ -207,7 +207,7 @@ describe("ConnectionCatalogDocument", () => {
       remoteDpopTokens: [token],
     };
     const schema = Schema.fromJsonString(ConnectionCatalogDocument);
-    const restored = Schema.decodeUnknownSync(schema)(Schema.encodeSync(schema)(document));
+    const restored = Schema.decodeSync(schema)(Schema.encodeSync(schema)(document));
 
     expect(restored).toEqual(document);
     expect(restored.remoteDpopTokens[0]?.accountId).toBe(accountId);

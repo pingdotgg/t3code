@@ -131,17 +131,22 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
       const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);
 
       const checkProvider = checkGrokProviderStatus(effectiveConfig, processEnv, cwd).pipe(
-        Effect.flatMap((snapshot) =>
-          effectiveConfig.enabled && snapshot.installed && snapshot.auth.status === "authenticated"
-            ? readGrokAccount(processEnv).pipe(
-                // The email lets clients recognize one account signed in on several environments.
-                Effect.map(({ email, usageLimits }) => ({
-                  ...snapshot,
-                  auth: email ? { ...snapshot.auth, email } : snapshot.auth,
-                  usageLimits,
-                })),
-              )
-            : Effect.succeed(snapshot),
+        Effect.filterOrElse(
+          (snapshot) =>
+            !(
+              effectiveConfig.enabled &&
+              snapshot.installed &&
+              snapshot.auth.status === "authenticated"
+            ),
+          (snapshot) =>
+            readGrokAccount(processEnv).pipe(
+              // The email lets clients recognize one account signed in on several environments.
+              Effect.map(({ email, usageLimits }) => ({
+                ...snapshot,
+                auth: email ? { ...snapshot.auth, email } : snapshot.auth,
+                usageLimits,
+              })),
+            ),
         ),
         Effect.map(stampIdentity),
         Effect.provideService(HttpClient.HttpClient, httpClient),

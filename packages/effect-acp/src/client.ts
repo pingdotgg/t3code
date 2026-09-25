@@ -346,11 +346,9 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     registration: BufferedNotificationHandler<A>,
     notification: A,
   ) =>
-    Effect.forEach(
-      registration.handlers,
-      (handler) => handler(notification).pipe(Effect.catch(() => Effect.void)),
-      { discard: true },
-    );
+    Effect.forEach(registration.handlers, (handler) => handler(notification).pipe(Effect.ignore), {
+      discard: true,
+    });
 
   const flushBufferedNotifications = <A>(registration: BufferedNotificationHandler<A>) =>
     Effect.suspend(() => {

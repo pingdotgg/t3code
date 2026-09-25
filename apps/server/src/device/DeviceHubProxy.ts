@@ -142,7 +142,7 @@ const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
         pumpFrames(client, writeToUpstream),
       );
     }),
-  ).pipe(Effect.catchCause(() => Effect.void));
+  ).pipe(Effect.ignoreCause);
   return HttpServerResponse.empty();
 });
 

@@ -153,14 +153,12 @@ const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make")(func
         Effect.flatMap((decoded) =>
           Effect.forEach(handlers, (handler) => handler(decoded), { discard: true }),
         ),
-        Effect.catch(() => Effect.void),
+        Effect.ignore,
       );
     }
 
     return unknownNotificationHandler
-      ? unknownNotificationHandler(notification.method, notification.params).pipe(
-          Effect.catch(() => Effect.void),
-        )
+      ? unknownNotificationHandler(notification.method, notification.params).pipe(Effect.ignore)
       : Effect.void;
   };
 

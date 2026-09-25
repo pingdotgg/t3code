@@ -780,17 +780,16 @@ export const make = (
           resumePayload,
           acp.agent.resumeSession(resumePayload).pipe(
             Effect.timeoutOption(options.sessionLoadTimeout ?? defaultSessionLoadTimeout),
-            Effect.flatMap((result) =>
-              Option.isSome(result)
-                ? Effect.succeed(result.value)
-                : Effect.fail(
-                    new EffectAcpErrors.AcpTransportError({
-                      operation: "call-rpc",
-                      method: "session/resume",
-                      detail: "session/resume timed out waiting for the agent response.",
-                      cause: undefined,
-                    }),
-                  ),
+            Effect.flatMap(
+              Effect.fromOption(
+                () =>
+                  new EffectAcpErrors.AcpTransportError({
+                    operation: "call-rpc",
+                    method: "session/resume",
+                    detail: "session/resume timed out waiting for the agent response.",
+                    cause: undefined,
+                  }),
+              ),
             ),
           ),
         );
@@ -834,19 +833,16 @@ export const make = (
           ).pipe(
             Effect.ensuring(Fiber.interrupt(idleFiber).pipe(Effect.ignore)),
             Effect.timeoutOption(sessionLoadTimeout),
-            Effect.flatMap((result) =>
-              Option.match(result, {
-                onNone: () =>
-                  Effect.fail(
-                    new EffectAcpErrors.AcpTransportError({
-                      operation: "call-rpc",
-                      method: "session/load",
-                      detail: "session/load timed out waiting for RPC response or replay idle gap",
-                      cause: undefined,
-                    }),
-                  ),
-                onSome: Effect.succeed,
-              }),
+            Effect.flatMap(
+              Effect.fromOption(
+                () =>
+                  new EffectAcpErrors.AcpTransportError({
+                    operation: "call-rpc",
+                    method: "session/load",
+                    detail: "session/load timed out waiting for RPC response or replay idle gap",
+                    cause: undefined,
+                  }),
+              ),
             ),
             Effect.tap((result) =>
               logRequest({
@@ -1058,12 +1054,13 @@ export const make = (
             ),
             (activePrompt) =>
               Fiber.join(activePrompt.fiber).pipe(
-                Effect.catchCause((cause) =>
-                  options.cancelBehavior !== "wait-for-prompt" && Cause.hasInterruptsOnly(cause)
-                    ? Effect.succeed({
-                        stopReason: "cancelled",
-                      } satisfies EffectAcpSchema.PromptResponse)
-                    : Effect.failCause(cause),
+                Effect.catchCauseIf(
+                  (cause) =>
+                    options.cancelBehavior !== "wait-for-prompt" && Cause.hasInterruptsOnly(cause),
+                  () =>
+                    Effect.succeed({
+                      stopReason: "cancelled",
+                    } satisfies EffectAcpSchema.PromptResponse),
                 ),
                 Effect.tap(() =>
                   closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef }),

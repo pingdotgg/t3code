@@ -471,8 +471,9 @@ export const make = Effect.gen(function* () {
                 ? updateExistingDnsRecords(records, preferredDnsRecordId, dnsRecord)
                 : Effect.fail(createError),
             ),
-            Effect.flatMap((dnsRecordId) =>
-              dnsRecordId === null ? Effect.fail(createError) : Effect.succeed(dnsRecordId),
+            Effect.filterOrFail(
+              (dnsRecordId) => dnsRecordId !== null,
+              () => createError,
             ),
           ),
       }),
@@ -578,19 +579,19 @@ export const make = Effect.gen(function* () {
                     ? Effect.succeed("missing" as const)
                     : Effect.fail(error),
               }),
-              Effect.flatMap((result) =>
-                result === "missing"
-                  ? Effect.succeed(result)
-                  : allocations
-                      .markReady({
-                        ...input,
-                        generation: allocation.generation,
-                      })
-                      .pipe(
-                        Effect.map((updated) =>
-                          updated ? ("configured" as const) : ("stale" as const),
-                        ),
+              Effect.filterOrElse(
+                (result): result is "missing" => result === "missing",
+                () =>
+                  allocations
+                    .markReady({
+                      ...input,
+                      generation: allocation.generation,
+                    })
+                    .pipe(
+                      Effect.map((updated) =>
+                        updated ? ("configured" as const) : ("stale" as const),
                       ),
+                    ),
               ),
             ),
         )
@@ -791,11 +792,11 @@ export const make = Effect.gen(function* () {
         const expectedStatus = input.expectedStatus;
         const inactiveBefore = input.expectedInactiveBefore;
         const currentTunnel = yield* tunnels.get(tunnelId).pipe(
-          Effect.map(Option.some),
+          Effect.asSome,
           Effect.catchTags({
             ManagedEndpointTunnelClientError: (cause) =>
               isManagedEndpointNotFound(cause.cause)
-                ? Effect.succeed(Option.none())
+                ? Effect.succeedNone
                 : Effect.fail(
                     new ManagedEndpointDeprovisioningFailed({
                       ...input,

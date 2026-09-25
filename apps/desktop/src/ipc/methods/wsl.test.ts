@@ -2,7 +2,6 @@ import { DesktopWslStateSchema } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
@@ -34,7 +33,7 @@ function makeWslBackendLayer(input: { readonly onReconcile?: Effect.Effect<void>
     DesktopWslBackend.DesktopWslBackend,
     DesktopWslBackend.DesktopWslBackend.of({
       reconcile: input.onReconcile ?? Effect.void,
-      lastPreflightError: Effect.succeed(Option.none()),
+      lastPreflightError: Effect.succeedNone,
     }),
   );
 }

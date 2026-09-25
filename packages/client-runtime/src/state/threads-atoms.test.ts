@@ -200,7 +200,7 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
       Layer.succeed(
         EnvironmentCacheStore,
         EnvironmentCacheStore.of({
-          loadShell: () => Effect.succeed(Option.none()),
+          loadShell: () => Effect.succeedNone,
           saveShell: () => Effect.void,
           loadThread: () =>
             Effect.sync(() => {
@@ -209,9 +209,9 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
             }),
           saveThread: () => Effect.void,
           removeThread: () => Effect.void,
-          loadServerConfig: () => Effect.succeed(Option.none()),
+          loadServerConfig: () => Effect.succeedNone,
           saveServerConfig: () => Effect.void,
-          loadVcsRefs: () => Effect.succeed(Option.none()),
+          loadVcsRefs: () => Effect.succeedNone,
           saveVcsRefs: () => Effect.void,
           removeVcsRefs: () => Effect.void,
           clearVcsRefs: () => Effect.void,

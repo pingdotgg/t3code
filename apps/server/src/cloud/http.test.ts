@@ -252,7 +252,7 @@ describe("reconcileDesiredCloudLink", () => {
         CliTokenManager.CloudCliTokenManager,
         CliTokenManager.CloudCliTokenManager.of({
           get: unusedSecretStoreOperation(),
-          getExisting: Effect.succeed(Option.none()),
+          getExisting: Effect.succeedNone,
           hasCredential: unusedSecretStoreOperation(),
           store: () => unusedSecretStoreOperation(),
           clear: unusedSecretStoreOperation(),
@@ -411,7 +411,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
           CliTokenManager.CloudCliTokenManager,
           CliTokenManager.CloudCliTokenManager.of({
             get: unusedSecretStoreOperation(),
-            getExisting: Effect.succeed(Option.some(cliToken)),
+            getExisting: Effect.succeedSome(cliToken),
             hasCredential: unusedSecretStoreOperation(),
             store: () => unusedSecretStoreOperation(),
             clear: unusedSecretStoreOperation(),

@@ -40,7 +40,7 @@ const runtimeDependencies = (
     Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
     relayClientLayer,
     Layer.mock(ServerSecretStore.ServerSecretStore)({
-      get: () => Effect.succeed(Option.none()),
+      get: () => Effect.succeedNone,
     }),
   );
 

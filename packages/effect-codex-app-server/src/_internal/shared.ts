@@ -45,7 +45,7 @@ export const encodeOptionalPayload = <A, I>(
 ): Effect.Effect<I | undefined, CodexError.CodexAppServerRequestError> => {
   if (!schema) {
     if (payload === undefined) {
-      return Effect.sync(() => undefined);
+      return Effect.undefined;
     }
     return Effect.fail(
       CodexError.CodexAppServerRequestError.unexpectedPayload(method, "encode-payload", payload),

@@ -906,13 +906,11 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         lifecycleLock.withPermit(
           Effect.gen(function* () {
             if (!installTool)
-              return yield* Effect.fail(
-                new DeviceOperationError({
-                  operation: "update device tool",
-                  reason: "request_failed",
-                  cause: new Error("Tool installation is unavailable in this device service."),
-                }),
-              );
+              return yield* new DeviceOperationError({
+                operation: "update device tool",
+                reason: "request_failed",
+                cause: new Error("Tool installation is unavailable in this device service."),
+              });
             yield* installTool(tool);
             return yield* inspect;
           }),

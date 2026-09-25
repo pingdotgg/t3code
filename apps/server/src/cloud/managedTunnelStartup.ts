@@ -49,19 +49,20 @@ export const retryManagedTunnelRegistration = <A, E, R>(
     ),
     Schedule.jittered,
   );
-  return registration.pipe(
+  const withinWindow = registration.pipe(
     Effect.retry({
       while: isRetryable,
       schedule: schedule.pipe(
         Schedule.upTo({ duration: MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW }),
       ),
     }),
-    Effect.catch((error) =>
-      onRetryWindowExhausted !== undefined && isRetryable(error)
-        ? onRetryWindowExhausted.pipe(
-            Effect.andThen(registration.pipe(Effect.retry({ while: isRetryable, schedule }))),
-          )
-        : Effect.fail(error),
+  );
+  if (onRetryWindowExhausted === undefined) return withinWindow;
+  return withinWindow.pipe(
+    Effect.catchIf(isRetryable, () =>
+      onRetryWindowExhausted.pipe(
+        Effect.andThen(registration.pipe(Effect.retry({ while: isRetryable, schedule }))),
+      ),
     ),
   );
 };

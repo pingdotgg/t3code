@@ -32,9 +32,10 @@ export const readWorkflowScript = Effect.fn("orchestration.readWorkflowScript")(
   const requested = input.scriptPath;
 
   if (!NodePath.isAbsolute(requested) || NodePath.extname(requested) !== ".js") {
-    return yield* Effect.fail(
-      new OrchestrationGetWorkflowScriptError({ reason: "invalid-path", scriptPath: requested }),
-    );
+    return yield* new OrchestrationGetWorkflowScriptError({
+      reason: "invalid-path",
+      scriptPath: requested,
+    });
   }
 
   const root = yield* Effect.tryPromise({
@@ -60,14 +61,16 @@ export const readWorkflowScript = Effect.fn("orchestration.readWorkflowScript")(
   });
 
   if (resolved !== root && !resolved.startsWith(`${root}${NodePath.sep}`)) {
-    return yield* Effect.fail(
-      new OrchestrationGetWorkflowScriptError({ reason: "outside-root", scriptPath: resolved }),
-    );
+    return yield* new OrchestrationGetWorkflowScriptError({
+      reason: "outside-root",
+      scriptPath: resolved,
+    });
   }
   if (NodePath.extname(resolved) !== ".js") {
-    return yield* Effect.fail(
-      new OrchestrationGetWorkflowScriptError({ reason: "not-js", scriptPath: resolved }),
-    );
+    return yield* new OrchestrationGetWorkflowScriptError({
+      reason: "not-js",
+      scriptPath: resolved,
+    });
   }
 
   // TOCTOU-safe read (review finding): open FIRST, then verify what was

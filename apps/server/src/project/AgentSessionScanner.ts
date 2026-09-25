@@ -662,7 +662,7 @@ export const make = Effect.gen(function* () {
     fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
 
   const statOption = (target: string) =>
-    fileSystem.stat(target).pipe(Effect.map(Option.some), Effect.orElseSucceed(Option.none));
+    fileSystem.stat(target).pipe(Effect.asSome, Effect.orElseSucceed(Option.none));
 
   /** Match directory aliases without assuming the host volume is case-insensitive. */
   const directoryIdentity = Effect.fn("AgentSessionScanner.directoryIdentity")(function* (

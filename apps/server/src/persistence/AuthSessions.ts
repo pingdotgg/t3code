@@ -422,7 +422,7 @@ export const make = Effect.gen(function* () {
       ),
       Effect.flatMap((rowOption) =>
         Option.match(rowOption, {
-          onNone: () => Effect.succeed(Option.none()),
+          onNone: () => Effect.succeedNone,
           onSome: (row) =>
             decodeAuthSessionDbRow(row).pipe(
               Effect.mapError((cause) =>

@@ -822,7 +822,7 @@ const abortOpenCodeDescendants = Effect.fn("abortOpenCodeDescendants")(function*
         .pipe(
           Effect.catchIf(
             (cause) => isOpenCodeNotFound(cause),
-            () => Effect.void,
+            () => Effect.undefined,
           ),
           Effect.result,
         );
@@ -1097,7 +1097,7 @@ export function makeOpenCodeAdapter(
         readonly observedAt: string;
         readonly event: Record<string, unknown>;
       },
-    ) => writeNativeEvent(threadId, event).pipe(Effect.catchCause(() => Effect.void));
+    ) => writeNativeEvent(threadId, event).pipe(Effect.ignoreCause);
 
     const cancelIdleReconciliation = Effect.fn("cancelIdleReconciliation")(function* (
       context: OpenCodeSessionContext,
@@ -1262,7 +1262,7 @@ export function makeOpenCodeAdapter(
           yield* Effect.sleep(`${delayMs} millis`);
         }
       }).pipe(
-        Effect.catchCause(() => Effect.void),
+        Effect.ignoreCause,
         Effect.ensuring(
           Effect.sync(() => {
             if (context.pendingIdleReconciliation === pending) {
@@ -1492,7 +1492,7 @@ export function makeOpenCodeAdapter(
         }
         yield* failPromptAdmissionRecovery(context, promptAdmission);
       }).pipe(
-        Effect.catchCause(() => Effect.void),
+        Effect.ignoreCause,
         Effect.ensuring(
           Effect.sync(() => {
             delete promptAdmission.recoveryFiber;
@@ -1699,7 +1699,7 @@ export function makeOpenCodeAdapter(
           }),
           Effect.catchIf(
             (cause) => isOpenCodeNotFound(cause),
-            () => Effect.succeed(undefined),
+            () => Effect.undefined,
           ),
         );
       let sessionId: string | undefined = candidateSessionId;
@@ -2044,7 +2044,7 @@ export function makeOpenCodeAdapter(
           yield* Effect.sleep(`${delayMs} millis`);
         }
       }).pipe(
-        Effect.catchCause(() => Effect.void),
+        Effect.ignoreCause,
         Effect.ensuring(
           Effect.sync(() => {
             if (context.requestRelationRetries.get(requestId) === retry) {
@@ -2163,7 +2163,7 @@ export function makeOpenCodeAdapter(
           return;
         }
       }).pipe(
-        Effect.catchCause(() => Effect.void),
+        Effect.ignoreCause,
         Effect.ensuring(
           Effect.sync(() => {
             if (context.pendingRequestRecovery === recovery) {
@@ -2730,6 +2730,7 @@ export function makeOpenCodeAdapter(
       // the scope closes (explicit stop, unexpected exit, or layer
       // shutdown) and cancels the in-flight `event.subscribe` fetch so
       // the async iterable unwinds cleanly.
+      // @effect-diagnostics-next-line abortControllerInEffect:off - aborted by a scope finalizer to cancel the SDK's event.subscribe fetch
       const eventsAbortController = new AbortController();
       let lastStreamError: unknown;
       let warnedAboutDisconnect = false;

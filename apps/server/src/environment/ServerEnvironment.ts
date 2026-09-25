@@ -127,13 +127,12 @@ const makeIdentity = Effect.gen(function* () {
       });
       yield* fileSystem.writeFileString(tempPath, `${value}\n`);
       // Publish the completed file without replacing an ID created by another process.
-      yield* fileSystem
-        .link(tempPath, destinationPath)
-        .pipe(
-          Effect.catch((cause) =>
-            cause.reason._tag === "AlreadyExists" ? Effect.void : Effect.fail(cause),
-          ),
-        );
+      yield* fileSystem.link(tempPath, destinationPath).pipe(
+        Effect.catchIf(
+          (cause) => cause.reason._tag === "AlreadyExists",
+          () => Effect.void,
+        ),
+      );
       if (mode === "recover") {
         // Keep the recovery ID so delayed initializers also publish the same winner.
         yield* fileSystem.remove(tempPath);

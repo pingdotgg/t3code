@@ -107,7 +107,7 @@ const readOptionalFile = Effect.fn("readOptionalFile")(function* (path: string) 
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.readFileString(path).pipe(
     Effect.map(normalize),
-    Effect.catch(() => Effect.succeed(null)),
+    Effect.orElseSucceed(() => null),
   );
 });
 
@@ -125,7 +125,7 @@ const runProbe = Effect.fn("runMachineProbe")(function* (input: {
     })
     .pipe(
       Effect.map((result) => (result.code === 0 ? normalize(result.stdout) : null)),
-      Effect.catch(() => Effect.succeed(null)),
+      Effect.orElseSucceed(() => null),
     );
 });
 

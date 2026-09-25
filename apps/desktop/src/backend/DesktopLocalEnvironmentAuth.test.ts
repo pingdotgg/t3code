@@ -1,7 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -60,7 +59,7 @@ describe("DesktopLocalEnvironmentAuth", () => {
           {
             id: PRIMARY_LOCAL_ENVIRONMENT_ID,
             label: Effect.succeed("Windows"),
-            currentConfig: Effect.succeed(Option.some(config)),
+            currentConfig: Effect.succeedSome(config),
           },
         ]),
       } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]);

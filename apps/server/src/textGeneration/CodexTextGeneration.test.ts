@@ -556,7 +556,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
                   }),
                 ),
               ),
-              Effect.ensuring(fs.remove(imagePath).pipe(Effect.catch(() => Effect.void))),
+              Effect.ensuring(fs.remove(imagePath).pipe(Effect.ignore)),
             );
 
           expect(generated.branch).toBe("fix/ui-regression");
@@ -579,7 +579,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
           const { attachmentsDir } = yield* ServerConfig.ServerConfig;
           const missingAttachmentId = "thread-missing-attachment";
           const missingPath = path.join(attachmentsDir, `${missingAttachmentId}.png`);
-          yield* fs.remove(missingPath).pipe(Effect.catch(() => Effect.void));
+          yield* fs.remove(missingPath).pipe(Effect.ignore);
 
           const result = yield* textGeneration
             .generateBranchName({

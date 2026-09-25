@@ -107,9 +107,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
 
   const windowLayer = Layer.succeed(ElectronWindow.ElectronWindow, {
     create: () => Effect.die("unexpected BrowserWindow creation"),
-    main: Effect.succeed(Option.none()),
-    currentMainOrFirst: Effect.succeed(Option.none()),
-    focusedMainOrFirst: Effect.succeed(Option.none()),
+    main: Effect.succeedNone,
+    currentMainOrFirst: Effect.succeedNone,
+    focusedMainOrFirst: Effect.succeedNone,
     setMain: () => Effect.void,
     clearMain: () => Effect.void,
     prepareReveal: () => Effect.succeed(false),
@@ -131,7 +131,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       installSteps.push("startBackend");
     }).pipe(Effect.andThen(options.startBackend ?? Effect.void)),
     stop: () => options.stopBackend ?? Effect.void,
-    currentConfig: Effect.succeed(Option.none()),
+    currentConfig: Effect.succeedNone,
     snapshot: Effect.succeed({
       desiredRunning: false,
       ready: false,
@@ -245,7 +245,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     installSteps,
     updateRestartMarkers,
     downloadCount: () => downloadCount,
-    feedUrls: () => feedUrls,
+    feedUrls: (): ElectronUpdater.ElectronUpdaterFeedUrl[] => feedUrls,
     fullChangelog: () => fullChangelog,
     listenerCount: () =>
       Array.from(listeners.values()).reduce(

@@ -260,12 +260,10 @@ const writeDefaultTheme = Effect.fn(function* (input: {
       // Falling through here would overwrite whatever landed in between, which
       // is exactly the loss this loop exists to prevent.
       if (attempt >= CONCURRENT_WRITE_ATTEMPTS) {
-        return yield* Effect.fail(
-          new ThemeSettingsBusyError({
-            settingsPath: input.settingsPath,
-            attempts: CONCURRENT_WRITE_ATTEMPTS,
-          }),
-        );
+        return yield* new ThemeSettingsBusyError({
+          settingsPath: input.settingsPath,
+          attempts: CONCURRENT_WRITE_ATTEMPTS,
+        });
       }
       continue;
     }
@@ -299,12 +297,13 @@ const publishThemeFile = Effect.fn(function* (input: {
       Effect.mapError((cause) => new ThemeFileUnreadableError({ filePath: input.filePath, cause })),
     );
   if (info.type !== "File") {
-    return yield* Effect.fail(new ThemeFileUnreadableError({ filePath: input.filePath }));
+    return yield* new ThemeFileUnreadableError({ filePath: input.filePath });
   }
   if (Number(info.size) > MAX_THEME_FILE_BYTES) {
-    return yield* Effect.fail(
-      new ThemeFileTooLargeError({ filePath: input.filePath, limit: MAX_THEME_FILE_BYTES }),
-    );
+    return yield* new ThemeFileTooLargeError({
+      filePath: input.filePath,
+      limit: MAX_THEME_FILE_BYTES,
+    });
   }
 
   // An explicit source path is the user's own input, and a symlink there is a
@@ -320,17 +319,15 @@ const publishThemeFile = Effect.fn(function* (input: {
     );
   const raw = readThemeFileGuarded(resolvedSource, MAX_THEME_FILE_BYTES);
   if (raw === null) {
-    return yield* Effect.fail(new ThemeFileUnreadableError({ filePath: input.filePath }));
+    return yield* new ThemeFileUnreadableError({ filePath: input.filePath });
   }
 
   const decoded = decodeThemeFileJsonExit(raw);
   if (decoded._tag === "Failure") {
-    return yield* Effect.fail(
-      new ThemeFileInvalidError({ filePath: input.filePath, cause: decoded.cause }),
-    );
+    return yield* new ThemeFileInvalidError({ filePath: input.filePath, cause: decoded.cause });
   }
   if (!environmentThemeFileHasColors(decoded.value)) {
-    return yield* Effect.fail(new ThemeFileColorlessError({ filePath: input.filePath }));
+    return yield* new ThemeFileColorlessError({ filePath: input.filePath });
   }
 
   const fileBasename = path.basename(input.filePath, ".json");
@@ -338,7 +335,7 @@ const publishThemeFile = Effect.fn(function* (input: {
   // The same rules the watcher applies when it reads the directory back, so a
   // publish cannot report success for a file that will then be skipped.
   if (!isEnvironmentThemeId(themeId) || UNPUBLISHABLE_THEME_IDS.has(themeId)) {
-    return yield* Effect.fail(new ThemeFileIdInvalidError({ themeId, filePath: input.filePath }));
+    return yield* new ThemeFileIdInvalidError({ themeId, filePath: input.filePath });
   }
 
   const destinationPath = path.join(input.themesDir, `${themeId}.json`);
@@ -479,7 +476,7 @@ const themeSetCommand = Command.make("set", {
       const fs = yield* FileSystem.FileSystem;
       const target = yield* expandHomePath(flags.theme.trim());
       if (target.length === 0) {
-        return yield* Effect.fail(new ThemeTargetMissingError());
+        return yield* new ThemeTargetMissingError();
       }
       const paths = yield* resolveThemePaths(flags.baseDir);
 
@@ -514,15 +511,15 @@ const themeSetCommand = Command.make("set", {
         revertPublish = published.revert;
         cleanupPublish = published.cleanup;
       } else if (looksLikePath) {
-        return yield* Effect.fail(new ThemeFileUnreadableError({ filePath: target }));
+        return yield* new ThemeFileUnreadableError({ filePath: target });
       } else if (isEnvironmentThemeId(target)) {
         const known = yield* resolvableThemeIds(paths.themesDir);
         if (!known.includes(target)) {
-          return yield* Effect.fail(new ThemeIdUnknownError({ themeId: target, known }));
+          return yield* new ThemeIdUnknownError({ themeId: target, known });
         }
         themeId = target;
       } else {
-        return yield* Effect.fail(new ThemeIdInvalidError({ themeId: target }));
+        return yield* new ThemeIdInvalidError({ themeId: target });
       }
 
       // set means set: if the default cannot be written, the publish that

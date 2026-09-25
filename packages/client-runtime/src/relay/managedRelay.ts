@@ -666,11 +666,8 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
       authorize(input).pipe(
         Effect.flatMap((authorization) =>
           request(authorization).pipe(
-            Effect.catch((error) => {
-              if (!isRejectedDpopAccessToken(error)) {
-                return Effect.fail(error);
-              }
-              return invalidateAccessToken(authorization.accessToken).pipe(
+            Effect.catchIf(isRejectedDpopAccessToken, (error) =>
+              invalidateAccessToken(authorization.accessToken).pipe(
                 Effect.tap((invalidated) =>
                   Effect.annotateCurrentSpan({
                     "relay.token_cache.invalidated": invalidated,
@@ -686,8 +683,8 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
                     : Effect.void,
                 ),
                 Effect.andThen(refreshRejectedToken ? attempt(false) : Effect.fail(error)),
-              );
-            }),
+              ),
+            ),
           ),
         ),
       );

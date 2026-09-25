@@ -275,12 +275,12 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         next.set(environmentId, snapshot);
         return next;
       }),
-    loadThread: (_environmentId, _threadId) => Effect.succeed(Option.none()),
+    loadThread: (_environmentId, _threadId) => Effect.succeedNone,
     saveThread: (_environmentId, _thread) => Effect.void,
     removeThread: (_environmentId, _threadId) => Effect.void,
-    loadServerConfig: () => Effect.succeed(Option.none()),
+    loadServerConfig: () => Effect.succeedNone,
     saveServerConfig: () => Effect.void,
-    loadVcsRefs: () => Effect.succeed(Option.none()),
+    loadVcsRefs: () => Effect.succeedNone,
     saveVcsRefs: () => Effect.void,
     removeVcsRefs: () => Effect.void,
     clearVcsRefs: () => Effect.void,

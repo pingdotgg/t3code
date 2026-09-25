@@ -2751,7 +2751,7 @@ export const make = Effect.gen(function* () {
       `project:${input.projectId}`,
       refScope(input),
     ]);
-    const decoded = yield* Schema.decodeUnknownEffect(codec)(payload).pipe(Effect.option);
+    const decoded = yield* Schema.decodeEffect(codec)(payload).pipe(Effect.option);
     return Option.isSome(decoded) ? decoded.value : yield* lookup;
   });
   const summaryCodec = Schema.fromJsonString(PullRequestSummary);

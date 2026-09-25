@@ -143,7 +143,7 @@ const optionOnNotFound = <A, R>(
   effect: Effect.Effect<A, PlatformError.PlatformError, R>,
 ): Effect.Effect<Option.Option<A>, PlatformError.PlatformError, R> =>
   effect.pipe(
-    Effect.map(Option.some),
+    Effect.asSome,
     Effect.catchTags({
       PlatformError: (error) =>
         error.reason._tag === "NotFound" ? Effect.succeed(Option.none<A>()) : Effect.fail(error),
@@ -175,7 +175,7 @@ export const make = Effect.gen(function* () {
               relativePath,
             })
       ).pipe(
-        Effect.map(Option.some),
+        Effect.asSome,
         Effect.catchTags({
           WorkspacePathOutsideRootError: () =>
             Effect.succeed(

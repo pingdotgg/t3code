@@ -50,7 +50,8 @@
           "globalTimers": "error",
           "globalTimersInEffect": "error",
           "globalFetch": "error",
-          "globalFetchInEffect": "error"
+          "globalFetchInEffect": "error",
+          "schemaNumber": "off"
         }
       }
     ]

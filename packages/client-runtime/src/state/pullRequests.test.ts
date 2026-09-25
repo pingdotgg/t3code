@@ -1171,7 +1171,7 @@ it.effect("updates cached labels after successful edits without rereading the ho
             if (failDetail) {
               yield* detailRefreshStarted.open;
               yield* releaseDetailRefresh.await;
-              return yield* Effect.fail(new MutationRefused());
+              return yield* new MutationRefused();
             }
             return { title: "keep this title", labels: [existing] };
           }),

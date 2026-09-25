@@ -20,7 +20,7 @@ function initialConfigOption<E>(
   initialConfig: Effect.Effect<ServerConfig, E>,
 ): Effect.Effect<Option.Option<ServerConfig>> {
   return initialConfig.pipe(
-    Effect.map(Option.some),
+    Effect.asSome,
     Effect.catch((error) =>
       Effect.logWarning("Could not load the initial environment configuration.").pipe(
         Effect.annotateLogs({ ...safeErrorLogAttributes(error) }),

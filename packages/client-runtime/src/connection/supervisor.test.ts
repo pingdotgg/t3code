@@ -1290,11 +1290,11 @@ describe("EnvironmentSupervisor", () => {
             Layer.succeed(ManagedRelayDpopSigner, signer),
             Layer.succeed(ManagedRelayClient, relay),
             Layer.succeed(ClientCapabilities.CloudSession, {
-              identity: Effect.succeed(Option.some({ accountId: "test-account" })),
+              identity: Effect.succeedSome({ accountId: "test-account" }),
               clerkToken: Effect.succeed("clerk-token"),
             }),
             Layer.succeed(ClientCapabilities.RelayDeviceIdentity, {
-              deviceId: Effect.succeed(Option.none()),
+              deviceId: Effect.succeedNone,
             }),
             TokenStore.layer({
               get: () => Ref.get(token),

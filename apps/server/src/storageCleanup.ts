@@ -419,10 +419,9 @@ export const make = Effect.gen(function* () {
   });
   const worker = yield* makeDrainableWorker(() =>
     sweep().pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.failCause(cause)
-          : Effect.logWarning("storage cleanup failed", { cause }),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) => Effect.logWarning("storage cleanup failed", { cause }),
       ),
     ),
   );

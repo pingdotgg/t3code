@@ -197,16 +197,16 @@ const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (opt
     retryNow: Effect.void,
   } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
   const cache = Persistence.EnvironmentCacheStore.of({
-    loadShell: () => Effect.succeed(Option.none()),
+    loadShell: () => Effect.succeedNone,
     saveShell: () => Effect.void,
     loadThread: () =>
       Effect.succeed(options?.cached !== undefined ? Option.some(options.cached) : Option.none()),
     saveThread: (_environmentId, thread) =>
       Ref.update(savedThreads, (current) => [...current, thread]),
     removeThread: () => Effect.void,
-    loadServerConfig: () => Effect.succeed(Option.none()),
+    loadServerConfig: () => Effect.succeedNone,
     saveServerConfig: () => Effect.void,
-    loadVcsRefs: () => Effect.succeed(Option.none()),
+    loadVcsRefs: () => Effect.succeedNone,
     saveVcsRefs: () => Effect.void,
     removeVcsRefs: () => Effect.void,
     clearVcsRefs: () => Effect.void,

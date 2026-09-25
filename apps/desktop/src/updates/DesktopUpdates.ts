@@ -668,24 +668,25 @@ export const make = Effect.gen(function* () {
       }),
     ).pipe(Effect.withSpan("desktop.updates.installDownloadedUpdate"));
 
-  const installWithExpectedVersion = (expectedVersion?: string) =>
-    Effect.gen(function* () {
-      if (yield* Ref.get(desktopState.quitting)) {
-        return {
-          accepted: false,
-          completed: false,
-          failed: false,
-          state: yield* Ref.get(updateStateRef),
-        };
-      }
-      const result = yield* installDownloadedUpdate(expectedVersion);
+  const installWithExpectedVersion = Effect.fn("desktop.updates.install")(function* (
+    expectedVersion?: string,
+  ) {
+    if (yield* Ref.get(desktopState.quitting)) {
       return {
-        accepted: result.accepted,
-        completed: result.completed,
-        failed: result.failed,
+        accepted: false,
+        completed: false,
+        failed: false,
         state: yield* Ref.get(updateStateRef),
       };
-    }).pipe(Effect.withSpan("desktop.updates.install"));
+    }
+    const result = yield* installDownloadedUpdate(expectedVersion);
+    return {
+      accepted: result.accepted,
+      completed: result.completed,
+      failed: result.failed,
+      state: yield* Ref.get(updateStateRef),
+    };
+  });
 
   const startUpdatePollers: Effect.Effect<void, never, Scope.Scope> = Effect.gen(function* () {
     yield* Effect.sleep(AUTO_UPDATE_STARTUP_DELAY).pipe(

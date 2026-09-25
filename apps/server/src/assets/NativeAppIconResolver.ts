@@ -43,10 +43,10 @@ function appFromCacheKey(key: string): ToolActivityNativeAppReference {
 const existingFile = Effect.fn("NativeAppIconResolver.existingFile")(function* (filePath: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   const info = yield* fileSystem.stat(filePath).pipe(
-    Effect.map(Option.some),
+    Effect.asSome,
     Effect.catchTags({
       PlatformError: (error) =>
-        error.reason._tag === "NotFound" ? Effect.succeed(Option.none()) : Effect.fail(error),
+        error.reason._tag === "NotFound" ? Effect.succeedNone : Effect.fail(error),
     }),
   );
   return Option.isSome(info) && info.value.type === "File" ? filePath : null;

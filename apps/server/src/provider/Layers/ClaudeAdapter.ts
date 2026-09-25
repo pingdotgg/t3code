@@ -5357,6 +5357,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       ) => {
         // SDK history helpers read process.env. Isolate the provider's home instead
         // of changing the server's environment while other providers are running.
+        // @effect-diagnostics-next-line runEffectInsideEffect:off - SDK callback runs outside the fiber; the spawn is self-contained
         const result = await Effect.runPromise(
           spawnAndCollect(
             process.execPath,
@@ -5547,7 +5548,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     for (const result of results) {
       if (result._tag === "Failure") {
-        return yield* Effect.fail(result.failure);
+        return yield* result.failure;
       }
     }
   });

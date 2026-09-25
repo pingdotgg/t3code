@@ -6,7 +6,6 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -56,7 +55,7 @@ const PullRequestsTestLayer = McpHttpServer.PullRequestsToolkitRegistrationLive.
   Layer.provide(
     Layer.mergeAll(
       Layer.mock(ProjectionSnapshotQuery)({
-        getThreadShellById: () => Effect.succeed(Option.none()),
+        getThreadShellById: () => Effect.succeedNone,
       }),
       Layer.mock(OrchestrationEngineService)({}),
       NodeServices.layer,

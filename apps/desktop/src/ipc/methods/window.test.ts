@@ -61,7 +61,7 @@ const defaultWslInstance: DesktopBackendManager.DesktopBackendInstance = {
   label: Effect.succeed("WSL (default distro)"),
   start: Effect.void,
   stop: () => Effect.void,
-  currentConfig: Effect.succeed(Option.some(readyWslConfig)),
+  currentConfig: Effect.succeedSome(readyWslConfig),
   snapshot: Effect.succeed({
     desiredRunning: true,
     ready: true,
@@ -101,7 +101,7 @@ describe("getLocalEnvironmentBootstraps", () => {
     };
     const retryingInstance: DesktopBackendManager.DesktopBackendInstance = {
       ...defaultWslInstance,
-      currentConfig: Effect.succeed(Option.some(retryingConfig)),
+      currentConfig: Effect.succeedSome(retryingConfig),
       snapshot: Effect.succeed({
         desiredRunning: true,
         ready: false,
@@ -128,16 +128,14 @@ describe("getLocalEnvironmentBootstraps", () => {
   it.effect("omits a bounded transient bootstrap after retries stop", () => {
     const stoppedInstance: DesktopBackendManager.DesktopBackendInstance = {
       ...defaultWslInstance,
-      currentConfig: Effect.succeed(
-        Option.some({
-          ...readyWslConfig,
-          preflightFailure: Option.some({
-            reason: "WSL probe timed out",
-            fatal: false,
-            retryLimit: 12,
-          }),
+      currentConfig: Effect.succeedSome({
+        ...readyWslConfig,
+        preflightFailure: Option.some({
+          reason: "WSL probe timed out",
+          fatal: false,
+          retryLimit: 12,
         }),
-      ),
+      }),
       snapshot: Effect.succeed({
         desiredRunning: false,
         ready: false,
@@ -163,7 +161,7 @@ describe("getWindowFullscreenState", () => {
     }).pipe(
       Effect.provide(
         Layer.mock(ElectronWindow.ElectronWindow)({
-          currentMainOrFirst: Effect.succeed(Option.some(window)),
+          currentMainOrFirst: Effect.succeedSome(window),
         }),
       ),
     );
@@ -206,7 +204,7 @@ describe("pasteAsText", () => {
       }).pipe(
         Effect.provide(
           Layer.mock(ElectronWindow.ElectronWindow)({
-            main: Effect.succeed(Option.some(window)),
+            main: Effect.succeedSome(window),
           }),
         ),
       );
@@ -219,7 +217,7 @@ describe("pickProjectFavicon", () => {
     Layer.mergeAll(
       Layer.mock(ElectronDialog.ElectronDialog)({ pickFiles }),
       Layer.mock(ElectronWindow.ElectronWindow)({
-        focusedMainOrFirst: Effect.succeed(Option.none()),
+        focusedMainOrFirst: Effect.succeedNone,
       }),
       DesktopAppSettings.layerTest(settings),
     );

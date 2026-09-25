@@ -216,7 +216,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     Queue.offer(notificationQueue, notification).pipe(
       Effect.andThen(
         options.onNotification
-          ? options.onNotification(notification).pipe(Effect.catch(() => Effect.void))
+          ? options.onNotification(notification).pipe(Effect.ignore)
           : Effect.void,
       ),
       Effect.asVoid,

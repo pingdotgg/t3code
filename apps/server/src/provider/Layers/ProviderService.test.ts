@@ -4894,13 +4894,11 @@ const listThreadIds = vi.fn(() =>
   Effect.succeed([activeSessionThreadId, historicalSessionThreadId]),
 );
 const getBinding = vi.fn((threadId: ThreadId) =>
-  Effect.succeed(
-    Option.some({
-      threadId,
-      provider: CODEX_DRIVER,
-      providerInstanceId: codexInstanceId,
-    }),
-  ),
+  Effect.succeedSome({
+    threadId,
+    provider: CODEX_DRIVER,
+    providerInstanceId: codexInstanceId,
+  }),
 );
 const boundedListing = makeProviderServiceLayer({
   directory: {

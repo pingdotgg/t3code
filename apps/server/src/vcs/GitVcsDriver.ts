@@ -1101,7 +1101,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           /^warning: failed to remove \.\/: [^\n]+$/.test(cleaned.stderr.trim()) &&
           (yield* fileSystem.readDirectory(input.cwd).pipe(
             Effect.map((entries) => entries.length === 0),
-            Effect.catch(() => Effect.succeed(false)),
+            Effect.orElseSucceed(() => false),
           ));
         if (!emptiedWorkspace)
           return yield* new VcsProcessExitError({

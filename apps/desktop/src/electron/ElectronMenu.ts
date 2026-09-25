@@ -226,7 +226,7 @@ export const make = Effect.gen(function* () {
       Effect.callback<Option.Option<string>>((resume) => {
         const normalizedItems = normalizeContextMenuItems(input.items);
         if (normalizedItems.length === 0) {
-          resume(Effect.succeed(Option.none()));
+          resume(Effect.succeedNone);
           return;
         }
 
