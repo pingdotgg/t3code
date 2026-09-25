@@ -91,6 +91,16 @@ const imageProps = {
           <h2 class="platform-name">Linux</h2>
         </div>
         <div class="download-cards">
+          <a class="download-card" data-asset="amd64.deb" href={RELEASES_URL}>
+            <span class="card-icon">
+              <Image class="card-icon--stable" src={iconStable} width={28} height={28} loading="lazy" {...imageProps} />
+              <Image class="card-icon--nightly" src={iconNightly} width={28} height={28} loading="lazy" {...imageProps} />
+            </span>
+            <span class="card-text">
+              <span class="card-arch">Debian, Ubuntu</span>
+              <span class="card-format">.deb</span>
+            </span>
+          </a>
           <a class="download-card" data-asset="x86_64.AppImage" href={RELEASES_URL}>
             <span class="card-icon">
               <Image class="card-icon--stable" src={iconStable} width={28} height={28} loading="lazy" {...imageProps} />
@@ -102,6 +112,10 @@ const imageProps = {
             </span>
           </a>
         </div>
+        <p class="intel-note">
+          On ARM? Download the arm64 <a data-asset="arm64.deb" href={RELEASES_URL}>.deb</a> or
+          <a data-asset="arm64.AppImage" href={RELEASES_URL}>AppImage</a>.
+        </p>
       </section>
 
       <!-- Mobile. Stable only, there is no nightly mobile build. -->
