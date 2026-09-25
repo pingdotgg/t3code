@@ -1869,6 +1869,8 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       const now = yield* DateTime.now;
       const settledThreadId = ThreadId.make("thread:recovery-candidates:settled");
       const runningThreadId = ThreadId.make("thread:recovery-candidates:running");
+      const memberThreadId = ThreadId.make("thread:recovery-candidates:member");
+      const childThreadId = ThreadId.make("thread:recovery-candidates:child");
       const rolledBackThreadId = yield* addRolledBackRecoveryCandidate("recovery-candidates");
       const orphanedThreadId = yield* addOrphanedRecoveryCandidate("recovery-candidates");
       const projectId = ProjectId.make("project:recovery-candidates");
@@ -1900,7 +1902,7 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         deletedAt: null,
       });
 
-      for (const threadId of [settledThreadId, runningThreadId]) {
+      for (const threadId of [settledThreadId, runningThreadId, memberThreadId, childThreadId]) {
         yield* projectionStore.apply({
           id: EventId.make(`event:recovery-candidates:${threadId}:created`),
           type: "thread.created",
@@ -1940,11 +1942,118 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         },
       });
 
+      const memberId = NodeId.make("node:recovery-candidates:member");
+      const childRootNodeId = NodeId.make("node:recovery-candidates:child-root");
+      const nativeTaskRef = { driver, nativeId: "workflow:agent:1", strength: "strong" as const };
+      const memberNode = {
+        id: memberId,
+        threadId: memberThreadId,
+        runId: null,
+        parentNodeId: NodeId.make("node:recovery-candidates:coordinator-root"),
+        rootNodeId: NodeId.make("node:recovery-candidates:coordinator-root"),
+        kind: "subagent" as const,
+        status: "running" as const,
+        countsForRun: false,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: nativeTaskRef,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: null,
+      };
+      yield* projectionStore.apply({
+        id: EventId.make("event:recovery-candidates:member"),
+        type: "subagent.updated",
+        threadId: memberThreadId,
+        nodeId: memberId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: memberId,
+          threadId: memberThreadId,
+          runId: null,
+          parentNodeId: memberNode.parentNodeId,
+          origin: "provider_native",
+          createdBy: "agent",
+          driver,
+          providerInstanceId,
+          providerThreadId: null,
+          childThreadId,
+          nativeTaskRef,
+          prompt: "Do the work",
+          title: "Member",
+          model: null,
+          status: "running",
+          result: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        },
+      });
+      for (const [threadId, node] of [
+        [memberThreadId, memberNode],
+        [
+          childThreadId,
+          {
+            ...memberNode,
+            id: childRootNodeId,
+            threadId: childThreadId,
+            parentNodeId: null,
+            rootNodeId: childRootNodeId,
+            kind: "root_turn" as const,
+          },
+        ],
+      ] as const) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:recovery-candidates:node:${node.id}`),
+          type: "node.updated",
+          threadId,
+          nodeId: node.id,
+          driver,
+          occurredAt: now,
+          payload: node,
+        });
+      }
+
       const recoveryThreadIds = yield* projectionStore.getRecoveryThreadIds("runtime");
       assert.include(recoveryThreadIds, runningThreadId);
       assert.include(recoveryThreadIds, orphanedThreadId);
+      assert.include(recoveryThreadIds, memberThreadId);
+      assert.include(recoveryThreadIds, childThreadId);
       assert.notInclude(recoveryThreadIds, settledThreadId);
       assert.notInclude(recoveryThreadIds, rolledBackThreadId);
+      const memberRecovery = yield* projectionStore.getRuntimeRecoveryProjection(memberThreadId);
+      const childRecovery = yield* projectionStore.getRuntimeRecoveryProjection(childThreadId);
+      assert.deepEqual(
+        memberRecovery.subagents.map((subagent) => subagent.id),
+        [memberId],
+      );
+      assert.deepEqual(
+        memberRecovery.nodes.map((node) => node.id),
+        [memberId],
+      );
+      assert.deepEqual(
+        childRecovery.nodes.map((node) => node.id),
+        [childRootNodeId],
+      );
+      yield* projectionStore.apply({
+        id: EventId.make("event:recovery-candidates:member-cancelled"),
+        type: "subagent.updated",
+        threadId: memberThreadId,
+        nodeId: memberId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...memberRecovery.subagents[0]!,
+          status: "cancelled",
+          completedAt: now,
+          updatedAt: now,
+        },
+      });
+      assert.include(yield* projectionStore.getRecoveryThreadIds("runtime"), childThreadId);
     }),
   );
 

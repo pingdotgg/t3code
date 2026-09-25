@@ -357,6 +357,7 @@ export const make = Effect.gen(function* () {
       // cancellation events.
       const recoveredNonterminalRunIds = new Set(runs.map((run) => run.id));
       const cancelledStaleNodeIds = new Set<string>();
+      const cancelledStaleSubagentIds = new Set<string>();
       for (const item of projection.turnItems ?? []) {
         if (item.runId !== null && recoveredNonterminalRunIds.has(item.runId)) {
           continue;
@@ -409,6 +410,7 @@ export const make = Effect.gen(function* () {
             candidate.id === item.subagentId && isNonterminalSubagentStatus(candidate.status),
         );
         if (staleSubagent !== undefined) {
+          cancelledStaleSubagentIds.add(staleSubagent.id);
           events.push({
             id: yield* allocateEventId(),
             type: "subagent.updated",
@@ -436,6 +438,39 @@ export const make = Effect.gen(function* () {
             providerInstanceId,
             occurredAt: now,
             payload: { ...staleSubagentNode, status: "cancelled", completedAt: now },
+          });
+        }
+      }
+      for (const subagent of (projection.subagents ?? []).filter(
+        (candidate) =>
+          candidate.runId === null &&
+          candidate.origin === "provider_native" &&
+          isNonterminalSubagentStatus(candidate.status) &&
+          !cancelledStaleSubagentIds.has(candidate.id),
+      )) {
+        events.push({
+          id: yield* allocateEventId(),
+          type: "subagent.updated",
+          threadId: projection.thread.id,
+          nodeId: subagent.id,
+          driver: subagent.driver,
+          providerInstanceId: subagent.providerInstanceId,
+          occurredAt: now,
+          payload: { ...subagent, status: "cancelled", completedAt: now, updatedAt: now },
+        });
+        const node = projection.nodes.find(
+          (candidate) => candidate.id === subagent.id && isNonterminalNodeStatus(candidate.status),
+        );
+        if (node !== undefined && !cancelledStaleNodeIds.has(node.id)) {
+          cancelledStaleNodeIds.add(node.id);
+          events.push({
+            id: yield* allocateEventId(),
+            type: "node.updated",
+            threadId: projection.thread.id,
+            nodeId: node.id,
+            providerInstanceId: subagent.providerInstanceId,
+            occurredAt: now,
+            payload: { ...node, status: "cancelled", completedAt: now },
           });
         }
       }
