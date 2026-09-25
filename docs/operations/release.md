@@ -29,7 +29,7 @@ This document covers the unified release workflow for stable and nightly desktop
 - Builds six desktop artifacts in parallel for both channels, each as its own job (`desktop_<platform>_<arch>`, one call of `release-desktop.yml`) on hardware of its own architecture, gated only on the bundle (the Windows jobs also wait for the same-arch Linux job, whose CLI archive they embed as the WSL runtime):
   - macOS `arm64` DMG
   - macOS `x64` DMG
-  - Linux `x64` and `arm64` AppImage
+  - Linux `x64` and `arm64` AppImage and `.deb`, from one electron-builder run. The `.deb` updates in the app through electron-updater, which installs it with `dpkg`.
   - Windows `x64` and `arm64` NSIS installer
 - Publishes one GitHub Release with all produced files.
   - Stable tags with a suffix after `X.Y.Z` (for example `1.2.3-alpha.1`) are published as GitHub prereleases.
@@ -140,6 +140,11 @@ Required `production` environment secrets:
 - `CLERK_SECRET_KEY`
 - `APNS_PRIVATE_KEY`
 
+The relay Worker reads these variables and secrets when it is deployed. Alchemy does not redeploy the
+Worker when only one of these values changes ([alchemy-run/alchemy#1831](https://github.com/alchemy-run/alchemy/issues/1831)),
+so a push to `main` without relay code changes leaves the old value in place. After changing one, run
+the **Deploy T3 Connect relay** workflow manually from `main` with **force** checked.
+
 The account-scoped repository credentials are consumed by Alchemy while provisioning relay stages; they
 are not bound into the relay Worker. The production deployment uses an Axiom personal access token,
 so `AXIOM_ORG_ID` must accompany `AXIOM_TOKEN`. The `prod` stage owns the retained PlanetScale
@@ -163,18 +168,20 @@ because those builds register recovery and replace a deleted tunnel after wake.
 1. Deploy the relay and migration with cleanup `off`.
 2. Release the server build and confirm current hosts register recovery. Older hosts stay marked
    legacy and are never candidates.
-3. Set `dry-run`, deploy, and read the sweep counters (`scanned`, `wouldDelete`, `skippedLegacy`,
-   `skippedOrphan`, `failed`, `truncated`) across several sweeps.
+3. Set `dry-run`, run a forced relay deploy, and read the sweep counters (`scanned`, `wouldDelete`,
+   `skippedLegacy`, `skippedOrphan`, `failed`, `truncated`) across several sweeps. Each sweep records
+   them, and the active `mode`, as `relay.managed_endpoint_reaper.*` attributes on its
+   `relay.managed_endpoint_reaper.sweep` span in Axiom.
 4. Run the disposable-host canary below.
 5. Set `enabled` only after the canary recovers without a server restart.
 
 The job runs every five minutes with a five-minute grace period for tunnels that lost their
 connector, so a candidate is usually removed five to ten minutes after it goes down. Tunnels that
 never connected wait an hour. One sweep attempts at most 100 deletions, so a backlog takes longer.
-`RELAY_TUNNEL_CLEANUP_MODE` is read at deploy time. Changing it, including turning cleanup off during
-an incident, needs a relay deploy.
+Changing `RELAY_TUNNEL_CLEANUP_MODE`, including turning cleanup off during an incident, needs a forced
+relay deploy. Confirm the new `mode` on the next sweep span.
 
-To roll back, set cleanup to `off` and deploy the relay before downgrading any host. Keep the
+To roll back, set cleanup to `off` and run a forced relay deploy before downgrading any host. Keep the
 recovery endpoints deployed while current server builds are in use. The nullable columns can stay.
 
 ### Disposable-host canary
@@ -194,8 +201,8 @@ stage, test Cloudflare account, disposable host, and disposable T3 home. Keep pr
    and pause it with `kill -STOP <first-pid>`. Wait until Cloudflare reports it down for over five
    minutes.
 5. Confirm dry-run counts the first tunnel in `wouldDelete` and the second in `skippedLegacy`.
-6. Set cleanup `enabled` on the disposable stage and deploy. Confirm in the test Cloudflare account
-   that the first tunnel is deleted and the legacy tunnel still exists.
+6. Set cleanup `enabled` on the disposable stage and deploy it with `--force`. Confirm in the test
+   Cloudflare account that the first tunnel is deleted and the legacy tunnel still exists.
 7. Resume the first child with `kill -CONT <first-pid>`. Confirm the running server detects the
    repeated rejection, requests recovery, and becomes reachable at the same hostname without a
    restart.
@@ -322,7 +329,7 @@ available.
   - `T3CODE_DESKTOP_UPDATE_REPOSITORY` (format `owner/repo`), if set.
   - otherwise `GITHUB_REPOSITORY` from GitHub Actions.
 - Required release assets for updater:
-  - platform installers (`.exe`, `.dmg`, `.AppImage`, plus macOS `.zip` for Squirrel.Mac update payloads)
+  - platform installers (`.exe`, `.dmg`, `.AppImage`, `.deb`, plus macOS `.zip` for Squirrel.Mac update payloads)
   - channel metadata: `latest*.yml` for stable releases, `nightly*.yml` for nightly releases
   - `*.blockmap` files (used for differential downloads)
 - macOS metadata note:

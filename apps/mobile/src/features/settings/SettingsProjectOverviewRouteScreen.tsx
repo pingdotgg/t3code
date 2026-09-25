@@ -96,9 +96,10 @@ function ProjectOverviewContent(props: {
       <View className="flex-row items-center gap-4 px-2">
         <ProjectFavicon
           environmentId={representative.environmentId}
-          projectTitle={displayName}
+          projectTitle={representative.title}
           workspaceRoot={representative.workspaceRoot}
           faviconPath={representative.faviconPath}
+          projectIcon={representative.projectIcon}
           size={48}
         />
         <View className="min-w-0 flex-1">
