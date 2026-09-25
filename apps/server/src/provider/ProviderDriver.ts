@@ -131,7 +131,10 @@ export interface ProviderDriverCreateInput<Config> {
  * `create` is responsible for *all* per-instance state — process handles,
  * pubsub topics, refs, file watchers — and must release them when its
  * scope closes. Two calls to `create` with different `instanceId` /
- * `config` MUST yield instances with no shared mutable state.
+ * `config` MUST yield instances with no shared mutable state. State that
+ * belongs to an account rather than an instance lives in a server-wide
+ * service from `R` instead (see `ResetCreditCoordinator`, `ClaudeProbeCache`),
+ * keyed so instances share it only when their inputs match.
  */
 export interface ProviderDriver<Config, R = never> {
   readonly driverKind: ProviderDriverKind;

@@ -57,6 +57,7 @@ import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
+import * as ClaudeProbeCache from "../Drivers/ClaudeProbeCache.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
 
@@ -245,6 +246,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
   const testLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "provider-instance-registry-test",
   }).pipe(
+    Layer.provideMerge(ClaudeProbeCache.layer),
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
     Layer.provideMerge(ServerSettingsService.layerTest()),
@@ -601,6 +603,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         prefix: "provider-instance-registry-all-drivers-test",
       }),
     ),
+    Layer.provideMerge(ClaudeProbeCache.layer),
     Layer.provideMerge(infraLayer),
     Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
     Layer.provideMerge(ServerSettingsService.layerTest()),

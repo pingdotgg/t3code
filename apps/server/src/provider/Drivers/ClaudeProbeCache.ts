@@ -1,0 +1,75 @@
+/**
+ * One server-wide cache for the Claude capabilities probe. Claude instances
+ * whose probe inputs match (same binary, home, cwd and instance env vars)
+ * read the same account, so they share one cached result instead of each
+ * starting its own SDK session. A small gate limits how many SDK probes run
+ * at once across all instances.
+ *
+ * @module provider/Drivers/ClaudeProbeCache
+ */
+import type { ClaudeSettings, ProviderInstanceEnvironment } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
+import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as Semaphore from "effect/Semaphore";
+
+import { type ClaudeCapabilitiesProbe, probeClaudeCapabilities } from "../Layers/ClaudeProvider.ts";
+import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+
+/**
+ * Everything the probe reads, and also the cache key. The lookup gets only
+ * this value, so the probe cannot depend on an input the key leaves out.
+ * Keys compare structurally.
+ */
+export type ClaudeProbeInput = Pick<ClaudeSettings, "binaryPath" | "homePath"> & {
+  readonly cwd: string;
+  readonly environment: ProviderInstanceEnvironment;
+};
+
+const PROBE_TTL = Duration.minutes(5);
+// A failed probe marks every instance on that home as unverified, so retry soon.
+const FAILED_PROBE_TTL = Duration.seconds(30);
+const MAX_CONCURRENT_PROBES = 3;
+
+export class ClaudeProbeCache extends Context.Service<
+  ClaudeProbeCache,
+  {
+    /** Cached probe result for `input`, or `undefined` when the probe failed. */
+    readonly capabilities: (
+      input: ClaudeProbeInput,
+    ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined>;
+    /** Drop the result for `input`, so the next read probes again. */
+    readonly invalidate: (input: ClaudeProbeInput) => Effect.Effect<void>;
+  }
+>()("t3/provider/Drivers/ClaudeProbeCache") {}
+
+export const layer = Layer.effect(
+  ClaudeProbeCache,
+  Effect.gen(function* () {
+    const gate = yield* Semaphore.make(MAX_CONCURRENT_PROBES);
+    // The probe keeps its own timeout inside the gate, so time spent waiting
+    // for a permit cannot turn into a false failure.
+    const cache = yield* Cache.makeWith(
+      (input: ClaudeProbeInput) =>
+        gate.withPermits(1)(
+          probeClaudeCapabilities(
+            input,
+            mergeProviderInstanceEnvironment(input.environment),
+            input.cwd,
+          ),
+        ),
+      {
+        capacity: 64,
+        timeToLive: (exit) =>
+          Exit.isSuccess(exit) && exit.value !== undefined ? PROBE_TTL : FAILED_PROBE_TTL,
+      },
+    );
+    return {
+      capabilities: (input) => Cache.get(cache, input),
+      invalidate: (input) => Cache.invalidate(cache, input),
+    } satisfies ClaudeProbeCache["Service"];
+  }),
+);

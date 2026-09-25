@@ -63,17 +63,6 @@ export const makeClaudeContinuationGroupKey = Effect.fn("makeClaudeContinuationG
   },
 );
 
-export const makeClaudeCapabilitiesCacheKey = Effect.fn("makeClaudeCapabilitiesCacheKey")(
-  function* (
-    config: Pick<ClaudeSettings, "binaryPath" | "homePath">,
-    cwd?: string,
-    environment?: NodeJS.ProcessEnv,
-  ): Effect.fn.Return<string, never, Path.Path> {
-    const resolvedHomePath = yield* resolveClaudeHomePath(config, environment);
-    return `${config.binaryPath}\0${resolvedHomePath}\0${cwd ?? ""}`;
-  },
-);
-
 /**
  * Describe the spawned CLI's environment separately from the login command so
  * paths remain literal on every shell, including relative inherited values.
