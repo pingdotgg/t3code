@@ -106,19 +106,6 @@ export function overlayComposerIsResting(input: {
   return input.composerMounted && input.composerReportedResting;
 }
 
-/**
- * The model picker lives in the composer controls. When they are hidden (a
- * collapsed composer, or a native subagent whose settings belong to its
- * provider) the picker cannot stay open, or a shortcut that opened it would
- * pop it up later on another thread.
- */
-export function composerModelPickerCanStayOpen(input: {
-  controlsHidden: boolean;
-  threadSettingsHidden: boolean;
-}): boolean {
-  return !input.controlsHidden && !input.threadSettingsHidden;
-}
-
 export function shouldAnimateComposerRestingTransition(input: {
   hasCompletedInitialLayout: boolean;
   stateChanged: boolean;

@@ -267,7 +267,8 @@ export interface ThreadFeedProps {
   readonly setupWorkingStartedAt?: string | null;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
-  readonly onEditPendingMessage: (message: QueuedThreadMessage) => void;
+  /** Null where a pending message cannot be edited (no composer to edit it in). */
+  readonly onEditPendingMessage: ((message: QueuedThreadMessage) => void) | null;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly threadTitle: string;
@@ -1771,7 +1772,8 @@ function renderFeedEntry(
             <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
               {entry.pendingMessage && !entry.acknowledged ? "Pending" : timestampLabel}
             </Text>
-            {entry.pendingMessage &&
+            {props.onEditPendingMessage !== null &&
+            entry.pendingMessage &&
             !entry.acknowledged &&
             !entry.pendingMessage.creation &&
             entry.pendingMessage.messageId !== props.dispatchingMessageId ? (
@@ -1781,7 +1783,9 @@ function renderFeedEntry(
                 hitSlop={8}
                 className="size-7 items-center justify-center"
                 onPress={() => {
-                  if (entry.pendingMessage) props.onEditPendingMessage(entry.pendingMessage);
+                  if (entry.pendingMessage && props.onEditPendingMessage) {
+                    props.onEditPendingMessage(entry.pendingMessage);
+                  }
                 }}
               >
                 <SymbolView name="pencil" size={14} tintColor={iconSubtleColor} />

@@ -6,7 +6,6 @@ import {
   COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX,
   COMPOSER_RESTING_EXPANSION_MIN_PX,
   getRestingComposerImagePreviewCounts,
-  composerModelPickerCanStayOpen,
   overlayComposerIsResting,
   resolveComposerTimelineInset,
   resolveScrollToEndClearance,
@@ -76,20 +75,6 @@ describe("shouldUseCompactComposerPrimaryActions", () => {
         hasWideActions: true,
       }),
     ).toBe(false);
-  });
-});
-
-describe("composerModelPickerCanStayOpen", () => {
-  it("closes the picker while a native subagent hides the thread settings", () => {
-    expect(
-      composerModelPickerCanStayOpen({ controlsHidden: false, threadSettingsHidden: true }),
-    ).toBe(false);
-    expect(
-      composerModelPickerCanStayOpen({ controlsHidden: true, threadSettingsHidden: false }),
-    ).toBe(false);
-    expect(
-      composerModelPickerCanStayOpen({ controlsHidden: false, threadSettingsHidden: false }),
-    ).toBe(true);
   });
 });
 

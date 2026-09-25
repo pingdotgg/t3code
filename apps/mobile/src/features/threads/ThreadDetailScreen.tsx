@@ -363,6 +363,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   });
   const agentsSegment = resolveSubagentPillSegment(turnSubagents);
   const composerEditorRef = useRef<ComposerEditorHandle>(null);
+  // A provider-native subagent shows status instead of a composer.
+  const isProviderSubagent = isProviderNativeSubagentThread(props.selectedThread.source);
   // Entering edit mode from the queue sheet should land in a ready composer,
   // not require a second tap on a composer already holding the message.
   const editingRunId = props.queuedRunEdit?.runId ?? null;
@@ -1042,7 +1044,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               setupWorkingStartedAt={props.setupWorkingStartedAt}
               queuedMessages={props.queuedMessages}
               dispatchingMessageId={props.dispatchingMessageId}
-              onEditPendingMessage={handleEditPendingMessage}
+              // A native subagent has no composer to edit a pending message in;
+              // Cancel on the edit banner would discard it.
+              onEditPendingMessage={isProviderSubagent ? null : handleEditPendingMessage}
               contentPresentation={props.contentPresentation}
               agentLabel={agentLabel}
               threadTitle={props.selectedThread.title}
@@ -1230,7 +1234,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     : undefined
                 }
               >
-                {isProviderNativeSubagentThread(props.selectedThread.source) ? (
+                {isProviderSubagent ? (
                   <View
                     className="self-center px-3 pt-1.5"
                     style={{
