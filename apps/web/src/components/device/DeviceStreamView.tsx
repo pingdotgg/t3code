@@ -292,7 +292,7 @@ export function DeviceStreamView(props: {
 
   const phoneUnavailableReason =
     isDuo && !screen?.supportsHingeAngle
-      ? "iPhone Duo 3D requires the pinned experimental Device Hub build"
+      ? "iPhone Duo 3D requires Device Hub 0.11.0 or newer"
       : phoneUnavailable
         ? "3D is unavailable on this browser"
         : mjpegUrl
