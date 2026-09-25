@@ -32,6 +32,10 @@ import {
 } from "./toolkits/preview/tools.ts";
 import { PullRequestsToolkitHandlersLive } from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import { prismSnapshotRouteLayer } from "../prism/snapshotRoute.ts";
+import { PrismToolkitHandlersLive } from "./toolkits/prism/handlers.ts";
+import { PrismToolkit } from "./toolkits/prism/tools.ts";
 import { ThreadsToolkitHandlersLive } from "./toolkits/threads/handlers.ts";
 import { ThreadsToolkit } from "./toolkits/threads/tools.ts";
 import {
@@ -653,6 +657,11 @@ const ThreadsToolkitRegistrationLive = McpServer.toolkit(ThreadsToolkit).pipe(
   Layer.provide(ThreadsToolkitHandlersLive),
 );
 
+const PrismToolkitRegistrationLive = McpServer.toolkit(PrismToolkit).pipe(
+  Layer.provide(PrismToolkitHandlersLive),
+  Layer.provide(ProcessRunner.layer),
+);
+
 const DeviceStandardToolkitRegistrationLive = McpServer.toolkit(DeviceStandardToolkit).pipe(
   Layer.provide(DeviceStandardToolkitHandlersLive),
 );
@@ -677,5 +686,7 @@ export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   ThreadsToolkitRegistrationLive,
+  PrismToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,
+  prismSnapshotRouteLayer,
 ).pipe(Layer.provideMerge(McpTransportLive));

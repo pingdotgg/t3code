@@ -6,10 +6,14 @@ import {
   ThreadId,
   type OrchestrationEvent,
   type OrchestrationSession,
+  DEFAULT_PRISM_LANE,
   type OrchestrationThreadShell,
+  type PrismRoleKits,
   type ProviderOptionSelection,
 } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -18,8 +22,18 @@ import * as Stream from "effect/Stream";
 
 import * as OrchestrationEngine from "../../../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProviderRegistry from "../../../provider/Services/ProviderRegistry.ts";
 import * as ProviderService from "../../../provider/Services/ProviderService.ts";
+import { ServerSettingsService } from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import {
+  pickRoleModel,
+  prismRoleSuffix,
+  roleTaskMessage,
+  type ThreadToolName,
+  threadToolRefusal,
+  threadToolScopeOf,
+} from "./roles.ts";
 import { isSubagentThreadId, makeSubagentThreadId, parentThreadIdOf } from "./subagentThreadId.ts";
 import {
   type SubagentStatus,
@@ -135,6 +149,8 @@ const make = Effect.gen(function* () {
   const engine = yield* OrchestrationEngine.OrchestrationEngineService;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const providers = yield* ProviderService.ProviderService;
+  const registry = yield* ProviderRegistry.ProviderRegistry;
+  const serverSettings = yield* ServerSettingsService;
   const crypto = yield* Crypto.Crypto;
 
   /** Child thread id -> whether its turn results go back to the parent.
@@ -205,12 +221,29 @@ const make = Effect.gen(function* () {
       };
     });
 
-  /** The calling thread, plus a guard that the target is in the requested scope. */
-  const callerScopedThread = (threadId: string, scope: ThreadScope) =>
+  /** Prism role kits as resolved for a project. */
+  const roleKits = (projectId: OrchestrationThreadShell["projectId"]) =>
+    serverSettings.getSettings.pipe(
+      Effect.map((settings) => resolveProjectSettings(settings, projectId).settings.prismRoles),
+      Effect.catchCause(() => fail("Could not read Prism role settings.")),
+    );
+
+  /** The calling thread, once its role may use `tool` with `scope`. */
+  const authorizedCaller = (tool: ThreadToolName, scope: ThreadScope) =>
     Effect.gen(function* () {
       const invocation = yield* McpInvocationContext.McpInvocationContext;
       const caller = yield* threadShell(invocation.threadId);
       if (!caller) return yield* fail(`Thread ${invocation.threadId} was not found.`);
+      const kits: PrismRoleKits = yield* roleKits(caller.projectId);
+      const refusal = threadToolRefusal(threadToolScopeOf(caller.id, kits), tool, scope);
+      if (refusal) return yield* fail(refusal);
+      return { caller, kits };
+    });
+
+  /** The calling thread, plus a guard that the target is in the requested scope. */
+  const callerScopedThread = (tool: ThreadToolName, threadId: string, scope: ThreadScope) =>
+    Effect.gen(function* () {
+      const { caller } = yield* authorizedCaller(tool, scope);
       const target = yield* threadShell(threadId);
       if (!target) return yield* fail(`Thread ${threadId} was not found.`);
       if (!threadIsInScope(target, caller, scope))
@@ -220,9 +253,7 @@ const make = Effect.gen(function* () {
 
   const listThreads = (scope: ThreadScope, includeSettled: boolean) =>
     Effect.gen(function* () {
-      const invocation = yield* McpInvocationContext.McpInvocationContext;
-      const caller = yield* threadShell(invocation.threadId);
-      if (!caller) return yield* fail(`Thread ${invocation.threadId} was not found.`);
+      const { caller } = yield* authorizedCaller("list_threads", scope);
       const shells = yield* snapshots.getShellSnapshot().pipe(
         Effect.map((snapshot) => snapshot.threads),
         Effect.catchCause(() => fail("Could not read threads.")),
@@ -235,9 +266,7 @@ const make = Effect.gen(function* () {
 
   const listChildThreads = () =>
     Effect.gen(function* () {
-      const invocation = yield* McpInvocationContext.McpInvocationContext;
-      const caller = yield* threadShell(invocation.threadId);
-      if (!caller) return yield* fail(`Thread ${invocation.threadId} was not found.`);
+      const { caller } = yield* authorizedCaller("list_child_threads", "children");
       const shells = yield* snapshots.getShellSnapshot().pipe(
         Effect.map((snapshot) => snapshot.threads),
         Effect.catchCause(() => fail("Could not read threads.")),
@@ -391,41 +420,61 @@ const make = Effect.gen(function* () {
   return ThreadsToolkit.of({
     spawn_thread: (input) =>
       Effect.gen(function* () {
-        const scope = yield* McpInvocationContext.McpInvocationContext;
-        const parent = yield* threadShell(scope.threadId);
-        if (!parent) return yield* fail(`Thread ${scope.threadId} was not found.`);
+        const { caller: parent, kits } = yield* authorizedCaller("spawn_thread", "children");
+        const kit = input.role ? kits[input.role] : undefined;
+        const lane = input.lane ?? DEFAULT_PRISM_LANE;
+        const laneModels = kit?.lanes[lane] ?? [];
+        // A role's lane list applies only when the caller names no model.
+        let preferred: { instanceId: string; model: string; effort?: string } | undefined;
+        if (kit && !input.model && !input.instanceId && laneModels.length > 0) {
+          const nowMs = yield* Clock.currentTimeMillis;
+          const picked = pickRoleModel(laneModels, yield* registry.getProviders, nowMs);
+          if ("refusal" in picked) return yield* fail(picked.refusal);
+          preferred = picked.pick;
+        }
         const instanceId = ProviderInstanceId.make(
-          input.instanceId ?? parent.modelSelection.instanceId,
+          input.instanceId ?? preferred?.instanceId ?? parent.modelSelection.instanceId,
         );
         const sameInstance = instanceId === parent.modelSelection.instanceId;
-        const model = input.model ?? (sameInstance ? parent.modelSelection.model : undefined);
+        const model =
+          input.model ??
+          preferred?.model ??
+          (sameInstance ? parent.modelSelection.model : undefined);
         if (!model) return yield* fail("Pass model when instanceId differs from this thread's.");
+        const effort = input.effort ?? preferred?.effort;
         const info = yield* providers
           .getInstanceInfo(instanceId)
           .pipe(Effect.catchCause(() => fail(`Unknown provider instance ${instanceId}.`)));
         if (!info.enabled) {
           return yield* fail(`Provider instance ${instanceId} is disabled in T3 Code settings.`);
         }
-        const options: ProviderOptionSelection[] = input.effort
-          ? [{ id: effortOptionId(info.driverKind), value: input.effort }]
+        const options: ProviderOptionSelection[] = effort
+          ? [{ id: effortOptionId(info.driverKind), value: effort }]
           : [];
         const modelSelection = {
           instanceId,
           model,
           ...(options.length > 0 ? { options } : {}),
         };
+        const random = (yield* uuid).replaceAll("-", "").slice(0, 12);
         const childId = ThreadId.make(
-          makeSubagentThreadId(parent.id, (yield* uuid).replaceAll("-", "").slice(0, 12)),
+          makeSubagentThreadId(
+            parent.id,
+            input.role ? prismRoleSuffix(input.role, random) : random,
+          ),
         );
         reportBack.set(childId, input.reportBack !== false);
         const createdAt = yield* nowIso;
-        const runtimeMode = input.runtimeMode ?? parent.runtimeMode;
+        const runtimeMode = input.runtimeMode ?? kit?.runtimeMode ?? parent.runtimeMode;
+        const titlePrefix = input.role
+          ? `${input.role[0]!.toUpperCase()}${input.role.slice(1)}`
+          : "Subagent";
         yield* dispatch({
           type: "thread.create",
           commandId: yield* commandId("create"),
           threadId: childId,
           projectId: parent.projectId,
-          title: input.title ?? `Subagent: ${input.task.slice(0, 60)}`,
+          title: input.title ?? `${titlePrefix}: ${input.task.slice(0, 60)}`,
           modelSelection,
           runtimeMode,
           interactionMode: "default",
@@ -435,12 +484,18 @@ const make = Effect.gen(function* () {
         });
         const child = yield* threadShell(childId);
         if (!child) return yield* fail(`Child thread ${childId} was not created.`);
-        yield* startTurn(child, input.task);
-        return { threadId: childId, parentThreadId: parent.id, instanceId, model };
+        yield* startTurn(child, kit ? roleTaskMessage(kit, input.task) : input.task);
+        return {
+          threadId: childId,
+          ...(input.role ? { role: input.role, lane } : {}),
+          parentThreadId: parent.id,
+          instanceId,
+          model,
+        };
       }),
     message_thread: ({ threadId, text, scope }) =>
       Effect.gen(function* () {
-        const { caller, target } = yield* callerScopedThread(threadId, scope);
+        const { caller, target } = yield* callerScopedThread("message_thread", threadId, scope);
         const statusBefore = subagentStatusOf(target.session);
         if (statusBefore === "starting") {
           return yield* fail(`Thread ${threadId} is still starting. Retry in a few seconds.`);
@@ -449,7 +504,9 @@ const make = Effect.gen(function* () {
         return { threadId, statusBefore, delivery: deliveryOf(statusBefore) };
       }),
     read_thread: ({ threadId, scope }) =>
-      callerScopedThread(threadId, scope).pipe(Effect.flatMap(({ target }) => summarize(target))),
+      callerScopedThread("read_thread", threadId, scope).pipe(
+        Effect.flatMap(({ target }) => summarize(target)),
+      ),
     list_child_threads: () => listChildThreads(),
     list_threads: ({ scope, includeSettled }) => listThreads(scope, includeSettled),
   });

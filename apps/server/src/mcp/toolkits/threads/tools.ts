@@ -1,4 +1,4 @@
-import { RuntimeMode, TrimmedNonEmptyString } from "@t3tools/contracts";
+import { PrismLane, PrismRole, RuntimeMode, TrimmedNonEmptyString } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Tool from "effect/unstable/ai/Tool";
@@ -31,15 +31,28 @@ export const SpawnThreadInput = Schema.Struct({
   task: TrimmedNonEmptyString.annotate({
     description: "The first message the child thread receives: its whole task.",
   }),
+  role: Schema.optional(
+    PrismRole.annotate({
+      description:
+        "Prism role for the child: dispatcher, reviewer, worker, correction, recovery (or planner). Applies that role's kit from Prism settings: its instructions, skills, permissions, thread-tool scope, and the first eligible model of its lane list unless model is named.",
+    }),
+  ),
+  lane: Schema.optional(
+    PrismLane.annotate({
+      description:
+        "With role: which of the role's model lists to use, easy, medium (default) or hard, by how difficult the task is. Later entries in the list are fallbacks.",
+    }),
+  ),
   instanceId: Schema.optional(
     TrimmedNonEmptyString.annotate({
       description:
-        "Provider instance to run the child on, for example claudeAgent, codex, opencode or grok. Defaults to this thread's provider instance.",
+        "Provider instance to run the child on, for example claudeAgent, codex, opencode or grok. Defaults to the role's preferred model, else this thread's provider instance.",
     }),
   ),
   model: Schema.optional(
     TrimmedNonEmptyString.annotate({
-      description: "Model id on that instance. Defaults to this thread's model.",
+      description:
+        "Model id on that instance. Defaults to the first eligible model of the role's lane, else this thread's model.",
     }),
   ),
   effort: Schema.optional(
@@ -60,6 +73,8 @@ export const SpawnThreadInput = Schema.Struct({
 
 export const SpawnThreadResult = Schema.Struct({
   threadId: Schema.String,
+  role: Schema.optional(PrismRole),
+  lane: Schema.optional(PrismLane),
   parentThreadId: Schema.String,
   instanceId: Schema.String,
   model: Schema.String,
@@ -96,7 +111,7 @@ export const ThreadSummary = Schema.Struct({
 
 const SpawnThreadTool = Tool.make("spawn_thread", {
   description:
-    "Start a child thread in this project on a chosen provider instance, model and effort, and send it a task. Returns immediately with the child's thread id; the child shows in this thread's Agents panel. Use read_thread to see its reply, message_thread to talk to it.",
+    "Start a child thread in this project and send it a task: small direct work such as a quick review or a bounded fix. Pass role (for example reviewer or worker) to apply that Prism role's kit and preferred model, or name a provider instance, model and effort. For a full job that needs a dispatcher, fallback, recovery and one PR, use prism_submit instead. Returns immediately with the child's thread id; the child shows in this thread's Agents panel. Use read_thread to see its reply, message_thread to talk to it.",
   parameters: SpawnThreadInput,
   success: SpawnThreadResult,
   failure: ThreadsToolError,

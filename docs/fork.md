@@ -79,6 +79,16 @@ any modified upstream file missing from `scripts/fork-upstream-edits.txt`.
   `apps/web/src/components/chat/ChatHeader.tsx` renders the parent crumb and
   sibling menu for a child thread. The logic lives in the fork-owned
   `AgentThreadTree.logic.ts`, `AgentThreadTree.tsx` and `chat/ThreadParentCrumbs.tsx`.
+- Prism toolkit and role kits (#19): `packages/contracts/src/settings.ts`
+  adds the `prismRoles` server setting (project-scoped, with its patch) and
+  `packages/contracts/src/index.ts` exports the fork-owned `prism.ts` and
+  `prismSnapshot.ts`; `apps/server/src/mcp/McpHttpServer.ts` registers the
+  fork-owned Prism toolkit (`toolkits/prism/`) and `GET /api/prism/snapshot`
+  (`apps/server/src/prism/`); the threads toolkit's `tools.ts` and
+  `handlers.ts` take `spawn_thread(role)` and enforce each role's thread-tool
+  scope (`toolkits/threads/roles.ts`);
+  `apps/server/src/provider/Drivers/OpenCodeDriver.ts` turns on interval
+  refresh so OpenCode usage windows stay current.
 - `scripts/build-desktop-artifact.ts` (#10): the packaged-bundle
   self-containment probe clears an inherited `ELECTRON_RUN_AS_NODE`.
 - `apps/server/src/entrypoint.test.ts` (#10): resolves the fixture directory
