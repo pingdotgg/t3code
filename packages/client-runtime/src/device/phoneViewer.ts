@@ -93,13 +93,14 @@ export function createPhoneViewer(options: {
   let screen: DeviceScreenSize | null = null;
   let layout = phoneDisplayLayout(screen, options.source.width, options.source.height);
   let profile = options.profile ?? IOS_PHONE_SHAPE;
-  let orientationAngle = layout.rotation;
+  let foldAngle = options.foldAngle ?? null;
+  let orientationAngle =
+    foldAngle !== null && profile.id.startsWith("android") ? 0 : layout.rotation;
   let orientationTurn: { from: number; to: number; startedAt: number } | null = null;
   let imported: Awaited<ReturnType<typeof loadDeviceModel>> | null = null;
   let modelSource = options.model ?? null;
   let accessory: Awaited<ReturnType<typeof loadDeviceModel>> | null = null;
   let accessoryBounds: Box3 | null = null;
-  let foldAngle = options.foldAngle ?? null;
   let foldTurn: { from: number; to: number; startedAt: number } | null = null;
   let phone: ReturnType<typeof createPhoneScene> | ReturnType<typeof createAndroidFoldScene> =
     foldAngle !== null && profile.id.startsWith("android")
