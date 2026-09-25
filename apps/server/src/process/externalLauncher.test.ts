@@ -989,6 +989,12 @@ for (const { platform, installPath, editor, args } of [
     editor: "zed",
     args: ["/workspace with spaces/file.ts:12:4"],
   },
+  {
+    platform: "linux",
+    installPath: ".local/bin/px0",
+    editor: "px0",
+    args: ["/workspace with spaces/file.ts:12:4"],
+  },
 ] as const) {
   it.effect.skipIf(windowsHost && platform !== "win32")(
     `discovers and launches ${editor} outside PATH on ${platform}`,
@@ -1024,6 +1030,46 @@ for (const { platform, installPath, editor, args } of [
         );
         assert.deepEqual(spawned.args, args);
         assert.equal(spawned.options.shell, executable.endsWith(".cmd"));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
+
+// px0 has no app bundle or Windows installer location: it relies on the PATH
+// that server startup hydrates from the login shell (macOS) or the known CLI
+// dirs such as %USERPROFILE%\.local\bin (Windows).
+for (const { platform, binary } of [
+  { platform: "darwin", binary: "px0" },
+  { platform: "win32", binary: "px0.exe" },
+] as const) {
+  it.effect.skipIf(windowsHost && platform !== "win32")(
+    `discovers and launches px0 from PATH on ${platform}`,
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const binDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-px0-" });
+        yield* fs.writeFileString(path.join(binDir, binary), "#!/bin/sh\n");
+        yield* fs.chmod(path.join(binDir, binary), 0o755);
+        let spawned: ChildProcess.StandardCommand | undefined;
+        yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          assert.include(yield* launcher.resolveAvailableEditors(), "px0");
+          yield* launcher.launchEditor({ editor: "px0", cwd: "/workspace/file.ts:12:4" });
+        }).pipe(
+          Effect.provide(
+            testLayer({
+              platform,
+              env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+              onSpawn: (command) => {
+                spawned = command;
+              },
+            }),
+          ),
+        );
+        assert.ok(spawned);
+        assert.equal(spawned.command, "px0");
+        assert.deepEqual(spawned.args, ["/workspace/file.ts:12:4"]);
+        assert.equal(spawned.options.shell, false);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 }

@@ -36,6 +36,7 @@ import {
   FinderIcon,
   Icon,
   KiroIcon,
+  Px0Icon,
   TraeIcon,
   VisualStudioCode,
   VisualStudioCodeInsiders,
@@ -110,6 +111,11 @@ export const resolveOpenInOptions = (
     {
       Icon: AntigravityIcon,
       value: "antigravity",
+      kind: "brand",
+    },
+    {
+      Icon: Px0Icon,
+      value: "px0",
       kind: "brand",
     },
     {

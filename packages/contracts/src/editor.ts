@@ -60,6 +60,7 @@ export const EDITORS = [
     remoteScheme: "zed",
   },
   { id: "antigravity", label: "Antigravity", commands: ["agy"], launchStyle: "goto" },
+  { id: "px0", label: "px0", commands: ["px0"], launchStyle: "direct-path" },
   { id: "idea", label: "IntelliJ IDEA", commands: ["idea"], launchStyle: "line-column" },
   { id: "aqua", label: "Aqua", commands: ["aqua"], launchStyle: "line-column" },
   { id: "clion", label: "CLion", commands: ["clion"], launchStyle: "line-column" },
