@@ -5163,7 +5163,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("creates the Scratch project on first request and reuses it after", () =>
+  it.effect("creates the Scratch project once and restores its folder on reuse", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const created: Array<{ readonly projectId: ProjectId; readonly workspaceRoot: string }> = [];
@@ -5202,15 +5202,18 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
           Effect.gen(function* () {
             const config = yield* client[WS_METHODS.serverGetConfig]({});
+            const scratchRoot = config.scratchWorkspaceRoot ?? "";
             const first = yield* client[WS_METHODS.projectsEnsureScratch]({});
+            // A user may delete the folder; reuse must bring it back.
+            yield* fileSystem.remove(scratchRoot, { recursive: true });
             const second = yield* client[WS_METHODS.projectsEnsureScratch]({});
 
-            assert.isTrue(config.scratchWorkspaceRoot?.endsWith("scratch"));
+            assert.isTrue(scratchRoot.endsWith("scratch"));
             assert.equal(created.length, 1);
-            assert.equal(created[0]?.workspaceRoot, config.scratchWorkspaceRoot);
+            assert.equal(created[0]?.workspaceRoot, scratchRoot);
             assert.equal(first.projectId, created[0]?.projectId);
             assert.equal(second.projectId, first.projectId);
-            assert.isTrue(yield* fileSystem.exists(config.scratchWorkspaceRoot ?? ""));
+            assert.isTrue(yield* fileSystem.exists(scratchRoot));
           }),
         ),
       );

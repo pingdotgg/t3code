@@ -109,7 +109,7 @@ function ChatRouteGlobalShortcuts() {
 
       if (command === "chat.newScratch") {
         const environmentId = scratchEnvironmentId(
-          routeThreadRef?.environmentId ?? primaryEnvironmentId,
+          activeThread?.environmentId ?? activeDraftThread?.environmentId ?? primaryEnvironmentId,
         );
         if (environmentId === null) return;
         event.preventDefault();

@@ -169,15 +169,18 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     reportFailure: false,
   });
   // Scratch needs a connected environment whose server offers the folder.
-  // When the list is scoped to selectedEnvironmentId only that environment
-  // qualifies; an unscoped list takes the first one that does.
+  // The selected environment wins when it has one; otherwise the first that does.
+  const scratchEnvironments = connectedEnvironments.filter(
+    (environment) =>
+      canCreateProjectInEnvironment(environment.connectionState) &&
+      serverConfigs.get(environment.environmentId)?.scratchWorkspaceRoot !== undefined,
+  );
   const scratchEnvironment =
-    connectedEnvironments.find(
-      (environment) =>
-        (selectedEnvironmentId === null || environment.environmentId === selectedEnvironmentId) &&
-        canCreateProjectInEnvironment(environment.connectionState) &&
-        serverConfigs.get(environment.environmentId)?.scratchWorkspaceRoot !== undefined,
-    ) ?? null;
+    scratchEnvironments.find(
+      (environment) => environment.environmentId === selectedEnvironmentId,
+    ) ??
+    scratchEnvironments[0] ??
+    null;
   const scratchWorkspaceRoot = scratchEnvironment
     ? (serverConfigs.get(scratchEnvironment.environmentId)?.scratchWorkspaceRoot ?? null)
     : null;

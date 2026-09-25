@@ -1830,6 +1830,8 @@ const makeWsRpcLayer = (
       // One Scratch project per environment, created the first time a client
       // asks. Two clients racing the create both reach dispatch; the loser's
       // duplicate-root rejection resolves to the project the winner made.
+      // The folder is (re)made on every call so a deleted Scratch still runs.
+      const fileSystem = yield* FileSystem.FileSystem;
       const ensureScratchProject = Effect.gen(function* () {
         const workspaceRoot = yield* resolveScratchWorkspaceRoot;
         if (workspaceRoot === undefined) {
@@ -1837,12 +1839,25 @@ const makeWsRpcLayer = (
             message: "Scratch is not available on this environment.",
           });
         }
+        yield* fileSystem.makeDirectory(workspaceRoot, { recursive: true }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationDispatchCommandError({
+                message: "Failed to create the Scratch folder.",
+                cause,
+              }),
+          ),
+        );
         const findScratchProjectId = projectionSnapshotQuery
           .getActiveProjectByWorkspaceRoot(workspaceRoot)
           .pipe(
             Effect.map(Option.map((project) => project.id)),
-            Effect.mapError((cause) =>
-              toDispatchCommandError(cause, "Failed to look up the Scratch project."),
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationDispatchCommandError({
+                  message: "Failed to look up the Scratch project.",
+                  cause,
+                }),
             ),
           );
         const existingProjectId = yield* findScratchProjectId;
@@ -1857,16 +1872,11 @@ const makeWsRpcLayer = (
             projectId,
             title: "Scratch",
             workspaceRoot,
-            createWorkspaceRootIfMissing: true,
             createdAt: yield* nowIso,
           });
           yield* dispatchNormalizedCommand(command);
-          yield* recordClientCommandAnalytics(command);
           return { projectId };
         }).pipe(
-          Effect.mapError((cause) =>
-            toDispatchCommandError(cause, "Failed to create the Scratch project."),
-          ),
           Effect.catch((error) =>
             findScratchProjectId.pipe(
               Effect.flatMap(
