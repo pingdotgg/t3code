@@ -380,6 +380,8 @@ const XAiTaskLifecycleNotification = Schema.Struct({
     task_snapshot: Schema.optional(
       Schema.Struct({
         task_id: Schema.optional(Schema.String),
+        output: Schema.optional(Schema.String),
+        exit_code: Schema.optional(Schema.NullOr(Schema.Number)),
       }),
     ),
   }),
@@ -391,7 +393,9 @@ type XAiTaskLifecycleNotification = typeof XAiTaskLifecycleNotification.Type;
 export interface XAiBackgroundTaskLifecycleMutation {
   readonly sessionId: string;
   readonly taskId: string;
-  readonly status: "running" | "completed";
+  readonly status: "running" | "completed" | "failed";
+  /** Final output from `task_completed.task_snapshot`, when Grok sent one. */
+  readonly output?: string;
 }
 
 export function xAiBackgroundTaskLifecycleMutation(
@@ -404,7 +408,15 @@ export function xAiBackgroundTaskLifecycleMutation(
     nonEmptyString(update.task_id) ??
     nonEmptyString(update.tool_call_id);
   if (taskId === undefined) return null;
-  return { sessionId: notification.sessionId, taskId, status };
+  const exitCode = update.task_snapshot?.exit_code;
+  const output = update.task_snapshot?.output;
+  return {
+    sessionId: notification.sessionId,
+    taskId,
+    status:
+      status === "completed" && typeof exitCode === "number" && exitCode !== 0 ? "failed" : status,
+    ...(output === undefined ? {} : { output }),
+  };
 }
 
 /**
@@ -480,10 +492,11 @@ export function resolveXAiAcpToolTitle(toolCall: AcpToolCallState): string | und
  * - replace generic titles ("Tool") with description / variant labels
  * - structured Monitor start ACK stays running
  * - text start ACK stays running
- * - structured Bash results with exit_code are terminal (any tool: post-settle
- *   wake re-reports of a finished monitor arrive with empty rawInput and a
- *   generic title, so monitor detection cannot match; without this they replay
- *   as running and the timeline row spins forever)
+ * - structured Bash results with exit_code are terminal, unless Grok itself
+ *   still reports the tool running. Grok 1.0.41 streams every monitor tick as
+ *   `status: "in_progress"` with a Bash-shaped rawOutput whose exit_code is
+ *   already 0, and never sends a completed status for the monitor; its end
+ *   arrives as `_x.ai/task_completed`.
  */
 export function normalizeXAiAcpToolCallState(toolCall: AcpToolCallState): AcpToolCallState {
   const resolvedTitle = resolveXAiAcpToolTitle(toolCall);
@@ -494,7 +507,8 @@ export function normalizeXAiAcpToolCallState(toolCall: AcpToolCallState): AcpToo
 
   const rawOutput = unknownRecord(withTitle.data.rawOutput);
   const outputType = nonEmptyString(rawOutput?.type)?.toLowerCase();
-  if (outputType === "bash") {
+  const reportedRunning = withTitle.status === "inProgress" || withTitle.status === "pending";
+  if (outputType === "bash" && !reportedRunning) {
     // Same key set as the adapter's command projection (commandExitCode).
     const exitCode = ["exit_code", "exitCode", "code"]
       .map((key) => rawOutput?.[key])

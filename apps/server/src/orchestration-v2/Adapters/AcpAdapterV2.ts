@@ -174,12 +174,15 @@ export interface AcpAdapterV2ExtensionContext {
   /**
    * Session-scoped background-task lifecycle reported via extension
    * notifications (e.g. Grok `x.ai/task_backgrounded`; older builds use the
-   * underscore alias). Mutations for non-root sessions are ignored.
+   * underscore alias). Mutations for non-root sessions are ignored. A terminal
+   * mutation also finishes the tool that registered the task in a settled turn
+   * still held open for it, with `output` as its final text when given.
    */
   readonly applyBackgroundTaskMutation: (mutation: {
     readonly sessionId: string;
     readonly taskId: string;
     readonly status: "running" | "completed" | "failed";
+    readonly output?: string;
   }) => Effect.Effect<void>;
   readonly requestUserInput: (
     input: AcpAdapterV2UserInputRequest,
@@ -3578,6 +3581,34 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           }
         });
 
+        // A structured task end (Grok `task_completed`) is authoritative for the
+        // tool that registered the task: its own updates only ever say running.
+        // Finish the row while deferred finalize holds a settled root turn open
+        // for it, so the turn can settle. While the prompt is still open the
+        // agent reports the end itself (TaskOutput hydration), and an unreported
+        // end must keep its post-finalize continuation offer.
+        const finishRegisteredBackgroundTool = Effect.fnUntraced(function* (mutation: {
+          readonly taskId: string;
+          readonly status: "completed" | "failed";
+          readonly output?: string;
+        }) {
+          const context = yield* Ref.get(activeTurn);
+          if (context === null || context.finalized || !context.promptSettled) return;
+          const toolCallId = context.toolCallIdsByBackgroundTaskId.get(mutation.taskId);
+          const tool = toolCallId === undefined ? undefined : context.tools.get(toolCallId);
+          if (tool === undefined) return;
+          const status = toolStatus(tool.status);
+          if (status !== "pending" && status !== "running") return;
+          context.awaitingBackgroundHydration.delete(mutation.taskId);
+          const finished = { ...tool, status: mutation.status };
+          yield* emitTool(
+            context,
+            mutation.output === undefined ? finished : setToolOutputText(finished, mutation.output),
+            mutation.status,
+          );
+          yield* rearmDeferredFinalize(context);
+        });
+
         const bufferPostSettleWake = Effect.fnUntraced(function* (
           notification: EffectAcpSchema.SessionNotification,
         ) {
@@ -5569,6 +5600,13 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                     // its child session must not gate root wake machinery.
                     if ((yield* Ref.get(activeSessionId)) !== mutation.sessionId) return;
                     yield* applyLateBackgroundMutation(mutation.sessionId, mutation);
+                    if (mutation.status !== "running") {
+                      yield* finishRegisteredBackgroundTool({
+                        taskId: mutation.taskId,
+                        status: mutation.status,
+                        ...(mutation.output === undefined ? {} : { output: mutation.output }),
+                      });
+                    }
                   }),
                 ).pipe(Effect.asVoid),
             });
