@@ -161,19 +161,71 @@ it.effect.each([{}, { includeImage: false }])(
             Effect.provideService(McpSchema.McpServerClient, client),
           );
 
+        const message = "Preview automation snapshot failed on client mcp-failure-client.";
         expect(snapshot.isError).toBe(true);
         expect(snapshot.content).toEqual([
-          { type: "text", text: "Preview snapshot failed: PreviewAutomationExecutionError." },
+          { type: "text", text: `Preview snapshot failed: ${message}` },
         ]);
         expect(snapshot.structuredContent).toEqual({
           error: {
             _tag: "PreviewAutomationExecutionError",
             operation: "snapshot",
             failureCount: 1,
+            message,
           },
         });
       }),
     ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect.each([
+  { args: {}, advice: "No active preview tab was found for snapshot. Call preview_open first." },
+  {
+    args: { tabId: alternateTabId },
+    advice: `Preview tab ${alternateTabId} was not found for snapshot. Omit tabId to use the current tab, or call preview_open.`,
+  },
+])("tells the agent to open a tab when the snapshot has none $args", ({ args, advice }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const connected = yield* Deferred.make<void>();
+      const events = yield* broker.connect({ clientId: "mcp-no-tab-client", environmentId });
+      yield* Stream.runForEach(events, (event) =>
+        event.type === "connected"
+          ? Deferred.succeed(connected, undefined)
+          : broker.respond({
+              clientId: "mcp-no-tab-client",
+              connectionId: event.connectionId,
+              requestId: event.request.requestId,
+              ok: false,
+              error: { _tag: "PreviewAutomationTabNotFoundError", message: "no tab" },
+            }),
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+
+      const snapshot = yield* callSnapshot(args);
+
+      expect(snapshot.isError).toBe(true);
+      expect(snapshot.content).toEqual([
+        { type: "text", text: `Preview snapshot failed: ${advice}` },
+      ]);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("tells the agent how to fall back when no desktop app can run the snapshot", () =>
+  Effect.gen(function* () {
+    const snapshot = yield* callSnapshot({});
+
+    expect(snapshot.isError).toBe(true);
+    const [text] = snapshot.content;
+    expect(text?.type === "text" ? text.text : "").toContain(
+      "use a headless browser from the shell",
+    );
+    expect(snapshot.structuredContent).toMatchObject({
+      error: { _tag: "PreviewAutomationNoAvailableHostError" },
+    });
+  }).pipe(Effect.provide(TestLayer)),
 );
 
 it.effect.each([

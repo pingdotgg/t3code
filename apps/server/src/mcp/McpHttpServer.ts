@@ -13,6 +13,7 @@ import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
 import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { PreviewAutomationError } from "@t3tools/contracts";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
@@ -328,6 +329,8 @@ const saveScreenshot = Effect.fn("McpHttpServer.saveScreenshot")(function* (
   return screenshotPath;
 });
 
+const isPreviewAutomationError = Schema.is(PreviewAutomationError);
+
 const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
   if (Cause.hasInterrupts(cause) || cause.reasons.some(Cause.isDieReason)) {
     return Effect.failCause(cause).pipe(Effect.orDie);
@@ -341,6 +344,9 @@ const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
     typeof firstFailure._tag === "string"
       ? firstFailure._tag
       : "PreviewSnapshotError";
+  // Preview errors build their message on the server, never from page output,
+  // and it tells the agent what to do next, such as falling back to a shell browser.
+  const message = isPreviewAutomationError(firstFailure) ? firstFailure.message : undefined;
   const result = new McpSchema.CallToolResult({
     isError: true,
     structuredContent: {
@@ -348,10 +354,11 @@ const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
         _tag: errorTag,
         operation: "snapshot",
         failureCount: failures.length,
+        ...(message === undefined ? {} : { message }),
       },
     },
-    // Agents usually see only the text content, so name the tag there too.
-    content: [{ type: "text", text: `Preview snapshot failed: ${errorTag}.` }],
+    // Some clients show only the text content and others only structuredContent, so both carry it.
+    content: [{ type: "text", text: `Preview snapshot failed: ${message ?? `${errorTag}.`}` }],
   });
   return Effect.logWarning("preview snapshot failed", {
     operation: "snapshot",
