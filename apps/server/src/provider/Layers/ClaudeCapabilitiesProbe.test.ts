@@ -10,6 +10,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
@@ -223,3 +225,45 @@ it.effect("preserves initialized capabilities when optional usage times out", ()
     assert.equal(abortSignal?.aborted, true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("logs why a capability probe failed before reporting no capabilities", () => {
+  const messages: Array<unknown> = [];
+  const logCapture = Logger.make<unknown, void>(({ message }) => {
+    messages.push(...(Array.isArray(message) ? message : [message]));
+  });
+  return Effect.gen(function* () {
+    const initializationStarted = yield* Deferred.make<void>();
+    let abortSignal: AbortSignal | undefined;
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ options }) => {
+      abortSignal = options?.abortController?.signal;
+      return {
+        initializationResult: () => {
+          Deferred.doneUnsafe(initializationStarted, Effect.void);
+          return new Promise(() => {});
+        },
+      } as unknown as ReturnType<typeof ClaudeSdk.query>;
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const probe = yield* probeClaudeCapabilities(
+      decodeClaudeSettings({ binaryPath: "claude" }),
+    ).pipe(Effect.forkChild);
+    yield* Deferred.await(initializationStarted);
+    yield* TestClock.adjust("25 seconds");
+    const capabilities = yield* Fiber.join(probe);
+    assert.equal(capabilities, undefined);
+    assert.equal(abortSignal?.aborted, true);
+    assert.include(messages, "Claude capability probe failed.");
+    const annotations = messages.find(
+      (message): message is Record<string, unknown> =>
+        typeof message === "object" && message !== null && "errorTag" in message,
+    );
+    assert.equal(annotations?.errorTag, "TimeoutError");
+    assert.equal(annotations?.timeoutMs, 25_000);
+    assert.isString(annotations?.detail);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.merge(NodeServices.layer, Logger.layer([logCapture], { mergeWithExisting: false })),
+    ),
+  );
+});

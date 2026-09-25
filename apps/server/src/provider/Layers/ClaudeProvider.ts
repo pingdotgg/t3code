@@ -396,6 +396,14 @@ const probeClaudeCapabilities = (
         if (!abort.signal.aborted) abort.abort();
       }),
     ),
+    // Callers only see `undefined`, so this log is the one record of why the probe failed.
+    Effect.tapError((error) =>
+      Effect.logWarning("Claude capability probe failed.", {
+        errorTag: error._tag,
+        detail: error.message,
+        ...(error._tag === "TimeoutError" ? { timeoutMs: CAPABILITIES_PROBE_TIMEOUT_MS } : {}),
+      }),
+    ),
     Effect.result,
     Effect.map((result) => (Result.isSuccess(result) ? result.success : undefined)),
   );
