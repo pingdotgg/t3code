@@ -5,6 +5,7 @@ import {
   THEME_PREVIEW_RENDER_SPECS,
 } from "@t3tools/shared/themePreview";
 import { cn } from "../../lib/utils";
+import { APP_BASE_NAME } from "../../branding";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   getThemeColorsForMode,
@@ -58,7 +59,7 @@ const STANDARD_THEME_PREVIEW_COLORS: Record<
 export const STANDARD_THEME_CARDS: ReadonlyArray<ThemeCardDefinition> = [
   {
     id: "default",
-    label: "T3 Code",
+    label: APP_BASE_NAME,
     previews: (["light", "dark"] as const).map((mode) => ({
       mode,
       colors: STANDARD_THEME_PREVIEW_COLORS[mode],
