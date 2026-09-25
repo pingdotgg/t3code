@@ -618,3 +618,36 @@ Current high-value span and metric boundaries include:
 - logs outside spans are not persisted in the trace file; SSH-managed launch stdout/stderr is still
   captured in its launcher log
 - metrics are not snapshotted locally
+
+## Heap Snapshots
+
+To see what a long-running server holds in memory, send it `SIGUSR2`. The server writes a V8 heap
+snapshot to its logs dir and logs the path. This works for desktop, `npx t3`, and service installs
+on macOS and Linux. Windows has no `SIGUSR2`.
+
+Send the signal to the server pid in `server-runtime.json`, which sits next to the `logs` dir. Do
+not send it to the desktop app or the service launcher: a process without the handler exits on
+`SIGUSR2`.
+
+```bash
+kill -USR2 "$(jq .pid ~/.t3/userdata/server-runtime.json)"
+```
+
+The file is `<logsDir>/server-<pid>-<timestamp>.heapsnapshot`, next to `server.trace.ndjson`. To
+open it, use the Memory tab in Chrome DevTools and select Load.
+
+Before you take one:
+
+- The server stops while it writes the file. For a large heap this can take a minute or more.
+  Send the signal once. A second signal sent during a write takes another snapshot after the first
+  one finishes.
+- The write needs about as much free memory as the heap uses. On a machine that is already
+  swapping, it can make the problem worse or crash the server.
+- The file contains everything in server memory, including tokens, secrets, and thread content. Do
+  not share it publicly. Delete it when you are done, because storage cleanup does not remove it.
+
+Alternative: outside the desktop app, `kill -USR1 <pid>` opens the Node inspector on
+`127.0.0.1:9229`. Open `chrome://inspect`, select the server, and take a snapshot in the Memory tab.
+This sends the snapshot through DevTools instead of writing a file, which is slow for a large heap.
+The inspector stays open until the server exits. While it is open, any local process can connect to
+it and run code in the server.
