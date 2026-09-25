@@ -86,4 +86,17 @@ describe("model ordering", () => {
       { provider: CODEX_WORK_ID, model: "crest-alpha" },
     ]);
   });
+
+  it("collapses a duplicated favorite to its first slot when a provider's favorites change", () => {
+    const favorites = [
+      { provider: CODEX_WORK_ID, model: "gpt-5.5" },
+      { provider: CLAUDE_ID, model: "claude-opus-4-6" },
+      { provider: CODEX_WORK_ID, model: "gpt-5.5" },
+    ];
+
+    expect(replaceInstanceFavorites(favorites, CODEX_WORK_ID, ["gpt-5.5"])).toEqual([
+      { provider: CODEX_WORK_ID, model: "gpt-5.5" },
+      { provider: CLAUDE_ID, model: "claude-opus-4-6" },
+    ]);
+  });
 });

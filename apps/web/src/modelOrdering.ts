@@ -123,7 +123,8 @@ export function moveFavoriteModel<T extends ModelFavorite>(
 
 /**
  * Replaces one provider instance's favorites. Kept favorites stay where the
- * user ordered them and new ones go to the end.
+ * user ordered them, duplicates collapse to their first slot, and new ones go
+ * to the end.
  */
 export function replaceInstanceFavorites(
   favorites: ReadonlyArray<ModelFavorite>,
@@ -131,11 +132,9 @@ export function replaceInstanceFavorites(
   models: ReadonlyArray<string>,
 ): ModelFavorite[] {
   const added = new Set(models);
-  const kept = favorites.filter(
-    (favorite) => favorite.provider !== instanceId || added.has(favorite.model),
-  );
-  for (const favorite of kept) {
-    if (favorite.provider === instanceId) added.delete(favorite.model);
-  }
+  const kept = favorites.filter((favorite) => {
+    if (favorite.provider !== instanceId) return true;
+    return added.delete(favorite.model);
+  });
   return [...kept, ...Arr.map([...added], (model) => ({ provider: instanceId, model }))];
 }
