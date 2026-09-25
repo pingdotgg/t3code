@@ -8780,8 +8780,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "message.dispatch": {
         // The provider owns a native subagent's conversation, so a sent
-        // message has nowhere to go. Only sends are refused: answers to the
-        // subagent's own questions reuse dispatchMessage and must still land.
+        // message has nowhere to go. Answers to a subagent's questions never
+        // target it either: adapters ask them on the top-level parent thread.
         const thread = yield* projectionStore
           .getThread(command.threadId)
           .pipe(
