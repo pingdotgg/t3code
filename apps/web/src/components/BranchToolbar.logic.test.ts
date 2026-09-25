@@ -8,6 +8,7 @@ import {
   resolveCurrentWorkspaceLabel,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
+  resolveExistingWorktreeForBaseRef,
   resolveEnvModeLabel,
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
@@ -856,5 +857,37 @@ describe("sanitizeNewRefName", () => {
   it("does not collapse dashes the user typed", () => {
     expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
     expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
+  });
+});
+
+describe("resolveExistingWorktreeForBaseRef", () => {
+  it("returns the secondary worktree that already holds the base ref", () => {
+    expect(
+      resolveExistingWorktreeForBaseRef({
+        activeProjectCwd: "/repo",
+        refName: { worktreePath: "/repo/.t3/worktrees/feature" },
+      }),
+    ).toBe("/repo/.t3/worktrees/feature");
+  });
+
+  it("keeps the project checkout when the base ref lives there", () => {
+    expect(
+      resolveExistingWorktreeForBaseRef({
+        activeProjectCwd: "/repo",
+        refName: { worktreePath: "/repo" },
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null when the base ref is not checked out anywhere", () => {
+    expect(
+      resolveExistingWorktreeForBaseRef({
+        activeProjectCwd: "/repo",
+        refName: { worktreePath: null },
+      }),
+    ).toBeNull();
+    expect(
+      resolveExistingWorktreeForBaseRef({ activeProjectCwd: "/repo", refName: null }),
+    ).toBeNull();
   });
 });

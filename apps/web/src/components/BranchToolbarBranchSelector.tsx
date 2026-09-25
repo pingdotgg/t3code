@@ -49,6 +49,7 @@ import {
   resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
+  resolveExistingWorktreeForBaseRef,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
@@ -78,6 +79,8 @@ import { MiddleTruncate } from "./ui/middle-truncate";
 
 export interface BranchToolbarBranchSelectorHandle {
   open: () => void;
+  /** The existing worktree holding the selected new-worktree base ref, if any. */
+  getBaseRefWorktree: () => { branch: string; worktreePath: string } | null;
 }
 
 interface BranchToolbarBranchSelectorProps {
@@ -558,8 +561,25 @@ export function BranchToolbarBranchSelector({
         if (isInitialBranchesLoadPending || isBranchActionPending) return;
         handleOpenChange(true);
       },
+      getBaseRefWorktree: () => {
+        if (!isSelectingWorktreeBase || resolvedActiveBranch === null) return null;
+        const worktreePath = resolveExistingWorktreeForBaseRef({
+          activeProjectCwd,
+          refName: listedActiveBranch ?? queriedActiveBranch ?? null,
+        });
+        return worktreePath ? { branch: resolvedActiveBranch, worktreePath } : null;
+      },
     }),
-    [handleOpenChange, isBranchActionPending, isInitialBranchesLoadPending],
+    [
+      activeProjectCwd,
+      handleOpenChange,
+      isBranchActionPending,
+      isInitialBranchesLoadPending,
+      isSelectingWorktreeBase,
+      listedActiveBranch,
+      queriedActiveBranch,
+      resolvedActiveBranch,
+    ],
   );
 
   const [showTopBranchScrollFade, setShowTopBranchScrollFade] = useState(false);
