@@ -108,7 +108,11 @@ describe("OtelEnvironment", () => {
 
   describe("endpoints", () => {
     const urlOf = (signal: OtelEnvironment.OtelSignal) =>
-      signal._tag === "Export" ? signal.url : signal._tag;
+      OtelEnvironment.OtelSignal.$match(signal, {
+        Export: ({ url }) => url,
+        Off: () => "Off",
+        Unset: () => "Unset",
+      });
     it.effect.each([
       {
         name: "nothing set",
@@ -198,9 +202,11 @@ describe("OtelEnvironment", () => {
 
     const ENDPOINT = { OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector:4318" };
     const exportOf = (signal: OtelEnvironment.OtelSignal): unknown =>
-      signal._tag === "Export"
-        ? { protocol: signal.protocol, headers: signal.headers }
-        : signal._tag;
+      OtelEnvironment.OtelSignal.$match(signal, {
+        Export: ({ protocol, headers }) => ({ protocol, headers }),
+        Off: () => "Off",
+        Unset: () => "Unset",
+      });
     it.effect.each([
       {
         name: "nothing else set takes the specification's default protocol",
@@ -286,12 +292,11 @@ describe("OtelEnvironment", () => {
       disabled,
       logs,
     });
-    const otelExport: OtelEnvironment.OtelSignal = {
-      _tag: "Export",
+    const otelExport = OtelEnvironment.OtelSignal.Export({
       url: "http://otel:4318/v1/logs",
       protocol: "http/protobuf",
       headers: { "x-key": "otel" },
-    };
+    });
     it.each([
       {
         name: "T3CODE_OTLP_*_URL wins over an OTEL endpoint",
@@ -301,7 +306,7 @@ describe("OtelEnvironment", () => {
       },
       {
         name: "T3CODE_OTLP_*_URL wins over a signal the OTEL variables turned off",
-        otel: withLogs({ _tag: "Off" }),
+        otel: withLogs(OtelEnvironment.OtelSignal.Off()),
         t3Url: "http://t3:4318/v1/logs",
         expected: { url: "http://t3:4318/v1/logs", export: t3Export },
       },
@@ -320,13 +325,13 @@ describe("OtelEnvironment", () => {
       },
       {
         name: "a signal the OTEL variables turned off does not fall through",
-        otel: withLogs({ _tag: "Off" }),
+        otel: withLogs(OtelEnvironment.OtelSignal.Off()),
         t3Url: undefined,
         expected: undefined,
       },
       {
         name: "an unset signal takes the first non-blank fallback",
-        otel: withLogs({ _tag: "Unset" }),
+        otel: withLogs(OtelEnvironment.OtelSignal.Unset()),
         t3Url: undefined,
         expected: { url: "http://settings:4318/v1/logs", export: t3Export },
       },

@@ -10,6 +10,7 @@
  */
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -25,18 +26,16 @@ type OtlpSignalName = "TRACES" | "METRICS" | "LOGS";
  * claimed with an endpoint whose protocol or headers do not read, so it is
  * exported nowhere rather than to the bootstrap or Settings collector.
  */
-export type OtelSignal =
-  | { readonly _tag: "Unset" }
-  | { readonly _tag: "Off" }
-  | {
-      readonly _tag: "Export";
-      readonly url: string;
-      readonly protocol: OtlpProtocol;
-      readonly headers: Readonly<Record<string, string>> | undefined;
-    };
-
-const UNSET: OtelSignal = { _tag: "Unset" };
-const OFF: OtelSignal = { _tag: "Off" };
+export type OtelSignal = Data.TaggedEnum<{
+  Unset: {};
+  Off: {};
+  Export: {
+    readonly url: string;
+    readonly protocol: OtlpProtocol;
+    readonly headers: Readonly<Record<string, string>> | undefined;
+  };
+}>;
+export const OtelSignal = Data.taggedEnum<OtelSignal>();
 
 export interface OtelEnvironment {
   /** Whether OTLP export is off, whatever endpoint is configured. */
@@ -220,22 +219,21 @@ const signal = (name: OtlpSignalName, own: Settings, generic: Settings): Resolve
   const ownEndpoint = isClaimed(own.endpoint);
   const endpoint = ownEndpoint ? own.endpoint : generic.endpoint;
   if (endpoint.value === undefined) {
-    return { signal: UNSET, used: [endpoint] };
+    return { signal: OtelSignal.Unset(), used: [endpoint] };
   }
   const protocol = claimed(own.protocol, generic.protocol);
   const headers = claimed(own.headers, generic.headers);
   const used = [endpoint, protocol, headers];
   if (protocol.warning !== undefined || headers.warning !== undefined) {
-    return { signal: OFF, used };
+    return { signal: OtelSignal.Off(), used };
   }
   const url = ownEndpoint ? endpoint.value : withSignalPath(name, endpoint.value);
   return {
-    signal: {
-      _tag: "Export",
+    signal: OtelSignal.Export({
       url: url.toString(),
       protocol: protocol.value ?? "http/protobuf",
       headers: headers.value,
-    },
+    }),
     used,
   };
 };
@@ -294,9 +292,9 @@ export const load: Effect.Effect<OtelEnvironment> = Config.all({
       disabled,
       warnings,
       resourceAttributes: resource.value,
-      traces: signals?.traces.signal ?? UNSET,
-      metrics: signals?.metrics.signal ?? UNSET,
-      logs: signals?.logs.signal ?? UNSET,
+      traces: signals?.traces.signal ?? OtelSignal.Unset(),
+      metrics: signals?.metrics.signal ?? OtelSignal.Unset(),
+      logs: signals?.logs.signal ?? OtelSignal.Unset(),
     };
   }),
   // Every read above falls back instead of failing, so this cannot happen.
@@ -329,24 +327,17 @@ export const resolveSignalEndpoint = (
   if (t3Url !== undefined) {
     return { url: t3Url, export: t3.export };
   }
-  const claimedByOtel = otel[signal];
-  switch (claimedByOtel._tag) {
-    case "Export":
-      return {
-        url: claimedByOtel.url,
-        export: {
-          protocol: claimedByOtel.protocol,
-          headers: claimedByOtel.headers,
-          exportIntervalMs: t3.export.exportIntervalMs,
-        },
-      };
-    case "Off":
-      return undefined;
-    case "Unset": {
+  return OtelSignal.$match(otel[signal], {
+    Export: ({ url, protocol, headers }): SignalEndpoint => ({
+      url,
+      export: { protocol, headers, exportIntervalMs: t3.export.exportIntervalMs },
+    }),
+    Off: () => undefined,
+    Unset: () => {
       const url = fallbackUrls.map(blankAsUnset).find((candidate) => candidate !== undefined);
       return url === undefined ? undefined : { url, export: t3.export };
-    }
-  }
+    },
+  });
 };
 
 /**
@@ -373,7 +364,7 @@ export const none: OtelEnvironment = {
   disabled: false,
   warnings: [],
   resourceAttributes: {},
-  traces: UNSET,
-  metrics: UNSET,
-  logs: UNSET,
+  traces: OtelSignal.Unset(),
+  metrics: OtelSignal.Unset(),
+  logs: OtelSignal.Unset(),
 };
