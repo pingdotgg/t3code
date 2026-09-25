@@ -1,4 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
+import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
+import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
 import {
   createEnvironmentThreadDetailAtoms,
   createEnvironmentThreadShellAtoms,
@@ -6,8 +8,9 @@ import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   type EnvironmentThreadState,
   createThreadEnvironmentAtoms,
+  isThreadSessionRunning,
 } from "@t3tools/client-runtime/state/threads";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, OrchestrationThreadShell, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -46,3 +49,84 @@ export function useEnvironmentThread(
     () => EMPTY_ENVIRONMENT_THREAD_STATE,
   ) as EnvironmentThreadState;
 }
+
+type KeptThreads = ReadonlyMap<EnvironmentId, ReadonlySet<ThreadId>>;
+
+// True while the thread's own stream is up and still shows a running session.
+// A failed or disconnected stream cannot deliver the stop, so it does not wait.
+function isDetailStillRunning<E>(
+  result: AsyncResult.AsyncResult<EnvironmentThreadState, E>,
+): boolean {
+  if (!AsyncResult.isSuccess(result)) return false;
+  const { status, data } = result.value;
+  return (
+    (status === "live" || status === "synchronizing") &&
+    Option.exists(data, (thread) => isThreadSessionRunning(thread.session))
+  );
+}
+
+/**
+ * Keeps the thread state atom mounted for each running thread in the listed
+ * environments. Mount the result; its value is only bookkeeping.
+ *
+ * The shell and detail streams are independent, so the shell can report a
+ * stop first. A stopped thread stays mounted until its own detail shows the
+ * stop too. Then the stream closes and saves the settled state to disk.
+ */
+export function createRunningThreadKeepAliveAtom<E>(input: {
+  readonly environmentIdsAtom: Atom.Atom<ReadonlyArray<EnvironmentId>>;
+  readonly threadsAtom: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<ReadonlyArray<Pick<OrchestrationThreadShell, "id" | "session">>>;
+  readonly stateAtom: (
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentThreadState, E>>;
+}) {
+  // Keeps its identity until a thread starts or stops, so ordinary shell
+  // updates do not rebuild the keep-alive set.
+  const runningThreadIdsAtom = Atom.family((environmentId: EnvironmentId) => {
+    let previous: ReadonlyArray<ThreadId> = [];
+    return Atom.make((get) => {
+      const running = get(input.threadsAtom(environmentId)).flatMap((thread) =>
+        isThreadSessionRunning(thread.session) ? [thread.id] : [],
+      );
+      if (arrayElementsEqual(previous, running)) return previous;
+      previous = running;
+      return running;
+    }).pipe(Atom.withLabel(`web-running-thread-ids:${environmentId}`));
+  });
+
+  return Atom.make((get): KeptThreads => {
+    const previous = Option.getOrUndefined(get.self<KeptThreads>());
+    const kept = new Map<EnvironmentId, ReadonlySet<ThreadId>>();
+    // An environment that leaves the list is not visited, so its mounts drop.
+    for (const environmentId of get(input.environmentIdsAtom)) {
+      const threadIds = new Set(get(runningThreadIdsAtom(environmentId)));
+      for (const threadId of previous?.get(environmentId) ?? []) {
+        if (threadIds.has(threadId)) continue;
+        const stateAtom = input.stateAtom(environmentId, threadId);
+        // `once`, not `get`: a dependency on a stopped thread would hold its
+        // stream open until some other change rebuilds this atom.
+        if (!isDetailStillRunning(get.once(stateAtom))) continue;
+        threadIds.add(threadId);
+        // Rebuild when this detail shows the stop, not on each update.
+        get.subscribe(stateAtom, (state) => {
+          if (!isDetailStillRunning(state)) get.refreshSelf();
+        });
+      }
+      for (const threadId of threadIds) get.mount(input.stateAtom(environmentId, threadId));
+      kept.set(environmentId, threadIds);
+    }
+    return kept;
+  }).pipe(Atom.withLabel("web-running-thread-keep-alive"));
+}
+
+/** Mounted by `RunningThreadKeepAlive` on desktop, for every enabled environment. */
+export const runningThreadKeepAliveAtom = createRunningThreadKeepAliveAtom({
+  environmentIdsAtom: Atom.map(environmentCatalog.catalogValueAtom, (catalog) => [
+    ...enabledEnvironmentIds(catalog),
+  ]),
+  threadsAtom: environmentThreadShells.environmentThreadsAtom,
+  stateAtom: environmentThreads.stateAtom,
+});
