@@ -128,9 +128,12 @@ const runMaintenance = Effect.fn("DeviceToolchain.maintenance")(function* (
     ],
   });
   if (result.code !== 0)
-    return yield* Effect.fail(
-      new DeviceToolMaintenanceError({ operation, tool, exitCode: result.code, cause: result }),
-    );
+    return yield* new DeviceToolMaintenanceError({
+      operation,
+      tool,
+      exitCode: result.code,
+      cause: result,
+    });
 });
 
 export const pruneLocalDeviceTools = Effect.fn("DeviceToolchain.prune")(function* (

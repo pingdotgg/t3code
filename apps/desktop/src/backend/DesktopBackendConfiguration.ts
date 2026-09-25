@@ -199,11 +199,11 @@ const readPersistedBackendObservabilitySettings = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const raw = yield* fileSystem.readFileString(environment.serverSettingsPath).pipe(
-    Effect.map(Option.some),
+    Effect.asSome,
     Effect.catchTags({
       PlatformError: (cause) =>
         cause.reason._tag === "NotFound"
-          ? Effect.succeed(Option.none())
+          ? Effect.succeedNone
           : logBackendObservabilitySettingsReadFailure(environment.serverSettingsPath, cause).pipe(
               Effect.as(Option.none()),
             ),

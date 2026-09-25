@@ -820,7 +820,7 @@ export const make = Effect.gen(function* () {
   };
 
   const emit = (event: DesktopSnapShotEvent) =>
-    desktopWindow.dispatchSnapShotEvent(event).pipe(Effect.catchCause(() => Effect.void));
+    desktopWindow.dispatchSnapShotEvent(event).pipe(Effect.ignoreCause);
   const setFailure = (message: string, captureId?: string) =>
     Ref.update(stateRef, (state) => ({ ...state, message })).pipe(
       Effect.andThen(
@@ -846,10 +846,9 @@ export const make = Effect.gen(function* () {
   const discardCapture = Effect.fn("desktop.snapShot.discardCapture")(function* (id: string) {
     closeLinuxFeedback(id);
     transition.dismiss(id);
-    yield* Effect.all(
-      [`${id}.png`, `${id}.tmp.png`, `${id}.json`, `${id}.json.tmp`].map((name) =>
-        fileSystem.remove(path.join(captureDirectory, name), { force: true }),
-      ),
+    yield* Effect.forEach(
+      [`${id}.png`, `${id}.tmp.png`, `${id}.json`, `${id}.json.tmp`],
+      (name) => fileSystem.remove(path.join(captureDirectory, name), { force: true }),
       { concurrency: "unbounded", discard: true },
     ).pipe(Effect.ignore);
   });
@@ -904,7 +903,7 @@ export const make = Effect.gen(function* () {
       if (snapshot.animationStarted) {
         yield* emit({ type: "started", id: id as DesktopSnapShotId });
       } else {
-        yield* desktopWindow.activate.pipe(Effect.catchCause(() => Effect.void));
+        yield* desktopWindow.activate.pipe(Effect.ignoreCause);
       }
       return { id, capturedAt, ...snapshot };
     }).pipe(Effect.mapError((cause) => captureFailure(cause, id)));
@@ -1511,7 +1510,7 @@ export const make = Effect.gen(function* () {
             null,
           ),
         ),
-        Effect.catch(() => Effect.void),
+        Effect.ignore,
       ),
     ),
     configure,

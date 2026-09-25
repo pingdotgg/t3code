@@ -625,7 +625,7 @@ jobs:
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
       label: Linux arm64
-      runner: ubuntu-24.04-arm
+      runner: blacksmith-16vcpu-ubuntu-2404-arm
       platform: linux
       target: AppImage
       arch: arm64
@@ -875,6 +875,7 @@ jobs:
             echo 'release-assets/*.dmg'
             echo 'release-assets/*.zip'
             echo 'release-assets/*.AppImage'
+            echo 'release-assets/*.deb'
             echo 'release-assets/*.exe'
             if [[ "${{ needs.preflight.outputs.release_channel }}" != "preview" ]]; then
               echo 'release-assets/*.blockmap'

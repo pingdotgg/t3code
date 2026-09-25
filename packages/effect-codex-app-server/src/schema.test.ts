@@ -29,7 +29,7 @@ it("keeps async questions in live notifications and thread history", () => {
     CodexSchema.V2ThreadReadResponse__ThreadItem,
     CodexSchema.V2ThreadResumeResponse__ThreadItem,
   ]) {
-    assert.deepEqual(Schema.decodeUnknownSync(schema)(item), item);
+    assert.deepEqual(Schema.decodeSync(schema)(item), item);
   }
 });
 

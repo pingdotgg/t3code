@@ -259,12 +259,12 @@ export const make = Effect.gen(function* () {
             Effect.map((stack) => ({
               stack: stack === null ? null : ({ kind: "native", ...stack } as const),
             })),
-            Effect.catchCause((cause) =>
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.failCause(cause)
-                : Effect.logWarning("pull request stack lookup failed", {
-                    key,
-                  }).pipe(Effect.as(null)),
+            Effect.catchCauseIf(
+              (cause) => !Cause.hasInterruptsOnly(cause),
+              () =>
+                Effect.logWarning("pull request stack lookup failed", {
+                  key,
+                }).pipe(Effect.as(null)),
             ),
           )
         : null;

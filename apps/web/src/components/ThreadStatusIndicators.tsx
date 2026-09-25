@@ -16,7 +16,7 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 import { FolderGit2Icon, TerminalIcon } from "lucide-react";
 import { useRender } from "@base-ui/react/use-render";
-import { useMemo, type MouseEvent, type ReactElement } from "react";
+import { useMemo, type AnimationEvent, type MouseEvent, type ReactElement } from "react";
 import { cn } from "../lib/utils";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -394,6 +394,17 @@ export function terminalStatusFromRunningIds(
   };
 }
 
+/** Align newly started pulses with the document clock without a timer or frame loop. */
+export function synchronizeTerminalPulse(event: AnimationEvent<SVGSVGElement>) {
+  if (event.animationName !== "status-pulse") return;
+
+  for (const animation of event.currentTarget.getAnimations()) {
+    if ("animationName" in animation && animation.animationName === "status-pulse") {
+      animation.startTime = 0;
+    }
+  }
+}
+
 export function ThreadWorktreeIndicator({
   thread,
 }: {
@@ -582,7 +593,8 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
             }
           >
             <TerminalIcon
-              className={`size-3 ${terminalStatus.pulse ? "animate-status-pulse" : ""}`}
+              className={`size-3 ${terminalStatus.pulse ? "motion-safe:animate-status-pulse" : ""}`}
+              onAnimationStart={synchronizeTerminalPulse}
             />
           </TooltipTrigger>
           <TooltipPopup side="top">{terminalStatus.label}</TooltipPopup>

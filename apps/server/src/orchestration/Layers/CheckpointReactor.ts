@@ -97,12 +97,12 @@ const make = Effect.gen(function* () {
   const entryRefreshWorker = yield* makeDrainableWorker((cwd: string) =>
     Effect.sync(() => queuedEntryRefreshes.delete(cwd)).pipe(
       Effect.andThen(workspaceEntries.refresh(cwd)),
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.failCause(cause)
-          : Effect.logWarning("failed to refresh checkpoint workspace entries", {
-              cwd,
-            }),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        () =>
+          Effect.logWarning("failed to refresh checkpoint workspace entries", {
+            cwd,
+          }),
       ),
     ),
   );
@@ -625,15 +625,14 @@ const make = Effect.gen(function* () {
         branch: checkedOutBranch,
       });
     }).pipe(
-      Effect.catchCause((cause) => {
-        if (Cause.hasInterruptsOnly(cause)) {
-          return Effect.failCause(cause);
-        }
-        return Effect.logWarning("failed to follow worktree branch drift", {
-          threadId: input.threadId,
-          cause: Cause.pretty(cause),
-        });
-      }),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Effect.logWarning("failed to follow worktree branch drift", {
+            threadId: input.threadId,
+            cause: Cause.pretty(cause),
+          }),
+      ),
     );
   });
 
@@ -643,12 +642,12 @@ const make = Effect.gen(function* () {
   const statusRefreshWorker = yield* makeDrainableWorker(
     (event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>) =>
       refreshLocalGitStatusFromTurnCompletion(event).pipe(
-        Effect.catchCause((cause) =>
-          Cause.hasInterruptsOnly(cause)
-            ? Effect.failCause(cause)
-            : Effect.logWarning("failed to refresh git status after turn completion", {
-                threadId: event.threadId,
-              }),
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          () =>
+            Effect.logWarning("failed to refresh git status after turn completion", {
+              threadId: event.threadId,
+            }),
         ),
       ),
   );
@@ -749,11 +748,7 @@ const make = Effect.gen(function* () {
     for (const candidate of paths) {
       const otherCwd = yield* fileSystem
         .realPath(candidate)
-        .pipe(
-          Effect.catch((error) =>
-            error.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(error),
-          ),
-        );
+        .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(null)));
       if (otherCwd === null) continue;
       const isWithin = (parent: string, child: string) => {
         const relative = path.relative(parent, child);
@@ -791,7 +786,7 @@ const make = Effect.gen(function* () {
       preferSessionRuntime: true,
     }).pipe(
       Effect.catch((error) =>
-        event.payload.restoreFiles === false ? Effect.succeed(undefined) : Effect.fail(error),
+        event.payload.restoreFiles === false ? Effect.undefined : Effect.fail(error),
       ),
     );
 
@@ -1014,16 +1009,15 @@ const make = Effect.gen(function* () {
 
   const processInputSafely = (input: ReactorInput) =>
     processInput(input).pipe(
-      Effect.catchCause((cause) => {
-        if (Cause.hasInterruptsOnly(cause)) {
-          return Effect.failCause(cause);
-        }
-        return Effect.logWarning("checkpoint reactor failed to process input", {
-          source: input.source,
-          eventType: input.event.type,
-          cause: Cause.pretty(cause),
-        });
-      }),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Effect.logWarning("checkpoint reactor failed to process input", {
+            source: input.source,
+            eventType: input.event.type,
+            cause: Cause.pretty(cause),
+          }),
+      ),
     );
 
   const worker = yield* makeDrainableWorker(processInputSafely);
