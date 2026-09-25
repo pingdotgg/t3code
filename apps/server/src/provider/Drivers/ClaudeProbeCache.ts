@@ -51,7 +51,7 @@ export class ClaudeProbeCache extends Context.Service<
   }
 >()("t3/provider/Drivers/ClaudeProbeCache") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const gate = yield* Semaphore.make(MAX_CONCURRENT_PROBES);
   // The probe keeps its own timeout inside the gate, so time spent waiting
   // for a permit cannot turn into a false failure.
