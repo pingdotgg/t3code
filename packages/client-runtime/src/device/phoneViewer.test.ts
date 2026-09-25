@@ -294,6 +294,27 @@ it("resizes the fold body for a landscape inner display and keeps it through the
   viewer.dispose();
 });
 
+it("keeps the fold body through a rotated cover frame and learns the inner shape before fold mode", () => {
+  const { viewer, draw, source, state } = fixture(ANDROID_PHONE_SHAPE);
+  source.width = 2208;
+  source.height = 1840;
+  viewer.setScreen({ width: 2208, height: 1840, orientation: "portrait" });
+  viewer.frameUpdated();
+  draw(0);
+  viewer.setFoldAngle(180);
+  draw(10);
+  const landscape = state.frames.at(-1)!.phone!;
+  const width = new Box3().setFromObject(landscape).getSize(new Vector3()).x;
+  expect(width / new Box3().setFromObject(landscape).getSize(new Vector3()).y).toBeGreaterThan(1.1);
+  source.width = 2092;
+  source.height = 1080;
+  viewer.setScreen({ width: 2092, height: 1080, orientation: "landscape_left" });
+  viewer.frameUpdated();
+  draw(20);
+  expect(state.frames.at(-1)!.phone).toBe(landscape);
+  viewer.dispose();
+});
+
 it("retargets an unfinished hinge turn from its visible angle", () => {
   const { viewer, draw, state } = fixture(ANDROID_PHONE_SHAPE);
   viewer.setFoldAngle(180);

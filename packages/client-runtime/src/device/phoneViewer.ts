@@ -238,15 +238,12 @@ export function createPhoneViewer(options: {
         phone.setDisplay(texture, next);
         previous.dispose();
       }
-      const unfoldedAspect = options.source.width / options.source.height;
-      if (
-        !imported &&
-        "setAngle" in phone &&
-        isFoldInnerAspect(unfoldedAspect) &&
-        unfoldedAspect !== foldAspect
-      ) {
+      // Learn the inner display shape from any unfolded frame, including before fold mode.
+      const frameAspect = rawAspect();
+      const innerChanged = isFoldInnerAspect(frameAspect) && frameAspect !== foldAspect;
+      if (innerChanged) foldAspect = frameAspect;
+      if (!imported && "setAngle" in phone && innerChanged) {
         // A new inner display shape resizes the body; the hinge keeps its visible angle.
-        foldAspect = unfoldedAspect;
         const angle = visibleFoldAngle(foldAngle ?? 180);
         scene.remove(phone.root);
         phone.dispose();

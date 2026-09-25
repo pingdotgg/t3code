@@ -29,8 +29,12 @@ const PIVOT_Z = DEPTH / 2 + 0.005;
 const SPINE_RADIUS = PIVOT_Z + DEPTH / 2 - 0.002;
 /** Width over height of the unfolded inner display until a live frame reports its own. */
 export const DEFAULT_FOLD_INNER_ASPECT = 2076 / 2152;
-/** Cover displays are tall phones; unfolded inner displays are near square or landscape. */
-export const isFoldInnerAspect = (aspect: number) => Number.isFinite(aspect) && aspect > 0.75;
+/**
+ * Unfolded inner displays are near square in either orientation. Cover displays are
+ * phone shaped (about 0.4-0.5, or 2-2.6 when rotated), so they never retune the body.
+ */
+export const isFoldInnerAspect = (aspect: number) =>
+  Number.isFinite(aspect) && aspect > 0.75 && aspect < 1.5;
 
 function panelPath(
   halfWidth: number,
