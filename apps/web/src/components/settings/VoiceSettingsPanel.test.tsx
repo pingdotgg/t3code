@@ -149,6 +149,11 @@ it("keeps dictionary corrections collapsed until a word is opened", async () => 
     root = create(createElement(VoiceSettingsPanel));
   });
 
+  const dictionaryToggle = root.root.findByProps({ "aria-label": "Saved dictionary words" });
+  expect(dictionaryToggle.props["aria-expanded"]).toBe(false);
+  expect(root.root.findAllByProps({ "aria-label": "Edit aliases for T3 Code" })).toHaveLength(0);
+  await act(async () => dictionaryToggle.props.onClick());
+  expect(dictionaryToggle.props["aria-expanded"]).toBe(true);
   expect(root.root.findAllByProps({ "aria-label": "Transcribed as for T3 Code" })).toHaveLength(0);
   expect(root.root.findByProps({ "aria-label": "Edit aliases for T3 Code" })).toBeDefined();
   await act(async () =>
@@ -160,6 +165,8 @@ it("keeps dictionary corrections collapsed until a word is opened", async () => 
     root.root.findByProps({ "aria-label": "Hide aliases for T3 Code" }).props.onClick(),
   );
   expect(root.root.findAllByProps({ "aria-label": "Transcribed as for T3 Code" })).toHaveLength(0);
+  await act(async () => dictionaryToggle.props.onClick());
+  expect(root.root.findAllByProps({ "aria-label": "Edit aliases for T3 Code" })).toHaveLength(0);
 });
 it("shows models for the selected language while keeping the active model summary", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
