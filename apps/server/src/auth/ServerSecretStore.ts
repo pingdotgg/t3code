@@ -202,7 +202,11 @@ export const make = Effect.gen(function* () {
   );
 
   yield* pruneReplayGuards(serverConfig.secretsDir).pipe(
-    Effect.catch((error) => Effect.logWarning("secret-store.replay-guard-prune-failed", { error })),
+    Effect.catch((error) =>
+      Effect.logWarning("secret-store.replay-guard-prune-failed", {
+        category: error.reason._tag,
+      }),
+    ),
     Effect.repeat(Schedule.spaced(REPLAY_GUARD_SWEEP_INTERVAL)),
     Effect.forkScoped,
   );
