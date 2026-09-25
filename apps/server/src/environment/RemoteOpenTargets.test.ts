@@ -5,12 +5,12 @@ import {
   HostProcessUsername,
 } from "@t3tools/shared/hostProcess";
 import * as NetService from "@t3tools/shared/Net";
-import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { describe, expect } from "vite-plus/test";
 
@@ -33,23 +33,32 @@ const TAILSCALE_GET_UNSUPPORTED: CommandResult = { exitCode: 1, stdout: "" };
 /**
  * Spawner that answers `tailscale get` with `get` and every other command
  * (`tailscale status --json`) with `status`, recording each subcommand it
- * starts in `spawned`.
+ * starts in `spawned`. With `stall`, the first command never exits and
+ * completes `stall` once it has started.
  */
 const spawnerLayer = (input: {
   readonly status: CommandResult;
   readonly get: CommandResult;
   readonly spawned: Array<string>;
+  readonly stall: Deferred.Deferred<void> | undefined;
 }) =>
   Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make((command) => {
-      const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
-      input.spawned.push(args[0] ?? "");
-      const result = args[0] === "get" ? input.get : input.status;
-      return Effect.succeed(
-        ChildProcessSpawner.makeHandle({
+    ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
+        input.spawned.push(args[0] ?? "");
+        const result = args[0] === "get" ? input.get : input.status;
+        const stall = input.spawned.length === 1 ? input.stall : undefined;
+        if (stall !== undefined) {
+          yield* Deferred.succeed(stall, undefined);
+        }
+        return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
-          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode)),
+          exitCode:
+            stall !== undefined
+              ? Effect.never
+              : Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode)),
           isRunning: Effect.succeed(false),
           kill: () => Effect.void,
           unref: Effect.succeed(Effect.void),
@@ -59,9 +68,9 @@ const spawnerLayer = (input: {
           all: Stream.empty,
           getInputFd: () => Sink.drain,
           getOutputFd: () => Stream.empty,
-        }),
-      );
-    }),
+        });
+      }),
+    ),
   );
 
 const netLayer = (input: { readonly ipv4: boolean; readonly ipv6: boolean }) =>
@@ -83,6 +92,8 @@ interface MachineInput {
   readonly platform?: NodeJS.Platform;
   /** Collects the tailscale subcommands the resolver starts. */
   readonly spawned?: Array<string>;
+  /** Holds the first tailscale command open; completed once it starts. */
+  readonly stall?: Deferred.Deferred<void>;
 }
 
 /** Runs `program` against one RemoteOpenTargets built for the given machine. */
@@ -106,6 +117,7 @@ const onMachine = <A, E>(
                   ? TAILSCALE_GET_UNSUPPORTED
                   : { exitCode: 0, stdout: JSON.stringify({ ssh: input.tailscaleSsh }) },
               spawned: input.spawned ?? [],
+              stall: input.stall,
             }),
           ),
         ),
@@ -237,23 +249,35 @@ describe("RemoteOpenTargets", () => {
     }),
   );
 
-  it.effect("starts the tailscale CLI at most once a minute on hosts without sshd", () => {
-    const spawned: Array<string> = [];
-    return onMachine(
-      { sshd: NO_SSHD, tailscale: TAILSCALE_UP, tailscaleSsh: true, hostname: "bb-1", spawned },
-      Effect.gen(function* () {
-        const service = yield* RemoteOpenTargets.RemoteOpenTargets;
-        const first = yield* service.resolveTargets();
-        const second = yield* service.resolveTargets();
-        expect(second).toEqual(first);
-        expect(spawned.toSorted()).toEqual(["get", "status"]);
+  // A client that disconnects mid-discovery interrupts its own config load.
+  // The next load, from any client, must still get a real answer.
+  it.effect("answers the next config load after one is cut off mid-discovery", () =>
+    Effect.gen(function* () {
+      const spawned: Array<string> = [];
+      const stall = yield* Deferred.make<void>();
+      yield* onMachine(
+        {
+          sshd: NO_SSHD,
+          tailscale: TAILSCALE_UP,
+          tailscaleSsh: true,
+          hostname: "bb-1",
+          spawned,
+          stall,
+        },
+        Effect.gen(function* () {
+          const service = yield* RemoteOpenTargets.RemoteOpenTargets;
+          const cutOff = yield* Effect.forkChild(service.resolveTargets());
+          yield* Deferred.await(stall);
+          yield* Fiber.interrupt(cutOff);
 
-        yield* TestClock.adjust(Duration.minutes(1));
-        yield* service.resolveTargets();
-        expect(spawned.toSorted()).toEqual(["get", "get", "status", "status"]);
-      }),
-    ).pipe(Effect.provide(TestClock.layer()));
-  });
+          expect(yield* service.resolveTargets()).toEqual([
+            { kind: "tailscale-ssh", host: "bb-1.tail1234.ts.net", user: "theo" },
+          ]);
+          expect(spawned.toSorted()).toEqual(["get", "get", "status", "status"]);
+        }),
+      );
+    }),
+  );
 
   it.effect("leaves out an account name a link cannot carry", () =>
     Effect.gen(function* () {

@@ -21,14 +21,12 @@ import {
 import * as NetService from "@t3tools/shared/Net";
 import { readTailscaleSshEnabled, readTailscaleStatus } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 const SSH_PORT = 22;
-const TAILSCALE_SSH_CACHE_TTL = Duration.minutes(1);
 
 const isRemoteOpenUser = Schema.is(RemoteOpenUser);
 
@@ -51,42 +49,39 @@ export const make = Effect.gen(function* () {
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
   );
 
-  // Hosts without sshd would otherwise start the tailscale CLI on every
-  // config load. The answer only changes after `tailscale set --ssh`, and
-  // clients pick up targets only when they fetch config again anyway.
-  const resolveTailscaleSshTargets = yield* Effect.cachedWithTTL(
-    Effect.gen(function* () {
-      // Tailscale SSH has no Windows server, so skip the CLI there.
-      if ((yield* HostProcessPlatform) === "win32") {
-        return [];
-      }
-      // Ask both at once: each tailscale CLI start can take hundreds of
-      // milliseconds, and config loads wait on this.
-      const [sshEnabled, magicDnsName] = yield* Effect.all(
-        [
-          readTailscaleSshEnabled.pipe(
-            Effect.orElseSucceed(() => false),
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          ),
-          readMagicDnsName,
-        ],
-        { concurrency: "unbounded" },
-      );
-      if (!sshEnabled || magicDnsName === null) {
-        return [];
-      }
-      // Tailscale SSH signs in as the user the editor names, and editors
-      // default to the viewing machine's username. Naming this process's
-      // account opens the project as the user T3 Code runs as.
-      const user = yield* HostProcessUsername;
-      const target: RemoteOpenTarget =
-        user !== undefined && isRemoteOpenUser(user)
-          ? { kind: "tailscale-ssh", host: magicDnsName, user }
-          : { kind: "tailscale-ssh", host: magicDnsName };
-      return [target];
-    }),
-    TAILSCALE_SSH_CACHE_TTL,
-  );
+  // Read on every config load, as the sshd path reads `tailscale status`.
+  // Sharing one read across loads would hand a disconnecting client's
+  // interruption to every load waiting on it.
+  const resolveTailscaleSshTargets = Effect.gen(function* () {
+    // Tailscale SSH has no Windows server, so skip the CLI there.
+    if ((yield* HostProcessPlatform) === "win32") {
+      return [];
+    }
+    // Ask both at once: each tailscale CLI start can take hundreds of
+    // milliseconds, and config loads wait on this.
+    const [sshEnabled, magicDnsName] = yield* Effect.all(
+      [
+        readTailscaleSshEnabled.pipe(
+          Effect.orElseSucceed(() => false),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+        readMagicDnsName,
+      ],
+      { concurrency: "unbounded" },
+    );
+    if (!sshEnabled || magicDnsName === null) {
+      return [];
+    }
+    // Tailscale SSH signs in as the user the editor names, and editors
+    // default to the viewing machine's username. Naming this process's
+    // account opens the project as the user T3 Code runs as.
+    const user = yield* HostProcessUsername;
+    const target: RemoteOpenTarget =
+      user !== undefined && isRemoteOpenUser(user)
+        ? { kind: "tailscale-ssh", host: magicDnsName, user }
+        : { kind: "tailscale-ssh", host: magicDnsName };
+    return [target];
+  });
 
   const resolveTargets = Effect.gen(function* () {
     // Check both loopback families: sshd can be bound IPv6-only.
