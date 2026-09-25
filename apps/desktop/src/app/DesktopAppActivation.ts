@@ -75,11 +75,12 @@ function requestIdFromUnknown(value: unknown): string {
   return "invalid-request";
 }
 
+/** Makes sure the socket directory is safe to use. Returns true when it had to create it. */
 async function prepareUnixDirectory(input: {
   readonly directory: string;
   readonly userId: number | undefined;
-}): Promise<void> {
-  await NodeFSP.mkdir(input.directory, { recursive: true, mode: 0o700 });
+}): Promise<boolean> {
+  const created = await NodeFSP.mkdir(input.directory, { recursive: true, mode: 0o700 });
   const stat = await NodeFSP.lstat(input.directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error(`${input.directory} is not a directory.`);
@@ -88,6 +89,7 @@ async function prepareUnixDirectory(input: {
     throw new Error(`${input.directory} is owned by another user.`);
   }
   await NodeFSP.chmod(input.directory, 0o700);
+  return created !== undefined;
 }
 
 async function inodeAt(path: string): Promise<number | null> {
@@ -234,7 +236,10 @@ export async function startDesktopAppControlServer(input: {
   const reclaimOnce = async () => {
     // Never replace a socket that exists, so two apps cannot trade the path back and forth.
     if (closed || input.directory === null || (await inodeAt(input.address)) !== null) return;
-    await prepareUnixDirectory({ directory: input.directory, userId: input.userId });
+    if (await prepareUnixDirectory({ directory: input.directory, userId: input.userId })) {
+      // A watch follows the directory's inode, so a recreated directory needs a new one.
+      watchDirectory(input.directory);
+    }
     const next = await bindUnix(input.directory, "claim-free").catch(
       (error: NodeJS.ErrnoException) => {
         // Another app bound the address first.
@@ -254,18 +259,23 @@ export async function startDesktopAppControlServer(input: {
     return run;
   };
   let watcher: NodeFS.FSWatcher | null = null;
-  if (input.directory !== null) {
+  const watchDirectory = (directory: string) => {
+    watcher?.close();
+    watcher = null;
     try {
-      watcher = NodeFS.watch(input.directory, { persistent: false }, () => {
+      watcher = NodeFS.watch(directory, { persistent: false }, () => {
         reclaim().catch(input.onReclaimError);
       });
       watcher.on("error", input.onReclaimError);
-      // Catch a removal that happened before the watcher started.
-      reclaim().catch(input.onReclaimError);
     } catch (error) {
       // The socket still works without a watcher. It only cannot recover after removal.
       input.onReclaimError(error);
     }
+  };
+  if (input.directory !== null) {
+    watchDirectory(input.directory);
+    // Catch a removal that happened before the watcher started.
+    reclaim().catch(input.onReclaimError);
   }
 
   return {
@@ -273,8 +283,9 @@ export async function startDesktopAppControlServer(input: {
     close: async () => {
       if (closed) return;
       closed = true;
-      watcher?.close();
+      // A running reclaim can replace the watcher, so close the watcher after it.
       await pendingReclaim;
+      watcher?.close();
       for (const socket of sockets) socket.destroy();
       await closeServer(server);
       server.removeAllListeners();
