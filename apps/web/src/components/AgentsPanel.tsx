@@ -586,14 +586,14 @@ export function AgentsPanel({
               </div>
               {tree.sections.prismJobs.map((job) => (
                 <div key={job.requestId}>
-                  <div className="flex items-center gap-2 px-1.5 pt-1.5 font-mono text-[.7rem] text-muted-foreground">
-                    <StatusDot status={job.status} />
-                    <span className="min-w-0 truncate text-foreground/90">{job.requestId}</span>
+                  {/* A heading, not a row: the job is not an agent, so it gets no status dot. */}
+                  <h3 className="flex items-center gap-2 px-1.5 pt-1.5 font-mono text-2xs font-normal text-muted-foreground">
+                    <span className="min-w-0 truncate">Job {job.requestId}</span>
                     <span className="shrink-0">
-                      {job.status === "idle" ? "Idle" : STATUS_VISUALS[job.status].label}
+                      · {job.status === "idle" ? "Idle" : STATUS_VISUALS[job.status].label}
                     </span>
                     <span className="ml-auto min-w-0 truncate">{job.route}</span>
-                  </div>
+                  </h3>
                   {job.agents.map((agent) => (
                     <AgentThreadEntry key={agent.id} agentId={agent.id} {...treeProps}>
                       <AgentRow agent={agent} />

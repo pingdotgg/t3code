@@ -1,6 +1,8 @@
 import {
   AuthOrchestrationReadScope,
   type PrismProviderSnapshot,
+  type PrismRoleKits,
+  type PrismSnapshotRoles,
   ProjectId,
   type ServerProvider,
   type ServerSettings,
@@ -16,6 +18,24 @@ import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 
 const PRISM_SNAPSHOT_PATH = "/api/prism/snapshot";
+
+/**
+ * Kits in the snapshot shape: the worker's lanes as saved, every other role's
+ * single list repeated in each lane for routers that still read lanes.
+ */
+function snapshotRoles(kits: PrismRoleKits): PrismSnapshotRoles {
+  const single = <Kit extends { readonly models: PrismRoleKits["planner"]["models"] }>(
+    kit: Kit,
+  ) => ({ ...kit, lanes: { easy: kit.models, medium: kit.models, hard: kit.models } });
+  return {
+    planner: single(kits.planner),
+    dispatcher: single(kits.dispatcher),
+    reviewer: single(kits.reviewer),
+    worker: kits.worker,
+    correction: single(kits.correction),
+    recovery: single(kits.recovery),
+  };
+}
 
 /**
  * The Prism router's view of this environment: every provider instance with
@@ -40,7 +60,9 @@ export function makePrismSnapshot(input: {
       models: provider.models,
       ...(provider.usageLimits ? { usageLimits: provider.usageLimits } : {}),
     })),
-    roles: resolveProjectSettings(input.settings, input.projectId).settings.prismRoles,
+    roles: snapshotRoles(
+      resolveProjectSettings(input.settings, input.projectId).settings.prismRoles,
+    ),
   };
 }
 

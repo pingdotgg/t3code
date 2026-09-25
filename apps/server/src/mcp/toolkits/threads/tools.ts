@@ -1,4 +1,10 @@
-import { PrismLane, PrismRole, RuntimeMode, TrimmedNonEmptyString } from "@t3tools/contracts";
+import {
+  PrismLane,
+  PrismRole,
+  PrismRoleName,
+  RuntimeMode,
+  TrimmedNonEmptyString,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Tool from "effect/unstable/ai/Tool";
@@ -32,15 +38,15 @@ export const SpawnThreadInput = Schema.Struct({
     description: "The first message the child thread receives: its whole task.",
   }),
   role: Schema.optional(
-    PrismRole.annotate({
+    PrismRoleName.annotate({
       description:
-        "Prism role for the child: dispatcher, reviewer, worker, correction, recovery (or planner). Applies that role's kit from Prism settings: its instructions, skills, permissions, thread-tool scope, and the first eligible model of its lane list unless model is named.",
+        "Prism role for the child: dispatcher, reviewer, worker, retry, escalation (or planner); correction and recovery are the old names of retry and escalation. Applies that role's kit from Prism settings: its instructions, skills, permissions, thread-tool scope, and the first eligible model of its model list unless model is named.",
     }),
   ),
   lane: Schema.optional(
     PrismLane.annotate({
       description:
-        "With role: which of the role's model lists to use, easy, medium (default) or hard, by how difficult the task is. Later entries in the list are fallbacks.",
+        "With role worker: which of its model lists to use, easy, medium (default) or hard, by how difficult the task is. Other roles have one list. Later entries in a list are fallbacks.",
     }),
   ),
   instanceId: Schema.optional(
@@ -52,7 +58,7 @@ export const SpawnThreadInput = Schema.Struct({
   model: Schema.optional(
     TrimmedNonEmptyString.annotate({
       description:
-        "Model id on that instance. Defaults to the first eligible model of the role's lane, else this thread's model.",
+        "Model id on that instance. Defaults to the first eligible model of the role's list, else this thread's model.",
     }),
   ),
   effort: Schema.optional(

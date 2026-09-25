@@ -1,4 +1,9 @@
-import { DEFAULT_PRISM_ROLE_KITS, type ServerProvider } from "@t3tools/contracts";
+import {
+  DEFAULT_PRISM_ROLE_KITS,
+  prismRoleFromName,
+  type ServerProvider,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -11,7 +16,9 @@ import {
   threadToolScopeOf,
 } from "./roles.ts";
 import { makeSubagentThreadId } from "./subagentThreadId.ts";
+import { SpawnThreadInput } from "./tools.ts";
 
+const decodeSpawnInput = Schema.decodeUnknownSync(SpawnThreadInput);
 const child = (role: string) => makeSubagentThreadId("planner-1", `${role}-abc123`);
 
 describe("thread roles", () => {
@@ -25,6 +32,19 @@ describe("thread roles", () => {
     );
     expect(threadRoleOf(child("dispatcher"))).toBe("dispatcher");
     expect(threadRoleOf(makeSubagentThreadId(child("dispatcher"), "worker-9f"))).toBe("worker");
+  });
+
+  it("spawns Retry and Escalation under their stable keys, old names too", () => {
+    const spawnedRole = (role: string) => {
+      const input = decodeSpawnInput({ task: "Fix it.", role });
+      return threadRoleOf(
+        makeSubagentThreadId("planner-1", prismRoleSuffix(prismRoleFromName(input.role!), "a1")),
+      );
+    };
+    expect(spawnedRole("retry")).toBe("correction");
+    expect(spawnedRole("correction")).toBe("correction");
+    expect(spawnedRole("escalation")).toBe("recovery");
+    expect(spawnedRole("recovery")).toBe("recovery");
   });
 
   it("leaves children without a role prefix unassigned", () => {

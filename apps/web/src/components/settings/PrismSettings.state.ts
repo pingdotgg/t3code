@@ -1,12 +1,12 @@
 import { createStore } from "zustand/vanilla";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
-  planPrismModelsPatch,
+  planPrismRolePatch,
   prismWriteObserved,
   type PrismWriteExpectation,
 } from "./PrismSettings.logic";
 
-type Plan = ReturnType<typeof planPrismModelsPatch>;
+type Plan = ReturnType<typeof planPrismRolePatch>;
 interface PrismSaveState {
   pendingWrite: { plan: Plan; expectation: PrismWriteExpectation; acknowledged: boolean } | null;
   saveError: string | null;

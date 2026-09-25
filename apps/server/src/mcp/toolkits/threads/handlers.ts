@@ -8,6 +8,9 @@ import {
   type OrchestrationSession,
   DEFAULT_PRISM_LANE,
   type OrchestrationThreadShell,
+  PRISM_ROLE_LABELS,
+  prismRoleFromName,
+  prismRoleModels,
   type PrismRoleKits,
   type ProviderOptionSelection,
 } from "@t3tools/contracts";
@@ -421,10 +424,11 @@ const make = Effect.gen(function* () {
     spawn_thread: (input) =>
       Effect.gen(function* () {
         const { caller: parent, kits } = yield* authorizedCaller("spawn_thread", "children");
-        const kit = input.role ? kits[input.role] : undefined;
+        const role = input.role ? prismRoleFromName(input.role) : undefined;
+        const kit = role ? kits[role] : undefined;
         const lane = input.lane ?? DEFAULT_PRISM_LANE;
-        const laneModels = kit?.lanes[lane] ?? [];
-        // A role's lane list applies only when the caller names no model.
+        const laneModels = role ? prismRoleModels(kits, role, lane) : [];
+        // A role's model list applies only when the caller names no model.
         let preferred: { instanceId: string; model: string; effort?: string } | undefined;
         if (kit && !input.model && !input.instanceId && laneModels.length > 0) {
           const nowMs = yield* Clock.currentTimeMillis;
@@ -458,17 +462,12 @@ const make = Effect.gen(function* () {
         };
         const random = (yield* uuid).replaceAll("-", "").slice(0, 12);
         const childId = ThreadId.make(
-          makeSubagentThreadId(
-            parent.id,
-            input.role ? prismRoleSuffix(input.role, random) : random,
-          ),
+          makeSubagentThreadId(parent.id, role ? prismRoleSuffix(role, random) : random),
         );
         reportBack.set(childId, input.reportBack !== false);
         const createdAt = yield* nowIso;
         const runtimeMode = input.runtimeMode ?? kit?.runtimeMode ?? parent.runtimeMode;
-        const titlePrefix = input.role
-          ? `${input.role[0]!.toUpperCase()}${input.role.slice(1)}`
-          : "Subagent";
+        const titlePrefix = role ? PRISM_ROLE_LABELS[role] : "Subagent";
         yield* dispatch({
           type: "thread.create",
           commandId: yield* commandId("create"),
@@ -487,7 +486,7 @@ const make = Effect.gen(function* () {
         yield* startTurn(child, kit ? roleTaskMessage(kit, input.task) : input.task);
         return {
           threadId: childId,
-          ...(input.role ? { role: input.role, lane } : {}),
+          ...(role ? { role, lane } : {}),
           parentThreadId: parent.id,
           instanceId,
           model,

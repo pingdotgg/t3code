@@ -37,7 +37,7 @@ describe("Prism provider snapshot", () => {
   const settings = decodeServerSettings({
     prismRoles: { worker: { lanes: { medium: luna, hard: luna } } },
     projectSettingsOverrides: {
-      p1: { prismRoles: { reviewer: { lanes: { easy: luna } } } },
+      p1: { prismRoles: { reviewer: { lanes: { medium: luna } } } },
     },
   });
 
@@ -70,6 +70,32 @@ describe("Prism provider snapshot", () => {
     });
     expect(snapshot.roles.reviewer.lanes.easy).toEqual(luna);
     expect(snapshot.roles.worker.lanes.medium).toEqual([]);
+  });
+
+  it("repeats a single list in every lane and flags only Retry and Escalation", () => {
+    const snapshot = makePrismSnapshot({
+      generatedAt: "2026-09-25T01:00:00.000Z",
+      projectId: null,
+      providers: [],
+      settings: decodeServerSettings({
+        prismRoles: {
+          dispatcher: { models: luna },
+          worker: { lanes: { hard: luna } },
+          correction: { enabled: false },
+        },
+      }),
+    });
+    expect(snapshot.roles.dispatcher).toMatchObject({
+      models: luna,
+      lanes: { easy: luna, medium: luna, hard: luna },
+    });
+    expect(snapshot.roles.worker).not.toHaveProperty("models");
+    expect(snapshot.roles.worker.lanes).toEqual({ easy: [], medium: [], hard: luna });
+    expect(snapshot.roles.correction.enabled).toBe(false);
+    expect(snapshot.roles.recovery.enabled).toBe(true);
+    for (const role of ["planner", "dispatcher", "reviewer", "worker"] as const) {
+      expect(snapshot.roles[role]).not.toHaveProperty("enabled");
+    }
   });
 
   it("reports an unavailable instance as disabled", () => {

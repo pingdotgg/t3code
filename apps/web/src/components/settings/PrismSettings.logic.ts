@@ -2,7 +2,10 @@ import {
   ProjectId,
   type PrismModelPreference,
   type PrismRole,
+  type PrismRoleKits,
+  type PrismRoleKitsPatch,
   type PrismLane,
+  type PrismSwitchableRole,
   type ModelCapabilities,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -38,16 +41,49 @@ export function prismEffortOptions(capabilities: ModelCapabilities | null | unde
     : [];
 }
 
+/** One autosaved edit on the Prism page. */
+export type PrismRoleUpdate =
+  | { kind: "lane"; role: "worker"; lane: PrismLane; models: readonly PrismModelPreference[] }
+  | {
+      kind: "models";
+      role: Exclude<PrismRole, "worker">;
+      models: readonly PrismModelPreference[];
+    }
+  | { kind: "enabled"; role: PrismSwitchableRole; enabled: boolean };
+
+function prismRolePatch(update: PrismRoleUpdate): PrismRoleKitsPatch {
+  switch (update.kind) {
+    case "lane":
+      return { worker: { lanes: { [update.lane]: update.models } } };
+    case "models":
+      return { [update.role]: { models: update.models } };
+    case "enabled":
+      return { [update.role]: { enabled: update.enabled } };
+  }
+}
+
+function applyPrismRoleUpdate(kits: PrismRoleKits, update: PrismRoleUpdate): PrismRoleKits {
+  switch (update.kind) {
+    case "lane":
+      return {
+        ...kits,
+        worker: { ...kits.worker, lanes: { ...kits.worker.lanes, [update.lane]: update.models } },
+      };
+    case "models":
+      return { ...kits, [update.role]: { ...kits[update.role], models: update.models } };
+    case "enabled":
+      return { ...kits, [update.role]: { ...kits[update.role], enabled: update.enabled } };
+  }
+}
+
 /** Project overrides store complete kits, while environment updates accept deep patches. */
-export function planPrismModelsPatch(
+export function planPrismRolePatch(
   scope: Parameters<typeof planScopedSettingsPatch>[0],
   environments: Parameters<typeof planScopedSettingsPatch>[1],
-  role: PrismRole,
-  lane: PrismLane,
-  models: readonly PrismModelPreference[],
-) {
+  update: PrismRoleUpdate,
+): ReturnType<typeof planScopedSettingsPatch> {
   const plan = planScopedSettingsPatch(scope, environments, {
-    prismRoles: { [role]: { lanes: { [lane]: models } } },
+    prismRoles: prismRolePatch(update),
   });
   return {
     ...plan,
@@ -61,20 +97,16 @@ export function planPrismModelsPatch(
         patch: {
           ...write.patch,
           projectSettingsOverrides: Object.fromEntries(
-            Object.entries(overrides).map(([id, override]) => {
-              const roles = resolveProjectSettings(settings, ProjectId.make(id)).settings
-                .prismRoles;
-              return [
-                id,
-                {
-                  ...override,
-                  prismRoles: {
-                    ...roles,
-                    [role]: { ...roles[role], lanes: { ...roles[role].lanes, [lane]: models } },
-                  },
-                },
-              ];
-            }),
+            Object.entries(overrides).map(([id, override]) => [
+              id,
+              {
+                ...override,
+                prismRoles: applyPrismRoleUpdate(
+                  resolveProjectSettings(settings, ProjectId.make(id)).settings.prismRoles,
+                  update,
+                ),
+              },
+            ]),
           ),
         },
       };
@@ -105,9 +137,7 @@ export function prismModelChoices(
     );
 }
 
-export type PrismWriteExpectation =
-  | { kind: "lane"; role: PrismRole; lane: PrismLane; models: readonly PrismModelPreference[] }
-  | { kind: "inherit" };
+export type PrismWriteExpectation = PrismRoleUpdate | { kind: "inherit" };
 
 /** A successful RPC is not enough: wait for the streamed settings before building another full override. */
 export function prismWriteObserved(
@@ -130,8 +160,8 @@ export function prismWriteObserved(
       : [settings];
     return effective.every(
       (target) =>
-        JSON.stringify(target.prismRoles[expectation.role].lanes[expectation.lane]) ===
-        JSON.stringify(expectation.models),
+        JSON.stringify(target.prismRoles[expectation.role]) ===
+        JSON.stringify(applyPrismRoleUpdate(target.prismRoles, expectation)[expectation.role]),
     );
   });
 }

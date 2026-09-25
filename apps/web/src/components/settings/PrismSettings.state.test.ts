@@ -1,7 +1,7 @@
 import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { describe, expect, it } from "vite-plus/test";
-import { planPrismModelsPatch } from "./PrismSettings.logic";
+import { planPrismRolePatch } from "./PrismSettings.logic";
 import { createPrismSaveStore } from "./PrismSettings.state";
 import { resolveSettingsScope } from "./settingsScope";
 
@@ -19,7 +19,12 @@ const expectation = {
   models,
 };
 const scope = resolveSettingsScope({}, [], [environment]);
-const plan = planPrismModelsPatch(scope, [environment], "worker", "easy", models);
+const plan = planPrismRolePatch(scope, [environment], {
+  kind: "lane",
+  role: "worker",
+  lane: "easy",
+  models: models,
+});
 const updatedEnvironment = {
   ...environment,
   serverConfig: {
@@ -44,7 +49,12 @@ describe("Prism save lifecycle", () => {
     expect(store.getState().begin(plan, expectation)).toBe(false); // Receipt alone cannot release stale data.
     store.getState().observe([updatedEnvironment]);
     expect(store.getState().pendingWrite).toBeNull();
-    const next = planPrismModelsPatch(scope, [updatedEnvironment], "worker", "hard", models);
+    const next = planPrismRolePatch(scope, [updatedEnvironment], {
+      kind: "lane",
+      role: "worker",
+      lane: "hard",
+      models: models,
+    });
     expect(store.getState().begin(next, { ...expectation, lane: "hard" })).toBe(true);
     const settings = applyServerSettingsPatch(
       updatedEnvironment.serverConfig.settings,

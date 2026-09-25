@@ -504,7 +504,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Prism (Model Router)",
     to: "/settings/prism",
     scope: "project-defaults",
-    searchTerms: ["planner dispatcher reviewer worker correction recovery models effort capacity"],
+    searchTerms: [
+      "dispatcher reviewer worker retry escalation correction recovery models effort lanes capacity",
+    ],
   },
   ...KEYBINDING_SEARCH_ITEMS,
   {

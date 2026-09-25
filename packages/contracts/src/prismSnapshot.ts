@@ -1,7 +1,8 @@
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { PrismRoleKits } from "./prism.ts";
+import { IsoDateTime, ProjectId, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { RuntimeMode } from "./orchestration.ts";
+import { PrismModelPreference, PrismThreadToolScope } from "./prism.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerProviderUsageLimits } from "./providerUsageLimits.ts";
 import { ServerProviderModel, ServerProviderState } from "./server.ts";
@@ -27,11 +28,42 @@ export const PrismProviderSnapshotEntry = Schema.Struct({
 });
 export type PrismProviderSnapshotEntry = typeof PrismProviderSnapshotEntry.Type;
 
+/**
+ * A role kit as the router reads it. Every role still carries
+ * `lanes.easy/medium/hard` until the router reads single lists
+ * (toolboxmd/model-router#127): a role other than the worker repeats its
+ * one list, `models`, in every lane. Only Retry (`correction`) and
+ * Escalation (`recovery`) carry `enabled`.
+ */
+const PrismSnapshotRoleKit = Schema.Struct({
+  instructions: TrimmedString,
+  runtimeMode: Schema.optionalKey(RuntimeMode),
+  skills: Schema.Array(TrimmedNonEmptyString),
+  threadTools: PrismThreadToolScope,
+  lanes: Schema.Struct({
+    easy: Schema.Array(PrismModelPreference),
+    medium: Schema.Array(PrismModelPreference),
+    hard: Schema.Array(PrismModelPreference),
+  }),
+  models: Schema.optionalKey(Schema.Array(PrismModelPreference)),
+  enabled: Schema.optionalKey(Schema.Boolean),
+});
+
+export const PrismSnapshotRoles = Schema.Struct({
+  planner: PrismSnapshotRoleKit,
+  dispatcher: PrismSnapshotRoleKit,
+  reviewer: PrismSnapshotRoleKit,
+  worker: PrismSnapshotRoleKit,
+  correction: PrismSnapshotRoleKit,
+  recovery: PrismSnapshotRoleKit,
+});
+export type PrismSnapshotRoles = typeof PrismSnapshotRoles.Type;
+
 export const PrismProviderSnapshot = Schema.Struct({
   generatedAt: IsoDateTime,
   /** The project the role kits were resolved for; null for environment values. */
   projectId: Schema.NullOr(ProjectId),
   providers: Schema.Array(PrismProviderSnapshotEntry),
-  roles: PrismRoleKits,
+  roles: PrismSnapshotRoles,
 });
 export type PrismProviderSnapshot = typeof PrismProviderSnapshot.Type;

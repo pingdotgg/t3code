@@ -8,7 +8,7 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { describe, expect, it } from "vite-plus/test";
 import {
   movePrismPreference,
-  planPrismModelsPatch,
+  planPrismRolePatch,
   prismEffortOptions,
   prismModelChoices,
   prismWriteObserved,
@@ -81,7 +81,12 @@ describe("Prism role preferences", () => {
   it("replaces model arrays, including clearing them, without changing role kits or offline environments", () => {
     const envs = [environment("one"), environment("two", false)];
     const scope = resolveSettingsScope({}, [], envs);
-    const plan = planPrismModelsPatch(scope, envs, "worker", "medium", [second]);
+    const plan = planPrismRolePatch(scope, envs, {
+      kind: "lane",
+      role: "worker",
+      lane: "medium",
+      models: [second],
+    });
     expect(plan.serverWrites.map((write) => write.environmentId)).toEqual(["one"]);
     const next = applyServerSettingsPatch(
       envs[0]!.serverConfig.settings,
@@ -92,7 +97,12 @@ describe("Prism role preferences", () => {
       lanes: { ...rolesLanes, medium: [second] },
     });
     expect(next.prismRoles.planner).toEqual(roles.planner);
-    const clear = planPrismModelsPatch(scope, envs, "worker", "medium", []);
+    const clear = planPrismRolePatch(scope, envs, {
+      kind: "lane",
+      role: "worker",
+      lane: "medium",
+      models: [],
+    });
     expect(
       applyServerSettingsPatch(next, clear.serverWrites[0]!.patch).prismRoles.worker.lanes.medium,
     ).toEqual([]);
@@ -143,7 +153,12 @@ describe("Prism role preferences", () => {
       remoteEnvironmentLabels: ["one"],
     };
     const scope = resolveSettingsScope({ project: "group" }, [group], [scopedEnv]);
-    const plan = planPrismModelsPatch(scope, [scopedEnv], "worker", "medium", [second, first]);
+    const plan = planPrismRolePatch(scope, [scopedEnv], {
+      kind: "lane",
+      role: "worker",
+      lane: "medium",
+      models: [second, first],
+    });
     const next = applyServerSettingsPatch(
       scopedEnv.serverConfig.settings,
       plan.serverWrites[0]!.patch,
@@ -161,16 +176,20 @@ describe("Prism role preferences", () => {
     const offline = environment("offline", false);
     const scope = resolveSettingsScope({ machine: offline.environmentId }, [], [offline]);
     expect(
-      planPrismModelsPatch(scope, [offline], "worker", "medium", []).unavailableReason,
+      planPrismRolePatch(scope, [offline], {
+        kind: "lane",
+        role: "worker",
+        lane: "medium",
+        models: [],
+      }).unavailableReason,
     ).toBeTruthy();
     const envs = [environment("one"), environment("two")];
-    const plan = planPrismModelsPatch(
-      resolveSettingsScope({}, [], envs),
-      envs,
-      "worker",
-      "medium",
-      [first],
-    );
+    const plan = planPrismRolePatch(resolveSettingsScope({}, [], envs), envs, {
+      kind: "lane",
+      role: "worker",
+      lane: "medium",
+      models: [first],
+    });
     const result = await persistScopedSettingsPatch(
       plan,
       async ({ environmentId }) => ({ _tag: environmentId === "one" ? "Success" : "Failure" }),
@@ -211,26 +230,48 @@ it("offers only enabled models available across the selected scope", () => {
 it("keeps the same model at distinct efforts as separate ordered entries", () => {
   const envs = [environment("one")];
   const models = [first, { ...first, effort: "low" }];
-  const plan = planPrismModelsPatch(
-    resolveSettingsScope({}, [], envs),
-    envs,
-    "reviewer",
-    "hard",
+  const plan = planPrismRolePatch(resolveSettingsScope({}, [], envs), envs, {
+    kind: "models",
+    role: "reviewer",
     models,
-  );
+  });
   const next = applyServerSettingsPatch(
     envs[0]!.serverConfig.settings,
     plan.serverWrites[0]!.patch,
   );
-  expect(next.prismRoles.reviewer.lanes.hard).toEqual(models);
+  expect(next.prismRoles.reviewer.models).toEqual(models);
   expect(next.prismRoles.worker).toEqual(roles.worker);
+});
+
+it("switches Retry off and back on without touching its model list", () => {
+  const envs = [environment("one")];
+  const scope = resolveSettingsScope({}, [], envs);
+  const off = planPrismRolePatch(scope, envs, {
+    kind: "enabled",
+    role: "correction",
+    enabled: false,
+  });
+  const next = applyServerSettingsPatch(envs[0]!.serverConfig.settings, off.serverWrites[0]!.patch);
+  expect(next.prismRoles.correction).toEqual({ ...roles.correction, enabled: false });
+  expect(next.prismRoles.recovery.enabled).toBe(true);
+  const on = planPrismRolePatch(scope, envs, {
+    kind: "enabled",
+    role: "correction",
+    enabled: true,
+  });
+  expect(applyServerSettingsPatch(next, on.serverWrites[0]!.patch).prismRoles.correction).toEqual(
+    roles.correction,
+  );
 });
 
 it("keeps the save barrier until the updated settings snapshot arrives", () => {
   const envs = [environment("one")];
-  const plan = planPrismModelsPatch(resolveSettingsScope({}, [], envs), envs, "worker", "easy", [
-    first,
-  ]);
+  const plan = planPrismRolePatch(resolveSettingsScope({}, [], envs), envs, {
+    kind: "lane",
+    role: "worker",
+    lane: "easy",
+    models: [first],
+  });
   const expectation = {
     kind: "lane" as const,
     role: "worker" as const,
