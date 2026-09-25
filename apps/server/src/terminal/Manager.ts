@@ -286,6 +286,8 @@ interface TerminalSessionState {
   exitSignal: number | null;
   updatedAt: string;
   eventSequence: number;
+  /** Counts writes, so closeIdle can see input that has not echoed yet. */
+  inputCount: number;
   cols: number;
   rows: number;
   process: PtyAdapter.PtyProcess | null;
@@ -2558,6 +2560,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         exitSignal: null,
         updatedAt: yield* nowIso,
         eventSequence: 0,
+        inputCount: 0,
         cols,
         rows,
         process: null,
@@ -2898,6 +2901,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         terminalId,
       });
     }
+    session.inputCount += 1;
     yield* Effect.try({
       try: () => process.write(input.data),
       catch: (cause) =>
@@ -2979,6 +2983,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           exitSignal: null,
           updatedAt: yield* nowIso,
           eventSequence: 0,
+          inputCount: 0,
           cols,
           rows,
           process: null,
@@ -3074,10 +3079,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             (input.terminalId === undefined || session.terminalId === input.terminalId),
         );
         if (running.length === 0) return;
-        // Typing echoes output, so a command started during the process check
-        // advances the sequence even if its process missed the snapshot.
-        const sequences = new Map(
-          running.map((session) => [session.terminalId, session.eventSequence]),
+        // A command started during the process check can miss the snapshot,
+        // but its input or echo still lands. Both counters only grow, so the
+        // sum changes when either one does.
+        const activityMark = (session: TerminalSessionState) =>
+          session.eventSequence + session.inputCount;
+        const marks = new Map(
+          running.map((session) => [session.terminalId, activityMark(session)]),
         );
         // Inspect now instead of trusting the last poll, so a command started
         // since then keeps its terminal.
@@ -3088,7 +3096,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             inspector(session.pid).pipe(
               Effect.flatMap((result) =>
                 result.hasRunningSubprocess ||
-                session.eventSequence !== sequences.get(session.terminalId)
+                activityMark(session) !== marks.get(session.terminalId)
                   ? Effect.void
                   : closeSession(input.threadId, session.terminalId, false),
               ),
