@@ -14,7 +14,6 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -841,9 +840,6 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
     [input.cwd, input.transcriptCwd ?? `/tmp/cursor-replay-${input.scenario}`],
     [input.cwd.slice(0, input.cwd.lastIndexOf("/")), "/tmp"],
   ];
-  // Closed from the first tool-call-started until run.cancel is sent, so the
-  // transcript never shows updates between the interrupt trigger and the cancel.
-  const updatesGate = yield* Latch.make(true);
   let runsStarted = 0;
   let resuming = false;
 
@@ -881,23 +877,45 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
     }
   };
 
-  const recordFrame = Effect.fnUntraced(function* (event: CursorAgentSdkProtocolLogEvent) {
-    const frame = event.payload;
-    if (frame.type === "interaction.update") {
-      yield* updatesGate.await;
-    }
-    if (frame.type === "agent.open") {
-      resuming = frame.operation === "resume";
-    }
-    if (frame.type === "run.start") {
-      runsStarted += 1;
-    }
-    entries.push({
-      type: event.direction === "outgoing" ? "expect_outbound" : "emit_inbound",
-      label: frameLabel(frame),
-      frame: transcriptFrame(frame),
+  // In a mid-tool interrupt recording, frames after the first tool-call-started
+  // are held until run.cancel is recorded, so the cancel directly follows its
+  // trigger. Holding appends rather than waits: updates can arrive while send
+  // is still flushing them, and blocking there would never return.
+  let awaitingToolStart = input.interruptAfterToolStart === true;
+  let heldUntilCancel: Array<ProviderReplayEntry> | undefined;
+
+  const recordFrame = (event: CursorAgentSdkProtocolLogEvent) =>
+    Effect.sync(() => {
+      const frame = event.payload;
+      if (frame.type === "agent.open") {
+        resuming = frame.operation === "resume";
+      }
+      if (frame.type === "run.start") {
+        runsStarted += 1;
+      }
+      const entry: ProviderReplayEntry = {
+        type: event.direction === "outgoing" ? "expect_outbound" : "emit_inbound",
+        label: frameLabel(frame),
+        frame: transcriptFrame(frame),
+      };
+      if (heldUntilCancel !== undefined && frame.type !== "run.cancel") {
+        heldUntilCancel.push(entry);
+        return;
+      }
+      entries.push(entry);
+      if (frame.type === "run.cancel" && heldUntilCancel !== undefined) {
+        entries.push(...heldUntilCancel);
+        heldUntilCancel = undefined;
+      }
+      if (
+        awaitingToolStart &&
+        frame.type === "interaction.update" &&
+        frame.update.type === "tool-call-started"
+      ) {
+        awaitingToolStart = false;
+        heldUntilCancel = [];
+      }
     });
-  });
   const runner = makeCursorAgentSdkRunner(() => recordFrame);
 
   const awaitSignal = (signal: Deferred.Deferred<void>, description: string) =>
@@ -916,8 +934,7 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
     const interruptAfterRunStart = input.interruptAfterRunStartPromptIndex === index;
     const firstUpdate = yield* Deferred.make<void>();
     const toolStarted = yield* Deferred.make<void>();
-    // Updates that arrive before send returns are flushed inside send, so
-    // holding one back there would block send forever.
+    const cancelSent = yield* Deferred.make<void>();
     let sent = false;
     const run = yield* session.send({
       message: prompt,
@@ -925,15 +942,16 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
       onDelta: (update) =>
         Effect.gen(function* () {
           yield* Deferred.succeed(firstUpdate, undefined);
-          if (
-            input.interruptAfterToolStart === true &&
-            update.type === "tool-call-started" &&
-            !(yield* Deferred.isDone(toolStarted))
-          ) {
-            if (sent) {
-              yield* updatesGate.close;
-            }
-            yield* Deferred.succeed(toolStarted, undefined);
+          if (input.interruptAfterToolStart !== true || update.type !== "tool-call-started") {
+            return;
+          }
+          const first = yield* Deferred.succeed(toolStarted, undefined);
+          // Also hold the SDK's callback until the cancel is sent, as the async
+          // recorder did: with the tool left running, all three live probes hit
+          // the AbortError described below. Inside send the hold would never
+          // return, so updates flushed there rely on recordFrame's ordering.
+          if (first && sent) {
+            yield* Deferred.await(cancelSent);
           }
         }),
     });
@@ -952,7 +970,7 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
       // later timer was clean in the same probes; 10 ms is that deferral.
       yield* Effect.sleep("10 millis");
       const cancelling = yield* run.cancel.pipe(Effect.forkChild({ startImmediately: true }));
-      yield* updatesGate.open;
+      yield* Deferred.succeed(cancelSent, undefined);
       yield* Fiber.join(cancelling);
     }
     yield* Fiber.join(waiting).pipe(
