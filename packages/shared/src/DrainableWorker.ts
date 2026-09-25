@@ -68,3 +68,43 @@ export const makeDrainableWorker = <A, E, R>(
 
     return { enqueue, drain } satisfies DrainableWorker<A>;
   });
+
+/**
+ * Create a drainable worker that keeps items with the same key in order while
+ * letting items with different keys run concurrently.
+ *
+ * Items are routed by a stable hash of `keyOf(item)` into `lanes` independent
+ * serial workers, so one slow item only delays items that share its lane.
+ * `drain` resolves once every lane is idle.
+ *
+ * @param process - The effect to run for each queued item.
+ * @param keyOf - Returns the ordering key for an item.
+ * @param lanes - Number of independent serial lanes.
+ */
+export const makeKeyedDrainableWorker = <A, E, R>(
+  process: (item: A) => Effect.Effect<void, E, R>,
+  keyOf: (item: A) => string,
+  lanes: number,
+): Effect.Effect<DrainableWorker<A>, never, Scope.Scope | R> =>
+  Effect.gen(function* () {
+    const workers: Array<DrainableWorker<A>> = [];
+    for (let index = 0; index < Math.max(1, lanes); index++) {
+      workers.push(yield* makeDrainableWorker(process));
+    }
+
+    const laneFor = (item: A): DrainableWorker<A> => {
+      const key = keyOf(item);
+      let hash = 0;
+      for (let index = 0; index < key.length; index++) {
+        hash = (Math.imul(hash, 31) + key.charCodeAt(index)) >>> 0;
+      }
+      return workers[hash % workers.length]!;
+    };
+
+    const enqueue: DrainableWorker<A>["enqueue"] = (item) => laneFor(item).enqueue(item);
+    const drain: DrainableWorker<A>["drain"] = Effect.forEach(workers, (worker) => worker.drain, {
+      discard: true,
+    });
+
+    return { enqueue, drain } satisfies DrainableWorker<A>;
+  });

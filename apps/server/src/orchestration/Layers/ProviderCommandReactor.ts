@@ -31,7 +31,7 @@ import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { makeDrainableWorker, makeKeyedDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
@@ -119,6 +119,7 @@ const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
 
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
+const REACTOR_THREAD_LANES = 16;
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
 function providerErrorLabel(value: string | undefined): string {
@@ -1862,7 +1863,13 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processDomainEventSafely);
+  // Events for one thread stay ordered, but a slow provider session start on one
+  // thread must not delay turn starts, interrupts or stops on unrelated threads.
+  const worker = yield* makeKeyedDrainableWorker(
+    processDomainEventSafely,
+    (event) => event.payload.threadId,
+    REACTOR_THREAD_LANES,
+  );
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const pendingTitles = yield* findPendingThreadTitles().pipe(
