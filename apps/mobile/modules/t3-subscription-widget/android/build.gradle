@@ -15,5 +15,4 @@ android {
 
 dependencies {
   implementation project(':expo-modules-core')
-  implementation 'androidx.core:core-remoteviews:1.1.0'
 }

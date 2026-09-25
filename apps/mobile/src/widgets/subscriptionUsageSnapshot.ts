@@ -130,7 +130,13 @@ export function buildSubscriptionUsageSnapshot(
   const configuredDrivers = new Set(
     [...presentations.values()].flatMap((presentation) =>
       (presentation.serverConfig?.providers ?? [])
-        .filter((provider) => provider.enabled)
+        // Servers report default-enabled drivers even when their CLI is missing.
+        .filter(
+          (provider) =>
+            provider.enabled &&
+            provider.installed &&
+            provider.usageLimits?.unavailable?.reason !== "unsupported",
+        )
         .map((provider) => provider.driver),
     ),
   );

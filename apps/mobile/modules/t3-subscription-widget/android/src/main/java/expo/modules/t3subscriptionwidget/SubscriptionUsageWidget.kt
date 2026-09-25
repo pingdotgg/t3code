@@ -11,7 +11,6 @@ import android.net.Uri
 import android.os.Build
 import android.view.View
 import android.widget.RemoteViews
-import androidx.core.widget.RemoteViewsCompat
 import org.json.JSONObject
 import java.text.DateFormat
 import java.util.Date
@@ -48,6 +47,8 @@ class SubscriptionUsageWidget : AppWidgetProvider() {
     }
 
     private fun update(context: Context, manager: AppWidgetManager, id: Int) {
+      // The receiver is disabled below 12L (values-v32/bools.xml), but the module still calls in.
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S_V2) return
       val saved = context.getSharedPreferences(PREFERENCES, 0).getString("snapshot", null)
       val snapshot = runCatching { JSONObject(saved.orEmpty()) }.getOrNull()
       val openApp = openAppIntent(context, id, snapshot)
@@ -70,21 +71,23 @@ class SubscriptionUsageWidget : AppWidgetProvider() {
         groups.mapNotNull { it.getOrNull(index) }
       }
       val views = RemoteViews(context.packageName, R.layout.t3_subscription_widget)
-      val title = if (rows.isEmpty()) {
+      // Count limits only; "Open app to refresh" placeholders are not entries.
+      val limits = rows.count { (_, window) -> window != null }
+      val title = if (limits == 0) {
         context.getString(R.string.t3_subscription_widget_name)
       } else {
-        context.getString(R.string.t3_subscription_widget_title_count, rows.size)
+        context.getString(R.string.t3_subscription_widget_title_count, limits)
       }
       views.setTextViewText(R.id.t3_widget_title, title)
       views.setContentDescription(
         R.id.t3_widget_title,
-        if (rows.isEmpty()) {
+        if (limits == 0) {
           title
         } else {
           context.resources.getQuantityString(
             R.plurals.t3_subscription_widget_title_description,
-            rows.size,
-            rows.size
+            limits,
+            limits
           )
         }
       )
@@ -92,11 +95,11 @@ class SubscriptionUsageWidget : AppWidgetProvider() {
       openAppIntent(context, id, snapshot, forCollection = true)?.let {
         views.setPendingIntentTemplate(R.id.t3_widget_rows, it)
       }
-      val items = RemoteViewsCompat.RemoteCollectionItems.Builder().setViewTypeCount(1)
+      val items = RemoteViews.RemoteCollectionItems.Builder()
       rows.forEachIndexed { index, (provider, window) ->
         items.addItem(index.toLong(), rowView(context, provider, window))
       }
-      RemoteViewsCompat.setRemoteAdapter(context, views, id, R.id.t3_widget_rows, items.build())
+      views.setRemoteAdapter(R.id.t3_widget_rows, items.build())
       views.setEmptyView(R.id.t3_widget_rows, R.id.t3_widget_empty)
       val checkedAt = snapshot?.optLong("checkedAt") ?: 0
       val checked = if (checkedAt > 0) {
@@ -138,7 +141,7 @@ class SubscriptionUsageWidget : AppWidgetProvider() {
         intent,
         PendingIntent.FLAG_UPDATE_CURRENT or if (forCollection) {
           // Collection rows use fill-in intents with an explicit app target.
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
+          PendingIntent.FLAG_MUTABLE
         } else {
           PendingIntent.FLAG_IMMUTABLE
         }

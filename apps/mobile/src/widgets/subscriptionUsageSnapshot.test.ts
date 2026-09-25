@@ -65,11 +65,24 @@ describe("subscription widget snapshots", () => {
     expect(snapshot.url).toBe(deepLink);
     expect(JSON.stringify(snapshot)).not.toContain("private@example.com");
   });
-  it("clears data after removing environments and hides disabled providers", () => {
+  it("clears data after removing environments", () => {
     expect(buildSubscriptionUsageSnapshot(new Map(), deepLink).providers).toEqual([]);
+  });
+  it.each<{ name: string; overrides: Partial<ServerProvider> }>([
+    { name: "disabled", overrides: { enabled: false } },
+    {
+      name: "missing",
+      overrides: { installed: false, status: "error", usageLimits: undefined },
+    },
+    {
+      name: "API-key",
+      overrides: {
+        usageLimits: { checkedAt, windows: [], unavailable: { reason: "unsupported" } },
+      },
+    },
+  ])("hides $name providers", ({ overrides }) => {
     expect(
-      buildSubscriptionUsageSnapshot(presentations([provider({ enabled: false })]), deepLink)
-        .providers,
+      buildSubscriptionUsageSnapshot(presentations([provider(overrides)]), deepLink).providers,
     ).toEqual([]);
   });
   it.each([

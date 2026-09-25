@@ -237,7 +237,7 @@ function SubscriptionUsage(
     >
       {providers.length === 0 ? (
         <Text modifiers={[font({ textStyle: "caption" }), foregroundStyle("secondary")]}>
-          No subscription limits available. Open T3 to connect.
+          No subscription limits available.
         </Text>
       ) : compact ? (
         <VStack alignment="leading" spacing={accessory || dense ? 4 : 8}>
