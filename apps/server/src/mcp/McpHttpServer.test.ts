@@ -514,6 +514,32 @@ it.effect("bounds the snapshot text even when nothing but logs and the title are
   ).pipe(Effect.provide(TestLayer)),
 );
 
+it.effect("bounds page text made of wide characters", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      // The character caps alone leave 8,000 three-byte characters, about 24 KB.
+      yield* serveSnapshots("mcp-wide-text-client", {
+        ...snapshotResult,
+        visibleText: "界".repeat(9_000),
+      });
+
+      const snapshot = yield* callSnapshot({ includeImage: false });
+
+      const [, text, notice] = snapshot.content;
+      const body = text?.type === "text" ? text.text : "";
+      expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(
+        McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
+      );
+      expect((decodeJsonText(body) as { readonly visibleText: string }).visibleText).toMatch(
+        /^界+…$/,
+      );
+      expect(notice?.type === "text" ? notice.text : "").toContain(
+        "visibleText after 4000 characters",
+      );
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
 it.effect("sheds log entries before locators when every list is full", () =>
   Effect.scoped(
     Effect.gen(function* () {

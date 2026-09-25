@@ -199,16 +199,10 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
   ) {
     omitted.push(`element names longer than ${MAX_SNAPSHOT_ELEMENT_NAME_CHARS} characters`);
   }
-  if (metadata.visibleText.length > MAX_SNAPSHOT_VISIBLE_TEXT_CHARS) {
-    omitted.push(
-      `visibleText after ${MAX_SNAPSHOT_VISIBLE_TEXT_CHARS} characters (use preview_evaluate for more)`,
-    );
-  }
   const bounded = {
     ...withoutTree,
     url: cutText(metadata.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
     title: cutText(metadata.title, MAX_SNAPSHOT_IDENTIFIER_CHARS),
-    visibleText: cutText(metadata.visibleText, MAX_SNAPSHOT_VISIBLE_TEXT_CHARS),
     interactiveElements: metadata.interactiveElements.map((element) => ({
       ...element,
       name: cutText(element.name, MAX_SNAPSHOT_ELEMENT_NAME_CHARS),
@@ -220,8 +214,9 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
 
   // Per-field caps do not sum below the ceiling: three log arrays of 40 capped
   // entries alone can pass 60 KB. Shed the least useful lists first, halving
-  // one list per round, until the JSON fits. With every list empty the rest
-  // is bounded by the identifier and visibleText caps, so this terminates.
+  // one list per round, until the JSON fits. Page text is halved last: the
+  // caps count characters, and wide characters can keep it over the ceiling
+  // alone. The identifier caps bound the rest, so this terminates.
   const shedOrder = [
     "actionTimeline",
     "networkEntries",
@@ -240,31 +235,46 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
     networkEntries: 0,
     actionTimeline: 0,
   };
-  let text = encodeJsonText({ ...bounded, ...lists });
+  let visibleTextChars = Math.min(metadata.visibleText.length, MAX_SNAPSHOT_VISIBLE_TEXT_CHARS);
+  const value = () => ({
+    ...bounded,
+    visibleText: cutText(metadata.visibleText, visibleTextChars),
+    ...lists,
+  });
+  let text = encodeJsonText(value());
   while (utf8Length(text) > MAX_SNAPSHOT_TEXT_BYTES) {
     // Elements carry the locators, so they go last; logs shed newest-last.
     const key =
       shedOrder.find(
         (candidate) => candidate !== "interactiveElements" && lists[candidate].length > 0,
       ) ?? (lists.interactiveElements.length > 0 ? "interactiveElements" : undefined);
-    if (key === undefined) break;
-    const keep = Math.floor(lists[key].length / 2);
-    dropped[key] += lists[key].length - keep;
-    // slice(-0) keeps everything, so spell out the empty case.
-    lists[key] =
-      keep === 0
-        ? []
-        : key === "interactiveElements"
-          ? lists[key].slice(0, keep)
-          : lists[key].slice(-keep);
-    text = encodeJsonText({ ...bounded, ...lists });
+    if (key === undefined) {
+      if (visibleTextChars === 0) break;
+      visibleTextChars = Math.floor(visibleTextChars / 2);
+    } else {
+      const keep = Math.floor(lists[key].length / 2);
+      dropped[key] += lists[key].length - keep;
+      // slice(-0) keeps everything, so spell out the empty case.
+      lists[key] =
+        keep === 0
+          ? []
+          : key === "interactiveElements"
+            ? lists[key].slice(0, keep)
+            : lists[key].slice(-keep);
+    }
+    text = encodeJsonText(value());
+  }
+  if (visibleTextChars < metadata.visibleText.length) {
+    omitted.push(
+      `visibleText after ${visibleTextChars} characters (use preview_evaluate for more)`,
+    );
   }
   for (const key of shedOrder) {
     if (dropped[key] > 0) {
       omitted.push(`${dropped[key]} of ${bounded[key].length} ${key}`);
     }
   }
-  return { value: { ...bounded, ...lists }, text, omitted };
+  return { value: value(), text, omitted };
 };
 
 export class PreviewScreenshotSaveError extends Schema.TaggedError<PreviewScreenshotSaveError>()(
