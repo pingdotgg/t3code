@@ -40,6 +40,7 @@ import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
+  buildCodexAdditionalContext,
   buildCodexDeveloperInstructions,
   type T3CodeToolAvailability,
 } from "../CodexDeveloperInstructions.ts";
@@ -141,10 +142,13 @@ const isMcpElicitationMetadata = Schema.is(McpElicitationMetadata);
 const isMcpElicitationForm = Schema.is(McpElicitationForm);
 
 // TODO: Verify `packages/effect-codex-app-server/scripts/generate.ts` so the generated
-// `V2TurnStartParams` schema includes `collaborationMode` directly.
+// `V2TurnStartParams` schema includes its experimental fields directly.
 const CodexTurnStartParamsWithCollaborationMode = EffectCodexSchema.V2TurnStartParams.pipe(
   Schema.fieldsAssign({
     collaborationMode: Schema.optionalKey(EffectCodexSchema.V2TurnStartParams__CollaborationMode),
+    additionalContext: Schema.optionalKey(
+      Schema.Record(Schema.String, EffectCodexSchema.V2TurnStartParams__AdditionalContextEntry),
+    ),
   }),
 );
 const decodeCodexTurnStartParamsWithCollaborationMode = Schema.decodeUnknownEffect(
@@ -579,28 +583,30 @@ function runtimeModeToTurnSandboxPolicy(
   }
 }
 
-function buildCodexCollaborationMode(input: {
+function buildCodexTurnInstructions(input: {
   readonly interactionMode?: ProviderInteractionMode;
   readonly model?: string;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly browserToolsAvailable?: boolean | T3CodeToolAvailability;
-}): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
+}): Pick<CodexTurnStartParamsWithCollaborationMode, "collaborationMode" | "additionalContext"> {
   if (input.interactionMode === undefined) {
-    return undefined;
+    return {};
   }
   const model = normalizeCodexModelSlug(input.model) ?? DEFAULT_MODEL;
   const reasoningEffort = input.effort ?? "medium";
   return {
-    mode: input.interactionMode,
-    settings: {
-      model,
-      reasoning_effort: reasoningEffort,
-      developer_instructions: buildCodexDeveloperInstructions(
-        input.interactionMode,
-        { model, reasoningEffort },
-        input.browserToolsAvailable ?? true,
-      ),
+    collaborationMode: {
+      mode: input.interactionMode,
+      settings: {
+        model,
+        reasoning_effort: reasoningEffort,
+        developer_instructions: buildCodexDeveloperInstructions(input.interactionMode),
+      },
     },
+    additionalContext: buildCodexAdditionalContext(
+      { model, reasoningEffort },
+      input.browserToolsAvailable ?? true,
+    ),
   };
 }
 
@@ -638,7 +644,7 @@ export function buildTurnStartParams(input: {
   }
 
   const config = runtimeModeToThreadConfig(input.runtimeMode);
-  const collaborationMode = buildCodexCollaborationMode({
+  const turnInstructions = buildCodexTurnInstructions({
     ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
@@ -654,7 +660,7 @@ export function buildTurnStartParams(input: {
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
-    ...(collaborationMode ? { collaborationMode } : {}),
+    ...turnInstructions,
   }).pipe(
     Effect.mapError((cause) =>
       CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
