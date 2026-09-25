@@ -1,3 +1,4 @@
+import { ThreadSearchStatus } from "../threads/ThreadSearchStatus";
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import { computeThreadMoveAvailability } from "../threads/threadOrder";
 import { LegendList } from "@legendapp/list/react-native";
@@ -17,7 +18,7 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Platform, View } from "react-native";
+import { ActivityIndicator, Platform, ScrollView, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -221,13 +222,9 @@ export function HomeScreen(props: HomeScreenProps) {
   const searchEnvironmentIds = useMemo(
     () =>
       props.selectedEnvironmentId === null
-        ? props.environments
-            .filter((environment) => environment.connectionState === "connected")
-            .map((environment) => environment.environmentId)
+        ? props.environments.map((environment) => environment.environmentId)
         : props.environments.some(
-              (environment) =>
-                environment.environmentId === props.selectedEnvironmentId &&
-                environment.connectionState === "connected",
+              (environment) => environment.environmentId === props.selectedEnvironmentId,
             )
           ? [props.selectedEnvironmentId]
           : [],
@@ -847,7 +844,7 @@ export function HomeScreen(props: HomeScreenProps) {
     projectCount: props.projects.length,
   });
 
-  if (!hasAnyThreads) {
+  if (!hasAnyThreads && !hasSearchQuery) {
     return (
       <View className="flex-1 bg-screen android:bg-header">
         <View
@@ -890,7 +887,15 @@ export function HomeScreen(props: HomeScreenProps) {
     );
   }
 
-  const listHeader = Platform.OS === "ios" ? null : <HomeTopContentSpacer />;
+  const searchStatus = (
+    <ThreadSearchStatus sources={threadSearch.sources} retry={threadSearch.retry} />
+  );
+  const listHeader = (
+    <>
+      {Platform.OS === "ios" ? null : <HomeTopContentSpacer />}
+      {searchStatus}
+    </>
+  );
 
   // Project scoping lives in the header filter menu (no inline chip row on
   // mobile — the menu is the one filter surface).
@@ -901,8 +906,16 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ListEmpty =
     hasSearchQuery && threadSearch.isPending ? null : hasSearchQuery ? (
       <EmptyState
-        title="No results"
-        detail={`No threads matching "${props.searchQuery}".`}
+        title={
+          threadSearch.sources.some((source) => source.status !== "complete")
+            ? "No matches in available results"
+            : "No results"
+        }
+        detail={
+          threadSearch.sources.some((source) => source.status !== "complete")
+            ? "Message search may be incomplete."
+            : `No threads matching "${props.searchQuery}".`
+        }
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : v2ScopedProjectGroup !== null ? (
@@ -928,12 +941,19 @@ export function HomeScreen(props: HomeScreenProps) {
   if (Platform.OS === "android" && threadListV2Items.length === 0) {
     return (
       <View className="flex-1 bg-header">
-        <View
-          className="flex-1 items-center justify-center overflow-hidden rounded-t-[28px] bg-screen px-4"
-          style={{ paddingBottom: insets.bottom }}
+        <ScrollView
+          className="flex-1 overflow-hidden rounded-t-[28px] bg-screen px-4"
+          contentContainerStyle={{
+            flexGrow: 1,
+            alignItems: "center",
+            justifyContent: "center",
+            paddingBottom: insets.bottom,
+          }}
+          showsVerticalScrollIndicator={false}
         >
+          {searchStatus}
           {v2ListEmpty}
-        </View>
+        </ScrollView>
       </View>
     );
   }

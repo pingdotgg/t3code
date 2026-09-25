@@ -1,3 +1,4 @@
+import { ThreadSearchStatus } from "./ThreadSearchStatus";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { computeThreadMoveAvailability } from "./threadOrder";
 import type {
@@ -14,7 +15,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LayoutChangeEvent } from "react-native";
-import { Platform, StyleSheet, TextInput, View } from "react-native";
+import { Platform, ScrollView, StyleSheet, TextInput, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -176,13 +177,9 @@ function ThreadNavigationSidebarPane(
   const searchEnvironmentIds = useMemo(
     () =>
       options.selectedEnvironmentId === null
-        ? workspaceEnvironments
-            .filter((environment) => environment.connectionState === "connected")
-            .map((environment) => environment.environmentId)
+        ? workspaceEnvironments.map((environment) => environment.environmentId)
         : workspaceEnvironments.some(
-              (environment) =>
-                environment.environmentId === options.selectedEnvironmentId &&
-                environment.connectionState === "connected",
+              (environment) => environment.environmentId === options.selectedEnvironmentId,
             )
           ? [options.selectedEnvironmentId]
           : [],
@@ -913,11 +910,23 @@ function ThreadNavigationSidebarPane(
           : props.searchQuery.trim().length > 0
             ? threadSearch.isPending
               ? "Searching thread messages…"
-              : "No matching threads"
+              : threadSearch.sources.some((source) => source.status !== "complete")
+                ? "No matches in available results"
+                : "No matching threads"
             : selectedProjectScope !== null
               ? `No threads in ${selectedProjectScope.title}`
               : "No threads yet"}
     </Text>
+  );
+
+  // Android's empty branch replaces the list, so the status must render there
+  // too — otherwise a failed source loses its Retry and Manage actions.
+  const searchStatus = (
+    <ThreadSearchStatus
+      sources={threadSearch.sources}
+      retry={threadSearch.retry}
+      onOpenConnections={props.onOpenEnvironmentSettings}
+    />
   );
 
   if (props.nativeChrome) {
@@ -986,6 +995,7 @@ function ThreadNavigationSidebarPane(
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
+                ListHeaderComponent={searchStatus}
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>
@@ -1020,7 +1030,18 @@ function ThreadNavigationSidebarPane(
         }
       >
         {Platform.OS === "android" && listItems.length === 0 ? (
-          <View className="flex-1 items-center justify-center">{listEmpty}</View>
+          <ScrollView
+            className="flex-1"
+            contentContainerStyle={{
+              flexGrow: 1,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+            showsVerticalScrollIndicator={false}
+          >
+            {searchStatus}
+            {listEmpty}
+          </ScrollView>
         ) : (
           <SwipeableScrollGateProvider enabled={swipeEnabled}>
             <GestureDetector gesture={sidebarScrollGesture}>
@@ -1051,6 +1072,7 @@ function ThreadNavigationSidebarPane(
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
+                ListHeaderComponent={searchStatus}
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>
