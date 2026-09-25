@@ -43,7 +43,7 @@ function shell(id: string, status: OrchestrationSessionStatus | null) {
 function detail(
   id: string,
   status: OrchestrationSessionStatus,
-  streamStatus: EnvironmentThreadState["status"] = "live",
+  overrides: Partial<EnvironmentThreadState> = {},
 ) {
   const threadId = ThreadId.make(id);
   const thread: OrchestrationThread = {
@@ -69,10 +69,11 @@ function detail(
     checkpoints: [],
     session: session(threadId, status),
   };
-  return AsyncResult.success({
+  return AsyncResult.success<EnvironmentThreadState>({
     ...EMPTY_ENVIRONMENT_THREAD_STATE,
-    status: streamStatus,
+    status: "live",
     data: Option.some(thread),
+    ...overrides,
   });
 }
 
@@ -150,26 +151,33 @@ describe("createRunningThreadKeepAliveAtom", () => {
     expect(h.registry.get(h.stateAtom(LOCAL, "a"))).toBe(live);
   });
 
-  it("holds a stopped thread until its own connected stream shows the stop", () => {
+  it("holds a stopped thread until its own stream is live and shows the stop", () => {
     const h = makeHarness();
     h.registry.set(h.threads(LOCAL), [
       shell("a", "running"),
       shell("b", "running"),
       shell("c", "running"),
     ]);
+    // "b" has not loaded yet. "c" hit a stream error.
     h.registry.set(h.stateAtom(LOCAL, "a"), detail("a", "running"));
-    h.registry.set(h.stateAtom(LOCAL, "c"), detail("c", "running", "cached"));
+    h.registry.set(
+      h.stateAtom(LOCAL, "c"),
+      detail("c", "running", { status: "cached", error: Option.some("Could not sync.") }),
+    );
 
-    // The shell reports the stops first. Only the connected stream that
-    // still shows a running session is held open.
+    // The shell reports the stops first. A failed stream cannot deliver its
+    // stop, so only it is released now.
     h.registry.set(h.threads(LOCAL), [
       shell("a", "ready"),
       shell("b", "ready"),
       shell("c", "ready"),
     ]);
-    expect(h.openStreams()).toEqual(["local:a"]);
+    expect(h.openStreams()).toEqual(["local:a", "local:b"]);
 
     h.registry.set(h.stateAtom(LOCAL, "a"), detail("a", "ready"));
+    h.registry.set(h.stateAtom(LOCAL, "b"), detail("b", "ready", { status: "synchronizing" }));
+    expect(h.openStreams()).toEqual(["local:b"]);
+    h.registry.set(h.stateAtom(LOCAL, "b"), detail("b", "ready"));
     expect(h.openStreams()).toEqual([]);
   });
 

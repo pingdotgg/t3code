@@ -52,16 +52,15 @@ export function useEnvironmentThread(
 
 type KeptThreads = ReadonlyMap<EnvironmentId, ReadonlySet<ThreadId>>;
 
-// True while the thread's own stream is up and still shows a running session.
-// A failed or disconnected stream cannot deliver the stop, so it does not wait.
-function isDetailStillRunning<E>(
-  result: AsyncResult.AsyncResult<EnvironmentThreadState, E>,
-): boolean {
-  if (!AsyncResult.isSuccess(result)) return false;
-  const { status, data } = result.value;
+// True once a thread's own stream no longer needs to stay open: it is in sync
+// and shows a settled session, or it cannot progress (deleted or failed). A
+// stream that is still loading or reconnecting keeps waiting for the stop.
+function isDetailDone<E>(result: AsyncResult.AsyncResult<EnvironmentThreadState, E>): boolean {
+  if (!AsyncResult.isSuccess(result)) return true;
+  const { status, data, error } = result.value;
+  if (status === "deleted" || Option.isSome(error)) return true;
   return (
-    (status === "live" || status === "synchronizing") &&
-    Option.exists(data, (thread) => isThreadSessionRunning(thread.session))
+    status === "live" && !Option.exists(data, (thread) => isThreadSessionRunning(thread.session))
   );
 }
 
@@ -70,8 +69,9 @@ function isDetailStillRunning<E>(
  * environments. Mount the result; its value is only bookkeeping.
  *
  * The shell and detail streams are independent, so the shell can report a
- * stop first. A stopped thread stays mounted until its own detail shows the
- * stop too. Then the stream closes and saves the settled state to disk.
+ * stop before the detail loads or catches up. A stopped thread stays mounted
+ * until its own detail is live and shows the stop too. Then the stream closes
+ * and saves the settled state to disk.
  */
 export function createRunningThreadKeepAliveAtom<E>(input: {
   readonly environmentIdsAtom: Atom.Atom<ReadonlyArray<EnvironmentId>>;
@@ -108,11 +108,11 @@ export function createRunningThreadKeepAliveAtom<E>(input: {
         const stateAtom = input.stateAtom(environmentId, threadId);
         // `once`, not `get`: a dependency on a stopped thread would hold its
         // stream open until some other change rebuilds this atom.
-        if (!isDetailStillRunning(get.once(stateAtom))) continue;
+        if (isDetailDone(get.once(stateAtom))) continue;
         threadIds.add(threadId);
-        // Rebuild when this detail shows the stop, not on each update.
+        // Rebuild when this detail is done, not on each update.
         get.subscribe(stateAtom, (state) => {
-          if (!isDetailStillRunning(state)) get.refreshSelf();
+          if (isDetailDone(state)) get.refreshSelf();
         });
       }
       for (const threadId of threadIds) get.mount(input.stateAtom(environmentId, threadId));
