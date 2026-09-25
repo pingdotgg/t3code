@@ -58,12 +58,16 @@ update it with `git pull` and a rebuild.
 Download a release from [GitHub Releases](https://github.com/pingdotgg/t3code/releases),
 or use a package manager:
 
-| Platform           | Install                         |
-| ------------------ | ------------------------------- |
-| Windows            | `winget install T3Tools.T3Code` |
-| macOS              | `brew install --cask t3-code`   |
-| Arch Linux         | `yay -S t3code-bin`             |
-| Arch Linux nightly | `yay -S t3code-nightly-bin`     |
+| Platform           | Install                                  |
+| ------------------ | ---------------------------------------- |
+| Windows            | `winget install T3Tools.T3Code`          |
+| macOS              | `brew install --cask t3-code`            |
+| Debian, Ubuntu     | `sudo apt install ./T3-Code-*-amd64.deb` |
+| Arch Linux         | `yay -S t3code-bin`                      |
+| Arch Linux nightly | `yay -S t3code-nightly-bin`              |
+
+The `.deb` updates itself like the other desktop builds. It asks for your
+password to install each update.
 
 ### Windows Subsystem for Linux
 

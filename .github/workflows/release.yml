@@ -875,6 +875,7 @@ jobs:
             echo 'release-assets/*.dmg'
             echo 'release-assets/*.zip'
             echo 'release-assets/*.AppImage'
+            echo 'release-assets/*.deb'
             echo 'release-assets/*.exe'
             if [[ "${{ needs.preflight.outputs.release_channel }}" != "preview" ]]; then
               echo 'release-assets/*.blockmap'
