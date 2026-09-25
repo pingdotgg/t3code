@@ -153,7 +153,7 @@ both parent and child session ids so root-only terminal behavior remains testabl
 Provider transcript recorders live with the server orchestration testkit, not with provider client
 packages. Use `bun run record:codex-replay -- --scenario <name>` for Codex app-server transcripts
 and `bun run record:claude-replay -- --scenario <name>` for Claude Agent SDK transcripts. Use
-`pnpm --filter t3 record:cursor-replay -- --scenario <name>` for Cursor Agent SDK transcripts.
+`pnpm --filter t3 record:cursor-replay --scenario <name>` for Cursor Agent SDK transcripts.
 
 ## Contract Test Levels
 

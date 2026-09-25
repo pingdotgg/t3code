@@ -1,12 +1,21 @@
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
+import { Command, Flag } from "effect/unstable/cli";
 
-import { recordCursorAgentSdkReplayTranscript } from "../src/orchestration-v2/Adapters/CursorAdapterV2.testkit.ts";
-import { makeCheckpointWorkspace } from "../src/orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
+import {
+  recordCursorAgentSdkReplayTranscript,
+  type CursorAgentSdkReplayTranscript,
+} from "../src/orchestration-v2/Adapters/CursorAdapterV2.testkit.ts";
+import { checkpointWorkspace } from "../src/orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
 import {
   CURSOR_MODEL_SELECTION,
   MESSAGE_STEERING_INITIAL_PROMPT,
@@ -94,17 +103,11 @@ const RECORDINGS = {
 } as const;
 
 type RecordingName = keyof typeof RECORDINGS;
+const RECORDING_NAMES = Struct.keys(RECORDINGS);
 
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-function readArgValue(name: string): string | undefined {
-  const index = process.argv.indexOf(name);
-  return index === -1 ? undefined : process.argv[index + 1];
-}
-
-function encodeTranscriptNdjson(
-  transcript: Awaited<ReturnType<typeof recordCursorAgentSdkReplayTranscript>>,
-): string {
+function encodeTranscriptNdjson(transcript: CursorAgentSdkReplayTranscript): string {
   const { entries, ...metadata } = transcript;
   return [
     encodeUnknownJsonString({ type: "transcript_start", ...metadata }),
@@ -113,101 +116,66 @@ function encodeTranscriptNdjson(
   ].join("\n");
 }
 
-const runFileSystem = <A, E>(
-  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
-): Promise<A> => Effect.runPromise(effect.pipe(Effect.provide(NodeServices.layer)));
+const writeFixtureFiles = Effect.fn("writeFixtureFiles")(function* (cwd: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.writeFileString(
+    path.join(cwd, "package.json"),
+    encodeUnknownJsonString({
+      name: "cursor-read-only-fixture",
+      private: true,
+      scripts: { typecheck: "tsc --noEmit" },
+    }),
+  );
+  yield* fs.writeFileString(
+    path.join(cwd, "tsconfig.json"),
+    encodeUnknownJsonString({
+      compilerOptions: {
+        module: "ESNext",
+        strict: true,
+        target: "ES2022",
+      },
+    }),
+  );
+});
 
-async function prepareWorkspace(scenario: RecordingName): Promise<{
-  readonly cwd: string;
-  readonly owned: boolean;
-}> {
-  const configuredCwd = process.env.T3_CURSOR_REPLAY_CWD?.trim();
-  if (configuredCwd) {
-    return {
-      cwd: configuredCwd,
-      owned: false,
-    };
-  }
+const recordScenario = Effect.fn("recordScenario")(function* (
+  scenario: RecordingName,
+  out: string | undefined,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const apiKey = yield* Config.Redacted("CURSOR_API_KEY");
+  const model = yield* Config.NonEmptyString("T3_CURSOR_REPLAY_MODEL").pipe(
+    Config.withDefault(CURSOR_MODEL_SELECTION.model),
+  );
+  const configuredCwd = yield* Config.NonEmptyString("T3_CURSOR_REPLAY_CWD").pipe(Config.option);
   const recording = RECORDINGS[scenario];
-  return {
-    cwd: await makeCheckpointWorkspace(
-      `cursor-agent-sdk-record-${scenario}`,
-      "workspaceFiles" in recording ? recording.workspaceFiles : undefined,
-    ),
-    owned: true,
-  };
-}
 
-async function writeFixtureFiles(cwd: string): Promise<void> {
-  await runFileSystem(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* fs.writeFileString(
-        path.join(cwd, "package.json"),
-        encodeUnknownJsonString({
-          name: "cursor-read-only-fixture",
-          private: true,
-          scripts: { typecheck: "tsc --noEmit" },
-        }),
+  const owned = Option.isNone(configuredCwd);
+  const cwd = Option.isSome(configuredCwd)
+    ? configuredCwd.value
+    : yield* checkpointWorkspace(
+        `cursor-agent-sdk-record-${scenario}`,
+        "workspaceFiles" in recording ? recording.workspaceFiles : undefined,
       );
-      yield* fs.writeFileString(
-        path.join(cwd, "tsconfig.json"),
-        encodeUnknownJsonString({
-          compilerOptions: {
-            module: "ESNext",
-            strict: true,
-            target: "ES2022",
-          },
-        }),
-      );
-    }),
-  );
-}
-
-const scenario = (readArgValue("--scenario") ?? process.env.T3_CURSOR_REPLAY_SCENARIO) as
-  | RecordingName
-  | undefined;
-if (scenario === undefined || RECORDINGS[scenario] === undefined) {
-  throw new Error(`Pass --scenario with one of: ${Object.keys(RECORDINGS).join(", ")}`);
-}
-
-const apiKey = process.env.CURSOR_API_KEY?.trim();
-if (!apiKey) {
-  throw new Error("CURSOR_API_KEY is required to record Cursor SDK replay fixtures.");
-}
-
-const recording = RECORDINGS[scenario];
-const workspace = await prepareWorkspace(scenario);
-const transcriptCwd = cursorReplayTranscriptCwd(scenario);
-const outputPath = readArgValue("--out") ?? new URL(recording.output, import.meta.url).pathname;
-
-try {
-  if (shouldSeedCursorReplayWorkspace({ scenario, owned: workspace.owned })) {
-    await writeFixtureFiles(workspace.cwd);
+  if (shouldSeedCursorReplayWorkspace({ scenario, owned })) {
+    yield* writeFixtureFiles(cwd);
   }
-  const prompts = await runFileSystem(
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      return cursorReplayPromptsForWorkspace({
-        scenario,
-        configuredPrompts: recording.prompts,
-        packageJsonPath: path.join(workspace.cwd, "package.json"),
-        tsconfigPath: path.join(workspace.cwd, "tsconfig.json"),
-      });
-    }),
-  );
-  const transcript = await recordCursorAgentSdkReplayTranscript({
+  const transcriptCwd = cursorReplayTranscriptCwd(scenario);
+  const transcript = yield* recordCursorAgentSdkReplayTranscript({
     scenario,
-    prompts,
+    prompts: cursorReplayPromptsForWorkspace({
+      scenario,
+      configuredPrompts: recording.prompts,
+      packageJsonPath: path.join(cwd, "package.json"),
+      tsconfigPath: path.join(cwd, "tsconfig.json"),
+    }),
     ...(scenario === "tool_call_read_only" ? { transcriptPrompts: recording.prompts } : {}),
-    modelSelection: {
-      ...CURSOR_MODEL_SELECTION,
-      model: process.env.T3_CURSOR_REPLAY_MODEL ?? CURSOR_MODEL_SELECTION.model,
-    },
-    cwd: workspace.cwd,
+    modelSelection: { ...CURSOR_MODEL_SELECTION, model },
+    cwd,
     ...(transcriptCwd === undefined ? {} : { transcriptCwd }),
-    apiKey,
+    apiKey: Redacted.value(apiKey),
     ...("interactionMode" in recording ? { interactionMode: recording.interactionMode } : {}),
     ...("runtimePolicyOverride" in recording
       ? { runtimePolicyOverride: recording.runtimePolicyOverride }
@@ -222,24 +190,35 @@ try {
       ? { restartBeforePromptIndex: recording.restartBeforePromptIndex }
       : {}),
   });
-  await runFileSystem(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* fs.makeDirectory(path.dirname(outputPath), { recursive: true });
-      yield* fs.writeFileString(outputPath, encodeTranscriptNdjson(transcript));
-    }),
+
+  const outputPath = out ?? (yield* path.fromFileUrl(new URL(recording.output, import.meta.url)));
+  yield* fs.makeDirectory(path.dirname(outputPath), { recursive: true });
+  yield* fs.writeFileString(outputPath, encodeTranscriptNdjson(transcript));
+  yield* Console.log(
+    `Wrote ${transcript.entries.length} Cursor SDK replay entries to ${outputPath}`,
   );
-  await Effect.runPromise(
-    Console.log(`Wrote ${transcript.entries.length} Cursor SDK replay entries to ${outputPath}`),
-  );
-} finally {
-  if (workspace.owned) {
-    await runFileSystem(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        yield* fs.remove(workspace.cwd, { recursive: true, force: true });
-      }),
-    );
-  }
-}
+}, Effect.scoped);
+
+const recordCursorReplayCommand = Command.make(
+  "record-cursor-agent-sdk-replay-fixture",
+  {
+    scenario: Flag.Literals("scenario", RECORDING_NAMES).pipe(
+      Flag.withDescription("Scenario to record (or T3_CURSOR_REPLAY_SCENARIO)."),
+      Flag.withFallbackConfig(Config.Literals(RECORDING_NAMES, "T3_CURSOR_REPLAY_SCENARIO")),
+    ),
+    out: Flag.String("out").pipe(
+      Flag.optional,
+      Flag.withDescription("Write the transcript here instead of over the checked-in fixture."),
+    ),
+  },
+  ({ scenario, out }) => recordScenario(scenario, Option.getOrUndefined(out)),
+).pipe(
+  Command.withDescription(
+    "Record a Cursor Agent SDK replay fixture live. Reads CURSOR_API_KEY, plus optional T3_CURSOR_REPLAY_MODEL and T3_CURSOR_REPLAY_CWD.",
+  ),
+);
+
+Command.run(recordCursorReplayCommand, { version: "0.0.0" }).pipe(
+  Effect.provide(NodeServices.layer),
+  NodeRuntime.runMain,
+);

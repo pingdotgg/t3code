@@ -2,16 +2,19 @@ import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import type { InteractionUpdate, RunResult } from "@cursor/sdk";
-import { Agent } from "../../provider/cursorSdk.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProviderReplayEntry,
+  ProviderSessionId,
+  ThreadId,
   type ModelSelection,
   type ProviderReplayTranscript,
-  type ThreadId,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -30,6 +33,7 @@ import {
   isCursorCancellationError,
   loggedCursorAgentOptions,
   loggedCursorSendOptions,
+  makeCursorAgentSdkRunner,
   type CursorAgentSdkOpenInput,
   type CursorAgentSdkProtocolLogEvent,
   type CursorAgentSdkRun,
@@ -728,32 +732,6 @@ function serializeCursorRecordingError(cause: unknown): unknown {
   };
 }
 
-function makeRecordingSignal(): {
-  readonly promise: Promise<void>;
-  readonly resolve: () => void;
-} {
-  let resolve = () => {};
-  const promise = new Promise<void>((onResolve) => {
-    resolve = onResolve;
-  });
-  return { promise, resolve };
-}
-
-async function waitForRecordingSignal(signal: Promise<void>, description: string): Promise<void> {
-  const controller = new AbortController();
-  const timeout = Effect.runPromise(
-    Effect.sleep("30 seconds").pipe(
-      Effect.andThen(Effect.die(`Timed out waiting for ${description}.`)),
-    ),
-    { signal: controller.signal },
-  );
-  try {
-    await Promise.race([signal, timeout]);
-  } finally {
-    controller.abort();
-  }
-}
-
 function recordingRuntimePolicy(input: {
   readonly cwd: string;
   readonly interactionMode: "default" | "plan";
@@ -771,7 +749,19 @@ function recordingRuntimePolicy(input: {
   };
 }
 
-export async function recordCursorAgentSdkReplayTranscript(input: {
+class CursorReplayRecordingError extends Schema.TaggedError<CursorReplayRecordingError>()(
+  "CursorReplayRecordingError",
+  {
+    scenario: Schema.String,
+    reason: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Cursor Agent SDK replay recording failed in scenario ${this.scenario}: ${this.reason}`;
+  }
+}
+
+interface CursorReplayRecordingInput {
   readonly scenario: string;
   readonly prompts: ReadonlyArray<string>;
   /** Stable transcript representation when runtime-only paths were substituted into prompts. */
@@ -790,261 +780,230 @@ export async function recordCursorAgentSdkReplayTranscript(input: {
   readonly interruptAfterToolStart?: boolean;
   readonly interruptAfterRunStartPromptIndex?: number;
   readonly restartBeforePromptIndex?: number;
-}): Promise<CursorAgentSdkReplayTranscript> {
+}
+
+/**
+ * Records a live Cursor Agent SDK session as a replay transcript. The SDK is
+ * driven through the same runner the adapter uses; its protocol frames are the
+ * transcript entries.
+ */
+export const recordCursorAgentSdkReplayTranscript = Effect.fn(
+  "recordCursorAgentSdkReplayTranscript",
+)(function* (input: CursorReplayRecordingInput) {
+  const invalid = (reason: string) =>
+    new CursorReplayRecordingError({ scenario: input.scenario, reason });
+  const outsidePrompts = (index: number | undefined) =>
+    index !== undefined && (index < 0 || index >= input.prompts.length);
   if (
     input.transcriptPrompts !== undefined &&
     input.transcriptPrompts.length !== input.prompts.length
   ) {
-    throw new Error("Cursor transcript prompts must match the runtime prompt count.");
+    return yield* invalid("Cursor transcript prompts must match the runtime prompt count.");
   }
   if (input.interruptAfterToolStart === true && input.prompts.length !== 1) {
-    throw new Error("Cursor interrupt recordings require exactly one prompt.");
+    return yield* invalid("Cursor interrupt recordings require exactly one prompt.");
   }
   if (
     input.interruptAfterToolStart === true &&
     input.interruptAfterRunStartPromptIndex !== undefined
   ) {
-    throw new Error("Cursor recordings cannot use both interrupt triggers.");
+    return yield* invalid("Cursor recordings cannot use both interrupt triggers.");
   }
-  if (
-    input.interruptAfterRunStartPromptIndex !== undefined &&
-    (input.interruptAfterRunStartPromptIndex < 0 ||
-      input.interruptAfterRunStartPromptIndex >= input.prompts.length)
-  ) {
-    throw new Error("Cursor interrupt prompt index is outside the prompt list.");
+  if (outsidePrompts(input.interruptAfterRunStartPromptIndex)) {
+    return yield* invalid("Cursor interrupt prompt index is outside the prompt list.");
   }
+  if (outsidePrompts(input.restartBeforePromptIndex)) {
+    return yield* invalid("Cursor restart prompt index is outside the prompt list.");
+  }
+
   const entries: Array<ProviderReplayEntry> = [];
   const interactionMode = input.interactionMode ?? "default";
-  const runtimePolicy = recordingRuntimePolicy({
-    cwd: input.cwd,
-    interactionMode,
-    ...(input.runtimePolicyOverride === undefined ? {} : { override: input.runtimePolicyOverride }),
-  });
+  const threadId = ThreadId.make("thread:cursor-replay");
   const options = makeCursorAgentOptions({
     ...(input.apiKey === undefined ? {} : { apiKey: input.apiKey }),
     modelSelection: input.modelSelection,
-    runtimePolicy,
-    threadId: "thread:cursor-replay" as ThreadId,
+    runtimePolicy: recordingRuntimePolicy({
+      cwd: input.cwd,
+      interactionMode,
+      ...(input.runtimePolicyOverride === undefined
+        ? {}
+        : { override: input.runtimePolicyOverride }),
+    }),
+    threadId,
   });
-  entries.push({
-    type: "expect_outbound",
-    label: "agent.open",
-    frame: {
-      type: "agent.open",
-      operation: "create",
-      options: loggedCursorAgentOptions(options),
-    },
-  });
-
-  let agent = await Agent.create(options);
-  const nativeAgentId = agent.agentId;
-  entries.push({
-    type: "emit_inbound",
-    label: "agent.opened",
-    frame: {
-      type: "agent.opened",
-      agentId: agent.agentId,
-    },
-  });
-
+  const sendOptions = {
+    model: cursorSdkModelSelection(input.modelSelection),
+    mode: interactionMode === "plan" ? "plan" : "agent",
+  } as const;
   // Agents sometimes search the workspace's parent too; map it to /tmp so the
   // recording host's temp layout stays out of the fixture.
   const replacements: ReadonlyArray<readonly [string, string]> = [
     [input.cwd, input.transcriptCwd ?? `/tmp/cursor-replay-${input.scenario}`],
     [input.cwd.slice(0, input.cwd.lastIndexOf("/")), "/tmp"],
   ];
+  // Closed from the first tool-call-started until run.cancel is sent, so the
+  // transcript never shows updates between the interrupt trigger and the cancel.
+  const updatesGate = yield* Latch.make(true);
+  let runsStarted = 0;
+  let resuming = false;
 
-  try {
-    for (const [index, prompt] of input.prompts.entries()) {
-      if (input.restartBeforePromptIndex === index) {
-        entries.push({
-          type: "expect_outbound",
-          label: `agent.close:before-prompt-${index + 1}`,
-          frame: {
-            type: "agent.close",
-            agentId: nativeAgentId,
-          },
-        });
-        agent.close();
-        entries.push({
-          type: "expect_outbound",
-          label: `agent.resume:before-prompt-${index + 1}`,
-          frame: {
-            type: "agent.open",
-            operation: "resume",
-            agentId: nativeAgentId,
-            options: loggedCursorAgentOptions(options),
-          },
-        });
-        agent = await Agent.resume(nativeAgentId, options);
-        entries.push({
-          type: "emit_inbound",
-          label: `agent.resumed:before-prompt-${index + 1}`,
-          frame: {
-            type: "agent.opened",
-            agentId: agent.agentId,
-          },
-        });
-      }
-      const sendOptions = {
-        model: cursorSdkModelSelection(input.modelSelection),
-        mode: interactionMode === "plan" ? "plan" : "agent",
-      } as const;
-      entries.push({
-        type: "expect_outbound",
-        label: `run.start:${index + 1}`,
-        frame: {
-          type: "run.start",
-          message: input.transcriptPrompts?.[index] ?? prompt,
-          options: loggedCursorSendOptions(sendOptions),
-        },
-      });
-      const pendingUpdates: Array<InteractionUpdate> = [];
-      let runReady = false;
-      let runId = "";
-      let updatesPaused = false;
-      const toolStarted = makeRecordingSignal();
-      const runActivityStarted = makeRecordingSignal();
-      const resumeUpdates = makeRecordingSignal();
-      let interruptTriggerObserved = false;
-      let callbackChain = Promise.resolve();
-      const recordUpdate = async (update: InteractionUpdate) => {
-        if (updatesPaused) {
-          await resumeUpdates.promise;
-        }
-        entries.push({
-          type: "emit_inbound",
-          label: update.type,
-          frame: {
-            type: "interaction.update",
-            runId,
-            update: sanitizeReplayValue(update, replacements) as InteractionUpdate,
-          },
-        });
-        if (
-          input.interruptAfterToolStart === true &&
-          !interruptTriggerObserved &&
-          update.type === "tool-call-started"
-        ) {
-          interruptTriggerObserved = true;
-          updatesPaused = true;
-          toolStarted.resolve();
-        }
-      };
-      const scheduleUpdate = (update: InteractionUpdate): Promise<void> => {
-        callbackChain = callbackChain.then(() => recordUpdate(update));
-        return callbackChain;
-      };
-      const run = await agent.send(prompt, {
-        ...sendOptions,
-        onDelta: async ({ update }) => {
-          runActivityStarted.resolve();
-          if (!runReady) {
-            pendingUpdates.push(update);
-            return;
-          }
-          await scheduleUpdate(update);
-        },
-      });
-      runId = run.id;
-      entries.push({
-        type: "emit_inbound",
-        label: `run.started:${index + 1}`,
-        frame: {
-          type: "run.started",
-          runId: run.id,
-          agentId: run.agentId,
-        },
-      });
-      runReady = true;
-      for (const update of pendingUpdates) {
-        void scheduleUpdate(update);
-      }
-      const resultPromise = run.wait().then(
-        (result) => ({ type: "success" as const, result }),
-        (cause: unknown) => ({ type: "failure" as const, cause }),
-      );
-      if (input.interruptAfterRunStartPromptIndex === index) {
-        await waitForRecordingSignal(
-          runActivityStarted.promise,
-          "Cursor SDK run activity before interrupt",
-        );
-        entries.push({
-          type: "expect_outbound",
-          label: `run.cancel:${index + 1}`,
-          frame: {
-            type: "run.cancel",
-            runId: run.id,
-          },
-        });
-        await run.cancel().catch((cause: unknown) => {
-          if (!isCursorCancellationError(cause)) {
-            throw cause;
-          }
-        });
-      }
-      if (input.interruptAfterToolStart === true) {
-        await waitForRecordingSignal(
-          toolStarted.promise,
-          "Cursor SDK tool-call-started before interrupt",
-        );
-        // Cancelling synchronously from the SDK's tool-call-started callback
-        // leaves an unhandled AbortError inside @cursor/sdk that kills the
-        // process (reproduced on 1.0.22, 1.0.31, and 1.0.32). Cancelling from a
-        // later timer was clean in the same probes; 10 ms is that deferral.
-        await Effect.runPromise(Effect.sleep("10 millis"));
-        entries.push({
-          type: "expect_outbound",
-          label: `run.cancel:${index + 1}`,
-          frame: {
-            type: "run.cancel",
-            runId: run.id,
-          },
-        });
-        const cancelPromise = run.cancel().catch((cause: unknown) => {
-          if (!isCursorCancellationError(cause)) {
-            throw cause;
-          }
-        });
-        updatesPaused = false;
-        resumeUpdates.resolve();
-        await cancelPromise;
-      }
-      const outcome = await resultPromise;
-      await callbackChain;
-      if (outcome.type === "success") {
-        entries.push({
-          type: "emit_inbound",
-          label: `run.completed:${index + 1}`,
-          frame: {
-            type: "run.completed",
-            result: sanitizeReplayValue(outcome.result, replacements) as RunResult,
-          },
-        });
-      } else if (
-        (input.interruptAfterToolStart === true ||
-          input.interruptAfterRunStartPromptIndex === index) &&
-        isCursorCancellationError(outcome.cause)
-      ) {
-        entries.push({
-          type: "runtime_exit",
-          status: "cancelled",
-          error: serializeCursorRecordingError(outcome.cause),
-        });
-      } else {
-        throw outcome.cause;
-      }
+  const frameLabel = (frame: CursorProtocolPayload): string => {
+    const beforeNextPrompt = `before-prompt-${runsStarted + 1}`;
+    switch (frame.type) {
+      case "agent.open":
+        return resuming ? `agent.resume:${beforeNextPrompt}` : "agent.open";
+      case "agent.opened":
+        return resuming ? `agent.resumed:${beforeNextPrompt}` : "agent.opened";
+      case "agent.close":
+        return runsStarted < input.prompts.length
+          ? `agent.close:${beforeNextPrompt}`
+          : "agent.close";
+      case "interaction.update":
+        return frame.update.type;
+      default:
+        return `${frame.type}:${runsStarted}`;
     }
-  } finally {
+  };
+
+  const transcriptFrame = (frame: CursorProtocolPayload): CursorProtocolPayload => {
+    switch (frame.type) {
+      case "run.start":
+        return { ...frame, message: input.transcriptPrompts?.[runsStarted - 1] ?? frame.message };
+      case "interaction.update":
+        return {
+          ...frame,
+          update: sanitizeReplayValue(frame.update, replacements) as InteractionUpdate,
+        };
+      case "run.completed":
+        return { ...frame, result: sanitizeReplayValue(frame.result, replacements) as RunResult };
+      default:
+        return frame;
+    }
+  };
+
+  const recordFrame = Effect.fnUntraced(function* (event: CursorAgentSdkProtocolLogEvent) {
+    const frame = event.payload;
+    if (frame.type === "interaction.update") {
+      yield* updatesGate.await;
+    }
+    if (frame.type === "agent.open") {
+      resuming = frame.operation === "resume";
+    }
+    if (frame.type === "run.start") {
+      runsStarted += 1;
+    }
     entries.push({
-      type: "expect_outbound",
-      label: "agent.close",
-      frame: {
-        type: "agent.close",
-        agentId: nativeAgentId,
-      },
+      type: event.direction === "outgoing" ? "expect_outbound" : "emit_inbound",
+      label: frameLabel(frame),
+      frame: transcriptFrame(frame),
     });
-    agent.close();
+  });
+  const runner = makeCursorAgentSdkRunner(() => recordFrame);
+
+  const awaitSignal = (signal: Deferred.Deferred<void>, description: string) =>
+    Deferred.await(signal).pipe(
+      Effect.timeoutOrElse({
+        duration: "30 seconds",
+        orElse: () => Effect.fail(invalid(`Timed out waiting for ${description}.`)),
+      }),
+    );
+
+  const runPrompt = Effect.fnUntraced(function* (
+    session: CursorAgentSdkSession,
+    prompt: string,
+    index: number,
+  ) {
+    const interruptAfterRunStart = input.interruptAfterRunStartPromptIndex === index;
+    const firstUpdate = yield* Deferred.make<void>();
+    const toolStarted = yield* Deferred.make<void>();
+    // Updates that arrive before send returns are flushed inside send, so
+    // holding one back there would block send forever.
+    let sent = false;
+    const run = yield* session.send({
+      message: prompt,
+      options: sendOptions,
+      onDelta: (update) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(firstUpdate, undefined);
+          if (
+            input.interruptAfterToolStart === true &&
+            update.type === "tool-call-started" &&
+            !(yield* Deferred.isDone(toolStarted))
+          ) {
+            if (sent) {
+              yield* updatesGate.close;
+            }
+            yield* Deferred.succeed(toolStarted, undefined);
+          }
+        }),
+    });
+    sent = true;
+    // Wait on the run before cancelling it, as the adapter does.
+    const waiting = yield* run.wait.pipe(Effect.forkChild({ startImmediately: true }));
+    if (interruptAfterRunStart) {
+      yield* awaitSignal(firstUpdate, "Cursor SDK run activity before interrupt");
+      yield* run.cancel;
+    }
+    if (input.interruptAfterToolStart === true) {
+      yield* awaitSignal(toolStarted, "Cursor SDK tool-call-started before interrupt");
+      // Cancelling synchronously from the SDK's tool-call-started callback
+      // leaves an unhandled AbortError inside @cursor/sdk that kills the
+      // process (reproduced on 1.0.22, 1.0.31, and 1.0.32). Cancelling from a
+      // later timer was clean in the same probes; 10 ms is that deferral.
+      yield* Effect.sleep("10 millis");
+      const cancelling = yield* run.cancel.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* updatesGate.open;
+      yield* Fiber.join(cancelling);
+    }
+    yield* Fiber.join(waiting).pipe(
+      Effect.catchIf(
+        (error) =>
+          (input.interruptAfterToolStart === true || interruptAfterRunStart) &&
+          isCursorCancellationError(error.cause),
+        (error) =>
+          Effect.sync(() => {
+            entries.push({
+              type: "runtime_exit",
+              status: "cancelled",
+              error: serializeCursorRecordingError(error.cause),
+            });
+          }),
+      ),
+    );
+  });
+
+  const runPrompts = (session: CursorAgentSdkSession, from: number, to: number) =>
+    Effect.forEach(
+      input.prompts.slice(from, to),
+      (prompt, offset) => runPrompt(session, prompt, from + offset),
+      { discard: true },
+    );
+
+  const withAgent = <A, E>(
+    open:
+      | { readonly operation: "create" }
+      | { readonly operation: "resume"; readonly agentId: string },
+    use: (session: CursorAgentSdkSession) => Effect.Effect<A, E>,
+  ) =>
+    Effect.acquireUseRelease(
+      runner.open({
+        ...open,
+        options,
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session:cursor-replay"),
+      }),
+      use,
+      (session) => session.close,
+    );
+
+  const restartAt = input.restartBeforePromptIndex ?? input.prompts.length;
+  const nativeAgentId = yield* withAgent({ operation: "create" }, (session) =>
+    runPrompts(session, 0, restartAt).pipe(Effect.as(session.agentId)),
+  );
+  if (restartAt < input.prompts.length) {
+    yield* withAgent({ operation: "resume", agentId: nativeAgentId }, (session) =>
+      runPrompts(session, restartAt, input.prompts.length),
+    );
   }
 
   return {
@@ -1057,5 +1016,5 @@ export async function recordCursorAgentSdkReplayTranscript(input: {
       nativeAgentId,
     },
     entries,
-  };
-}
+  } satisfies CursorAgentSdkReplayTranscript;
+});
