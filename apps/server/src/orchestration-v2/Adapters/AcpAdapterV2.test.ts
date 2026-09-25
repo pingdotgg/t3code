@@ -82,6 +82,7 @@ import {
   acpPostSettleWakeEvidence,
   acpPostSettleWakeShouldBuffer,
   acpProjectedCommandExitCode,
+  acpToolCallDiffPatch,
   acpTurnStartShouldPreserveContinuation,
   makeAcpAdapterV2,
   type AcpAdapterV2ExtensionContext,
@@ -119,6 +120,57 @@ describe("acpProjectedCommandExitCode", () => {
     assert.equal(acpProjectedCommandExitCode("completed", failedOutput), 1);
     assert.equal(acpProjectedCommandExitCode("failed", failedOutput), 1);
     assert.equal(acpProjectedCommandExitCode("completed", {}), undefined);
+  });
+});
+
+describe("acpToolCallDiffPatch", () => {
+  it("builds a patch per file from ACP v1 oldText/newText, with /dev/null for a new file", () => {
+    assert.equal(
+      acpToolCallDiffPatch([
+        { type: "diff", path: "/repo/new.txt", oldText: null, newText: "hello\n" },
+        { type: "diff", path: "/repo/a.ts", oldText: "a\nb\nc\n", newText: "a\nB\nc\n" },
+        { type: "diff", path: "/repo/same.ts", oldText: "x\n", newText: "x\n" },
+      ]),
+      [
+        "--- /dev/null",
+        "+++ /repo/new.txt",
+        "@@ -0,0 +1,1 @@",
+        "+hello",
+        "",
+        "--- /repo/a.ts",
+        "+++ /repo/a.ts",
+        "@@ -1,3 +1,3 @@",
+        " a",
+        "-b",
+        "+B",
+        " c",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps the ACP v2 patch text as sent", () => {
+    const text = "diff --git a/repo/a.ts b/repo/a.ts\n";
+    assert.equal(
+      acpToolCallDiffPatch([
+        {
+          type: "diff",
+          changes: [{ operation: "modify", path: "/repo/a.ts" }],
+          patch: { format: "git_patch", text },
+        },
+      ]),
+      text,
+    );
+  });
+
+  it("drops the patch for a rewrite too large to diff cheaply", () => {
+    const lines = (prefix: string) =>
+      Array.from({ length: 2_000 }, (_, index) => `${prefix} ${index}`).join("\n");
+    assert.isUndefined(
+      acpToolCallDiffPatch([
+        { type: "diff", path: "/repo/big.ts", oldText: lines("old"), newText: lines("new") },
+      ]),
+    );
   });
 });
 
