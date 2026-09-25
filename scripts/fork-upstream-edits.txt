@@ -39,6 +39,9 @@ apps/web/src/components/AgentsPanel.tsx
 apps/web/src/components/LegacySidebar.tsx
 apps/web/src/components/Sidebar.tsx
 
+# Agents panel sections, child tree and parent breadcrumb (#17)
+apps/web/src/components/chat/ChatHeader.tsx
+
 # CI on GitHub-hosted runners (#6)
 .github/workflows/ci.yml
 .github/workflows/mobile-fingerprint-check.yml

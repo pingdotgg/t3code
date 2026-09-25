@@ -73,6 +73,12 @@ any modified upstream file missing from `scripts/fork-upstream-edits.txt`.
   child threads; `apps/web/src/components/Sidebar.tsx` and
   `apps/web/src/components/LegacySidebar.tsx` hide child threads from the
   sidebar.
+- Agents panel sections, child tree and breadcrumb (#17):
+  `apps/web/src/components/AgentsPanel.tsx` splits Prism spawns from direct
+  spawns and nests child threads under their row;
+  `apps/web/src/components/chat/ChatHeader.tsx` renders the parent crumb and
+  sibling menu for a child thread. The logic lives in the fork-owned
+  `AgentThreadTree.logic.ts`, `AgentThreadTree.tsx` and `chat/ThreadParentCrumbs.tsx`.
 - `scripts/build-desktop-artifact.ts` (#10): the packaged-bundle
   self-containment probe clears an inherited `ELECTRON_RUN_AS_NODE`.
 - `apps/server/src/entrypoint.test.ts` (#10): resolves the fixture directory

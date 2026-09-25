@@ -25,7 +25,8 @@ import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
-import { AgentThreadLink } from "~/components/AgentThreadLink";
+import { AgentThreadEntry, useAgentThreadTree } from "~/components/AgentThreadTree";
+import { toggleExpandedThread } from "~/components/AgentThreadTree.logic";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Button } from "~/components/ui/button";
@@ -531,6 +532,15 @@ export function AgentsPanel({
   environmentId?: EnvironmentId | null;
   threadId?: ThreadId | null;
 }) {
+  const tree = useAgentThreadTree(environmentId, model.directAgents);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const treeProps = {
+    environmentId,
+    childrenByParent: tree.childrenByParent,
+    expanded,
+    onToggle: (id: string) => setExpanded((current) => toggleExpandedThread(current, id)),
+  };
+
   if (!model.hasAgents) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
@@ -546,6 +556,7 @@ export function AgentsPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {tree.probes}
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-2 p-2">
           {model.workflows.map((group) => (
@@ -556,15 +567,39 @@ export function AgentsPanel({
               threadId={threadId}
             />
           ))}
-          {model.directAgents.length > 0 ? (
+          {tree.sections.directAgents.length > 0 ? (
             <section>
               <div className="px-1.5 pt-1 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
                 Direct spawns
               </div>
-              {model.directAgents.map((agent) => (
-                <AgentThreadLink key={agent.id} agentId={agent.id} environmentId={environmentId}>
+              {tree.sections.directAgents.map((agent) => (
+                <AgentThreadEntry key={agent.id} agentId={agent.id} {...treeProps}>
                   <AgentRow agent={agent} />
-                </AgentThreadLink>
+                </AgentThreadEntry>
+              ))}
+            </section>
+          ) : null}
+          {tree.sections.prismJobs.length > 0 ? (
+            <section>
+              <div className="px-1.5 pt-1 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
+                Prism spawns
+              </div>
+              {tree.sections.prismJobs.map((job) => (
+                <div key={job.requestId}>
+                  <div className="flex items-center gap-2 px-1.5 pt-1.5 font-mono text-[.7rem] text-muted-foreground">
+                    <StatusDot status={job.status} />
+                    <span className="min-w-0 truncate text-foreground/90">{job.requestId}</span>
+                    <span className="shrink-0">
+                      {job.status === "idle" ? "Idle" : STATUS_VISUALS[job.status].label}
+                    </span>
+                    <span className="ml-auto min-w-0 truncate">{job.route}</span>
+                  </div>
+                  {job.agents.map((agent) => (
+                    <AgentThreadEntry key={agent.id} agentId={agent.id} {...treeProps}>
+                      <AgentRow agent={agent} />
+                    </AgentThreadEntry>
+                  ))}
+                </div>
               ))}
             </section>
           ) : null}
