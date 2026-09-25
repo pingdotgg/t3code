@@ -1,6 +1,7 @@
 import * as NodePath from "@effect/platform-node/NodePath";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeOS from "node:os";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -147,6 +148,32 @@ describe("ServerLoggerLive", () => {
       assert.include(request?.body ?? "", "server logger under test");
       assert.include(request?.body ?? "", "t3-server");
       assert.include(request?.body ?? "", "service.runtime");
+    }),
+  );
+
+  it.effect("keeps its service name while OTEL resource attributes add dimensions", () =>
+    Effect.gen(function* () {
+      const requests = yield* logThrough({
+        otlpLogsUrl: "https://collector.example.com/v1/logs",
+      }).pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: {
+                OTEL_SERVICE_NAME: "renamed",
+                OTEL_RESOURCE_ATTRIBUTES:
+                  "service.name=renamed,deployment.environment.name=development",
+              },
+            }),
+          ),
+        ),
+      );
+
+      assert.lengthOf(requests, 1);
+      const body = requests[0]?.body ?? "";
+      assert.include(body, '"stringValue":"t3-server"');
+      assert.include(body, "deployment.environment.name");
+      assert.notInclude(body, "renamed");
     }),
   );
 
