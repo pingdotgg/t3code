@@ -3,6 +3,7 @@ import {
   CommandId,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ThreadProjection,
+  MessageId,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
@@ -41,6 +42,7 @@ function dispatchProjection(
   const providerThreadId = ProviderThreadId.make("command-policy-provider-thread");
   const providerSessionId = ProviderSessionId.make("command-policy-provider-session");
   return {
+    messages: [],
     runs:
       sessionCapabilities === undefined
         ? []
@@ -133,6 +135,58 @@ it("targets the latest active run for explicit steer and restart intent", () => 
   assert.deepEqual(
     resolveMessageDispatchIntent(dispatchProjection(), { type: "start_immediately" }, "steer"),
     { type: "start_immediately" },
+  );
+});
+
+it("queues a message sent while a compaction run is active", () => {
+  const messageId = MessageId.make("command-policy-compaction-message");
+  const base = dispatchProjection(baseCapabilities);
+  const projection = {
+    ...base,
+    runs: base.runs.map((run) => ({ ...run, userMessageId: messageId })),
+    messages: [{ id: messageId, role: "user", text: "/compact", attachments: [] }],
+  } as unknown as OrchestrationV2ThreadProjection;
+  const queueAfterActive = { type: "queue_after_active" };
+  assert.deepEqual(
+    resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "auto"),
+    queueAfterActive,
+  );
+  assert.deepEqual(
+    resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "steer"),
+    queueAfterActive,
+  );
+  assert.deepEqual(
+    resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "restart"),
+    queueAfterActive,
+  );
+  assert.deepEqual(
+    resolveMessageDispatchIntent(projection, {
+      type: "steer_active",
+      targetRunId: activeRunId,
+    }),
+    queueAfterActive,
+  );
+});
+
+it("keeps steering an ordinary run alongside a compacted message in history", () => {
+  const messageId = MessageId.make("command-policy-ordinary-message");
+  const base = dispatchProjection(baseCapabilities);
+  const projection = {
+    ...base,
+    runs: base.runs.map((run) => ({ ...run, userMessageId: messageId })),
+    messages: [
+      { id: messageId, role: "user", text: "ship it", attachments: [] },
+      {
+        id: MessageId.make("command-policy-earlier-compaction"),
+        role: "user",
+        text: "/compact",
+        attachments: [],
+      },
+    ],
+  } as unknown as OrchestrationV2ThreadProjection;
+  assert.deepEqual(
+    resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "auto"),
+    { type: "steer_active", targetRunId: activeRunId },
   );
 });
 
