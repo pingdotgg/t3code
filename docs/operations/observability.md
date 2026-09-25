@@ -565,9 +565,9 @@ headers that are not `key=value` pairs with percent-encoded values turn that sig
 with a startup warning, rather than sending it to the Settings endpoint.
 
 Service names are fixed: `t3code-server` for the backend and `t3code-desktop` for the desktop main
-process. `OTEL_SERVICE_NAME` and a `service.name` in `OTEL_RESOURCE_ATTRIBUTES` are ignored. Tell
-installations apart with other resource attributes, such as
-`OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=development`.
+process, both in `service.namespace` `t3code`. `OTEL_SERVICE_NAME` and a `service.name` or
+`service.namespace` in `OTEL_RESOURCE_ATTRIBUTES` are ignored. Tell installations apart with other
+resource attributes, such as `OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=development`.
 
 If the OTLP URLs are unset, local tracing still works, metrics stay in-process only, and logs stay
 on stdout only.

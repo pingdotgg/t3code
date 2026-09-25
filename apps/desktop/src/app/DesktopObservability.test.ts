@@ -498,6 +498,7 @@ describe("DesktopObservability", () => {
       const body = requests[0]?.body ?? "";
       assert.include(body, '"stringValue":"t3code-desktop"');
       assert.include(body, "deployment.environment.name");
+      assert.include(body, '"key":"service.namespace","value":{"stringValue":"t3code"}');
       assert.notInclude(body, "renamed");
     }).pipe(
       Effect.scoped,
@@ -510,7 +511,7 @@ describe("DesktopObservability", () => {
               env: {
                 OTEL_SERVICE_NAME: "renamed",
                 OTEL_RESOURCE_ATTRIBUTES:
-                  "service.name=renamed,deployment.environment.name=development",
+                  "service.name=renamed,service.namespace=renamed,deployment.environment.name=development",
               },
             }),
           ),

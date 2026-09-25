@@ -120,6 +120,7 @@ export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config)
 export const otlpResource = (config: ServerConfig["Service"]) => ({
   serviceName: "t3code-server",
   attributes: {
+    "service.namespace": "t3code",
     "service.runtime": "t3-server",
     "service.mode": config.mode,
   },
