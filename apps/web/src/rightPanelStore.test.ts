@@ -180,6 +180,37 @@ describe("rightPanelStore", () => {
     );
   });
 
+  it.each([linkedPullRequest, { id: "pull-requests", kind: "pull-requests" } as const])(
+    "leaves an existing $kind tab alone when its thread is reopened",
+    (surface) => {
+      const store = useRightPanelStore.getState();
+      expect(store.openProactive(refA, surface, store.getUserActionRevision(refA))).toBe(true);
+      store.openFile(refA, "notes.md");
+      const chosen = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+
+      // Reopening a thread reads a fresh revision, so the existing tab is what keeps the choice.
+      expect(store.openProactive(refA, surface, store.getUserActionRevision(refA))).toBe(false);
+      expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toBe(
+        chosen,
+      );
+
+      store.close(refA);
+      expect(store.openProactive(refA, surface, store.getUserActionRevision(refA))).toBe(false);
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).isOpen,
+      ).toBe(false);
+    },
+  );
+
+  it("still focuses an existing diff tab for a later completed turn", () => {
+    const store = useRightPanelStore.getState();
+    store.openProactive(refA, completedDiff, store.getUserActionRevision(refA));
+    store.openFile(refA, "notes.md");
+
+    expect(store.openProactive(refA, completedDiff, store.getUserActionRevision(refA))).toBe(true);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+  });
+
   it("allows automatic panels for a later turn after a manual choice", () => {
     const store = useRightPanelStore.getState();
     const firstTurnRevision = store.getUserActionRevision(refA);

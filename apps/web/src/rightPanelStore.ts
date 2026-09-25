@@ -492,6 +492,16 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           ) {
             return state;
           }
+          // A pull request that is already a tab stays where the user left it, so
+          // returning to its thread does not reopen the panel or steal the selection.
+          if (
+            surface.kind !== "diff" &&
+            selectThreadRightPanelState(state.byThreadKey, ref).surfaces.some(
+              (entry) => entry.id === surface.id,
+            )
+          ) {
+            return state;
+          }
           // A linked PR takes priority over a completed-turn diff. Manual actions
           // always apply, and later user choices reject both proactive requests.
           if (
