@@ -872,20 +872,20 @@ describe("CodexSessionRuntime collab integration", () => {
 describe("CodexSessionRuntime compaction", () => {
   it.effect("restores T3 context after the root thread compacts", () =>
     Effect.gen(function* () {
+      const compacted = (threadId: string) => ({
+        method: "item/completed",
+        params: {
+          threadId,
+          turnId: `${threadId}-turn`,
+          completedAtMs: 0,
+          item: { type: "contextCompaction", id: `compaction-${threadId}` },
+        },
+      });
       const script = {
         rootThreadId: ROOT,
         recordRequests: true,
-        notifications: [
-          {
-            method: "item/completed",
-            params: {
-              threadId: ROOT,
-              turnId: `${ROOT}-turn`,
-              completedAtMs: 0,
-              item: { type: "contextCompaction", id: "compaction-1" },
-            },
-          },
-        ],
+        // A child's compaction must not inject into the root thread.
+        notifications: [compacted(CHILD_A), compacted(ROOT)],
       };
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
@@ -919,7 +919,9 @@ describe("CodexSessionRuntime compaction", () => {
       yield* Fiber.join(completedFiber);
 
       // The restore is awaited before later notifications, so it has landed.
-      const [inject] = readRecordedRequests();
+      const requests = readRecordedRequests();
+      assert.lengthOf(requests, 1);
+      const [inject] = requests;
       assert.isDefined(inject);
       assert.equal(inject.method, "thread/inject_items");
       assert.equal(inject.params.threadId, ROOT);
