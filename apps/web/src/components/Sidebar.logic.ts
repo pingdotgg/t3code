@@ -1425,9 +1425,7 @@ export function deriveSidebarSubagentCounts(
     counts.set(parentKey, {
       working: working.length,
       done: batch.filter((subagent) => subagent.status === "completed").length,
-      failed: batch.filter(
-        (subagent) => subagent.status === "failed" || subagent.status === "interrupted",
-      ).length,
+      failed: batch.filter((subagent) => subagent.status === "failed").length,
     });
   }
   return counts;

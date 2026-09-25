@@ -2159,7 +2159,7 @@ describe("deriveSidebarSubagentCounts", () => {
     environmentId,
     lineage: { parentThreadId: parentId, relationshipToParent, rootThreadId: parentId },
     createdAt,
-    source: { status, activityRunStatus: null },
+    source: { status, activityRunStatus: null as "running" | null },
   });
 
   it("tallies the batch that started with the oldest working subagent", () => {
@@ -2174,7 +2174,8 @@ describe("deriveSidebarSubagentCounts", () => {
       child("interrupted", "2026-09-25T10:00:04.000Z"),
       child("cancelled", "2026-09-25T10:00:05.000Z"),
     ]);
-    expect(counts.get(parentKey)).toEqual({ working: 2, done: 1, failed: 2 });
+    // Interrupted and cancelled subagents were stopped, not failed.
+    expect(counts.get(parentKey)).toEqual({ working: 2, done: 1, failed: 1 });
   });
 
   it("omits parents whose subagents have all finished", () => {
@@ -2183,6 +2184,16 @@ describe("deriveSidebarSubagentCounts", () => {
       child("failed", "2026-09-25T10:00:01.000Z"),
     ]);
     expect(counts.has(parentKey)).toBe(false);
+  });
+
+  it("reads the live run status before the thread status", () => {
+    const counts = deriveSidebarSubagentCounts([
+      {
+        ...child("completed", "2026-09-25T10:00:00.000Z"),
+        source: { status: "completed", activityRunStatus: "running" },
+      },
+    ]);
+    expect(counts.get(parentKey)).toEqual({ working: 1, done: 0, failed: 0 });
   });
 
   it("ignores forks", () => {
