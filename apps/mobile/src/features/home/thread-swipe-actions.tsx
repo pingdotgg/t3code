@@ -67,6 +67,7 @@ interface ThreadSwipeAction {
     readonly title?: string;
   };
   readonly onPress: () => void;
+  readonly tone?: "primary" | "secondary" | "danger";
 }
 
 interface ThreadSwipeSecondaryAction extends ThreadSwipeAction {
@@ -712,7 +713,7 @@ export function ThreadSwipeActions(props: {
       <SwipeActionButton
         accessibilityLabel={props.primaryAction.accessibilityLabel}
         actionsWidth={actionsWidth}
-        tone="primary"
+        tone={props.primaryAction.tone ?? "primary"}
         compact={props.compact}
         entryRange={
           secondaryAction === null

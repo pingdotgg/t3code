@@ -8,10 +8,23 @@ import {
 } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Platform, Pressable, View } from "react-native";
+import type { MenuAction } from "@react-native-menu/menu";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  type ColorValue,
+  Platform,
+  Pressable,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { cn } from "../../lib/cn";
+import { ControlPillMenu } from "../../components/ControlPill";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { ThreadSwipeable } from "../home/thread-swipe-actions";
+import { useConfirmRemoveProjects } from "../projects/useConfirmRemoveProjects";
 import { MaterialScreenContent } from "../../components/MaterialScreenContent";
 import { MaterialButton } from "../../components/MaterialButton";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
@@ -125,10 +138,161 @@ function NewTaskHeader(props: {
   );
 }
 
+const PROJECT_ROW_MENU_ACTIONS: MenuAction[] = [
+  {
+    id: "remove-project",
+    title: "Remove project",
+    image: "trash",
+    attributes: { destructive: true },
+  },
+];
+
+/** Swipe left for Remove; a tap on an open row only closes its actions. */
+/** Presses arriving this soon after a swipe drag are the drag's own finger-up. */
+const SWIPE_PRESS_GRACE_MS = 600;
+
+const SwipeableProjectRow = memo(function SwipeableProjectRow(props: {
+  // Primitive props only: the picker re-renders on every thread update while
+  // an agent works, and an open swipe must survive that untouched.
+  readonly scopeKey: string;
+  readonly title: string;
+  readonly subtitle: string;
+  readonly environmentId: EnvironmentProject["environmentId"];
+  readonly faviconPath: EnvironmentProject["faviconPath"];
+  readonly workspaceRoot: string;
+  readonly isFirst: boolean;
+  readonly disabled: boolean;
+  readonly backgroundColor: ColorValue;
+  readonly fullSwipeWidth: number;
+  readonly onSelect: (scopeKey: string) => void;
+  readonly onRemove: (scopeKey: string) => void;
+}) {
+  const { disabled, scopeKey, title, onRemove, onSelect } = props;
+  // Lifting the finger at the end of a swipe still reaches the Pressable as a
+  // press (the touch never left the row), so presses right after a drag are
+  // dropped; only a later tap on an open row closes it.
+  const swipeOpenRef = useRef(false);
+  const lastSwipeAtRef = useRef(0);
+  const markSwipedOpen = useCallback(() => {
+    swipeOpenRef.current = true;
+    lastSwipeAtRef.current = Date.now();
+  }, []);
+  const markSwipedClosed = useCallback(() => {
+    swipeOpenRef.current = false;
+    lastSwipeAtRef.current = Date.now();
+  }, []);
+  const remove = useCallback(() => {
+    if (!disabled) onRemove(scopeKey);
+  }, [disabled, onRemove, scopeKey]);
+  const removeAction = useMemo(
+    () => ({
+      accessibilityLabel: `Remove project ${title}`,
+      icon: "trash" as const,
+      label: "Remove",
+      tone: "danger" as const,
+      onPress: remove,
+    }),
+    [remove, title],
+  );
+  return (
+    <ThreadSwipeable
+      backgroundColor={props.backgroundColor}
+      compactActions
+      enabled={!disabled}
+      fullSwipeWidth={props.fullSwipeWidth}
+      onDelete={remove}
+      onSwipeableWillOpen={markSwipedOpen}
+      onSwipeableClose={markSwipedClosed}
+      primaryAction={removeAction}
+      resetKey={scopeKey}
+      secondaryAction={null}
+      threadKey={scopeKey}
+      threadTitle={title}
+    >
+      {(close) => (
+        <View className={cn(!props.isFirst && "border-t border-border-subtle")}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={title}
+            accessibilityHint="Swipe left to remove the project"
+            disabled={props.disabled}
+            onPress={() => {
+              if (Date.now() - lastSwipeAtRef.current < SWIPE_PRESS_GRACE_MS) return;
+              if (swipeOpenRef.current) {
+                close();
+                return;
+              }
+              onSelect(scopeKey);
+            }}
+            className="bg-card"
+          >
+            <View className="flex-row items-center gap-3 px-4 py-3.5">
+              <View className="h-7 w-7 items-center justify-center">
+                <ProjectFavicon
+                  environmentId={props.environmentId}
+                  faviconPath={props.faviconPath}
+                  size={20}
+                  projectTitle={title}
+                  workspaceRoot={props.workspaceRoot}
+                />
+              </View>
+              <View className="min-w-0 flex-1">
+                <Text className="text-base font-t3-bold leading-snug">{title}</Text>
+                <Text
+                  className="text-xs leading-snug text-foreground-muted"
+                  ellipsizeMode="middle"
+                  numberOfLines={1}
+                >
+                  {props.subtitle}
+                </Text>
+              </View>
+              <SymbolView
+                name="chevron.right"
+                size={14}
+                tintColorClassName="accent-chevron"
+                type="monochrome"
+              />
+            </View>
+          </Pressable>
+        </View>
+      )}
+    </ThreadSwipeable>
+  );
+});
+
 export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRouteParams | undefined>) {
   const projects = useProjects();
   const [searchText, setSearchText] = useState("");
   const { projectScopes, selectedEnvironmentId, setProject } = useNewTaskFlow();
+  const { width: windowWidth } = useWindowDimensions();
+  const cardColor = useAppearancePreferences().themeVariables["--color-card"];
+  // This picker is the one place mobile lists every project, so it doubles
+  // as the place to remove one: swipe on iOS, long-press on Android.
+  const confirmRemoveProjects = useConfirmRemoveProjects();
+  const removeScope = (scope: (typeof projectScopes)[number]) => {
+    void confirmRemoveProjects(scope.projects, { groupTitle: scope.title });
+  };
+  // The memoized iOS rows receive stable callbacks that resolve the current
+  // scope by key at press time instead of closing over per-render objects.
+  const latest = { projectScopes, removeScope, selectProject, selectedEnvironmentId };
+  const latestRef = useRef(latest);
+  useEffect(() => {
+    latestRef.current = latest;
+  });
+  const [rowActions] = useState(() => ({
+    remove(scopeKey: string) {
+      const scope = latestRef.current.projectScopes.find((entry) => entry.key === scopeKey);
+      if (scope) latestRef.current.removeScope(scope);
+    },
+    select(scopeKey: string) {
+      const scope = latestRef.current.projectScopes.find((entry) => entry.key === scopeKey);
+      if (scope) {
+        void latestRef.current.selectProject(
+          getProjectScopeSelectionTarget(scope, latestRef.current.selectedEnvironmentId),
+        );
+      }
+    },
+  }));
   const { state: catalogState } = useWorkspaceState();
   const navigation = useNavigation();
   const isFocused = useIsFocused();
@@ -319,71 +483,56 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                 );
                 if (Platform.OS === "android") {
                   return (
-                    <MaterialListRow
+                    <ControlPillMenu
                       key={scope.key}
-                      title={scope.title}
-                      subtitle={
-                        hasMultipleProjects
-                          ? `${scope.projects.length} workspaces`
-                          : selectionTarget.workspaceRoot
-                      }
-                      disabled={reservedDestinationProject !== null}
-                      onPress={() => void selectProject(selectionTarget)}
-                      leading={
-                        <ProjectFavicon
-                          environmentId={scope.representative.environmentId}
-                          faviconPath={scope.representative.faviconPath}
-                          size={24}
-                          projectTitle={scope.title}
-                          workspaceRoot={scope.representative.workspaceRoot}
-                        />
-                      }
-                    />
+                      actions={PROJECT_ROW_MENU_ACTIONS}
+                      onPressAction={({ nativeEvent }) => {
+                        if (nativeEvent.event === "remove-project") removeScope(scope);
+                      }}
+                      shouldOpenOnLongPress
+                    >
+                      <MaterialListRow
+                        title={scope.title}
+                        subtitle={
+                          hasMultipleProjects
+                            ? `${scope.projects.length} workspaces`
+                            : selectionTarget.workspaceRoot
+                        }
+                        disabled={reservedDestinationProject !== null}
+                        onPress={() => void selectProject(selectionTarget)}
+                        leading={
+                          <ProjectFavicon
+                            environmentId={scope.representative.environmentId}
+                            faviconPath={scope.representative.faviconPath}
+                            size={24}
+                            projectTitle={scope.title}
+                            workspaceRoot={scope.representative.workspaceRoot}
+                          />
+                        }
+                      />
+                    </ControlPillMenu>
                   );
                 }
                 return (
-                  <View
+                  <SwipeableProjectRow
                     key={scope.key}
-                    className={cn(scopeIndex > 0 && "border-t border-border-subtle")}
-                  >
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={scope.title}
-                      disabled={reservedDestinationProject !== null}
-                      onPress={() => void selectProject(selectionTarget)}
-                      className="flex-row items-center gap-3 bg-card px-4 py-3.5"
-                    >
-                      <View className="h-7 w-7 items-center justify-center">
-                        <ProjectFavicon
-                          environmentId={scope.representative.environmentId}
-                          faviconPath={scope.representative.faviconPath}
-                          size={20}
-                          projectTitle={scope.title}
-                          workspaceRoot={scope.representative.workspaceRoot}
-                        />
-                      </View>
-                      <View className="min-w-0 flex-1">
-                        <Text className={cn("text-base leading-snug", "font-t3-bold")}>
-                          {scope.title}
-                        </Text>
-                        <Text
-                          className="text-xs leading-snug text-foreground-muted"
-                          ellipsizeMode="middle"
-                          numberOfLines={1}
-                        >
-                          {hasMultipleProjects
-                            ? `${scope.projects.length} workspaces`
-                            : selectionTarget.workspaceRoot}
-                        </Text>
-                      </View>
-                      <SymbolView
-                        name="chevron.right"
-                        size={14}
-                        tintColorClassName="accent-chevron"
-                        type="monochrome"
-                      />
-                    </Pressable>
-                  </View>
+                    backgroundColor={cardColor}
+                    disabled={reservedDestinationProject !== null}
+                    environmentId={scope.representative.environmentId}
+                    faviconPath={scope.representative.faviconPath}
+                    fullSwipeWidth={windowWidth - 40}
+                    isFirst={scopeIndex === 0}
+                    onRemove={rowActions.remove}
+                    onSelect={rowActions.select}
+                    scopeKey={scope.key}
+                    subtitle={
+                      hasMultipleProjects
+                        ? `${scope.projects.length} workspaces`
+                        : selectionTarget.workspaceRoot
+                    }
+                    title={scope.title}
+                    workspaceRoot={scope.representative.workspaceRoot}
+                  />
                 );
               })}
             </View>
