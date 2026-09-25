@@ -360,9 +360,8 @@ export const ApiLive = Api.make(
         { concurrency: 2, discard: true },
       ).pipe(
         Effect.withSpan("relay.cron.prune_expired_state"),
-        Effect.provide(runtimeLayer),
         // Export cron spans to Axiom like HTTP spans; the scope flushes them before the run ends.
-        Effect.provide(relayTraceLayer),
+        Effect.provide(Layer.merge(runtimeLayer, relayTraceLayer)),
       ),
     );
 
