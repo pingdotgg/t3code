@@ -195,6 +195,9 @@ describe("file attachment limits", () => {
     expect(fileAttachmentTooLargeMessage("one.bin", 1024 * 1024)).toBe(
       "'one.bin' exceeds the 1 MB attachment limit.",
     );
+    expect(fileAttachmentTooLargeMessage("archive.zip", 100_000_000)).toBe(
+      "'archive.zip' exceeds the 100 MB attachment limit.",
+    );
     expect(fileAttachmentTooLargeMessage("big.zip", 50 * 1024 * 1024)).toBe(
       "'big.zip' exceeds the 50 MB attachment limit.",
     );

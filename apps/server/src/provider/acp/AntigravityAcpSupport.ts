@@ -1,7 +1,6 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type AntigravityAuthMethod,
-  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ProviderSendTurnInput,
   type RuntimeMode,
@@ -244,7 +243,7 @@ const TEXT_FILE_EXTENSIONS = new Set([
   ".conf",
 ]);
 export const ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES = 1024 * 1024;
-const MAX_TOTAL_ATTACHMENT_BYTES = PROVIDER_SEND_TURN_MAX_FILE_BYTES;
+const MAX_TOTAL_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
 /** Sends uploads as native ACP content instead of workspace path hints. */
 export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(function* (input: {
@@ -317,7 +316,7 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
       : audio
         ? ANTIGRAVITY_MAX_AUDIO_ATTACHMENT_BYTES
         : pdf
-          ? PROVIDER_SEND_TURN_MAX_FILE_BYTES
+          ? MAX_TOTAL_ATTACHMENT_BYTES
           : ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES;
     totalBytes += size;
     if (info.type !== "File" || size > limit || totalBytes > MAX_TOTAL_ATTACHMENT_BYTES) {

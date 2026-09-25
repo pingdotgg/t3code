@@ -986,6 +986,40 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+for (const name of ["codex", "claudeAgent", "cursor", "grok", "opencode", "antigravity"]) {
+  const driver = ProviderDriverKind.make(name);
+  const instanceId = ProviderInstanceId.make(name);
+  const adapter = makeFakeCodexAdapter(driver);
+  makeProviderServiceLayer({
+    registry: makeStaticInstanceRegistry([[instanceId, adapter.adapter]]),
+  }).layer(`${name} file attachment limits`, (it) => {
+    it.effect("passes a 100 MB ZIP by path", () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const threadId = asThreadId(`zip-${name}`);
+        yield* provider.startSession(threadId, {
+          provider: driver,
+          providerInstanceId: instanceId,
+          threadId,
+          runtimeMode: "full-access",
+        });
+        const attachment = {
+          type: "file" as const,
+          id: "thread-attach-12345678-1234-1234-1234-123456789abc-zip",
+          name: "archive.zip",
+          mimeType: "application/zip",
+          sizeBytes: 100_000_000,
+        };
+        yield* provider.sendTurn({ threadId, attachments: [attachment] });
+        const sent = adapter.sendTurn.mock.calls[0]?.[0];
+        assert.include(sent?.input ?? "", '[Attached file "archive.zip" is saved at: ');
+        assert.include(sent?.input ?? "", `${attachment.id}.zip]`);
+        assert.deepEqual(sent?.attachments, [attachment]);
+      }),
+    );
+  });
+}
+
 const routing = makeProviderServiceLayer();
 
 const customCompactionDriver = ProviderDriverKind.make("custom-compaction-provider");

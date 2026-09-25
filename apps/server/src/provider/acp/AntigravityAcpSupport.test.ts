@@ -2,7 +2,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
-  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ChatAttachment,
   type RuntimeMode,
@@ -403,7 +402,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
   it.effect.each([
     { attachment: textAttachment, bytes: ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES + 1 },
     { attachment: imageAttachment, bytes: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1 },
-    { attachment: pdfAttachment, bytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1 },
+    { attachment: pdfAttachment, bytes: 50 * 1024 * 1024 + 1 },
   ])(
     "rejects oversized $attachment.name using file size instead of upload metadata",
     ({ attachment, bytes }) =>
@@ -435,8 +434,8 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       };
       const first = yield* fixture.write(pdfAttachment, "");
       const second = yield* fixture.write(secondAttachment, "");
-      yield* fixture.fs.truncate(first.filePath, PROVIDER_SEND_TURN_MAX_FILE_BYTES / 2);
-      yield* fixture.fs.truncate(second.filePath, PROVIDER_SEND_TURN_MAX_FILE_BYTES / 2);
+      yield* fixture.fs.truncate(first.filePath, (50 * 1024 * 1024) / 2);
+      yield* fixture.fs.truncate(second.filePath, (50 * 1024 * 1024) / 2);
       const input = {
         input: undefined,
         attachments: [pdfAttachment, secondAttachment],
@@ -448,7 +447,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
         { type: "resource_link", uri: second.uri, name: "second.pdf", mimeType: "application/pdf" },
       ]);
 
-      yield* fixture.fs.truncate(second.filePath, PROVIDER_SEND_TURN_MAX_FILE_BYTES / 2 + 1);
+      yield* fixture.fs.truncate(second.filePath, (50 * 1024 * 1024) / 2 + 1);
       const error = yield* buildAntigravityPrompt(input).pipe(Effect.flip);
       expect(error).toMatchObject({
         _tag: "AcpRequestError",
@@ -463,7 +462,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       const fixture = yield* makeAttachmentFixture();
       const pdf = yield* fixture.write(pdfAttachment, "");
       const text = yield* fixture.write(textAttachment, "a");
-      yield* fixture.fs.truncate(pdf.filePath, PROVIDER_SEND_TURN_MAX_FILE_BYTES - 1);
+      yield* fixture.fs.truncate(pdf.filePath, 50 * 1024 * 1024 - 1);
       const error = yield* buildAntigravityPrompt({
         input: undefined,
         attachments: [pdfAttachment, textAttachment],

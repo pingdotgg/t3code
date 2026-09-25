@@ -302,13 +302,14 @@ describe("toOpenCodeFileParts", () => {
         attachment("image/png"),
         // A ZIP file part makes OpenCode's Anthropic path throw before the
         // turn starts; it must ride only as the prompt's file path line.
-        attachment("application/zip"),
+        attachment("application/zip", 100_000_000),
         attachment("application/octet-stream"),
         // Image formats the model APIs reject stay on the fallback path too.
         attachment("image/bmp"),
         attachment("image/svg+xml"),
         // Over the direct-attachment limit: path fallback even for a PDF.
         attachment("application/pdf", 21 * 1024 * 1024),
+        attachment("application/pdf", 100_000_000),
       ],
       resolveAttachmentPath: () => "/tmp/attachment",
     });
