@@ -685,6 +685,15 @@ describe("orchestration projector", () => {
             data: { output: "x".repeat(10_000) },
           }),
         ),
+        // Carries a requestId, but openRequests does not read this kind.
+        event(
+          7,
+          "thread.activity-appended",
+          activity("answer-1", "user-input.answer-submitted", {
+            requestId: "request-2",
+            answers: { q1: "yes" },
+          }),
+        ),
       ];
       let model = createEmptyReadModel(at(0));
       for (const next of events) {
@@ -698,7 +707,7 @@ describe("orchestration projector", () => {
         ["turn-1", []],
       ]);
       // Dropped events still move updatedAt, which the decider re-emits.
-      expect(thread?.updatedAt).toBe(at(6));
+      expect(thread?.updatedAt).toBe(at(7));
     }),
   );
 

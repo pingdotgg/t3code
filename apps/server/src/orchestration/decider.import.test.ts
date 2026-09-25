@@ -395,6 +395,68 @@ it.layer(NodeServices.layer)("thread history import", (it) => {
     );
   }
 
+  it.effect("rejects a second import of history with no user message", () =>
+    Effect.gen(function* () {
+      const createdAt = "2026-08-24T10:00:00.000Z";
+      const threadId = ThreadId.make("import:codex:assistant-only");
+      const readModel = yield* projectEvent(createEmptyReadModel(createdAt), {
+        sequence: 1,
+        eventId: EventId.make("event-assistant-only-thread-created"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.created",
+        occurredAt: createdAt,
+        commandId: CommandId.make("command-assistant-only-thread-created"),
+        causationEventId: null,
+        correlationId: CommandId.make("command-assistant-only-thread-created"),
+        metadata: {},
+        payload: {
+          threadId,
+          projectId: ProjectId.make("project-1"),
+          title: "Imported thread",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+      const importCommand = (commandId: string) => ({
+        type: "thread.history.import" as const,
+        commandId: CommandId.make(commandId),
+        threadId,
+        messages: [
+          {
+            messageId: MessageId.make(`${threadId}:000000`),
+            role: "assistant" as const,
+            text: "Done",
+            createdAt,
+          },
+        ],
+      });
+
+      const events = yield* decideOrchestrationCommand({
+        command: importCommand("command-first-import"),
+        readModel,
+      });
+      let projected = readModel;
+      for (const [index, event] of (Array.isArray(events) ? events : [events]).entries()) {
+        projected = yield* projectEvent(projected, { ...event, sequence: index + 2 });
+      }
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: importCommand("command-second-import"),
+          readModel: projected,
+        }),
+      );
+
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      expect(error.message).toContain("must be active and empty");
+    }),
+  );
+
   it.effect("rejects a live user message in the imported-session namespace", () =>
     Effect.gen(function* () {
       const createdAt = "2026-08-24T10:00:00.000Z";

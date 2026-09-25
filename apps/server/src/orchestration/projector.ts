@@ -3,7 +3,8 @@
  * and the engine's command checks read it; clients read the SQL projections
  * instead. It lives for the whole server process, so keep only the fields
  * those readers need: user messages, request activities, and checkpoints
- * without their file lists.
+ * without their file lists. A thread with only non-user messages keeps one
+ * of them without its text, so it does not look empty.
  */
 import type {
   OrchestrationEvent,
@@ -65,6 +66,16 @@ import {
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
+// The activity kinds openRequests in decider.ts reads. Other activities, such
+// as user-input.answer-submitted, carry a requestId but stay in SQL.
+const REQUEST_ACTIVITY_KINDS: ReadonlySet<string> = new Set([
+  "approval.requested",
+  "approval.resolved",
+  "user-input.requested",
+  "user-input.resolved",
+  "provider.approval.respond.failed",
+  "provider.user-input.respond.failed",
+]);
 
 // Safety cap for the retained request activities. Pending async questions
 // stay past the cap, because they stay open while the agent works. Match the
@@ -761,9 +772,11 @@ export function projectEvent(
         if (!thread) {
           return nextBase;
         }
-        // The decider reads only user messages. Assistant text and streaming
-        // deltas stay in the SQL projections.
-        if (payload.role !== "user") {
+        // The decider reads user messages. The history-import guard also needs
+        // to know if the thread has any message, so a thread with no message
+        // keeps one non-user message without its text as that signal.
+        // Assistant text and streaming deltas stay in the SQL projections.
+        if (payload.role !== "user" && thread.messages.length > 0) {
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
@@ -777,7 +790,7 @@ export function projectEvent(
           {
             id: payload.messageId,
             role: payload.role,
-            text: payload.text,
+            text: payload.role === "user" ? payload.text : "",
             ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
             ...(payload.context !== undefined ? { context: payload.context } : {}),
             turnId: payload.turnId,
@@ -1064,6 +1077,7 @@ export function projectEvent(
           // The decider reads only request activities (see openRequests in
           // decider.ts). Tool output and other activities stay in SQL.
           if (
+            !REQUEST_ACTIVITY_KINDS.has(payload.activity.kind) ||
             !Predicate.isObject(payload.activity.payload) ||
             typeof payload.activity.payload.requestId !== "string"
           ) {

@@ -79,8 +79,9 @@ function isStaleRequestFailureDetail(payload: Record<string, unknown> | null): b
   );
 }
 
-// Scans the read model's activities. The command projector keeps only
-// activities with a string payload.requestId, capped at the most recent 500.
+// Scans the read model's activities. The command projector keeps only the
+// kinds read here (REQUEST_ACTIVITY_KINDS in projector.ts) with a string
+// payload.requestId, capped at the most recent 500.
 // Tool output does not count toward that cap. Pending async questions stay
 // past the cap, because they stay actionable while the agent works.
 function openRequests(thread: Pick<OrchestrationThread, "activities">) {
