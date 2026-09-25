@@ -24,6 +24,7 @@ import {
   resolveSpawnCommand,
   resolveWindowsEnvironment,
   SpawnExecutableResolution,
+  type SpawnExecutableResolver,
   WindowsShellEnvironment,
   type WindowsShellEnvironmentReader,
 } from "./shell.ts";
@@ -480,7 +481,10 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
     Effect.gen(function* () {
       const command = yield* resolveSpawnCommand("node.exe", ["script.js", "hello & goodbye"], {
         env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
-      }).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+      }).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(CommandResolutionCache, new Map()),
+      );
 
       expect(command).toEqual({
         command: "node.exe",
@@ -498,6 +502,7 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
         { env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" } },
       ).pipe(
         Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(CommandResolutionCache, new Map()),
         Effect.provideService(
           SpawnExecutableResolution,
           () => "C:\\Program Files\\npm & tools\\vp.cmd",
@@ -524,6 +529,7 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
         extendEnv: true,
       }).pipe(
         Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(CommandResolutionCache, new Map()),
         Effect.provideService(HostProcessEnvironment, {
           PATH: "C:\\Users\\tester\\AppData\\Roaming\\npm",
           PATHEXT: ".COM;.EXE;.BAT;.CMD",
@@ -542,11 +548,58 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
     }),
   );
 
+  it.effect("scans PATH once per command until the search environment changes", () =>
+    Effect.gen(function* () {
+      const scans: Array<string> = [];
+      const scan: SpawnExecutableResolver = (name, _platform, env) => {
+        scans.push(`${name}@${env.PATH}`);
+        return name === "missing" ? undefined : `${env.PATH}\\${name}.exe`;
+      };
+      const resolve = (command: string, path: string, resolver = scan) =>
+        resolveSpawnCommand(command, [], { env: { PATH: path, PATHEXT: ".EXE" } }).pipe(
+          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.provideService(SpawnExecutableResolution, resolver),
+        );
+
+      expect((yield* resolve("git", "C:\\one")).command).toBe("C:\\one\\git.exe");
+      expect((yield* resolve("git", "C:\\one")).command).toBe("C:\\one\\git.exe");
+      // A failed spawn is how a provider reports "not installed", so a miss
+      // must clear the moment the binary appears.
+      yield* resolve("missing", "C:\\one");
+      yield* resolve("missing", "C:\\one");
+      expect((yield* resolve("git", "C:\\two")).command).toBe("C:\\two\\git.exe");
+      // Callers probe explicit paths they may have just written.
+      yield* resolve("C:\\tools\\git.exe", "C:\\one");
+      yield* resolve("C:\\tools\\git.exe", "C:\\one");
+      expect(scans).toEqual([
+        "git@C:\\one",
+        "missing@C:\\one",
+        "missing@C:\\one",
+        "git@C:\\two",
+        "C:\\tools\\git.exe@C:\\one",
+        "C:\\tools\\git.exe@C:\\one",
+      ]);
+
+      yield* TestClock.adjust("31 seconds");
+      yield* resolve("git", "C:\\one");
+      expect(scans).toHaveLength(7);
+
+      // Another resolver sharing the cache gets its own answer, not the cached one.
+      const elsewhere = yield* resolve("git", "C:\\one", () => "D:\\elsewhere\\git.exe");
+      expect(elsewhere.command).toBe("D:\\elsewhere\\git.exe");
+      expect((yield* resolve("git", "C:\\one")).command).toBe("C:\\one\\git.exe");
+      expect(scans).toHaveLength(7);
+    }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+  );
+
   it.effect("does not fall back to a shell for unresolved Windows commands", () =>
     Effect.gen(function* () {
       const command = yield* resolveSpawnCommand("missing & calc", ["unsafe & value"], {
         env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
-      }).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+      }).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(CommandResolutionCache, new Map()),
+      );
 
       expect(command).toEqual({
         command: "missing & calc",
