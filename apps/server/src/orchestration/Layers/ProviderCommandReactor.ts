@@ -31,6 +31,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker, makeKeyedDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
@@ -121,6 +122,7 @@ const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_PROVIDER_COMMAND_LANES = 16;
+const DEFAULT_PROVIDER_SESSION_START_CONCURRENCY = 4;
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
 function providerErrorLabel(value: string | undefined): string {
@@ -224,6 +226,17 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  // Starting a provider session is expensive. After a server restart many threads
+  // restart at once; capping concurrent starts lets each finish sooner instead of
+  // all of them competing. Interrupts, stops and turns on live sessions do not wait.
+  const providerSessionStartConcurrency = yield* Config.Int(
+    "T3CODE_PROVIDER_SESSION_START_CONCURRENCY",
+  ).pipe(Config.withDefault(DEFAULT_PROVIDER_SESSION_START_CONCURRENCY));
+  const providerSessionStartSemaphore = yield* Semaphore.make(
+    Number.isFinite(providerSessionStartConcurrency)
+      ? Math.max(1, Math.floor(providerSessionStartConcurrency))
+      : DEFAULT_PROVIDER_SESSION_START_CONCURRENCY,
+  );
   /** Environment settings with the thread's project overrides applied. */
   const projectSettingsForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     const settings = yield* serverSettingsService.getSettings;
@@ -734,7 +747,10 @@ const make = Effect.gen(function* () {
           ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
           runtimeMode: desiredRuntimeMode,
         })
-        .pipe(Effect.tap(() => refreshWorkspaceSnapshot));
+        .pipe(
+          providerSessionStartSemaphore.withPermits(1),
+          Effect.tap(() => refreshWorkspaceSnapshot),
+        );
 
     const bindSessionToThread = (session: ProviderSession) =>
       Effect.gen(function* () {
