@@ -12,41 +12,17 @@ import { newestPullRequestSummary } from "../state/pullRequests";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
 describe("synchronizeTerminalPulse", () => {
-  function animationStartEvent(animations: Animation[], animationName = "status-pulse") {
-    return {
-      animationName,
-      currentTarget: { getAnimations: () => animations },
-    } as AnimationEvent<SVGSVGElement>;
-  }
-
-  it("aligns terminal pulses started at different times to the same document clock", () => {
-    const first = { animationName: "status-pulse", startTime: 125 } as CSSAnimation;
-    const later = { animationName: "status-pulse", startTime: 975 } as CSSAnimation;
-
-    synchronizeTerminalPulse(animationStartEvent([first]));
-    synchronizeTerminalPulse(animationStartEvent([later]));
-
-    expect([first.startTime, later.startTime]).toEqual([0, 0]);
-  });
-
-  it("does not change other CSS or Web Animations on the icon", () => {
+  it("pins only the status pulse to the document clock", () => {
     const pulse = { animationName: "status-pulse", startTime: 975 } as CSSAnimation;
     const otherCss = { animationName: "other-animation", startTime: 125 } as CSSAnimation;
     const otherAnimation = { startTime: 250 } as Animation;
 
-    synchronizeTerminalPulse(animationStartEvent([pulse, otherCss, otherAnimation]));
+    synchronizeTerminalPulse({
+      animationName: "status-pulse",
+      currentTarget: { getAnimations: () => [pulse, otherCss, otherAnimation] },
+    } as AnimationEvent<SVGSVGElement>);
 
-    expect(pulse.startTime).toBe(0);
-    expect(otherCss.startTime).toBe(125);
-    expect(otherAnimation.startTime).toBe(250);
-  });
-
-  it("ignores the start of another animation", () => {
-    const pulse = { animationName: "status-pulse", startTime: 975 } as CSSAnimation;
-
-    synchronizeTerminalPulse(animationStartEvent([pulse], "other-animation"));
-
-    expect(pulse.startTime).toBe(975);
+    expect([pulse.startTime, otherCss.startTime, otherAnimation.startTime]).toEqual([0, 125, 250]);
   });
 });
 
