@@ -62,6 +62,10 @@ created in Settings can only be copied from the client that created them while
 its Connections page stays open. If you leave or reload that page, create
 another link to share.
 
+A pairing link expires five minutes after it is created. On a private network
+where links take longer to reach the other device, set `T3CODE_PAIRING_TOKEN_TTL`
+on the host to extend that window, using a duration such as `15m` or `1h`.
+
 ### Balance new threads across machines
 
 Auto balance is off by default. On web and desktop, enable it in

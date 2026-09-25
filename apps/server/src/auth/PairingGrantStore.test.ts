@@ -14,7 +14,9 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 
 const makeServerConfigLayer = (
-  overrides?: Partial<Pick<ServerConfig.ServerConfig["Service"], "desktopBootstrapToken">>,
+  overrides?: Partial<
+    Pick<ServerConfig.ServerConfig["Service"], "desktopBootstrapToken" | "pairingTokenTtl">
+  >,
 ) =>
   Layer.effect(
     ServerConfig.ServerConfig,
@@ -30,7 +32,11 @@ const makeServerConfigLayer = (
   );
 
 const makePairingGrantStoreLayer = (
-  overrides?: Partial<Pick<ServerConfig.ServerConfig["Service"], "desktopBootstrapToken">>,
+  overrides?: Partial<
+    Pick<ServerConfig.ServerConfig["Service"], "desktopBootstrapToken" | "pairingTokenTtl"> & {
+      readonly devUrl?: URL | undefined;
+    }
+  >,
 ) =>
   PairingGrantStore.layer.pipe(
     Layer.provide(SqlitePersistenceMemory),
@@ -136,6 +142,49 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
       expect(wrong.message).toContain("proof key mismatch");
       expect(consumed.proofKeyThumbprint).toBe("client-proof-key-thumbprint");
     }).pipe(Effect.provide(makePairingGrantStoreLayer())),
+  );
+
+  it.effect("honors the configured pairing token ttl for one-time grants", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const issued = yield* bootstrapCredentials.issueOneTimeToken();
+
+      // The configured 90-minute ttl replaces the 5-minute default.
+      yield* TestClock.adjust(Duration.minutes(30));
+      const stillValid = yield* bootstrapCredentials.consume(issued.credential);
+      expect(stillValid.method).toBe("one-time-token");
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          makePairingGrantStoreLayer({
+            pairingTokenTtl: Duration.minutes(90),
+          }),
+          TestClock.layer(),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps dev startup tokens on the dev ttl regardless of the pairing token ttl", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const issued = yield* bootstrapCredentials.issueOneTimeToken({ purpose: "startup" });
+
+      // Dev startup grants intentionally outlive the configured pairing ttl.
+      yield* TestClock.adjust(Duration.hours(2));
+      const stillValid = yield* bootstrapCredentials.consume(issued.credential);
+      expect(stillValid.method).toBe("one-time-token");
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          makePairingGrantStoreLayer({
+            pairingTokenTtl: Duration.minutes(90),
+            devUrl: new URL("http://localhost:5173"),
+          }),
+          TestClock.layer(),
+        ),
+      ),
+    ),
   );
 
   it.effect("seeds the desktop bootstrap credential as a reusable grant", () =>

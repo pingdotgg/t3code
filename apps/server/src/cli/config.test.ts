@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 
 import { assert, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -238,6 +239,79 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServePort: 443,
       });
       assert.equal(resolved.stateDir, join(baseDir, "userdata"));
+    }),
+  );
+
+  it.effect("resolves a finite positive pairing token ttl from the environment", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) => fs.makeTempDirectoryScoped({ prefix: "t3-cli-pairing-ttl-" })),
+      );
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.none(),
+          port: Option.none(),
+          host: Option.none(),
+          baseDir: Option.some(baseDir),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({ env: { T3CODE_PAIRING_TOKEN_TTL: "90 minutes" } }),
+            ),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      assert.deepEqual(resolved.pairingTokenTtl, Duration.minutes(90));
+    }),
+  );
+
+  it.effect("rejects non-finite and non-positive pairing token ttls at startup", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) => fs.makeTempDirectoryScoped({ prefix: "t3-cli-pairing-ttl-bad-" })),
+      );
+      const flags = {
+        mode: Option.none(),
+        port: Option.none(),
+        host: Option.none(),
+        baseDir: Option.some(baseDir),
+        cwd: Option.none(),
+        devUrl: Option.none(),
+        noBrowser: Option.none(),
+        bootstrapFd: Option.none(),
+        autoBootstrapProjectFromCwd: Option.none(),
+        logWebSocketEvents: Option.none(),
+        tailscaleServeEnabled: Option.none(),
+        tailscaleServePort: Option.none(),
+      };
+      for (const value of ["Infinity", "-5 minutes", "NaN seconds"]) {
+        const error = yield* resolveServerConfig(flags, Option.none()).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({ env: { T3CODE_PAIRING_TOKEN_TTL: value } }),
+              ),
+              NetService.layer,
+            ),
+          ),
+          Effect.flip,
+        );
+
+        expect(String(error)).toContain("T3CODE_PAIRING_TOKEN_TTL");
+      }
     }),
   );
 

@@ -82,6 +82,69 @@ const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.optional,
 );
 
+const DurationShorthandPattern = /^(?<value>\d+)(?<unit>ms|s|m|h|d|w)$/i;
+
+const parseDurationInput = (value: string): Duration.Duration | null => {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+
+  const shorthand = DurationShorthandPattern.exec(trimmed);
+  const normalizedInput = shorthand?.groups
+    ? (() => {
+        const amountText = shorthand.groups.value;
+        const unitText = shorthand.groups.unit;
+        if (typeof amountText !== "string" || typeof unitText !== "string") {
+          return null;
+        }
+
+        const amount = Number.parseInt(amountText, 10);
+        if (!Number.isFinite(amount)) return null;
+
+        switch (unitText.toLowerCase()) {
+          case "ms":
+            return `${amount} millis`;
+          case "s":
+            return `${amount} seconds`;
+          case "m":
+            return `${amount} minutes`;
+          case "h":
+            return `${amount} hours`;
+          case "d":
+            return `${amount} days`;
+          case "w":
+            return `${amount} weeks`;
+          default:
+            return null;
+        }
+      })()
+    : (trimmed as Duration.Input);
+
+  if (normalizedInput === null) return null;
+
+  const decoded = Duration.fromInput(normalizedInput as Duration.Input);
+  return Option.isSome(decoded) ? decoded.value : null;
+};
+
+export const DurationFromString = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.Duration,
+    SchemaTransformation.transformEffect({
+      decode: (value) => {
+        const duration = parseDurationInput(value);
+        if (duration !== null) {
+          return Effect.succeed(duration);
+        }
+        return Effect.fail(
+          new SchemaIssue.InvalidValue({
+            message: "Invalid duration. Use values like 5m, 1h, 30d, or 15 minutes.",
+          }),
+        );
+      },
+      encode: (duration) => Effect.succeed(Duration.format(duration)),
+    }),
+  ),
+);
+
 const EnvServerConfig = Config.all({
   logLevel: Config.LogLevel("T3CODE_LOG_LEVEL").pipe(Config.withDefault("Info")),
   traceMinLevel: Config.LogLevel("T3CODE_TRACE_MIN_LEVEL").pipe(Config.withDefault("Info")),
@@ -154,6 +217,28 @@ const EnvServerConfig = Config.all({
     Config.map(Option.getOrUndefined),
   ),
   tailscaleServePort: Config.Port("T3CODE_TAILSCALE_SERVE_PORT").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  pairingTokenTtl: Config.schema(DurationFromString, "T3CODE_PAIRING_TOKEN_TTL").pipe(
+    // `Duration.fromInput` accepts "Infinity" and negative amounts; either would
+    // poison every default pairing link with a NaN expiration, so stop at config
+    // parsing instead of failing on first use.
+    Config.mapEffect((duration) => {
+      const millis = Duration.toMillis(duration);
+      return Number.isFinite(millis) && millis > 0
+        ? Effect.succeed(duration)
+        : Effect.fail(
+            new Config.ConfigError(
+              new Schema.SchemaError(
+                new SchemaIssue.InvalidValue({
+                  message:
+                    "T3CODE_PAIRING_TOKEN_TTL must be a finite, positive duration (for example 15m or 1h).",
+                }),
+              ),
+            ),
+          );
+    }),
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
@@ -443,6 +528,7 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      ...(env.pairingTokenTtl === undefined ? {} : { pairingTokenTtl: env.pairingTokenTtl }),
     };
 
     return config;
@@ -469,66 +555,3 @@ export const resolveCliAuthConfig = (
     },
     cliLogLevel,
   );
-
-const DurationShorthandPattern = /^(?<value>\d+)(?<unit>ms|s|m|h|d|w)$/i;
-
-const parseDurationInput = (value: string): Duration.Duration | null => {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return null;
-
-  const shorthand = DurationShorthandPattern.exec(trimmed);
-  const normalizedInput = shorthand?.groups
-    ? (() => {
-        const amountText = shorthand.groups.value;
-        const unitText = shorthand.groups.unit;
-        if (typeof amountText !== "string" || typeof unitText !== "string") {
-          return null;
-        }
-
-        const amount = Number.parseInt(amountText, 10);
-        if (!Number.isFinite(amount)) return null;
-
-        switch (unitText.toLowerCase()) {
-          case "ms":
-            return `${amount} millis`;
-          case "s":
-            return `${amount} seconds`;
-          case "m":
-            return `${amount} minutes`;
-          case "h":
-            return `${amount} hours`;
-          case "d":
-            return `${amount} days`;
-          case "w":
-            return `${amount} weeks`;
-          default:
-            return null;
-        }
-      })()
-    : (trimmed as Duration.Input);
-
-  if (normalizedInput === null) return null;
-
-  const decoded = Duration.fromInput(normalizedInput as Duration.Input);
-  return Option.isSome(decoded) ? decoded.value : null;
-};
-
-export const DurationFromString = Schema.String.pipe(
-  Schema.decodeTo(
-    Schema.Duration,
-    SchemaTransformation.transformEffect({
-      decode: (value) => {
-        const duration = parseDurationInput(value);
-        if (duration !== null) {
-          return Effect.succeed(duration);
-        }
-        return Effect.fail(
-          new SchemaIssue.InvalidValue({
-            message: "Invalid duration. Use values like 5m, 1h, 30d, or 15 minutes.",
-          }),
-        );
-      },
-      encode: (duration) => Effect.succeed(Duration.format(duration)),
-    }),
-  ),
-);

@@ -8,6 +8,7 @@
  */
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -103,6 +104,12 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    /**
+     * Operator override for how long a user-issued one-time pairing token
+     * stays redeemable (default 5 minutes). Dev startup tokens keep their own
+     * longer ttl; desktop bootstrap grants are unaffected.
+     */
+    readonly pairingTokenTtl?: Duration.Duration | undefined;
   }
 >()("t3/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */

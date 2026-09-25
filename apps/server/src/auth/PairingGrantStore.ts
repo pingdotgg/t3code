@@ -384,7 +384,9 @@ export const make = Effect.gen(function* () {
     const isDevStartupToken = config.devUrl !== undefined && input?.purpose === "startup";
     const ttl =
       input?.ttl ??
-      (isDevStartupToken ? DEV_STARTUP_TTL_HOURS : DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES);
+      (isDevStartupToken
+        ? DEV_STARTUP_TTL_HOURS
+        : (config.pairingTokenTtl ?? DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES));
     const now = yield* DateTime.now;
     const expiresAt = DateTime.add(now, { milliseconds: Duration.toMillis(ttl) });
     const issued: IssuedBootstrapCredential = {
