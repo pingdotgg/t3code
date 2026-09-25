@@ -161,19 +161,36 @@ it.effect.each([{}, { includeImage: false }])(
             Effect.provideService(McpSchema.McpServerClient, client),
           );
 
+        const message = "Preview automation snapshot failed on client mcp-failure-client.";
         expect(snapshot.isError).toBe(true);
         expect(snapshot.content).toEqual([
-          { type: "text", text: "Preview snapshot failed: PreviewAutomationExecutionError." },
+          { type: "text", text: `Preview snapshot failed: ${message}` },
         ]);
         expect(snapshot.structuredContent).toEqual({
           error: {
             _tag: "PreviewAutomationExecutionError",
             operation: "snapshot",
             failureCount: 1,
+            message,
           },
         });
       }),
     ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("tells the agent how to fall back when no desktop app can run the snapshot", () =>
+  Effect.gen(function* () {
+    const snapshot = yield* callSnapshot({});
+
+    expect(snapshot.isError).toBe(true);
+    const [text] = snapshot.content;
+    expect(text?.type === "text" ? text.text : "").toContain(
+      "use a headless browser from the shell",
+    );
+    expect(snapshot.structuredContent).toMatchObject({
+      error: { _tag: "PreviewAutomationNoAvailableHostError" },
+    });
+  }).pipe(Effect.provide(TestLayer)),
 );
 
 it.effect.each([
