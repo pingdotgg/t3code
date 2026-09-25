@@ -4371,4 +4371,49 @@ describe("ProviderCommandReactor", () => {
       expect(harness.stopSession).not.toHaveBeenCalled();
     }),
   );
+
+  effectIt.effect(
+    "keeps terminals when the thread is un-settled before its settle event runs",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const threadId = ThreadId.make("thread-1");
+        const firstCloseStarted = yield* Deferred.make<void>();
+        const releaseFirstClose = yield* Deferred.make<void>();
+        harness.closeIdleTerminals.mockImplementationOnce(() =>
+          Deferred.succeed(firstCloseStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseFirstClose)),
+          ),
+        );
+
+        yield* harness.engine.dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make("cmd-settle-first"),
+          threadId,
+        });
+        // The reactor is busy with the first settle while the user changes their mind.
+        yield* Deferred.await(firstCloseStarted);
+        yield* harness.engine.dispatch({
+          type: "thread.unsettle",
+          commandId: CommandId.make("cmd-unsettle-first"),
+          threadId,
+          reason: "user",
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make("cmd-settle-second"),
+          threadId,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.unsettle",
+          commandId: CommandId.make("cmd-unsettle-second"),
+          threadId,
+          reason: "user",
+        });
+        yield* Deferred.succeed(releaseFirstClose, undefined);
+        yield* Effect.promise(() => harness.drain());
+
+        expect(harness.closeIdleTerminals).toHaveBeenCalledTimes(1);
+      }),
+  );
 });

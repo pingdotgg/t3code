@@ -3074,6 +3074,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             (input.terminalId === undefined || session.terminalId === input.terminalId),
         );
         if (running.length === 0) return;
+        // Typing echoes output, so a command started during the process check
+        // advances the sequence even if its process missed the snapshot.
+        const sequences = new Map(
+          running.map((session) => [session.terminalId, session.eventSequence]),
+        );
         // Inspect now instead of trusting the last poll, so a command started
         // since then keeps its terminal.
         const { inspector } = yield* acquireSubprocessInspector;
@@ -3082,7 +3087,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           (session) =>
             inspector(session.pid).pipe(
               Effect.flatMap((result) =>
-                result.hasRunningSubprocess
+                result.hasRunningSubprocess ||
+                session.eventSequence !== sequences.get(session.terminalId)
                   ? Effect.void
                   : closeSession(input.threadId, session.terminalId, false),
               ),
@@ -3091,10 +3097,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         );
       }),
     ).pipe(
+      // The process check failed, so every terminal stays open.
       Effect.catch((error) =>
         Effect.logWarning("failed to close idle terminals", {
           threadId: input.threadId,
-          error,
+          error: error.message,
         }),
       ),
     );

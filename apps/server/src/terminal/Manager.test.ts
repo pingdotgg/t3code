@@ -1263,6 +1263,33 @@ it.layer(
     }),
   );
 
+  it.effect("keeps a terminal that prints output while closeIdle checks it", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new FakePtyAdapter();
+      let outputDuringCheck: Effect.Effect<void> = Effect.void;
+      const { manager, getEvents } = yield* createManager(5, {
+        ptyAdapter,
+        subprocessPollIntervalMs: 60_000,
+        // The typed command's process misses the snapshot, but its echo lands.
+        subprocessInspector: () =>
+          outputDuringCheck.pipe(
+            Effect.as({ hasRunningSubprocess: false, childCommand: null, processIds: [] }),
+          ),
+      });
+      yield* manager.open(openInput());
+      outputDuringCheck = Effect.gen(function* () {
+        ptyAdapter.processes[0]!.emitData("make build\r\n");
+        yield* waitFor(
+          Effect.map(getEvents, (events) => events.some((event) => event.type === "output")),
+        );
+      }).pipe(Effect.orDie);
+
+      yield* manager.closeIdle({ threadId: "thread-1" });
+
+      expect(ptyAdapter.processes[0]!.killed).toBe(false);
+    }),
+  );
+
   it.effect("backs off the spawned fallback when the resource monitor snapshot fails", () =>
     Effect.gen(function* () {
       const fallbackCalls: Array<number> = [];
