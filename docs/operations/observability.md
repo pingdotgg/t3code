@@ -62,6 +62,22 @@ far in the future for the environment server's allowed window. It can point to
 a date or time problem on either device, but it can also result from a delayed
 request.
 
+#### Summarize the trace file
+
+`t3 trace summary` reads the trace file and its rotated backups directly, so it works while the
+server is stalled or stopped. It prints one row per span name, busiest first: count, spans per
+minute, p50, p90, max, and the number of interrupted and failed exits. Use it to measure background
+work or to compare two builds.
+
+```bash
+t3 trace summary --since 30m --limit 40
+```
+
+It reads `T3CODE_TRACE_FILE` and `T3CODE_TRACE_MAX_FILES` if set, else
+`<home>/userdata/logs/server.trace.ndjson` for `--base-dir` or `T3CODE_HOME`. For a dev run or a
+copied file, set `T3CODE_TRACE_FILE`. `--since` keeps spans that ended in that window
+before now. The rate is per minute between the first and last span end.
+
 ### Metrics
 
 Metrics are not written to a local file.

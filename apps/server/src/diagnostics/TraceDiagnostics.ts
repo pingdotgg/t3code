@@ -81,7 +81,12 @@ interface TraceDiagnosticsErrorSummary {
 const DEFAULT_SLOW_SPAN_THRESHOLD_MS = 1_000;
 const TOP_LIMIT = 10;
 const RECENT_LIMIT = 20;
-function toRotatedTracePaths(traceFilePath: string, maxFiles: number): ReadonlyArray<string> {
+
+/** The trace file and its rotated backups, oldest first. */
+export function toRotatedTracePaths(
+  traceFilePath: string,
+  maxFiles: number,
+): ReadonlyArray<string> {
   const backupCount = Math.max(0, Math.floor(maxFiles));
   const backups = Array.from(
     { length: backupCount },
@@ -390,7 +395,8 @@ type TraceFileReadResult =
   | { readonly _tag: "Loaded"; readonly path: string; readonly text: string }
   | { readonly _tag: "Missing"; readonly path: string };
 
-function readTraceFile(
+/** Reads one trace file. A missing file is a normal result, not an error. */
+export function readTraceFile(
   fileSystem: FileSystem.FileSystem,
   path: string,
 ): Effect.Effect<TraceFileReadResult, TraceFileReadError> {
