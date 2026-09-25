@@ -183,7 +183,10 @@ import {
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { usePreparedConnection } from "../../state/session";
 import { useThreadSelection } from "../../state/use-thread-selection";
-import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
+import {
+  composerDocumentAttachmentRecord,
+  isDirectoryMentionPath,
+} from "../../lib/composerContext";
 import * as Option from "effect/Option";
 import {
   basename,
@@ -1796,7 +1799,11 @@ function UserMessageContent(props: UserMessageContentProps) {
       (record) => record.contextId === reference.contextId,
     );
     if (record?.kind === "mention" && "path" in record) {
-      props.linkHandlers.onLinkPress?.(record.path);
+      // A directory mention has no file route to open; the composer skips
+      // it the same way (see composerMentionPath).
+      if (!isDirectoryMentionPath(record.path)) {
+        props.linkHandlers.onLinkPress?.(record.path);
+      }
       return;
     }
     // Documents open in the file screen; pictures, video and PDF keep their native viewers.

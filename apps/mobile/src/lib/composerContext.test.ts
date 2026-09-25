@@ -18,6 +18,7 @@ import {
   composerContextSendBlockReason,
   composerMentionPath,
   createComposerContextHistory,
+  isDirectoryMentionPath,
   referencedComposerContext,
   reidentifyComposerContext,
   uploadedComposerContext,
@@ -163,6 +164,12 @@ describe("mobile composer context", () => {
         records: [directoryMention],
       }),
     ).toBeNull();
+  });
+
+  it("treats only a trailing separator as a directory mention path", () => {
+    expect(isDirectoryMentionPath("src/")).toBe(true);
+    expect(isDirectoryMentionPath("src\\")).toBe(true);
+    expect(isDirectoryMentionPath("src/Checkout.tsx")).toBe(false);
   });
 
   it("restores deleted payloads on undo without adding removed context to the current draft", () => {
