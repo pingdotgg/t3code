@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   normalizeProviderAccentColor,
+  providerAccentForegroundColor,
   providerInstanceInitials,
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
@@ -85,6 +86,40 @@ describe("normalizeProviderAccentColor", () => {
   it("treats undefined and blank as unset", () => {
     expect(normalizeProviderAccentColor(undefined)).toBeUndefined();
     expect(normalizeProviderAccentColor("   ")).toBeUndefined();
+  });
+});
+
+describe("providerAccentForegroundColor", () => {
+  it("uses dark text on a white accent", () => {
+    expect(providerAccentForegroundColor("#ffffff")).toBe("#0a0a0a");
+  });
+
+  it("uses white text on a black accent", () => {
+    expect(providerAccentForegroundColor("#000000")).toBe("#ffffff");
+  });
+
+  it("keeps white text on the default blue and on Claude's orange", () => {
+    expect(providerAccentForegroundColor("#2563eb")).toBe("#ffffff");
+    expect(providerAccentForegroundColor("#d97757")).toBe("#ffffff");
+  });
+
+  it("switches to dark text on a pastel accent", () => {
+    expect(providerAccentForegroundColor("#fde68a")).toBe("#0a0a0a");
+  });
+
+  it("switches to dark text on bright mid-tones where white would not pass", () => {
+    // #ff8000 gives white text 2.5:1 and dark text 7.9:1; teal is the same case.
+    expect(providerAccentForegroundColor("#ff8000")).toBe("#0a0a0a");
+    expect(providerAccentForegroundColor("#14b8a6")).toBe("#0a0a0a");
+  });
+
+  it("expands a short hex accent", () => {
+    expect(providerAccentForegroundColor("#fff")).toBe("#0a0a0a");
+    expect(providerAccentForegroundColor("#000")).toBe("#ffffff");
+  });
+
+  it("keeps white text for an accent it cannot parse", () => {
+    expect(providerAccentForegroundColor("tomato")).toBe("#ffffff");
   });
 });
 
