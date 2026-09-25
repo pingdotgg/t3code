@@ -309,12 +309,12 @@ Recommended flow in Grafana:
 2. Pick the `Tempo` data source.
 3. Set the time range to something recent like `Last 15 minutes`.
 4. Start broad. Do not begin with a very narrow query.
-5. Look for spans from the `t3-server` or `t3-desktop` service, then narrow by span name or
+5. Look for spans from the `t3code-server` or `t3code-desktop` service, then narrow by span name or
    attributes.
 
 Good first searches:
 
-- service name `t3-server` or `t3-desktop`, plus a resource attribute such as
+- service name `t3code-server` or `t3code-desktop`, plus a resource attribute such as
   `deployment.environment.name`
 - span names like `sendTurn` or a Git operation such as `GitVcsDriver.statusDetails.status`
 - Git spans whose `git.operation` attribute identifies the operation
@@ -525,9 +525,10 @@ It provides:
 The desktop main process is a second producer, assembled in
 `apps/desktop/src/app/DesktopObservability.ts`. It reads the same `T3CODE_OTLP_*` names and the same
 Settings entries as the backend it supervises, and covers work the backend cannot see: app startup,
-window and menu handling, backend supervision, and updates. It reports as service `t3-desktop`, so a
-collector shows it alongside the backend rather than mixed into it. It exports traces and logs only;
-the main process records no metrics, so the metrics endpoint applies to the backend alone.
+window and menu handling, backend supervision, and updates. It reports as service
+`t3code-desktop`, so a collector shows it alongside the backend rather than mixed into it. It
+exports traces and logs only; the main process records no metrics, so the metrics endpoint applies
+to the backend alone.
 
 ### Env Vars
 
@@ -563,8 +564,8 @@ an `http` or `https` URL, a protocol other than `http/protobuf` or `http/json` s
 headers that are not `key=value` pairs with percent-encoded values turn that signal's export off
 with a startup warning, rather than sending it to the Settings endpoint.
 
-Service names are fixed: `t3-server` for the backend and `t3-desktop` for the desktop main process.
-`OTEL_SERVICE_NAME` and a `service.name` in `OTEL_RESOURCE_ATTRIBUTES` are ignored. Tell
+Service names are fixed: `t3code-server` for the backend and `t3code-desktop` for the desktop main
+process. `OTEL_SERVICE_NAME` and a `service.name` in `OTEL_RESOURCE_ATTRIBUTES` are ignored. Tell
 installations apart with other resource attributes, such as
 `OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=development`.
 
