@@ -1008,11 +1008,12 @@ describe("DesktopBackendConfiguration", () => {
         const standard = {
           OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector.example.com:4318/base?api_key=secret",
           OTEL_EXPORTER_OTLP_LOGS_HEADERS: "authorization=Bearer%20token",
+          T3CODE_OTLP_TRACES_URL: "http://t3.example.com:4318/v1/traces",
         };
         const previousWslEnv = process.env.WSLENV;
-        // A developer's own OTEL_* variables would be forwarded too.
-        const ambientOtel = Object.entries(process.env).filter(([name]) =>
-          name.startsWith("OTEL_"),
+        // A developer's own OTLP variables would be forwarded too.
+        const ambientOtel = Object.entries(process.env).filter(
+          ([name]) => name.startsWith("OTEL_") || name.startsWith("T3CODE_OTLP_"),
         );
         try {
           for (const [name] of ambientOtel) delete process.env[name];
@@ -1035,6 +1036,8 @@ describe("DesktopBackendConfiguration", () => {
             const wslEnv = (config.env.WSLENV ?? "").split(":");
             assert.include(wslEnv, "OTEL_EXPORTER_OTLP_ENDPOINT");
             assert.include(wslEnv, "OTEL_EXPORTER_OTLP_LOGS_HEADERS");
+            assert.equal(config.env.T3CODE_OTLP_TRACES_URL, "http://t3.example.com:4318/v1/traces");
+            assert.include(wslEnv, "T3CODE_OTLP_TRACES_URL");
           }).pipe(
             Effect.provide(
               DesktopBackendConfiguration.layer.pipe(

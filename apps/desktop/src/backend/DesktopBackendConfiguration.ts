@@ -101,7 +101,12 @@ const WSL_FORWARDED_ENV_NAMES = [
   "OTEL_SDK_DISABLED",
   "T3CODE_OTLP_HEADERS",
   "T3CODE_OTLP_PROTOCOL",
-  // Forwarded without a WSLENV flag, so the values arrive untranslated.
+  // Forwarded without a WSLENV flag, so the values arrive untranslated. The
+  // bootstrap envelope ranks under an OTEL endpoint, so the T3 URLs travel as
+  // variables to keep winning inside the distro as they do on Windows.
+  "T3CODE_OTLP_TRACES_URL",
+  "T3CODE_OTLP_METRICS_URL",
+  "T3CODE_OTLP_LOGS_URL",
   "OTEL_EXPORTER_OTLP_ENDPOINT",
   "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
   "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",

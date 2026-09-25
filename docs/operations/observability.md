@@ -552,7 +552,7 @@ OTLP export:
   `OTEL_EXPORTER_OTLP_HEADERS`: comma-separated `key=value` pairs with percent-encoded values.
 - `T3CODE_OTLP_PROTOCOL`: `http/json` (default) or `http/protobuf`
 
-The server also reads the standard `OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_ENDPOINT` and generic
+The server and the desktop app also read the standard `OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_ENDPOINT` and generic
 `OTEL_EXPORTER_OTLP_ENDPOINT` (with `/v1/traces`, `/v1/metrics`, or `/v1/logs` appended), for a
 collector expecting those instead. A non-blank `T3CODE_OTLP_*_URL` wins over either, and a
 per-signal endpoint wins over the generic one for its signal. A blank value counts as unset. A
