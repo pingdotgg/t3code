@@ -819,7 +819,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     Effect.gen(function* () {
       const held = yield* Ref.getAndUpdate(paintingCapturesRef, (count) => count + 1);
       if (held === 0 && sessions.size === 0) {
-        yield* setFrameCaptureBackgroundThrottling(false).pipe(Effect.ignore);
+        // Best effort: a visible window still paints while throttled.
+        yield* setFrameCaptureBackgroundThrottling(false).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Failed to unthrottle the main window for a preview capture.", {
+              error,
+            }),
+          ),
+        );
       }
       return [undefined, sessions] as const;
     }),
