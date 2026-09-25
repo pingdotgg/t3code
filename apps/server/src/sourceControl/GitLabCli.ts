@@ -10,6 +10,7 @@ import type * as DateTime from "effect/DateTime";
 import {
   TrimmedNonEmptyString,
   type SourceControlRepositoryVisibility,
+  type SourceControlRepositorySearchResult,
   type VcsError,
 } from "@t3tools/contracts";
 
@@ -195,7 +196,12 @@ export class GitLabRepositoryDecodeError extends Schema.TaggedError<GitLabReposi
   "GitLabRepositoryDecodeError",
   {
     ...gitLabCliDecodeErrorContext,
-    operation: Schema.Literals(["getRepositoryCloneUrls", "createRepository", "getDefaultBranch"]),
+    operation: Schema.Literals([
+      "getRepositoryCloneUrls",
+      "createRepository",
+      "getDefaultBranch",
+      "searchRepositories",
+    ]),
     repository: Schema.optional(Schema.String),
   },
 ) {
@@ -290,6 +296,11 @@ export class GitLabCli extends Context.Service<
       readonly repository: string;
     }) => Effect.Effect<GitLabRepositoryCloneUrls, GitLabCliError>;
 
+    readonly searchRepositories: (input: {
+      readonly cwd: string;
+      readonly query: string;
+    }) => Effect.Effect<ReadonlyArray<SourceControlRepositorySearchResult>, GitLabCliError>;
+
     readonly createRepository: (input: {
       readonly cwd: string;
       readonly repository: string;
@@ -324,6 +335,17 @@ const RawGitLabRepositoryCloneUrlsSchema = Schema.Struct({
   http_url_to_repo: TrimmedNonEmptyString,
   ssh_url_to_repo: TrimmedNonEmptyString,
 });
+
+const decodeGitLabRepositorySearch = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({
+        path_with_namespace: TrimmedNonEmptyString,
+        description: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
+  ),
+);
 
 const RawGitLabDefaultBranchSchema = Schema.Struct({
   default_branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -541,6 +563,39 @@ export const make = Effect.gen(function* () {
         ),
         Effect.map(normalizeRepositoryCloneUrls),
       ),
+    searchRepositories: (input) => {
+      const query = input.query.trim();
+      if (query.length < 3) return Effect.succeed([]);
+      const params = new URLSearchParams({
+        search: query,
+        membership: "true",
+        search_namespaces: "true",
+        simple: "true",
+        per_page: "20",
+        order_by: "last_activity_at",
+      });
+      return execute({ cwd: input.cwd, args: ["api", `projects?${params}`] }).pipe(
+        Effect.flatMap((result) =>
+          decodeGitLabRepositorySearch(result.stdout.trim()).pipe(
+            Effect.mapError(
+              (cause) =>
+                new GitLabRepositoryDecodeError({
+                  operation: "searchRepositories",
+                  command: "glab",
+                  cwd: input.cwd,
+                  cause,
+                }),
+            ),
+          ),
+        ),
+        Effect.map((repositories) =>
+          repositories.map((repository) => ({
+            nameWithOwner: repository.path_with_namespace,
+            description: repository.description ?? null,
+          })),
+        ),
+      );
+    },
     createRepository: (input) => {
       const { namespacePath, projectPath } = parseRepositoryPath(input.repository);
       const namespaceId: Effect.Effect<number | null, GitLabCliError> = namespacePath

@@ -721,15 +721,16 @@ export function AddProjectRepositoryScreen(props: {
   const [repositoryInput, setRepositoryInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const githubSearchQuery = useDebouncedValue(
-    source === "github" ? repositoryInput.trim() : "",
+  const isSearchableSource = source === "github" || source === "gitlab";
+  const repositorySearchQuery = useDebouncedValue(
+    isSearchableSource ? repositoryInput.trim() : "",
     500,
   );
-  const githubSearch = useEnvironmentQuery(
-    environment && githubSearchQuery.length >= 3
+  const repositorySearch = useEnvironmentQuery(
+    environment && isSearchableSource && repositorySearchQuery.length >= 3
       ? sourceControlEnvironment.searchRepositories({
           environmentId: environment.environmentId,
-          input: { provider: "github", query: githubSearchQuery },
+          input: { provider: source, query: repositorySearchQuery },
         })
       : null,
   );
@@ -795,8 +796,8 @@ export function AddProjectRepositoryScreen(props: {
             placeholder={
               source === "url"
                 ? "https://github.com/org/repo.git"
-                : source === "github"
-                  ? "Search or enter owner/repo"
+                : isSearchableSource
+                  ? `Search or enter ${addProjectRemoteSourcePathHint(source)}`
                   : addProjectRemoteSourcePathHint(source)
             }
             returnKeyType="next"
@@ -808,24 +809,24 @@ export function AddProjectRepositoryScreen(props: {
             onPress={() => void lookupRepository(repositoryInput.trim())}
             loading={isSubmitting}
           />
-          {source === "github" && githubSearchQuery.length >= 3 ? (
+          {isSearchableSource && repositorySearchQuery.length >= 3 ? (
             <>
               <SectionTitle>Repositories</SectionTitle>
-              {githubSearch.error ? <ErrorBanner message={githubSearch.error} /> : null}
+              {repositorySearch.error ? <ErrorBanner message={repositorySearch.error} /> : null}
               <ListSection>
-                {githubSearch.isPending && githubSearch.data === null ? (
+                {repositorySearch.isPending && repositorySearch.data === null ? (
                   <View className="items-center py-5">
                     <ActivityIndicator colorClassName="accent-icon-muted" />
                   </View>
                 ) : null}
-                {(githubSearch.data ?? []).map((repository, index) => (
+                {(repositorySearch.data ?? []).map((repository, index) => (
                   <ListRow
                     key={repository.nameWithOwner}
                     title={repository.nameWithOwner}
                     subtitle={repository.description}
                     icon={
                       <SourceControlIcon
-                        kind="github"
+                        kind={source}
                         size={Platform.OS === "android" ? 24 : 18}
                         colorClassName="accent-icon-muted"
                       />

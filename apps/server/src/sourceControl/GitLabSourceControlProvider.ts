@@ -256,6 +256,20 @@ export const make = Effect.gen(function* () {
             }),
         ),
       ),
+    searchRepositories: (input) =>
+      gitlab.searchRepositories(input).pipe(
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "gitlab",
+              operation: "searchRepositories",
+              command: error.command,
+              cwd: input.cwd,
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+      ),
     createRepository: (input) =>
       gitlab.createRepository(input).pipe(
         Effect.mapError(

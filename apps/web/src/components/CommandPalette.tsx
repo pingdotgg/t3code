@@ -371,8 +371,8 @@ function remoteProjectInputPlaceholder(flow: AddProjectCloneFlow | null): string
   if (flow.source === "url") {
     return "Enter Git clone URL";
   }
-  if (flow.source === "github") {
-    return "Search GitHub repositories or enter owner/repo";
+  if (flow.source === "github" || flow.source === "gitlab") {
+    return `Search ${remoteProjectSourceLabel(flow.source)} repositories or enter ${remoteProjectSourcePathHint(flow.source)}`;
   }
   return `Enter ${remoteProjectSourceLabel(flow.source)} repository (${remoteProjectSourcePathHint(flow.source)})`;
 }
@@ -1036,17 +1036,18 @@ function OpenCommandPaletteDialog(props: {
   );
   const isRemoteProjectCloneFlow = addProjectCloneFlow !== null;
   const isRemoteProjectRepositoryStep = addProjectCloneFlow?.step === "repository";
-  const isGitHubRepositoryStep =
-    isRemoteProjectRepositoryStep && addProjectCloneFlow.source === "github";
-  const githubRepositorySearchQuery = useDebouncedValue(
-    isGitHubRepositoryStep ? query.trim() : "",
+  const isSearchableRepositoryStep =
+    isRemoteProjectRepositoryStep &&
+    (addProjectCloneFlow.source === "github" || addProjectCloneFlow.source === "gitlab");
+  const repositorySearchQuery = useDebouncedValue(
+    isSearchableRepositoryStep ? query.trim() : "",
     500,
   );
-  const githubRepositorySearch = useEnvironmentQuery(
-    isGitHubRepositoryStep && githubRepositorySearchQuery.length >= 3
+  const repositorySearch = useEnvironmentQuery(
+    isSearchableRepositoryStep && repositorySearchQuery.length >= 3
       ? sourceControlEnvironment.searchRepositories({
           environmentId: addProjectCloneFlow.environmentId,
-          input: { provider: "github", query: githubRepositorySearchQuery },
+          input: { provider: addProjectCloneFlow.source, query: repositorySearchQuery },
         })
       : null,
   );
@@ -2599,15 +2600,15 @@ function OpenCommandPaletteDialog(props: {
     };
   }, [addProjectCloneFlow]);
 
-  const githubRepositoryItems: ReadonlyArray<CommandPaletteActionItem> = (
-    githubRepositorySearch.data ?? []
+  const repositoryItems: ReadonlyArray<CommandPaletteActionItem> = (
+    (isSearchableRepositoryStep ? repositorySearch.data : null) ?? []
   ).map((repository) => ({
     kind: "action",
-    value: `github-repository:${repository.nameWithOwner}`,
+    value: `repository:${repository.nameWithOwner}`,
     searchTerms: [],
     title: repository.nameWithOwner,
     ...(repository.description ? { description: repository.description } : {}),
-    icon: <GitHubIcon className={ITEM_ICON_CLASS} />,
+    icon: remoteProjectSourceIcon(addProjectCloneFlow?.source ?? "github", ITEM_ICON_CLASS),
     keepOpen: true,
     run: () => lookupCloneRepository(repository.nameWithOwner),
   }));
@@ -2615,8 +2616,8 @@ function OpenCommandPaletteDialog(props: {
   let displayedGroups: CommandPaletteView["groups"] = filteredGroups;
   if (addProjectCloneFlow?.step === "repository") {
     displayedGroups =
-      githubRepositoryItems.length > 0
-        ? [{ value: "github-repositories", label: "Repositories", items: githubRepositoryItems }]
+      repositoryItems.length > 0
+        ? [{ value: "repositories", label: "Repositories", items: repositoryItems }]
         : [];
   } else if (addProjectCloneFlow?.step === "confirm") {
     displayedGroups = relativePathNeedsActiveProject ? [] : cloneDestinationBrowseGroups;
@@ -2727,8 +2728,7 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
-    const hasHighlightedRepository =
-      highlightedItemValue?.startsWith("github-repository:") ?? false;
+    const hasHighlightedRepository = highlightedItemValue?.startsWith("repository:") ?? false;
     if (
       addProjectCloneFlow?.step === "repository" &&
       event.key === "Enter" &&
@@ -3059,12 +3059,12 @@ function OpenCommandPaletteDialog(props: {
               emptyStateMessage:
                 addProjectCloneFlow.source === "url"
                   ? "Enter a Git clone URL and press Enter to continue."
-                  : addProjectCloneFlow.source !== "github"
+                  : !isSearchableRepositoryStep
                     ? "Enter a repository path and press Enter to look it up."
-                    : githubRepositorySearch.isPending
-                      ? "Searching GitHub…"
-                      : (githubRepositorySearch.error ??
-                        "Type to search GitHub, or enter owner/repo and press Enter."),
+                    : repositorySearch.isPending
+                      ? `Searching ${remoteProjectSourceLabel(addProjectCloneFlow.source)}…`
+                      : (repositorySearch.error ??
+                        `Type to search ${remoteProjectSourceLabel(addProjectCloneFlow.source)}, or enter ${remoteProjectSourcePathHint(addProjectCloneFlow.source)} and press Enter.`),
             }
           : addProjectCloneFlow?.step === "confirm"
             ? { emptyStateMessage: "Choose a destination path and press Enter to clone." }
