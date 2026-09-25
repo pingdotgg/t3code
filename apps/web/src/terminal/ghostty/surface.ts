@@ -249,6 +249,41 @@ export interface TerminalLinkWithRange {
   readonly range: GhosttyCellRange;
 }
 
+export function createTerminalLinkPinController(onChange?: () => void) {
+  let pinned: TerminalLinkWithRange | null = null;
+  let request = 0;
+  return {
+    get pinned() {
+      return pinned;
+    },
+    pin(link: TerminalLinkWithRange | null, pending: Promise<void> | void): void {
+      if (link === null) {
+        request++;
+        if (pinned !== null) {
+          pinned = null;
+          onChange?.();
+        }
+        return;
+      }
+      const current = ++request;
+      pinned = link;
+      onChange?.();
+      Promise.resolve(pending).finally(() => {
+        if (current === request) {
+          pinned = null;
+          onChange?.();
+        }
+      });
+    },
+    clear(): void {
+      if (pinned === null) return;
+      request++;
+      pinned = null;
+      onChange?.();
+    },
+  };
+}
+
 function isSameTerminalLink(
   left: TerminalLinkWithRange,
   right: TerminalLinkWithRange | null,
@@ -552,7 +587,10 @@ export interface GhosttyTerminalSurfaceOptions {
    * reporting. The host owns the menu, so it also owns preventing the browser
    * default — whose Paste entry can never reach a canvas terminal.
    */
-  readonly onContextMenu?: (event: MouseEvent) => void;
+  readonly onContextMenu?: (
+    event: MouseEvent,
+    link: TerminalLinkWithRange | null,
+  ) => void | Promise<void>;
 }
 
 export class GhosttyTerminalSurface {
@@ -566,6 +604,10 @@ export class GhosttyTerminalSurface {
   private readonly context: CanvasRenderingContext2D;
   private readonly core: GhosttyTerminalCore;
   private readonly options: GhosttyTerminalSurfaceOptions;
+  private readonly linkPinController = createTerminalLinkPinController(() => {
+    this.forceFullRender = true;
+    this.requestRender();
+  });
   private visible: boolean;
   private hasSize = false;
   private metrics: GhosttyCellMetrics;
@@ -857,6 +899,7 @@ export class GhosttyTerminalSurface {
 
   fit(): boolean {
     if (this.disposed || !this.visible) return false;
+    if (this.linkPinController.pinned !== null) this.linkPinController.clear();
     const width = this.mount.clientWidth;
     const height = this.mount.clientHeight;
     if (width <= 0 || height <= 0) {
@@ -1606,7 +1649,9 @@ export class GhosttyTerminalSurface {
       event.preventDefault();
       return;
     }
-    this.options.onContextMenu?.(event);
+    const link = this.linkAt(event.clientX, event.clientY);
+    const pending = this.options.onContextMenu?.(event, link);
+    this.linkPinController.pin(link, pending);
   };
 
   private readonly onScrollbarPointerDown = (event: PointerEvent) => {
@@ -1815,6 +1860,10 @@ export class GhosttyTerminalSurface {
       return;
     }
     this.snapshot = this.core.snapshot();
+    const pinned = this.linkPinController.pinned;
+    if (pinned !== null && !isSameTerminalLink(pinned, this.linkAtCell(pinned.range.start))) {
+      this.linkPinController.clear();
+    }
     // A cursor that is not blinking right now must be drawn, never caught in an
     // off phase left behind by a blink that has since been turned off.
     if (!this.blinkEnabled()) this.cursorOn = true;
@@ -1848,7 +1897,7 @@ export class GhosttyTerminalSurface {
       cursorOn: this.cursorOn,
       previousCursorY: this.renderedCursorY,
       focused: this.focused,
-      hoveredLinkRange: this.hoveredLink?.range ?? null,
+      hoveredLinkRange: (this.linkPinController.pinned ?? this.hoveredLink)?.range ?? null,
       ...(this.theme.selectionBackground !== undefined
         ? { selectionBackground: this.theme.selectionBackground }
         : {}),
@@ -1938,6 +1987,14 @@ export class GhosttyTerminalSurface {
       originY: this.originY,
     });
     if (!cell) return null;
+    return this.linkAtCell(cell);
+  }
+
+  private linkAtCell(cell: {
+    readonly x: number;
+    readonly y: number;
+  }): TerminalLinkWithRange | null {
+    if (!this.snapshot) return null;
     const explicitHyperlink = this.core.hyperlinkAt(cell.x, cell.y);
     if (explicitHyperlink) {
       const start = { ...cell };

@@ -7,6 +7,9 @@ import {
   terminalSelectionLineRange,
   terminalSelectionMenuItems,
   terminalThemeFromApp,
+  terminalLinkChatText,
+  terminalLinkCopyText,
+  terminalLinkTargetForEditor,
 } from "./ThreadTerminalDrawer";
 
 describe("terminal selection menus", () => {
@@ -24,6 +27,121 @@ describe("terminal selection menus", () => {
     expect(
       terminalContextMenuItems({ hasSelection: true, canAddToChat: false }).map(({ id }) => id),
     ).toEqual(["copy", "paste"]);
+  });
+});
+
+describe("terminal link menus", () => {
+  it("adds path actions before selection actions", () => {
+    const items = terminalContextMenuItems({
+      hasSelection: true,
+      link: { text: "src/main.ts:12", editorLabel: "Open in VS Code" },
+    });
+
+    expect(items.map(({ id }) => id)).toEqual([
+      "open-terminal-path",
+      "add-terminal-path-to-chat",
+      "copy-terminal-path",
+      "add-to-chat",
+      "copy",
+      "paste",
+    ]);
+    expect(items[0]).toMatchObject({ id: "open-terminal-path", label: "Open in VS Code" });
+    expect(items.find(({ id }) => id === "add-to-chat")).toMatchObject({
+      separatorBefore: true,
+    });
+    expect(items.slice(0, 3).every((item) => !item.separatorBefore)).toBe(true);
+  });
+
+  it.each([
+    ["with reveal", "Reveal in Finder", true],
+    ["without reveal", undefined, false],
+  ])("handles path reveal action %s", (_name, revealLabel, hasReveal) => {
+    const items = terminalContextMenuItems({
+      hasSelection: true,
+      link: { text: "src/main.ts:12", ...(revealLabel ? { revealLabel } : {}) },
+    });
+    const ids = items.map(({ id }) => id);
+    expect(ids.includes("reveal-terminal-path")).toBe(hasReveal);
+    if (hasReveal) {
+      expect(ids.indexOf("reveal-terminal-path")).toBe(ids.indexOf("open-terminal-path") + 1);
+    }
+  });
+
+  it("does not add reveal action to URL links", () => {
+    expect(
+      terminalContextMenuItems({
+        hasSelection: true,
+        link: { text: "https://example.com", revealLabel: "Reveal in Finder" },
+      }).map(({ id }) => id),
+    ).not.toContain("reveal-terminal-path");
+  });
+
+  it("keeps the selection menu unchanged when there is no link", () => {
+    const items = terminalContextMenuItems({ hasSelection: true });
+
+    expect(items.map(({ id }) => id)).toEqual(["add-to-chat", "copy", "paste"]);
+    expect(items.every((item) => !item.separatorBefore)).toBe(true);
+  });
+
+  it("omits URL chat actions when adding to chat is unavailable", () => {
+    const items = terminalContextMenuItems({
+      hasSelection: true,
+      canAddToChat: false,
+      link: { text: "https://example.com", canOpenPreview: true },
+    });
+
+    expect(items.map(({ id }) => id)).not.toContain("add-terminal-link-to-chat");
+    expect(items.map(({ id }) => id)).not.toContain("add-to-chat");
+  });
+
+  it("gates the link add-to-chat item separately from the selection one", () => {
+    const ids = terminalContextMenuItems({
+      hasSelection: true,
+      link: { text: "src/main.ts", canAddToChat: false },
+    }).map(({ id }) => id);
+
+    expect(ids).not.toContain("add-terminal-path-to-chat");
+    expect(ids).toContain("add-to-chat");
+  });
+
+  it("places URL actions before selection actions", () => {
+    expect(
+      terminalContextMenuItems({
+        hasSelection: true,
+        link: { text: "https://example.com", canOpenPreview: true },
+      }).map(({ id }) => id),
+    ).toEqual([
+      "open-terminal-link-preview",
+      "open-terminal-link-browser",
+      "add-terminal-link-to-chat",
+      "copy-terminal-link",
+      "add-to-chat",
+      "copy",
+      "paste",
+    ]);
+  });
+
+  it("serializes paths for chat and strips positions for copying", () => {
+    expect(terminalLinkChatText("src/main.ts:12:3", "/repo")).toContain("src/main.ts");
+    expect(terminalLinkChatText("/", "/repo")).toBe("/");
+    expect(terminalLinkChatText("src\\", "/repo")).toBe("[src](/repo/src)");
+    expect(terminalLinkChatText("C:\\", "C:\\repo")).toBe("C:\\");
+    expect(terminalLinkChatText("https://example.com/a", "/repo")).toBe("https://example.com/a");
+    expect(terminalLinkCopyText("src/main.ts:12:3")).toBe("src/main.ts");
+    expect(terminalLinkCopyText("https://example.com:8080/a")).toBe("https://example.com:8080/a");
+  });
+
+  it("keeps Windows directory paths as directory links", () => {
+    expect(terminalLinkChatText("C:\\work\\", "C:\\repo")).toBe("C:\\work\\");
+  });
+
+  it("strips positions only for the file manager", () => {
+    expect(terminalLinkTargetForEditor("/repo/src/main.ts:12:3", "file-manager")).toBe(
+      "/repo/src/main.ts",
+    );
+    expect(terminalLinkTargetForEditor("/repo/src/main.ts:12:3", "vscode")).toBe(
+      "/repo/src/main.ts:12:3",
+    );
   });
 });
 

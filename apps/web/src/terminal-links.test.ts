@@ -173,6 +173,16 @@ describe("resolvePathLinkTarget", () => {
       resolvePathLinkTarget("C:/Users/julius/project/src/main.ts:12", "C:\\Users\\julius\\project"),
     ).toBe("C:/Users/julius/project/src/main.ts:12");
   });
+
+  it("anchors root-relative paths to the Windows cwd's volume", () => {
+    expect(resolvePathLinkTarget("/foo/bar.ts:3", "C:\\Users\\julius\\project")).toBe(
+      "C:\\foo\\bar.ts:3",
+    );
+    expect(resolvePathLinkTarget("\\report.pdf", "\\\\server\\share\\project")).toBe(
+      "\\\\server\\share\\report.pdf",
+    );
+    expect(resolvePathLinkTarget("/foo/bar.ts", "/Users/julius/project")).toBe("/foo/bar.ts");
+  });
 });
 
 describe("isTerminalLinkActivation", () => {

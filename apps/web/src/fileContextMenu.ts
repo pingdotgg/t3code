@@ -15,8 +15,9 @@ import { useCallback, useMemo } from "react";
 
 import { resolveDiffPathForWorkspace } from "./diffFileActions";
 import {
-  revealInFileExplorerLabelForKind,
-  revealInFileExplorerLabelForOs,
+  fileManagerRevealNameForKind,
+  fileManagerRevealNameForOs,
+  revealInFileExplorerLabelForManager,
 } from "~/components/preview/fileExplorerLabel";
 import { readLocalApi } from "./localApi";
 import { serverEnvironment } from "./state/server";
@@ -127,8 +128,12 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
         serverConfig?.shellRevealInFileManager === true &&
         serverConfig.availableEditors.includes("file-manager")
           ? serverConfig.shellRevealInFileManagerKind === undefined
-            ? revealInFileExplorerLabelForOs(serverConfig.environment.platform.os)
-            : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind)
+            ? revealInFileExplorerLabelForManager(
+                fileManagerRevealNameForOs(serverConfig.environment.platform.os),
+              )
+            : revealInFileExplorerLabelForManager(
+                fileManagerRevealNameForKind(serverConfig.shellRevealInFileManagerKind),
+              )
           : undefined,
       canOpenDefault: availableEditors.includes("file-manager"),
       editorIds: availableEditors,

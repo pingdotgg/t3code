@@ -29,8 +29,40 @@ import {
   terminalWheelArrowData,
   terminalWheelDeltaRows,
   GhosttyTerminalSurface,
+  createTerminalLinkPinController,
   type GhosttyTerminalSurfaceOptions,
 } from "./surface";
+
+describe("terminal link pin controller", () => {
+  it("keeps only the newest pending menu pin", async () => {
+    const onChange = vi.fn();
+    const controller = createTerminalLinkPinController(onChange);
+    const first = { text: "a", range: { start: { x: 0, y: 0 }, end: { x: 0, y: 0 } } };
+    const second = { text: "b", range: { start: { x: 1, y: 0 }, end: { x: 1, y: 0 } } };
+    let closeFirst!: () => void;
+    controller.pin(first, new Promise<void>((resolve) => (closeFirst = resolve)));
+    controller.pin(second, new Promise<void>(() => undefined));
+    closeFirst();
+    await Promise.resolve();
+    expect(controller.pinned).toEqual(second);
+    controller.clear();
+    expect(controller.pinned).toBeNull();
+    expect(onChange).toHaveBeenCalledTimes(3);
+  });
+
+  it("treats a right-click away from any link as superseding the open pin", async () => {
+    const onChange = vi.fn();
+    const controller = createTerminalLinkPinController(onChange);
+    const link = { text: "a", range: { start: { x: 0, y: 0 }, end: { x: 0, y: 0 } } };
+    let closeFirst!: () => void;
+    controller.pin(link, new Promise<void>((resolve) => (closeFirst = resolve)));
+    controller.pin(null, Promise.resolve());
+    expect(controller.pinned).toBeNull();
+    closeFirst();
+    await Promise.resolve();
+    expect(onChange).toHaveBeenCalledTimes(2);
+  });
+});
 
 vi.mock("./vendor/ghostty-vt.wasm?url", async () => ({
   default: (await import("./vendor/ghostty-vt.wasm?inline")).default,
