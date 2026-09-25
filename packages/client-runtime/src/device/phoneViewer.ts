@@ -268,6 +268,7 @@ export function createPhoneViewer(options: {
           : foldAngle !== null && profile.id.startsWith("android")
             ? createAndroidFoldScene(texture, layout, foldAngle)
             : createPhoneScene(texture, layout, profile);
+      foldTurn = null;
       scene.remove(phone.root);
       phone.dispose();
       imported = model;
@@ -340,12 +341,15 @@ export function createPhoneViewer(options: {
         applyPose();
         fit(true);
       } else {
+        const progress = foldTurn
+          ? Math.min(1, (performance.now() - foldTurn.startedAt) / ANDROID_FOLD_TURN_MS)
+          : 1;
+        const eased = progress * progress * (3 - 2 * progress);
         const from = foldTurn
-          ? foldTurn.from +
-            (foldTurn.to - foldTurn.from) *
-              Math.min(1, (performance.now() - foldTurn.startedAt) / ANDROID_FOLD_TURN_MS)
+          ? foldTurn.from + (foldTurn.to - foldTurn.from) * eased
           : (previous ?? next);
         if (reducedMotion()) {
+          foldTurn = null;
           phone.setAngle(next);
           fit(true);
         } else {

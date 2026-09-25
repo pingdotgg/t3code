@@ -259,6 +259,41 @@ it("animates the Android hinge on the same scene through an encoder resize", () 
   viewer.dispose();
 });
 
+it("retargets an unfinished hinge turn from its visible angle", () => {
+  const { viewer, draw, state } = fixture(ANDROID_PHONE_SHAPE);
+  viewer.setFoldAngle(180);
+  draw(0);
+  const moving = state.frames.at(-1)!.phone!.children[0]!.children[0]!;
+  viewer.setFoldAngle(0);
+  draw(200);
+  const visibleAngle = moving.rotation.y;
+  viewer.setFoldAngle(180);
+  draw(200);
+  expect(moving.rotation.y).toBeCloseTo(visibleAngle);
+  draw(1050);
+  expect(moving.rotation.y).toBeCloseTo(0);
+  viewer.dispose();
+});
+
+it("stops a hinge turn when a loaded model replaces the fold scene", async () => {
+  const { viewer, draw, pending } = fixture(ANDROID_PHONE_SHAPE);
+  viewer.setFoldAngle(180);
+  draw(0);
+  viewer.setFoldAngle(0);
+  viewer.setModel({ id: "test-fold-model", url: "/fold.glb" });
+  const asset = new Group();
+  const body = new Mesh(new BoxGeometry(1, 2, 0.1), new MeshBasicMaterial());
+  const display = new Mesh(new PlaneGeometry(0.9, 1.9), new MeshBasicMaterial());
+  display.name = "device-screen";
+  asset.add(body, display);
+  models.pending[0]!.resolve({ asset, dispose: () => disposeDeviceModel(asset) });
+  await Promise.resolve();
+  draw(200);
+  draw(1050);
+  expect(pending.size).toBe(0);
+  viewer.dispose();
+});
+
 it("retains the loaded model and pose through rotation and framebuffer resolution changes, then releases it once", async () => {
   const { viewer, draw, source, state } = fixture();
   viewer.orbit(0.08, 0.04);
