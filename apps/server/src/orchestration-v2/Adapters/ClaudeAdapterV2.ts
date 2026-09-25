@@ -1437,6 +1437,13 @@ function shouldInstallClaudePermissionCallback(policy: ClaudeRuntimeQueryPolicy)
   return policy.installPermissionCallback;
 }
 
+// Whether a tool's permission callback must ask the user before answering.
+function requiresClaudeApproval(context: ActiveClaudeTurnContext): boolean {
+  return shouldInstallClaudePermissionCallback(
+    claudeRuntimeQueryPolicyForRuntimePolicy(context.input.runtimePolicy),
+  );
+}
+
 function claudeRuntimeQueryPolicyKey(policy: ClaudeRuntimeQueryPolicy): string {
   return JSON.stringify({
     permissionMode: policy.permissionMode,
@@ -2167,6 +2174,23 @@ function isClaudePromptEchoGatedFrame(message: SDKMessage): boolean {
   }
 }
 
+// The tool_use a non-root frame belongs to: a subagent frame's parent, or a
+// task lifecycle frame's tool_use_id.
+function claudeFrameToolUseIds(message: SDKMessage): ReadonlyArray<string> {
+  const ids: Array<string> = [];
+  const parent = Reflect.get(message, "parent_tool_use_id");
+  if (typeof parent === "string") {
+    ids.push(parent);
+  }
+  if (message.type === "system") {
+    const toolUseId = Reflect.get(message, "tool_use_id");
+    if (typeof toolUseId === "string") {
+      ids.push(toolUseId);
+    }
+  }
+  return ids;
+}
+
 function claudeEchoedPromptUuids(message: SDKMessage): ReadonlyArray<string> {
   const uuids = Reflect.get(message, "user_message_uuids");
   if (Array.isArray(uuids)) {
@@ -2765,6 +2789,11 @@ export function makeClaudeAdapterV2(
           >(),
         );
         const requestedContinuations = yield* Ref.make(new Set<string>());
+        // ExitPlanMode plans whose permission callback fired while the tool's
+        // root frames were held for a prompt echo. Each projects when its
+        // tool_use frame is handled, in whichever run that frame is routed
+        // to (the prompt's turn, or the continuation that drains a wake).
+        const heldProposedPlansByToolUseId = new Map<string, string>();
         const runtimeContext = yield* Effect.context<never>();
         const runPromise = Effect.runPromiseWith(runtimeContext);
 
@@ -5266,6 +5295,16 @@ export function makeClaudeAdapterV2(
               toolInput: nativeToolInput,
               parentToolUseId: parentToolUseIdFromSdkMessage(message),
             });
+            const heldPlan = heldProposedPlansByToolUseId.get(toolUse.id);
+            if (heldPlan !== undefined) {
+              heldProposedPlansByToolUseId.delete(toolUse.id);
+              yield* emitClaudePlanProjection({
+                context,
+                nativeItemId: toolUse.id,
+                kind: "proposed_plan",
+                markdown: heldPlan,
+              }).pipe(Effect.orDie);
+            }
           }
 
           for (const { toolResult, output } of claudeToolResultEntriesFromMessage(message)) {
@@ -5558,6 +5597,31 @@ export function makeClaudeAdapterV2(
           }
         });
 
+        // Root tool_use ids among a turn's held frames.
+        const heldToolUseIds = (context: ActiveClaudeTurnContext): ReadonlySet<string> =>
+          new Set(
+            context.heldRootFrames.flatMap((frame) =>
+              parentToolUseIdFromSdkMessage(frame) === null
+                ? claudeToolUseBlocksFromAssistantMessage(frame).map((toolUse) => toolUse.id)
+                : [],
+            ),
+          );
+
+        // Gives held root output to the pending prompt turn.
+        const releaseHeldRootFrames = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+        ) {
+          context.promptEcho = "confirmed";
+          const liveQuery = yield* Ref.get(queryContext);
+          const held = context.heldRootFrames.splice(0);
+          if (liveQuery === null) {
+            return;
+          }
+          for (const message of held) {
+            yield* handleRoutedSdkMessage({ query: liveQuery.query, message });
+          }
+        });
+
         // A prompt offered while Claude has a wake turn queued (a background
         // task or subagent finished during the previous turn) is answered
         // only after that wake turn runs, and the two look alike until each
@@ -5586,20 +5650,28 @@ export function makeClaudeAdapterV2(
             return;
           }
           if (claudeEchoedPromptUuids(message).includes(context.promptUuid)) {
-            context.promptEcho = "confirmed";
             if (liveQuery.promptEchoMode === "unknown") {
               liveQuery.promptEchoMode =
                 message.type !== "result" && context.gatedFramesBeforeEcho === 0
                   ? "early"
                   : "result_only";
             }
-            for (const frame of context.heldRootFrames.splice(0)) {
-              yield* handleRoutedSdkMessage({ query: input.query, message: frame });
-            }
+            yield* releaseHeldRootFrames(context);
             yield* handleRoutedSdkMessage(input);
             return;
           }
           if (!isClaudePromptEchoGatedFrame(message)) {
+            // Frames the held turn produced through its own tool uses (a
+            // subagent it launched, its task lifecycle) follow that turn;
+            // anything else, such as an earlier subagent still streaming,
+            // keeps its own owner.
+            if (
+              context.heldRootFrames.length > 0 &&
+              claudeFrameToolUseIds(message).some((id) => heldToolUseIds(context).has(id))
+            ) {
+              context.heldRootFrames.push(message);
+              return;
+            }
             yield* handleRoutedSdkMessage(input);
             return;
           }
@@ -5613,6 +5685,13 @@ export function makeClaudeAdapterV2(
             return;
           }
           const held = context.heldRootFrames.splice(0);
+          if (isClaudeTaskNotificationOriginResult(message) && message.num_turns === 0) {
+            // Lifecycle debris, not a turn: the frame handler drops it as it
+            // always has, and any held output stays held for its real owner.
+            context.heldRootFrames.push(...held);
+            yield* handleRoutedSdkMessage(input);
+            return;
+          }
           if (isClaudeTaskNotificationOriginResult(message)) {
             // The held turn was a wake turn Claude ran before this prompt's
             // turn, which still follows on the same stream.
@@ -5630,10 +5709,8 @@ export function makeClaudeAdapterV2(
           }
           // A result that neither echoes the prompt nor comes from a wake
           // (an interrupt, a startup failure) settles the prompt's turn.
-          context.promptEcho = "confirmed";
-          for (const frame of held) {
-            yield* handleRoutedSdkMessage({ query: input.query, message: frame });
-          }
+          context.heldRootFrames.unshift(...held);
+          yield* releaseHeldRootFrames(context);
           yield* handleRoutedSdkMessage(input);
         });
 
@@ -5653,9 +5730,15 @@ export function makeClaudeAdapterV2(
 
           const nativeRequestId = callbackOptions.toolUseID;
           const nativeToolInput = claudeNativeToolInputFromRecord(toolInput);
+          // While root output awaits its prompt echo, the tool's streamed
+          // frames are held and may belong to a queued wake turn, so the
+          // callback must not attach anything to the pending prompt turn:
+          // the held tool_use frame starts the tool (and projects an
+          // ExitPlanMode plan) in whichever run it is released to.
+          const heldForEcho = context.heldRootFrames.length > 0;
           if (toolName === "Agent") {
             rememberClaudeSubagentRequestedModel(context, nativeRequestId, nativeToolInput);
-          } else {
+          } else if (!heldForEcho) {
             yield* ensureToolCallStarted({
               context,
               nativeItemId: nativeRequestId,
@@ -5663,6 +5746,23 @@ export function makeClaudeAdapterV2(
               toolInput: nativeToolInput,
               parentToolUseId: null,
             });
+          }
+
+          if (heldForEcho && (toolName === "AskUserQuestion" || requiresClaudeApproval(context))) {
+            // The SDK blocks on the answer, and the prompt echo cannot arrive
+            // until the held turn goes on, so the request is raised now and
+            // the held output goes with it to the pending prompt turn, as it
+            // did before this turn was held.
+            yield* releaseHeldRootFrames(context);
+            if (toolName !== "Agent") {
+              yield* ensureToolCallStarted({
+                context,
+                nativeItemId: nativeRequestId,
+                toolName,
+                toolInput: nativeToolInput,
+                parentToolUseId: null,
+              });
+            }
           }
 
           if (toolName === "AskUserQuestion") {
@@ -5733,7 +5833,9 @@ export function makeClaudeAdapterV2(
 
           if (toolName === "ExitPlanMode") {
             const markdown = claudeProposedPlan(nativeToolInput);
-            if (markdown !== null) {
+            if (markdown !== null && heldForEcho) {
+              heldProposedPlansByToolUseId.set(nativeRequestId, markdown);
+            } else if (markdown !== null) {
               yield* emitClaudePlanProjection({
                 context,
                 nativeItemId: nativeRequestId,
@@ -5749,11 +5851,7 @@ export function makeClaudeAdapterV2(
             } satisfies PermissionResult;
           }
 
-          if (
-            !shouldInstallClaudePermissionCallback(
-              claudeRuntimeQueryPolicyForRuntimePolicy(context.input.runtimePolicy),
-            )
-          ) {
+          if (!requiresClaudeApproval(context)) {
             return {
               behavior: "allow",
               updatedInput: toolInput,
@@ -6038,13 +6136,15 @@ export function makeClaudeAdapterV2(
             Effect.flatMap(
               Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
                 // Output held for a prompt echo that never came still
-                // belongs to the turn the stream ended in.
+                // belongs to the turn this stream ended in. A replaced
+                // query's exit must not touch the next query's turn.
                 const heldContext = yield* Ref.get(activeTurn);
-                if (heldContext !== null && heldContext.heldRootFrames.length > 0) {
-                  heldContext.promptEcho = "confirmed";
-                  for (const frame of heldContext.heldRootFrames.splice(0)) {
-                    yield* handleRoutedSdkMessage({ query: querySession, message: frame });
-                  }
+                if (
+                  (yield* Ref.get(queryContext))?.query === querySession &&
+                  heldContext !== null &&
+                  heldContext.heldRootFrames.length > 0
+                ) {
+                  yield* releaseHeldRootFrames(heldContext);
                 }
                 const ownsLiveQuery = yield* Ref.modify(queryContext, (current) =>
                   current?.query === querySession ? [true, null] : [false, current],
