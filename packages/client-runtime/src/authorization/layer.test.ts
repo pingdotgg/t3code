@@ -529,10 +529,11 @@ describe("RemoteEnvironmentAuthorization", () => {
         yield* Queue.take(harness.stalls);
         yield* TestClock.adjust("3 seconds");
         yield* Queue.take(harness.stalls);
-        // The retry gets the default 10 s budget, not another 3 s.
-        yield* TestClock.adjust("3 seconds");
+        // The retry gets 7 s, so the ticket step ends 10 s after it started.
+        yield* TestClock.adjust("6 seconds");
         expect(pending.pollUnsafe()).toBeUndefined();
-        yield* TestClock.adjust("7 seconds");
+        yield* TestClock.adjust("1 second");
+        expect(pending.pollUnsafe()).toBeDefined();
         return yield* Fiber.join(pending);
       }).pipe(Effect.provide(harness.layer));
 

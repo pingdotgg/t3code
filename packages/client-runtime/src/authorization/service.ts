@@ -80,6 +80,9 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
 >()("@t3tools/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
 
 const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
+// 3 s + 7 s matches the default 10 s ticket budget. That leaves at least 5 s of the
+// supervisor's 15 s setup deadline for the descriptor check, websocket open, and initial config.
+const CACHED_ENDPOINT_SOCKET_RETRY_TIMEOUT_MS = 7_000;
 const BEARER_DESCRIPTOR_CACHE_TTL_MS = 10_000;
 const DPOP_AUTHORIZATION_TIMEOUT_MS = 30_000;
 
@@ -466,15 +469,16 @@ export const make = Effect.gen(function* () {
     let selected = yield* getDpopToken(input);
     if (selected.fromCache) {
       const cachedToken = selected.token;
-      // A slow server does not mean the token is bad. Retry the same token with the
-      // default budget so a stall does not mint a new credential and auth session.
+      // A slow server does not mean the token is bad. Retry the same token once with a
+      // longer budget so a stall does not mint a new credential and auth session.
       const cachedSocket = yield* createDpopSocketUrl(
         cachedToken,
         CACHED_ENDPOINT_SOCKET_TIMEOUT_MS,
       ).pipe(
-        Effect.catchTag("RemoteEnvironmentAuthTimeoutError", () =>
-          createDpopSocketUrl(cachedToken),
-        ),
+        Effect.catchTags({
+          RemoteEnvironmentAuthTimeoutError: () =>
+            createDpopSocketUrl(cachedToken, CACHED_ENDPOINT_SOCKET_RETRY_TIMEOUT_MS),
+        }),
         Effect.result,
       );
       if (Result.isSuccess(cachedSocket)) {
