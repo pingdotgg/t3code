@@ -133,7 +133,7 @@ interface Setting<A> {
 }
 
 /** Reads one variable, warning rather than failing when it is set and unusable. */
-const setting = <A>(
+const readOrWarn = <A>(
   config: Config.Config<A>,
   name: string,
   warning: (raw: string) => string,
@@ -154,7 +154,7 @@ const setting = <A>(
   );
 
 const endpoint = (name: string) =>
-  setting(
+  readOrWarn(
     Config.URL(name),
     name,
     // The value is left out because an endpoint can carry an API key.
@@ -162,7 +162,7 @@ const endpoint = (name: string) =>
   );
 
 const protocol = (name: string) =>
-  setting(
+  readOrWarn(
     Config.schema(OtlpProtocol, name),
     name,
     (raw) =>
@@ -170,7 +170,7 @@ const protocol = (name: string) =>
   );
 
 const headers = (name: string) =>
-  setting(
+  readOrWarn(
     // The schema Effect's OTLP exporters read these variables with.
     Config.Record(Schema.String, Schema.StringFromUriComponent, name),
     name,
