@@ -1,4 +1,5 @@
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
+import { isAutoSettlementCandidate } from "./ThreadSettlementService.ts";
 import { SourceControlProviderRegistry } from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -2914,6 +2915,125 @@ it.layer(SharedApplicationDataPlaneTestLayer)("snooze projection", (it) => {
       const awakened = yield* orchestrator.getThreadProjection(threadId);
       assert.isNull(awakened.thread.snoozedUntil);
       assert.isNull(awakened.thread.snoozedAt);
+    }),
+  );
+
+  it.effect("snoozes a running thread until its run ends", () =>
+    Effect.gen(function* () {
+      const applicationEngine = yield* OrchestrationEngineService;
+      const orchestrator = yield* OrchestratorV2;
+      const threadManagement = yield* ThreadManagementService;
+      const projectId = ProjectId.make("runtime-layer-run-end-snooze-project");
+      const threadId = ThreadId.make("runtime-layer-run-end-snooze-thread");
+      const snoozeUntilDone = (id: string) =>
+        orchestrator.dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make(`runtime-layer-run-end-snooze-${id}`),
+          threadId,
+          wakeOn: "run-end",
+        });
+      const readShell = Effect.map(orchestrator.getShellSnapshot(), (snapshot) =>
+        snapshot.threads.find((candidate) => candidate.id === threadId),
+      );
+
+      yield* applicationEngine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("runtime-layer-run-end-snooze-project-create"),
+        projectId,
+        title: "Run-end snooze",
+        workspaceRoot: "/tmp/runtime-layer-run-end-snooze-project",
+        defaultModelSelection: modelSelection,
+        scripts: [],
+        createdAt: "2026-07-24T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-run-end-snooze-thread-create"),
+        threadId,
+        projectId,
+        title: "Run-end snooze",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+
+      // No run in progress: the condition has already fired.
+      assert.equal((yield* Effect.flip(snoozeUntilDone("idle")))._tag, "OrchestratorDispatchError");
+      const empty = yield* orchestrator
+        .dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make("runtime-layer-run-end-snooze-empty"),
+          threadId,
+        })
+        .pipe(Effect.flip);
+      assert.equal(empty._tag, "OrchestratorDispatchError");
+
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-run-end-snooze-message"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-run-end-snooze-message"),
+        text: "Work on this.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0];
+      assert.isDefined(run);
+      assert.equal(run.status, "starting");
+
+      yield* snoozeUntilDone("running");
+      const snoozed = yield* readShell;
+      assert.isDefined(snoozed);
+      assert.deepEqual(snoozed.snoozeWakeOn, { type: "run-end", runId: run.id });
+      assert.isNull(snoozed.snoozedUntil);
+      assert.isNotNull(snoozed.snoozedAt);
+      assert.isFalse(
+        isAutoSettlementCandidate(snoozed, DateTime.toEpochMillis(yield* DateTime.now)),
+      );
+
+      // A duplicate keeps the original snooze.
+      yield* TestClock.adjust("1 second");
+      yield* snoozeUntilDone("running-again");
+      assert.deepEqual((yield* readShell)?.snoozedAt, snoozed.snoozedAt);
+
+      // The wake is derived: once the bound run stops, the stored condition
+      // no longer holds the thread, and auto-settlement treats it as awake.
+      yield* threadManagement.interruptThread({
+        projectId,
+        commandId: CommandId.make("runtime-layer-run-end-snooze-interrupt"),
+        threadId,
+        runId: run.id,
+        reason: "Stopped while snoozed",
+      });
+      const stopped = yield* readShell;
+      assert.isDefined(stopped);
+      assert.equal(stopped.latestRunId, run.id);
+      assert.equal(stopped.status, "interrupted");
+      assert.deepEqual(stopped.snoozeWakeOn, { type: "run-end", runId: run.id });
+      assert.isTrue(
+        isAutoSettlementCandidate(stopped, DateTime.toEpochMillis(yield* DateTime.now)),
+      );
+      assert.equal(
+        (yield* Effect.flip(snoozeUntilDone("stopped")))._tag,
+        "OrchestratorDispatchError",
+      );
+
+      yield* orchestrator.dispatch({
+        type: "thread.unsnooze",
+        commandId: CommandId.make("runtime-layer-run-end-snooze-wake"),
+        threadId,
+        reason: "user",
+      });
+      const awake = yield* readShell;
+      assert.isNull(awake?.snoozeWakeOn);
+      assert.isNull(awake?.snoozedAt);
     }),
   );
 });

@@ -1,4 +1,4 @@
-import type { ThreadId } from "@t3tools/contracts";
+import type { OrchestrationV2SnoozeWakeOn, ThreadId } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -404,6 +404,7 @@ export function createThreadEnvironmentAtoms<R, E>(
             pinOrderKey: null,
             snoozedAt: null,
             snoozedUntil: null,
+            snoozeWakeOn: null,
           },
     ),
     unsettle: optimistic.wrap(commands.unsettle, (thread, input, now) => ({
@@ -412,27 +413,49 @@ export function createThreadEnvironmentAtoms<R, E>(
       settledAt: null,
       unsettledAt: thread.settledOverride === "active" ? (thread.unsettledAt ?? null) : now,
     })),
-    snooze: optimistic.wrap(commands.snooze, (thread, input, now, accepted) =>
-      (!accepted &&
-        (thread.pendingRuntimeRequest !== null ||
-          ["preparing", "queued", "starting"].includes(thread.status))) ||
-      !(Date.parse(input.snoozedUntil) > DateTime.toEpochMillis(now))
-        ? thread
-        : {
-            ...thread,
-            pendingRuntimeRequest: null,
-            snoozedUntil: DateTime.makeUnsafe(input.snoozedUntil),
-            snoozedAt:
-              thread.snoozedUntil != null &&
-              DateTime.formatIso(thread.snoozedUntil) === input.snoozedUntil
-                ? (thread.snoozedAt ?? now)
-                : now,
-          },
-    ),
+    snooze: optimistic.wrap(commands.snooze, (thread, input, now, accepted, dispatched) => {
+      if (
+        (!accepted &&
+          (thread.pendingRuntimeRequest !== null ||
+            ["preparing", "queued", "starting"].includes(thread.status))) ||
+        (input.snoozedUntil === undefined && input.wakeOn === undefined) ||
+        (input.snoozedUntil !== undefined &&
+          !(Date.parse(input.snoozedUntil) > DateTime.toEpochMillis(now)))
+      ) {
+        return thread;
+      }
+      // Mirrors the server: "Until done" binds to the run in progress when the
+      // user acted, so a run starting mid-request cannot adopt the snooze.
+      let snoozeWakeOn: OrchestrationV2SnoozeWakeOn | null = null;
+      if (input.wakeOn === "run-end") {
+        if (
+          dispatched === undefined ||
+          dispatched.latestRunId === null ||
+          !["preparing", "starting", "running", "waiting"].includes(dispatched.status)
+        ) {
+          return thread;
+        }
+        snoozeWakeOn = { type: "run-end", runId: dispatched.latestRunId };
+      }
+      const sameWake =
+        (thread.snoozedUntil == null
+          ? input.snoozedUntil === undefined
+          : DateTime.formatIso(thread.snoozedUntil) === input.snoozedUntil) &&
+        thread.snoozeWakeOn?.runId === snoozeWakeOn?.runId;
+      return {
+        ...thread,
+        pendingRuntimeRequest: null,
+        snoozedUntil:
+          input.snoozedUntil === undefined ? null : DateTime.makeUnsafe(input.snoozedUntil),
+        snoozeWakeOn,
+        snoozedAt: sameWake ? (thread.snoozedAt ?? now) : now,
+      };
+    }),
     unsnooze: optimistic.wrap(commands.unsnooze, (thread) => ({
       ...thread,
       snoozedUntil: null,
       snoozedAt: null,
+      snoozeWakeOn: null,
     })),
     setAutoSettle: optimistic.wrap(commands.setAutoSettle, (thread, input, now) => ({
       ...thread,
@@ -451,6 +474,7 @@ export function createThreadEnvironmentAtoms<R, E>(
         : {}),
       snoozedUntil: null,
       snoozedAt: null,
+      snoozeWakeOn: null,
     })),
     unpin: optimistic.wrap(commands.unpin, (thread) => ({
       ...thread,

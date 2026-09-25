@@ -5,6 +5,7 @@ import {
   OrchestrationSearchThreadsResult,
   OrchestrationV2ThreadForkSourcePoint,
   OrchestrationV2ContextTransfer,
+  OrchestrationV2SnoozeWakeCondition,
   TrimmedNonEmptyString,
   ModelSelection,
   RuntimeMode,
@@ -29,7 +30,7 @@ import { McpInvocationContext } from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread in the calling project. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply; this does not schedule a future action.",
+    "Pin, snooze, settle, archive, or mark a thread unread in the calling project. Omit threadId for this thread. snooze requires snoozedUntil, or wakeOn 'run-end' to wake once the run in progress ends. Existing thread lifecycle rules apply; this does not schedule a future action.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     action: Schema.Literals([
@@ -44,6 +45,7 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
       "mark_unread",
     ]),
     snoozedUntil: Schema.optional(IsoDateTime),
+    wakeOn: Schema.optional(OrchestrationV2SnoozeWakeCondition),
   }),
   success: OrchestrationV2DispatchCommandResult,
   failure: OrchestratorMcpFailure,

@@ -59,6 +59,9 @@ export function createOptimisticThreadLifecycle(
       input: Input,
       now: DateTime.Utc,
       accepted: boolean,
+      // The thread as it was when the user acted, for previews that must not
+      // follow later snapshot changes the server never saw.
+      dispatched: OrchestrationV2ThreadShell | undefined,
     ) => OrchestrationV2ThreadShell,
   ): typeof command {
     return {
@@ -67,9 +70,13 @@ export function createOptimisticThreadLifecycle(
         const now = DateTime.nowUnsafe();
         const pending = pendingAtom(target.environmentId);
         const source = sourceSnapshotAtom(target.environmentId);
+        const dispatched = registry
+          .get(source)
+          ?.threads.find((thread) => thread.id === target.input.threadId);
         const update: PendingThreadUpdate = {
           threadId: target.input.threadId,
-          apply: (thread) => apply(thread, target.input, now, update.sequence !== undefined),
+          apply: (thread) =>
+            apply(thread, target.input, now, update.sequence !== undefined, dispatched),
         };
         const remove = () =>
           registry.update(pending, (current) => current.filter((item) => item !== update));

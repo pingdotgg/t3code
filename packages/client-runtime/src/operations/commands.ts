@@ -105,8 +105,10 @@ export interface ReorderActiveThreadInput extends ThreadCommandInput {
   readonly orderKey: string;
 }
 
+/** At least one of a wake time and a wake condition. */
 export interface SnoozeThreadInput extends ThreadCommandInput {
-  readonly snoozedUntil: string;
+  readonly snoozedUntil?: string | undefined;
+  readonly wakeOn?: import("@t3tools/contracts").OrchestrationV2SnoozeWakeCondition | undefined;
 }
 
 export interface UnsnoozeThreadInput extends ThreadCommandInput {
@@ -515,7 +517,8 @@ export const snoozeThread = Effect.fn("EnvironmentCommands.snoozeThread")(functi
     type: "thread.snooze",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
-    snoozedUntil: input.snoozedUntil,
+    ...(input.snoozedUntil === undefined ? {} : { snoozedUntil: input.snoozedUntil }),
+    ...(input.wakeOn === undefined ? {} : { wakeOn: input.wakeOn }),
   });
 });
 

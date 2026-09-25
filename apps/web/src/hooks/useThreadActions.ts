@@ -5,7 +5,11 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canSnooze,
+  threadWokeAt,
+  type SnoozeTarget,
+} from "@t3tools/client-runtime/state/thread-settled";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
@@ -850,7 +854,7 @@ export function useThreadActions() {
   );
 
   const snoozeThread = useCallback(
-    async (target: ScopedThreadRef, snoozedUntil: string) => {
+    async (target: ScopedThreadRef, snooze: SnoozeTarget) => {
       // Version skew: never send the command to a server that predates it.
       if (!readEnvironmentSupportsSnooze(target.environmentId)) {
         return AsyncResult.failure(
@@ -879,7 +883,11 @@ export function useThreadActions() {
       const action = ThreadUndo.begin("snooze", scopedThreadKey(target));
       const result = await snoozeThreadMutation({
         environmentId: target.environmentId,
-        input: { threadId: target.threadId, snoozedUntil },
+        input: {
+          threadId: target.threadId,
+          snoozedUntil: snooze.snoozedUntil,
+          wakeOn: snooze.wakeOn,
+        },
       });
       if (result._tag !== "Success") {
         action.finish();

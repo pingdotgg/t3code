@@ -9,6 +9,7 @@ import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
+import type { SnoozeTarget } from "@t3tools/client-runtime/state/thread-settled";
 import { type EnvironmentId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect } from "@react-navigation/native";
@@ -86,7 +87,7 @@ interface HomeScreenProps {
   readonly onSettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onSnoozeThread: (
     thread: EnvironmentThreadShell,
-    snoozedUntil: string,
+    target: SnoozeTarget,
   ) => Promise<boolean>;
   readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
@@ -349,8 +350,8 @@ export function HomeScreen(props: HomeScreenProps) {
   // optimistic holds.
   const handleSettleThread = props.onSettleThread;
   const handleSnoozeThread = useCallback(
-    (thread: EnvironmentThreadShell, snoozedUntil: string) => {
-      void props.onSnoozeThread(thread, snoozedUntil);
+    (thread: EnvironmentThreadShell, target: SnoozeTarget) => {
+      void props.onSnoozeThread(thread, target);
     },
     [props.onSnoozeThread],
   );
@@ -440,6 +441,7 @@ export function HomeScreen(props: HomeScreenProps) {
     machineByEnvironmentId,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
+    snoozeUntilDoneEnvironmentIds,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
     pinReorderEnvironmentIds,
@@ -671,6 +673,7 @@ export function HomeScreen(props: HomeScreenProps) {
           settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
           onSettleThread={handleSettleThread}
           snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
+          snoozeUntilDoneSupported={snoozeUntilDoneEnvironmentIds.has(thread.environmentId)}
           pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
           autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
           reorderSupported={
@@ -723,6 +726,7 @@ export function HomeScreen(props: HomeScreenProps) {
       providersByEnvironmentId,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
+      snoozeUntilDoneEnvironmentIds,
       threadSearchMatchByKey,
       titleRegenerationEnvironmentIds,
       toggleSettledShelf,

@@ -1,12 +1,13 @@
 // @effect-diagnostics globalDate:off -- Tests exercise local calendar snooze boundaries.
 import { ThreadId } from "@t3tools/contracts";
-import { TurnId } from "@t3tools/contracts";
+import { RunId, TurnId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   canSnooze,
   effectiveSnoozed,
   hasQueuedTurnStart,
+  isThreadRunInProgress,
   resolveSnoozePresets,
   snoozeWakeLabel,
   threadRaisedHandWhileSnoozed,
@@ -149,6 +150,98 @@ describe("effectiveSnoozed", () => {
         { now: NOW },
       ),
     ).toBe(true);
+  });
+});
+
+describe("run-end snoozes", () => {
+  const runId = "run-1";
+  function makeRunShell(input: {
+    readonly runId?: string;
+    readonly status: string;
+    readonly requestedAt?: string;
+    readonly completedAt?: string | null;
+  }): ThreadSnoozeShell {
+    return {
+      snoozedUntil: null,
+      snoozedAt: SNOOZED_AT,
+      snoozeWakeOn: { type: "run-end", runId: RunId.make(runId) },
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      latestRun: {
+        runId: input.runId ?? runId,
+        status: input.status,
+        requestedAt: input.requestedAt ?? SNOOZED_AT,
+        startedAt: input.requestedAt ?? SNOOZED_AT,
+        completedAt: input.completedAt ?? null,
+      },
+      runtime: { status: input.status, updatedAt: "2026-04-10T11:30:00.000Z" },
+    };
+  }
+
+  it("stay snoozed while the bound run is in progress", () => {
+    for (const status of ["starting", "running", "waiting"]) {
+      const shell = makeRunShell({ status });
+      expect(effectiveSnoozed(shell, { now: NOW })).toBe(true);
+      expect(threadWokeAt(shell, { now: NOW })).toBe(null);
+    }
+  });
+
+  it("wake once the bound run stops, however it ends", () => {
+    const completedAt = "2026-04-10T11:00:00.000Z";
+    for (const status of ["completed", "interrupted", "cancelled", "failed"]) {
+      const shell = makeRunShell({ status, completedAt });
+      expect(effectiveSnoozed(shell, { now: NOW })).toBe(false);
+      expect(threadWokeAt(shell, { now: NOW })).toBe(completedAt);
+    }
+  });
+
+  it("stay awake when a later run starts", () => {
+    const requestedAt = "2026-04-10T11:15:00.000Z";
+    const laterRun = makeRunShell({ runId: "run-2", status: "running", requestedAt });
+    expect(effectiveSnoozed(laterRun, { now: NOW })).toBe(false);
+    expect(threadWokeAt(laterRun, { now: NOW })).toBe(requestedAt);
+  });
+
+  it("stay snoozed behind a follow-up queued or cancelled while the bound run is active", () => {
+    for (const status of ["queued", "cancelled"]) {
+      const shell = {
+        ...makeRunShell({ runId: "run-2", status, requestedAt: "2026-04-10T10:00:00.000Z" }),
+        runtime: { status: "running", activeRunId: runId },
+      };
+      expect(effectiveSnoozed(shell, { now: NOW })).toBe(true);
+      expect(threadWokeAt(shell, { now: NOW })).toBe(null);
+    }
+    // Once the bound run ends, the follow-up starts and marks the wake.
+    const startedAt = "2026-04-10T11:15:00.000Z";
+    const followUp: ThreadSnoozeShell = {
+      ...makeRunShell({ runId: "run-2", status: "running" }),
+      latestRun: {
+        runId: "run-2",
+        status: "running",
+        requestedAt: "2026-04-10T10:00:00.000Z",
+        startedAt,
+        completedAt: null,
+      },
+      runtime: { status: "running", activeRunId: "run-2" },
+    };
+    expect(effectiveSnoozed(followUp, { now: NOW })).toBe(false);
+    expect(threadWokeAt(followUp, { now: NOW })).toBe(startedAt);
+  });
+
+  it("are offered first, only when requested, and label as when done", () => {
+    const now = localDate(2026, 4, 8, 10);
+    expect(resolveSnoozePresets(now).some((preset) => preset.id === "until-done")).toBe(false);
+    expect(resolveSnoozePresets(now, { untilDone: true })[0]).toEqual({
+      id: "until-done",
+      label: "Until done",
+      whenLabel: "",
+      wakeOn: "run-end",
+    });
+    expect(snoozeWakeLabel(makeRunShell({ status: "running" }), { now: NOW })).toBe("when done");
+    expect(isThreadRunInProgress(makeRunShell({ status: "running" }))).toBe(true);
+    expect(isThreadRunInProgress(makeRunShell({ status: "completed" }))).toBe(false);
+    // The server refuses to snooze a queued run, so "Until done" is not offered.
+    expect(isThreadRunInProgress(makeRunShell({ status: "queued" }))).toBe(false);
   });
 });
 
@@ -307,16 +400,18 @@ describe("snoozeWakeLabel", () => {
   const now = "2026-06-02T00:00:00.000Z";
 
   it("formats remaining time coarsely, rounding up", () => {
-    expect(snoozeWakeLabel("2026-06-02T00:30:00.000Z", { now })).toBe("30m");
-    expect(snoozeWakeLabel("2026-06-02T01:30:00.000Z", { now })).toBe("2h");
-    expect(snoozeWakeLabel("2026-06-03T02:00:00.000Z", { now })).toBe("2d");
+    expect(snoozeWakeLabel({ snoozedUntil: "2026-06-02T00:30:00.000Z" }, { now })).toBe("30m");
+    expect(snoozeWakeLabel({ snoozedUntil: "2026-06-02T01:30:00.000Z" }, { now })).toBe("2h");
+    expect(snoozeWakeLabel({ snoozedUntil: "2026-06-03T02:00:00.000Z" }, { now })).toBe("2d");
   });
 
   it("never reads zero or negative while still snoozed", () => {
-    expect(snoozeWakeLabel("2026-06-02T00:00:30.000Z", { now })).toBe("1m");
-    expect(snoozeWakeLabel("2026-06-01T23:59:59.000Z", { now })).toBe("now");
-    expect(snoozeWakeLabel("not-a-date", { now })).toBe("now");
-    expect(snoozeWakeLabel("2026-06-02T09:00:00.000Z", { now: "bad" })).toBe("now");
+    expect(snoozeWakeLabel({ snoozedUntil: "2026-06-02T00:00:30.000Z" }, { now })).toBe("1m");
+    expect(snoozeWakeLabel({ snoozedUntil: "2026-06-01T23:59:59.000Z" }, { now })).toBe("now");
+    expect(snoozeWakeLabel({ snoozedUntil: "not-a-date" }, { now })).toBe("now");
+    expect(snoozeWakeLabel({ snoozedUntil: "2026-06-02T09:00:00.000Z" }, { now: "bad" })).toBe(
+      "now",
+    );
   });
 });
 
@@ -336,7 +431,7 @@ describe("resolveSnoozePresets", () => {
     expect(presets.find((preset) => preset.id === "three-hours")?.label).toBe("In 3 hours");
     expect(presets.find((preset) => preset.id === "evening")?.label).toBe("This evening");
     expect(
-      new Date(presets.find((preset) => preset.id === "tomorrow")!.snoozedUntil).getHours(),
+      new Date(presets.find((preset) => preset.id === "tomorrow")!.snoozedUntil!).getHours(),
     ).toBe(9);
   });
 
@@ -352,7 +447,7 @@ describe("resolveSnoozePresets", () => {
   it("puts next week on the following Monday", () => {
     const nextWeek = new Date(
       resolveSnoozePresets(localDate(2026, 4, 6, 10)).find((preset) => preset.id === "next-week")!
-        .snoozedUntil,
+        .snoozedUntil!,
     );
     expect(nextWeek.getDay()).toBe(1);
     expect(nextWeek.getDate()).toBe(13);
@@ -367,7 +462,7 @@ describe("resolveSnoozePresets", () => {
       "evening",
       "tomorrow",
     ]);
-    const tomorrow = new Date(presets.find((preset) => preset.id === "tomorrow")!.snoozedUntil);
+    const tomorrow = new Date(presets.find((preset) => preset.id === "tomorrow")!.snoozedUntil!);
     expect(tomorrow.getDay()).toBe(1);
   });
 });

@@ -91,7 +91,12 @@ export function resolveThreadListV2SnoozeMenuSelection(input: {
   const displayedPreset = input.displayedPresets.find(
     (candidate) => input.event === `snooze:${candidate.id}`,
   );
-  if (displayedPreset && Date.parse(displayedPreset.snoozedUntil) > input.now.getTime()) {
+  // "Until done" has no wake time to expire.
+  if (
+    displayedPreset &&
+    (displayedPreset.snoozedUntil === undefined ||
+      Date.parse(displayedPreset.snoozedUntil) > input.now.getTime())
+  ) {
     return { _tag: "selected", preset: displayedPreset };
   }
   return { _tag: "expired" };
@@ -472,8 +477,8 @@ export function buildThreadListV2ListItems(input: {
 }): ThreadListV2ListItem[] {
   const threadItems = input.items.map((item): ThreadListV2ListItem => {
     const snoozeWakeLabelText =
-      item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
-        ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow })
+      item.snoozed && input.snoozeLabelNow !== undefined
+        ? snoozeWakeLabel(item.thread, { now: input.snoozeLabelNow })
         : undefined;
     // The minute clock belongs on the item, not the list's extraData, so the
     // recycler's equality can confine the per-minute re-render to rows whose

@@ -1,8 +1,13 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import type {
+  OrchestrationThreadShell,
+  OrchestrationV2SnoozeWakeCondition,
+  OrchestrationV2SnoozeWakeOn,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 interface SettlementRunLike {
+  readonly runId?: unknown;
   readonly turnId?: unknown;
   readonly assistantMessageId?: unknown;
   readonly status?: string;
@@ -17,6 +22,7 @@ interface SettlementRuntimeLike {
   readonly providerName?: unknown;
   readonly runtimeMode?: unknown;
   readonly activeTurnId?: unknown;
+  readonly activeRunId?: string | null;
   readonly lastError?: unknown;
   readonly status: string;
   readonly updatedAt?: string;
@@ -92,11 +98,13 @@ export function hasQueuedTurnStart(
  * The snooze lifecycle fields plus everything needed to detect a raised
  * hand. Snooze is an overlay on the active state: a snoozed thread stays
  * "active" in the data model and is only suppressed from the inbox until
- * its wake time passes or the thread demands attention.
+ * its wake time passes, its wake condition fires, or the thread demands
+ * attention.
  */
 export interface ThreadSnoozeShell extends QueuedThreadShell {
   readonly snoozedUntil?: string | null;
   readonly snoozedAt?: string | null;
+  readonly snoozeWakeOn?: OrchestrationV2SnoozeWakeOn | null;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
 }
@@ -111,6 +119,7 @@ export interface ThreadSnoozeShell extends QueuedThreadShell {
  */
 export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean {
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return true;
+  if (snoozedRunEnded(shell)) return true;
   const runtime = shell.runtime ?? shell.session ?? null;
   const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
   // Only a FRESH failure raises the hand: a thread snoozed while already
@@ -133,6 +142,32 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
     return true;
   }
   return false;
+}
+
+/**
+ * An "Until done" snooze's run has ended, however it ended: the run stopped,
+ * or a newer run replaced it. Binding to the run keeps a stale condition from
+ * re-hiding the thread when a later run starts. A follow-up queued behind the
+ * bound run becomes the latest run while the bound run is still active, so
+ * the active run wins over the latest one.
+ */
+function snoozedRunEnded(shell: ThreadSnoozeShell): boolean {
+  if (shell.snoozeWakeOn?.type !== "run-end") return false;
+  if (shell.runtime?.activeRunId === shell.snoozeWakeOn.runId) return false;
+  const latestRun = shell.latestRun ?? null;
+  return latestRun?.runId !== shell.snoozeWakeOn.runId || !isThreadRunInProgress(shell);
+}
+
+/**
+ * The latest run is still working: the only time "Until done" is offered.
+ * Excludes "queued" to match the run statuses the server binds a run-end
+ * snooze to.
+ */
+export function isThreadRunInProgress(shell: Pick<QueuedThreadShell, "latestRun">): boolean {
+  const status = shell.latestRun?.status;
+  return (
+    status === "preparing" || status === "starting" || status === "running" || status === "waiting"
+  );
 }
 
 /**
@@ -162,21 +197,23 @@ export function canSnooze(
 }
 
 /**
- * Snoozed resolution: hidden from the inbox while the wake time is in the
- * future and the thread has not raised its hand. Timer wakes are derived —
- * no server event fires when snoozedUntil passes; the stale fields simply
- * stop classifying as snoozed (and feed the woke indicator until the user
- * visits or re-engages).
+ * Snoozed resolution: hidden from the inbox while the wake time (if any) is
+ * in the future and the thread has not raised its hand. Wakes are derived —
+ * no server event fires when snoozedUntil passes or the run ends; the stale
+ * fields simply stop classifying as snoozed (and feed the woke indicator
+ * until the user visits or re-engages).
  */
 export function effectiveSnoozed(
   shell: ThreadSnoozeShell,
   options: { readonly now: string },
 ): boolean {
-  if (shell.snoozedUntil == null) return false;
-  const wakeAtMs = Date.parse(shell.snoozedUntil);
-  // Malformed data never hides a thread.
-  if (Number.isNaN(wakeAtMs)) return false;
-  if (wakeAtMs <= Date.parse(options.now)) return false;
+  if (shell.snoozedUntil == null && shell.snoozeWakeOn == null) return false;
+  if (shell.snoozedUntil != null) {
+    const wakeAtMs = Date.parse(shell.snoozedUntil);
+    // Malformed data never hides a thread.
+    if (Number.isNaN(wakeAtMs)) return false;
+    if (wakeAtMs <= Date.parse(options.now)) return false;
+  }
   return !threadRaisedHandWhileSnoozed(shell);
 }
 
@@ -195,8 +232,8 @@ export function threadWokeAt(
   shell: ThreadSnoozeShell,
   options: { readonly now: string },
 ): string | null {
-  if (shell.snoozedUntil == null) return null;
-  const wakeAtMs = Date.parse(shell.snoozedUntil);
+  if (shell.snoozedUntil == null && shell.snoozeWakeOn == null) return null;
+  const wakeAtMs = shell.snoozedUntil == null ? null : Date.parse(shell.snoozedUntil);
   if (Number.isNaN(wakeAtMs)) return null;
   // An early hand-raise wake stays authoritative even after the scheduled
   // wake time passes: reporting snoozedUntil then would resurface a Woke
@@ -213,27 +250,48 @@ export function threadWokeAt(
     ) {
       return latestRun.completedAt;
     }
+    // A run-end wake reports when the snoozed run stopped, or when the run
+    // that replaced it started (a queued follow-up is requested earlier).
+    if (snoozedRunEnded(shell)) {
+      const endedAt =
+        latestRun?.runId === shell.snoozeWakeOn?.runId
+          ? latestRun?.completedAt
+          : (latestRun?.startedAt ?? latestRun?.requestedAt);
+      if (endedAt != null) return endedAt;
+    }
     return runtime?.updatedAt ?? shell.snoozedAt ?? null;
   }
   // No raised hand: woke iff the timer elapsed (still-snoozed → null).
-  return wakeAtMs <= Date.parse(options.now) ? shell.snoozedUntil : null;
+  return wakeAtMs !== null && wakeAtMs <= Date.parse(options.now)
+    ? (shell.snoozedUntil ?? null)
+    : null;
 }
 
 const HOUR_MS = 60 * 60 * 1_000;
 const EVENING_HOUR = 18;
 const MORNING_HOUR = 9;
 
-export type SnoozePresetId = "hour" | "three-hours" | "evening" | "tomorrow" | "next-week";
+export type SnoozePresetId =
+  | "until-done"
+  | "hour"
+  | "three-hours"
+  | "evening"
+  | "tomorrow"
+  | "next-week";
 
-export interface SnoozePreset {
+/** What a snooze waits for, in thread.snooze command shape. */
+export type SnoozeTarget =
+  | { readonly snoozedUntil: string; readonly wakeOn?: undefined }
+  | { readonly snoozedUntil?: undefined; readonly wakeOn: OrchestrationV2SnoozeWakeCondition };
+
+export type SnoozePreset = SnoozeTarget & {
   readonly id: SnoozePresetId;
   readonly label: string;
   /** Menu-row time column. Complements the label instead of repeating it:
-      "Tomorrow" pairs with "9:00 AM", not "tomorrow 9:00 AM". */
+      "Tomorrow" pairs with "9:00 AM", not "tomorrow 9:00 AM". Empty for
+      "Until done", which has no wake time. */
   readonly whenLabel: string;
-  /** ISO wake time. */
-  readonly snoozedUntil: string;
-}
+};
 
 function snoozeTimeOfDayLabel(date: Date): string {
   return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
@@ -259,12 +317,26 @@ function addSnoozeDays(base: Date, days: number): Date {
  * appears while it is meaningfully before evening; after that the calendar
  * choices start at "Tomorrow". Calendar presets that land on the same
  * instant collapse: on Sundays "Tomorrow" and "Next week" are both Monday
- * morning, so only "Tomorrow" is offered.
+ * morning, so only "Tomorrow" is offered. "Until done" leads the list for
+ * running threads.
  */
-export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
+export function resolveSnoozePresets(
+  now: Date,
+  options: { readonly untilDone?: boolean } = {},
+): ReadonlyArray<SnoozePreset> {
   const inAnHour = DateTime.toDate(DateTime.makeUnsafe(now.getTime() + HOUR_MS));
   const inThreeHours = DateTime.toDate(DateTime.makeUnsafe(now.getTime() + 3 * HOUR_MS));
   const presets: SnoozePreset[] = [
+    ...(options.untilDone === true
+      ? [
+          {
+            id: "until-done" as const,
+            label: "Until done",
+            whenLabel: "",
+            wakeOn: "run-end" as const,
+          },
+        ]
+      : []),
     {
       id: "hour",
       label: "In 1 hour",
@@ -312,12 +384,17 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
 }
 
 /**
- * Compact "wakes in" label for snoozed rows: "2h", "18h", "3d". Minutes
- * round up so a snooze never reads "0m" while still hidden. Shared by web
- * and mobile so the same wake time never reads differently per client.
+ * Compact "wakes in" label for snoozed rows: "2h", "18h", "3d", or "when
+ * done" for an "Until done" snooze. Minutes round up so a snooze never reads
+ * "0m" while still hidden. Shared by web and mobile so the same wake time
+ * never reads differently per client.
  */
-export function snoozeWakeLabel(snoozedUntil: string, options: { readonly now: string }): string {
-  const wakeMs = Date.parse(snoozedUntil);
+export function snoozeWakeLabel(
+  shell: Pick<ThreadSnoozeShell, "snoozedUntil" | "snoozeWakeOn">,
+  options: { readonly now: string },
+): string {
+  if (shell.snoozedUntil == null) return shell.snoozeWakeOn != null ? "when done" : "now";
+  const wakeMs = Date.parse(shell.snoozedUntil);
   const nowMs = Date.parse(options.now);
   if (Number.isNaN(wakeMs) || Number.isNaN(nowMs)) return "now";
   const remainingMs = wakeMs - nowMs;

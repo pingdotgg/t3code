@@ -13,6 +13,7 @@ import {
   type ModelSelection,
   OrchestrationV2Command,
   type OrchestrationV2AppThread,
+  type OrchestrationV2SnoozeWakeOn,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ContextSourcePoint,
   type OrchestrationV2ContextTransfer,
@@ -2388,20 +2389,50 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
     let snoozedUntil: DateTime.Utc | null = null;
+    let snoozeWakeOn: OrchestrationV2SnoozeWakeOn | null = null;
     if (command.type === "thread.snooze") {
       const projection = yield* loadProjectionForCommand(command, ["runs", "runtimeRequests"], {
         turnItemTypes: [],
       });
-      const parsedSnoozedUntil = DateTime.make(command.snoozedUntil);
+      if (command.snoozedUntil === undefined && command.wakeOn === undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} snooze needs a wake time or wake condition.`,
+        });
+      }
+      const parsedSnoozedUntil =
+        command.snoozedUntil === undefined ? null : DateTime.make(command.snoozedUntil);
       if (
-        Option.isNone(parsedSnoozedUntil) ||
-        DateTime.toEpochMillis(parsedSnoozedUntil.value) <= DateTime.toEpochMillis(now)
+        parsedSnoozedUntil !== null &&
+        (Option.isNone(parsedSnoozedUntil) ||
+          DateTime.toEpochMillis(parsedSnoozedUntil.value) <= DateTime.toEpochMillis(now))
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
           cause: `Thread ${command.threadId} snooze wake time ${command.snoozedUntil} is not in the future.`,
         });
+      }
+      if (command.wakeOn === "run-end") {
+        // With no run in progress the condition has already fired, so the
+        // snooze would wake at once. Bind to the run so a later one cannot
+        // re-hide the thread.
+        const run = projection.runs.at(-1);
+        if (
+          run === undefined ||
+          (run.status !== "preparing" &&
+            run.status !== "starting" &&
+            run.status !== "running" &&
+            run.status !== "waiting")
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} has no run in progress to snooze until.`,
+          });
+        }
+        snoozeWakeOn = { type: "run-end", runId: run.id };
       }
       if (projection.runtimeRequests.some((request) => request.status === "pending")) {
         return yield* new OrchestratorDispatchError({
@@ -2417,7 +2448,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} has a queued run and cannot be snoozed.`,
         });
       }
-      snoozedUntil = parsedSnoozedUntil.value;
+      snoozedUntil = parsedSnoozedUntil === null ? null : parsedSnoozedUntil.value;
     }
     let markUnreadVisitedAt: DateTime.Utc | null = null;
     if (command.type === "thread.mark-unread") {
@@ -2466,25 +2497,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
         }
         case "thread.snooze": {
-          const sameWakeTime =
-            thread.snoozedUntil != null &&
-            snoozedUntil !== null &&
-            DateTime.toEpochMillis(thread.snoozedUntil) === DateTime.toEpochMillis(snoozedUntil);
-          const existingSnoozedAt = sameWakeTime ? (thread.snoozedAt ?? null) : null;
+          // Re-snoozing to the same wake is a duplicate (double-click, raced
+          // clients) and keeps the original timestamps.
+          const sameWake =
+            (thread.snoozedUntil == null
+              ? snoozedUntil === null
+              : snoozedUntil !== null &&
+                DateTime.toEpochMillis(thread.snoozedUntil) ===
+                  DateTime.toEpochMillis(snoozedUntil)) &&
+            thread.snoozeWakeOn?.runId === snoozeWakeOn?.runId;
+          const existingSnoozedAt = sameWake ? (thread.snoozedAt ?? null) : null;
           return {
             ...thread,
             snoozedUntil,
+            snoozeWakeOn,
             limitRecovery: thread.limitRecovery ? { ...thread.limitRecovery, snooze: false } : null,
             snoozedAt: existingSnoozedAt ?? now,
             updatedAt: existingSnoozedAt === null ? now : thread.updatedAt,
           };
         }
         case "thread.unsnooze": {
-          const alreadyAwake = thread.snoozedUntil == null;
+          const alreadyAwake = thread.snoozedUntil == null && thread.snoozeWakeOn == null;
           return {
             ...thread,
             snoozedUntil: null,
             snoozedAt: null,
+            snoozeWakeOn: null,
             updatedAt: alreadyAwake ? thread.updatedAt : now,
           };
         }
@@ -2501,7 +2539,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // silently outranking them — an explicit settle is un-settled and a
           // snooze's return ticket is spent (the thread is on top NOW).
           const alreadyPinned = thread.pinnedAt != null;
-          const promotes = thread.settledOverride === "settled" || thread.snoozedUntil != null;
+          const promotes =
+            thread.settledOverride === "settled" ||
+            thread.snoozedUntil != null ||
+            thread.snoozeWakeOn != null;
           return {
             ...thread,
             pinnedAt: alreadyPinned ? thread.pinnedAt : now,
@@ -2516,6 +2557,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             settledAt: thread.settledOverride === "settled" ? null : thread.settledAt,
             snoozedUntil: null,
             snoozedAt: null,
+            snoozeWakeOn: null,
             updatedAt: alreadyPinned && !promotes ? thread.updatedAt : now,
           };
         }
@@ -2581,6 +2623,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   // Recovery changes acknowledge the same stopped run; keep its
                   // metadata timestamp from appearing as a fresh failure wake.
                   snoozedAt: now,
+                  snoozeWakeOn: null,
                 }
               : command.limitRecovery !== undefined &&
                   thread.limitRecovery?.snooze &&
@@ -4090,12 +4133,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
         projection = yield* getProjectionWithPendingEvents(command.threadId, events);
       }
-      if (projection.thread.snoozedUntil != null) {
+      if (projection.thread.snoozedUntil != null || projection.thread.snoozeWakeOn != null) {
         const now = yield* DateTime.now;
         const thread: OrchestrationV2AppThread = {
           ...projection.thread,
           snoozedUntil: null,
           snoozedAt: null,
+          snoozeWakeOn: null,
           updatedAt: now,
         };
         yield* emit(

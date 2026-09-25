@@ -10,6 +10,7 @@ import {
   ContextHandoffId,
   ContextTransferId,
   EventId,
+  ForwardCompatibleNullable,
   IsoDateTime,
   MessageId,
   NodeId,
@@ -351,6 +352,20 @@ export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
 );
 export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitRecoveryUpdate.Type;
 
+/** Event-based snooze wake. "run-end": the run in progress stops, however it ends. */
+export const OrchestrationV2SnoozeWakeCondition = Schema.Literals(["run-end"]);
+export type OrchestrationV2SnoozeWakeCondition = typeof OrchestrationV2SnoozeWakeCondition.Type;
+
+/** A wake condition bound to the run it waits on, so a later run cannot re-hide the thread. */
+export const OrchestrationV2SnoozeWakeOn = Schema.Struct({
+  type: OrchestrationV2SnoozeWakeCondition,
+  runId: RunId,
+});
+export type OrchestrationV2SnoozeWakeOn = typeof OrchestrationV2SnoozeWakeOn.Type;
+
+/** Conditions this build does not know decode as null: the thread stays visible, not stuck. */
+const SnoozeWakeOnField = Schema.optional(ForwardCompatibleNullable(OrchestrationV2SnoozeWakeOn));
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -394,6 +409,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  snoozeWakeOn: SnoozeWakeOnField,
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -1554,6 +1570,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  snoozeWakeOn: SnoozeWakeOnField,
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   /** Omitted by servers that predate thread pinning. */
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -2307,7 +2324,10 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.snooze"),
     commandId: CommandId,
     threadId: ThreadId,
-    snoozedUntil: IsoDateTime,
+    // At least one of a wake time and a wake condition; with both, whichever
+    // comes first wakes the thread. "run-end" binds to the run in progress.
+    snoozedUntil: Schema.optional(IsoDateTime),
+    wakeOn: Schema.optional(OrchestrationV2SnoozeWakeCondition),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsnooze"),

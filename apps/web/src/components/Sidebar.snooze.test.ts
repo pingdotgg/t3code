@@ -19,15 +19,15 @@ describe("resolveSnoozePresets", () => {
       "next-week",
     ]);
     const threeHours = presets.find((preset) => preset.id === "three-hours");
-    expect(new Date(threeHours!.snoozedUntil).getHours()).toBe(13);
+    expect(new Date(threeHours!.snoozedUntil!).getHours()).toBe(13);
     const evening = presets.find((preset) => preset.id === "evening");
-    expect(new Date(evening!.snoozedUntil).getHours()).toBe(18);
+    expect(new Date(evening!.snoozedUntil!).getHours()).toBe(18);
     const tomorrow = presets.find((preset) => preset.id === "tomorrow");
-    const tomorrowDate = new Date(tomorrow!.snoozedUntil);
+    const tomorrowDate = new Date(tomorrow!.snoozedUntil!);
     expect(tomorrowDate.getDate()).toBe(9);
     expect(tomorrowDate.getHours()).toBe(9);
     const nextWeek = presets.find((preset) => preset.id === "next-week");
-    const nextWeekDate = new Date(nextWeek!.snoozedUntil);
+    const nextWeekDate = new Date(nextWeek!.snoozedUntil!);
     expect(nextWeekDate.getDay()).toBe(1);
     expect(nextWeekDate.getDate()).toBe(13);
   });
@@ -57,7 +57,7 @@ describe("resolveSnoozePresets", () => {
   it("puts next week a full week out when today is Monday", () => {
     // Monday 2026-04-06.
     const presets = resolveSnoozePresets(localDate(2026, 4, 6, 10), "locale");
-    const nextWeek = new Date(presets.find((preset) => preset.id === "next-week")!.snoozedUntil);
+    const nextWeek = new Date(presets.find((preset) => preset.id === "next-week")!.snoozedUntil!);
     expect(nextWeek.getDay()).toBe(1);
     expect(nextWeek.getDate()).toBe(13);
   });

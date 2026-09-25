@@ -115,6 +115,7 @@ function threadDetailToShell(
     pinOrderKey: thread.pinOrderKey,
     snoozedUntil: thread.snoozedUntil ?? null,
     snoozedAt: thread.snoozedAt ?? null,
+    snoozeWakeOn: thread.snoozeWakeOn ?? null,
     deletedAt: thread.deletedAt,
   });
 }
