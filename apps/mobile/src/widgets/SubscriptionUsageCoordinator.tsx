@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/unstable/reactivity";
 import * as Linking from "expo-linking";
 import { useEffect } from "react";
+import { Platform } from "react-native";
 import { environmentCatalog } from "../connection/catalog";
 import { environmentPresentations } from "../state/presentation";
 import { publishSubscriptionUsage } from "./publishSubscriptionUsage";
@@ -13,6 +14,8 @@ const snapshotAtom = Atom.make((get) =>
   buildSubscriptionUsageSnapshot(
     get(environmentPresentations.presentationsAtom),
     Linking.createURL("settings/usage", { queryParams: { tab: "limits" } }),
+    // Android scrolls the full list; iOS stores a bounded widget timeline.
+    Platform.OS === "android" ? Infinity : 6,
   ),
 ).pipe(Atom.withEquality((a, b) => JSON.stringify(a) === JSON.stringify(b)));
 
