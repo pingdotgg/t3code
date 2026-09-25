@@ -226,11 +226,24 @@ it.effect("preserves initialized capabilities when optional usage times out", ()
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("logs why a capability probe failed before reporting no capabilities", () => {
+const captureProbeFailureLog = () => {
   const messages: Array<unknown> = [];
-  const logCapture = Logger.make<unknown, void>(({ message }) => {
+  const logger = Logger.make<unknown, void>(({ message }) => {
     messages.push(...(Array.isArray(message) ? message : [message]));
   });
+  return {
+    messages,
+    layer: Layer.merge(NodeServices.layer, Logger.layer([logger], { mergeWithExisting: false })),
+    annotations: () =>
+      messages.find(
+        (message): message is Record<string, unknown> =>
+          typeof message === "object" && message !== null && "errorTag" in message,
+      ),
+  };
+};
+
+it.effect("logs a timed-out capability probe before reporting no capabilities", () => {
+  const log = captureProbeFailureLog();
   return Effect.gen(function* () {
     const initializationStarted = yield* Deferred.make<void>();
     let abortSignal: AbortSignal | undefined;
@@ -252,18 +265,32 @@ it.effect("logs why a capability probe failed before reporting no capabilities",
     const capabilities = yield* Fiber.join(probe);
     assert.equal(capabilities, undefined);
     assert.equal(abortSignal?.aborted, true);
-    assert.include(messages, "Claude capability probe failed.");
-    const annotations = messages.find(
-      (message): message is Record<string, unknown> =>
-        typeof message === "object" && message !== null && "errorTag" in message,
+    assert.include(log.messages, "Claude capability probe failed.");
+    assert.equal(log.annotations()?.errorTag, "TimeoutError");
+    assert.equal(log.annotations()?.timeoutMs, 25_000);
+  }).pipe(Effect.scoped, Effect.provide(log.layer));
+});
+
+it.effect("logs a rejected capability probe by cause type without its message", () => {
+  const log = captureProbeFailureLog();
+  const secret = "secret-subprocess-output";
+  return Effect.gen(function* () {
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+      () =>
+        ({
+          initializationResult: () =>
+            Promise.reject(new TypeError(`Claude Code process exited: ${secret}`)),
+        }) as unknown as ReturnType<typeof ClaudeSdk.query>,
     );
-    assert.equal(annotations?.errorTag, "TimeoutError");
-    assert.equal(annotations?.timeoutMs, 25_000);
-    assert.isString(annotations?.detail);
-  }).pipe(
-    Effect.scoped,
-    Effect.provide(
-      Layer.merge(NodeServices.layer, Logger.layer([logCapture], { mergeWithExisting: false })),
-    ),
-  );
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const capabilities = yield* probeClaudeCapabilities(
+      decodeClaudeSettings({ binaryPath: "claude" }),
+    );
+    assert.equal(capabilities, undefined);
+    assert.equal(log.annotations()?.errorTag, "UnknownError");
+    assert.equal(log.annotations()?.causeName, "TypeError");
+    assert.equal(log.annotations()?.timeoutMs, undefined);
+    // @effect-diagnostics-next-line preferSchemaOverJson:off
+    assert.notInclude(JSON.stringify(log.messages), secret);
+  }).pipe(Effect.scoped, Effect.provide(log.layer));
 });

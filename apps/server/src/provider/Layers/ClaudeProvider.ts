@@ -397,10 +397,11 @@ const probeClaudeCapabilities = (
       }),
     ),
     // Callers only see `undefined`, so this log is the one record of why the probe failed.
+    // Like the CLI health checks, it names the failure without logging SDK or subprocess text.
     Effect.tapError((error) =>
       Effect.logWarning("Claude capability probe failed.", {
         errorTag: error._tag,
-        detail: error.message,
+        ...(error.cause instanceof Error ? { causeName: error.cause.name } : {}),
         ...(error._tag === "TimeoutError" ? { timeoutMs: CAPABILITIES_PROBE_TIMEOUT_MS } : {}),
       }),
     ),
