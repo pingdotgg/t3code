@@ -52,6 +52,8 @@ export const SUBAGENT_V2_NESTED_PROMPT =
   "Spawn one subagent and tell it to spawn its own subagent, which must in turn spawn one more subagent whose only task is to reply with exactly: Hello. Each agent waits for its child and replies with exactly what the child said. Wait for your subagent, then reply with exactly what it said.";
 export const SUBAGENT_V2_PROMPT =
   "Spawn one subagent whose only task is to reply with exactly: Hello. Wait for it to finish, then reply with exactly what it said.";
+export const SUBAGENT_V2_APPROVAL_PROMPT =
+  "Do not run any commands yourself. Spawn one subagent whose only task is to run this exact shell command: printf 'subagent approval fixture' > subagent-approval.txt and then reply with exactly: Written. Wait for it to finish, then reply with exactly what it said.";
 export const OPENCODE_SUBAGENT_PROMPT =
   "Use the task tool exactly once. Delegate to the general subagent with this prompt: Respond exactly CHILD_OK. After the task completes, respond exactly PARENT_OK.";
 export const SUBAGENT_CONTINUE_PROMPT =
@@ -225,6 +227,8 @@ export type OrchestratorFixtureInputStep =
         OrchestrationV2Command,
         { readonly type: "runtime-request.respond" }
       >["decision"];
+      /** Captures the shell snapshot under this key while the request is pending. */
+      readonly shellSnapshotKeyWhilePending?: string;
     }
   | {
       readonly type: "answer_next_user_input_request";
@@ -660,6 +664,9 @@ export function materializeFixtureInput(input: {
             threadId: ids.threadId,
             commandId: commands.at(-1)!.commandId,
             decision: step.decision ?? "accept",
+            ...(step.shellSnapshotKeyWhilePending === undefined
+              ? {}
+              : { shellSnapshotKeyWhilePending: step.shellSnapshotKeyWhilePending }),
           };
           steps.push({ type: "advance_clock", duration: "1 millis" });
           steps.push({ type: "await_thread_idle", threadId: ids.threadId });
