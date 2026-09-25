@@ -90,12 +90,13 @@ If OTLP is not configured, metrics still exist in-process, but you will not have
 ### Event Loop Stalls
 
 `apps/server/src/observability/EventLoopMonitor.ts` samples the server's event loop every 30 s. When
-the loop was blocked for more than 1 s in that window, it records a root `server.eventLoop.stall`
+the loop was blocked for more than 1 s since the previous sample, it records a root `server.eventLoop.stall`
 span with a warning. The span has trace level `Warn`, so it stays when `T3CODE_TRACE_MIN_LEVEL` is
 `Warn`. The span lands in the trace file, and the warning shows in Settings > Diagnostics unless
-OTLP logs are on. The span time is when the sample ran; the stall happened in the 30 s before it.
+OTLP logs are on. The span time is when the sample ran; the stall happened since the previous sample.
 
-Attributes cover that 30 s window:
+Attributes cover the window since the previous sample. That is nominally 30 s, but a stall delays the
+next sample, so a long stall makes the window longer:
 
 - `delayMaxMs`, `delayP99Ms`, `delayMeanMs`: how late the loop ran. The max can undercount a stall
   by up to 200 ms.
@@ -105,7 +106,7 @@ Attributes cover that 30 s window:
 - `involuntaryContextSwitches`: times the OS took the CPU away from the process.
 - `rssMb`: resident memory at sample time.
 
-To read a stall, remember that the CPU times cover the full 30 s window and all threads, but
+To read a stall, remember that the CPU times cover the full window and all threads, but
 `delayMaxMs` is one stall. Other work in the same window can hide a wait. Only CPU time far below
 `delayMaxMs` shows that the thread was waiting. In other cases, read the user and system CPU split
 together with the page faults:
