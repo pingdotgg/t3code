@@ -167,9 +167,9 @@ it.layer(NodeServices.layer)("thread history import", (it) => {
         metadata: {},
         payload: { threadId, turnCount: 0 },
       });
+      // The command model keeps only user messages.
       expect(projected.threads[0]?.messages.map((message) => message.text)).toEqual([
         "Fix the bug",
-        "Fixed",
       ]);
     }),
   );

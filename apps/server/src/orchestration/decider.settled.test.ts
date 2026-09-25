@@ -323,6 +323,61 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
     }),
   );
 
+  it.effect("keeps an open approval blocking settle after many tool activities", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-1");
+      const appended = (
+        sequence: number,
+        id: string,
+        kind: string,
+        payload: Record<string, unknown>,
+      ): OrchestrationEvent => ({
+        sequence,
+        eventId: EventId.make(`event-${sequence}`),
+        type: "thread.activity-appended",
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: NOW,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        payload: {
+          threadId,
+          activity: {
+            id: EventId.make(id),
+            tone: "tool",
+            kind,
+            summary: kind,
+            payload,
+            turnId: null,
+            createdAt: NOW,
+          },
+        },
+      });
+      let readModel = yield* projectEvent(
+        makeReadModel(null),
+        appended(1, "approval", "approval.requested", { requestId: "req-1" }),
+      );
+      for (let index = 0; index < 600; index += 1) {
+        readModel = yield* projectEvent(
+          readModel,
+          appended(index + 2, `tool-${index}`, "tool.completed", { data: "x".repeat(1_000) }),
+        );
+      }
+
+      const error = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.settle",
+          commandId: CommandId.make("cmd-settle-after-tools"),
+          threadId,
+        },
+        readModel,
+      }).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "OrchestrationThreadSettleBlockedError", threadId });
+    }),
+  );
+
   it.effect("manual settlement dismisses async questions without starting a turn", () =>
     Effect.gen(function* () {
       const question = (requestId: string): OrchestrationThread["activities"][number] => ({

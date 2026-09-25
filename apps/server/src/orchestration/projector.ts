@@ -1,3 +1,10 @@
+/**
+ * Projects events onto the engine's private command read model. The decider
+ * and the engine's command checks read it; clients read the SQL projections
+ * instead. It lives for the whole server process, so keep only the fields
+ * those readers need: user messages, request activities, and checkpoints
+ * without their file lists.
+ */
 import type {
   OrchestrationEvent,
   OrchestrationProject,
@@ -13,7 +20,6 @@ import {
   OrchestrationMessage,
   OrchestrationSession,
   OrchestrationThread,
-  WORKTREE_SETUP_ACTIVITY_KIND,
 } from "@t3tools/contracts";
 import {
   legacyLinkedPullRequestOf,
@@ -60,8 +66,9 @@ type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
 
-// Async questions can stay open while the agent produces more activity.
-// Match the database snapshot's pending-question retention.
+// Safety cap for the retained request activities. Pending async questions
+// stay past the cap, because they stay open while the agent works. Match the
+// database snapshot's pending-question retention.
 function retainThreadActivities(activities: OrchestrationThread["activities"]) {
   const recentStart = activities.length - 500;
   if (recentStart <= 0) return activities;
@@ -78,13 +85,7 @@ function retainThreadActivities(activities: OrchestrationThread["activities"]) {
   }
   const pendingActivities = new Set(pending.values());
   return activities.filter(
-    (activity, index) =>
-      index >= recentStart ||
-      pendingActivities.has(activity) ||
-      // The worktree setup record is upserted under one id for the thread's
-      // whole life and is the only durable copy of a running setup; an async
-      // setup script can outlast a chatty first turn.
-      activity.kind === WORKTREE_SETUP_ACTIVITY_KIND,
+    (activity, index) => index >= recentStart || pendingActivities.has(activity),
   );
 }
 
@@ -228,7 +229,7 @@ function retainThreadMessagesAfterRevert(
 ): ReadonlyArray<OrchestrationMessage> {
   const retainedMessageIds = new Set<string>();
   for (const message of messages) {
-    if (message.role === "system" || isImportedAgentSessionMessageId(message.id)) {
+    if (isImportedAgentSessionMessageId(message.id)) {
       retainedMessageIds.add(message.id);
       continue;
     }
@@ -259,32 +260,6 @@ function retainThreadMessagesAfterRevert(
       )
       .slice(0, missingUserCount);
     for (const message of fallbackUserMessages) {
-      retainedMessageIds.add(message.id);
-    }
-  }
-
-  const retainedAssistantCount = messages.filter(
-    (message) =>
-      message.role === "assistant" &&
-      !isImportedAgentSessionMessageId(message.id) &&
-      retainedMessageIds.has(message.id),
-  ).length;
-  const missingAssistantCount = Math.max(0, turnCount - retainedAssistantCount);
-  if (missingAssistantCount > 0) {
-    const fallbackAssistantMessages = messages
-      .filter(
-        (message) =>
-          message.role === "assistant" &&
-          !retainedMessageIds.has(message.id) &&
-          (message.turnId === null || retainedTurnIds.has(message.turnId)),
-      )
-      .toSorted(
-        (left, right) =>
-          compareDateTimeStrings(left.createdAt, right.createdAt) ||
-          left.id.localeCompare(right.id),
-      )
-      .slice(0, missingAssistantCount);
-    for (const message of fallbackAssistantMessages) {
       retainedMessageIds.add(message.id);
     }
   }
@@ -786,6 +761,16 @@ export function projectEvent(
         if (!thread) {
           return nextBase;
         }
+        // The decider reads only user messages. Assistant text and streaming
+        // deltas stay in the SQL projections.
+        if (payload.role !== "user") {
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }
 
         const message: OrchestrationMessage = yield* decodeForEvent(
           OrchestrationMessage,
@@ -952,7 +937,8 @@ export function projectEvent(
             checkpointTurnCount: payload.checkpointTurnCount,
             checkpointRef: payload.checkpointRef,
             status: payload.status,
-            files: payload.files,
+            // The decider never reads file lists; they stay in SQL.
+            files: [],
             assistantMessageId: payload.assistantMessageId,
             completedAt: payload.completedAt,
           },
@@ -1074,6 +1060,19 @@ export function projectEvent(
           const thread = nextBase.threads[threadIndex];
           if (!thread) {
             return nextBase;
+          }
+          // The decider reads only request activities (see openRequests in
+          // decider.ts). Tool output and other activities stay in SQL.
+          if (
+            !Predicate.isObject(payload.activity.payload) ||
+            typeof payload.activity.payload.requestId !== "string"
+          ) {
+            return {
+              ...nextBase,
+              threads: updateThread(nextBase.threads, payload.threadId, {
+                updatedAt: event.occurredAt,
+              }),
+            };
           }
 
           const activities = retainThreadActivities(
