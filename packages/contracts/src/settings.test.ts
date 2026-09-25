@@ -506,6 +506,14 @@ describe("server model preferences", () => {
 });
 
 describe("ClientSettings microphone", () => {
+  it("defaults to auto dictation and accepts the other shortcut modes", () => {
+    expect(decodeClientSettings({}).voiceShortcutMode).toBe("auto");
+    expect(decodeClientSettingsPatch({ voiceShortcutMode: "hold" }).voiceShortcutMode).toBe("hold");
+    expect(decodeClientSettingsPatch({ voiceShortcutMode: "toggle" }).voiceShortcutMode).toBe(
+      "toggle",
+    );
+    expect(() => decodeClientSettingsPatch({ voiceShortcutMode: "invalid" })).toThrow();
+  });
   it("accepts microphone selection patches", () => {
     expect(decodeClientSettingsPatch({ voiceMicrophone: "studio-mic" }).voiceMicrophone).toBe(
       "studio-mic",

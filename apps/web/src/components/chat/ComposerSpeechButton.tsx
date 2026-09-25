@@ -185,6 +185,7 @@ export function ComposerSpeechStatus(props: {
 
 export function ComposerSpeechCancelButton(props: {
   state: VoiceInputState<true>;
+  shortcutLabel?: string | null;
   onCancel(): void;
 }) {
   if (props.state.phase === "idle") return null;
@@ -207,7 +208,10 @@ export function ComposerSpeechCancelButton(props: {
           </Button>
         }
       />
-      <TooltipPopup side="top">{label}</TooltipPopup>
+      <TooltipPopup side="top">
+        {label}
+        {props.shortcutLabel ? ` (${props.shortcutLabel})` : ""}
+      </TooltipPopup>
     </Tooltip>
   );
 }
@@ -215,6 +219,7 @@ export function ComposerSpeechCancelButton(props: {
 export function ComposerSpeechButton(props: {
   state: VoiceInputState<true>;
   progress: { downloaded: number; total: number } | null;
+  shortcutLabel?: string | null;
   disabled?: boolean;
   onStart(): void;
   onCancel(): void;
@@ -252,7 +257,10 @@ export function ComposerSpeechButton(props: {
           </Button>
         }
       />
-      <TooltipPopup side="top">{label}</TooltipPopup>
+      <TooltipPopup side="top">
+        {label}
+        {!openSettings && props.shortcutLabel ? ` (${props.shortcutLabel})` : ""}
+      </TooltipPopup>
     </Tooltip>
   );
 }
@@ -260,6 +268,8 @@ export function ComposerSpeechButton(props: {
 export function ComposerSpeechRecordingPill(props: {
   state: VoiceInputState<true>;
   progress: { downloaded: number; total: number } | null;
+  finishShortcutLabel?: string | null;
+  cancelShortcutLabel?: string | null;
   level: number;
   onStop(): void;
   onCancel(): void;
@@ -274,7 +284,11 @@ export function ComposerSpeechRecordingPill(props: {
 
   return (
     <div className="flex h-10 w-48 min-w-0 items-center gap-2 rounded-full border border-border/50 bg-background/80 p-1 sm:h-9 sm:w-64">
-      <ComposerSpeechCancelButton state={props.state} onCancel={props.onCancel} />
+      <ComposerSpeechCancelButton
+        state={props.state}
+        shortcutLabel={props.cancelShortcutLabel ?? null}
+        onCancel={props.onCancel}
+      />
       <ComposerSpeechStatus state={props.state} progress={props.progress} level={props.level} />
       {props.state.phase === "post-processing" ? (
         <Button
@@ -304,7 +318,12 @@ export function ComposerSpeechRecordingPill(props: {
               </Button>
             }
           />
-          <TooltipPopup side="top">{label}</TooltipPopup>
+          <TooltipPopup side="top">
+            {label}
+            {presentation.confirmEnabled && props.finishShortcutLabel
+              ? ` (${props.finishShortcutLabel})`
+              : ""}
+          </TooltipPopup>
         </Tooltip>
       )}
     </div>

@@ -83,6 +83,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const [setupError, setSetupError] = useState<string | null>(null);
   const setupCancelledRef = useRef(false);
   const controllerRef = useRef<VoiceInputController<true> | null>(null);
+  const startRequestRef = useRef(0);
   const latestInputRef = useRef(input);
   const microphoneIdRef = useRef(microphoneId);
   const draftRevisionRef = useRef({ ownerKey: input.ownerKey, text: input.draftText, revision: 0 });
@@ -232,6 +233,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   }, [input.ownerKey]);
 
   const start = useCallback(async () => {
+    const request = ++startRequestRef.current;
     const expectedController = controllerRef.current;
     const expectedOwner = latestInputRef.current.ownerKey;
     if (!expectedController || !prepared || !currentStatus?.supported) return;
@@ -254,7 +256,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       return;
     }
     const controller = controllerRef.current;
-    if (controller !== expectedController || latestInputRef.current.ownerKey !== expectedOwner)
+    if (
+      request !== startRequestRef.current ||
+      controller !== expectedController ||
+      latestInputRef.current.ownerKey !== expectedOwner
+    )
       return;
     setLevel(0);
     await controller.start();
@@ -329,7 +335,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     freezesEditor: voiceInputFreezesEditor(state),
     start,
     stop: useCallback(() => controllerRef.current?.stop() ?? Promise.resolve(), []),
-    cancel: useCallback(() => controllerRef.current?.cancel(), []),
+    cancel: useCallback(() => {
+      startRequestRef.current += 1;
+      controllerRef.current?.cancel();
+    }, []),
     skipPostProcessing: useCallback(() => controllerRef.current?.skipPostProcessing(), []),
   };
 }

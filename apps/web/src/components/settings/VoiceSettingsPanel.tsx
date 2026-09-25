@@ -232,6 +232,7 @@ export function VoiceSettingsPanel() {
     : null;
   const prepared = Option.getOrNull(usePreparedConnection(environmentId));
   const selectedMicrophone = useClientSettings((settings) => settings.voiceMicrophone);
+  const voiceShortcutMode = useClientSettings((settings) => settings.voiceShortcutMode);
   const updateClientSettings = useUpdateClientSettings();
   const [status, setStatus] = useState<{
     readonly prepared: NonNullable<typeof prepared>;
@@ -471,6 +472,29 @@ export function VoiceSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection title="Input">
+        <SettingsRow
+          {...searchableSetting("dictation-shortcut-mode")}
+          description="Choose how the dictation shortcut starts and finishes recording."
+          control={
+            <Select
+              value={voiceShortcutMode}
+              onValueChange={(value) => {
+                if (value === "auto" || value === "hold" || value === "toggle") {
+                  void updateClientSettings({ voiceShortcutMode: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" aria-label="Dictation shortcut mode" className="max-w-80">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem value="auto">Auto: hold or tap to toggle</SelectItem>
+                <SelectItem value="hold">Hold to record</SelectItem>
+                <SelectItem value="toggle">Press to toggle</SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
         <SettingsRow
           {...searchableSetting("transcription-environment")}
           description="Run voice transcription on this environment for every thread."

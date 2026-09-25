@@ -489,6 +489,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta alpha simlock callstack simulator emulator ios android pool lease gateway"],
   },
   {
+    id: "dictation-shortcut-mode",
+    title: "Dictation shortcut mode",
+    to: "/settings/voice",
+    searchTerms: ["speech voice keyboard hotkey hold toggle auto"],
+  },
+  {
     id: "transcription-environment",
     title: "Transcription environment",
     to: "/settings/voice",
