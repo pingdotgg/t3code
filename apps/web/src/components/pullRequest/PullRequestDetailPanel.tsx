@@ -379,7 +379,7 @@ function PullRequestBaseFreshnessWarning({
             type="button"
             aria-label={summary}
             className={cn(
-              "inline-flex min-w-0 shrink-0 cursor-help items-center gap-1 rounded-sm text-amber-600 outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-amber-400/90",
+              "inline-flex min-w-0 shrink-0 cursor-help items-center gap-1 rounded-sm text-warning-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring",
               className,
             )}
           />
@@ -1980,9 +1980,11 @@ export function PullRequestDetailPanel({
                 </Tooltip>
               ) : (primaryAction === "merged" || primaryAction === "closed") &&
                 statePresentation !== null ? (
-                <Badge size="control" variant="outline" className={statePresentation.toneClassName}>
-                  <statePresentation.Icon className="size-3.5" />
-                  {statePresentation.label}
+                <Badge size="control" variant="outline">
+                  <span className={cn("flex items-center gap-1", statePresentation.toneClassName)}>
+                    <statePresentation.Icon className="size-3.5" />
+                    {statePresentation.label}
+                  </span>
                 </Badge>
               ) : null}
               <Menu>
@@ -2258,7 +2260,7 @@ export function PullRequestDetailPanel({
                     <span className="shrink-0">{formatRelativeTimeLabel(detail.updatedAt)}</span>
                   </span>
                   <span aria-hidden className="h-3 w-px shrink-0 bg-border/70" />
-                  <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-[11px] text-muted-foreground/65">
+                  <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-2xs text-muted-foreground/65">
                     {/* An out-of-date base wears the warning on the branch name itself, so the
                         name is amber and pointing at either the name or the mark opens the way
                         out. Up to date, the name keeps its plain tooltip. */}
@@ -2320,7 +2322,7 @@ export function PullRequestDetailPanel({
                       <TooltipPopup side="top">{detail.headBranch}</TooltipPopup>
                     </Tooltip>
                   </span>
-                  <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2 text-[11px]">
+                  <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2 text-2xs">
                     <span
                       className="inline-flex items-center gap-1 tabular-nums"
                       aria-label={`${detail.changedFiles.toLocaleString()} changed ${
@@ -2333,7 +2335,7 @@ export function PullRequestDetailPanel({
                     <PullRequestDiffStat
                       additions={detail.additions}
                       deletions={detail.deletions}
-                      className="shrink-0 font-mono text-[11px]"
+                      className="shrink-0 font-mono text-2xs"
                     />
                   </span>
                 </div>
@@ -2607,7 +2609,7 @@ export function PullRequestDetailPanel({
               <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
                 <PullRequestMetaLine
                   className={cn(
-                    "whitespace-nowrap text-[11px] transition-opacity",
+                    "whitespace-nowrap text-2xs transition-opacity",
                     (activityPending || activityError) && "opacity-35",
                   )}
                 >

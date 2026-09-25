@@ -401,7 +401,7 @@ function CommentGroup({
               </span>
             ))}
             {authors.length > 3 ? (
-              <span className="relative flex size-6 items-center justify-center rounded-full bg-muted text-[10px] text-muted-foreground ring-2 ring-background">
+              <span className="relative flex size-6 items-center justify-center rounded-full bg-muted text-3xs text-muted-foreground ring-2 ring-background">
                 +{authors.length - 3}
               </span>
             ) : null}
@@ -412,7 +412,7 @@ function CommentGroup({
           >
             <span className="min-w-0 flex-1 space-y-1">
               <span className="block text-xs font-medium text-foreground/90">{label}</span>
-              <span className="flex flex-wrap gap-x-1.5 text-[11px] text-muted-foreground">
+              <span className="flex flex-wrap gap-x-1.5 text-2xs text-muted-foreground">
                 <span>
                   {authors.length} {authors.length === 1 ? "author" : "authors"}
                 </span>
@@ -943,7 +943,7 @@ export function PullRequestSummaryTab({
         ) : (
           <>
             {detail.commentsTruncated ? (
-              <p className="mb-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-xs">
+              <p className="mb-2 rounded-md border border-warning/30 bg-warning-surface px-2 py-1.5 text-xs">
                 This conversation is longer than this page reads in one go. The most recent{" "}
                 {detail.comments.length} are here; open it on the host to read the rest.
               </p>

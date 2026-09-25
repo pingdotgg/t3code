@@ -43,15 +43,12 @@ export function GitHubRoutingSettings() {
   return (
     <View className="mt-5 gap-3">
       <SettingsSection title="GitHub routing">
-        {[...catalog.entries.values()].map((entry, index) => {
+        {[...catalog.entries.values()].map((entry) => {
           const environmentId = entry.target.environmentId;
           const selected = gitHubRoutingPermissionFor(entry, permissions);
           const disabled = !catalog.isReady || saving || gitHubRoutingConnectionKey(entry) === null;
           return (
-            <View
-              key={environmentId}
-              className={index === 0 ? undefined : "border-t border-border-subtle"}
-            >
+            <View key={environmentId}>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`${entry.target.label} GitHub routing`}
@@ -83,7 +80,7 @@ export function GitHubRoutingSettings() {
                       accessibilityRole="radio"
                       accessibilityState={{ checked: selected === option.value, disabled }}
                       disabled={disabled}
-                      className="flex-row items-center gap-4 border-t border-border-subtle p-4 disabled:opacity-50"
+                      className="flex-row items-center gap-4 p-4 disabled:opacity-50"
                       onPress={() => {
                         setSaving(true);
                         void update({ environmentId, permission: option.value }).then((result) => {

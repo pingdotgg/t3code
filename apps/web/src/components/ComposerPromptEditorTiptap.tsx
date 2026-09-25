@@ -190,7 +190,7 @@ function resolvedThemeFromDocument(): "light" | "dark" {
  * paints the editor's node selection over it.
  */
 const CHIP_NODE_SELECTION_CLASS_NAME =
-  "relative inline-flex select-none items-center align-middle leading-none data-[composer-chip-selected]:after:pointer-events-none data-[composer-chip-selected]:after:absolute data-[composer-chip-selected]:after:inset-0 data-[composer-chip-selected]:after:rounded-[6px] data-[composer-chip-selected]:after:bg-[Highlight] data-[composer-chip-selected]:after:opacity-30 data-[composer-chip-selected]:after:content-['']";
+  "relative inline-flex select-none items-center align-middle leading-none data-[composer-chip-selected]:after:pointer-events-none data-[composer-chip-selected]:after:absolute data-[composer-chip-selected]:after:inset-0 data-[composer-chip-selected]:after:rounded-sm data-[composer-chip-selected]:after:bg-[Highlight] data-[composer-chip-selected]:after:opacity-30 data-[composer-chip-selected]:after:content-['']";
 
 const ComposerMentionExtension = Node.create({
   name: "composer-mention",
@@ -718,7 +718,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   const editorAttributes = useMemo(
     () => ({
       class: cn(
-        "composer-tiptap block max-h-50 min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
+        "composer-tiptap -m-1 block max-h-52 min-h-19.5 overflow-y-auto p-1 whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
         className,
       ),
       "data-testid": "composer-editor",
@@ -1242,7 +1242,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         <ComposerCitationCommentContext value={citationCommentActions}>
           <div
             className={cn(
-              "relative [font-family:var(--font-composer,var(--font-sans))] [font-size:var(--font-size-prompt,0.875rem)] [@media(max-width:39.999rem)_and_(pointer:coarse)]:[font-size:max(var(--font-size-prompt,1rem),16px)]",
+              "relative flow-root font-(family-name:--font-composer,var(--font-sans)) text-(length:--font-size-prompt,var(--text-sm)) max-sm:pointer-coarse:text-(length:--font-size-prompt-touch)",
               containerClassName,
             )}
           >

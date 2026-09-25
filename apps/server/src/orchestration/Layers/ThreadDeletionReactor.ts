@@ -27,15 +27,14 @@ export const logCleanupCauseUnlessInterrupted = <R, E>({
   readonly threadId: ThreadDeletedEvent["payload"]["threadId"];
 }): Effect.Effect<void, E, R> =>
   effect.pipe(
-    Effect.catchCause((cause) => {
-      if (Cause.hasInterruptsOnly(cause)) {
-        return Effect.failCause(cause);
-      }
-      return Effect.logDebug(message, {
-        threadId,
-        cause: Cause.pretty(cause),
-      });
-    }),
+    Effect.catchCauseIf(
+      (cause) => !Cause.hasInterruptsOnly(cause),
+      (cause) =>
+        Effect.logDebug(message, {
+          threadId,
+          cause: Cause.pretty(cause),
+        }),
+    ),
   );
 
 const make = Effect.gen(function* () {
@@ -67,16 +66,15 @@ const make = Effect.gen(function* () {
 
   const processThreadDeletedSafely = (event: ThreadDeletedEvent) =>
     processThreadDeleted(event).pipe(
-      Effect.catchCause((cause) => {
-        if (Cause.hasInterruptsOnly(cause)) {
-          return Effect.failCause(cause);
-        }
-        return Effect.logWarning("thread deletion reactor failed to process event", {
-          eventType: event.type,
-          threadId: event.payload.threadId,
-          cause: Cause.pretty(cause),
-        });
-      }),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Effect.logWarning("thread deletion reactor failed to process event", {
+            eventType: event.type,
+            threadId: event.payload.threadId,
+            cause: Cause.pretty(cause),
+          }),
+      ),
     );
 
   const worker = yield* makeDrainableWorker(processThreadDeletedSafely);

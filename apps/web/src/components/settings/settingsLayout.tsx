@@ -202,7 +202,7 @@ export function SettingsSection({
           className="flex min-h-7 items-start justify-between gap-4 px-3 sm:px-4"
         >
           <div className="min-w-0">
-            <h2 className="flex min-h-7 items-center gap-2 text-sm font-normal tracking-[-0.005em] text-foreground/70">
+            <h2 className="flex min-h-7 items-center gap-2 text-sm font-normal text-foreground/70">
               {icon}
               {title}
             </h2>
@@ -228,7 +228,7 @@ export function SettingsUnavailableGroup({
 
   return (
     <div className="border-border/60 bg-muted/20 py-1.5">
-      <div className="flex items-start gap-2 px-3 py-2 text-[12px] leading-relaxed text-muted-foreground sm:px-4">
+      <div className="flex items-start gap-2 px-3 py-2 text-xs leading-relaxed text-muted-foreground sm:px-4">
         <InfoIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
         <p>{message}</p>
       </div>
@@ -427,7 +427,7 @@ export function SettingsRow({
       tabIndex={rowProps.id ? -1 : rowProps.tabIndex}
       data-slot="settings-row"
       className={cn(
-        "@container/settings-row rounded-xl px-3 sm:px-4 aria-disabled:opacity-50 aria-disabled:[&_*]:text-muted-foreground",
+        "@container/settings-row rounded-xl px-3 sm:px-4 aria-disabled:opacity-64 aria-disabled:[&_*]:text-muted-foreground",
         children ? "pt-3 pb-1" : "py-3",
         className,
       )}
@@ -435,7 +435,7 @@ export function SettingsRow({
       <div className="flex flex-col gap-3 @min-[32rem]/settings-row:grid @min-[32rem]/settings-row:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)] @min-[32rem]/settings-row:items-center @min-[32rem]/settings-row:gap-8">
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
-            <h3 className="text-sm font-medium tracking-[-0.005em] text-foreground">{title}</h3>
+            <h3 className="text-sm font-medium text-foreground">{title}</h3>
             {renderedInheritance ? (
               <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
                 {renderedInheritance}
@@ -446,7 +446,7 @@ export function SettingsRow({
             </span>
           </div>
           {description ? (
-            <p className="max-w-xl text-[13px] leading-[1.45] text-muted-foreground/80">
+            <p className="max-w-xl text-xs leading-normal text-muted-foreground/80">
               {description}
             </p>
           ) : null}

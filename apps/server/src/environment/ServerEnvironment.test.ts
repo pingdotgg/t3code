@@ -6,11 +6,11 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
+import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
@@ -34,7 +34,7 @@ const makeServerEnvironmentLayer = (baseDir: string) =>
 const emptySecretStoreLayer = Layer.succeed(
   ServerSecretStore.ServerSecretStore,
   ServerSecretStore.ServerSecretStore.of({
-    get: () => Effect.succeed(Option.none()),
+    get: () => Effect.succeedNone,
     set: () => Effect.void,
     create: () => Effect.void,
     getOrCreateRandom: () => Effect.succeed(new Uint8Array()),
@@ -60,6 +60,7 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
     otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
     otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
     otlpServiceName: "t3-server",
+    otelEnvironment: OtelEnvironment.none,
     cwd: process.cwd(),
     baseDir,
     mode: "web",

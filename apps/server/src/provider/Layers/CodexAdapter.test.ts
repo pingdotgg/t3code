@@ -225,7 +225,7 @@ const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory
   recordImportedTranscript: () => Effect.die("unused"),
   getProvider: () =>
     Effect.die(new Error("ProviderSessionDirectory.getProvider is not used in test")),
-  getBinding: () => Effect.succeed(Option.none()),
+  getBinding: () => Effect.succeedNone,
   listThreadIds: () => Effect.succeed([]),
   listBindings: () => Effect.succeed([]),
 });
@@ -2383,6 +2383,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
           method: "item/tool/requestUserInput",
           requestId: ApprovalRequestId.make("req-user-input-1"),
           payload: {
+            isBlocking: true,
             itemId: "item-user-input-1",
             threadId: "thread-1",
             turnId: "turn-1",

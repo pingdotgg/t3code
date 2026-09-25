@@ -132,7 +132,7 @@ const readIdentityFile = (
   filePath: string,
 ) =>
   fileSystem.readFileString(filePath).pipe(
-    Effect.map(Option.some),
+    Effect.asSome,
     Effect.catchTags({
       PlatformError: (cause) =>
         isNotFoundError(cause)
@@ -278,7 +278,7 @@ export const getTelemetryIdentifierForHome = Effect.fn("getTelemetryIdentifierFo
     }
 
     const anonymousId = yield* upsertAnonymousId.pipe(
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.catchTags({
         TelemetryIdentityReadError: (error) =>
           logTelemetryIdentityError(error).pipe(Effect.as(Option.none<string>())),

@@ -119,7 +119,7 @@ const McpElicitationFormField = Schema.Struct({
   type: Schema.optionalKey(NullableMcpElicitationString),
   title: Schema.optionalKey(NullableMcpElicitationString),
   description: Schema.optionalKey(NullableMcpElicitationString),
-  default: Schema.optionalKey(Schema.Unknown),
+  default: Schema.optionalKey(Schema.Json),
   enum: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String))),
   enumNames: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String))),
   oneOf: Schema.optionalKey(
@@ -163,8 +163,7 @@ export type CodexTurnStartParamsWithCollaborationMode =
 export type CodexResumeCursor = typeof CodexResumeCursorSchema.Type;
 type CodexServiceTier = NonNullable<EffectCodexSchema.V2ThreadStartParams["serviceTier"]>;
 type CodexThreadItem =
-  | EffectCodexSchema.V2ThreadReadResponse["thread"]["turns"][number]["items"][number]
-  | EffectCodexSchema.V2ThreadRollbackResponse["thread"]["turns"][number]["items"][number];
+  EffectCodexSchema.V2ThreadReadResponse["thread"]["turns"][number]["items"][number];
 
 export interface CodexSessionRuntimeOptions {
   readonly threadId: ThreadId;
@@ -442,7 +441,7 @@ export function toMcpElicitationResponse(
         ? "always"
         : undefined;
   const form = mcpElicitationFormFields(payload);
-  const content: Record<string, unknown> = {};
+  const content: Record<string, Schema.Json> = {};
 
   for (const [key, field] of Object.entries(form?.properties ?? {})) {
     const options = mcpElicitationFieldOptions(field);
@@ -1185,7 +1184,7 @@ function updateSession(
 }
 
 function parseThreadSnapshot(
-  response: EffectCodexSchema.V2ThreadReadResponse | EffectCodexSchema.V2ThreadRollbackResponse,
+  response: EffectCodexSchema.V2ThreadReadResponse,
 ): CodexThreadSnapshot {
   return {
     threadId: response.thread.id,
@@ -1273,11 +1272,8 @@ export const rollbackCodexThread = Effect.fn("rollbackCodexThread")(function* (
   threadId: string,
   numTurns: number,
 ): Effect.fn.Return<CodexThreadSnapshot, CodexErrors.CodexAppServerError> {
-  if ((yield* readCodexHistoryMode(client, threadId)) !== "paginated") {
-    return parseThreadSnapshot(yield* client.request("thread/rollback", { threadId, numTurns }));
-  }
-  // Paginated threads replace history at a turn boundary instead of supporting
-  // the legacy count-based rollback endpoint.
+  // Codex replaces history at a turn boundary. It rejects threads that still
+  // use legacy history, which have no rollback API since Codex 0.156.
   const snapshot = yield* readCodexThread(client, threadId);
   const retainedCount = Math.max(0, snapshot.turns.length - numTurns);
   const firstRemoved = snapshot.turns[retainedCount];
@@ -1522,7 +1518,7 @@ export const makeCodexSessionRuntime = (
               }
             }),
           ),
-          Effect.catch(() => Effect.void),
+          Effect.ignore,
           Effect.forkIn(runtimeScope),
         );
     });

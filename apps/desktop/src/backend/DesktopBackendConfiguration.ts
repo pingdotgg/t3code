@@ -96,6 +96,9 @@ const DESKTOP_BACKEND_ENV_NAMES = [
 const WSL_FORWARDED_ENV_NAMES = [
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
+  // Otherwise the WSL server keeps exporting to endpoints from the bootstrap.
+  "T3CODE_OTEL_SDK_DISABLED",
+  "OTEL_SDK_DISABLED",
   "T3CODE_OTLP_HEADERS",
   "T3CODE_OTLP_PROTOCOL",
 ] as const;
@@ -196,11 +199,11 @@ const readPersistedBackendObservabilitySettings = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const raw = yield* fileSystem.readFileString(environment.serverSettingsPath).pipe(
-    Effect.map(Option.some),
+    Effect.asSome,
     Effect.catchTags({
       PlatformError: (cause) =>
         cause.reason._tag === "NotFound"
-          ? Effect.succeed(Option.none())
+          ? Effect.succeedNone
           : logBackendObservabilitySettingsReadFailure(environment.serverSettingsPath, cause).pipe(
               Effect.as(Option.none()),
             ),

@@ -331,9 +331,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     for (let attempt = 0; attempt < INSTALL_LOCK_RETRY_COUNT; attempt += 1) {
       const acquired = yield* fileSystem.writeFileString(lockPath, "", { flag: "wx" }).pipe(
         Effect.as(true),
-        Effect.catch((error) =>
-          isAlreadyExists(error) ? Effect.succeed(false) : Effect.fail(error),
-        ),
+        Effect.catchIf(isAlreadyExists, () => Effect.succeed(false)),
       );
       if (acquired) return;
 
@@ -445,16 +443,16 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     }).pipe(
       Effect.scoped,
       Effect.ensuring(fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore)),
-      Effect.catch((cause) =>
-        cause instanceof RelayClientInstallError
-          ? Effect.fail(cause)
-          : Effect.fail(
-              new RelayClientInstallError({
-                reason: "write_failed",
-                message: "Could not install the relay client.",
-                cause,
-              }),
-            ),
+      Effect.catchIf(
+        (cause) => !(cause instanceof RelayClientInstallError),
+        (cause) =>
+          Effect.fail(
+            new RelayClientInstallError({
+              reason: "write_failed",
+              message: "Could not install the relay client.",
+              cause,
+            }),
+          ),
       ),
     );
   });

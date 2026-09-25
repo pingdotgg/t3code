@@ -110,10 +110,9 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
     entry: ConnectionCatalogEntry & { readonly target: BearerConnectionTarget },
   ) {
     const target = entry.target;
-    const profile = yield* Option.match(entry.profile, {
-      onNone: () => Effect.fail(profileMissingError(target.connectionId)),
-      onSome: Effect.succeed,
-    });
+    const profile = yield* Effect.fromOption(entry.profile, () =>
+      profileMissingError(target.connectionId),
+    );
     if (!isBearerProfile(profile)) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
@@ -186,10 +185,9 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
     entry: ConnectionCatalogEntry & { readonly target: SshConnectionTarget },
   ) {
     const target = entry.target;
-    const profile = yield* Option.match(entry.profile, {
-      onNone: () => Effect.fail(profileMissingError(target.connectionId)),
-      onSome: Effect.succeed,
-    });
+    const profile = yield* Effect.fromOption(entry.profile, () =>
+      profileMissingError(target.connectionId),
+    );
     if (!isSshProfile(profile)) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
