@@ -44,6 +44,8 @@ interactive. On iPhone Duo, use the fold and stance controls to change its
 physical pose, or pinch over the device to adjust the hinge. Turning the model
 to the other screen switches the live display and touch input to that screen.
 **Restore 3D view** returns the device to a screen-facing position.
+On supported Android foldables, use **Fold device** and **Unfold device** beside
+the screen to change its posture in either view.
 
 ## Tools
 
