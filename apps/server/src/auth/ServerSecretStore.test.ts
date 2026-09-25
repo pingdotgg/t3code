@@ -6,8 +6,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as PlatformError from "effect/PlatformError";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -264,5 +266,38 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
       assert.instanceOf(error.cause, PlatformError.PlatformError);
       assert.equal((error.cause as PlatformError.PlatformError).reason._tag, "PermissionDenied");
     }).pipe(Effect.provide(makeRemoveFailureSecretStoreLayer())),
+  );
+
+  it.effect("prunes replay-guard files older than the retention window", () =>
+    Effect.gen(function* () {
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const { secretsDir } = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const bytes = Uint8Array.from([1]);
+
+      const names = [
+        "dpop-proof-old",
+        "cloud-mint-nonce-old",
+        "cloud-health-jti-old",
+        "dpop-proof-fresh",
+        "session-signing-key",
+      ];
+      yield* Effect.forEach(names, (name) => secretStore.create(name, bytes), { discard: true });
+      yield* Effect.forEach(
+        ["dpop-proof-old", "cloud-mint-nonce-old", "cloud-health-jti-old", "session-signing-key"],
+        (name) => fileSystem.utimes(path.join(secretsDir, `${name}.bin`), 0, 0),
+        { discard: true },
+      );
+      const fresh = yield* fileSystem.stat(path.join(secretsDir, "dpop-proof-fresh.bin"));
+      yield* TestClock.setTime(Option.getOrThrow(fresh.mtime).getTime());
+
+      yield* ServerSecretStore.pruneReplayGuards(secretsDir);
+
+      const remaining = yield* Effect.forEach(names, (name) =>
+        secretStore.get(name).pipe(Effect.map(Option.isSome)),
+      );
+      assert.deepEqual(remaining, [false, false, false, true, true]);
+    }).pipe(Effect.provide(Layer.provideMerge(ServerSecretStore.layer, makeServerConfigLayer()))),
   );
 });
