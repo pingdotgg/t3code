@@ -271,7 +271,7 @@ export interface LimitPoolWindow {
   readonly resets: ReadonlyArray<{
     readonly member: LimitPoolMember;
     readonly at: number;
-    /** Points of the pool the reset restores: the member's used share over the member count. */
+    /** Points of the pool the reset restores: the member's used share, weighted by its plan's capacity. */
     readonly restoresPercent: number;
   }>;
 }
@@ -332,6 +332,19 @@ export function collectLimitPools(
   });
 }
 
+/**
+ * How much quota an account adds to its pool, relative to the provider's base
+ * paid plan. Plan labels carry the multiplier (`ChatGPT Pro 20x Subscription`,
+ * `Max 5x`); a label without one counts as the base plan. Averaging members
+ * evenly instead would let a Plus account's weekly allowance count as much as
+ * a Pro 20x account's, when it is a twentieth of it.
+ */
+export function planCapacityWeight(plan: string | undefined): number {
+  const multiplier = plan?.match(/\b(\d+(?:\.\d+)?)x\b/i)?.[1];
+  const weight = multiplier === undefined ? 1 : Number(multiplier);
+  return Number.isFinite(weight) && weight > 0 ? weight : 1;
+}
+
 function accountSortName(account: LimitAccount): string {
   return (account.displayName ?? account.email ?? account.key).toLowerCase();
 }
@@ -349,17 +362,26 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
   const pools = [...byKey.values()].map((members): LimitPoolWindow => {
     const memberByAccount = new Map(members.map((member) => [member.account.key, member]));
     const first = members[0]!.window;
-    const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
+    // Each member counts by its plan's capacity, not one vote apiece.
+    const weightOf = (member: LimitPoolMember) => planCapacityWeight(member.account.plan);
+    const totalWeight = members.reduce((sum, m) => sum + weightOf(m), 0);
+    const usedPercent =
+      members.reduce((sum, m) => sum + m.window.usedPercent * weightOf(m), 0) / totalWeight;
     // Pace compares spend against the clock, so it is judged only over the
     // members that have a clock; a window with no reset would otherwise
     // count as spend with no time elapsed and skew the verdict.
     const timed = members.flatMap((m) => {
       const share = elapsedShare(m.window, now);
-      return share === null ? [] : [{ used: m.window.usedPercent, elapsed: share }];
+      return share === null
+        ? []
+        : [{ used: m.window.usedPercent, elapsed: share, weight: weightOf(m) }];
     });
-    const timedUsed = timed.reduce((sum, t) => sum + t.used, 0) / timed.length;
+    const timedWeight = timed.reduce((sum, t) => sum + t.weight, 0);
+    const timedUsed = timed.reduce((sum, t) => sum + t.used * t.weight, 0) / timedWeight;
     const meanElapsed =
-      timed.length > 0 ? timed.reduce((sum, t) => sum + t.elapsed, 0) / timed.length : null;
+      timed.length > 0
+        ? timed.reduce((sum, t) => sum + t.elapsed * t.weight, 0) / timedWeight
+        : null;
     const resets = members
       .flatMap((member) => {
         const at = resetMillis(member.window);
@@ -369,7 +391,9 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
               {
                 member,
                 at,
-                restoresPercent: Math.round(member.window.usedPercent / members.length),
+                restoresPercent: Math.round(
+                  (member.window.usedPercent * weightOf(member)) / totalWeight,
+                ),
               },
             ];
       })

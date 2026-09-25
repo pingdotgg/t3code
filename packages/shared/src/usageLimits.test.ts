@@ -17,6 +17,7 @@ import {
   collectLimitNotices,
   collectLimitPools,
   elapsedShare,
+  planCapacityWeight,
   formatResetsIn,
   limitsNotice,
   paceOf,
@@ -675,6 +676,34 @@ describe("pooled account columns", () => {
     expect(keys(pool!)).toEqual([["b", "a"]]);
   });
 
+  it("weights pooled quota by each account's plan capacity", () => {
+    const [pool] = collectLimitPools(
+      [
+        {
+          ...account("pro", [
+            { ...weekly, usedPercent: 100, resetsAt: "2026-09-05T12:00:00.000Z" },
+          ]),
+          plan: "ChatGPT Pro 20x Subscription",
+        },
+        {
+          ...account("plus", [{ ...weekly, usedPercent: 0, resetsAt: "2026-09-06T12:00:00.000Z" }]),
+          plan: "ChatGPT Plus Subscription",
+        },
+      ],
+      now,
+    );
+    // 20 parts of 21 are spent, not the one account in two an even split implies.
+    expect(pool!.windows[0]!.remainingPercent).toBe(5);
+    expect(pool!.windows[0]!.usedPercent).toBe(95);
+    expect(pool!.windows[0]!.pace).toBe("ahead");
+    expect(
+      pool!.windows[0]!.resets.map((reset) => [reset.member.account.key, reset.restoresPercent]),
+    ).toEqual([
+      ["pro", 95],
+      ["plus", 0],
+    ]);
+  });
+
   it("sorts unknown resets last and breaks ties consistently", () => {
     const accounts = [
       account("z", [{ ...window, resetsAt: undefined }]),
@@ -684,6 +713,18 @@ describe("pooled account columns", () => {
     ];
     expect(keys(collectLimitPools(accounts, now)[0]!)).toEqual([["a", "b", "y", "z"]]);
     expect(keys(collectLimitPools(accounts.toReversed(), now)[0]!)).toEqual([["a", "b", "y", "z"]]);
+  });
+});
+
+describe("planCapacityWeight", () => {
+  it("reads the multiplier from the plan label", () => {
+    expect(planCapacityWeight("ChatGPT Pro 20x Subscription")).toBe(20);
+    expect(planCapacityWeight("ChatGPT Pro 5x Subscription")).toBe(5);
+    expect(planCapacityWeight("Max 20x")).toBe(20);
+    expect(planCapacityWeight("ChatGPT Plus Subscription")).toBe(1);
+    expect(planCapacityWeight("Claude Subscription")).toBe(1);
+    expect(planCapacityWeight(undefined)).toBe(1);
+    expect(planCapacityWeight("Max 0x")).toBe(1);
   });
 });
 
