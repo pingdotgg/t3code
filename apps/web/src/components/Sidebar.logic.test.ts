@@ -23,7 +23,6 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
-  resolveThreadRowClassName,
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
@@ -51,6 +50,7 @@ import {
   type SidebarSection,
   resolveSidebarDropVerb,
 } from "./Sidebar.logic";
+import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
   EnvironmentId,
   OrchestrationLatestTurn,
@@ -816,11 +816,23 @@ describe("resolveSidebarThreadStatus", () => {
 });
 
 describe("searchSidebarThreads", () => {
+  const searchThread = (id: string, title: string, project: string) => ({
+    environmentId: localEnvironmentId,
+    id: ThreadId.make(id),
+    title,
+    project,
+  });
   const threads = [
-    { id: "thread-1", title: "Fix workspace search", project: "Alpha" },
-    { id: "thread-2", title: "Review providers", project: "Workspace" },
-    { id: "thread-3", title: "WORKTREE cleanup", project: "Beta" },
+    searchThread("thread-1", "Fix workspace search", "Alpha"),
+    searchThread("thread-2", "Review providers", "Workspace"),
+    searchThread("thread-3", "WORKTREE cleanup", "Beta"),
   ];
+  const contentKeys = (...ids: ReadonlyArray<string>) =>
+    new Set(
+      ids.map((id) =>
+        threadSearchMatchKey({ environmentId: localEnvironmentId, threadId: ThreadId.make(id) }),
+      ),
+    );
 
   it("matches thread titles case-insensitively and preserves their order", () => {
     expect(searchSidebarThreads(threads, "work")).toEqual([threads[0], threads[2]]);
@@ -832,6 +844,28 @@ describe("searchSidebarThreads", () => {
 
   it("returns no results for an empty query", () => {
     expect(searchSidebarThreads(threads, "   ")).toEqual([]);
+  });
+
+  it("appends content-only matches after every title match", () => {
+    expect(searchSidebarThreads(threads, "work", contentKeys("thread-2"))).toEqual([
+      threads[0],
+      threads[2],
+      threads[1],
+    ]);
+  });
+
+  it("lists a thread matching both title and content once", () => {
+    expect(searchSidebarThreads(threads, "work", contentKeys("thread-1"))).toEqual([
+      threads[0],
+      threads[2],
+    ]);
+  });
+
+  it("ignores content matches for threads outside the sidebar collection", () => {
+    expect(searchSidebarThreads(threads, "work", contentKeys("thread-missing"))).toEqual([
+      threads[0],
+      threads[2],
+    ]);
   });
 });
 
@@ -2021,28 +2055,6 @@ describe("resolveThreadStatusPill", () => {
         },
       }),
     ).toMatchObject({ label: "Completed", pulse: false });
-  });
-});
-
-describe("resolveThreadRowClassName", () => {
-  it("uses the active sidebar surface when a thread is both selected and active", () => {
-    const className = resolveThreadRowClassName({ isActive: true, isSelected: true });
-    expect(className).toContain("bg-sidebar-row-active");
-    expect(className).toContain("text-sidebar-foreground");
-    expect(className).not.toContain("bg-primary");
-  });
-
-  it("uses selected hover colors for selected threads", () => {
-    const className = resolveThreadRowClassName({ isActive: false, isSelected: true });
-    expect(className).toContain("bg-sidebar-row-selected");
-    expect(className).toContain("hover:bg-sidebar-row-active");
-    expect(className).not.toContain("bg-primary");
-  });
-
-  it("uses the active sidebar surface for active-only threads", () => {
-    const className = resolveThreadRowClassName({ isActive: true, isSelected: false });
-    expect(className).toContain("bg-sidebar-row-active");
-    expect(className).toContain("hover:bg-sidebar-row-active");
   });
 });
 

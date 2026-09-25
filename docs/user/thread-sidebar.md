@@ -29,6 +29,12 @@ and worktree while you stay in the new thread composer. This requires a Git proj
 
 Pin a thread from its menu to keep it above your active work.
 
+On web and desktop, unpinning, settling, snoozing, and archiving a thread each show
+a notification with **Undo** for five seconds. Undo restores the thread's previous
+state, including its pinned position, and reopens an archived thread you were
+viewing. `mod+z` triggers the most recent Undo when no text field is focused; see
+[Keybindings](./keybindings.md#commands-with-special-behavior).
+
 On web and desktop, you can also drag files from your computer onto any thread row:
 the thread opens and the files are attached in its composer, ready for
 your next message. The same per-message file limits apply as when attaching
@@ -92,6 +98,11 @@ thread. Work in progress, pending questions or approvals, and live background wo
 prevent automatic settlement. An open pull request does not prevent inactivity
 settlement, but an old closed or merged pull request does not settle work you
 resumed after it closed.
+
+To keep one thread out of the settled shelf no matter how long it sits idle, open its menu,
+choose **Auto-settle behavior**, and pick **Disabled**. The current option is checked. Pick
+**Enabled** to return to the usual rules. Manual settle, snooze, and archive still work while it
+is disabled.
 
 Change these rules in **Settings → General** on web and desktop, or **Settings → Thread behavior** on mobile.
 They continue to run when your apps are closed. On web and desktop, choose an environment at the

@@ -5,7 +5,6 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Etag from "effect/unstable/http/Etag";
@@ -69,7 +68,7 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
     const unusedSecretStore = ServerSecretStore.ServerSecretStore.of({
-      get: () => Effect.succeed(Option.none()),
+      get: () => Effect.succeedNone,
       set: () => Effect.void,
       create: () => Effect.void,
       getOrCreateRandom: () => Effect.die("Not used by these routes."),

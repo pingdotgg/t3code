@@ -5,7 +5,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation"
 
 const schema = Schema.String.pipe(Schema.decodeTo(
   Schema.String,
-  SchemaTransformation.transformOrFail({
+  SchemaTransformation.transformEffect({
     decode: (s) =>
       Effect.gen(function*() {
         yield* Effect.clockWith((clock) => clock.sleep(Duration.millis(300)))

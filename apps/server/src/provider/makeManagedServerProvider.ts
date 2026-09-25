@@ -252,6 +252,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   yield* Effect.forever(
     getRefreshInterval.pipe(
       Effect.flatMap((refreshInterval) =>
+        // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - races the interval against a settings-change signal, not a timeout
         Effect.raceFirst(
           Effect.sleep(
             Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) <= 0

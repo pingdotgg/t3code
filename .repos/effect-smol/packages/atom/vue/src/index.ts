@@ -206,6 +206,7 @@ export const useAtomRef = <A>(atomRef: () => AtomRef.ReadonlyRef<A>): Readonly<R
     onCleanup(ref.subscribe((next: A) => {
       value.value = next
     }))
+    value.value = ref.value
   })
   return value as Readonly<Ref<A>>
 }

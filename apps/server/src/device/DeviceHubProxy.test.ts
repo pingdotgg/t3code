@@ -111,6 +111,32 @@ describe("device hub proxy", () => {
     await response.text();
   });
 
+  it("reads Android fold state but requires operate scope to change it", async () => {
+    const path = "http://t3.test/api/device-hub/vendor/serve-emu/api/fold?device=emulator-5554";
+    const reader = fixture([AuthOrchestrationReadScope]);
+    const read = await reader.handler(new Request(path));
+    expect(read.status).toBe(200);
+    await read.text();
+    expect(reader.requests).toEqual([
+      "http://hub.test/vendor/serve-emu/api/fold?device=emulator-5554",
+    ]);
+    const denied = await reader.handler(
+      new Request(path, { method: "POST", body: '{"posture":"closed"}' }),
+    );
+    expect(denied.status).toBe(403);
+    expect(reader.requests).toHaveLength(1);
+
+    const operator = fixture([AuthOrchestrationOperateScope]);
+    const changed = await operator.handler(
+      new Request(path, { method: "POST", body: '{"posture":"closed"}' }),
+    );
+    expect(changed.status).toBe(200);
+    await changed.text();
+    expect(operator.requests).toEqual([
+      "http://hub.test/vendor/serve-emu/api/fold?device=emulator-5554",
+    ]);
+  });
+
   it("never forwards the vendor shell endpoint", async () => {
     const { handler, requests } = fixture([AuthOrchestrationOperateScope]);
     expect(
@@ -139,3 +165,29 @@ it.each([
   expect(await response.text()).not.toContain("private credential diagnostic");
   expect(requests).toEqual([]);
 });
+
+it.each([1, 3])(
+  "forwards fixed Duo display %s through the authenticated read proxy",
+  async (panel) => {
+    const { handler, requests } = fixture([AuthOrchestrationReadScope]);
+    const route = `/vendor/serve-sim/helper/duo/panel/${panel}/stream.avcc`;
+    const response = await handler(
+      new Request(`http://t3.test/api/device-hub${route}?wsTicket=secret`),
+    );
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(requests).toEqual([`http://hub.test${route}`]);
+  },
+);
+
+it.each(["/panel/2/stream.avcc", "/panel/1/webrtc/offer", "/panel/3/exec"])(
+  "rejects unsupported Duo route %s",
+  async (route) => {
+    const { handler, requests } = fixture([AuthOrchestrationReadScope]);
+    const response = await handler(
+      new Request(`http://t3.test/api/device-hub/vendor/serve-sim/helper/duo${route}`),
+    );
+    expect(response.status).toBe(404);
+    expect(requests).toEqual([]);
+  },
+);

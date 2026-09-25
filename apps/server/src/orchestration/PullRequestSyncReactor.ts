@@ -259,12 +259,12 @@ export const make = Effect.gen(function* () {
             Effect.map((stack) => ({
               stack: stack === null ? null : ({ kind: "native", ...stack } as const),
             })),
-            Effect.catchCause((cause) =>
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.failCause(cause)
-                : Effect.logWarning("pull request stack lookup failed", {
-                    key,
-                  }).pipe(Effect.as(null)),
+            Effect.catchCauseIf(
+              (cause) => !Cause.hasInterruptsOnly(cause),
+              () =>
+                Effect.logWarning("pull request stack lookup failed", {
+                  key,
+                }).pipe(Effect.as(null)),
             ),
           )
         : null;
@@ -303,7 +303,9 @@ export const make = Effect.gen(function* () {
               Effect.catchCause(logSkipped("pull request sync skipped", { key })),
             )
           : Effect.void,
-      { concurrency: 8, discard: true },
+      // As wide as one batched summary read, so the sweep's reads on a host arrive together and
+      // GitHub answers them in one request rather than one `gh pr view` apiece.
+      { concurrency: 25, discard: true },
     );
   });
 

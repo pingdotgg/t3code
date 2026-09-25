@@ -4,6 +4,15 @@ on:
   push:
     branches:
       - main
+  # Alchemy does not redeploy the Worker when only a Config value read in its
+  # Init changes (alchemy-run/alchemy#1831), so a changed repository variable
+  # needs a forced deploy to reach production.
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Redeploy every resource, including ones with no detected changes
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -17,6 +26,8 @@ concurrency:
 jobs:
   deploy_relay:
     name: Deploy production relay
+    # A manual run from another branch would deploy that branch to production.
+    if: github.ref == 'refs/heads/main'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 15
     environment:
@@ -28,6 +39,7 @@ jobs:
       RELAY_DOMAIN: ${{ vars.RELAY_DOMAIN }}
       RELAY_API_ZONE_NAME: ${{ vars.RELAY_API_ZONE_NAME }}
       RELAY_TUNNEL_ZONE_NAME: ${{ vars.RELAY_TUNNEL_ZONE_NAME }}
+      RELAY_TUNNEL_CLEANUP_MODE: ${{ vars.RELAY_TUNNEL_CLEANUP_MODE }}
       CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
       CLERK_JWT_AUDIENCE: ${{ vars.CLERK_JWT_AUDIENCE }}
       APNS_ENVIRONMENT: ${{ vars.APNS_ENVIRONMENT }}
@@ -54,9 +66,11 @@ jobs:
               - --filter=t3code-relay...
 
       - name: Deploy production relay stage
-        id: deploy
-        run: vp run --filter t3code-relay deploy --stage prod --yes --github-output
+        run: vp run --filter t3code-relay deploy --stage prod --yes --no-input ${{ inputs.force && '--force' || '' }}
         env:
+          # The PublishClientConfig action writes the client env here instead
+          # of the repo-root .env; nothing on the runner reads it.
+          T3CODE_RELAY_CLIENT_CONFIG_ENV: ${{ runner.temp }}/relay-client-config.env
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           PLANETSCALE_API_TOKEN_ID: ${{ secrets.PLANETSCALE_API_TOKEN_ID }}
           PLANETSCALE_API_TOKEN: ${{ secrets.PLANETSCALE_API_TOKEN }}
@@ -69,20 +83,12 @@ jobs:
         uses: actions/github-script@v8
         with:
           script: |
-            const result = "${{ steps.deploy.outputs.result }}";
-            const changed = "${{ steps.deploy.outputs.changed }}" === "true";
-            const description = changed
-              ? "Relay production deploy applied infrastructure changes."
-              : result === "noop"
-                ? "Relay production deploy was a no-op."
-                : `Relay production deploy completed with result: ${result}.`;
-
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
               sha: context.sha,
               state: "success",
               context: "Relay deploy / production",
-              description,
+              description: "Relay production deploy completed.",
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });

@@ -46,6 +46,7 @@ import {
   buildDocJson,
   buildTiptapContent,
   collapsedToFlat,
+  ComposerCodeExtension,
   ComposerTaskItemExtension,
   flatToCollapsed,
   flatToMarkdown,
@@ -57,18 +58,13 @@ import {
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
-import {
-  COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME,
-  COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-  COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
-  COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME,
-  SKILL_CHIP_ICON_SVG,
-} from "./composerInlineChip";
-import { FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
+import { FileTagChipContent } from "./chat/FileTagChip";
+import { SkillChipIcon } from "./chat/SkillInlineText";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { getTimelinePageScrollKey } from "./chat/pageScrollController";
 import { ContextChipPopover } from "./contextChipParts";
 import { Button } from "./ui/button";
+import { ContextChip } from "./ContextChip";
 import {
   ComposerContextActionsContext,
   ComposerContextReferenceChip,
@@ -136,7 +132,7 @@ export interface ComposerPromptEditorProps {
   ) => void;
   onVisibleSelectionChange?: () => void;
   onCommandKeyDown?: (
-    key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
+    key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab" | "Escape",
     event: KeyboardEvent,
     isTaskItem?: boolean,
   ) => boolean;
@@ -189,6 +185,13 @@ function resolvedThemeFromDocument(): "light" | "dark" {
 
 // ── Inline atom nodes (chips) ─────────────────────────────────────────────
 
+/**
+ * Wraps an inline chip node view: keeps the caret and text selection out of the chip and
+ * paints the editor's node selection over it.
+ */
+const CHIP_NODE_SELECTION_CLASS_NAME =
+  "relative inline-flex select-none items-center align-middle leading-none data-[composer-chip-selected]:after:pointer-events-none data-[composer-chip-selected]:after:absolute data-[composer-chip-selected]:after:inset-0 data-[composer-chip-selected]:after:rounded-sm data-[composer-chip-selected]:after:bg-[Highlight] data-[composer-chip-selected]:after:opacity-30 data-[composer-chip-selected]:after:content-['']";
+
 const ComposerMentionExtension = Node.create({
   name: "composer-mention",
   group: "inline",
@@ -216,11 +219,11 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
   const actions = use(ComposerContextActionsContext);
   const path = (node.attrs.path as string) ?? "";
   const chip = (
-    <Button
-      variant="chip"
+    <ContextChip
+      kind="mention"
+      render={<button type="button" />}
       onClick={() => actions.openMention(path)}
       aria-label={`Preview ${path}`}
-      className={`${FILE_TAG_CHIP_CLASS_NAME} cursor-pointer focus-visible:outline-2`}
       contentEditable={false}
       spellCheck={false}
       data-composer-mention-chip="true"
@@ -230,18 +233,13 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
         label={basenameOfPath(path)}
         theme={resolvedThemeFromDocument()}
       />
-    </Button>
+    </ContextChip>
   );
   return (
-    <NodeViewWrapper as="span" className={COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME}>
+    <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <Tooltip>
         <TooltipTrigger render={chip} />
-        <TooltipPopup
-          side="top"
-          className="max-w-120 whitespace-normal leading-tight wrap-anywhere"
-        >
-          {path}
-        </TooltipPopup>
+        <TooltipPopup side="top">{path}</TooltipPopup>
       </Tooltip>
     </NodeViewWrapper>
   );
@@ -279,20 +277,12 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
   const skillDescription = (node.attrs.skillDescription as string | null) ?? null;
   const skill = skills.find((candidate) => candidate.name === skillName);
   return (
-    <NodeViewWrapper as="span" className={COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME}>
+    <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <ContextChipPopover
+        kind="skill"
+        icon={<SkillChipIcon />}
+        label={skillLabel}
         accessibleLabel={`Skill ${skillLabel}`}
-        triggerClassName={COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME}
-        chip={
-          <>
-            <span
-              aria-hidden="true"
-              className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
-              dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
-            />
-            <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{skillLabel}</span>
-          </>
-        }
       >
         <div className="space-y-3 p-2 text-sm">
           <p className="font-medium">{skillLabel}</p>
@@ -384,7 +374,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
   return (
     <NodeViewWrapper
       as="span"
-      className="inline-flex min-w-0 max-w-full"
+      className="inline-flex min-w-0 max-w-full select-none"
       contentEditable={false}
       spellCheck={false}
       data-composer-citation-chip="true"
@@ -439,7 +429,7 @@ const ComposerContextReferenceExtension = Node.create({
 
 function ComposerContextReferenceNodeView({ node }: NodeViewProps) {
   return (
-    <NodeViewWrapper as="span" className={COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME}>
+    <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <ComposerContextReferenceChip
         kind={(node.attrs.kind as string) ?? ""}
         contextId={(node.attrs.contextId as string) ?? ""}
@@ -725,6 +715,19 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     );
   }, []);
 
+  const editorAttributes = useMemo(
+    () => ({
+      class: cn(
+        "composer-tiptap -m-1 block max-h-52 min-h-19.5 overflow-y-auto p-1 whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
+        className,
+      ),
+      "data-testid": "composer-editor",
+      "data-composer-rich-text": richText ? "true" : "false",
+      "aria-placeholder": placeholder,
+    }),
+    [className, placeholder, richText],
+  );
+
   const editor = useEditor(
     {
       extensions: [
@@ -741,8 +744,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           dropcursor: false,
           gapcursor: false,
           trailingNode: false,
+          code: false,
           // Plain mode has no marks: typed markers stay literal characters.
-          ...(richText ? {} : { bold: false, italic: false, strike: false, code: false }),
+          ...(richText ? {} : { bold: false, italic: false, strike: false }),
         }),
         ComposerMentionExtension,
         ComposerSkillExtension,
@@ -751,6 +755,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         ComposerMarkersExtension,
         ...(richText
           ? [
+              ComposerCodeExtension,
               TaskList,
               ComposerTaskItemExtension.extend({
                 addInputRules() {
@@ -787,15 +792,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       ),
       editable: !disabled,
       editorProps: {
-        attributes: {
-          class: cn(
-            "composer-tiptap block max-h-50 min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
-            className,
-          ),
-          "data-testid": "composer-editor",
-          "data-composer-rich-text": richText ? "true" : "false",
-          "aria-placeholder": placeholder,
-        },
+        attributes: editorAttributes,
         handleKeyDown: (view, event) => {
           if (
             isMacPlatform(navigator.platform) &&
@@ -904,7 +901,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
                 ? ("ArrowDown" as const)
                 : event.key === "ArrowUp"
                   ? ("ArrowUp" as const)
-                  : null;
+                  : event.key === "Escape"
+                    ? ("Escape" as const)
+                    : null;
           if (!key) return false;
           const handled = handler(key, event);
           if (handled) {
@@ -994,6 +993,17 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   useEffect(() => {
     editorHolder.current = editor;
   }, [editor]);
+
+  // Tiptap forwards option changes to the view from a passive effect, so a
+  // class change here would reach the ProseMirror element one tick after
+  // React commits. The chat composer measures its resting and expanded
+  // geometry in layout effects that run first, and it clamps the prompt
+  // through `className`, so the attributes are pushed to the view here for
+  // those measurements to see the layout they are about to reserve for.
+  useLayoutEffect(() => {
+    if (!editor?.isInitialized) return;
+    editor.view.setProps({ attributes: editorAttributes });
+  }, [editor, editorAttributes]);
 
   const readSnapshot = useCallback(() => {
     const snapshot = snapshotRef.current;
@@ -1232,7 +1242,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         <ComposerCitationCommentContext value={citationCommentActions}>
           <div
             className={cn(
-              "relative [font-family:var(--font-composer,var(--font-sans))] [font-size:var(--font-size-prompt,0.875rem)] [@media(max-width:39.999rem)_and_(pointer:coarse)]:[font-size:max(var(--font-size-prompt,1rem),16px)]",
+              "relative flow-root font-(family-name:--font-composer,var(--font-sans)) text-(length:--font-size-prompt,var(--text-sm)) max-sm:pointer-coarse:text-(length:--font-size-prompt-touch)",
               containerClassName,
             )}
           >

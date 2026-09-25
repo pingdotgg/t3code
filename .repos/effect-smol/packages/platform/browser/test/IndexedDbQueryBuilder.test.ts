@@ -63,7 +63,7 @@ class VerifyContext extends Context.Service<
 
 const VerifyId = Schema.String.pipe(
   Schema.decodeTo(Schema.String, {
-    encode: SchemaGetter.transformOrFail((s) =>
+    encode: SchemaGetter.transformEffect((s) =>
       Effect.gen(function*() {
         const { maxLength } = yield* VerifyContext
         if (s.length > maxLength) {
@@ -120,7 +120,8 @@ const Table6 = IndexedDbTable.make({
 
 const Table7 = IndexedDbTable.make({
   name: "no-keypath",
-  schema: Schema.Struct({ username: Schema.String, index: Schema.Number })
+  schema: Schema.Struct({ username: Schema.String, index: Schema.Number }),
+  indexes: { usernameIndex: "username" }
 })
 
 class V1 extends IndexedDbVersion.make(
@@ -133,7 +134,7 @@ class V1 extends IndexedDbVersion.make(
   Table7
 ) {}
 
-describe.sequential("IndexedDbQueryBuilder", () => {
+describe("IndexedDbQueryBuilder", { concurrent: false }, () => {
   describe("select", () => {
     it.effect("select", () => {
       class Db extends IndexedDbDatabase.make(
@@ -248,6 +249,51 @@ describe.sequential("IndexedDbQueryBuilder", () => {
 
         assert.deepStrictEqual(data, [
           { username: "user", index: 1, key: 5 }
+        ])
+      }).pipe(provideDb(Db))
+    })
+
+    it.effect("select first preserves the primary key in no keypath table", () => {
+      class Db extends IndexedDbDatabase.make(
+        V1,
+        Effect.fn(function*(api) {
+          yield* api.createObjectStore("no-keypath")
+          yield* api.createIndex("no-keypath", "usernameIndex")
+          yield* api.from("no-keypath").insertAll([
+            { key: 7, username: "user", index: 1 },
+            { key: 9, username: "user", index: 2 }
+          ])
+        })
+      ) {}
+
+      return Effect.gen(function*() {
+        const api = yield* Db
+        const data = yield* api.from("no-keypath").select("usernameIndex").equals("user").first()
+
+        assert.deepStrictEqual(data, { key: 7, username: "user", index: 1 })
+      }).pipe(provideDb(Db))
+    })
+
+    it.effect("select preserves primary keys in no keypath table", () => {
+      class Db extends IndexedDbDatabase.make(
+        V1,
+        Effect.fn(function*(api) {
+          yield* api.createObjectStore("no-keypath")
+          yield* api.createIndex("no-keypath", "usernameIndex")
+          yield* api.from("no-keypath").insertAll([
+            { key: 7, username: "user", index: 1 },
+            { key: 9, username: "user", index: 2 }
+          ])
+        })
+      ) {}
+
+      return Effect.gen(function*() {
+        const api = yield* Db
+        const data = yield* api.from("no-keypath").select("usernameIndex").equals("user")
+
+        assert.deepStrictEqual(data, [
+          { key: 7, username: "user", index: 1 },
+          { key: 9, username: "user", index: 2 }
         ])
       }).pipe(provideDb(Db))
     })
@@ -1418,6 +1464,11 @@ describe.sequential("IndexedDbQueryBuilder", () => {
       )
       assert.equal(data3.length, 10)
       assert.equal(data3[0].id, 51)
+
+      const data4 = yield* api.from("todo").select().limit(3).stream({ chunkSize: 2 }).pipe(
+        Stream.runCollect
+      )
+      assert.deepStrictEqual(data4.map((row) => row.id), [1, 2, 3])
     }).pipe(provideDb(Db))
   })
 

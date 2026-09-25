@@ -1,12 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
-import {
-  BackHandler,
-  Keyboard,
-  Pressable,
-  TextInput,
-  View,
-  type LayoutChangeEvent,
-} from "react-native";
+import { BackHandler, Keyboard, type TextInput, View, type LayoutChangeEvent } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { MenuAction } from "@react-native-menu/menu";
 
@@ -15,7 +8,7 @@ import { CompactBrandTitle } from "../../components/CompactBrandTitle";
 import { MaterialFloatingActionButton } from "../../components/MaterialFloatingActionButton";
 import { AndroidAnchoredMenu } from "../../components/AndroidAnchoredMenu";
 import { ControlPillMenu } from "../../components/ControlPill";
-import { SymbolView } from "../../components/AppSymbol";
+import { MaterialSearchField } from "../../components/MaterialSearchField";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { WorkspaceConnectionTitle } from "./WorkspaceConnectionTitle";
 import { useWorkspaceState } from "../../state/workspace";
@@ -68,42 +61,14 @@ export function MaterialThreadListToolbar(props: {
     ? "line.3.horizontal.decrease.circle.fill"
     : "line.3.horizontal.decrease.circle";
   const searchField = (
-    <View className="h-12 min-w-0 flex-1 flex-row items-center gap-2 rounded-full border border-input-border bg-input px-3">
-      <SymbolView name="magnifyingglass" size={18} tintColorClassName="accent-foreground-muted" />
-      <TextInput
-        ref={searchRef}
-        accessibilityLabel="Search threads"
-        autoFocus={true}
-        autoCapitalize="none"
-        autoCorrect={false}
-        returnKeyType="search"
-        placeholder="Search"
-        placeholderTextColorClassName="accent-placeholder"
-        selectionColorClassName="accent-primary/32"
-        cursorColorClassName="accent-primary"
-        selectionHandleColorClassName="accent-primary"
-        className="min-w-0 flex-1 py-2 font-sans text-base text-foreground"
-        value={props.searchQuery}
-        onChangeText={onSearchQueryChange}
-      />
-      {props.searchQuery.length > 0 ? (
-        <Pressable
-          accessibilityLabel="Clear search"
-          accessibilityRole="button"
-          hitSlop={10}
-          onPress={() => {
-            props.onSearchQueryChange("");
-            searchRef.current?.focus();
-          }}
-        >
-          <SymbolView
-            name="xmark.circle.fill"
-            size={18}
-            tintColorClassName="accent-foreground-muted"
-          />
-        </Pressable>
-      ) : null}
-    </View>
+    <MaterialSearchField
+      inputRef={searchRef}
+      accessibilityLabel="Search threads"
+      clearAccessibilityLabel="Clear search"
+      placeholder="Search"
+      value={props.searchQuery}
+      onChangeText={onSearchQueryChange}
+    />
   );
 
   return (
@@ -165,7 +130,7 @@ export function MaterialThreadListToolbar(props: {
           <AndroidAnchoredMenu actions={props.filterActions} onPressAction={props.onFilterAction}>
             {(open) => (
               <MaterialFloatingActionButton
-                label="Filter and sort threads"
+                label="Filter threads"
                 icon={filterIcon}
                 onPress={open}
               />

@@ -27,6 +27,7 @@ export interface ViteChildConfig {
   source?: {
     descriptor: WorkerSourceDescriptor;
     id: string;
+    fqn: string;
     assets: WorkerAssetsConfig | undefined;
   };
   worker: {
@@ -46,6 +47,7 @@ export interface ViteChildConfig {
     workflows: Workflow[];
     hyperdrives: Record<string, Required<HyperdriveOrigin>>;
     queueConsumers: QueueConsumer[];
+    crons: RuntimeWorker["crons"];
     assets: RuntimeWorker["assets"];
   };
 }

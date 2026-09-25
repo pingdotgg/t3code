@@ -63,7 +63,6 @@ export class DesktopTelemetryPublisher extends Context.Service<
     readonly latest: Effect.Effect<Option.Option<DesktopHostTelemetrySnapshot>>;
     readonly changes: Stream.Stream<DesktopHostTelemetrySnapshot>;
     readonly encoded: Stream.Stream<Uint8Array>;
-    readonly handleControl: (message: DesktopTelemetryControlMessage) => Effect.Effect<void>;
     readonly handleControlForSource: (
       sourceId: string,
       message: DesktopTelemetryControlMessage,
@@ -290,12 +289,12 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
       yield* Ref.set(latest, Option.some(snapshot));
       yield* PubSub.publish(changes, snapshot);
     }).pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterrupts(cause)
-          ? Effect.failCause(cause)
-          : Effect.logWarning("Failed to sample Electron telemetry", {
-              cause: String(cause),
-            }),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterrupts(cause),
+        (cause) =>
+          Effect.logWarning("Failed to sample Electron telemetry", {
+            cause: String(cause),
+          }),
       ),
     );
 
@@ -307,6 +306,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
         Ref.get(diagnosticsDemandSources).pipe(Effect.map((sources) => sources.size > 0)),
         Ref.get(hostPowerIntervals),
       ]);
+      // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - races a trigger queue against the interval; both arms are real outcomes, not a timeout
       const allowSuspendRecovery = yield* Effect.raceFirst(
         Queue.take(sampleTriggers).pipe(Effect.as(false)),
         Effect.sleep(sampleInterval(currentPower, demand, intervals)).pipe(Effect.as(true)),
@@ -365,8 +365,6 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
           : Queue.offer(sampleTriggers, undefined).pipe(Effect.asVoid),
       ),
     );
-  const handleControl: DesktopTelemetryPublisher["Service"]["handleControl"] = (message) =>
-    handleControlForSource("legacy", message);
 
   const snapshots = Stream.unwrap(
     Effect.gen(function* () {
@@ -415,7 +413,6 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
     latest: Ref.get(latest),
     changes: Stream.fromPubSub(changes),
     encoded,
-    handleControl,
     handleControlForSource,
     removeControlSource,
     publishUpdateReport,

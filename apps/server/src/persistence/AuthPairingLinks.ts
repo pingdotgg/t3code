@@ -268,7 +268,7 @@ export const make = Effect.gen(function* () {
       ),
       Effect.flatMap((rowOption) =>
         Option.match(rowOption, {
-          onNone: () => Effect.succeed(Option.none()),
+          onNone: () => Effect.succeedNone,
           onSome: (row) =>
             decodeAuthPairingLinkDbRow(row).pipe(
               Effect.mapError((cause) =>
@@ -278,7 +278,7 @@ export const make = Effect.gen(function* () {
                   { pairingLinkId: row.id },
                 ),
               ),
-              Effect.map(Option.some),
+              Effect.asSome,
             ),
         }),
       ),
@@ -329,7 +329,7 @@ export const make = Effect.gen(function* () {
       ),
       Effect.flatMap((rowOption) =>
         Option.match(rowOption, {
-          onNone: () => Effect.succeed(Option.none()),
+          onNone: () => Effect.succeedNone,
           onSome: (row) =>
             decodeAuthPairingLinkDbRow(row).pipe(
               Effect.mapError((cause) =>
@@ -339,7 +339,7 @@ export const make = Effect.gen(function* () {
                   { pairingLinkId: row.id },
                 ),
               ),
-              Effect.map(Option.some),
+              Effect.asSome,
             ),
         }),
       ),

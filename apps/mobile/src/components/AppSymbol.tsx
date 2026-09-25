@@ -19,7 +19,7 @@ import IconArrowUp from "@tabler/icons-react-native/IconArrowUp";
 import IconArrowUpCircle from "@tabler/icons-react-native/IconArrowUpCircle";
 import IconArrowUpRight from "@tabler/icons-react-native/IconArrowUpRight";
 import IconArrowUpRightCircle from "@tabler/icons-react-native/IconArrowUpRightCircle";
-import IconArrowsMaximize from "@tabler/icons-react-native/IconArrowsMaximize";
+import IconArrowsDiagonal2 from "@tabler/icons-react-native/IconArrowsDiagonal2";
 import IconArrowsMinimize from "@tabler/icons-react-native/IconArrowsMinimize";
 import IconBellRinging from "@tabler/icons-react-native/IconBellRinging";
 import IconBolt from "@tabler/icons-react-native/IconBolt";
@@ -60,9 +60,11 @@ import IconGitBranch from "@tabler/icons-react-native/IconGitBranch";
 import IconGitMerge from "@tabler/icons-react-native/IconGitMerge";
 import IconGitPullRequest from "@tabler/icons-react-native/IconGitPullRequest";
 import IconHammer from "@tabler/icons-react-native/IconHammer";
+import IconHome from "@tabler/icons-react-native/IconHome";
 import IconInfoCircle from "@tabler/icons-react-native/IconInfoCircle";
 import IconKeyboard from "@tabler/icons-react-native/IconKeyboard";
 import IconKeyboardHide from "@tabler/icons-react-native/IconKeyboardHide";
+import IconLock from "@tabler/icons-react-native/IconLock";
 import IconLayoutColumns from "@tabler/icons-react-native/IconLayoutColumns";
 import IconLayoutSidebar from "@tabler/icons-react-native/IconLayoutSidebar";
 import IconLayoutSidebarRight from "@tabler/icons-react-native/IconLayoutSidebarRight";
@@ -120,7 +122,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "arrow.turn.left.up": IconArrowBackUp,
   "arrow.up": IconArrowUp,
   "arrow.up.circle": IconArrowUpCircle,
-  "arrow.up.left.and.arrow.down.right": IconArrowsMaximize,
+  "arrow.up.left.and.arrow.down.right": IconArrowsDiagonal2,
   "arrow.down.right.and.arrow.up.left": IconArrowsMinimize,
   "arrow.up.right": IconArrowUpRight,
   "arrow.up.right.circle": IconArrowUpRightCircle,
@@ -138,6 +140,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "checkmark.circle": IconCircleCheck,
   circle: IconCircle,
   clock: IconClock,
+  timer: IconClock,
   ticket: IconTicket,
   cloud: IconCloud,
   cube: IconBox,
@@ -161,6 +164,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   gearshape: IconSettings,
   globe: IconWorld,
   hammer: IconHammer,
+  house: IconHome,
   "info.circle": IconInfoCircle,
   internaldrive: IconDatabase,
   keyboard: IconKeyboard,
@@ -194,6 +198,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "sidebar.right": IconLayoutSidebarRight,
   "slider.horizontal.3": IconAdjustmentsHorizontal,
   "square.and.pencil": IconEdit,
+  "square.on.square": IconCopy,
   "square.grid.2x2": IconApps,
   "square.split.2x1": IconLayoutColumns,
   star: IconStar,
@@ -237,6 +242,7 @@ const ANDROID_ICON_BY_MATERIAL_NAME = {
   keyboard_arrow_down: IconChevronDown,
   keyboard_arrow_up: IconChevronUp,
   keyboard_hide: IconKeyboardHide,
+  lock: IconLock,
   more_vert: IconDotsVertical,
   merge: IconGitMerge,
   public: IconWorld,
