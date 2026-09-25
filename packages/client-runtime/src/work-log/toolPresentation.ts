@@ -105,6 +105,42 @@ function activitySource(value: unknown): ToolActivitySource | undefined {
   return { key, name, kind, ...(icon ? { icon } : {}) };
 }
 
+/** MCP identity comes from provider fields, never from command text or tool output. */
+export function readMcpToolIdentity(value: unknown) {
+  const data = asRecord(value);
+  const server = trimmedString(data?.server, 160);
+  const tool = trimmedString(data?.tool, 160);
+  if (server && tool) return { server, tool };
+  const name = trimmedString(data?.toolName ?? data?.tool ?? value, 512);
+  const match = name?.match(/^mcp__(.+?)__(.+)$/u);
+  return match ? { server: match[1]!, tool: match[2]! } : undefined;
+}
+
+export function extractMcpToolData(payloadValue: unknown): unknown {
+  const payload = asRecord(payloadValue);
+  if (payload?.itemType !== "mcp_tool_call") return undefined;
+  const data = asRecord(payload.data);
+  return data?.item ?? data;
+}
+
+const pydanticIcon: ToolActivityIcon = {
+  _tag: "themed-logo",
+  // Official Pydantic mark, bundled so activity rendering needs no external request.
+  // Source: https://pydantic.dev/favicon/favicon-32x32.png
+  logoUrl:
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAjVBMVEUAAADkHunlH+jmH+nnIO3mH+nmH+jmH+nmH+nmIOrnI+fhJOHlH+jmIOnlH+nmH+nlIOnmIOnnIOjoH+jlIOnmH+nmH+jmH+jlH+nlHujlIOjkIOnmH+jmIOnmIOnlH+nmH+rlIOjmH+nlH+nlH+jmIOjmIOjmH+jnH+nmH+bpHenlIOnlIOnlH+rmIOn8IWMRAAAALnRSTlMAOfz3D+ySy+U9FQfy1bSwbV01K97Et4p4Wk4d3LyagEhE0KOih3xoYCkj3b0xGud1NAAAASlJREFUOMutktmSgjAQRdskEGRHkc19X2bm/v/nDYlIFNAn71NXnVOVzk3o23GldD8KEZB94jHqxO/5lCMIwKfvuLcD/1OS90ZYAbE+xh7mG4asWbQa4nMLjquv6sCaDwhLsO19GjPM+rwAciJvs/GIcqDo8gmDFNXBB3iYCAk2euViAUgfTXwJLMSLsL8TKwMyCzr7Z55oeqi8ETCise2gTmL4zYdlj9WkBaLaseDfWmHW7qQEs/Wj8iNwoq5AJ+D41EtfoN+mOZHqZo3Q7T4CShoSqAJCojOwoq5g3v9MO4BHpegLoow4EFCpS+HhRTwL4hJy1HESdeP1Qs1sFrt3QSQNtbftW+apdpY2YC+ZmtN80vnR6wBtUlW8iXGkoj+G9nMtiit9Of95Iid+i/HAwQAAAABJRU5ErkJggg==",
+};
+
+export function mcpToolSource(server: string): ToolActivitySource {
+  const isLogfire = /^(?:pydantic[-_])?logfire$/iu.test(server);
+  return {
+    key: `mcp:${server}`,
+    name: `${isLogfire ? "Pydantic Logfire" : server} MCP`,
+    kind: "integration",
+    ...(isLogfire ? { icon: pydanticIcon } : {}),
+  };
+}
+
 export function extractToolActivityPresentation(
   payloadValue: unknown,
 ): ExtractedToolActivityPresentation {
@@ -114,7 +150,14 @@ export function extractToolActivityPresentation(
       ? payload.toolSurface
       : undefined;
   const toolIcon = activityIcon(payload?.toolIcon);
-  const toolSource = activitySource(payload?.toolSource);
+  const identity =
+    readMcpToolIdentity(extractMcpToolData(payload)) ??
+    (payload?.itemType === "mcp_tool_call" ? readMcpToolIdentity(payload.title) : undefined);
+  const toolSource =
+    activitySource(payload?.toolSource) ??
+    (!toolSurface && identity && !/^(?:t3-code|t3_code|t3code)$/iu.test(identity.server)
+      ? mcpToolSource(identity.server)
+      : undefined);
   return {
     ...(toolSurface ? { toolSurface } : {}),
     ...(toolIcon ? { toolIcon } : {}),

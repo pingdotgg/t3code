@@ -19,7 +19,10 @@ import {
   workLogEntryIsToolLike,
   type WorkLogToolLifecycleStatus,
 } from "@t3tools/client-runtime/work-log/presentation";
-import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
+import {
+  extractMcpToolData,
+  extractToolActivityPresentation,
+} from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
   isToolLifecycleItemType,
   type AssetResource,
@@ -633,8 +636,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     entry.toolSource = toolPresentation.toolSource;
   }
   if (itemType === "mcp_tool_call") {
-    const data = asRecord(payload?.data);
-    const toolData = typeof data?.toolName === "string" ? (data.item ?? data) : data?.item;
+    const toolData = extractMcpToolData(payload);
     if (toolData !== undefined) {
       entry.toolData = toolData;
     }

@@ -901,13 +901,42 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  it.effect("starts fresh threads with raw response events enabled", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ method: string; payload: unknown }> = [];
+      const opened = yield* openCodexThread({
+        client: {
+          raw: {
+            request: (method: "thread/start" | "thread/resume", payload: unknown) => {
+              calls.push({ method, payload });
+              return Effect.succeed(makeThreadOpenResponse("fresh-thread"));
+            },
+          },
+        },
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+      });
+
+      NodeAssert.equal(opened.thread.id, "fresh-thread");
+      NodeAssert.equal(calls.length, 1);
+      NodeAssert.equal(calls[0]!.method, "thread/start");
+      NodeAssert.equal(
+        (calls[0]!.payload as { experimentalRawEvents?: boolean }).experimentalRawEvents,
+        true,
+      );
+    }),
+  );
+
   it.effect("resumes metadata when historical turns contain unknown error values", () =>
     Effect.gen(function* () {
       const response = makeThreadOpenResponse("saved-thread");
       const calls: unknown[] = [];
       const opened = yield* openCodexThread({
         client: {
-          request: () => Effect.die("A valid resumed thread must not start fresh"),
           raw: {
             request: (method, payload) => {
               calls.push({ method, payload });
@@ -972,7 +1001,6 @@ describe("openCodexThread", () => {
       ]) {
         const error = yield* openCodexThread({
           client: {
-            request: () => Effect.die("Invalid resume metadata must not start a fresh thread"),
             raw: {
               request: () =>
                 Effect.succeed({ ...makeThreadOpenResponse("saved-thread"), ...invalidMetadata }),
@@ -999,25 +1027,17 @@ describe("openCodexThread", () => {
       const started = makeThreadOpenResponse("fresh-thread");
       const client = {
         raw: {
-          request: (
-            method: "thread/resume",
-            payload: CodexRpc.ClientRequestParamsByMethod["thread/resume"],
-          ) => {
+          request: (method: "thread/start" | "thread/resume", payload: unknown) => {
             calls.push({ method, payload });
-            return Effect.fail(
-              new CodexErrors.CodexAppServerRequestError({
-                code: -32603,
-                errorMessage: "thread not found",
-              }),
-            );
+            return method === "thread/start"
+              ? Effect.succeed(started)
+              : Effect.fail(
+                  new CodexErrors.CodexAppServerRequestError({
+                    code: -32603,
+                    errorMessage: "thread not found",
+                  }),
+                );
           },
-        },
-        request: (
-          method: "thread/start",
-          payload: CodexRpc.ClientRequestParamsByMethod["thread/start"],
-        ) => {
-          calls.push({ method, payload });
-          return Effect.succeed(started);
         },
       };
 
@@ -1042,15 +1062,16 @@ describe("openCodexThread", () => {
   it.effect("propagates non-recoverable resume failures", () =>
     Effect.gen(function* () {
       const client = {
-        request: () => Effect.die("Non-recoverable resume failures must not start a fresh thread"),
         raw: {
-          request: () =>
-            Effect.fail(
-              new CodexErrors.CodexAppServerRequestError({
-                code: -32603,
-                errorMessage: "timed out waiting for server",
-              }),
-            ),
+          request: (method: "thread/start" | "thread/resume") =>
+            method === "thread/start"
+              ? Effect.die("Non-recoverable resume failures must not start a fresh thread")
+              : Effect.fail(
+                  new CodexErrors.CodexAppServerRequestError({
+                    code: -32603,
+                    errorMessage: "timed out waiting for server",
+                  }),
+                ),
         },
       };
 

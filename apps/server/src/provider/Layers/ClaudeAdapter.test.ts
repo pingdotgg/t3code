@@ -1231,6 +1231,91 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("reports each main-agent response with Claude's own request timing", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const responseFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "model.response.completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+        },
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId: session.threadId, input: "hello", attachments: [] });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-1",
+        uuid: "stream-start",
+        parent_tool_use_id: null,
+        ttft_ms: 700,
+        event: {
+          type: "message_start",
+          message: { id: "msg_1", model: "claude-sonnet-5-20260101", usage: {} },
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-1",
+        uuid: "stream-tool",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "tool_use", id: "toolu_1", name: "Read", input: {} },
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-1",
+        uuid: "stream-delta",
+        parent_tool_use_id: null,
+        event: {
+          type: "message_delta",
+          delta: { stop_reason: "tool_use" },
+          usage: {
+            input_tokens: 5,
+            cache_read_input_tokens: 100,
+            cache_creation_input_tokens: 10,
+            output_tokens: 40,
+          },
+        },
+      } as unknown as SDKMessage);
+
+      const [response] = Array.from(yield* Fiber.join(responseFiber));
+      assert.equal(response?.type, "model.response.completed");
+      if (response?.type !== "model.response.completed") return;
+      assert.equal(response.payload.responseId, "msg_1");
+      assert.equal(response.payload.model, "claude-sonnet-5-20260101");
+      assert.equal(response.payload.finishReason, "tool_use");
+      assert.equal(response.payload.requestStartSource, "provider_ttft");
+      assert.equal(
+        Date.parse(response.payload.firstChunkAt!) - Date.parse(response.payload.requestStartedAt!),
+        700,
+      );
+      assert.deepEqual(response.payload.toolCalls, [{ id: "toolu_1", name: "Read" }]);
+      assert.deepEqual(response.payload.usage, {
+        inputTokens: 115,
+        outputTokens: 40,
+        cachedInputTokens: 100,
+        cacheCreationTokens: 10,
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("maps Claude stream/runtime messages to canonical provider runtime events", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

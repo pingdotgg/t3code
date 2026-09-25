@@ -43,7 +43,11 @@ describe("thread title context", () => {
     for (let budget = 1; budget < 40; budget++) {
       expect(limitTitleMessage("x".repeat(100), budget).length).toBeLessThanOrEqual(budget);
     }
-    expect(formatThreadTitleContext([])).toEqual({ message: "", attachments: [] });
+    expect(formatThreadTitleContext([])).toMatchObject({
+      message: "",
+      attachments: [],
+      context: { sourceMessageCount: 0, retainedMessageCount: 0 },
+    });
   });
 
   it("omits reasoning traces from generated titles", () => {

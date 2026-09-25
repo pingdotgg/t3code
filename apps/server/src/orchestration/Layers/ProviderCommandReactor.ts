@@ -970,6 +970,7 @@ const make = Effect.gen(function* () {
         const generated = yield* textGeneration
           .generateThreadTitle({
             cwd: input.cwd,
+            threadId: input.threadId,
             message: input.messageText,
             ...(attachments.length > 0 ? { attachments } : {}),
             modelSelection,
@@ -1046,7 +1047,7 @@ const make = Effect.gen(function* () {
       return { _tag: "Superseded" } as const;
     }
 
-    const { message, attachments } = formatThreadTitleContext(thread.messages);
+    const { message, attachments, context } = formatThreadTitleContext(thread.messages);
     if (message.length === 0) {
       return { _tag: "Completed", title: undefined } as const;
     }
@@ -1067,7 +1068,10 @@ const make = Effect.gen(function* () {
     ).settings;
     const generated = yield* textGeneration.generateThreadTitle({
       cwd,
+      threadId: thread.id,
+      requestId,
       message,
+      context,
       previousTitle,
       ...(attachments.length > 0 ? { attachments } : {}),
       modelSelection,

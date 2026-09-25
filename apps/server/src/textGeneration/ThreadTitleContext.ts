@@ -96,6 +96,21 @@ export function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMess
     (attachment) => attachment.id !== firstAttachment?.id,
   );
   return {
+    context: {
+      sourceMessageCount: sections.length,
+      retainedMessageCount: retained.length,
+      droppedMessageIndices: sections
+        .filter((section) => !selected.has(section.index))
+        .map((section) => section.index),
+      truncatedMessageIndices: retained
+        .filter((section) => selected.get(section.index) !== section.prefix + contentsFor(section))
+        .map((section) => section.index),
+      sourceMessages: sections.map((section) => ({
+        index: section.index,
+        role: section.message.role,
+        text: section.message.text,
+      })),
+    },
     message: `${truncated || retained.length < sections.length ? OMITTED : ""}${retained.map((section) => selected.get(section.index)).join("\n\n")}`,
     attachments: [
       ...(firstAttachment ? [firstAttachment] : []),

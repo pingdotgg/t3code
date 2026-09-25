@@ -50,6 +50,7 @@ import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReape
 import { forkParked } from "./serverActivation.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import { seedLogfireTitleDemo } from "./logfireTitleDemo.ts";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
@@ -1059,6 +1060,11 @@ export const make = (options?: StartupOptions) =>
         }),
       );
       yield* options?.activate ?? Effect.void;
+
+      const titleDemoCorpus = process.env.T3CODE_LOGFIRE_TITLE_CORPUS;
+      if (titleDemoCorpus) {
+        yield* runStartupPhase("demo.seed-titles", seedLogfireTitleDemo(titleDemoCorpus));
+      }
 
       yield* Effect.logDebug("Accepting commands");
       yield* commandGate.signalCommandReady;
