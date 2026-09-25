@@ -64,3 +64,30 @@ it.effect("applies busy_timeout in the shared persistence setup", () =>
     assert.equal(rows[0]?.timeout, 5000);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
+
+it.effect("truncates the WAL back to the size limit after a checkpoint", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-wal-"));
+  const dbPath = NodePath.join(tempDir, "state.sqlite");
+  const walSize = () => NodeFS.statSync(`${dbPath}-wal`).size;
+  const limit = 16 * 1024 * 1024;
+
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE wal_probe(data BLOB)`;
+    yield* sql.withTransaction(
+      Effect.forEach(
+        Array.from({ length: 24 }),
+        () => sql`INSERT INTO wal_probe(data) VALUES (${new Uint8Array(1024 * 1024)})`,
+      ),
+    );
+    assert.isAbove(walSize(), limit);
+
+    // The next writes cross the autocheckpoint threshold, reset the WAL, and truncate it.
+    yield* sql`DELETE FROM wal_probe`;
+    yield* sql`INSERT INTO wal_probe(data) VALUES (${new Uint8Array(1)})`;
+    assert.isAtMost(walSize(), limit);
+  }).pipe(
+    Effect.provide(makeSqlitePersistenceLive(dbPath).pipe(Layer.provide(NodeServices.layer))),
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});

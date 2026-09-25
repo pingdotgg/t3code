@@ -15,6 +15,8 @@ const setup = Layer.effectDiscard(
     yield* sql`PRAGMA busy_timeout = 5000;`;
     yield* sql`PRAGMA foreign_keys = ON;`;
     yield* sql`PRAGMA journal_mode = WAL;`;
+    // WAL files never shrink on their own; truncate back to 16 MiB after each checkpoint reset.
+    yield* sql`PRAGMA journal_size_limit = 16777216;`;
     yield* runMigrations();
   }),
 );
