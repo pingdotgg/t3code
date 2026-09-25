@@ -648,6 +648,78 @@ it.effect("ProviderServiceLive catches stopAll failures during shutdown", () =>
   }),
 );
 
+it.effect("ProviderServiceLive shutdown leaves settled session rows untouched", () =>
+  Effect.gen(function* () {
+    const recordedAnalytics = makeRecordingAnalytics();
+    const codex = makeFakeCodexAdapter();
+    const persistence = yield* Layer.build(
+      ProviderSessionDirectoryLive.pipe(
+        Layer.provide(ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+      ),
+    );
+    const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory.pipe(
+      Effect.provide(persistence),
+    );
+    const seed = (threadId: ThreadId, status: "running" | "stopped", activeTurnId: TurnId | null) =>
+      directory.upsert({
+        threadId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        status,
+        runtimePayload: { cwd: "/repo", activeTurnId },
+      });
+    const readBindings = directory
+      .listBindings()
+      .pipe(
+        Effect.map((bindings) => new Map(bindings.map((binding) => [binding.threadId, binding]))),
+      );
+    const settledId = asThreadId("shutdown-settled");
+    const liveId = asThreadId("shutdown-live");
+    const stoppedWithTurnId = asThreadId("shutdown-stopped-with-turn");
+    yield* seed(settledId, "stopped", null);
+    yield* seed(liveId, "running", asTurnId("live-turn"));
+    yield* seed(stoppedWithTurnId, "stopped", asTurnId("stale-turn"));
+    const settledBefore = (yield* readBindings).get(settledId);
+    assert(settledBefore !== undefined);
+
+    const scope = yield* Scope.make();
+    yield* Layer.build(
+      makeProviderServiceLive().pipe(
+        Layer.provide(NodeServices.layer),
+        Layer.provide(Layer.succeed(ProviderSessionDirectory.ProviderSessionDirectory, directory)),
+        Layer.provide(
+          Layer.succeed(
+            ProviderAdapterRegistry.ProviderAdapterRegistry,
+            makeStaticInstanceRegistry([[codexInstanceId, codex.adapter]]),
+          ),
+        ),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(serverConfigTestLayer),
+        Layer.provide(recordedAnalytics.layer),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      ),
+    ).pipe(Scope.provide(scope));
+    yield* TestClock.adjust("1 minute");
+    yield* Scope.close(scope, Exit.void);
+
+    const byThread = yield* readBindings;
+    assert.deepStrictEqual(byThread.get(settledId), settledBefore);
+    for (const threadId of [liveId, stoppedWithTurnId]) {
+      const binding = byThread.get(threadId);
+      assert.equal(binding?.status, "stopped");
+      assert.propertyVal(binding?.runtimePayload, "activeTurnId", null);
+      assert.propertyVal(binding?.runtimePayload, "lastRuntimeEvent", "provider.stopAll");
+    }
+    const [stoppedAll] = recordedAnalytics.eventsByName("provider.sessions.stopped_all");
+    assert.equal(stoppedAll?.properties?.sessionCount, 2);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("ProviderServiceLive flushes deferred completions during shutdown", () =>
   Effect.gen(function* () {
     const recordedAnalytics = makeRecordingAnalytics();
