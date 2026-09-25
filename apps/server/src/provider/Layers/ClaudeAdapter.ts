@@ -421,9 +421,10 @@ interface ClaudeSessionContext {
   resumeSessionId: string | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
-  /** Completed turn ids, for rollback counting. SDK messages are not kept:
-   * rollback reads Claude's own history, and a long-lived session would
-   * otherwise hold every message it ever produced. */
+  /** Completed turn ids, reported by readThread and trimmed on rollback.
+   * SDK messages are not kept: rollback reads Claude's own history through
+   * turnStartMessageIds, and a long-lived session would otherwise hold every
+   * message it ever produced. */
   readonly turns: Array<{ readonly id: TurnId }>;
   readonly inFlightTools: Map<number, ToolInFlight>;
   readonly claudeTasks: Map<string, ClaudeTaskState>;
