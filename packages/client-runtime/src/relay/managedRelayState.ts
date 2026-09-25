@@ -208,6 +208,36 @@ export const deregisterManagedRelayEnvironment = Effect.fn(
   yield* relay.unlinkEnvironment({ clerkToken, environmentId: input.environmentId });
 });
 
+export const renameManagedRelayEnvironment = Effect.fn(
+  "clientRuntime.managedRelaySession.renameEnvironment",
+)(function* (
+  registry: AtomRegistry.AtomRegistry,
+  input: {
+    readonly accountId: string;
+    readonly environmentId: EnvironmentId;
+    readonly label: string | null;
+  },
+) {
+  const session = registry.get(managedRelaySessionAtom);
+  if (!session || session.accountId !== input.accountId) {
+    return yield* new ManagedRelaySessionError({
+      message: "Sign in to T3 Connect before renaming an environment for all devices.",
+    });
+  }
+  const clerkToken = yield* readSessionClerkToken(session);
+  const relay = yield* ManagedRelay.ManagedRelayClient;
+  const result = yield* relay.renameEnvironment({
+    clerkToken,
+    environmentId: input.environmentId,
+    label: input.label,
+  });
+  if (!result.ok) {
+    return yield* new ManagedRelaySessionError({
+      message: "This environment is no longer linked to your T3 Connect account.",
+    });
+  }
+});
+
 function requireClerkToken(
   get: Atom.AtomContext,
   accountId: string,

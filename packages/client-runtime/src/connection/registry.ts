@@ -18,6 +18,7 @@ import {
   type ConnectionRegistration,
   type PlatformConnectionRegistration,
   type PrimaryConnectionRegistration,
+  RelayConnectionRegistration,
   SshConnectionProfile,
   connectionRegistrationCatalogEntry,
 } from "./catalog.ts";
@@ -31,6 +32,7 @@ import type {
   SupervisorConnectionState,
 } from "./model.ts";
 import { ConnectionBlockedError } from "./model.ts";
+import { RelayConnectionTarget } from "./model.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionDriver from "./driver.ts";
@@ -74,6 +76,10 @@ export class EnvironmentRegistry extends Context.Service<
     readonly start: Effect.Effect<void>;
     readonly register: (
       registration: ConnectionRegistration,
+    ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
+    readonly syncRelayLabel: (
+      environmentId: EnvironmentId,
+      label: string,
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
     readonly registerPlatform: (registration: PrimaryConnectionRegistration) => Effect.Effect<void>;
     readonly reconcilePlatform: (
@@ -370,24 +376,21 @@ export const make = Effect.gen(function* () {
     ).pipe(
       Stream.map((current) => Option.fromUndefinedOr(current.get(environmentId))),
       Stream.changes,
-      Stream.switchMap(
-        Option.match({
-          onNone: () => Stream.empty,
-          onSome: () =>
-            Stream.unwrap(
-              acquireSupervisor(environmentId).pipe(
-                Effect.match({
-                  onFailure: () => Stream.empty,
-                  onSuccess: (supervisor) =>
-                    Stream.provideService(
-                      stream,
-                      EnvironmentSupervisor.EnvironmentSupervisor,
-                      supervisor,
-                    ),
-                }),
-              ),
+      Stream.mapEffect((entry) =>
+        Option.isNone(entry)
+          ? Effect.succeed(null)
+          : acquireSupervisor(environmentId).pipe(
+              Effect.catchTags({
+                EnvironmentNotRegisteredError: () => Effect.succeed(null),
+              }),
             ),
-        }),
+      ),
+      // Catalog labels can change while the runtime supervisor stays the same.
+      Stream.changes,
+      Stream.switchMap((supervisor) =>
+        supervisor === null
+          ? Stream.empty
+          : Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
       ),
     );
 
@@ -479,6 +482,38 @@ export const make = Effect.gen(function* () {
           return next;
         });
         yield* installEntryLocked(entry);
+      }),
+    );
+  });
+
+  const syncRelayLabel = Effect.fn("EnvironmentRegistry.syncRelayLabel")(function* (
+    environmentId: EnvironmentId,
+    label: string,
+  ) {
+    yield* withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        const previous = (yield* SubscriptionRef.get(entries)).get(environmentId);
+        if (
+          previous?.target._tag !== "RelayConnectionTarget" ||
+          (previous.target.label === label && previous.target.localLabelOverride !== true)
+        )
+          return;
+        const target = new RelayConnectionTarget({ environmentId, label });
+        yield* registrations.register(new RelayConnectionRegistration({ target }));
+        yield* Ref.update(persistedTargetsByEnvironment, (current) =>
+          new Map(current).set(environmentId, target),
+        );
+        const entry = { ...previous, target };
+        const lease = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
+        if (lease !== undefined) {
+          yield* SubscriptionRef.update(serviceScopes, (current) =>
+            new Map(current).set(environmentId, { ...lease, entry }),
+          );
+        }
+        yield* SubscriptionRef.update(entries, (current) =>
+          new Map(current).set(environmentId, entry),
+        );
       }),
     );
   });
@@ -875,6 +910,7 @@ export const make = Effect.gen(function* () {
     networkStatus,
     start,
     register,
+    syncRelayLabel,
     registerPlatform,
     reconcilePlatform,
     remove,

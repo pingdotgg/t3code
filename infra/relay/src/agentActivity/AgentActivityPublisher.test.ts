@@ -95,6 +95,7 @@ function makeEnvironmentLinks(
     listForUser: () => Effect.succeed([]),
     getForUser: () => Effect.succeed(null),
     revokeForUser: () => Effect.succeed(false),
+    renameForUser: () => Effect.succeed(false),
     ...overrides,
   };
 }

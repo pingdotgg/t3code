@@ -127,6 +127,7 @@ function testLayer(input?: {
           listForUser: () => Effect.succeed([]),
           getForUser: () => Effect.succeed(null),
           revokeForUser: () => Effect.succeed(false),
+          renameForUser: () => Effect.succeed(false),
         }),
         Layer.succeed(EnvironmentCredentials.EnvironmentCredentials, {
           create: () => Effect.succeed("t3env_credential_secret"),

@@ -9,7 +9,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayEnvironmentLinks } from "../persistence/schema.ts";
@@ -88,6 +88,19 @@ export class EnvironmentLinkRevokePersistenceError extends Schema.TaggedError<En
   }
 }
 
+export class EnvironmentLinkRenamePersistenceError extends Schema.TaggedError<EnvironmentLinkRenamePersistenceError>()(
+  "EnvironmentLinkRenamePersistenceError",
+  {
+    userId: Schema.String,
+    environmentId: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to rename environment link for user '${this.userId}', environment '${this.environmentId}'`;
+  }
+}
+
 export class EnvironmentLinks extends Context.Service<
   EnvironmentLinks,
   {
@@ -118,6 +131,11 @@ export class EnvironmentLinks extends Context.Service<
       readonly userId: string;
       readonly environmentId: string;
     }) => Effect.Effect<boolean, EnvironmentLinkRevokePersistenceError>;
+    readonly renameForUser: (input: {
+      readonly userId: string;
+      readonly environmentId: string;
+      readonly label: string | null;
+    }) => Effect.Effect<boolean, EnvironmentLinkRenamePersistenceError>;
   }
 >()("t3code-relay/environments/EnvironmentLinks") {}
 
@@ -171,6 +189,7 @@ const make = Effect.gen(function* () {
           set: {
             environmentPublicKey: proof.environmentPublicKey,
             environmentLabel: proof.descriptor.label,
+            environmentLabelOverride: sql`case when ${relayEnvironmentLinks.revokedAt} is null then ${relayEnvironmentLinks.environmentLabelOverride} else null end`,
             endpointHttpBaseUrl: endpoint.httpBaseUrl,
             endpointWsBaseUrl: endpoint.wsBaseUrl,
             endpointProviderKind: endpoint.providerKind,
@@ -230,6 +249,7 @@ const make = Effect.gen(function* () {
         .select({
           environmentId: relayEnvironmentLinks.environmentId,
           environmentLabel: relayEnvironmentLinks.environmentLabel,
+          environmentLabelOverride: relayEnvironmentLinks.environmentLabelOverride,
           endpointHttpBaseUrl: relayEnvironmentLinks.endpointHttpBaseUrl,
           endpointWsBaseUrl: relayEnvironmentLinks.endpointWsBaseUrl,
           endpointProviderKind: relayEnvironmentLinks.endpointProviderKind,
@@ -247,7 +267,8 @@ const make = Effect.gen(function* () {
             rows.map((row) => ({
               environmentId: row.environmentId as RelayClientEnvironmentRecord["environmentId"],
               label:
-                row.environmentLabel.trim().length > 0 ? row.environmentLabel : row.environmentId,
+                row.environmentLabelOverride ??
+                (row.environmentLabel.trim().length > 0 ? row.environmentLabel : row.environmentId),
               endpoint: {
                 httpBaseUrl: row.endpointHttpBaseUrl,
                 wsBaseUrl: row.endpointWsBaseUrl,
@@ -275,6 +296,7 @@ const make = Effect.gen(function* () {
         .select({
           environmentId: relayEnvironmentLinks.environmentId,
           environmentLabel: relayEnvironmentLinks.environmentLabel,
+          environmentLabelOverride: relayEnvironmentLinks.environmentLabelOverride,
           environmentPublicKey: relayEnvironmentLinks.environmentPublicKey,
           endpointHttpBaseUrl: relayEnvironmentLinks.endpointHttpBaseUrl,
           endpointWsBaseUrl: relayEnvironmentLinks.endpointWsBaseUrl,
@@ -297,9 +319,10 @@ const make = Effect.gen(function* () {
               ? {
                   environmentId: row.environmentId as RelayClientEnvironmentRecord["environmentId"],
                   label:
-                    row.environmentLabel.trim().length > 0
+                    row.environmentLabelOverride ??
+                    (row.environmentLabel.trim().length > 0
                       ? row.environmentLabel
-                      : row.environmentId,
+                      : row.environmentId),
                   endpoint: {
                     httpBaseUrl: row.endpointHttpBaseUrl,
                     wsBaseUrl: row.endpointWsBaseUrl,
@@ -320,6 +343,33 @@ const make = Effect.gen(function* () {
               }),
           ),
         );
+    }),
+
+    renameForUser: Effect.fn("relay.environment_links.rename_for_user")(function* (input) {
+      yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
+      const updatedAt = DateTime.formatIso(yield* DateTime.now);
+      const rows = yield* db
+        .update(relayEnvironmentLinks)
+        .set({ environmentLabelOverride: input.label, updatedAt })
+        .where(
+          and(
+            eq(relayEnvironmentLinks.userId, input.userId),
+            eq(relayEnvironmentLinks.environmentId, input.environmentId),
+            isNull(relayEnvironmentLinks.revokedAt),
+          ),
+        )
+        .returning({ environmentId: relayEnvironmentLinks.environmentId })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentLinkRenamePersistenceError({
+                userId: input.userId,
+                environmentId: input.environmentId,
+                cause,
+              }),
+          ),
+        );
+      return rows.length > 0;
     }),
 
     revokeForUser: Effect.fn("relay.environment_links.revoke_for_user")(function* (input) {

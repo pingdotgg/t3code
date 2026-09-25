@@ -6,12 +6,7 @@ export * from "./errors.ts";
 export * from "./githubRoutingPermissions.ts";
 export * as Connection from "./layer.ts";
 export * from "./model.ts";
-export {
-  type BearerConnectionUpdateInput,
-  ConnectionOnboarding,
-  type PairingConnectionInput,
-  type SshConnectionInput,
-} from "./onboarding.ts";
+export * as ConnectionOnboarding from "./onboarding.ts";
 export * from "./presentation.ts";
 export * as ProfileStore from "./profileStore.ts";
 export {

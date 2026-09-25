@@ -19,6 +19,7 @@ import {
   createManagedRelayQueryManager,
   createManagedRelaySession,
   deregisterManagedRelayEnvironment,
+  renameManagedRelayEnvironment,
   managedRelayAccountChanges,
   type ManagedRelayQueryEvent,
   ManagedRelaySessionError,
@@ -72,6 +73,7 @@ function createClient(overrides?: Partial<ManagedRelay.ManagedRelayClient["Servi
     createEnvironmentLinkChallenge: () => Effect.die("unused"),
     linkEnvironment: () => Effect.die("unused"),
     unlinkEnvironment: () => Effect.die("unused"),
+    renameEnvironment: () => Effect.die("unused"),
     getEnvironmentStatus: () =>
       Effect.succeed({
         environmentId: environment.environmentId,
@@ -116,6 +118,61 @@ function clerkToken(expiresAtSeconds: number): string {
 
 describe("createManagedRelayQueryManager", () => {
   afterEach(resetRegistry);
+
+  it.effect("renames the account environment through the current Clerk session", () =>
+    Effect.gen(function* () {
+      const renameEnvironment = vi.fn(() => Effect.succeed({ ok: true }));
+      setSession();
+      yield* renameManagedRelayEnvironment(registry, {
+        accountId: "account-1",
+        environmentId: environment.environmentId,
+        label: "Personal",
+      }).pipe(
+        Effect.provideService(ManagedRelay.ManagedRelayClient, createClient({ renameEnvironment })),
+      );
+      expect(renameEnvironment).toHaveBeenCalledWith({
+        clerkToken: "clerk-token",
+        environmentId: environment.environmentId,
+        label: "Personal",
+      });
+    }),
+  );
+
+  it.effect("rejects shared rename when the account has changed", () =>
+    Effect.gen(function* () {
+      const renameEnvironment = vi.fn(() => Effect.succeed({ ok: true }));
+      setSession();
+      const error = yield* renameManagedRelayEnvironment(registry, {
+        accountId: "previous-account",
+        environmentId: environment.environmentId,
+        label: "Personal",
+      }).pipe(
+        Effect.provideService(ManagedRelay.ManagedRelayClient, createClient({ renameEnvironment })),
+        Effect.flip,
+      );
+      expect(error).toBeInstanceOf(ManagedRelaySessionError);
+      expect(renameEnvironment).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("reports a missing account link instead of claiming a rename succeeded", () =>
+    Effect.gen(function* () {
+      setSession();
+      const error = yield* renameManagedRelayEnvironment(registry, {
+        accountId: "account-1",
+        environmentId: environment.environmentId,
+        label: "Personal",
+      }).pipe(
+        Effect.provideService(
+          ManagedRelay.ManagedRelayClient,
+          createClient({ renameEnvironment: () => Effect.succeed({ ok: false }) }),
+        ),
+        Effect.flip,
+      );
+      expect(error).toBeInstanceOf(ManagedRelaySessionError);
+      expect(error.message).toContain("no longer linked");
+    }),
+  );
 
   it.effect("deregisters an environment through the current Clerk session", () =>
     Effect.gen(function* () {

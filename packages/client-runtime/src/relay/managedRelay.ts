@@ -90,6 +90,7 @@ export const ManagedRelayRequestAction = Schema.Literals([
   "create relay environment link challenge",
   "link relay environment",
   "unlink relay environment",
+  "rename relay environment",
   "get relay environment status",
   "connect relay environment",
   "register relay mobile device",
@@ -106,6 +107,7 @@ export const ManagedRelayRequestActivity = Schema.Literals([
   "Relay environment link challenge",
   "Relay environment linking",
   "Relay environment unlinking",
+  "Relay environment renaming",
   "Relay environment status request",
   "Relay environment connection",
   "Relay mobile device registration",
@@ -274,6 +276,11 @@ export class ManagedRelayClient extends Context.Service<
       readonly clerkToken: string;
       readonly environmentId: RelayClientEnvironmentRecord["environmentId"];
     }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
+    readonly renameEnvironment: (input: {
+      readonly clerkToken: string;
+      readonly environmentId: RelayClientEnvironmentRecord["environmentId"];
+      readonly label: string | null;
+    }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
     readonly getEnvironmentStatus: (input: {
       readonly clerkToken: string;
       readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
@@ -417,6 +424,7 @@ function disabledManagedRelayClient(relayUrl: string): ManagedRelayClient["Servi
     ),
     linkEnvironment: unavailable("clientRuntime.managedRelay.linkEnvironment"),
     unlinkEnvironment: unavailable("clientRuntime.managedRelay.unlinkEnvironment"),
+    renameEnvironment: unavailable("clientRuntime.managedRelay.renameEnvironment"),
     getEnvironmentStatus: unavailable("clientRuntime.managedRelay.getEnvironmentStatus"),
     connectEnvironment: unavailable("clientRuntime.managedRelay.connectEnvironment"),
     registerDevice: unavailable("clientRuntime.managedRelay.registerDevice"),
@@ -781,6 +789,22 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
           );
       },
       Effect.withSpan("clientRuntime.managedRelay.unlinkEnvironment"),
+      withRelayClientTracing,
+    ),
+    renameEnvironment: Effect.fnUntraced(
+      function* (input) {
+        return yield* client.client
+          .renameEnvironment({
+            headers: bearerHeaders(input.clerkToken),
+            params: { environmentId: input.environmentId },
+            payload: { label: input.label },
+          })
+          .pipe(
+            Effect.mapError(relayRequestError("rename relay environment")),
+            timeoutRelayRequest("Relay environment renaming"),
+          );
+      },
+      Effect.withSpan("clientRuntime.managedRelay.renameEnvironment"),
       withRelayClientTracing,
     ),
     getEnvironmentStatus: Effect.fnUntraced(

@@ -1,0 +1,1 @@
+ALTER TABLE "relay_environment_links" ADD COLUMN "environment_label_override" text;

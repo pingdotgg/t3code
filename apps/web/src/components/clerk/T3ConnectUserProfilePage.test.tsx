@@ -30,6 +30,7 @@ function renderRow({
       mutationPending={mutationPending}
       onConfirmationChange={vi.fn()}
       onDeregister={vi.fn()}
+      onRename={vi.fn()}
     />,
   );
 }
@@ -58,6 +59,6 @@ describe("T3 Connect environment row", () => {
     const markup = renderRow({ confirmationOpen: true, mutationPending: true });
 
     expect(markup).toContain("Deregistering…");
-    expect(markup.match(/ disabled=""/g)).toHaveLength(3);
+    expect(markup.match(/ disabled=""/g)).toHaveLength(4);
   });
 });

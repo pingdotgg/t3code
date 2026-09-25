@@ -19,6 +19,7 @@ import type {
   RelayEnvironmentStatusResponse,
 } from "@t3tools/contracts/relay";
 import * as Option from "effect/Option";
+import { EllipsisIcon, PencilIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useEffectEvent, useState } from "react";
 
 import { environmentCatalog } from "~/connection/catalog";
@@ -31,6 +32,17 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "../settings/itemRows";
 import { Checkbox } from "../ui/checkbox";
 import { Button } from "../ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
+import { Input } from "../ui/input";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Skeleton } from "../ui/skeleton";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
@@ -81,6 +93,9 @@ export function CloudEnvironmentConnectRows({
   empty = null,
   selection,
   onDiscoveryReady,
+  onDeregister,
+  onRenameGlobally,
+  deregisteringEnvironmentIds,
 }: {
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly savedEnvironments: ReadonlyArray<SavedCloudEnvironmentConnection>;
@@ -88,6 +103,12 @@ export function CloudEnvironmentConnectRows({
   readonly refreshWhileEmpty?: boolean;
   readonly empty?: ReactNode;
   readonly onDiscoveryReady?: () => void;
+  readonly onDeregister?: (environment: RelayClientEnvironmentRecord) => void;
+  readonly onRenameGlobally?: (
+    environmentId: EnvironmentId,
+    label: string | null,
+  ) => Promise<boolean>;
+  readonly deregisteringEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly selection?: {
     readonly autoSelectedComputers?: Set<EnvironmentId>;
     readonly selectedIds: ReadonlySet<EnvironmentId>;
@@ -120,6 +141,9 @@ export function CloudEnvironmentConnectRows({
   const [connectingEnvironmentIds, setConnectingEnvironmentIds] = useState<
     ReadonlySet<EnvironmentId>
   >(new Set());
+  const [renamingEnvironment, setRenamingEnvironment] =
+    useState<RelayClientEnvironmentRecord | null>(null);
+  const [renameLabel, setRenameLabel] = useState("");
   const savedById = new Map(
     savedEnvironments.map((environment) => [environment.environmentId, environment]),
   );
@@ -180,6 +204,23 @@ export function CloudEnvironmentConnectRows({
         : undefined,
     });
     return false;
+  };
+
+  const renameDiscoveredEnvironment = async () => {
+    if (renamingEnvironment === null || renameLabel.trim() === "") return;
+    const environment = renamingEnvironment;
+    setConnectingEnvironmentIds((current) => new Set([...current, environment.environmentId]));
+    const renamed = await onRenameGlobally?.(environment.environmentId, renameLabel.trim());
+    setConnectingEnvironmentIds((current) => {
+      const next = new Set(current);
+      next.delete(environment.environmentId);
+      return next;
+    });
+    if (renamed) {
+      setRenamingEnvironment((current) =>
+        current?.environmentId === environment.environmentId ? null : current,
+      );
+    }
   };
 
   const visibleEnvironments = [...environmentsState.environments.values()].filter(
@@ -260,6 +301,56 @@ export function CloudEnvironmentConnectRows({
   }, [shouldRefreshWhileEmpty]);
 
   const standalone = showSavedEnvironments || savedEnvironments.length === 0;
+  const renamingEnvironmentId = renamingEnvironment?.environmentId;
+  const renameDialog = renamingEnvironmentId ? (
+    <Dialog open onOpenChange={(open) => !open && setRenamingEnvironment(null)}>
+      <DialogPopup className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Rename environment</DialogTitle>
+          <DialogDescription>
+            This changes the T3 Connect name on devices signed into your account. It does not add
+            the environment to this device.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel>
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-medium text-foreground">Name</span>
+            <Input
+              value={renameLabel}
+              onChange={(event) => setRenameLabel(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                if (event.key === "Enter" && renameLabel.trim() !== "") {
+                  event.preventDefault();
+                  void renameDiscoveredEnvironment();
+                }
+              }}
+              disabled={connectingEnvironmentIds.has(renamingEnvironmentId)}
+              autoFocus
+              maxLength={80}
+            />
+          </label>
+        </DialogPanel>
+        <DialogFooter variant="bare">
+          <Button
+            variant="outline"
+            disabled={connectingEnvironmentIds.has(renamingEnvironmentId)}
+            onClick={() => setRenamingEnvironment(null)}
+          >
+            Cancel
+          </Button>
+          <Button
+            disabled={
+              connectingEnvironmentIds.has(renamingEnvironmentId) || renameLabel.trim() === ""
+            }
+            onClick={() => void renameDiscoveredEnvironment()}
+          >
+            {connectingEnvironmentIds.has(renamingEnvironmentId) ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
+  ) : null;
 
   if (
     !refreshWhileEmpty &&
@@ -268,7 +359,12 @@ export function CloudEnvironmentConnectRows({
     environmentsState.refreshing &&
     environmentsState.environments.size === 0
   ) {
-    return <RemoteEnvironmentRowsSkeleton />;
+    return (
+      <>
+        <RemoteEnvironmentRowsSkeleton />
+        {renameDialog}
+      </>
+    );
   }
 
   if (standalone && visibleEnvironments.length === 0) {
@@ -279,26 +375,34 @@ export function CloudEnvironmentConnectRows({
       : (Option.getOrNull(environmentsState.error)?.message ?? null);
     if (discoveryProblem !== null && !environmentsState.refreshing) {
       return (
-        <div className={ITEM_ROW_CLASSNAME}>
-          <p className="text-sm font-medium text-destructive">
-            Could not load T3 Connect environments
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">{discoveryProblem}</p>
-          <Button
-            size="sm"
-            variant="outline"
-            className="mt-3"
-            onClick={() => void refreshRelayEnvironments()}
-          >
-            Try again
-          </Button>
-        </div>
+        <>
+          <div className={ITEM_ROW_CLASSNAME}>
+            <p className="text-sm font-medium text-destructive">
+              Could not load T3 Connect environments
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">{discoveryProblem}</p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-3"
+              onClick={() => void refreshRelayEnvironments()}
+            >
+              Try again
+            </Button>
+          </div>
+          {renameDialog}
+        </>
       );
     }
-    return empty;
+    return (
+      <>
+        {empty}
+        {renameDialog}
+      </>
+    );
   }
 
-  return visibleEnvironments.map(({ environment, availability, error, status }) => {
+  const rows = visibleEnvironments.map(({ environment, availability, error, status }) => {
     const savedEnvironment = savedById.get(environment.environmentId);
     const compatibilityError = discoveredCompatibilityError(status);
     const unsupported =
@@ -445,30 +549,85 @@ export function CloudEnvironmentConnectRows({
               {statusText}
             </p>
           </div>
-          {unsupported && !savedEnvironment ? (
-            <Tooltip>
-              <TooltipTrigger render={<span className="inline-flex" tabIndex={0} />}>
-                <Button size="sm" disabled>
-                  Add
-                </Button>
-              </TooltipTrigger>
-              <TooltipPopup>{unsupportedDetail ?? "Client not supported"}</TooltipPopup>
-            </Tooltip>
-          ) : savedConnection ? (
-            <Button size="sm" variant="outline" disabled>
-              {savedConnection.buttonLabel}
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              disabled={connectingEnvironmentIds.size > 0}
-              onClick={() => void connectEnvironment(environment)}
-            >
-              {connectingEnvironmentIds.has(environment.environmentId) ? "Adding…" : "Add"}
-            </Button>
-          )}
+          <div className="flex items-center gap-1">
+            {unsupported && !savedEnvironment ? (
+              <Tooltip>
+                <TooltipTrigger render={<span className="inline-flex" tabIndex={0} />}>
+                  <Button size="sm" disabled>
+                    Add
+                  </Button>
+                </TooltipTrigger>
+                <TooltipPopup className="max-w-80 break-words">
+                  {unsupportedDetail ?? "Client not supported"}
+                </TooltipPopup>
+              </Tooltip>
+            ) : savedConnection ? (
+              <Button size="sm" variant="outline" disabled>
+                {savedConnection.buttonLabel}
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                disabled={connectingEnvironmentIds.size > 0}
+                onClick={() => void connectEnvironment(environment)}
+              >
+                {connectingEnvironmentIds.has(environment.environmentId) ? "Adding…" : "Add"}
+              </Button>
+            )}
+            {onDeregister ? (
+              <Menu>
+                <MenuTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost-muted"
+                      size="icon-xs"
+                      disabled={
+                        deregisteringEnvironmentIds?.has(environment.environmentId) ||
+                        connectingEnvironmentIds.has(environment.environmentId)
+                      }
+                      aria-label={`More actions for ${environment.label}`}
+                    />
+                  }
+                >
+                  <EllipsisIcon className="size-3.5" />
+                </MenuTrigger>
+                <MenuPopup align="end" className="min-w-52">
+                  {onRenameGlobally ? (
+                    <>
+                      <MenuItem
+                        onClick={() => {
+                          setRenameLabel(environment.label);
+                          setRenamingEnvironment(environment);
+                        }}
+                      >
+                        <PencilIcon className="size-3.5" />
+                        Rename environment…
+                      </MenuItem>
+                      <MenuItem
+                        onClick={() => void onRenameGlobally(environment.environmentId, null)}
+                      >
+                        Restore default name
+                      </MenuItem>
+                    </>
+                  ) : null}
+                  <MenuItem variant="destructive" onClick={() => onDeregister(environment)}>
+                    {deregisteringEnvironmentIds?.has(environment.environmentId)
+                      ? "Deleting…"
+                      : "Delete from T3 Connect…"}
+                  </MenuItem>
+                </MenuPopup>
+              </Menu>
+            ) : null}
+          </div>
         </div>
       </div>
     );
   });
+  return (
+    <>
+      {rows}
+      {renameDialog}
+    </>
+  );
 }

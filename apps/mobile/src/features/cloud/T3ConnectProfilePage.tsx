@@ -10,6 +10,7 @@ import { type ReactNode, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -18,12 +19,14 @@ import {
 } from "react-native";
 
 import { SymbolView } from "../../components/AppSymbol";
-import { showConfirmDialog } from "../../components/ConfirmDialogHost";
+import { showConfirmDialog, showTextInputDialog } from "../../components/ConfirmDialogHost";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { relayEnvironmentDiscovery } from "../../state/relay";
 import {
   deregisterManagedRelayEnvironmentCommand,
+  renameManagedRelayEnvironmentCommand,
   useManagedRelayEnvironments,
 } from "./managedRelayState";
 
@@ -66,6 +69,13 @@ export function T3ConnectProfilePage() {
   const deregisterEnvironment = useAtomCommand(deregisterManagedRelayEnvironmentCommand, {
     reportFailure: false,
   });
+  const renameEnvironment = useAtomCommand(renameManagedRelayEnvironmentCommand, {
+    reportFailure: false,
+  });
+  const refreshRelayEnvironments = useAtomCommand(
+    relayEnvironmentDiscovery.refresh,
+    "relay environment refresh",
+  );
   const [deregisteringEnvironmentId, setDeregisteringEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const mutationPendingRef = useRef(false);
@@ -122,6 +132,56 @@ export function T3ConnectProfilePage() {
           ]
         : undefined,
     );
+  };
+
+  const commitRename = async (environment: RelayClientEnvironmentRecord, label: string | null) => {
+    const accountId = environmentsState.accountId;
+    const trimmedLabel = label?.trim() ?? null;
+    if (trimmedLabel === "" || !accountId || mutationPendingRef.current) return;
+    if (trimmedLabel !== null && trimmedLabel.length > 80) {
+      Alert.alert("Name is too long", "Use 80 characters or fewer.");
+      return;
+    }
+    mutationPendingRef.current = true;
+    setDeregisteringEnvironmentId(environment.environmentId);
+    const result = await renameEnvironment({
+      accountId,
+      environmentId: environment.environmentId,
+      label: trimmedLabel,
+    });
+    mutationPendingRef.current = false;
+    setDeregisteringEnvironmentId(null);
+    if (result._tag === "Success") {
+      environmentsState.refresh();
+      await refreshRelayEnvironments();
+      return;
+    }
+    if (isAtomCommandInterrupted(result)) return;
+    const cause = squashAtomCommandFailure(result);
+    Alert.alert(
+      "Could not rename environment",
+      cause instanceof Error ? cause.message : "The T3 Connect rename failed.",
+    );
+  };
+
+  const handleRename = (environment: RelayClientEnvironmentRecord) => {
+    const commit = (value: string) => void commitRename(environment, value.trim());
+    if (Platform.OS === "ios") {
+      Alert.prompt(
+        "Rename environment",
+        undefined,
+        (value) => void commit(value ?? ""),
+        "plain-text",
+        environment.label,
+      );
+      return;
+    }
+    showTextInputDialog({
+      title: "Rename environment",
+      initialValue: environment.label,
+      confirmText: "Rename",
+      onConfirm: (value) => void commit(value),
+    });
   };
 
   const removedEnvironmentLinkedAt =
@@ -183,9 +243,13 @@ export function T3ConnectProfilePage() {
                 <ControlPillMenu
                   actions={ENVIRONMENT_MENU_ACTIONS}
                   isAnchoredToRight
-                  onPressAction={() =>
-                    confirmDeregister(environment, () => void handleDeregister(environment))
-                  }
+                  onPressAction={({ nativeEvent }) => {
+                    if (nativeEvent.event === "rename") handleRename(environment);
+                    if (nativeEvent.event === "reset-name") void commitRename(environment, null);
+                    if (nativeEvent.event === "deregister") {
+                      confirmDeregister(environment, () => void handleDeregister(environment));
+                    }
+                  }}
                 >
                   <Pressable
                     accessibilityLabel={`Actions for ${environment.label}`}
@@ -222,6 +286,8 @@ export function T3ConnectProfilePage() {
 }
 
 const ENVIRONMENT_MENU_ACTIONS = [
+  { id: "rename", title: "Rename environment", image: "pencil" },
+  { id: "reset-name", title: "Restore default name", image: "arrow.uturn.backward" },
   { id: "deregister", title: "Deregister", image: "trash", attributes: { destructive: true } },
 ] satisfies MenuAction[];
 

@@ -47,6 +47,25 @@ function clerkToken(subject: string, nonce: string): string {
 }
 
 describe("ManagedRelayClient", () => {
+  it.effect("sends an account-level rename to the relay", () => {
+    const fetchFn = (async (input, init) => {
+      const request = new Request(input, init);
+      expect(request.method).toBe("PATCH");
+      expect(new URL(request.url).pathname).toBe("/v1/client/environment-links/env-1");
+      expect(await request.json()).toEqual({ label: "Personal" });
+      return Response.json({ ok: true });
+    }) satisfies typeof globalThis.fetch;
+    return Effect.gen(function* () {
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
+      const result = yield* relayClient.renameEnvironment({
+        clerkToken: "clerk-token",
+        environmentId: EnvironmentId.make("env-1"),
+        label: "Personal",
+      });
+      expect(result.ok).toBe(true);
+    }).pipe(Effect.provide(managedRelayTestLayer(fetchFn)));
+  });
+
   it.effect("owns tracing at service and implementation boundaries", () => {
     const spanNames: Array<string> = [];
     const tracer = Tracer.make({

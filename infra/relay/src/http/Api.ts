@@ -873,6 +873,20 @@ export const clientApi = HttpApiBuilder.group(
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(
+        "renameEnvironment",
+        Effect.fn("relay.api.client.renameEnvironment")(function* ({ params, payload }) {
+          const { userId } = yield* RelayClientPrincipal;
+          const renamed = yield* links
+            .renameForUser({
+              userId,
+              environmentId: params.environmentId,
+              label: payload.label,
+            })
+            .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
+          return { ok: renamed };
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
         "unlinkEnvironment",
         Effect.fn("relay.api.client.unlinkEnvironment")(function* (args) {
           const { params } = args;

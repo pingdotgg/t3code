@@ -32,11 +32,26 @@ export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscovere
               if (!current.environments.has(environmentId)) seenChecks.delete(environmentId);
             }
           }
+          const saved = yield* SubscriptionRef.get(registry.entries);
           for (const entry of current.environments.values()) {
+            const environmentId = entry.environment.environmentId;
+            const target = saved.get(environmentId)?.target;
+            if (
+              target?._tag === "RelayConnectionTarget" &&
+              (target.label !== entry.environment.label || target.localLabelOverride === true)
+            ) {
+              yield* registry.syncRelayLabel(environmentId, entry.environment.label).pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning("Could not sync discovered environment label.", {
+                    environmentId,
+                    operation: error.operation,
+                  }),
+                ),
+              );
+            }
             const status = Option.getOrNull(entry.status);
             const descriptor = status?.descriptor;
             if (status === null || descriptor === undefined) continue;
-            const environmentId = entry.environment.environmentId;
             const previous = seenChecks.get(environmentId);
             const fresh =
               previous?.checkedAt !== status.checkedAt ||

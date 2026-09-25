@@ -1259,6 +1259,7 @@ describe("EnvironmentSupervisor", () => {
         createEnvironmentLinkChallenge: unused,
         linkEnvironment: unused,
         unlinkEnvironment: unused,
+        renameEnvironment: () => Effect.die("unused"),
         getEnvironmentStatus: unused,
         connectEnvironment: Effect.fn("TestConnectionHttp.connectEnvironment")(function* () {
           yield* Ref.update(bootstrapCalls, (count) => count + 1);

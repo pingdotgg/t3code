@@ -2,7 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 import * as OpenApi from "effect/unstable/httpapi/OpenApi";
 import * as Schema from "effect/Schema";
 
-import { RelayApi, RelayDeviceRegistrationRequest } from "./relay.ts";
+import {
+  RelayApi,
+  RelayDeviceRegistrationRequest,
+  RelayEnvironmentRenameRequest,
+} from "./relay.ts";
 
 const decodeDevice = Schema.decodeUnknownExit(RelayDeviceRegistrationRequest);
 const device = {
@@ -57,5 +61,19 @@ describe("RelayApi security", () => {
       scheme: "DPoP",
       description: "DPoP-bound access token. Requests must also include the DPoP proof JWT header.",
     });
+  });
+});
+
+describe("environment rename request", () => {
+  const decode = Schema.decodeUnknownExit(RelayEnvironmentRenameRequest);
+
+  it("accepts a shared name or a reset to the machine name", () => {
+    expect(decode({ label: "Work" })._tag).toBe("Success");
+    expect(decode({ label: null })._tag).toBe("Success");
+  });
+
+  it("rejects empty or overlong shared names", () => {
+    expect(decode({ label: " " })._tag).toBe("Failure");
+    expect(decode({ label: "W".repeat(81) })._tag).toBe("Failure");
   });
 });

@@ -66,6 +66,30 @@ vi.mock("../ui/button", () => ({
     <button {...props}>{children}</button>
   ),
 }));
+vi.mock("../ui/dialog", () => ({
+  Dialog: ({ children }: { children: ReactNode }) => children,
+  DialogPopup: ({ children }: { children: ReactNode }) => children,
+  DialogHeader: ({ children }: { children: ReactNode }) => children,
+  DialogTitle: ({ children }: { children: ReactNode }) => children,
+  DialogDescription: ({ children }: { children: ReactNode }) => children,
+  DialogPanel: ({ children }: { children: ReactNode }) => children,
+  DialogFooter: ({ children }: { children: ReactNode }) => children,
+}));
+vi.mock("../ui/input", () => ({
+  Input: (props: { value: string; onChange: (event: { target: { value: string } }) => void }) => (
+    <input {...props} />
+  ),
+}));
+vi.mock("../ui/menu", () => ({
+  Menu: ({ children }: { children: ReactNode }) => children,
+  MenuTrigger: ({ children, render }: { children: ReactNode; render: ReactNode }) => (
+    <>{render ?? children}</>
+  ),
+  MenuPopup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  MenuItem: ({ children, onClick }: { children: ReactNode; onClick: () => void }) => (
+    <button onClick={onClick}>{children}</button>
+  ),
+}));
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 
 import { CloudEnvironmentConnectRows } from "./CloudEnvironmentConnectList";
@@ -153,6 +177,206 @@ afterEach(async () => {
 });
 
 describe("cloud onboarding discovery", () => {
+  it("offers account deletion for a discovered environment", async () => {
+    discovery.listEnvironments.mockResolvedValue(linkedMachines);
+    const onDeregister = vi.fn();
+    await act(async () => {
+      renderer = create(
+        <CloudEnvironmentConnectRows
+          primaryEnvironmentId={null}
+          savedEnvironments={[]}
+          onDeregister={onDeregister}
+        />,
+      );
+    });
+
+    const deleteButton = renderer!.root
+      .findAllByType("button")
+      .find((button) => button.children.includes("Delete from T3 Connect…"));
+    expect(deleteButton).toBeDefined();
+    await act(async () => deleteButton!.props.onClick());
+    expect(onDeregister).toHaveBeenCalledWith(linkedMachines.get(newMachineId)!.environment);
+  });
+
+  it("renames a discovered environment for the account without adding it locally", async () => {
+    discovery.listEnvironments.mockResolvedValue(linkedMachines);
+    const onRenameGlobally = vi.fn().mockResolvedValue(true);
+    await act(async () => {
+      renderer = create(
+        <CloudEnvironmentConnectRows
+          primaryEnvironmentId={null}
+          savedEnvironments={[]}
+          onDeregister={vi.fn()}
+          onRenameGlobally={onRenameGlobally}
+        />,
+      );
+    });
+    const renameButton = renderer!.root
+      .findAllByType("button")
+      .find((button) => button.children.includes("Rename environment…"))!;
+    await act(async () => renameButton.props.onClick());
+    await act(async () =>
+      renderer!.root.findByType("input").props.onChange({ target: { value: "Work" } }),
+    );
+    const saveButton = renderer!.root
+      .findAllByType("button")
+      .find((button) => button.children.includes("Save"))!;
+    await act(async () => saveButton.props.onClick());
+
+    expect(onRenameGlobally).toHaveBeenCalledWith(newMachineId, "Work");
+    expect(discovery.register).not.toHaveBeenCalled();
+  });
+
+  it("keeps a discovered environment's name draft visible during discovery refresh", async () => {
+    discovery.listEnvironments.mockResolvedValue(linkedMachines);
+    await act(async () => {
+      renderer = create(
+        <CloudEnvironmentConnectRows
+          primaryEnvironmentId={null}
+          savedEnvironments={[]}
+          onDeregister={vi.fn()}
+          onRenameGlobally={vi.fn().mockResolvedValue(true)}
+        />,
+      );
+    });
+    const renameButton = renderer!.root
+      .findAllByType("button")
+      .find((button) => button.children.includes("Rename environment…"))!;
+    await act(async () => renameButton.props.onClick());
+    await act(async () =>
+      renderer!.root.findByType("input").props.onChange({ target: { value: "My work laptop" } }),
+    );
+
+    await act(async () => {
+      publish({ ...discovery.state!, environments: new Map(), refreshing: true });
+    });
+
+    expect(renderer!.root.findByType("input").props.value).toBe("My work laptop");
+  });
+
+  it("does not close another environment's draft when an earlier rename finishes", async () => {
+    const secondMachineId = EnvironmentId.make("home-desktop");
+    const firstMachine = linkedMachines.get(newMachineId)!;
+    discovery.listEnvironments.mockResolvedValue(
+      new Map([
+        ...linkedMachines,
+        [
+          secondMachineId,
+          {
+            ...firstMachine,
+            environment: {
+              ...firstMachine.environment,
+              environmentId: secondMachineId,
+              label: "Home desktop",
+            },
+          },
+        ],
+      ]),
+    );
+    let finishFirstRename!: (renamed: boolean) => void;
+    const onRenameGlobally = vi.fn(
+      () => new Promise<boolean>((resolve) => (finishFirstRename = resolve)),
+    );
+    await act(async () => {
+      renderer = create(
+        <CloudEnvironmentConnectRows
+          primaryEnvironmentId={null}
+          savedEnvironments={[]}
+          onDeregister={vi.fn()}
+          onRenameGlobally={onRenameGlobally}
+        />,
+      );
+    });
+    const renameButtons = renderer!.root
+      .findAllByType("button")
+      .filter((button) => button.children.includes("Rename environment…"));
+    await act(async () => renameButtons[0]!.props.onClick());
+    const saveButton = renderer!.root
+      .findAllByType("button")
+      .find((button) => button.children.includes("Save"))!;
+    await act(async () => saveButton.props.onClick());
+    await act(async () => renderer!.root.findByProps({ open: true }).props.onOpenChange(false));
+    await act(async () => renameButtons[1]!.props.onClick());
+    await act(async () =>
+      renderer!.root.findByType("input").props.onChange({ target: { value: "Home draft" } }),
+    );
+
+    await act(async () => finishFirstRename(true));
+
+    expect(renderer!.root.findByType("input").props.value).toBe("Home draft");
+    expect(onRenameGlobally).toHaveBeenCalledWith(newMachineId, "Work laptop");
+  });
+
+  it("blocks deletion while adding a discovered environment", async () => {
+    discovery.listEnvironments.mockResolvedValue(linkedMachines);
+    let finishRegistration!: (result: AtomCommandResult<void, never>) => void;
+    discovery.register.mockReturnValue(
+      new Promise((resolve) => {
+        finishRegistration = resolve;
+      }),
+    );
+    await act(async () => {
+      renderer = create(
+        <CloudEnvironmentConnectRows
+          primaryEnvironmentId={null}
+          savedEnvironments={[]}
+          onDeregister={vi.fn()}
+        />,
+      );
+    });
+
+    const addButton = renderer!.root
+      .findAllByType("button")
+      .find((button) => button.children.includes("Add"))!;
+    await act(async () => addButton.props.onClick());
+    const menuButton = renderer!.root
+      .findAllByType("button")
+      .find((button) => button.props["aria-label"] === "More actions for Work laptop")!;
+    expect(menuButton.props.disabled).toBe(true);
+
+    await act(async () => finishRegistration(AsyncResult.success(undefined)));
+    expect(menuButton.props.disabled).toBe(false);
+  });
+
+  it("does not offer local rename for an incompatible discovered environment", async () => {
+    const base = linkedMachines.get(newMachineId)!;
+    discovery.listEnvironments.mockResolvedValue(
+      new Map([
+        [
+          newMachineId,
+          {
+            ...base,
+            status: Option.some({
+              environmentId: newMachineId,
+              endpoint: base.environment.endpoint,
+              status: "online" as const,
+              checkedAt: "2026-09-15T00:00:00Z",
+              descriptor: {
+                environmentId: newMachineId,
+                label: base.environment.label,
+                platform: { os: "linux" as const, arch: "x64" as const },
+                serverVersion: "1.0.0",
+                orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION + 1,
+                capabilities: { repositoryIdentity: true },
+              },
+            }),
+          },
+        ],
+      ]),
+    );
+    await act(async () => {
+      renderer = create(
+        <CloudEnvironmentConnectRows
+          primaryEnvironmentId={null}
+          savedEnvironments={[]}
+          onDeregister={vi.fn()}
+        />,
+      );
+    });
+
+    expect(discovery.register).not.toHaveBeenCalled();
+  });
+
   it("signals that the section can expand after initial discovery settles", async () => {
     let finishDiscovery!: (environments: DiscoveredEnvironments) => void;
     discovery.listEnvironments.mockReturnValue(

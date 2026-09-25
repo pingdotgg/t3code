@@ -10,10 +10,22 @@ import { useRef, useState } from "react";
 
 import {
   deregisterManagedRelayEnvironmentCommand,
+  renameManagedRelayEnvironmentCommand,
   useManagedRelayEnvironments,
 } from "../../cloud/managedRelayState";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { relayEnvironmentDiscovery } from "../../state/relay";
 import { Button } from "../ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
+import { Input } from "../ui/input";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { toastManager } from "../ui/toast";
@@ -44,8 +56,17 @@ export function T3ConnectEnvironmentRow(props: {
   readonly mutationPending: boolean;
   readonly onConfirmationChange: (open: boolean) => void;
   readonly onDeregister: (environment: RelayClientEnvironmentRecord) => void;
+  readonly onRename: (
+    environment: RelayClientEnvironmentRecord,
+    label: string | null,
+  ) => Promise<boolean>;
 }) {
   const { environment } = props;
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameLabel, setRenameLabel] = useState(environment.label);
+  const submitRename = async () => {
+    if (await props.onRename(environment, renameLabel.trim())) setRenameOpen(false);
+  };
   return (
     <ClerkUserProfileRow icon={<ServerIcon className="size-4" />}>
       <Collapsible open={props.confirmationOpen} onOpenChange={props.onConfirmationChange}>
@@ -58,13 +79,26 @@ export function T3ConnectEnvironmentRow(props: {
               {linkedAtLabel(environment.linkedAt)} · {endpointLabel(environment)}
             </p>
           </div>
-          <CollapsibleTrigger
-            render={
-              <Button size="sm" variant="destructive-outline" disabled={props.mutationPending}>
-                Deregister
-              </Button>
-            }
-          />
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={props.mutationPending}
+              onClick={() => {
+                setRenameLabel(environment.label);
+                setRenameOpen(true);
+              }}
+            >
+              Rename
+            </Button>
+            <CollapsibleTrigger
+              render={
+                <Button size="sm" variant="destructive-outline" disabled={props.mutationPending}>
+                  Deregister
+                </Button>
+              }
+            />
+          </div>
         </div>
 
         <CollapsiblePanel>
@@ -106,6 +140,49 @@ export function T3ConnectEnvironmentRow(props: {
           </div>
         </CollapsiblePanel>
       </Collapsible>
+      {renameOpen ? (
+        <Dialog open onOpenChange={(open) => !open && setRenameOpen(false)}>
+          <DialogPopup>
+            <DialogHeader>
+              <DialogTitle>Rename environment</DialogTitle>
+              <DialogDescription>
+                Devices signed into this T3 Connect account will show the new name after refreshing.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogPanel>
+              <Input
+                aria-label="Environment name"
+                value={renameLabel}
+                onChange={(event) => setRenameLabel(event.target.value)}
+                maxLength={80}
+                autoFocus
+              />
+            </DialogPanel>
+            <DialogFooter variant="bare">
+              <Button
+                variant="ghost"
+                disabled={props.mutationPending}
+                onClick={() =>
+                  void props
+                    .onRename(environment, null)
+                    .then((renamed) => renamed && setRenameOpen(false))
+                }
+              >
+                Restore default name
+              </Button>
+              <Button variant="outline" onClick={() => setRenameOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                disabled={props.mutationPending || renameLabel.trim() === ""}
+                onClick={() => void submitRename()}
+              >
+                Save
+              </Button>
+            </DialogFooter>
+          </DialogPopup>
+        </Dialog>
+      ) : null}
     </ClerkUserProfileRow>
   );
 }
@@ -113,6 +190,12 @@ export function T3ConnectEnvironmentRow(props: {
 export function T3ConnectUserProfilePage() {
   const environmentsState = useManagedRelayEnvironments();
   const deregisterEnvironment = useAtomCommand(deregisterManagedRelayEnvironmentCommand, {
+    reportFailure: false,
+  });
+  const renameEnvironment = useAtomCommand(renameManagedRelayEnvironmentCommand, {
+    reportFailure: false,
+  });
+  const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refresh, {
     reportFailure: false,
   });
   const [deregisteringEnvironmentId, setDeregisteringEnvironmentId] =
@@ -180,6 +263,37 @@ export function T3ConnectUserProfilePage() {
     });
   };
 
+  const handleRename = async (environment: RelayClientEnvironmentRecord, label: string | null) => {
+    const accountId = environmentsState.accountId;
+    if (!accountId || mutationPendingRef.current || label === "") return false;
+    mutationPendingRef.current = true;
+    setDeregisteringEnvironmentId(environment.environmentId);
+    const result = await renameEnvironment({
+      accountId,
+      environmentId: environment.environmentId,
+      label,
+    });
+    mutationPendingRef.current = false;
+    setDeregisteringEnvironmentId(null);
+    if (result._tag === "Success") {
+      environmentsState.refresh();
+      await refreshRelayEnvironments();
+      toastManager.add({
+        type: "success",
+        title: label === null ? "Default name restored" : "Environment renamed for all devices",
+      });
+      return true;
+    }
+    if (isAtomCommandInterrupted(result)) return false;
+    const cause = squashAtomCommandFailure(result);
+    toastManager.add({
+      type: "error",
+      title: "Could not rename environment",
+      description: cause instanceof Error ? cause.message : "The T3 Connect rename failed.",
+    });
+    return false;
+  };
+
   const removedEnvironmentLinkedAt =
     removedEnvironments.accountId === environmentsState.accountId
       ? removedEnvironments.linkedAtById
@@ -229,6 +343,7 @@ export function T3ConnectUserProfilePage() {
                   setConfirmingEnvironmentId(open ? environment.environmentId : null)
                 }
                 onDeregister={(selected) => void handleDeregister(selected)}
+                onRename={handleRename}
               />
             ))}
           </ul>

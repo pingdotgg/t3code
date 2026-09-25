@@ -812,6 +812,11 @@ export const RelayEnvironmentUnlinkParams = Schema.Struct({
 });
 export type RelayEnvironmentUnlinkParams = typeof RelayEnvironmentUnlinkParams.Type;
 
+export const RelayEnvironmentRenameRequest = Schema.Struct({
+  label: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(80))),
+});
+export type RelayEnvironmentRenameRequest = typeof RelayEnvironmentRenameRequest.Type;
+
 export const RelayEnvironmentConnectResponse = Schema.Struct({
   environmentId: EnvironmentId,
   endpoint: RelayManagedEndpoint,
@@ -1065,6 +1070,13 @@ const RelayClientGroup = HttpApiGroup.make("client")
       success: RelayOkResponse,
       error: RelayAuthAndInternalErrors,
     }).annotate(OpenApi.Summary, "Unlink an environment"),
+    HttpApiEndpoint.patch("renameEnvironment", "/v1/client/environment-links/:environmentId", {
+      headers: RelayBearerRequestHeaders,
+      params: RelayEnvironmentUnlinkParams,
+      payload: RelayEnvironmentRenameRequest,
+      success: RelayOkResponse,
+      error: RelayAuthAndInternalErrors,
+    }).annotate(OpenApi.Summary, "Rename an environment for this account"),
     HttpApiEndpoint.delete(
       "releaseEnvironmentTunnel",
       "/v1/client/environment-links/:environmentId/tunnel",

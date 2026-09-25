@@ -133,6 +133,18 @@ const registerPairingConnection = Effect.fn(
 const isBearerCredential = Schema.is(BearerConnectionCredential);
 const isBearerProfile = Schema.is(BearerConnectionProfile);
 
+function renamedLabel(label: string) {
+  const trimmed = label.trim();
+  return trimmed === ""
+    ? Effect.fail(
+        new ConnectionBlockedError({
+          reason: "configuration",
+          detail: "Environment name cannot be empty.",
+        }),
+      )
+    : Effect.succeed(trimmed);
+}
+
 const updateBearerConnection = Effect.fn(
   "clientRuntime.connection.onboarding.updateBearerConnection",
 )(function* (input: BearerConnectionUpdateInput) {
@@ -180,13 +192,7 @@ export const prepareBearerConnectionUpdate = Effect.fn(
     });
   }
 
-  const label = options.input.label.trim();
-  if (label === "") {
-    return yield* new ConnectionBlockedError({
-      reason: "configuration",
-      detail: "Environment label cannot be empty.",
-    });
-  }
+  const label = yield* renamedLabel(options.input.label);
   const httpBaseUrl = yield* Effect.try({
     try: () => normalizeHttpBaseUrl(options.input.httpBaseUrl),
     catch: (cause) =>

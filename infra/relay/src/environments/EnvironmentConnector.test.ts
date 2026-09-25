@@ -230,6 +230,7 @@ function makeLinks(
         ...overrides,
       }),
     revokeForUser: () => Effect.succeed(false),
+    renameForUser: () => Effect.succeed(false),
   };
 }
 

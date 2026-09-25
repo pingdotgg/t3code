@@ -8,6 +8,82 @@ import { relayEnvironmentLinks } from "../persistence/schema.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 
 describe("EnvironmentLinks", () => {
+  it.effect("lists the account name override instead of the machine's advertised name", () => {
+    const fakeDb = {
+      select: () => ({
+        from: (table: unknown) => {
+          expect(table).toBe(relayEnvironmentLinks);
+          return {
+            where: () =>
+              Effect.succeed([
+                {
+                  environmentId: "env-1",
+                  environmentLabel: "MacBook Pro",
+                  environmentLabelOverride: "Personal",
+                  endpointHttpBaseUrl: "https://relay.example.test",
+                  endpointWsBaseUrl: "wss://relay.example.test/ws",
+                  endpointProviderKind: "manual",
+                  createdAt: "2026-09-23T00:00:00.000Z",
+                },
+              ]),
+          };
+        },
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+    return Effect.gen(function* () {
+      const links = yield* EnvironmentLinks.EnvironmentLinks;
+      const environments = yield* links.listForUser({ userId: "user-1" });
+      expect(environments[0]?.label).toBe("Personal");
+    }).pipe(
+      Effect.provide(
+        EnvironmentLinks.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
+      ),
+    );
+  });
+
+  it.effect("renames only the active link for the account and can restore its machine name", () => {
+    const updates: Array<Record<string, unknown>> = [];
+    const conditions: Array<unknown> = [];
+    const fakeDb = {
+      update: (table: unknown) => {
+        expect(table).toBe(relayEnvironmentLinks);
+        return {
+          set: (values: Record<string, unknown>) => {
+            updates.push(values);
+            return {
+              where: (condition: unknown) => {
+                conditions.push(condition);
+                return {
+                  returning: () => Effect.succeed([{ environmentId: "env-1" }]),
+                };
+              },
+            };
+          },
+        };
+      },
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const links = yield* EnvironmentLinks.EnvironmentLinks;
+      expect(
+        yield* links.renameForUser({ userId: "user-1", environmentId: "env-1", label: "Personal" }),
+      ).toBe(true);
+      expect(
+        yield* links.renameForUser({ userId: "user-1", environmentId: "env-1", label: null }),
+      ).toBe(true);
+      expect(updates.map((value) => value.environmentLabelOverride)).toEqual(["Personal", null]);
+      const query = new PgDialect().sqlToQuery(conditions[0] as never);
+      expect(query.sql).toContain('"relay_environment_links"."user_id" = $1');
+      expect(query.sql).toContain('"relay_environment_links"."environment_id" = $2');
+      expect(query.sql).toContain('"relay_environment_links"."revoked_at" is null');
+      expect(query.params).toEqual(["user-1", "env-1"]);
+    }).pipe(
+      Effect.provide(
+        EnvironmentLinks.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
+      ),
+    );
+  });
+
   it.effect("retains link lookup failures with user and environment identity", () => {
     const cause = new Error("database unavailable");
     const fakeDb = {

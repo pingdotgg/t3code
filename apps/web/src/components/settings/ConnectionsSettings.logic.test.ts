@@ -1,10 +1,14 @@
-import type { AdvertisedEndpoint, DesktopWslState } from "@t3tools/contracts";
+import { EnvironmentId, type AdvertisedEndpoint, type DesktopWslState } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
+  localRemovalFailureMessage,
   selectQrEndpointOption,
+  updateMutatingEnvironmentIds,
 } from "./ConnectionsSettings.logic";
 
 const baseWslState: DesktopWslState = {
@@ -15,6 +19,30 @@ const baseWslState: DesktopWslState = {
   distros: [],
   preflightError: null,
 };
+
+describe("environment mutations", () => {
+  it("tracks concurrent mutations independently", () => {
+    const personal = EnvironmentId.make("personal");
+    const work = EnvironmentId.make("work");
+    const both = updateMutatingEnvironmentIds(
+      updateMutatingEnvironmentIds(new Set(), personal, true),
+      work,
+      true,
+    );
+
+    const workOnly = updateMutatingEnvironmentIds(both, personal, false);
+
+    expect(workOnly.has(personal)).toBe(false);
+    expect(workOnly.has(work)).toBe(true);
+  });
+
+  it("reports a failed local cleanup after cloud deregistration", () => {
+    expect(localRemovalFailureMessage(AsyncResult.success(undefined))).toBeNull();
+    expect(
+      localRemovalFailureMessage(AsyncResult.failure(Cause.fail(new Error("cleanup failed")))),
+    ).toBe("cleanup failed");
+  });
+});
 
 describe("isWslSettingsRowVisible", () => {
   it("shows the retry row when the WSL state failed to load", () => {

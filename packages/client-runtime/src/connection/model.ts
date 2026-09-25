@@ -27,6 +27,8 @@ export class RelayConnectionTarget extends Schema.TaggedClass<RelayConnectionTar
   "RelayConnectionTarget",
   {
     ...ConnectionTargetBase,
+    // Read older device-only names so discovery can replace and clear them.
+    localLabelOverride: Schema.optional(Schema.Boolean),
   },
 ) {}
 

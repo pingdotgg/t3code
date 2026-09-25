@@ -1,6 +1,38 @@
-import type { AdvertisedEndpoint, DesktopBridge, DesktopWslState } from "@t3tools/contracts";
+import type {
+  AdvertisedEndpoint,
+  DesktopBridge,
+  DesktopWslState,
+  EnvironmentId,
+} from "@t3tools/contracts";
+import {
+  type AtomCommandResult,
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 
 type WslEnableBridge = Pick<DesktopBridge, "setWslBackendEnabled" | "setWslDistro" | "setWslOnly">;
+
+export function updateMutatingEnvironmentIds(
+  current: ReadonlySet<EnvironmentId>,
+  environmentId: EnvironmentId,
+  mutating: boolean,
+): ReadonlySet<EnvironmentId> {
+  const next = new Set(current);
+  if (mutating) next.add(environmentId);
+  else next.delete(environmentId);
+  return next;
+}
+
+export function localRemovalFailureMessage(
+  result: AtomCommandResult<unknown, unknown>,
+): string | null {
+  if (result._tag === "Success") return null;
+  if (isAtomCommandInterrupted(result)) return "The local saved connection could not be removed.";
+  const error = squashAtomCommandFailure(result);
+  return error instanceof Error
+    ? error.message
+    : "The local saved connection could not be removed.";
+}
 
 /**
  * A QR code encoding a loopback URL makes the scanning device dial itself, so

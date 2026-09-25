@@ -686,9 +686,12 @@ describe("EnvironmentRegistry", () => {
       const harness = yield* makeHarness([RELAY_TARGET], [], [], {
         initialDisabled: [RELAY_TARGET.environmentId],
       });
-      const descriptor = (environmentId: EnvironmentId): ExecutionEnvironmentDescriptor => ({
+      const descriptor = (
+        environmentId: EnvironmentId,
+        label = "Server",
+      ): ExecutionEnvironmentDescriptor => ({
         environmentId,
-        label: "Server",
+        label,
         platform: { os: "linux", arch: "x64" },
         serverVersion: "1.0.0",
         orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
@@ -770,6 +773,10 @@ describe("EnvironmentRegistry", () => {
           Effect.forkScoped,
         );
         yield* Deferred.await(initial);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(RELAY_TARGET.environmentId)?.target
+            .label,
+        ).toBe("Server");
         const error = new ConnectionBlockedError({
           reason: "unsupported",
           detail: "Socket discovered a newer protocol.",
@@ -808,11 +815,20 @@ describe("EnvironmentRegistry", () => {
           (yield* SubscriptionRef.get(registry.entries)).get(RELAY_TARGET.environmentId)
             ?.unsupportedReason,
         ).toBe(error.message);
+        yield* registry.register(
+          new RelayConnectionRegistration({
+            target: new RelayConnectionTarget({
+              environmentId: RELAY_TARGET.environmentId,
+              label: "Only here",
+              localLabelOverride: true,
+            }),
+          }),
+        );
         yield* SubscriptionRef.update(discoveryState, (state) => ({
           ...state,
           environments: new Map(state.environments).set(
             RELAY_TARGET.environmentId,
-            discovered(descriptor(RELAY_TARGET.environmentId), "2026-09-15T00:02:00Z"),
+            discovered(descriptor(RELAY_TARGET.environmentId, "Work"), "2026-09-15T00:02:00Z"),
           ),
         }));
         yield* Deferred.await(refreshed);
@@ -820,9 +836,95 @@ describe("EnvironmentRegistry", () => {
           (yield* SubscriptionRef.get(registry.entries)).get(RELAY_TARGET.environmentId),
         ).toMatchObject({ enabled: false });
         expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(RELAY_TARGET.environmentId)?.target
+            .label,
+        ).toBe("Work");
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(RELAY_TARGET.environmentId)?.target,
+        ).not.toHaveProperty("localLabelOverride");
+        expect(
           (yield* SubscriptionRef.get(registry.entries)).get(RELAY_TARGET.environmentId)
             ?.unsupportedReason,
         ).toBeUndefined();
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("checks compatibility even when the shared label cannot be saved", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([RELAY_TARGET], [], [], {
+        initialDisabled: [RELAY_TARGET.environmentId],
+        beforeRegistrationRegister: () =>
+          Effect.fail(
+            new Persistence.ConnectionPersistenceError({
+              operation: "register-connection",
+              message: "Disk unavailable",
+            }),
+          ),
+      });
+      const environment = {
+        environmentId: RELAY_TARGET.environmentId,
+        label: "Work",
+        endpoint: {
+          httpBaseUrl: "https://relay.example.test",
+          wsBaseUrl: "wss://relay.example.test",
+          providerKind: "manual" as const,
+        },
+        linkedAt: "2026-09-15T00:00:00Z",
+      };
+      const discoveryState =
+        yield* SubscriptionRef.make<RelayEnvironmentDiscovery.RelayEnvironmentDiscoveryState>({
+          ...RelayEnvironmentDiscovery.EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE,
+          environments: new Map([
+            [
+              RELAY_TARGET.environmentId,
+              {
+                environment,
+                availability: "online" as const,
+                status: Option.some({
+                  environmentId: RELAY_TARGET.environmentId,
+                  endpoint: environment.endpoint,
+                  status: "online" as const,
+                  checkedAt: "2026-09-15T00:00:00Z",
+                  descriptor: {
+                    environmentId: RELAY_TARGET.environmentId,
+                    label: "Server",
+                    platform: { os: "linux", arch: "x64" },
+                    serverVersion: "1.0.0",
+                    orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+                    capabilities: { repositoryIdentity: true },
+                  },
+                }),
+                error: Option.none(),
+              },
+            ],
+          ]),
+        });
+      const checked = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* watchDiscoveredCompatibility().pipe(
+          Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, {
+            ...registry,
+            setCompatibility: (environmentId, error) =>
+              registry
+                .setCompatibility(environmentId, error)
+                .pipe(Effect.andThen(Deferred.succeed(checked, undefined))),
+          }),
+          Effect.provideService(
+            RelayEnvironmentDiscovery.RelayEnvironmentDiscovery,
+            RelayEnvironmentDiscovery.RelayEnvironmentDiscovery.of({
+              state: discoveryState,
+              refresh: Effect.void,
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(checked);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(RELAY_TARGET.environmentId)?.target
+            .label,
+        ).toBe(RELAY_TARGET.label);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
@@ -954,6 +1056,53 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
+  it.effect("syncing a shared relay label preserves its active connection", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([RELAY_TARGET]);
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          RELAY_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+        const sessionsBefore = (yield* Ref.get(harness.sessions)).length;
+        yield* registry.syncRelayLabel(RELAY_TARGET.environmentId, "Work");
+        expect((yield* Ref.get(harness.sessions)).length).toBe(sessionsBefore);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(RELAY_TARGET.environmentId)?.target
+            .label,
+        ).toBe("Work");
+        expect((yield* Ref.get(harness.storedTargets)).get(RELAY_TARGET.environmentId)?.label).toBe(
+          "Work",
+        );
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("clears a legacy local override even when its label matches the shared name", () =>
+    Effect.gen(function* () {
+      const target = new RelayConnectionTarget({
+        ...RELAY_TARGET,
+        localLabelOverride: true,
+      });
+      const harness = yield* makeHarness([target], [], [], {
+        initialDisabled: [target.environmentId],
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.syncRelayLabel(target.environmentId, target.label);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(target.environmentId)?.target,
+        ).not.toHaveProperty("localLabelOverride");
+        expect(
+          (yield* Ref.get(harness.storedTargets)).get(target.environmentId),
+        ).not.toHaveProperty("localLabelOverride");
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
   it.effect("switching an SSH environment off tears down its managed backend", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([SSH_CONNECTION], [SSH_PROFILE]);
@@ -1003,7 +1152,7 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
-  it.effect("moves durable streams to a replacement supervisor", () =>
+  it.effect("keeps durable streams through label sync and follows a replacement supervisor", () =>
     Effect.gen(function* () {
       const replacement = new RelayConnectionTarget({
         environmentId: RELAY_TARGET.environmentId,
@@ -1050,6 +1199,10 @@ describe("EnvironmentRegistry", () => {
         );
 
         yield* Deferred.await(firstObserved).pipe(Effect.timeout("1 second"));
+        yield* registry.syncRelayLabel(RELAY_TARGET.environmentId, "Display name");
+        // Drain subscription work so an unwanted restart is observed before replacement.
+        for (let index = 0; index < 20; index++) yield* Effect.yieldNow;
+        expect(yield* Ref.get(labels)).toEqual([RELAY_TARGET.label]);
         yield* registry.register(new RelayConnectionRegistration({ target: replacement }));
         yield* Deferred.await(secondObserved).pipe(Effect.timeout("1 second"));
         yield* Fiber.interrupt(subscription);
