@@ -471,7 +471,7 @@ export function VoiceSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Input">
+      <SettingsSection title="Environment">
         <SettingsRow
           {...searchableSetting("transcription-environment")}
           description="Run voice transcription on this environment for every thread."
@@ -526,6 +526,8 @@ export function VoiceSettingsPanel() {
             </Select>
           }
         />
+      </SettingsSection>
+      <SettingsSection title="Input">
         <SettingsRow
           {...searchableSetting("microphone")}
           description={
@@ -580,8 +582,6 @@ export function VoiceSettingsPanel() {
             </div>
           }
         />
-      </SettingsSection>
-      <SettingsSection title="Keyboard shortcuts">
         <SettingsRow
           {...searchableSetting("dictation-shortcut-mode")}
           description="Choose how the dictation shortcut starts and finishes recording. Change the keys in Keybindings settings."
