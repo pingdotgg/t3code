@@ -129,7 +129,7 @@ Default Grafana login:
 export T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces
 export T3CODE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics
 export T3CODE_OTLP_LOGS_URL=http://localhost:4318/v1/logs
-export OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=local
+export OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=development
 ```
 
 Optional:
@@ -566,7 +566,7 @@ with a startup warning, rather than sending it to the Settings endpoint.
 Service names are fixed: `t3-server` for the backend and `t3-desktop` for the desktop main process.
 `OTEL_SERVICE_NAME` and a `service.name` in `OTEL_RESOURCE_ATTRIBUTES` are ignored. Tell
 installations apart with other resource attributes, such as
-`OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=local`.
+`OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=development`.
 
 If the OTLP URLs are unset, local tracing still works, metrics stay in-process only, and logs stay
 on stdout only.
