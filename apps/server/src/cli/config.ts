@@ -396,25 +396,24 @@ export const resolveServerConfig = (
       headers: env.otlpHeaders,
       exportIntervalMs: env.otlpExportIntervalMs,
     };
-    const t3 = (url: string | undefined) => ({ url, export: signalExport });
     const traces = OtelEnvironment.resolveSignalEndpoint(
       otel,
       "traces",
-      t3(env.otlpTracesUrl),
+      { url: env.otlpTracesUrl, export: signalExport },
       bootstrap?.otlpTracesUrl,
       persistedObservabilitySettings.otlpTracesUrl,
     );
     const metrics = OtelEnvironment.resolveSignalEndpoint(
       otel,
       "metrics",
-      t3(env.otlpMetricsUrl),
+      { url: env.otlpMetricsUrl, export: signalExport },
       bootstrap?.otlpMetricsUrl,
       persistedObservabilitySettings.otlpMetricsUrl,
     );
     const logs = OtelEnvironment.resolveSignalEndpoint(
       otel,
       "logs",
-      t3(env.otlpLogsUrl),
+      { url: env.otlpLogsUrl, export: signalExport },
       bootstrap?.otlpLogsUrl,
       persistedObservabilitySettings.otlpLogsUrl,
     );
