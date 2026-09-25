@@ -21,6 +21,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -143,6 +144,7 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
     updatedAt: NOW,
   });
   const reads = yield* Queue.unbounded<void>();
+  const threadReads = yield* Queue.unbounded<ThreadId>();
   const events = yield* PubSub.unbounded<OrchestrationEvent>();
   const commands = yield* Ref.make<ReadonlyArray<SyncCommand>>([]);
   const branchCalls = yield* Ref.make<
@@ -154,6 +156,23 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
     Layer.mock(ProjectionSnapshotQuery)({
       getShellSnapshot: () =>
         Ref.get(snapshots).pipe(Effect.tap(() => Queue.offer(reads, undefined))),
+      getSnapshotSequence: () =>
+        Ref.get(snapshots).pipe(Effect.map(({ snapshotSequence }) => ({ snapshotSequence }))),
+      getThreadShellById: (threadId) =>
+        Ref.get(snapshots).pipe(
+          Effect.map(({ threads }) =>
+            Option.fromUndefinedOr(
+              threads.find((thread) => thread.id === threadId && thread.archivedAt === null),
+            ),
+          ),
+          Effect.tap(() => Queue.offer(threadReads, threadId)),
+        ),
+      getProjectShells: (projectIds) =>
+        Ref.get(snapshots).pipe(
+          Effect.map(({ projects }) =>
+            projects.filter((project) => projectIds?.includes(project.id) ?? true),
+          ),
+        ),
     }),
     Layer.mock(GitManager)({
       branchPullRequest: (input, readOptions) =>
@@ -232,6 +251,7 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
   return {
     start,
     reads,
+    threadReads,
     snapshots,
     commands,
     branchCalls,
@@ -376,13 +396,15 @@ describe("ThreadPullRequestReactor", () => {
                 : [checkpointEvent, sessionEvent];
             for (const event of events) {
               yield* fixture.publish(event);
-              yield* Queue.take(fixture.reads);
+              yield* Queue.take(fixture.threadReads);
               yield* reactor.drain;
             }
             expect((yield* Ref.get(fixture.commands))[0]?.branchPullRequest).toEqual(reference(42));
             expect(
               (yield* Ref.get(fixture.branchCalls)).filter((call) => call.refresh),
             ).toHaveLength(1);
+            // Thread events read one thread. Only the startup pass read them all.
+            expect(yield* Queue.size(fixture.reads)).toBe(0);
           }).pipe(Effect.provide(fixture.layer));
         }),
       ),
