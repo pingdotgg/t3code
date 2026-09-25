@@ -26,6 +26,7 @@ export const AcpReplayTranscript = Schema.Struct({
 export type AcpReplayTranscript = typeof AcpReplayTranscript.Type;
 
 const decodeAcpReplayTranscriptSchema = Schema.decodeUnknownEffect(AcpReplayTranscript);
+const encodeReplayTranscriptJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 export class AcpReplayTranscriptDecodeError extends Schema.TaggedError<AcpReplayTranscriptDecodeError>()(
   "AcpReplayTranscriptDecodeError",
@@ -155,6 +156,8 @@ export function makeAcpReplayRuntime(input: {
   readonly statusPath: string;
   readonly scriptPath: string;
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly cancelMeta?: AcpSessionRuntime.AcpSessionRuntimeOptions["cancelMeta"];
 }): (
   runtimeInput: AcpAdapterV2RuntimeInput,
 ) => Effect.Effect<
@@ -162,11 +165,22 @@ export function makeAcpReplayRuntime(input: {
   EffectAcpErrors.AcpError,
   Crypto.Crypto | Scope.Scope
 > {
-  const encodedTranscript = Buffer.from(JSON.stringify(input.transcript), "utf8").toString(
-    "base64",
-  );
+  // Recorded transcripts outgrow the kernel's 128 KiB limit on one environment
+  // variable, so the agent reads the transcript from a file beside its status.
+  const transcriptPath = `${input.statusPath}.transcript.json`;
   return (runtimeInput) =>
     Effect.gen(function* () {
+      yield* input.fileSystem
+        .writeFileString(transcriptPath, encodeReplayTranscriptJson(input.transcript))
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new EffectAcpErrors.AcpTransportError({
+                detail: `Failed to write ACP replay transcript for ${input.transcript.scenario}`,
+                cause,
+              }),
+          ),
+        );
       const context = yield* Layer.build(
         AcpSessionRuntime.layer({
           ...runtimeInput,
@@ -176,12 +190,13 @@ export function makeAcpReplayRuntime(input: {
             cwd: runtimeInput.cwd,
             env: {
               ...process.env,
-              T3_ACP_REPLAY_TRANSCRIPT: encodedTranscript,
+              T3_ACP_REPLAY_TRANSCRIPT_PATH: transcriptPath,
               T3_ACP_REPLAY_STATUS_PATH: input.statusPath,
               T3_ACP_REPLAY_WORKSPACE: runtimeInput.cwd,
             },
           },
           authMethodId: "replay",
+          ...(input.cancelMeta === undefined ? {} : { cancelMeta: input.cancelMeta }),
         }).pipe(
           Layer.provide(
             Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),

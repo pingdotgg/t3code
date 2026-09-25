@@ -73,6 +73,7 @@ function makeAcpRegistryProviderAdapterRegistryReplayLayer(transcript: AcpReplay
           statusPath,
           scriptPath,
           childProcessSpawner,
+          fileSystem,
         }),
         assertComplete: makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript),
       });

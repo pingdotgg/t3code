@@ -11,6 +11,8 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 
 import { ServerConfig } from "../../config.ts";
+import { GROK_ACP_CANCEL_META } from "../../provider/acp/GrokAcpSupport.ts";
+import { makeXAiPromptCompletionRuntime } from "../../provider/acp/XAiAcpExtension.ts";
 import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
 import { makeLayerEffect as makeProviderAdapterRegistryLayerEffect } from "../ProviderAdapterRegistry.ts";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
@@ -61,12 +63,17 @@ function makeGrokProviderAdapterRegistryReplayLayer(transcript: AcpReplayTranscr
         idAllocator,
         serverConfig,
         selfInvocation: yield* resolveSelfInvocation(),
-        makeRuntime: makeAcpReplayRuntime({
-          transcript,
-          statusPath,
-          scriptPath,
-          childProcessSpawner,
-        }),
+        // Same wrapping as makeGrokAcpRuntime: Ctrl+C cancel metadata and the
+        // x.ai prompt-completion race, so replay sends what production sends.
+        makeRuntime: (runtimeInput) =>
+          makeAcpReplayRuntime({
+            transcript,
+            statusPath,
+            scriptPath,
+            childProcessSpawner,
+            fileSystem,
+            cancelMeta: GROK_ACP_CANCEL_META,
+          })(runtimeInput).pipe(Effect.flatMap(makeXAiPromptCompletionRuntime)),
         assertComplete: makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript),
       });
       return [adapter];

@@ -35,17 +35,20 @@ interface JsonRpcMessage {
 }
 
 const encodedTranscript = process.env.T3_ACP_REPLAY_TRANSCRIPT;
+const transcriptPath = process.env.T3_ACP_REPLAY_TRANSCRIPT_PATH;
 const statusPath = process.env.T3_ACP_REPLAY_STATUS_PATH;
 const replayWorkspace = process.env.T3_ACP_REPLAY_WORKSPACE ?? process.cwd();
 
-if (encodedTranscript === undefined || statusPath === undefined) {
+if ((encodedTranscript === undefined && transcriptPath === undefined) || statusPath === undefined) {
   process.stderr.write("ACP replay requires transcript and status environment variables.\n");
   process.exit(2);
 }
 
 const replayStatusPath = statusPath;
 const transcript = JSON.parse(
-  Buffer.from(encodedTranscript, "base64").toString("utf8"),
+  transcriptPath === undefined
+    ? Buffer.from(encodedTranscript ?? "", "base64").toString("utf8")
+    : NodeFS.readFileSync(transcriptPath, "utf8"),
 ) as ReplayTranscript;
 let cursor = 0;
 let stopped = false;
@@ -170,7 +173,19 @@ function logicalIncoming(message: JsonRpcMessage): LogicalFrame | undefined {
   };
 }
 
-function emitInbound(frame: LogicalFrame): void {
+// Recorded agent frames name workspace paths (tool inputs, fs requests) as
+// <workspace>; point them at this replay's workspace like expectations do.
+function materializeInbound(value: unknown): unknown {
+  if (typeof value === "string") return expandExpectedString(value);
+  if (Array.isArray(value)) return value.map(materializeInbound);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, materializeInbound(entry)]),
+  );
+}
+
+function emitInbound(recorded: LogicalFrame): void {
+  const frame = materializeInbound(recorded) as LogicalFrame;
   switch (frame.kind) {
     case "notification":
       send({

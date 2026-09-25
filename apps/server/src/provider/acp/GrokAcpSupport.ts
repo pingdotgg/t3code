@@ -85,6 +85,13 @@ export function grokAcpRuntimeProcessOwnership(
   };
 }
 
+/**
+ * Current Grok treats Ctrl+C cancellation as a barrier against stale
+ * background-task wake prompts until the next genuine user turn. Replay sends
+ * the same metadata so recorded cancels match.
+ */
+export const GROK_ACP_CANCEL_META = { cancelTrigger: "ctrl_c" } as const;
+
 export const makeGrokAcpRuntime = (
   input: GrokAcpRuntimeInput,
 ): Effect.Effect<
@@ -106,9 +113,7 @@ export const makeGrokAcpRuntime = (
           input.runtimeMode,
         ),
         authMethodId: resolveGrokAuthMethodId(input.environment),
-        // Current Grok treats Ctrl+C cancellation as a barrier against stale
-        // background-task wake prompts until the next genuine user turn.
-        cancelMeta: { ...input.cancelMeta, cancelTrigger: "ctrl_c" },
+        cancelMeta: { ...input.cancelMeta, ...GROK_ACP_CANCEL_META },
         ...grokAcpRuntimeProcessOwnership(processGroupPlatform),
       }).pipe(
         Layer.provide(

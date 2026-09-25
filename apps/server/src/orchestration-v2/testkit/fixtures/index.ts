@@ -338,7 +338,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
       },
       {
         driver: ProviderDriverKind.make("acpRegistry"),
-        transcriptFile: new URL("./simple/grok_transcript.ndjson", import.meta.url),
+        transcriptFile: new URL("./simple/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         assertOutput: assertSimpleOutput,
       },
@@ -412,7 +412,10 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
       },
       {
         driver: ProviderDriverKind.make("acpRegistry"),
-        transcriptFile: new URL("./tool_call_read_only/grok_transcript.ndjson", import.meta.url),
+        transcriptFile: new URL(
+          "./tool_call_read_only/registry_transcript.ndjson",
+          import.meta.url,
+        ),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertToolCallReadOnlyCursorOutput,
@@ -457,7 +460,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
       {
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL(
-          "./tool_call_read_only_on_request/grok_transcript.ndjson",
+          "./tool_call_read_only_on_request/registry_transcript.ndjson",
           import.meta.url,
         ),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
@@ -641,7 +644,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
       },
       {
         driver: ProviderDriverKind.make("acpRegistry"),
-        transcriptFile: new URL("./multi_turn/grok_transcript.ndjson", import.meta.url),
+        transcriptFile: new URL("./multi_turn/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         assertOutput: assertMultiTurnOutput,
       },
@@ -733,7 +736,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
       },
       {
         driver: ProviderDriverKind.make("acpRegistry"),
-        transcriptFile: new URL("./queued_turn/grok_transcript.ndjson", import.meta.url),
+        transcriptFile: new URL("./queued_turn/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         assertOutput: assertQueuedTurnOutput,
       },
@@ -765,7 +768,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
       },
       {
         driver: ProviderDriverKind.make("acpRegistry"),
-        transcriptFile: new URL("./todo_list/grok_transcript.ndjson", import.meta.url),
+        transcriptFile: new URL("./todo_list/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         assertOutput: assertTodoListGrokOutput,
       },
@@ -866,7 +869,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
       },
       {
         driver: ProviderDriverKind.make("acpRegistry"),
-        transcriptFile: new URL("./message_steering/grok_transcript.ndjson", import.meta.url),
+        transcriptFile: new URL("./message_steering/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         assertOutput: assertGrokMessageSteeringOutput,
       },
@@ -905,7 +908,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
       },
       {
         driver: ProviderDriverKind.make("acpRegistry"),
-        transcriptFile: new URL("./turn_interrupt/grok_transcript.ndjson", import.meta.url),
+        transcriptFile: new URL("./turn_interrupt/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
         assertOutput: assertTurnInterruptOutput,
