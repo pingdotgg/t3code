@@ -45,7 +45,10 @@ export function threadHasQueuedTurnStart(
 }
 
 function pullRequestSettles(
-  thread: Pick<OrchestrationThreadShell, "createdAt" | "latestUserMessageAt" | "latestTurn">,
+  thread: Pick<
+    OrchestrationThreadShell,
+    "createdAt" | "latestUserMessageAt" | "latestTurn" | "settledOverride" | "unsettledAt"
+  >,
   pullRequest: SettlementPullRequest,
   autoSettleOnMerge: boolean,
 ): boolean {
@@ -58,6 +61,9 @@ function pullRequestSettles(
     thread.createdAt,
     thread.latestUserMessageAt,
     thread.latestTurn?.requestedAt,
+    // A keep-active choice made after a merge should not be undone by that
+    // older terminal state on the next sweep.
+    ...(thread.settledOverride === "active" ? [thread.unsettledAt] : []),
   ]);
   if (userAnchor === null) return false;
   const pullRequestAt = Date.parse(terminalAt);
@@ -96,7 +102,7 @@ export function resolveAutoSettlementAt(input: {
             closedAt: latest.snapshot.closedAt ?? null,
           };
   }
-  if (!isAutoSettlementCandidate(thread, input.now)) return null;
+  if (!isAutoSettlementCandidate(thread, input.now, { allowActiveOnMerge: true })) return null;
   const activityAt = latestTimestamp([
     thread.latestUserMessageAt,
     thread.latestTurn?.requestedAt,
@@ -104,10 +110,15 @@ export function resolveAutoSettlementAt(input: {
     thread.latestTurn?.completedAt,
   ]);
   if (pullRequest !== null) {
-    if (pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)) {
+    if (
+      pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge) &&
+      (thread.settledOverride !== "active" || pullRequest.state === "merged")
+    ) {
       return activityAt ?? thread.createdAt;
     }
   }
+  // A keep-active choice blocks inactivity and closed-without-merge settlement.
+  if (thread.settledOverride === "active") return null;
   if (input.autoSettleAfterDays === null || activityAt === null) return null;
   return Date.parse(activityAt) < Date.parse(input.now) - input.autoSettleAfterDays * DAY_MS
     ? activityAt
@@ -115,8 +126,17 @@ export function resolveAutoSettlementAt(input: {
 }
 
 /** Cheap checks that run before any source control lookup. */
-export function isAutoSettlementCandidate(thread: OrchestrationThreadShell, now: string): boolean {
-  if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
+export function isAutoSettlementCandidate(
+  thread: OrchestrationThreadShell,
+  now: string,
+  options: { readonly allowActiveOnMerge?: boolean } = {},
+): boolean {
+  if (
+    thread.archivedAt !== null ||
+    thread.settledOverride === "settled" ||
+    (thread.settledOverride === "active" && options.allowActiveOnMerge !== true)
+  )
+    return false;
   if (thread.autoSettleDisabledAt != null) return false;
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
   if (thread.session?.status === "starting" || thread.session?.status === "running") return false;

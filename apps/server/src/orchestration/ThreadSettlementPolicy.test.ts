@@ -173,6 +173,27 @@ describe("resolveAutoSettlementAt", () => {
     expect(decide(makeThread({ settledOverride: "active" }))).toBe(false);
   });
 
+  it("settles a keep-active thread only after its pull request merges", () => {
+    const active = makeThread({ settledOverride: "active" });
+    expect(decide(active, null, { days: 0 })).toBe(false);
+    expect(decide(active, { state: "open" })).toBe(false);
+    expect(decide(active, { state: "closed", closedAt: NOW })).toBe(false);
+    expect(decide(active, { state: "merged", mergedAt: NOW }, { merge: false })).toBe(false);
+    expect(decide(active, { state: "merged", mergedAt: NOW })).toBe(true);
+    expect(
+      decide(makeThread({ settledOverride: "active", unsettledAt: NOW }), {
+        state: "merged",
+        mergedAt: "2026-08-27T00:00:00.000Z",
+      }),
+    ).toBe(false);
+    expect(
+      decide(makeThread({ settledOverride: "active", autoSettleDisabledAt: NOW }), {
+        state: "merged",
+        mergedAt: NOW,
+      }),
+    ).toBe(false);
+  });
+
   it("never settles a thread whose auto-settle is turned off, by inactivity or merge", () => {
     const held = makeThread({ autoSettleDisabledAt: "2026-08-21T00:00:00.000Z" });
     expect(decide(held)).toBe(false);
@@ -273,6 +294,18 @@ describe("per-thread auto-settle opt out", () => {
 });
 
 describe("linked request settlement", () => {
+  it("settles a keep-active thread when its linked request merges", () => {
+    const active = { settledOverride: "active" as const };
+    const merged = linkedRequest(1, terminalSnapshot("merged", NOW));
+    const closed = linkedRequest(1, terminalSnapshot("closed", NOW));
+    expect(decide(makeThread({ ...active, pullRequests: [merged] }), null, { days: null })).toBe(
+      true,
+    );
+    expect(decide(makeThread({ ...active, pullRequests: [closed] }), null, { days: null })).toBe(
+      false,
+    );
+  });
+
   it.each(["closed", "merged"] as const)(
     "uses the latest actual %s transition despite later comments on another PR",
     (state) => {
