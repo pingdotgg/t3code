@@ -820,7 +820,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               </TooltipPopup>
             </Tooltip>
           )}
-          <ThreadWorktreeIndicator thread={thread} />
+          {/* Branchless folders (Scratch threads) are not git worktrees. */}
+          {thread.branch ? <ThreadWorktreeIndicator thread={thread} /> : null}
           {terminalStatus && (
             <Tooltip>
               <TooltipTrigger

@@ -21,10 +21,11 @@ Scratch** in the command palette, or press `mod+alt+n`. On mobile, pick
 **Scratch** from the project list. To move a draft to a repository, pick the
 project in the heading.
 
-Scratch is an ordinary project rooted in the `scratch` folder of your T3 data
-directory (`~/.t3/scratch` by default). All Scratch threads share that folder, and
-the files the agent writes stay there until you delete them. Branch, worktree, and
-diff controls stay hidden while the folder is not a Git repository. Scratch is
+Scratch is a project rooted in the `scratch` folder of your T3 data directory
+(`~/.t3/scratch` by default). Each Scratch thread works in its own folder there,
+named after its date and first message. Deleting a thread keeps its folder, so the
+files the agent wrote stay until you delete them. Branch, worktree, and diff
+controls stay hidden because Scratch folders are not Git repositories. Scratch is
 unavailable when the data directory itself sits inside a Git checkout.
 
 ### Start in the background

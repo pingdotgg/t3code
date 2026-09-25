@@ -8,7 +8,7 @@ import {
 } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
 import { canCreateProjectInEnvironment } from "@t3tools/client-runtime/operations/projects";
-import { findProjectByPath } from "@t3tools/client-runtime/state/projects";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -185,13 +185,11 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     ? (serverConfigs.get(scratchEnvironment.environmentId)?.scratchWorkspaceRoot ?? null)
     : null;
   // Once the Scratch project exists it is an ordinary row in the list.
-  const scratchProjectExists =
-    scratchEnvironment !== null &&
-    scratchWorkspaceRoot !== null &&
-    findProjectByPath(
-      projects.filter((project) => project.environmentId === scratchEnvironment.environmentId),
-      scratchWorkspaceRoot,
-    ) !== undefined;
+  const scratchProjectExists = projects.some(
+    (project) =>
+      project.environmentId === scratchEnvironment?.environmentId &&
+      isScratchProject(project, scratchWorkspaceRoot),
+  );
   const canStartScratch = scratchWorkspaceRoot !== null && reservedDestinationProject === null;
   const scratchStartInFlightRef = useRef(false);
 

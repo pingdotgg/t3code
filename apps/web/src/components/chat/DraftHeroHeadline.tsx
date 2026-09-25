@@ -2,7 +2,7 @@ import type { DraftId } from "~/composerDraftStore";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { findProjectByPath } from "@t3tools/client-runtime/state/projects";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { FolderPlusIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
@@ -149,9 +149,7 @@ export function DraftHeroHeadline({
     activeProjectRef?.environmentId ?? scratchEnvironmentId(primaryEnvironmentId);
   const scratchWorkspaceRoot = scratchWorkspaceRootFor(scratchTargetEnvironmentId);
   const isScratchDraft =
-    activeProject !== null &&
-    scratchWorkspaceRoot !== null &&
-    findProjectByPath([activeProject], scratchWorkspaceRoot) !== undefined;
+    activeProject !== null && isScratchProject(activeProject, scratchWorkspaceRoot);
 
   // The picker can change the draft's target while Scratch is still being
   // opened; a stale continuation must not retarget it again.

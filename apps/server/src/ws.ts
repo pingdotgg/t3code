@@ -178,6 +178,7 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -1773,7 +1774,114 @@ const makeWsRpcLayer = (
           return yield* runBootstrap;
         });
 
-      const dispatchNormalizedCommand = (
+      const path = yield* Path.Path;
+      // Scratch threads run in a plain folder under the data dir. Inside a
+      // checkout (a dev worktree's .t3, a dotfiles home) that folder would
+      // inherit the repo's git status and checkpoints, so it is only offered
+      // when the data dir is outside any work tree. Detection failures and
+      // defects fail closed and hide the folder, never the config.
+      // Probed once per connection: a negative VCS detection is not cached.
+      // An interrupt stays an interrupt, so a config load cancelled mid-probe
+      // invalidates the cache and the next load probes again.
+      const [cachedScratchWorkspaceRoot, invalidateScratchWorkspaceRoot] =
+        yield* Effect.cachedInvalidateWithTTL(
+          gitWorkflow.isRepository(config.baseDir).pipe(
+            Effect.map((isRepository) =>
+              isRepository ? undefined : path.resolve(config.baseDir, "scratch"),
+            ),
+            Effect.catchCause((cause) =>
+              Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(undefined),
+            ),
+          ),
+          Duration.infinity,
+        );
+      const resolveScratchWorkspaceRoot = cachedScratchWorkspaceRoot.pipe(
+        Effect.onInterrupt(() => invalidateScratchWorkspaceRoot),
+      );
+
+      const fileSystem = yield* FileSystem.FileSystem;
+      // Each Scratch thread gets its own folder under the Scratch root, named
+      // from its date, first words, and id. It rides in worktreePath like any
+      // thread that runs outside its project root, so the provider, terminal,
+      // and file tree all use it. Threads that already name a folder keep it.
+      const scratchThreadFolder = (input: {
+        readonly threadId: ThreadId;
+        readonly projectId: ProjectId;
+        readonly worktreePath: string | null;
+        readonly createdAt: string;
+        readonly text: string;
+      }): Effect.Effect<string | null, OrchestrationDispatchCommandError> =>
+        Effect.gen(function* () {
+          if (input.worktreePath !== null) return null;
+          const scratchRoot = yield* resolveScratchWorkspaceRoot;
+          if (scratchRoot === undefined) return null;
+          const project = yield* projectionSnapshotQuery.getProjectShellById(input.projectId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationDispatchCommandError({
+                  message: "Failed to look up the thread's project.",
+                  cause,
+                }),
+            ),
+          );
+          if (
+            Option.isNone(project) ||
+            normalizeProjectPathForComparison(project.value.workspaceRoot) !==
+              normalizeProjectPathForComparison(scratchRoot)
+          ) {
+            return null;
+          }
+          const words = input.text
+            .toLowerCase()
+            .split(/[^a-z0-9]+/)
+            .filter(Boolean)
+            .slice(0, 5);
+          const folder = path.join(
+            scratchRoot,
+            [input.createdAt.slice(0, 10), ...words, input.threadId.slice(0, 8)].join("-"),
+          );
+          yield* fileSystem.makeDirectory(folder, { recursive: true }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationDispatchCommandError({
+                  message: "Failed to create the Scratch thread folder.",
+                  cause,
+                }),
+            ),
+          );
+          return folder;
+        });
+      const withScratchThreadFolder = (
+        command: OrchestrationCommand,
+      ): Effect.Effect<OrchestrationCommand, OrchestrationDispatchCommandError> => {
+        if (command.type === "thread.create") {
+          return scratchThreadFolder({ ...command, text: command.title }).pipe(
+            Effect.map((worktreePath) =>
+              worktreePath === null ? command : { ...command, worktreePath },
+            ),
+          );
+        }
+        if (command.type !== "thread.turn.start") return Effect.succeed(command);
+        const bootstrap = command.bootstrap;
+        const createThread = bootstrap?.createThread;
+        if (bootstrap === undefined || createThread === undefined) return Effect.succeed(command);
+        return scratchThreadFolder({
+          ...createThread,
+          threadId: command.threadId,
+          text: command.message.text,
+        }).pipe(
+          Effect.map((worktreePath) =>
+            worktreePath === null
+              ? command
+              : {
+                  ...command,
+                  bootstrap: { ...bootstrap, createThread: { ...createThread, worktreePath } },
+                },
+          ),
+        );
+      };
+
+      const dispatchPreparedCommand = (
         normalizedCommand: OrchestrationCommand,
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> => {
         const dispatchEffect =
@@ -1802,36 +1910,15 @@ const makeWsRpcLayer = (
           );
       };
 
-      const path = yield* Path.Path;
-      // Scratch threads run in a plain folder under the data dir. Inside a
-      // checkout (a dev worktree's .t3, a dotfiles home) that folder would
-      // inherit the repo's git status and checkpoints, so it is only offered
-      // when the data dir is outside any work tree. Detection failures and
-      // defects fail closed and hide the folder, never the config.
-      // Probed once per connection: a negative VCS detection is not cached.
-      // An interrupt stays an interrupt, so a config load cancelled mid-probe
-      // invalidates the cache and the next load probes again.
-      const [cachedScratchWorkspaceRoot, invalidateScratchWorkspaceRoot] =
-        yield* Effect.cachedInvalidateWithTTL(
-          gitWorkflow.isRepository(config.baseDir).pipe(
-            Effect.map((isRepository) =>
-              isRepository ? undefined : path.resolve(config.baseDir, "scratch"),
-            ),
-            Effect.catchCause((cause) =>
-              Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(undefined),
-            ),
-          ),
-          Duration.infinity,
-        );
-      const resolveScratchWorkspaceRoot = cachedScratchWorkspaceRoot.pipe(
-        Effect.onInterrupt(() => invalidateScratchWorkspaceRoot),
-      );
+      const dispatchNormalizedCommand = (
+        command: OrchestrationCommand,
+      ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> =>
+        withScratchThreadFolder(command).pipe(Effect.flatMap(dispatchPreparedCommand));
 
       // One Scratch project per environment, created the first time a client
       // asks. Two clients racing the create both reach dispatch; the loser's
       // duplicate-root rejection resolves to the project the winner made.
       // The folder is (re)made on every call so a deleted Scratch still runs.
-      const fileSystem = yield* FileSystem.FileSystem;
       const ensureScratchProject = Effect.gen(function* () {
         const workspaceRoot = yield* resolveScratchWorkspaceRoot;
         if (workspaceRoot === undefined) {
