@@ -27,7 +27,10 @@ function Switch({
       data-size={size}
       data-slot="switch"
       data-mixed={mixed ? "" : undefined}
-      aria-checked={mixed ? "mixed" : undefined}
+      // Base UI copies every key we pass, even `undefined`, over its own
+      // aria-checked. Only pass the attribute when mixed so the real state
+      // survives for screen readers.
+      {...(mixed ? { "aria-checked": "mixed" as const } : {})}
       {...props}
     >
       <SwitchPrimitive.Thumb

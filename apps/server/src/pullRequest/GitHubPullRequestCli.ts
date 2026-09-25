@@ -1595,31 +1595,30 @@ export const make = Effect.gen(function* () {
           decode: decodePullRequestCoreJson,
         }),
       ),
-    ).pipe(
-      Effect.flatMap((core) => {
-        if (!core.checksTruncated) return Effect.succeed(core);
-        // gh already pages check contexts. Keep its complete, deduplicated result for
-        // large check suites instead of letting the first 100 checks imply success.
-        return readLegacyDetail(input).pipe(
-          Effect.flatMap((detail) =>
-            detail.headSha !== core.headSha
-              ? Effect.fail(
-                  new GitHubPullRequestReadError({
-                    command: "gh",
-                    cwd: input.cwd,
-                    operation: "getPullRequestDetail",
-                    cause: new Error("Pull request head changed while reading checks."),
-                  }),
-                )
-              : Effect.succeed({
-                  ...core,
-                  checks: detail.checks,
-                  checksState: detail.checksState,
-                  checksTruncated: false,
+      // gh already pages check contexts. Keep its complete, deduplicated result for
+      // large check suites instead of letting the first 100 checks imply success.
+      Effect.filterOrElse(
+        (core) => !core.checksTruncated,
+        (core) =>
+          readLegacyDetail(input).pipe(
+            Effect.filterOrFail(
+              (detail) => detail.headSha === core.headSha,
+              () =>
+                new GitHubPullRequestReadError({
+                  command: "gh",
+                  cwd: input.cwd,
+                  operation: "getPullRequestDetail",
+                  cause: new Error("Pull request head changed while reading checks."),
                 }),
+            ),
+            Effect.map((detail) => ({
+              ...core,
+              checks: detail.checks,
+              checksState: detail.checksState,
+              checksTruncated: false,
+            })),
           ),
-        );
-      }),
+      ),
     );
   };
 
@@ -1967,10 +1966,9 @@ export const make = Effect.gen(function* () {
       // the fallback out: an empty answer under one is already the answer.
       const hasQuery = (input.query?.trim().length ?? 0) > 0;
       return read(true).pipe(
-        Effect.flatMap((batch) =>
-          batch.items.length === 0 && input.cursor === undefined && !hasQuery
-            ? read(false)
-            : Effect.succeed(batch),
+        Effect.filterOrElse(
+          (batch) => batch.items.length > 0 || input.cursor !== undefined || hasQuery,
+          () => read(false),
         ),
         Effect.flatMap((batch) => {
           // Match the search query's host support, and enrich only rows that survived paging.
@@ -2131,6 +2129,7 @@ export const make = Effect.gen(function* () {
                   }),
                 );
           }),
+          // @effect-diagnostics-next-line flatMapConditionalToFilterOrFail:off - the fallback needs a non-null stack, which a predicate that also reads includeDetails cannot refine.
           Effect.flatMap((stack) => {
             if (!input.includeDetails || stack === null) return Effect.succeed(stack);
             return github

@@ -17,7 +17,7 @@ import {
 } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-const UPSTREAM_REF = "678157acaa819d5510adfe359abb5d0392cfe461";
+const UPSTREAM_REF = "fe74a774532af67b5a4a3dec03ce9469e17f89af";
 const USER_AGENT = "effect-codex-app-server-generator";
 const GITHUB_API_BASE =
   "https://api.github.com/repos/openai/codex/contents/codex-rs/app-server-protocol";
@@ -145,112 +145,6 @@ const ManualSchemas: Record<string, Schema.Json> = {
   },
 };
 
-// Codex 0.150 added these multi-agent values before our next full protocol
-// refresh. Keep every generated response namespace compatible with them.
-const Codex0150DefinitionSchemas: Record<string, Schema.Json> = {
-  CollabAgentTool: {
-    type: "string",
-    enum: [
-      "spawnAgent",
-      "sendInput",
-      "resumeAgent",
-      "wait",
-      "closeAgent",
-      "sendMessage",
-      "followupTask",
-      "interruptAgent",
-      "listAgents",
-    ],
-  },
-  CollabAgentToolCallStatus: {
-    type: "string",
-    enum: ["inProgress", "completed", "failed", "interrupted"],
-  },
-  PlanType: {
-    type: "string",
-    enum: [
-      "free",
-      "go",
-      "plus",
-      "pro",
-      "prolite",
-      "team",
-      "self_serve_business_prolite",
-      "self_serve_business_usage_based",
-      "business",
-      "ent26",
-      "enterprise_cbp_automation",
-      "enterprise_cbp_usage_based",
-      "enterprise",
-      "edu",
-      "edu_plus",
-      "edu_pro",
-      "unknown",
-    ],
-  },
-  SubAgentActivityKind: {
-    type: "string",
-    enum: ["started", "interacted", "interrupted", "completed"],
-  },
-};
-
-// Pinned protocol JSON omits later CodexErrorInfo variants. Keep historical
-// thread payloads decodable; do not fold unknown values into "other".
-const CodexErrorInfoCompatibilityValues = [
-  "rateLimitExceeded",
-  "misalignmentPolicyViolation",
-] as const;
-
-const CodexErrorInfoCompatibilityExports = new Set([
-  "V2ThreadReadResponse",
-  "V2ThreadResumeResponse",
-  "V2ThreadRollbackResponse",
-  "V2ThreadForkResponse",
-  "V2TurnCompletedNotification",
-]);
-
-function applyCodex0151DefinitionCompatibility(
-  exportName: string,
-  definitionName: string,
-  definitionSchema: Schema.Json,
-): Schema.Json {
-  if (
-    !CodexErrorInfoCompatibilityExports.has(exportName) ||
-    definitionName !== "CodexErrorInfo" ||
-    typeof definitionSchema !== "object"
-  ) {
-    return definitionSchema;
-  }
-
-  const schema = definitionSchema as {
-    readonly oneOf?: ReadonlyArray<{ readonly enum?: ReadonlyArray<string> }>;
-  };
-  const [firstVariant, ...remainingVariants] = schema.oneOf ?? [];
-  const currentEnum = firstVariant?.enum;
-  if (!currentEnum) {
-    return definitionSchema;
-  }
-
-  const missingValues = CodexErrorInfoCompatibilityValues.filter(
-    (value) => !currentEnum.includes(value),
-  );
-  if (missingValues.length === 0) {
-    return definitionSchema;
-  }
-
-  const enumValues = [...currentEnum];
-  const otherIndex = enumValues.indexOf("other");
-  const nextEnum =
-    otherIndex === -1
-      ? [...enumValues, ...missingValues]
-      : [...enumValues.slice(0, otherIndex), ...missingValues, ...enumValues.slice(otherIndex)];
-
-  return {
-    ...definitionSchema,
-    oneOf: [{ ...firstVariant, enum: nextEnum }, ...remainingVariants],
-  };
-}
-
 const getGeneratedPaths = Effect.fn("getGeneratedPaths")(function* () {
   const path = yield* Path.Path;
   const generatedDir = path.join(import.meta.dirname, "..", "src", "_generated");
@@ -269,8 +163,13 @@ const ensureGeneratedDir = Effect.fn("ensureGeneratedDir")(function* () {
 });
 
 const fetchText = Effect.fn("fetchText")(function* (url: string) {
+  // Unauthenticated GitHub API calls are capped at 60/hour; set GITHUB_TOKEN to lift that.
+  const token = process.env.GITHUB_TOKEN;
   return yield* HttpClientRequest.get(url).pipe(
     HttpClientRequest.setHeader("user-agent", USER_AGENT),
+    token && url.startsWith("https://api.github.com/")
+      ? HttpClientRequest.bearerToken(token)
+      : (request) => request,
     HttpClient.execute,
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.flatMap((okResponse) => okResponse.text),
@@ -387,59 +286,82 @@ function stripNullDefaults(value: Schema.Json): Schema.Json {
   ) as Schema.Json;
 }
 
-// Codex 0.153 adds async questions to agent messages. Keep older protocol
-// fields until the next full refresh, including every thread history namespace.
-function addAsyncQuestionFields(value: Schema.Json): Schema.Json {
-  if (Array.isArray(value)) {
-    return value.map(addAsyncQuestionFields);
-  }
-  if (value === null || typeof value !== "object") {
+type JsonSchemaNode = { readonly [key: string]: Schema.Json };
+
+function isJsonSchemaNode(value: Schema.Json | undefined): value is JsonSchemaNode {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+// Adapts Codex's JSON Schema to Effect's importer, visiting only schema
+// positions so a field literally named "properties" is left alone:
+// - Effect imports an object without additionalProperties as an open record.
+//   Codex omits it for plain structs, so close objects that list properties.
+// - Effect cannot intersect shared object fields with object alternatives,
+//   which Codex uses for "one of these keys plus shared fields"
+//   (image_url | file_id). Fold the shared fields into each alternative.
+function adaptSchemaForEffect(value: Schema.Json): Schema.Json {
+  if (!isJsonSchemaNode(value)) {
     return value;
   }
-  const properties = "properties" in value ? value.properties : undefined;
-  const itemType =
-    properties && typeof properties === "object" && "type" in properties
-      ? properties.type
-      : undefined;
-  if (
-    properties &&
-    typeof properties === "object" &&
-    itemType &&
-    typeof itemType === "object" &&
-    "enum" in itemType &&
-    Array.isArray(itemType.enum) &&
-    itemType.enum.includes("agentMessage")
-  ) {
-    return {
-      ...value,
-      properties: {
-        ...Object.fromEntries(Object.entries(properties).filter(([key]) => key !== "type")),
-        delivery: { anyOf: [{ type: "string", enum: ["async"] }, { type: "null" }] },
-        questions: {
-          anyOf: [
-            {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  title: { type: "string" },
-                  options: {
-                    anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }],
-                  },
-                },
-                required: ["title"],
-              },
-            },
-            { type: "null" },
-          ],
-        },
-        type: itemType,
-      },
-    };
+  const node: Record<string, Schema.Json> = { ...value };
+  for (const key of ["items", "additionalProperties"]) {
+    const child = node[key];
+    if (isJsonSchemaNode(child)) node[key] = adaptSchemaForEffect(child);
   }
-  return Object.fromEntries(
-    Object.entries(value).map(([key, child]) => [key, addAsyncQuestionFields(child)]),
-  );
+  for (const key of ["anyOf", "oneOf", "allOf"]) {
+    const child = node[key];
+    if (Array.isArray(child)) node[key] = child.map(adaptSchemaForEffect);
+  }
+  for (const key of ["properties", "definitions"]) {
+    const child = node[key];
+    if (isJsonSchemaNode(child)) {
+      node[key] = Object.fromEntries(
+        Object.entries(child).map(([name, schema]) => [name, adaptSchemaForEffect(schema)]),
+      );
+    }
+  }
+
+  const { properties } = node;
+  if (
+    isJsonSchemaNode(properties) &&
+    Object.keys(properties).length > 0 &&
+    !("additionalProperties" in node)
+  ) {
+    node.additionalProperties = false;
+  }
+
+  const alternativesKey = "anyOf" in node ? "anyOf" : "oneOf";
+  const alternatives = node[alternativesKey];
+  if (
+    !isJsonSchemaNode(properties) ||
+    !Array.isArray(alternatives) ||
+    !alternatives.every(
+      (alternative) => isJsonSchemaNode(alternative) && alternative.type === "object",
+    )
+  ) {
+    return node;
+  }
+  const {
+    properties: _shared,
+    required,
+    type: _type,
+    additionalProperties: _closed,
+    ...rest
+  } = node;
+  const sharedRequired = Array.isArray(required) ? required : [];
+  return {
+    ...rest,
+    [alternativesKey]: alternatives.map((alternative) => {
+      const branch = alternative as JsonSchemaNode;
+      const branchProperties = isJsonSchemaNode(branch.properties) ? branch.properties : {};
+      const branchRequired = Array.isArray(branch.required) ? branch.required : [];
+      return {
+        ...branch,
+        properties: { ...properties, ...branchProperties },
+        required: [...new Set([...sharedRequired, ...branchRequired])],
+      };
+    }),
+  };
 }
 
 function toPascalCaseMethod(method: string) {
@@ -453,13 +375,14 @@ function toPascalCaseMethod(method: string) {
 }
 
 function parseRequestEntries(fileContents: string): ReadonlyArray<MethodEntry> {
-  const entryPattern = /\{\s*"method":\s*"([^"]+)",\s*id:\s*RequestId,\s*params:\s*([^,}]+)/g;
+  // Optional params render as `params?: Foo | undefined`; their JSON schema is `NullableFoo`.
+  const entryPattern = /\{\s*"method":\s*"([^"]+)",\s*id:\s*RequestId,\s*params(\??):\s*([^,}|]+)/g;
   const entries: Array<MethodEntry> = [];
   let match: RegExpExecArray | null;
   while ((match = entryPattern.exec(fileContents)) !== null) {
     entries.push({
       method: match[1]!,
-      paramsType: match[2]!.trim(),
+      paramsType: `${match[2] ? "Nullable" : ""}${match[3]!.trim()}`,
     });
   }
   return entries;
@@ -649,7 +572,7 @@ function rewriteExternalRefs(
         const definitionName = child.slice("#/definitions/".length);
         const localRewrite = localDefinitionNames.get(definitionName);
         if (localRewrite) {
-          return [key, `#/definitions/${localRewrite}`];
+          return [key, `#/components/schemas/${localRewrite}`];
         }
 
         const candidates = [
@@ -670,7 +593,7 @@ function rewriteExternalRefs(
           throw new Error(`Missing rewritten definition for ref: ${child}`);
         }
 
-        return [key, `#/definitions/${rewritten}`];
+        return [key, `#/components/schemas/${rewritten}`];
       }
 
       return [
@@ -717,13 +640,10 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
     );
 
     for (const [definitionName, definitionSchema] of Object.entries(parsed.definitions ?? {})) {
-      const compatibleDefinitionSchema =
-        Codex0150DefinitionSchemas[definitionName] ??
-        applyCodex0151DefinitionCompatibility(file.exportName, definitionName, definitionSchema);
       aggregateSchemas[localDefinitionNames.get(definitionName)!] = stripNullDefaults(
         normalizeNullableTypes(
           rewriteExternalRefs(
-            compatibleDefinitionSchema,
+            definitionSchema,
             localDefinitionNames,
             file.namespace,
             exportNameByQualifiedName,
@@ -761,7 +681,7 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
   for (const [name, schema] of Object.entries(aggregateSchemas).toSorted(([left], [right]) =>
     left.localeCompare(right),
   )) {
-    aggregateSchemas[name] = addAsyncQuestionFields(schema);
+    aggregateSchemas[name] = adaptSchemaForEffect(schema);
     generator.addSchema(name, aggregateSchemas[name] as never);
   }
 

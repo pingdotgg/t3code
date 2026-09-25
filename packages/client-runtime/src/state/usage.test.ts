@@ -184,6 +184,19 @@ describe("manual usage refresh", () => {
 });
 
 describe("limits refresh cooldown", () => {
+  it("runs a fresh check after an in-flight check when settings change", async () => {
+    const id = EnvironmentId.make("limits-after-enable");
+    const oldCheck = Promise.withResolvers<string>();
+    const first = refreshUsageLimits(id, () => oldCheck.promise, true);
+    const newCheck = vi.fn(async () => "new limits");
+    const afterEnable = refreshUsageLimits(id, newCheck, false, true);
+    expect(newCheck).not.toHaveBeenCalled();
+    oldCheck.resolve("old limits");
+    expect(await first).toBe("old limits");
+    expect(await afterEnable).toBe("new limits");
+    expect(newCheck).toHaveBeenCalledTimes(1);
+  });
+
   it("joins manual calls and gates automatic refreshes after success or failure", async () => {
     const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
     try {

@@ -399,18 +399,16 @@ it.effect("does not continue archived or deleted marked sessions", () => {
     directory: {
       getBinding: (threadId) => {
         const thread = threadId === archived.id ? archived : deleted;
-        return Effect.succeed(
-          Option.some({
-            threadId,
-            provider: ProviderDriverKind.make("codex"),
-            providerInstanceId,
-            status: "running" as const,
-            resumeCursor: { cursor: threadId },
-            runtimePayload: {
-              continueAfterServerUpdate: thread.session.activeTurnId,
-            },
-          }),
-        );
+        return Effect.succeedSome({
+          threadId,
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId,
+          status: "running" as const,
+          resumeCursor: { cursor: threadId },
+          runtimePayload: {
+            continueAfterServerUpdate: thread.session.activeTurnId,
+          },
+        });
       },
       upsert: () => Effect.void,
       recordImportedTranscript: () => Effect.die("unused"),
@@ -456,18 +454,16 @@ it.effect("retries continuation preparation before settling a persistent failure
     threads: [thread],
     directory: {
       getBinding: () =>
-        Effect.succeed(
-          Option.some({
-            threadId: thread.id,
-            provider: ProviderDriverKind.make("codex"),
-            providerInstanceId,
-            status: "running" as const,
-            resumeCursor: { cursor: thread.id },
-            runtimePayload: {
-              continueAfterServerUpdate: thread.session.activeTurnId,
-            },
-          }),
-        ),
+        Effect.succeedSome({
+          threadId: thread.id,
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId,
+          status: "running" as const,
+          resumeCursor: { cursor: thread.id },
+          runtimePayload: {
+            continueAfterServerUpdate: thread.session.activeTurnId,
+          },
+        }),
       upsert: () => Effect.void,
       recordImportedTranscript: () => Effect.die("unused"),
       getProvider: () => Effect.die("unused"),
@@ -610,16 +606,14 @@ it.effect(
       directory: {
         getBinding: (candidate) =>
           candidate === absent.id
-            ? Effect.succeed(Option.none())
+            ? Effect.succeedNone
             : candidate === corrupt.id
               ? Effect.fail(corruptFailure)
-              : Effect.succeed(
-                  Option.some({
-                    threadId: candidate,
-                    provider: ProviderDriverKind.make("codex"),
-                    providerInstanceId,
-                  }),
-                ),
+              : Effect.succeedSome({
+                  threadId: candidate,
+                  provider: ProviderDriverKind.make("codex"),
+                  providerInstanceId,
+                }),
         upsert: () => Effect.fail(writeFailure),
         recordImportedTranscript: () => Effect.die("unused"),
         getProvider: () => Effect.die("unused"),
@@ -657,7 +651,7 @@ it.effect("retries failed projections and continues after a persistent failure",
   return runReconciliation({
     threads: [transient, persistent, later],
     directory: {
-      getBinding: () => Effect.succeed(Option.none()),
+      getBinding: () => Effect.succeedNone,
       upsert: () => Effect.void,
       recordImportedTranscript: () => Effect.die("unused"),
       getProvider: () => Effect.die("unused"),
@@ -758,19 +752,17 @@ for (const scenario of [
       continueAfterRestart: scenario !== "disabled",
       directory: {
         getBinding: () =>
-          Effect.succeed(
-            Option.some({
-              threadId: thread.id,
-              provider: ProviderDriverKind.make("codex"),
-              providerInstanceId,
-              status: scenario === "stopped binding" ? "stopped" : "running",
-              ...(scenario.includes("cursor") ? {} : { resumeCursor: { threadId: thread.id } }),
-              runtimePayload: {
-                activeTurnId: scenario === "marked superseded turn" ? "another-turn" : turnId,
-                ...(scenario.startsWith("marked") ? { continueAfterServerUpdate: turnId } : {}),
-              },
-            }),
-          ),
+          Effect.succeedSome({
+            threadId: thread.id,
+            provider: ProviderDriverKind.make("codex"),
+            providerInstanceId,
+            status: scenario === "stopped binding" ? "stopped" : "running",
+            ...(scenario.includes("cursor") ? {} : { resumeCursor: { threadId: thread.id } }),
+            runtimePayload: {
+              activeTurnId: scenario === "marked superseded turn" ? "another-turn" : turnId,
+              ...(scenario.startsWith("marked") ? { continueAfterServerUpdate: turnId } : {}),
+            },
+          }),
         upsert: (binding) =>
           Effect.sync(() => {
             upserts.push(binding);
@@ -944,9 +936,7 @@ it.effect("settles failed opt-in recovery without retrying the provider turn", (
           Effect.gen(function* () {
             sends.push(input);
             preparedPayloads.push(binding.runtimePayload);
-            return yield* Effect.fail(
-              new ProviderSessionNotFoundError({ threadId: input.threadId }),
-            );
+            return yield* new ProviderSessionNotFoundError({ threadId: input.threadId });
           }),
       },
       directory: {
