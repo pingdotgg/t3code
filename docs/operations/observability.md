@@ -87,6 +87,43 @@ Metrics are not written to a local file.
 
 If OTLP is not configured, metrics still exist in-process, but you will not have a local artifact to inspect.
 
+### Event Loop Stalls
+
+`apps/server/src/observability/EventLoopMonitor.ts` samples the server's event loop every 30 s. When
+the loop was blocked for more than 1 s in that window, it records a root `server.eventLoop.stall`
+span with a warning. The span has trace level `Warn`, so it stays when `T3CODE_TRACE_MIN_LEVEL` is
+`Warn`. The span lands in the trace file, and the warning shows in Settings > Diagnostics unless
+OTLP logs are on. The span time is when the sample ran; the stall happened in the 30 s before it.
+
+Attributes cover that 30 s window:
+
+- `delayMaxMs`, `delayP99Ms`, `delayMeanMs`: how late the loop ran. The max can undercount a stall
+  by up to 200 ms.
+- `utilization`: the fraction of the window the loop was busy.
+- `cpuUserMs`, `cpuSystemMs`: CPU time for the whole process, all threads.
+- `majorPageFaults`, `minorPageFaults`: major faults read memory back from disk or swap.
+- `involuntaryContextSwitches`: times the OS took the CPU away from the process.
+- `rssMb`: resident memory at sample time.
+
+To read a stall, remember that the CPU times cover the full 30 s window and all threads, but
+`delayMaxMs` is one stall. Other work in the same window can hide a wait. Only CPU time far below
+`delayMaxMs` shows that the thread was waiting. In other cases, read the user and system CPU split
+together with the page faults:
+
+- High `cpuSystemMs` with many page faults means memory pressure. Reads from swap are major faults.
+  On macOS, reads from compressed memory are minor faults plus system CPU.
+- High `cpuUserMs` with few page faults means the process was computing: JavaScript work or garbage
+  collection.
+- Low CPU with few major page faults points at synchronous disk I/O, such as SQLite reads or trace
+  file writes.
+- Many `involuntaryContextSwitches` mean other processes were competing for the CPU.
+
+The first sample after launch includes server startup, such as migrations and projection bootstrap.
+With a large database, this can record a stall at each launch. That stall is real.
+
+Every sample's max delay is also exported as the `t3_event_loop_delay_max_ms` gauge when OTLP
+metrics are on.
+
 ### Related Artifacts
 
 Provider event NDJSON files still exist for provider runtime streams. Those are separate from the main server trace file.
@@ -612,6 +649,7 @@ Current high-value span and metric boundaries include:
 - git command execution and git hook events
 - terminal session lifecycle
 - sqlite query execution
+- event loop stalls (`server.eventLoop.stall`) and the `t3_event_loop_delay_max_ms` gauge
 
 ### Current Constraints
 
