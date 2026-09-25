@@ -66,6 +66,11 @@ export function makeTraceSpanSummary(sinceMs = -Infinity) {
       return;
     }
     const endMs = span.endTimeUnixNano / 1_000_000;
+    // The report prints end times as dates, so skip ones outside the Date range.
+    if (Option.isNone(DateTime.make(endMs))) {
+      skippedLineCount += 1;
+      return;
+    }
     if (endMs < sinceMs) return;
 
     spanCount += 1;
@@ -191,17 +196,18 @@ const traceSummaryCommand = Command.make("summary", {
             Stream.decodeText,
             Stream.splitLines,
             Stream.runForEachArray((lines) => Effect.sync(() => lines.forEach(summarizer.addLine))),
-            Effect.catchTag("PlatformError", (cause) =>
-              cause.reason._tag === "NotFound"
-                ? Effect.void
-                : Effect.fail(
-                    new TraceFileReadError({
-                      traceFilePath: path,
-                      causeTag: cause.reason._tag,
-                      cause,
-                    }),
-                  ),
-            ),
+            Effect.catchTags({
+              PlatformError: (cause) =>
+                cause.reason._tag === "NotFound"
+                  ? Effect.void
+                  : Effect.fail(
+                      new TraceFileReadError({
+                        traceFilePath: path,
+                        causeTag: cause.reason._tag,
+                        cause,
+                      }),
+                    ),
+            }),
           ),
         { discard: true },
       );
@@ -209,7 +215,7 @@ const traceSummaryCommand = Command.make("summary", {
 
       yield* Console.log(
         summary.spanCount === 0
-          ? `No spans found in ${traceFilePath} or its rotated files${sinceMs === undefined ? "" : " in that window"}.`
+          ? `No spans found in ${traceFilePath} or its rotated files${sinceMs === undefined ? "" : " in that window"}.${summary.skippedLineCount > 0 ? ` Skipped ${summary.skippedLineCount} lines that are not spans.` : ""}`
           : formatTraceSummary(summary, flags.limit),
       );
     }),

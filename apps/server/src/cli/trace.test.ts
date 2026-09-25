@@ -73,11 +73,13 @@ it("drops spans that ended before the window and counts unreadable lines", () =>
     span("old", 1, 0),
     "{not json",
     JSON.stringify({ name: "no-duration" }),
+    // Ends past the largest Date, so the report could not print it.
+    JSON.stringify({ name: "far-future", durationMs: 1, endTimeUnixNano: "9".repeat(22) }),
     span("recent", 4, 5 * MINUTE_MS),
   ].forEach(summarizer.addLine);
   const summary = summarizer.finish();
 
-  assert.strictEqual(summary.skippedLineCount, 2);
+  assert.strictEqual(summary.skippedLineCount, 3);
   assert.deepStrictEqual(
     summary.spans.map((entry) => [entry.name, entry.count, entry.perMinute]),
     [["recent", 1, undefined]],
