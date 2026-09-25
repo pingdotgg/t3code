@@ -192,7 +192,8 @@ export function decodeScanCache(document: unknown): ScanCache {
         !Number.isFinite(cached) ||
         !Number.isFinite(cacheCreation) ||
         !Number.isFinite(output) ||
-        !Number.isFinite(reasoning)
+        !Number.isFinite(reasoning) ||
+        (fast !== 0 && fast !== 1)
       ) {
         return null;
       }
