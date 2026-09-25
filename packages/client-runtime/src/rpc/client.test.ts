@@ -22,6 +22,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 import { RpcClientError } from "effect/unstable/rpc";
+import { Socket } from "effect/unstable/socket";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -198,10 +199,7 @@ describe("environment RPC", () => {
                   ? Stream.empty
                   : Stream.fail(
                       new RpcClientError.RpcClientError({
-                        reason: new RpcClientError.RpcClientDefect({
-                          message: "socket closed",
-                          cause: new Error("socket closed"),
-                        }),
+                        reason: new Socket.SocketCloseError({ code: 1006 }),
                       }),
                     )
               ).pipe(Stream.ensuring(Deferred.succeed(completed, undefined)));
@@ -230,12 +228,13 @@ describe("environment RPC", () => {
         yield* Deferred.await(completed);
         if (reason === "transport failure") {
           yield* TestClock.adjust(10_000);
-          expect(oldAttempts).toBe(1);
+          expect(oldAttempts).toBeGreaterThan(1);
         }
+        const attemptsBeforeSwitch = oldAttempts;
         yield* SubscriptionRef.set(activeSession, Option.some(session(nextClient)));
         yield* Deferred.await(nextConnected);
         yield* TestClock.adjust(10_000);
-        expect(oldAttempts).toBe(1);
+        expect(oldAttempts).toBe(attemptsBeforeSwitch);
         expect(nextAttempts).toBe(1);
         yield* Fiber.interrupt(consumer);
       }),
@@ -456,10 +455,7 @@ describe("environment RPC", () => {
           subscriptions.push("first");
           return Stream.fail(
             new RpcClientError.RpcClientError({
-              reason: new RpcClientError.RpcClientDefect({
-                message: "socket closed",
-                cause: new Error("socket closed"),
-              }),
+              reason: new Socket.SocketCloseError({ code: 1006 }),
             }),
           );
         },
@@ -491,6 +487,96 @@ describe("environment RPC", () => {
 
       expect(subscriptions).toEqual(["first", "second"]);
       expect(yield* Ref.get(retryCount)).toBe(0);
+    }),
+  );
+
+  it.effect(
+    "recovers a durable subscription after transport failure without a session change",
+    () =>
+      Effect.gen(function* () {
+        const recovered = { source: "recovered" } as unknown as ServerLifecycleStreamEvent;
+        let subscriptions = 0;
+        const client = {
+          [WS_METHODS.subscribeServerLifecycle]: () => {
+            subscriptions += 1;
+            return subscriptions === 1
+              ? Stream.fail(
+                  new RpcClientError.RpcClientError({
+                    reason: new Socket.SocketCloseError({ code: 1006 }),
+                  }),
+                )
+              : Stream.make(recovered);
+          },
+        } as unknown as WsRpcProtocolClient;
+        const { activeSession, supervisor } = yield* makeHarness();
+        const sameSession = session(client);
+        yield* SubscriptionRef.set(activeSession, Option.some(sameSession));
+
+        const resultFiber = yield* subscribe(WS_METHODS.subscribeServerLifecycle, {}).pipe(
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.forkChild,
+        );
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          if (subscriptions >= 1) break;
+          yield* Effect.yieldNow;
+        }
+        yield* TestClock.adjust("1 second");
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          if (subscriptions >= 2) break;
+          yield* Effect.yieldNow;
+        }
+        expect(subscriptions).toBe(2);
+        expect(yield* Fiber.join(resultFiber)).toEqual([recovered]);
+        expect(yield* SubscriptionRef.get(activeSession)).toEqual(Option.some(sameSession));
+      }),
+  );
+
+  it.effect("reports RPC protocol defects without retrying a mismatched stream", () =>
+    Effect.gen(function* () {
+      const defect = new RpcClientError.RpcClientError({
+        reason: new RpcClientError.RpcClientDefect({
+          message: "incompatible stream payload",
+          cause: new Error("decode failed"),
+        }),
+      });
+      let subscriptions = 0;
+      let expectedFailures = 0;
+      const reported = yield* Deferred.make<void>();
+      const client = {
+        [WS_METHODS.subscribeTerminalEvents]: () => {
+          subscriptions += 1;
+          return Stream.fail(defect);
+        },
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+
+      const resultFiber = yield* subscribeDynamicWithSession(
+        WS_METHODS.subscribeTerminalEvents,
+        () => Effect.succeed({}),
+        {
+          onExpectedFailure: () =>
+            Effect.sync(() => {
+              expectedFailures += 1;
+            }).pipe(Effect.andThen(Deferred.succeed(reported, undefined)), Effect.asVoid),
+          retryExpectedFailureAfter: "100 millis",
+        },
+      ).pipe(
+        Stream.runDrain,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (subscriptions >= 1) break;
+        yield* Effect.yieldNow;
+      }
+      yield* Deferred.await(reported);
+      yield* TestClock.adjust("10 seconds");
+      yield* Fiber.interrupt(resultFiber);
+      expect(subscriptions).toBe(1);
+      expect(expectedFailures).toBe(1);
     }),
   );
 
