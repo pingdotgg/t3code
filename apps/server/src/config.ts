@@ -82,7 +82,6 @@ export class ServerConfig extends Context.Service<
     readonly otlpTracesExport: SignalExport;
     readonly otlpMetricsExport: SignalExport;
     readonly otlpLogsExport: SignalExport;
-    readonly otlpServiceName: string;
     readonly otelEnvironment: OtelEnvironment.OtelEnvironment;
     readonly mode: RuntimeMode;
     readonly port: number;
@@ -119,7 +118,7 @@ export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config)
  * logs report the same service identity to the collector.
  */
 export const otlpResource = (config: ServerConfig["Service"]) => ({
-  serviceName: config.otlpServiceName,
+  serviceName: "t3-server",
   attributes: {
     "service.runtime": "t3-server",
     "service.mode": config.mode,
@@ -222,7 +221,6 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
     otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
     otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
-    otlpServiceName: "t3-server",
     otelEnvironment: OtelEnvironment.none,
     cwd,
     baseDir,
