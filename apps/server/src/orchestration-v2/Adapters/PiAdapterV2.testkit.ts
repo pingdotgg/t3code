@@ -31,7 +31,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ServerConfig } from "../../config.ts";
-import { layer as idAllocatorLayer } from "../IdAllocator.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
 import { makeDriverLayer as makeProviderAdapterRegistryDriverLayer } from "../ProviderAdapterRegistry.ts";
 import {
@@ -74,12 +74,14 @@ class PiReplayMismatchError extends Schema.TaggedError<PiReplayMismatchError>()(
     scenario: Schema.String,
     cursor: Schema.Number,
     process: Schema.Number,
+    label: Schema.optional(Schema.String),
+    actualType: Schema.optional(Schema.String),
     expected: Schema.Unknown,
     actual: Schema.Unknown,
   },
 ) {
   override get message(): string {
-    return `Pi replay mismatch at cursor ${this.cursor} (process ${this.process}) in scenario ${this.scenario}. Expected ${JSON.stringify(this.expected)}, received ${JSON.stringify(this.actual)}.`;
+    return `Pi replay frame mismatch at cursor ${this.cursor} (expected ${this.label ?? "<none>"}, received ${this.actualType ?? "<untyped>"} from process ${this.process}) in scenario ${this.scenario}.`;
   }
 }
 
@@ -89,12 +91,18 @@ class PiReplayIncompleteError extends Schema.TaggedError<PiReplayIncompleteError
     scenario: Schema.String,
     cursor: Schema.Number,
     remaining: Schema.Number,
-    next: Schema.Unknown,
+    nextLabel: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
-    return `Pi replay ended with ${this.remaining} unconsumed entries at cursor ${this.cursor} in scenario ${this.scenario}. Next: ${JSON.stringify(this.next)}.`;
+    return `Pi replay ended with ${this.remaining} unconsumed entries at cursor ${this.cursor} (next ${this.nextLabel ?? "<none>"}) in scenario ${this.scenario}.`;
   }
+}
+
+/** Label or, failing that, entry type: bounded context for a replay error. */
+function entryLabel(entry: ProviderReplayEntryType | undefined): string | undefined {
+  if (entry === undefined) return undefined;
+  return entry.type === "runtime_exit" ? "runtime_exit" : (entry.label ?? entry.type);
 }
 
 const PiOrchestratorReplayHarnessError = Schema.Union([
@@ -209,7 +217,7 @@ interface PiReplayProcess {
  * the transcript reaches it. A write that matches nothing before the next
  * turn-starting record fails immediately.
  */
-export class PiReplayController {
+class PiReplayController {
   private cursor = 0;
   private failure: unknown = null;
   private readonly consumed = new Set<number>();
@@ -251,12 +259,17 @@ export class PiReplayController {
       if (!possible && pending && startsTurn(entry)) break;
     }
     if (!possible) {
+      const expected = entries[this.cursor];
+      const label = entryLabel(expected);
+      const actualType = isRecord(actual) ? actual.type : undefined;
       this.fail(
         new PiReplayMismatchError({
           scenario: this.transcript.scenario,
           cursor: this.cursor,
           process: process.ordinal,
-          expected: entries[this.cursor] ?? null,
+          ...(label === undefined ? {} : { label }),
+          ...(typeof actualType === "string" ? { actualType } : {}),
+          expected: expected ?? null,
           actual,
         }),
       );
@@ -275,11 +288,12 @@ export class PiReplayController {
   assertComplete(): void {
     if (this.failure !== null) throw this.failure;
     if (this.cursor !== this.transcript.entries.length || this.held.length > 0) {
+      const nextLabel = entryLabel(this.transcript.entries[this.cursor]);
       throw new PiReplayIncompleteError({
         scenario: this.transcript.scenario,
         cursor: this.cursor,
         remaining: this.transcript.entries.length - this.cursor,
-        next: this.held[0]?.actual ?? this.transcript.entries[this.cursor],
+        ...(nextLabel === undefined ? {} : { nextLabel }),
       });
     }
   }
@@ -323,6 +337,15 @@ export class PiReplayController {
     let emitted = false;
     while (this.failure === null) {
       const entry = this.transcript.entries[this.cursor];
+      if (entry?.type === "runtime_exit") {
+        // Pi exited on its own in the recording: end the newest process's
+        // stdout, which is the EOF the adapter observed.
+        this.cursor += 1;
+        emitted = true;
+        const process = this.processes.at(-1);
+        if (process !== undefined) this.close(process);
+        continue;
+      }
       if (entry?.type !== "emit_inbound") return emitted;
       const process = this.processes[entryProcess(entry) - 1];
       if (process === undefined) return emitted;
@@ -407,7 +430,7 @@ export function makePiProviderAdapterRegistryLayer<E, R>(input: {
     },
   }).pipe(
     Layer.provide(input.spawner),
-    Layer.provide(Layer.mergeAll(serverConfigLayer, NodeServices.layer, idAllocatorLayer)),
+    Layer.provide(Layer.mergeAll(serverConfigLayer, NodeServices.layer, IdAllocator.layer)),
   );
 }
 

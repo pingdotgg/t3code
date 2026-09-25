@@ -27,14 +27,18 @@ import {
   makePiRecordingSpawner,
   PI_REPLAY_ANY,
   PI_RPC_REPLAY_PROTOCOL,
+  PiOrchestratorReplayHarness,
 } from "../src/orchestration-v2/Adapters/PiAdapterV2.testkit.ts";
 import { PI_PROVIDER } from "../src/orchestration-v2/Adapters/PiAdapterV2.ts";
-import { layer as idAllocatorLayer } from "../src/orchestration-v2/IdAllocator.ts";
+import * as IdAllocator from "../src/orchestration-v2/IdAllocator.ts";
 import { provideDeterministicTestRuntime } from "../src/orchestration-v2/testkit/DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "../src/orchestration-v2/testkit/fixtures/index.ts";
 import { materializeFixtureInput } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
 import { runOrchestratorV2ProviderReplayScenario } from "../src/orchestration-v2/testkit/ProviderReplayHarness.ts";
-import { makeCheckpointWorkspace } from "../src/orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
+import {
+  checkpointWorkspace,
+  makeCheckpointWorkspace,
+} from "../src/orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
 
 /**
  * Keeps the user's skills, templates and context files out of the recording.
@@ -222,8 +226,9 @@ const record = Effect.gen(function* () {
   const path = yield* Path.Path;
   const piVersion = yield* readPiVersion;
   const outputPath = readArgValue("--out") ?? (yield* path.fromFileUrl(variant.transcriptFile));
+  const fixtureInput = fixture.buildInput();
   const workspace = yield* Effect.promise(() =>
-    makeCheckpointWorkspace(`pi-rpc-record-${fixture.name}`),
+    makeCheckpointWorkspace(`pi-rpc-record-${fixture.name}`, fixtureInput.workspaceFiles),
   );
   yield* fs.makeDirectory(path.join(workspace, ".pi"));
   yield* fs.writeFileString(
@@ -253,15 +258,19 @@ const record = Effect.gen(function* () {
     ),
   ).pipe(Layer.provide(NodeServices.layer));
 
-  const result = yield* Effect.gen(function* () {
+  const materializeInput = materializeFixtureInput({
+    scenario: fixture.name,
+    fixtureInput,
+    driver: variant.driver,
+    modelSelection: variant.modelSelection,
+  }).pipe(Effect.provide(IdAllocator.layer));
+  const continuationOptions =
+    variant.runContinuationWorker === true ? { runContinuationWorker: true } : {};
+
+  yield* Effect.gen(function* () {
     yield* followWallClock.pipe(Effect.forkScoped);
-    const materialized = yield* materializeFixtureInput({
-      scenario: fixture.name,
-      fixtureInput: fixture.buildInput(),
-      driver: variant.driver,
-      modelSelection: variant.modelSelection,
-    }).pipe(Effect.provide(idAllocatorLayer));
-    return yield* runOrchestratorV2ProviderReplayScenario(
+    const materialized = yield* materializeInput;
+    yield* runOrchestratorV2ProviderReplayScenario(
       {
         name: `${fixture.name}/pi:record`,
         transcript: placeholder,
@@ -285,7 +294,7 @@ const record = Effect.gen(function* () {
             spawner: recordingSpawner,
           }),
       },
-      variant.runContinuationWorker === true ? { runContinuationWorker: true } : {},
+      continuationOptions,
     );
   }).pipe(Effect.scoped, provideDeterministicTestRuntime);
 
@@ -304,15 +313,31 @@ const record = Effect.gen(function* () {
       modelSlug: variant.modelSelection.model,
     }),
   } satisfies ProviderReplayTranscript;
+
+  // The live projection still holds raw session paths, so the fixture's
+  // assertions run on a replay of the normalized transcript. A recording that
+  // fails them never replaces the existing fixture.
+  yield* Effect.gen(function* () {
+    const replayWorkspace = yield* checkpointWorkspace(fixture.name, fixtureInput.workspaceFiles);
+    const materialized = yield* materializeInput;
+    const replayResult = yield* runOrchestratorV2ProviderReplayScenario(
+      {
+        name: `${fixture.name}/pi:verify`,
+        transcript: yield* PiOrchestratorReplayHarness.decodeTranscript(transcript),
+        commands: materialized.commands,
+        steps: materialized.steps,
+        projectionThreadIds: materialized.projectionThreadIds,
+        runtimePolicyOverride: { ...variant.runtimePolicyOverride, cwd: replayWorkspace },
+      },
+      PiOrchestratorReplayHarness,
+      continuationOptions,
+    );
+    variant.assertOutput(replayResult, transcript);
+  }).pipe(Effect.scoped, provideDeterministicTestRuntime);
+
   yield* fs.makeDirectory(path.dirname(outputPath), { recursive: true });
   yield* fs.writeFileString(outputPath, encodeTranscriptNdjson(transcript));
   yield* Console.log(`Wrote ${transcript.entries.length} Pi RPC replay entries to ${outputPath}`);
-  // Assertions run on replay (OrchestratorReplayFixtures.integration.test.ts),
-  // where session paths are normalized; here only the run outcome is reported.
-  const [projection] = result.projections.values();
-  yield* Console.log(
-    `Recorded runs: ${projection?.runs.map((run) => run.status).join(", ") ?? "none"}`,
-  );
 });
 
 await Effect.runPromise(record.pipe(Effect.scoped, Effect.provide(NodeServices.layer)));
