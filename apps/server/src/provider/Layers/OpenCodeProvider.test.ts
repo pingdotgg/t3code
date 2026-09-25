@@ -25,7 +25,7 @@ import {
   openCodeCommandsToServerProviderSlashCommands,
 } from "./OpenCodeProvider.ts";
 import type { OpenCodeInventory } from "../opencodeRuntime.ts";
-import { readOpenCodeGoUsageLimits } from "./openCodeUsageLimits.ts";
+import { openRouterKeyToWindow, readOpenCodeUsageLimits } from "./openCodeUsageLimits.ts";
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
@@ -33,7 +33,7 @@ const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
 it.effect("reads Go limits with the instance's XDG credentials and preserves reset times", () =>
   Effect.gen(function* () {
     const resetsAt = "2026-09-17T12:00:00.000Z";
-    const limits = yield* readOpenCodeGoUsageLimits({
+    const limits = yield* readOpenCodeUsageLimits({
       enabled: true,
       serverUrl: "",
       environment: { XDG_DATA_HOME: "/instance/data", OPENCODE_API_KEY: "env-key" },
@@ -86,13 +86,124 @@ it.effect("reads Go limits with the instance's XDG credentials and preserves res
   }),
 );
 
+it("reads an OpenRouter key's credit limit and resets daily limits at midnight UTC", () => {
+  const checkedAt = "2026-09-25T13:45:00.000Z";
+  NodeAssert.deepEqual(
+    openRouterKeyToWindow(
+      { data: { limit: 1, limit_remaining: 0, limit_reset: null, usage: 1.02 } },
+      checkedAt,
+    ),
+    { id: "openrouter_key", kind: "other", label: "OpenRouter · Credit limit", usedPercent: 100 },
+  );
+  NodeAssert.deepEqual(
+    openRouterKeyToWindow(
+      { data: { limit: 20, limit_remaining: 15, limit_reset: "daily" } },
+      checkedAt,
+    ),
+    {
+      id: "openrouter_key",
+      kind: "other",
+      label: "OpenRouter · Daily",
+      usedPercent: 25,
+      windowDurationMins: 1440,
+      resetsAt: "2026-09-26T00:00:00.000Z",
+    },
+  );
+  // `usage` is lifetime spend; a weekly limit counts only this week's.
+  NodeAssert.deepEqual(
+    openRouterKeyToWindow(
+      { data: { limit: 50, usage: 400, usage_weekly: 10, limit_reset: "weekly" } },
+      checkedAt,
+    ),
+    { id: "openrouter_key", kind: "weekly", label: "OpenRouter · Weekly", usedPercent: 20 },
+  );
+  // A key without its own limit spends from the account balance: nothing to meter.
+  NodeAssert.equal(
+    openRouterKeyToWindow({ data: { limit: null, usage: 3 } }, checkedAt),
+    undefined,
+  );
+});
+
+it.effect(
+  "merges OpenRouter limits beside Go, fails on a transient error, and drops a rejected key",
+  () =>
+    Effect.gen(function* () {
+      for (const [goStatus, openRouterStatus] of [
+        [200, 200],
+        [500, 200],
+        [200, 500],
+        [200, 401],
+      ] as const) {
+        const limits = yield* readOpenCodeUsageLimits({
+          enabled: true,
+          serverUrl: "",
+          environment: {
+            OPENCODE_AUTH_CONTENT:
+              '{"opencode-go":{"type":"api","key":"go-key"},"openrouter":{"type":"api","key":"or-key"}}',
+          },
+        }).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              if (request.url === "https://openrouter.ai/api/v1/key") {
+                NodeAssert.equal(request.headers.authorization, "Bearer or-key");
+                return Effect.succeed(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    Response.json(
+                      { data: { limit: 10, limit_remaining: 4, limit_reset: null } },
+                      { status: openRouterStatus },
+                    ),
+                  ),
+                );
+              }
+              const resetsAt = "2026-09-26T00:00:00.000Z";
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  Response.json(
+                    {
+                      usage: {
+                        rolling: { percent: 1, resetsAt },
+                        weekly: { percent: 2, resetsAt },
+                        monthly: { percent: 3, resetsAt },
+                      },
+                    },
+                    { status: goStatus },
+                  ),
+                ),
+              );
+            }),
+          ),
+          Effect.provide(NodeServices.layer),
+        );
+        if (goStatus === 500 || openRouterStatus === 500) {
+          // Publishing one account alone would erase the other's bars already on
+          // screen; probeFailed keeps the last good snapshot instead.
+          NodeAssert.equal(limits.unavailable?.reason, "probeFailed");
+          continue;
+        }
+        const go = [
+          ["go_rolling", 1],
+          ["go_weekly", 2],
+          ["go_monthly", 3],
+        ];
+        // A rejected OpenRouter key has nothing to meter; Go keeps publishing.
+        NodeAssert.deepEqual(
+          limits.windows.map((window) => [window.id, window.usedPercent]),
+          openRouterStatus === 401 ? go : [...go, ["openrouter_key", 60]],
+        );
+      }
+    }),
+);
+
 it.effect("does not read local credentials for external or disabled OpenCode instances", () =>
   Effect.gen(function* () {
     for (const settings of [
       { enabled: true, serverUrl: "https://remote.example" },
       { enabled: false, serverUrl: "" },
     ]) {
-      const limits = yield* readOpenCodeGoUsageLimits({ ...settings, environment: {} }).pipe(
+      const limits = yield* readOpenCodeUsageLimits({ ...settings, environment: {} }).pipe(
         Effect.provideService(
           FileSystem.FileSystem,
           FileSystem.makeNoop({
@@ -117,7 +228,7 @@ it.effect("keeps Go entitlement absence distinct from failed or malformed usage 
       [401, "probeFailed"],
       [200, "probeFailed"],
     ] as const) {
-      const limits = yield* readOpenCodeGoUsageLimits({
+      const limits = yield* readOpenCodeUsageLimits({
         enabled: true,
         serverUrl: "",
         environment: {

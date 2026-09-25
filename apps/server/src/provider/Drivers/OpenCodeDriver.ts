@@ -30,7 +30,7 @@ import {
 } from "../../orchestration-v2/Adapters/OpenCodeAdapterV2.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { readOpenCodeGoUsageLimits } from "../Layers/openCodeUsageLimits.ts";
+import { readOpenCodeUsageLimits } from "../Layers/openCodeUsageLimits.ts";
 import {
   checkOpenCodeProviderStatus,
   makePendingOpenCodeProvider,
@@ -166,7 +166,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const checkProvider = Effect.all(
         {
           provider: checkOpenCodeProviderStatus(effectiveConfig, serverConfig.cwd, processEnv),
-          usageLimits: readOpenCodeGoUsageLimits({
+          usageLimits: readOpenCodeUsageLimits({
             enabled: effectiveConfig.enabled,
             serverUrl: effectiveConfig.serverUrl,
             environment: processEnv,
