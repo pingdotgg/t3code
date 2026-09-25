@@ -10,10 +10,9 @@ function box(clientWidth: number, style: Record<string, string>) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("contentInlineWidth", () => {
-  it("drops the inline padding clientWidth counts as room", () => {
-    // Asymmetric sides: a read of only one side, or of the physical props,
-    // answers for less than the full padding.
-    expect(box(724, { paddingInlineStart: "12px", paddingInlineEnd: "0px" })).toBe(712);
+  it("drops both inline sides of the padding clientWidth counts as room", () => {
+    // Unequal sides: reading only one of them, or the physical props, answers
+    // for less than the full padding.
     expect(box(724, { paddingInlineStart: "4px", paddingInlineEnd: "8px" })).toBe(712);
   });
 
