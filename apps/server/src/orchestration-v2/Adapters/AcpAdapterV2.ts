@@ -272,8 +272,8 @@ export interface AcpAdapterV2Flavor {
   /**
    * Serves the agent's `fs/read_text_file` and `fs/write_text_file` requests in
    * place of the generic handlers, after the runtime policy guard. Receives the
-   * session's policy cwd, which is null when the session has no workspace.
-   * Antigravity confines them to its workspace.
+   * cwd of the policy active when the request arrives, which is null when the
+   * session has no workspace. Antigravity confines them to its workspace.
    */
   readonly clientFileSystem?: {
     readonly readTextFile: (
@@ -5396,21 +5396,27 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               requestContext.requestId,
             );
           // A flavor's own handlers replace the generic ones: effect-acp keeps
-          // only the last handler registered per method.
-          const sessionCwd = input.runtimePolicy.cwd;
+          // only the last handler registered per method. They confine requests
+          // to the workspace of the policy the guard checks at request time,
+          // not the one the session opened with.
+          const clientFileSystem = flavor.clientFileSystem;
           yield* targetRuntime.handleReadTextFile((request) =>
             guardClientFsRead(request.path).pipe(
-              Effect.andThen(
-                flavor.clientFileSystem?.readTextFile(request, sessionCwd) ??
-                  acpReadTextFile(options.fileSystem, request),
+              Effect.andThen(clientPolicyContext),
+              Effect.flatMap(({ policy }) =>
+                clientFileSystem === undefined
+                  ? acpReadTextFile(options.fileSystem, request)
+                  : clientFileSystem.readTextFile(request, policy.cwd),
               ),
             ),
           );
           yield* targetRuntime.handleWriteTextFile((request) =>
             guardClientFsWrite(request.path).pipe(
-              Effect.andThen(
-                flavor.clientFileSystem?.writeTextFile(request, sessionCwd) ??
-                  acpWriteTextFile(options.fileSystem, request),
+              Effect.andThen(clientPolicyContext),
+              Effect.flatMap(({ policy }) =>
+                clientFileSystem === undefined
+                  ? acpWriteTextFile(options.fileSystem, request)
+                  : clientFileSystem.writeTextFile(request, policy.cwd),
               ),
             ),
           );
