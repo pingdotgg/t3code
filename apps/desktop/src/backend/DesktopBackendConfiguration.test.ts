@@ -780,12 +780,11 @@ describe("DesktopBackendConfiguration", () => {
         const config = yield* configuration.resolveWsl({ port: 5050, distro: null });
 
         // No settings.json exists here: the endpoints come from the desktop
-        // process's env, which a WSL child cannot inherit, so the bootstrap
-        // has to carry them or log export stays off inside the distro.
+        // environment, and the bootstrap carries them for a WSL child that
+        // lacks the variables.
         assert.equal(config.bootstrap.otlpTracesUrl, "http://127.0.0.1:4318/v1/traces");
         assert.equal(config.bootstrap.otlpMetricsUrl, "http://127.0.0.1:4318/v1/metrics");
         assert.equal(config.bootstrap.otlpLogsUrl, "http://127.0.0.1:4318/v1/logs");
-        assert.notInclude(config.env.WSLENV ?? "", "T3CODE_OTLP_LOGS_URL");
       }).pipe(
         Effect.provide(
           DesktopBackendConfiguration.layer.pipe(

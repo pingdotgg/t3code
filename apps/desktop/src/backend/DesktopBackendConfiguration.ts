@@ -90,9 +90,8 @@ const DESKTOP_BACKEND_ENV_NAMES = [
 ] as const;
 
 // Env vars that the WSL backend needs but Windows process.env won't forward
-// across the wsl.exe boundary without WSLENV. The dev-server URL is handled
-// separately via a `--dev-url` CLI flag because WSLENV translation of
-// URL-shaped values (colons / slashes) is unreliable.
+// across the wsl.exe boundary without WSLENV. The dev-server URL travels as
+// the `--dev-url` CLI flag instead.
 const WSL_FORWARDED_ENV_NAMES = [
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
@@ -239,12 +238,11 @@ const readPersistedBackendObservabilitySettings = Effect.gen(function* () {
   };
 });
 
-// The bootstrap is the only channel that carries an OTLP endpoint to every
-// backend. A Windows-native child inherits the desktop process's env, but a
-// WSL child gets nothing across wsl.exe that WSLENV does not declare, and
-// WSLENV translation of URL-shaped values is unreliable, so the endpoints are
-// deliberately not forwarded that way. Env beats the persisted settings file,
-// matching the precedence resolveServerConfig and DesktopObservability apply.
+// The bootstrap carries the OTLP endpoints to every backend, including a WSL
+// child that lacks the variables. The T3 URLs also travel as variables in
+// WSL_FORWARDED_ENV_NAMES so they outrank a forwarded OTEL endpoint. Env beats
+// the persisted settings file, matching the precedence resolveServerConfig and
+// DesktopObservability apply.
 const readBackendObservabilitySettings = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const persisted = yield* readPersistedBackendObservabilitySettings;
@@ -760,10 +758,8 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   };
 
   // Forward the dev-server URL as an explicit CLI flag so the WSL backend's
-  // config resolution lands in dev/ instead of userdata/. Inheriting through
-  // WSLENV is unreliable in practice (URL-shaped values with colons /
-  // slashes get translated unpredictably depending on flags), and the
-  // packaged build leaves devServerUrl as None anyway.
+  // config resolution lands in dev/ instead of userdata/. The packaged build
+  // leaves devServerUrl as None.
   const devUrlArgs = Option.match(environment.devServerUrl, {
     onNone: () => [] as ReadonlyArray<string>,
     onSome: (url) => ["--dev-url", url.href],
