@@ -509,10 +509,16 @@ const make = Effect.gen(function* () {
       Effect.map((settings) => settings.worktreeSubmodules),
       Effect.orElseSucceed(() => null),
     );
-    yield* gitWorkflow.pruneWorktrees({ cwd }).pipe(
-      Effect.andThen(
-        gitWorkflow.createWorktree({ cwd, refName: branch, path: worktreePath }, { submodules }),
+    // Threads run in parallel lanes, so serialize prune/add per checkout: both
+    // mutate the shared Git worktree metadata.
+    yield* withWorkspaceLease(
+      path.resolve(cwd),
+      gitWorkflow.pruneWorktrees({ cwd }).pipe(
+        Effect.andThen(
+          gitWorkflow.createWorktree({ cwd, refName: branch, path: worktreePath }, { submodules }),
+        ),
       ),
+    ).pipe(
       Effect.catchCauseIf(
         (cause) => !Cause.hasInterruptsOnly(cause),
         (cause) =>
