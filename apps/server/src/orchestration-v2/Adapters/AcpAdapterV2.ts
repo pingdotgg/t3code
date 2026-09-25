@@ -270,6 +270,21 @@ export interface AcpAdapterV2Flavor {
   /** Native session mode to select for a runtime policy (e.g. Antigravity `yolo`). */
   readonly sessionModeForPolicy?: (policy: ProviderAdapterV2RuntimePolicy) => string | undefined;
   /**
+   * Serves the agent's `fs/read_text_file` and `fs/write_text_file` requests in
+   * place of the generic handlers, after the runtime policy guard. Receives the
+   * session cwd. Antigravity confines them to its workspace.
+   */
+  readonly clientFileSystem?: {
+    readonly readTextFile: (
+      request: EffectAcpSchema.ReadTextFileRequest,
+      cwd: string,
+    ) => Effect.Effect<EffectAcpSchema.ReadTextFileResponse, EffectAcpErrors.AcpError>;
+    readonly writeTextFile: (
+      request: EffectAcpSchema.WriteTextFileRequest,
+      cwd: string,
+    ) => Effect.Effect<EffectAcpSchema.WriteTextFileResponse, EffectAcpErrors.AcpError>;
+  };
+  /**
    * Permission requests that are really questions (Antigravity `interaction_*`
    * tool calls). Returns the question and a response builder; undefined routes
    * the request through the normal approval card.
@@ -5379,14 +5394,23 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               Effect.succeed(request),
               requestContext.requestId,
             );
+          // A flavor's own handlers replace the generic ones: effect-acp keeps
+          // only the last handler registered per method.
+          const sessionCwd = input.runtimePolicy.cwd ?? process.cwd();
           yield* targetRuntime.handleReadTextFile((request) =>
             guardClientFsRead(request.path).pipe(
-              Effect.andThen(acpReadTextFile(options.fileSystem, request)),
+              Effect.andThen(
+                flavor.clientFileSystem?.readTextFile(request, sessionCwd) ??
+                  acpReadTextFile(options.fileSystem, request),
+              ),
             ),
           );
           yield* targetRuntime.handleWriteTextFile((request) =>
             guardClientFsWrite(request.path).pipe(
-              Effect.andThen(acpWriteTextFile(options.fileSystem, request)),
+              Effect.andThen(
+                flavor.clientFileSystem?.writeTextFile(request, sessionCwd) ??
+                  acpWriteTextFile(options.fileSystem, request),
+              ),
             ),
           );
           if (handlerOptions.mcp !== false) {

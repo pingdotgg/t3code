@@ -127,31 +127,12 @@ export function makeAntigravityAcpAdapterFlavor(
       // AcpAdapterV2 owns the runtime scope; sign-in and sign-out stop the
       // process by closing it, and the adapter respawns on the next turn.
       const scope = yield* Effect.scope;
-      // The attachments dir grant lets the agent read pasted files at the
-      // paths the turn text references. It is a leaf directory of uploads.
-      const allowedRoots = [input.cwd, options.serverConfig.attachmentsDir];
       const runtime = yield* options.withProcess(
         Scope.close(scope, Exit.void),
         options.makeRuntime({
           ...input,
           clientFileSystem: true,
           additionalDirectories: [options.serverConfig.attachmentsDir],
-        }),
-      );
-      yield* runtime.handleReadTextFile((request) =>
-        readAntigravityClientTextFile({
-          fileSystem: options.fileSystem,
-          path: options.path,
-          allowedRoots,
-          request,
-        }),
-      );
-      yield* runtime.handleWriteTextFile((request) =>
-        writeAntigravityClientTextFile({
-          fileSystem: options.fileSystem,
-          path: options.path,
-          allowedRoots,
-          request,
         }),
       );
       return {
@@ -196,6 +177,24 @@ export function makeAntigravityAcpAdapterFlavor(
         });
       }),
     sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
+    // The attachments dir grant lets the agent read pasted files at the paths
+    // the turn text references. It is a leaf directory of uploads.
+    clientFileSystem: {
+      readTextFile: (request, cwd) =>
+        readAntigravityClientTextFile({
+          fileSystem: options.fileSystem,
+          path: options.path,
+          allowedRoots: [cwd, options.serverConfig.attachmentsDir],
+          request,
+        }),
+      writeTextFile: (request, cwd) =>
+        writeAntigravityClientTextFile({
+          fileSystem: options.fileSystem,
+          path: options.path,
+          allowedRoots: [cwd, options.serverConfig.attachmentsDir],
+          request,
+        }),
+    },
     approvalOptions: antigravityApprovalOptions,
     extractPermissionQuestion: (request) => {
       const question = extractAntigravityUserInputQuestion(request);
