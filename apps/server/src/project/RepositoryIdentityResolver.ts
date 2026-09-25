@@ -107,6 +107,8 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
       .run({
         command: "git",
         args: ["-C", cwd, "rev-parse", "--show-toplevel"],
+        // Keep git's "not a git repository" diagnostic untranslated.
+        env: { LC_ALL: "C" },
         timeoutBehavior: "timedOutResult",
       })
       .pipe(Effect.option);
