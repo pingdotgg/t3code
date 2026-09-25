@@ -473,29 +473,6 @@ export function VoiceSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection title="Input">
         <SettingsRow
-          {...searchableSetting("dictation-shortcut-mode")}
-          description="Choose how the dictation shortcut starts and finishes recording."
-          control={
-            <Select
-              value={voiceShortcutMode}
-              onValueChange={(value) => {
-                if (value === "auto" || value === "hold" || value === "toggle") {
-                  void updateClientSettings({ voiceShortcutMode: value });
-                }
-              }}
-            >
-              <SelectTrigger size="sm" aria-label="Dictation shortcut mode" className="max-w-80">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="auto">Auto: hold or tap to toggle</SelectItem>
-                <SelectItem value="hold">Hold to record</SelectItem>
-                <SelectItem value="toggle">Press to toggle</SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
           {...searchableSetting("transcription-environment")}
           description="Run voice transcription on this environment for every thread."
           control={
@@ -601,6 +578,37 @@ export function VoiceSettingsPanel() {
                 <RefreshCwIcon className="size-3.5" />
               </Button>
             </div>
+          }
+        />
+      </SettingsSection>
+      <SettingsSection title="Keyboard shortcuts">
+        <SettingsRow
+          {...searchableSetting("dictation-shortcut-mode")}
+          description="Choose how the dictation shortcut starts and finishes recording. Change the keys in Keybindings settings."
+          control={
+            <Select
+              value={voiceShortcutMode}
+              onValueChange={(value) => {
+                if (value === "auto" || value === "hold" || value === "toggle") {
+                  void updateClientSettings({ voiceShortcutMode: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" aria-label="Dictation shortcut mode" className="max-w-80">
+                <SelectValue>
+                  {voiceShortcutMode === "auto"
+                    ? "Auto (hold or tap)"
+                    : voiceShortcutMode === "hold"
+                      ? "Hold to record"
+                      : "Toggle recording"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem value="auto">Auto (hold or tap)</SelectItem>
+                <SelectItem value="hold">Hold to record</SelectItem>
+                <SelectItem value="toggle">Toggle recording</SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
       </SettingsSection>
