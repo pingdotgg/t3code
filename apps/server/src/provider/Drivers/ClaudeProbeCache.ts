@@ -51,30 +51,29 @@ export class ClaudeProbeCache extends Context.Service<
   }
 >()("t3/provider/Drivers/ClaudeProbeCache") {}
 
-export const layer = Layer.effect(
-  ClaudeProbeCache,
-  Effect.gen(function* () {
-    const gate = yield* Semaphore.make(MAX_CONCURRENT_PROBES);
-    // The probe keeps its own timeout inside the gate, so time spent waiting
-    // for a permit cannot turn into a false failure.
-    const cache = yield* Cache.makeWith(
-      (input: ClaudeProbeInput) =>
-        gate.withPermits(1)(
-          probeClaudeCapabilities(
-            input,
-            mergeProviderInstanceEnvironment(input.environment),
-            input.cwd,
-          ),
+export const make = Effect.gen(function* () {
+  const gate = yield* Semaphore.make(MAX_CONCURRENT_PROBES);
+  // The probe keeps its own timeout inside the gate, so time spent waiting
+  // for a permit cannot turn into a false failure.
+  const cache = yield* Cache.makeWith(
+    (input: ClaudeProbeInput) =>
+      gate.withPermits(1)(
+        probeClaudeCapabilities(
+          input,
+          mergeProviderInstanceEnvironment(input.environment),
+          input.cwd,
         ),
-      {
-        capacity: MAX_CACHED_PROBES,
-        timeToLive: (exit) =>
-          Exit.isSuccess(exit) && exit.value !== undefined ? PROBE_TTL : FAILED_PROBE_TTL,
-      },
-    );
-    return {
-      capabilities: (input) => Cache.get(cache, input),
-      invalidate: (input) => Cache.invalidate(cache, input),
-    } satisfies ClaudeProbeCache["Service"];
-  }),
-);
+      ),
+    {
+      capacity: MAX_CACHED_PROBES,
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) && exit.value !== undefined ? PROBE_TTL : FAILED_PROBE_TTL,
+    },
+  );
+  return {
+    capabilities: (input) => Cache.get(cache, input),
+    invalidate: (input) => Cache.invalidate(cache, input),
+  } satisfies ClaudeProbeCache["Service"];
+});
+
+export const layer = Layer.effect(ClaudeProbeCache, make);
