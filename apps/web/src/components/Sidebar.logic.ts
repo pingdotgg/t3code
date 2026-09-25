@@ -1375,46 +1375,60 @@ export interface SidebarSubagentCounts {
 
 type SidebarSubagentThread = Pick<
   SidebarThreadSummary,
-  "environmentId" | "id" | "lineage" | "createdAt" | "latestUserMessageAt"
+  "environmentId" | "lineage" | "createdAt"
 > & {
   readonly source: Pick<SidebarThreadSummary["source"], "status" | "activityRunStatus">;
 };
 
+const WORKING_SUBAGENT_STATUSES = new Set([
+  "preparing",
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+]);
+
 /**
- * Subagent tallies keyed by the parent's scoped thread key. Only parents with a subagent still working get an entry: a quiet
- * thread must not carry a finished batch forever. Counts cover subagents
- * spawned since the parent's latest user message, so earlier batches drop out
- * when the user moves on.
+ * Subagent tallies keyed by the parent's scoped thread key. Only parents with
+ * a subagent still working get an entry: a quiet thread must not carry a
+ * finished batch forever. The batch starts at the oldest subagent still
+ * working, so earlier finished rounds drop out. (The parent's latest user
+ * message cannot mark the batch: delegated results arrive as user messages.)
  */
 export function deriveSidebarSubagentCounts(
   threads: ReadonlyArray<SidebarSubagentThread>,
 ): ReadonlyMap<string, SidebarSubagentCounts> {
-  const key = (environmentId: EnvironmentId, threadId: ThreadId) =>
-    scopedThreadKey(scopeThreadRef(environmentId, threadId));
-  const parents = new Map(threads.map((thread) => [key(thread.environmentId, thread.id), thread]));
-  const tallies = new Map<string, { working: number; done: number; failed: number }>();
+  const subagentsByParent = new Map<
+    string,
+    Array<{ readonly createdAt: string; readonly status: string }>
+  >();
   for (const thread of threads) {
     const parentThreadId = thread.lineage.parentThreadId;
     if (thread.lineage.relationshipToParent !== "subagent" || parentThreadId === null) continue;
-    const parentKey = key(thread.environmentId, parentThreadId);
-    const batchStartedAt = parents.get(parentKey)?.latestUserMessageAt ?? null;
-    if (batchStartedAt !== null && thread.createdAt < batchStartedAt) continue;
-    const status = thread.source.activityRunStatus ?? thread.source.status;
-    const tally = tallies.get(parentKey) ?? { working: 0, done: 0, failed: 0 };
-    if (["preparing", "queued", "starting", "running", "waiting"].includes(status)) {
-      tally.working += 1;
-    } else if (status === "completed") {
-      tally.done += 1;
-    } else if (status === "failed" || status === "interrupted") {
-      tally.failed += 1;
-    } else {
-      continue;
-    }
-    tallies.set(parentKey, tally);
+    const parentKey = scopedThreadKey(scopeThreadRef(thread.environmentId, parentThreadId));
+    const subagents = subagentsByParent.get(parentKey) ?? [];
+    subagents.push({
+      createdAt: thread.createdAt,
+      status: thread.source.activityRunStatus ?? thread.source.status,
+    });
+    subagentsByParent.set(parentKey, subagents);
   }
   const counts = new Map<string, SidebarSubagentCounts>();
-  for (const [parentKey, tally] of tallies) {
-    if (tally.working > 0) counts.set(parentKey, tally);
+  for (const [parentKey, subagents] of subagentsByParent) {
+    const working = subagents.filter((subagent) => WORKING_SUBAGENT_STATUSES.has(subagent.status));
+    if (working.length === 0) continue;
+    const batchStartedAt = working.reduce(
+      (earliest, subagent) => (subagent.createdAt < earliest ? subagent.createdAt : earliest),
+      working[0]!.createdAt,
+    );
+    const batch = subagents.filter((subagent) => subagent.createdAt >= batchStartedAt);
+    counts.set(parentKey, {
+      working: working.length,
+      done: batch.filter((subagent) => subagent.status === "completed").length,
+      failed: batch.filter(
+        (subagent) => subagent.status === "failed" || subagent.status === "interrupted",
+      ).length,
+    });
   }
   return counts;
 }

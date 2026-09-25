@@ -2151,64 +2151,43 @@ describe("deriveSidebarSubagentCounts", () => {
   const environmentId = EnvironmentId.make("environment-subagents");
   const parentId = ThreadId.make("thread-subagent-parent");
   const parentKey = scopedThreadKey(scopeThreadRef(environmentId, parentId));
-  const parent = {
-    environmentId,
-    id: parentId,
-    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: parentId },
-    createdAt: "2026-09-25T09:00:00.000Z",
-    latestUserMessageAt: "2026-09-25T10:00:00.000Z",
-    source: { status: "completed" as const, activityRunStatus: null },
-  };
   const child = (
-    id: string,
     status: "running" | "completed" | "failed" | "interrupted" | "cancelled",
-    createdAt = "2026-09-25T10:05:00.000Z",
+    createdAt: string,
+    relationshipToParent: "subagent" | "fork" = "subagent",
   ) => ({
     environmentId,
-    id: ThreadId.make(id),
-    lineage: {
-      parentThreadId: parentId,
-      relationshipToParent: "subagent" as const,
-      rootThreadId: parentId,
-    },
+    lineage: { parentThreadId: parentId, relationshipToParent, rootThreadId: parentId },
     createdAt,
-    latestUserMessageAt: null,
     source: { status, activityRunStatus: null },
   });
 
-  it("tallies the current batch while any subagent is still working", () => {
+  it("tallies the batch that started with the oldest working subagent", () => {
     const counts = deriveSidebarSubagentCounts([
-      parent,
-      child("a", "running"),
-      child("b", "running"),
-      child("c", "completed"),
-      child("d", "failed"),
-      child("e", "interrupted"),
-      child("f", "cancelled"),
-      // Spawned before the latest user message: an earlier batch.
-      child("g", "completed", "2026-09-25T09:30:00.000Z"),
+      // An earlier round, finished before the current batch started.
+      child("completed", "2026-09-25T09:00:00.000Z"),
+      child("failed", "2026-09-25T09:01:00.000Z"),
+      child("running", "2026-09-25T10:00:00.000Z"),
+      child("running", "2026-09-25T10:00:01.000Z"),
+      child("completed", "2026-09-25T10:00:02.000Z"),
+      child("failed", "2026-09-25T10:00:03.000Z"),
+      child("interrupted", "2026-09-25T10:00:04.000Z"),
+      child("cancelled", "2026-09-25T10:00:05.000Z"),
     ]);
     expect(counts.get(parentKey)).toEqual({ working: 2, done: 1, failed: 2 });
   });
 
   it("omits parents whose subagents have all finished", () => {
     const counts = deriveSidebarSubagentCounts([
-      parent,
-      child("a", "completed"),
-      child("b", "failed"),
+      child("completed", "2026-09-25T10:00:00.000Z"),
+      child("failed", "2026-09-25T10:00:01.000Z"),
     ]);
     expect(counts.has(parentKey)).toBe(false);
   });
 
   it("ignores forks", () => {
-    const fork = {
-      ...child("a", "running"),
-      lineage: {
-        parentThreadId: parentId,
-        relationshipToParent: "fork" as const,
-        rootThreadId: parentId,
-      },
-    };
-    expect(deriveSidebarSubagentCounts([parent, fork]).size).toBe(0);
+    expect(
+      deriveSidebarSubagentCounts([child("running", "2026-09-25T10:00:00.000Z", "fork")]).size,
+    ).toBe(0);
   });
 });
