@@ -166,18 +166,32 @@ describe("OtelEnvironment", () => {
           OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "not-a-url",
           OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector:4318/base",
         },
-        traces: "Unset",
+        traces: "Off",
         metrics: "https://collector:4318/base/v1/metrics",
         logs: "https://collector:4318/base/v1/logs",
-        warnings: ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is not a URL and was ignored"],
+        warnings: [
+          "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is not an http or https URL, so the signals it configures are not exported",
+        ],
       },
       {
         name: "an invalid generic endpoint warns without leaking its query",
         env: { OTEL_EXPORTER_OTLP_ENDPOINT: "not-a-url?api_key=secret" },
-        traces: "Unset",
-        metrics: "Unset",
-        logs: "Unset",
-        warnings: ["OTEL_EXPORTER_OTLP_ENDPOINT is not a URL and was ignored"],
+        traces: "Off",
+        metrics: "Off",
+        logs: "Off",
+        warnings: [
+          "OTEL_EXPORTER_OTLP_ENDPOINT is not an http or https URL, so the signals it configures are not exported",
+        ],
+      },
+      {
+        name: "an endpoint without a scheme is not an http URL",
+        env: { OTEL_EXPORTER_OTLP_ENDPOINT: "localhost:4318" },
+        traces: "Off",
+        metrics: "Off",
+        logs: "Off",
+        warnings: [
+          "OTEL_EXPORTER_OTLP_ENDPOINT is not an http or https URL, so the signals it configures are not exported",
+        ],
       },
       {
         name: "the kill switch wins outright over a valid endpoint",
@@ -241,8 +255,15 @@ describe("OtelEnvironment", () => {
         traces: { protocol: "http/protobuf", headers: undefined },
         logs: "Off",
         warnings: [
-          "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=grpc is not http/protobuf or http/json, so the signals it configures are not exported",
+          "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL is not http/protobuf or http/json, so the signals it configures are not exported",
         ],
+      },
+      {
+        name: "a protocol reads case-insensitively",
+        env: { ...ENDPOINT, OTEL_EXPORTER_OTLP_PROTOCOL: "HTTP/JSON" },
+        traces: { protocol: "http/json", headers: undefined },
+        logs: { protocol: "http/json", headers: undefined },
+        warnings: [],
       },
       {
         name: "undecodable headers turn off every signal once, without leaking them",
@@ -250,8 +271,28 @@ describe("OtelEnvironment", () => {
         traces: "Off",
         logs: "Off",
         warnings: [
-          "OTEL_EXPORTER_OTLP_HEADERS has a value that is not percent-encoded, so the signals it configures are not exported",
+          "OTEL_EXPORTER_OTLP_HEADERS is not a list of key=value pairs with percent-encoded values, so the signals it configures are not exported",
         ],
+      },
+      {
+        name: "a header without a value separator turns its signal off",
+        env: { ...ENDPOINT, OTEL_EXPORTER_OTLP_LOGS_HEADERS: "Authorization" },
+        traces: { protocol: "http/protobuf", headers: undefined },
+        logs: "Off",
+        warnings: [
+          "OTEL_EXPORTER_OTLP_LOGS_HEADERS is not a list of key=value pairs with percent-encoded values, so the signals it configures are not exported",
+        ],
+      },
+      {
+        name: "blank per-signal headers leave the generic ones in charge",
+        env: {
+          ...ENDPOINT,
+          OTEL_EXPORTER_OTLP_HEADERS: "api-key=shared",
+          OTEL_EXPORTER_OTLP_LOGS_HEADERS: "  ",
+        },
+        traces: { protocol: "http/protobuf", headers: { "api-key": "shared" } },
+        logs: { protocol: "http/protobuf", headers: { "api-key": "shared" } },
+        warnings: [],
       },
       {
         name: "generic headers every signal overrides say nothing",

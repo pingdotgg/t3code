@@ -16,14 +16,14 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
-import { OtlpProtocol, type SignalExport } from "./observability.ts";
+import { OtlpHeadersFromString, OtlpProtocol, type SignalExport } from "./observability.ts";
 
 /** The signals T3 Code exports, spelled as the variable names spell them. */
 type OtlpSignalName = "TRACES" | "METRICS" | "LOGS";
 
 /**
  * What the OTEL variables say about one signal. `Off` is a signal they
- * claimed with an endpoint whose protocol or headers do not read, so it is
+ * claimed with an endpoint, protocol, or headers that do not read, so it is
  * exported nowhere rather than to the bootstrap or Settings collector.
  */
 export type OtelSignal = Data.TaggedEnum<{
@@ -131,51 +131,52 @@ interface Setting<A> {
   readonly warning?: string;
 }
 
-/** Reads one variable, warning rather than failing when it is set and unusable. */
+/**
+ * Reads one variable. Blank reads as unset, and a value `parse` rejects warns
+ * without echoing it, since these variables carry credentials.
+ */
 const readOrWarn = <A>(
-  config: Config.Config<A>,
   name: string,
-  warning: (raw: string) => string,
+  parse: (raw: string) => Option.Option<A>,
+  warning: string,
 ): Config.Config<Setting<A>> =>
-  config.pipe(
-    Config.map((value): Setting<A> => ({ value })),
-    Config.orElse(() =>
-      Config.String(name).pipe(
-        Config.option,
-        Config.map((raw): Setting<A> => {
-          const value = blankAsUnset(Option.getOrUndefined(raw));
-          return value === undefined
-            ? { value: undefined }
-            : { value: undefined, warning: warning(value) };
-        }),
-      ),
-    ),
+  Config.String(name).pipe(
+    Config.option,
+    Config.map((option): Setting<A> => {
+      const raw = blankAsUnset(Option.getOrUndefined(option));
+      if (raw === undefined) {
+        return { value: undefined };
+      }
+      return Option.match(parse(raw), {
+        onNone: () => ({ value: undefined, warning }),
+        onSome: (value) => ({ value }),
+      });
+    }),
   );
+
+const parseHttpUrl = (raw: string) =>
+  Option.liftThrowable((value: string) => new URL(value))(raw).pipe(
+    Option.filter((url) => url.protocol === "http:" || url.protocol === "https:"),
+  );
+
+const NOT_EXPORTED = "so the signals it configures are not exported";
 
 const endpoint = (name: string) =>
-  readOrWarn(
-    Config.URL(name),
-    name,
-    // The value is left out because an endpoint can carry an API key.
-    () => `${name} is not a URL and was ignored`,
-  );
+  readOrWarn(name, parseHttpUrl, `${name} is not an http or https URL, ${NOT_EXPORTED}`);
 
+// The specification reads enum values case-insensitively.
 const protocol = (name: string) =>
   readOrWarn(
-    Config.schema(OtlpProtocol, name),
     name,
-    (raw) =>
-      `${name}=${raw} is not http/protobuf or http/json, so the signals it configures are not exported`,
+    (raw) => Schema.decodeUnknownOption(OtlpProtocol)(raw.toLowerCase()),
+    `${name} is not http/protobuf or http/json, ${NOT_EXPORTED}`,
   );
 
 const headers = (name: string) =>
   readOrWarn(
-    // The schema Effect's OTLP exporters read these variables with.
-    Config.Record(Schema.String, Schema.StringFromUriComponent, name),
     name,
-    // The value is left out because headers carry credentials.
-    () =>
-      `${name} has a value that is not percent-encoded, so the signals it configures are not exported`,
+    Schema.decodeUnknownOption(OtlpHeadersFromString),
+    `${name} is not a list of key=value pairs with percent-encoded values, ${NOT_EXPORTED}`,
   );
 
 interface Settings {
@@ -212,14 +213,16 @@ interface ResolvedSignal {
 }
 
 /**
- * A signal whose protocol or headers do not read is not exported rather than
- * sent in a format or without the credentials its collector expects.
+ * A signal whose endpoint, protocol, or headers do not read is not exported
+ * rather than sent somewhere, in a format, or without the credentials its
+ * collector expects.
  */
 const signal = (name: OtlpSignalName, own: Settings, generic: Settings): ResolvedSignal => {
   const ownEndpoint = isClaimed(own.endpoint);
   const endpoint = ownEndpoint ? own.endpoint : generic.endpoint;
   if (endpoint.value === undefined) {
-    return { signal: OtelSignal.Unset(), used: [endpoint] };
+    const signal = endpoint.warning === undefined ? OtelSignal.Unset() : OtelSignal.Off();
+    return { signal, used: [endpoint] };
   }
   const protocol = claimed(own.protocol, generic.protocol);
   const headers = claimed(own.headers, generic.headers);
