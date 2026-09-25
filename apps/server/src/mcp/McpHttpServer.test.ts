@@ -177,7 +177,7 @@ it.effect.each([{}, { includeImage: false }])(
 );
 
 it.effect.each([
-  { mode: "default", input: {}, images: true },
+  { mode: "default", input: {}, images: false },
   { mode: "explicit image", input: { includeImage: true }, images: true },
   { mode: "text only", input: { includeImage: false }, images: false },
 ])("returns fresh $mode snapshots on repeated MCP calls", ({ input, images }) =>
@@ -281,12 +281,7 @@ it.effect.each([
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
-      expect(nextDefault.content.map((content) => content.type)).toEqual([
-        "text",
-        "text",
-        "text",
-        "image",
-      ]);
+      expect(nextDefault.content.map((content) => content.type)).toEqual(["text", "text", "text"]);
       expect(nextDefault.structuredContent).toEqual({ ...page, title: "Snapshot 7", screenshot });
       expect(requests).toBe(7);
     }),
@@ -338,6 +333,12 @@ it.effect("saves the snapshot PNG on request and reports its path", () =>
       expect(Buffer.from(yield* fileSystem.readFile(screenshotPath!)).toString()).toBe("png");
       const [, text] = snapshot.content;
       expect(text?.type === "text" ? text.text : "").toContain(screenshotPath);
+      // Saving returns a file reference, not history-bricking bytes: no image
+      // content unless includeImage is explicitly true.
+      expect(snapshot.content.map((content) => content.type)).not.toContain("image");
+
+      const withImage = yield* callSnapshot({ save: true, includeImage: true });
+      expect(withImage.content.map((content) => content.type)).toContain("image");
 
       const unsaved = yield* callSnapshot({});
       expect(unsaved.structuredContent).not.toHaveProperty("screenshotPath");
@@ -716,10 +717,22 @@ it.effect("registers annotated tools and preserves authenticated request context
           Effect.provideService(McpSchema.McpServerClient, client),
         );
       expect(snapshot.isError).toBe(false);
-      expect(snapshot.content.some((content) => content.type === "image")).toBe(true);
+      // Text-first by default: no inline image bytes in the result.
+      expect(snapshot.content.some((content) => content.type === "image")).toBe(false);
       expect(snapshot.structuredContent).toMatchObject({
         screenshot: { mimeType: "image/png", width: 10, height: 5 },
       });
+      const snapshotWithImage = yield* server
+        .callTool({
+          name: "preview_snapshot",
+          arguments: { tabId: alternateTabId, includeImage: true },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(snapshotWithImage.isError).toBe(false);
+      expect(snapshotWithImage.content.some((content) => content.type === "image")).toBe(true);
       expect(routedRequests.find(({ operation }) => operation === "snapshot")?.tabId).toBe(
         alternateTabId,
       );
