@@ -33,23 +33,31 @@ interface GrokAcpRuntimeInput extends Omit<
 }
 
 /**
+ * The runtime modes `grok agent` can launch in: ask, its auto classifier, and
+ * always-approve. It has no Auto-accept edits: `acceptEdits` only exists as a
+ * settings-file `permissions.defaultMode`, and `grok agent` treats it as ask.
+ */
+export const GROK_SUPPORTED_RUNTIME_MODES = [
+  "approval-required",
+  "auto",
+  "full-access",
+] as const satisfies ReadonlyArray<RuntimeMode>;
+
+/**
  * Launch argv for a runtime mode. `--permission-mode` on the argv beats the
  * user's Grok config, so Supervised cannot inherit a configured always-approve.
- * `grok agent` only wires always-approve and auto at launch; `acceptEdits`
- * would behave exactly like `default`, so Auto-accept edits launches asking
- * and T3's ACP client policy approves the edit prompts.
+ * A mode Grok does not offer launches asking.
  */
 export function grokAcpSpawnArgs(runtimeMode?: RuntimeMode): ReadonlyArray<string> {
   switch (runtimeMode) {
-    case "approval-required":
-    case "auto-accept-edits":
-      return ["--permission-mode", "default", "agent", "stdio"];
+    case undefined:
+      return ["agent", "stdio"];
     case "auto":
       return ["--permission-mode", "auto", "agent", "stdio"];
     case "full-access":
       return ["agent", "--always-approve", "stdio"];
     default:
-      return ["agent", "stdio"];
+      return ["--permission-mode", "default", "agent", "stdio"];
   }
 }
 

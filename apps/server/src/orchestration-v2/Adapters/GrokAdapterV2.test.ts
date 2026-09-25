@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   GrokSettings,
+  ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
   type RuntimeMode,
@@ -12,6 +13,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import { xAiRateLimitedErrorCode } from "../../provider/acp/XAiAcpExtension.ts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -21,8 +23,16 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { ServerConfig } from "../../config.ts";
+import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
+import { buildInitialGrokProviderSnapshot } from "../../provider/Layers/GrokProvider.ts";
+import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
+import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
 import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import {
+  layerFromProjectRepository as runtimePolicyLayerFromProjectRepository,
+  RuntimePolicyV2,
+} from "../RuntimePolicy.ts";
 import { acpPermissionDisposition } from "../../provider/acp/AcpClientPolicy.ts";
 import {
   AcpProviderCapabilitiesV2,
@@ -341,7 +351,6 @@ describe("Grok launch permission mode", () => {
 
   for (const [runtimeMode, args] of [
     ["approval-required", ["--permission-mode", "default", "agent", "stdio"]],
-    ["auto-accept-edits", ["--permission-mode", "default", "agent", "stdio"]],
     ["auto", ["--permission-mode", "auto", "agent", "stdio"]],
     ["full-access", ["agent", "--always-approve", "stdio"]],
   ] as const) {
@@ -351,6 +360,68 @@ describe("Grok launch permission mode", () => {
       }),
     );
   }
+
+  it.effect("launches a thread stored as Auto-accept edits asking", () =>
+    Effect.gen(function* () {
+      // The policy the orchestrator resolves from Grok's own provider snapshot.
+      const snapshot = yield* buildInitialGrokProviderSnapshot(LAUNCH_TEST_GROK_SETTINGS);
+      const instanceId = ProviderInstanceId.make("grok-launch-test");
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("grok-launch-test");
+      const modelSelection = { instanceId, model: "grok-build" } as const;
+      const resolved = yield* Effect.gen(function* () {
+        const runtimePolicy = yield* RuntimePolicyV2;
+        return yield* runtimePolicy.resolve({
+          thread: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("grok-launch-test"),
+            title: "Grok launch test",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "auto-accept-edits",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: process.cwd(),
+            activeProviderThreadId: null,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          modelSelection,
+        });
+      }).pipe(
+        Effect.provide(
+          runtimePolicyLayerFromProjectRepository.pipe(
+            Layer.provide(
+              Layer.mock(ProjectionProjectRepository)({
+                getById: () => Effect.die("the thread has a worktree"),
+              }),
+            ),
+            Layer.provide(
+              Layer.mock(ProviderInstanceRegistry)({
+                getInstance: () =>
+                  Effect.succeed({
+                    snapshot: { getSnapshot: Effect.succeed(snapshot) },
+                  } as ProviderInstance),
+              }),
+            ),
+          ),
+        ),
+      );
+      assert.equal(resolved.runtimeMode, "approval-required");
+      assert.deepEqual(yield* launchArgs(resolved), [
+        ["--permission-mode", "default", "agent", "stdio"],
+      ]);
+    }),
+  );
 
   it.effect("launches asking when an explicit approval or sandbox policy governs the thread", () =>
     Effect.gen(function* () {

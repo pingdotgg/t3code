@@ -209,7 +209,7 @@ function acpOperationDisposition(
     case undefined:
       if (runtimePolicy.runtimeMode === "approval-required") return "deny";
       // Auto-accept edits approves file changes wherever the agent makes them
-      // (Grok's prompts carry no locations to confine); other actions still ask.
+      // (ACP prompts need not carry locations to confine); other actions still ask.
       if (
         runtimePolicy.runtimeMode === "auto-accept-edits" &&
         runtimePolicy.approvalPolicy === undefined &&

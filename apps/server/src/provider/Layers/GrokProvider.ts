@@ -37,6 +37,7 @@ import {
 } from "../providerMaintenance.ts";
 import {
   GROK_DEFAULT_MODEL_SLUG,
+  GROK_SUPPORTED_RUNTIME_MODES,
   isValidGrokReasoningEffortToken,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
@@ -48,6 +49,7 @@ const GROK_PRESENTATION = {
   displayName: "Grok",
   supportsConversationRollback: false,
   showInteractionModeToggle: false,
+  supportedRuntimeModes: GROK_SUPPORTED_RUNTIME_MODES,
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
