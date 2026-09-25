@@ -82,6 +82,8 @@ export function verifyRelayJwt(input: {
         typ: input.typ,
         issuer: input.issuer,
         audience: input.audience,
+        // apps/server prunes cloud replay markers after REPLAY_MARKER_MAX_AGE (server.ts).
+        // Keep maxTokenAge plus clockTolerance well under it.
         maxTokenAge: input.maxTokenAge ?? "5 minutes",
         clockTolerance: 60,
         currentDate: DateTime.toDate(DateTime.makeUnsafe(input.nowEpochSeconds * 1_000)),

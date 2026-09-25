@@ -1,15 +1,21 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as PlatformError from "effect/PlatformError";
+import * as TestClock from "effect/testing/TestClock";
 
+import { CLOUD_REPLAY_MARKER_PREFIXES } from "../cloud/http.ts";
 import * as ServerConfig from "../config.ts";
+import { DPOP_REPLAY_MARKER_PREFIX } from "./dpop.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 
 const makeServerConfigLayer = () =>
@@ -251,6 +257,53 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
       assert.instanceOf(error.cause, PlatformError.PlatformError);
       assert.equal((error.cause as PlatformError.PlatformError).reason._tag, "PermissionDenied");
     }).pipe(Effect.provide(makeRenameFailureSecretStoreLayer())),
+  );
+
+  it.effect("prunes only replay markers older than the max age", () =>
+    Effect.gen(function* () {
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const { secretsDir } = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const now = DateTime.makeUnsafe("2026-01-01T00:00:00Z");
+      const setAge = (fileName: string, age: Duration.Duration) => {
+        const mtime = DateTime.toDateUtc(DateTime.subtractDuration(now, age));
+        return fileSystem.utimes(path.join(secretsDir, fileName), mtime, mtime);
+      };
+
+      const expiredMarkers = ["dpop-proof-old", "cloud-mint-jti-old", "cloud-health-nonce-old"];
+      const keptSecrets = [
+        "dpop-proof-fresh",
+        "session-signing-key",
+        "cloud-mint-ed25519-public-key",
+      ];
+      const pendingSetFile = "dpop-proof-pending.bin.0000.tmp";
+      for (const name of [...expiredMarkers, ...keptSecrets]) {
+        yield* secretStore.create(name, Uint8Array.from([1]));
+        yield* setAge(
+          `${name}.bin`,
+          name.endsWith("fresh") ? Duration.minutes(1) : Duration.hours(1),
+        );
+      }
+      yield* fileSystem.writeFile(path.join(secretsDir, pendingSetFile), Uint8Array.from([1]));
+      yield* setAge(pendingSetFile, Duration.hours(1));
+      yield* TestClock.setTime(DateTime.toEpochMillis(now));
+
+      yield* ServerSecretStore.pruneExpiredReplayMarkers(
+        [DPOP_REPLAY_MARKER_PREFIX, ...CLOUD_REPLAY_MARKER_PREFIXES],
+        Duration.minutes(15),
+      );
+
+      for (const name of expiredMarkers) {
+        assert.isTrue(Option.isNone(yield* secretStore.get(name)), name);
+      }
+      for (const name of keptSecrets) {
+        assert.isTrue(Option.isSome(yield* secretStore.get(name)), name);
+      }
+      assert.isTrue(yield* fileSystem.exists(path.join(secretsDir, pendingSetFile)));
+    }).pipe(
+      Effect.provide(ServerSecretStore.layer.pipe(Layer.provideMerge(makeServerConfigLayer()))),
+    ),
   );
 
   it.effect("propagates remove failures other than missing-file errors", () =>

@@ -11,6 +11,7 @@ import { stableStringify } from "./relaySigning.ts";
 
 const DPOP_TYP = "dpop+jwt";
 const DPOP_ALG = "ES256";
+// apps/server prunes DPoP replay markers after REPLAY_MARKER_MAX_AGE (server.ts). Keep this well under it.
 const DEFAULT_MAX_AGE_SECONDS = 300;
 
 export const DpopPublicJwk = DpopPublicJwkSchema;

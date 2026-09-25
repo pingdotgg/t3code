@@ -124,9 +124,11 @@ import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http.ts";
+import { DPOP_REPLAY_MARKER_PREFIX } from "./auth/dpop.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import {
+  CLOUD_REPLAY_MARKER_PREFIXES,
   connectHttpApiLayer,
   pendingServiceUpdateExists,
   reconcileDesiredCloudLinkIfStillDesired,
@@ -500,8 +502,32 @@ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
   }),
 );
 
+// A replay marker only matters while its proof can still be accepted: about
+// 305 s for DPoP (5 min max age, 5 s future skew) and about 420 s for cloud
+// proofs (5 min lifetime, 60 s skew each way). 15 minutes is a 2x margin.
+// Markers stay on disk, so a restart inside the window still blocks replays.
+const REPLAY_MARKER_MAX_AGE = Duration.minutes(15);
+
+// Sweeps expired replay markers after activation, then every 10 minutes.
+// Keep this layer out of any span: the forked loop would hold its parent span
+// for the whole uptime.
+const ReplayMarkerPruneLive = Layer.effectDiscard(
+  forkParked(
+    ServerSecretStore.pruneExpiredReplayMarkers(
+      [DPOP_REPLAY_MARKER_PREFIX, ...CLOUD_REPLAY_MARKER_PREFIXES],
+      REPLAY_MARKER_MAX_AGE,
+    ).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Failed to prune expired replay markers", { cause }),
+      ),
+      Effect.repeat(Schedule.spaced(Duration.minutes(10))),
+    ),
+  ),
+);
+
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(AntigravityInstallationRefreshLive),
+  Layer.provideMerge(ReplayMarkerPruneLive),
   Layer.provideMerge(ProviderAuthServiceLive),
   // Core Services
   Layer.provideMerge(ServerSettingsLayerLive),

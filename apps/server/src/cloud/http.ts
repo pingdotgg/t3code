@@ -104,6 +104,14 @@ const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
 const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
 const CLOUD_HEALTH_NONCE_PREFIX = "cloud-health-nonce-";
 const CLOUD_HEALTH_JTI_PREFIX = "cloud-health-jti-";
+/** Secret store name prefixes of cloud replay markers. The server prunes expired ones. */
+export const CLOUD_REPLAY_MARKER_PREFIXES = [
+  CLOUD_MINT_NONCE_PREFIX,
+  CLOUD_MINT_JTI_PREFIX,
+  CLOUD_HEALTH_NONCE_PREFIX,
+  CLOUD_HEALTH_JTI_PREFIX,
+] as const;
+// Keep the proof window well under REPLAY_MARKER_MAX_AGE in server.ts, or pruned markers allow replays.
 const CLOUD_PROOF_MAX_LIFETIME_SECONDS = 5 * 60;
 const CLOUD_PROOF_CLOCK_SKEW_SECONDS = 60;
 // The desktop app stops its backends within seconds of writing the marker.
