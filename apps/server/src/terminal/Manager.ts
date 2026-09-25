@@ -199,6 +199,17 @@ export class TerminalManager extends Context.Service<
     readonly close: (input: TerminalCloseInput) => Effect.Effect<void, TerminalError>;
 
     /**
+     * Close a thread's terminals that wait at an idle shell prompt. A terminal
+     * that runs a command stays open. When `terminalId` is set, only that
+     * terminal is considered. Used when a thread settles and when a setup
+     * script finishes.
+     */
+    readonly closeIdle: (input: {
+      readonly threadId: string;
+      readonly terminalId?: string;
+    }) => Effect.Effect<void>;
+
+    /**
      * Subscribe to terminal runtime events with a direct callback.
      *
      * Returns an unsubscribe function.
@@ -275,6 +286,8 @@ interface TerminalSessionState {
   exitSignal: number | null;
   updatedAt: string;
   eventSequence: number;
+  /** Counts writes, so closeIdle can see input that has not echoed yet. */
+  inputCount: number;
   cols: number;
   rows: number;
   process: PtyAdapter.PtyProcess | null;
@@ -692,7 +705,17 @@ function deriveSubprocessInspectResult(
   terminalPid: number,
   platform: NodeJS.Platform,
 ): TerminalSubprocessInspectResult {
-  const childPid = (snapshot.childrenByParent.get(terminalPid) ?? [])[0];
+  const commandName = (pid: number) =>
+    normalizeChildCommandName(snapshot.commandById.get(pid) ?? "", platform);
+  const shellName = commandName(terminalPid);
+  // Async prompt themes fork the shell into a helper that waits with no
+  // children of its own. That copy is not a command the user started.
+  const childPid = (snapshot.childrenByParent.get(terminalPid) ?? []).find(
+    (pid) =>
+      shellName === null ||
+      commandName(pid) !== shellName ||
+      (snapshot.childrenByParent.get(pid)?.length ?? 0) > 0,
+  );
   if (childPid === undefined) {
     return { hasRunningSubprocess: false, childCommand: null, processIds: [] };
   }
@@ -707,7 +730,7 @@ function deriveSubprocessInspectResult(
       pending.push(pid);
     }
   }
-  const normalized = normalizeChildCommandName(snapshot.commandById.get(childPid) ?? "", platform);
+  const normalized = commandName(childPid);
   return {
     hasRunningSubprocess: true,
     childCommand: normalized ? truncateTerminalWireLabel(normalized) : null,
@@ -2537,6 +2560,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         exitSignal: null,
         updatedAt: yield* nowIso,
         eventSequence: 0,
+        inputCount: 0,
         cols,
         rows,
         process: null,
@@ -2877,6 +2901,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         terminalId,
       });
     }
+    session.inputCount += 1;
     yield* Effect.try({
       try: () => process.write(input.data),
       catch: (cause) =>
@@ -2958,6 +2983,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           exitSignal: null,
           updatedAt: yield* nowIso,
           eventSequence: 0,
+          inputCount: 0,
           cols,
           rows,
           process: null,
@@ -3042,6 +3068,52 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }),
     );
 
+  const closeIdle: TerminalManager["Service"]["closeIdle"] = (input) =>
+    withThreadLock(
+      input.threadId,
+      Effect.gen(function* () {
+        const running = (yield* sessionsForThread(input.threadId)).filter(
+          (session): session is TerminalSessionState & { pid: number } =>
+            session.status === "running" &&
+            Number.isInteger(session.pid) &&
+            (input.terminalId === undefined || session.terminalId === input.terminalId),
+        );
+        if (running.length === 0) return;
+        // A command started during the process check can miss the snapshot,
+        // but its input or echo still lands. Both counters only grow, so the
+        // sum changes when either one does.
+        const activityMark = (session: TerminalSessionState) =>
+          session.eventSequence + session.inputCount;
+        const marks = new Map(
+          running.map((session) => [session.terminalId, activityMark(session)]),
+        );
+        // Inspect now instead of trusting the last poll, so a command started
+        // since then keeps its terminal.
+        const { inspector } = yield* acquireSubprocessInspector;
+        yield* Effect.forEach(
+          running,
+          (session) =>
+            inspector(session.pid).pipe(
+              Effect.flatMap((result) =>
+                result.hasRunningSubprocess ||
+                activityMark(session) !== marks.get(session.terminalId)
+                  ? Effect.void
+                  : closeSession(input.threadId, session.terminalId, false),
+              ),
+            ),
+          { discard: true },
+        );
+      }),
+    ).pipe(
+      // The process check failed, so every terminal stays open.
+      Effect.catch((error) =>
+        Effect.logWarning("failed to close idle terminals", {
+          threadId: input.threadId,
+          error: error.message,
+        }),
+      ),
+    );
+
   return TerminalManager.of({
     open,
     attachStream,
@@ -3050,6 +3122,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     clear,
     restart,
     close,
+    closeIdle,
     subscribe,
     subscribeMetadata,
   });
