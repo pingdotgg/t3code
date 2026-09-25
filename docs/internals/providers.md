@@ -64,7 +64,9 @@ it. Homebrew and npm are proven by the real path (symlinks followed): a versione
 `brew --prefix`, or `<prefix>/lib/node_modules/<pkg>/` (Windows: the shim beside `node_modules`).
 Native installer layouts and the global bin directories of pnpm, Bun, and Vite+ may match on either
 the resolved path or its real target, since those installers place real files or their own symlinks
-there. Anything unproven stays manual-only but still reports the version gap. npm updates pin
+there. Cursor and Grok are the exception: their only updater is the CLI itself, which detects its
+own installer, so any resolved executable runs `<binary> update`. Anything unproven stays
+manual-only but still reports the version gap. npm updates pin
 `--prefix` because the `npm` on `PATH` can belong to a different Node than the one that owns the
 provider. Homebrew
 compares against `brew info` since casks trail npm by hours; native installs share npm's version
