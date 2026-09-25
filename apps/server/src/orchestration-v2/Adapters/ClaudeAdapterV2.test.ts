@@ -3476,195 +3476,221 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("keeps a queued wake turn's tool callback with its continuation", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        const now = yield* DateTime.now;
-        const firstAttempt = RunAttemptId.make("attempt-claude-wake-callback-1");
-        const userAttempt = RunAttemptId.make("attempt-claude-wake-callback-2");
-        const continuationAttempt = RunAttemptId.make("attempt-claude-wake-callback-3");
-        const planToolUseId = "toolu_01WakePlanExitPlanMode";
-        const planMarkdown = "# Wake plan\n\n1. Report the background result.";
-        const stamp = (frame: SDKMessage, attemptId: RunAttemptId) =>
-          claudeSdkFrame({ ...frame, user_message_uuid: claudePromptUuid(attemptId) });
-        const runOf = (attemptId: RunAttemptId) => RunId.make(`run-${attemptId}`);
-        const planToolUse = claudeSdkFrame({
-          type: "assistant",
-          message: {
-            model: "claude-sonnet-4-6",
-            id: "msg_wake_plan",
-            type: "message",
-            role: "assistant",
-            content: [
-              {
-                type: "tool_use",
-                id: planToolUseId,
-                name: "ExitPlanMode",
-                input: { plan: planMarkdown },
-              },
-            ],
-          },
-          parent_tool_use_id: null,
-          uuid: "00000000-0000-4000-8000-000000000741",
-          session_id: WAKE_NATIVE_SESSION,
-        });
-        const planToolResult = claudeSdkFrame({
-          type: "user",
-          message: {
-            role: "user",
-            content: [
-              {
-                type: "tool_result",
-                tool_use_id: planToolUseId,
-                content:
-                  "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.",
-                is_error: true,
-              },
-            ],
-          },
-          parent_tool_use_id: null,
-          uuid: "00000000-0000-4000-8000-000000000742",
-          session_id: WAKE_NATIVE_SESSION,
-        });
-
-        // Turn 1 launches background work and echoes its prompt early.
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: firstAttempt,
-            text: "Run the build in the background.",
-            attachments: [],
-          }),
-        );
-        yield* Queue.offer(harness.sdkMessages, stamp(wakeTaskStarted, firstAttempt));
-        yield* Queue.offer(
-          harness.sdkMessages,
-          stamp(
-            makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000740", result: "STARTED" }),
-            firstAttempt,
-          ),
-        );
-        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
-
-        // The task finishes while the user's next prompt is queued, and the
-        // CLI runs the wake turn first. That wake turn calls ExitPlanMode,
-        // whose permission callback fires between its tool_use and result.
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: userAttempt,
-            text: "Reply with exactly: USER_REPLY",
-            attachments: [],
-            providerTurnOrdinal: 2,
-          }),
-        );
-        yield* Queue.offer(harness.sdkMessages, wakeNotification);
-        yield* Queue.offer(harness.sdkMessages, planToolUse);
-        // The SDK asks for permission only after streaming the tool_use.
-        yield* awaitUntil(
-          () => Queue.sizeUnsafe(harness.sdkMessages) === 0,
-          "the tool_use frame to be consumed",
-        );
-        let settleYields = 0;
-        yield* awaitUntil(() => settleYields++ >= 50, "the tool_use frame to be handled");
-        const canUseTool = harness.getOpenedOptions()?.canUseTool;
-        assert.isFunction(canUseTool);
-        const callback = yield* Effect.promise(() =>
-          canUseTool!(
-            "ExitPlanMode",
-            { plan: planMarkdown },
-            {
-              signal: new AbortController().signal,
-              toolUseID: planToolUseId,
-              requestId: "request-wake-plan",
+  it.effect.each(["full-access", "approval-required"] as const)(
+    "keeps a queued wake turn's tool callback with its continuation in %s mode",
+    (runtimeMode) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
+          const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode,
+            interactionMode: "default",
+            cwd: "/workspace",
+          });
+          const firstAttempt = RunAttemptId.make("attempt-claude-wake-callback-1");
+          const userAttempt = RunAttemptId.make("attempt-claude-wake-callback-2");
+          const continuationAttempt = RunAttemptId.make("attempt-claude-wake-callback-3");
+          const planToolUseId = "toolu_01WakePlanExitPlanMode";
+          const planMarkdown = "# Wake plan\n\n1. Report the background result.";
+          const stamp = (frame: SDKMessage, attemptId: RunAttemptId) =>
+            claudeSdkFrame({ ...frame, user_message_uuid: claudePromptUuid(attemptId) });
+          const runOf = (attemptId: RunAttemptId) => RunId.make(`run-${attemptId}`);
+          const planToolUse = claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: "msg_wake_plan",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: planToolUseId,
+                  name: "ExitPlanMode",
+                  input: { plan: planMarkdown },
+                },
+              ],
             },
-          ),
-        );
-        assert.equal(callback?.behavior, "deny");
-        yield* Queue.offer(harness.sdkMessages, planToolResult);
-        yield* Queue.offer(harness.sdkMessages, wakeResult);
-        yield* awaitUntil(() => harness.continuationRequests.length === 1, "continuation request");
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000741",
+            session_id: WAKE_NATIVE_SESSION,
+          });
+          const planToolResult = claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: planToolUseId,
+                  content:
+                    "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.",
+                  is_error: true,
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000742",
+            session_id: WAKE_NATIVE_SESSION,
+          });
 
-        // The prompt's own turn follows and echoes its uuid.
-        yield* Queue.offer(
-          harness.sdkMessages,
-          stamp(
-            makeAssistantTextFrame({
-              uuid: "00000000-0000-4000-8000-000000000743",
-              text: "USER_REPLY",
+          // Turn 1 launches background work and echoes its prompt early.
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: firstAttempt,
+              text: "Run the build in the background.",
+              attachments: [],
+              runtimePolicy,
             }),
-            userAttempt,
-          ),
-        );
-        yield* Queue.offer(
-          harness.sdkMessages,
-          stamp(
-            makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000744", result: "USER_REPLY" }),
-            userAttempt,
-          ),
-        );
-        yield* awaitUntil(() => harness.terminalEvents().length === 2, "user turn terminal");
+          );
+          yield* Queue.offer(harness.sdkMessages, stamp(wakeTaskStarted, firstAttempt));
+          yield* Queue.offer(
+            harness.sdkMessages,
+            stamp(
+              makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000740", result: "STARTED" }),
+              firstAttempt,
+            ),
+          );
+          yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
 
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: continuationAttempt,
-            text: "Background task completed.",
-            attachments: [],
-            providerTurnOrdinal: 3,
-            messageCreatedBy: "agent",
-            messageCreationSource: "provider",
-          }),
-        );
-        yield* awaitUntil(() => harness.terminalEvents().length === 3, "continuation terminal");
+          // The task finishes while the user's next prompt is queued, and the
+          // CLI runs the wake turn first. That wake turn calls ExitPlanMode,
+          // whose permission callback fires between its tool_use and result.
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: userAttempt,
+              text: "Reply with exactly: USER_REPLY",
+              attachments: [],
+              runtimePolicy,
+              providerTurnOrdinal: 2,
+            }),
+          );
+          yield* Queue.offer(harness.sdkMessages, wakeNotification);
+          yield* Queue.offer(harness.sdkMessages, planToolUse);
+          // The SDK asks for permission only after streaming the tool_use.
+          yield* awaitUntil(
+            () => Queue.sizeUnsafe(harness.sdkMessages) === 0,
+            "the tool_use frame to be consumed",
+          );
+          let settleYields = 0;
+          yield* awaitUntil(() => settleYields++ >= 50, "the tool_use frame to be handled");
+          const canUseTool = harness.getOpenedOptions()?.canUseTool;
+          assert.isFunction(canUseTool);
+          const callback = yield* Effect.promise(() =>
+            canUseTool!(
+              "ExitPlanMode",
+              { plan: planMarkdown },
+              {
+                signal: new AbortController().signal,
+                toolUseID: planToolUseId,
+                requestId: "request-wake-plan",
+              },
+            ),
+          );
+          assert.equal(callback?.behavior, "deny");
+          assert.include(
+            callback?.behavior === "deny" ? callback.message : "",
+            "The client captured your proposed plan",
+          );
+          yield* Queue.offer(harness.sdkMessages, planToolResult);
+          yield* Queue.offer(harness.sdkMessages, wakeResult);
+          yield* awaitUntil(
+            () => harness.continuationRequests.length === 1,
+            "continuation request",
+          );
 
-        const latestItems = new Map(
-          harness.events.flatMap((event) =>
-            event.type === "turn_item.updated" ? [[String(event.turnItem.id), event.turnItem]] : [],
-          ),
-        );
-        const planTool = [...latestItems.values()].find(
-          (item) => item.type === "dynamic_tool" && item.nativeItemRef?.nativeId === planToolUseId,
-        );
-        const proposedPlans = [...latestItems.values()].filter(
-          (item) => item.type === "proposed_plan",
-        );
-        const plans = harness.events.flatMap((event) =>
-          event.type === "plan.updated" && event.plan.kind === "proposed_plan" ? [event.plan] : [],
-        );
-        // Every update of the tool, from start to its (denied) result, is in
-        // the continuation run; the user's turn never starts or fails it.
-        const planToolRuns = harness.events.flatMap((event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.nativeItemRef?.nativeId === planToolUseId &&
-          event.turnItem.type === "dynamic_tool"
-            ? [event.turnItem.runId]
-            : [],
-        );
-        assert.isNotEmpty(planToolRuns);
-        assert.isTrue(planToolRuns.every((runId) => runId === runOf(continuationAttempt)));
-        assert.equal(planTool?.runId, runOf(continuationAttempt));
-        assert.lengthOf(proposedPlans, 1);
-        assert.equal(proposedPlans[0]?.runId, runOf(continuationAttempt));
-        assert.isTrue(plans.length > 0);
-        assert.isTrue(plans.every((plan) => plan.runId === runOf(continuationAttempt)));
-        // Nothing from the wake turn reached the user's run.
-        const userRunItems = [...latestItems.values()].filter(
-          (item) => item.runId === runOf(userAttempt),
-        );
-        assert.deepEqual(
-          userRunItems.map((item) => item.type),
-          ["assistant_message"],
-        );
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
-    ),
+          // The prompt's own turn follows and echoes its uuid.
+          yield* Queue.offer(
+            harness.sdkMessages,
+            stamp(
+              makeAssistantTextFrame({
+                uuid: "00000000-0000-4000-8000-000000000743",
+                text: "USER_REPLY",
+              }),
+              userAttempt,
+            ),
+          );
+          yield* Queue.offer(
+            harness.sdkMessages,
+            stamp(
+              makeResultFrame({
+                uuid: "00000000-0000-4000-8000-000000000744",
+                result: "USER_REPLY",
+              }),
+              userAttempt,
+            ),
+          );
+          yield* awaitUntil(() => harness.terminalEvents().length === 2, "user turn terminal");
+
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: continuationAttempt,
+              text: "Background task completed.",
+              attachments: [],
+              runtimePolicy,
+              providerTurnOrdinal: 3,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+          yield* awaitUntil(() => harness.terminalEvents().length === 3, "continuation terminal");
+
+          const latestItems = new Map(
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated"
+                ? [[String(event.turnItem.id), event.turnItem]]
+                : [],
+            ),
+          );
+          const planTool = [...latestItems.values()].find(
+            (item) =>
+              item.type === "dynamic_tool" && item.nativeItemRef?.nativeId === planToolUseId,
+          );
+          const proposedPlans = [...latestItems.values()].filter(
+            (item) => item.type === "proposed_plan",
+          );
+          const plans = harness.events.flatMap((event) =>
+            event.type === "plan.updated" && event.plan.kind === "proposed_plan"
+              ? [event.plan]
+              : [],
+          );
+          // Every update of the tool, from start to its (denied) result, is in
+          // the continuation run; the user's turn never starts or fails it.
+          const planToolRuns = harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === planToolUseId &&
+            event.turnItem.type === "dynamic_tool"
+              ? [event.turnItem.runId]
+              : [],
+          );
+          assert.isNotEmpty(planToolRuns);
+          assert.isTrue(planToolRuns.every((runId) => runId === runOf(continuationAttempt)));
+          assert.equal(planTool?.runId, runOf(continuationAttempt));
+          // Claude was told the plan was captured, so it must be projected.
+          assert.lengthOf(proposedPlans, 1);
+          assert.equal(proposedPlans[0]?.runId, runOf(continuationAttempt));
+          assert.isTrue(plans.length > 0);
+          assert.isTrue(plans.every((plan) => plan.runId === runOf(continuationAttempt)));
+          // Nothing from the wake turn reached the user's run.
+          const userRunItems = [...latestItems.values()].filter(
+            (item) => item.runId === runOf(userAttempt),
+          );
+          assert.deepEqual(
+            userRunItems.map((item) => item.type),
+            ["assistant_message"],
+          );
+        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      ),
   );
 
   it.effect("answers an approval a held wake turn raises without waiting for the echo", () =>

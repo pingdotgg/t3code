@@ -5748,11 +5748,16 @@ export function makeClaudeAdapterV2(
             });
           }
 
-          if (heldForEcho && (toolName === "AskUserQuestion" || requiresClaudeApproval(context))) {
+          if (
+            heldForEcho &&
+            toolName !== "ExitPlanMode" &&
+            (toolName === "AskUserQuestion" || requiresClaudeApproval(context))
+          ) {
             // The SDK blocks on the answer, and the prompt echo cannot arrive
             // until the held turn goes on, so the request is raised now and
             // the held output goes with it to the pending prompt turn, as it
-            // did before this turn was held.
+            // did before this turn was held. ExitPlanMode is answered at once
+            // below, so its frames stay held.
             yield* releaseHeldRootFrames(context);
             if (toolName !== "Agent") {
               yield* ensureToolCallStarted({
@@ -5833,7 +5838,10 @@ export function makeClaudeAdapterV2(
 
           if (toolName === "ExitPlanMode") {
             const markdown = claudeProposedPlan(nativeToolInput);
-            if (markdown !== null && heldForEcho) {
+            // Defer only while the tool_use frame itself is still held, so
+            // the plan is published when that frame is handled; otherwise
+            // publish now. Claude is told the plan was captured either way.
+            if (markdown !== null && heldToolUseIds(context).has(nativeRequestId)) {
               heldProposedPlansByToolUseId.set(nativeRequestId, markdown);
             } else if (markdown !== null) {
               yield* emitClaudePlanProjection({
