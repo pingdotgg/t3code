@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 const expoMocks = vi.hoisted(() => ({
   requireNativeView: vi.fn(),
+  requireOptionalNativeModule: vi.fn(),
 }));
 const nativeView = () => null;
 const originalExpo = globalThis.expo;
@@ -14,6 +15,7 @@ function setExpoViewConfigAvailable() {
 
 vi.mock("expo", () => ({
   requireNativeView: expoMocks.requireNativeView,
+  requireOptionalNativeModule: expoMocks.requireOptionalNativeModule,
 }));
 
 describe("resolveNativeTerminalSurfaceView", () => {
@@ -62,4 +64,20 @@ describe("resolveNativeTerminalSurfaceView", () => {
     );
     expect(consoleError).toHaveBeenCalledTimes(1);
   });
+});
+
+describe("supportsNativeReplayStreaming", () => {
+  it.each([
+    [undefined, false],
+    [{ streamingRevision: 1 }, false],
+    [{ streamingRevision: 2 }, true],
+  ])(
+    "selects replay streaming only for a capable installed binary (%j)",
+    async (module, expected) => {
+      expoMocks.requireOptionalNativeModule.mockReturnValue(module);
+      const { supportsNativeReplayStreaming } = await import("./nativeTerminalModule");
+
+      expect(supportsNativeReplayStreaming()).toBe(expected);
+    },
+  );
 });

@@ -6,6 +6,7 @@ import {
 import {
   INITIAL_TERMINAL_OUTPUT_CURSOR,
   readTerminalOutputUpdate,
+  terminalOutputText,
   type TerminalOutputCursor,
   type TerminalOutputUpdate,
   type TerminalSessionState,
@@ -19,6 +20,8 @@ import {
   Trash2,
 } from "lucide-react";
 import {
+  DEFAULT_TERMINAL_REPLAY_BYTES,
+  EXTENDED_TERMINAL_REPLAY_BYTES,
   type ContextMenuItem,
   type ProviderInstanceId,
   type ResolvedKeybindingsConfig,
@@ -109,14 +112,67 @@ function writeSystemMessage(terminal: GhosttyTerminalSurface, message: string): 
 }
 
 export function writeTerminalOutputUpdate(
-  terminal: Pick<GhosttyTerminalSurface, "resetAndWrite" | "write">,
+  terminal: Pick<
+    GhosttyTerminalSurface,
+    "beginStreamingReplay" | "appendStreamingReplay" | "completeStreamingReplay" | "write"
+  >,
   update: TerminalOutputUpdate,
-): void {
+  replayState: TerminalReplayRendererState = "idle",
+  onReplayComplete: () => void = () => {},
+): { replayState: TerminalReplayRendererState; didWrite: boolean } {
+  if (update.type === "none") return { replayState, didWrite: false };
   if (update.type === "reset") {
-    terminal.resetAndWrite(update.data);
-  } else if (update.type === "append") {
-    terminal.write(update.data);
+    terminal.beginStreamingReplay("");
   }
+  const result = writeTerminalOutputSegments({
+    terminal,
+    segments: update.segments,
+    replayState: update.type === "reset" ? "replaying" : replayState,
+    onReplayComplete,
+  });
+  if (replayState === "idle" && result.replayState !== "idle") {
+    terminal.completeStreamingReplay();
+    result.replayState = "idle";
+  }
+  return { ...result, didWrite: update.type === "reset" || result.didWrite };
+}
+
+type TerminalReplayRendererState = "idle" | "waiting" | "replaying";
+
+/** Preserve replay/live ordering when React reduces both deliveries before a render. */
+export function writeTerminalOutputSegments(options: {
+  terminal: Pick<
+    GhosttyTerminalSurface,
+    "appendStreamingReplay" | "beginStreamingReplay" | "completeStreamingReplay" | "write"
+  >;
+  segments: Extract<TerminalOutputUpdate, { type: "append" }>["segments"];
+  replayState: TerminalReplayRendererState;
+  onReplayComplete: () => void;
+}): { replayState: TerminalReplayRendererState; didWrite: boolean } {
+  let replayState = options.replayState;
+  let didWrite = false;
+
+  for (const segment of options.segments) {
+    if (segment.data.length === 0) continue;
+    didWrite = true;
+    if (segment.delivery === "replay" && replayState !== "idle") {
+      if (replayState === "waiting") {
+        options.terminal.beginStreamingReplay(segment.data);
+        replayState = "replaying";
+      } else {
+        options.terminal.appendStreamingReplay(segment.data);
+      }
+      continue;
+    }
+    if (segment.delivery === "live" && replayState !== "idle") {
+      if (replayState === "replaying") options.terminal.completeStreamingReplay();
+      replayState = "idle";
+      options.onReplayComplete();
+    }
+    options.terminal.write(segment.data);
+  }
+
+  return { replayState, didWrite };
 }
 
 function parseTerminalColor(value: string, fallback: GhosttyColor): GhosttyColor {
@@ -219,19 +275,22 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
     "--terminal-selection-background",
     isDark ? "rgba(180, 203, 255, 0.25)" : "rgba(37, 63, 99, 0.2)",
   );
+  const backgroundColor = parseTerminalColor(
+    terminalBackground,
+    isDark ? { r: 14, g: 18, b: 24 } : { r: 255, g: 255, b: 255 },
+  );
+  const foregroundColor = parseTerminalColor(
+    terminalForeground,
+    isDark ? { r: 237, g: 241, b: 247 } : { r: 28, g: 33, b: 41 },
+  );
+  const cursorColor = parseTerminalColor(
+    terminalCursor,
+    isDark ? { r: 180, g: 203, b: 255 } : { r: 38, g: 56, b: 78 },
+  );
   return {
-    background: parseTerminalColor(
-      terminalBackground,
-      isDark ? { r: 14, g: 18, b: 24 } : { r: 255, g: 255, b: 255 },
-    ),
-    foreground: parseTerminalColor(
-      terminalForeground,
-      isDark ? { r: 237, g: 241, b: 247 } : { r: 28, g: 33, b: 41 },
-    ),
-    cursor: parseTerminalColor(
-      terminalCursor,
-      isDark ? { r: 180, g: 203, b: 255 } : { r: 38, g: 56, b: 78 },
-    ),
+    background: backgroundColor,
+    foreground: foregroundColor,
+    cursor: cursorColor,
     selectionBackground: terminalSelection,
   };
 }
@@ -401,6 +460,38 @@ export function TerminalViewport({
     }),
   );
   const terminalFontRef = useRef({ family: terminalFontFamily, size: terminalFontSize });
+  const pendingScrollbackReplayIdentityRef = useRef<string | null>(null);
+  const scrollbackReplayRendererStateRef = useRef<TerminalReplayRendererState>("idle");
+  const terminalAttachIdentity = useMemo(
+    () =>
+      JSON.stringify([
+        environmentId,
+        threadId,
+        terminalId,
+        cwd,
+        worktreePath ?? null,
+        runtimeEnvKey,
+      ]),
+    [cwd, environmentId, runtimeEnvKey, terminalId, threadId, worktreePath],
+  );
+  const [extendedReplayIdentity, setExtendedReplayIdentity] = useState<string | null>(null);
+  const replayBytes =
+    extendedReplayIdentity === terminalAttachIdentity
+      ? EXTENDED_TERMINAL_REPLAY_BYTES
+      : DEFAULT_TERMINAL_REPLAY_BYTES;
+  const requestExtendedReplay = useEffectEvent(() => {
+    if (extendedReplayIdentity === terminalAttachIdentity) return;
+    pendingScrollbackReplayIdentityRef.current = terminalAttachIdentity;
+    scrollbackReplayRendererStateRef.current = "waiting";
+    setExtendedReplayIdentity(terminalAttachIdentity);
+  });
+  useEffect(() => {
+    setExtendedReplayIdentity(null);
+    if (pendingScrollbackReplayIdentityRef.current !== terminalAttachIdentity) {
+      pendingScrollbackReplayIdentityRef.current = null;
+      scrollbackReplayRendererStateRef.current = "idle";
+    }
+  }, [terminalAttachIdentity]);
   const terminalSession = useAttachedTerminalSession({
     environmentId,
     terminal: {
@@ -410,6 +501,7 @@ export function TerminalViewport({
       ...(worktreePath !== undefined ? { worktreePath } : {}),
       ...(runtimeEnv ? { env: runtimeEnv } : {}),
       ...(providerInstanceId ? { providerInstanceId } : {}),
+      replayBytes,
     },
   });
   const writeTerminal = useEffectEvent((data: string) =>
@@ -428,6 +520,8 @@ export function TerminalViewport({
   const terminalError = terminalSession.error;
   const terminalStatus = terminalSession.status;
   const outputCursorRef = useRef<TerminalOutputCursor>(INITIAL_TERMINAL_OUTPUT_CURSOR);
+  const terminalSubscriptionIdentity = `${terminalAttachIdentity}:${replayBytes}`;
+  const outputSubscriptionIdentityRef = useRef(terminalSubscriptionIdentity);
   const synchronizedStatusRef = useRef<TerminalSessionState["status"]>("closed");
   const synchronizeTerminalStatus = useEffectEvent(
     (terminal: GhosttyTerminalSurface, status: TerminalSessionState["status"]) => {
@@ -447,10 +541,14 @@ export function TerminalViewport({
     },
   );
   const terminalVersion = terminalSession.version;
+  const terminalReplayStartVersion = terminalSession.replayStartVersion;
+  const terminalReplayCompleteVersion = terminalSession.replayCompleteVersion;
   const previousSessionRef = useRef({
     output: terminalOutput,
     error: terminalError,
     status: terminalStatus,
+    replayStartVersion: terminalReplayStartVersion,
+    replayCompleteVersion: terminalReplayCompleteVersion,
     version: terminalVersion,
   });
   const latestSessionRef = useRef(previousSessionRef.current);
@@ -458,6 +556,8 @@ export function TerminalViewport({
     output: terminalOutput,
     error: terminalError,
     status: terminalStatus,
+    replayStartVersion: terminalReplayStartVersion,
+    replayCompleteVersion: terminalReplayCompleteVersion,
     version: terminalVersion,
   };
 
@@ -499,6 +599,7 @@ export function TerminalViewport({
         onData: (data) => handleData(data),
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
         onSelectionChange: () => handleSelectionChange(),
+        onScrollbackTop: () => requestExtendedReplay(),
         beforeKey: (event) => handleBeforeKey(event),
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
         // The surface listens from construction, so a right-click can land
@@ -528,12 +629,18 @@ export function TerminalViewport({
       }
       const latestSession = latestSessionRef.current;
       previousSessionRef.current = latestSession;
+      scrollbackReplayRendererStateRef.current =
+        latestSession.replayStartVersion > latestSession.replayCompleteVersion ? "waiting" : "idle";
       const initialOutput = readTerminalOutputUpdate(
         latestSession.output,
         INITIAL_TERMINAL_OUTPUT_CURSOR,
       );
       if (initialOutput.type === "reset" && initialOutput.data.length > 0) {
-        writeTerminalOutputUpdate(terminal, initialOutput);
+        scrollbackReplayRendererStateRef.current = writeTerminalOutputUpdate(
+          terminal,
+          initialOutput,
+          scrollbackReplayRendererStateRef.current,
+        ).replayState;
       }
       outputCursorRef.current = initialOutput.cursor;
       if (latestSession.error !== null) writeSystemMessage(terminal, latestSession.error);
@@ -920,14 +1027,32 @@ export function TerminalViewport({
       teardown?.();
       if (hadFocus && mount.isConnected) mount.focus({ preventScroll: true });
     };
-  }, [cwd, environmentId, runtimeEnvKey, terminalId, threadId, worktreePath]);
+    // autoFocus is intentionally omitted;
+    // it is only read at mount time and must not trigger terminal teardown/recreation.
+  }, [
+    cwd,
+    environmentId,
+    runtimeEnvKey,
+    terminalAttachIdentity,
+    terminalId,
+    threadId,
+    worktreePath,
+  ]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
+    const subscriptionChanged =
+      outputSubscriptionIdentityRef.current !== terminalSubscriptionIdentity;
+    if (subscriptionChanged) {
+      outputSubscriptionIdentityRef.current = terminalSubscriptionIdentity;
+      outputCursorRef.current = INITIAL_TERMINAL_OUTPUT_CURSOR;
+    }
     const current = {
       output: terminalOutput,
       error: terminalError,
       status: terminalStatus,
+      replayStartVersion: terminalReplayStartVersion,
+      replayCompleteVersion: terminalReplayCompleteVersion,
       version: terminalVersion,
     };
     if (!terminal) {
@@ -937,21 +1062,91 @@ export function TerminalViewport({
 
     const previous = previousSessionRef.current;
     synchronizeTerminalStatus(terminal, current.status);
-    if (current.version === previous.version && current.output === previous.output) {
+    const replayBoundaryChanged =
+      current.replayStartVersion !== previous.replayStartVersion ||
+      current.replayCompleteVersion !== previous.replayCompleteVersion;
+    if (
+      !subscriptionChanged &&
+      current.version === previous.version &&
+      current.output === previous.output &&
+      !replayBoundaryChanged
+    ) {
       return;
     }
 
     const outputUpdate = readTerminalOutputUpdate(current.output, outputCursorRef.current);
-    writeTerminalOutputUpdate(terminal, outputUpdate);
     outputCursorRef.current = outputUpdate.cursor;
-    terminal.clearSelection();
+    if (
+      replayBytes === EXTENDED_TERMINAL_REPLAY_BYTES &&
+      current.replayStartVersion !== previous.replayStartVersion
+    ) {
+      scrollbackReplayRendererStateRef.current = "waiting";
+    }
+    const scrollbackReplayPending =
+      pendingScrollbackReplayIdentityRef.current === terminalAttachIdentity;
+    const streamingReplay = scrollbackReplayRendererStateRef.current !== "idle";
+    const completePendingScrollbackReplay = () => {
+      if (pendingScrollbackReplayIdentityRef.current !== terminalAttachIdentity) return;
+      pendingScrollbackReplayIdentityRef.current = null;
+      terminal.scrollToTopAfterWrites();
+    };
+    let didWriteOutput = false;
+    if (outputUpdate.type === "reset" && outputUpdate.data.length === 0 && current.version === 0) {
+      // A restarted attach stream emits its pristine seed state before the
+      // server replies. Keep the current screen until real content arrives;
+      // the cursor above already adopted the new stream's epoch.
+    } else if (outputUpdate.type === "reset" && streamingReplay && outputUpdate.data.length === 0) {
+      // The extended attach begins with an empty snapshot. Keep the current
+      // screen visible until its first retained-history chunk arrives.
+      scrollbackReplayRendererStateRef.current = "waiting";
+    } else {
+      const result = writeTerminalOutputUpdate(
+        terminal,
+        outputUpdate,
+        scrollbackReplayRendererStateRef.current,
+        completePendingScrollbackReplay,
+      );
+      scrollbackReplayRendererStateRef.current = result.replayState;
+      didWriteOutput = result.didWrite;
+    }
+    if (didWriteOutput) terminal.clearSelection();
+
+    if (
+      current.replayCompleteVersion > 0 &&
+      // Only an actual completion may finish a pending extended replay: live
+      // output from the outgoing subscription arrives with these versions
+      // already balanced and must not clear the request early.
+      current.replayCompleteVersion !== previous.replayCompleteVersion &&
+      current.replayCompleteVersion >= current.replayStartVersion &&
+      current.version !== previous.version &&
+      scrollbackReplayRendererStateRef.current !== "idle"
+    ) {
+      if (scrollbackReplayRendererStateRef.current === "waiting") {
+        terminal.beginStreamingReplay(terminalOutputText(current.output));
+        terminal.clearSelection();
+      }
+      terminal.completeStreamingReplay();
+      scrollbackReplayRendererStateRef.current = "idle";
+      if (scrollbackReplayPending) completePendingScrollbackReplay();
+    }
 
     if (current.error !== null && current.error !== previous.error) {
       writeSystemMessage(terminal, current.error);
     }
 
     previousSessionRef.current = current;
-  }, [terminalOutput, terminalError, terminalStatus, terminalVersion]);
+  }, [
+    autoFocus,
+    terminalError,
+    terminalOutput,
+    terminalReplayCompleteVersion,
+    terminalReplayStartVersion,
+    terminalStatus,
+    terminalAttachIdentity,
+    terminalSubscriptionIdentity,
+    terminalVersion,
+    replayBytes,
+  ]);
 
   useEffect(() => {
     if (!autoFocus || !visible) return;

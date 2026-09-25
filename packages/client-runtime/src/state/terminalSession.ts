@@ -1,10 +1,10 @@
-import type {
-  EnvironmentId,
-  TerminalAttachStreamEvent,
-  TerminalMetadataStreamEvent,
-  TerminalSessionSnapshot,
-  TerminalSummary,
-  ThreadId,
+import {
+  type EnvironmentId,
+  type TerminalAttachStreamEvent,
+  type TerminalMetadataStreamEvent,
+  type TerminalSessionSnapshot,
+  type TerminalSummary,
+  type ThreadId,
 } from "@t3tools/contracts";
 import {
   appendOutput,
@@ -31,6 +31,8 @@ export interface TerminalSessionState {
   readonly error: string | null;
   readonly hasRunningSubprocess: boolean;
   readonly updatedAt: string | null;
+  readonly replayStartVersion: number;
+  readonly replayCompleteVersion: number;
   readonly version: number;
   readonly lifecycleVersion: number;
 }
@@ -40,6 +42,8 @@ export interface TerminalBufferState {
   readonly status: TerminalSessionSnapshot["status"] | "closed";
   readonly error: string | null;
   readonly updatedAt: string | null;
+  readonly replayStartVersion: number;
+  readonly replayCompleteVersion: number;
   readonly version: number;
   readonly lifecycleVersion: number;
 }
@@ -68,17 +72,8 @@ export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
   status: "closed",
   error: null,
   updatedAt: null,
-  version: 0,
-  lifecycleVersion: 0,
-});
-
-export const EMPTY_TERMINAL_SESSION_STATE = Object.freeze<TerminalSessionState>({
-  summary: null,
-  output: EMPTY_TERMINAL_OUTPUT_STATE,
-  status: "closed",
-  error: null,
-  hasRunningSubprocess: false,
-  updatedAt: null,
+  replayStartVersion: 0,
+  replayCompleteVersion: 0,
   version: 0,
   lifecycleVersion: 0,
 });
@@ -96,6 +91,24 @@ export function nextTerminalAttachSeedState(): TerminalBufferState {
   };
 }
 
+export const EMPTY_TERMINAL_SESSION_STATE = Object.freeze<TerminalSessionState>({
+  summary: null,
+  output: EMPTY_TERMINAL_BUFFER_STATE.output,
+  status: "closed",
+  error: null,
+  hasRunningSubprocess: false,
+  updatedAt: null,
+  replayStartVersion: 0,
+  replayCompleteVersion: 0,
+  version: 0,
+  lifecycleVersion: 0,
+});
+
+/** Keep attach replay size and live client retention as separate budgets. */
+export function terminalOutputRetentionBytes(replayBytes?: number): number {
+  return Math.max(DEFAULT_MAX_TERMINAL_BUFFER_BYTES, replayBytes ?? 0);
+}
+
 function terminalBufferStateFromSnapshot(
   snapshot: TerminalSessionSnapshot,
   maxBufferBytes: number,
@@ -106,6 +119,8 @@ function terminalBufferStateFromSnapshot(
     status: snapshot.status,
     error: null,
     updatedAt: snapshot.updatedAt,
+    replayStartVersion: current.replayStartVersion,
+    replayCompleteVersion: current.replayCompleteVersion,
     version: current.version + 1,
     lifecycleVersion: current.lifecycleVersion,
   };
@@ -128,6 +143,8 @@ export function combineTerminalSessionState(
     error: buffer.error,
     hasRunningSubprocess: summary?.hasRunningSubprocess ?? false,
     updatedAt: latestTimestamp(summary?.updatedAt ?? null, buffer.updatedAt),
+    replayStartVersion: buffer.replayStartVersion,
+    replayCompleteVersion: buffer.replayCompleteVersion,
     version: buffer.version,
     lifecycleVersion: buffer.lifecycleVersion,
   };
@@ -139,6 +156,11 @@ export function applyTerminalAttachStreamEvent(
   maxBufferBytes = DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
 ): TerminalBufferState {
   switch (event.type) {
+    case "replay-start":
+      return {
+        ...current,
+        replayStartVersion: current.replayStartVersion + 1,
+      };
     case "snapshot":
       return {
         ...terminalBufferStateFromSnapshot(event.snapshot, maxBufferBytes, current),
@@ -153,9 +175,23 @@ export function applyTerminalAttachStreamEvent(
     case "output":
       return {
         ...current,
-        output: appendOutput(current.output, event.data, maxBufferBytes),
+        output: appendOutput(
+          current.output,
+          event.data,
+          maxBufferBytes,
+          current.replayStartVersion > current.replayCompleteVersion ? "replay" : "live",
+        ),
         status: current.status === "closed" ? "running" : current.status,
         error: null,
+        version: current.version + 1,
+      };
+    case "replay-complete":
+      // Latch to the start counter instead of incrementing. Replay markers can
+      // be lost (slow-consumer resync) or repeated (transport hand-off re-runs
+      // the attach), and one completion always closes every open replay.
+      return {
+        ...current,
+        replayCompleteVersion: current.replayStartVersion,
         version: current.version + 1,
       };
     case "cleared":
