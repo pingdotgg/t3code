@@ -1806,18 +1806,20 @@ const makeWsRpcLayer = (
       // Scratch threads run in a plain folder under the data dir. Inside a
       // checkout (a dev worktree's .t3, a dotfiles home) that folder would
       // inherit the repo's git status and checkpoints, so it is only offered
-      // when the data dir is outside any work tree. Detection failures fail
-      // closed and hide the folder, never the config.
+      // when the data dir is outside any work tree. Detection failures and
+      // defects fail closed and hide the folder, never the config.
       // Probed once per connection: a negative VCS detection is not cached.
-      // A cached probe memoizes an interrupt exit too, so a config load that
-      // is cancelled mid-probe invalidates it and the next load probes again.
+      // An interrupt stays an interrupt, so a config load cancelled mid-probe
+      // invalidates the cache and the next load probes again.
       const [cachedScratchWorkspaceRoot, invalidateScratchWorkspaceRoot] =
         yield* Effect.cachedInvalidateWithTTL(
           gitWorkflow.isRepository(config.baseDir).pipe(
             Effect.map((isRepository) =>
               isRepository ? undefined : path.resolve(config.baseDir, "scratch"),
             ),
-            Effect.catchCause(() => Effect.succeed(undefined)),
+            Effect.catchCause((cause) =>
+              Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(undefined),
+            ),
           ),
           Duration.infinity,
         );
