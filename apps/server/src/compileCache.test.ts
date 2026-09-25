@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - the test kills a real Node process to prove the cache is on disk.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
