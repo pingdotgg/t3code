@@ -20,7 +20,6 @@ import {
   extractXAiBackgroundTaskCompletion,
   extractXAiKilledBackgroundTasks,
   extractXAiMonitorTaskId,
-  handleXAiSubagentFinished,
   isGenericAcpToolTitle,
   isXAiMonitorTool,
   isXAiPersistentMonitor,
@@ -28,6 +27,7 @@ import {
   makeXAiPromptCompletionRuntime,
   normalizeXAiAcpToolCallState,
   registerXAiBackgroundTaskTracking,
+  registerXAiSubagentFinished,
   resolveXAiAcpToolTitle,
   xAiBackgroundTaskLifecycleMutation,
   xAiPromptCompleteFromSessionUpdate,
@@ -1494,10 +1494,24 @@ describe("XAiAcpExtension", () => {
     expect(finished({ status: "completed", child_session_id: undefined })).toBeNull();
   });
 
-  it.effect("forwards subagent_finished from the prompt runtime to its handler", () =>
+  it.effect("settles prompts and finishes subagents from the same session notifications", () =>
     Effect.gen(function* () {
       const handlers = new Map<string, (notification: unknown) => Effect.Effect<void>>();
+      let capturedMeta: Record<string, unknown> | null | undefined;
+      const hungPrompt = yield* Deferred.make<never>();
       const baseRuntime = {
+        start: () =>
+          Effect.succeed({
+            sessionId: "root-session",
+            initializeResult: {},
+            sessionSetupResult: {},
+            modelConfigId: undefined,
+          }),
+        prompt: (payload: { readonly _meta?: Record<string, unknown> | null }) => {
+          capturedMeta = payload._meta ?? null;
+          return Deferred.await(hungPrompt);
+        },
+        cancel: Effect.void,
         handleExtNotification: (
           method: string,
           _schema: unknown,
@@ -1509,10 +1523,13 @@ describe("XAiAcpExtension", () => {
       } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
       const runtime = yield* makeXAiPromptCompletionRuntime(baseRuntime);
       const notices: Array<unknown> = [];
-      yield* handleXAiSubagentFinished(runtime, (notice) =>
+      // Registered after the wrapper, as the adapter does: it must not replace
+      // the wrapper's prompt completion on the shared method.
+      yield* registerXAiSubagentFinished(runtime, (notice) =>
         Effect.sync(() => notices.push(notice)),
       );
-      yield* handlers.get("_x.ai/session_notification")!({
+      const sessionNotification = handlers.get("_x.ai/session_notification")!;
+      yield* sessionNotification({
         sessionId: "root-session",
         update: {
           sessionUpdate: "subagent_finished",
@@ -1529,9 +1546,22 @@ describe("XAiAcpExtension", () => {
           result: "SUBAGENT_DONE",
         },
       ]);
-      // Only a runtime that owns Grok's session notifications can route it.
-      const exit = yield* Effect.exit(handleXAiSubagentFinished(baseRuntime, () => Effect.void));
-      expect(exit._tag).toBe("Failure");
+
+      const promptFiber = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "hi" }] })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* sessionNotification({
+        sessionId: "root-session",
+        update: {
+          sessionUpdate: "turn_completed",
+          prompt_id: capturedMeta?.promptId,
+          stop_reason: "end_turn",
+        },
+      });
+      const response = yield* Fiber.join(promptFiber);
+      expect(response.stopReason).toBe("end_turn");
+      expect(notices).toHaveLength(1);
     }),
   );
 

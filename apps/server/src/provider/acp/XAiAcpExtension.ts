@@ -56,6 +56,14 @@ const XAiSessionUpdateNotification = Schema.Struct({
 
 type XAiSessionUpdateNotification = typeof XAiSessionUpdateNotification.Type;
 
+const decodeXAiSessionUpdateNotification = Schema.decodeUnknownEffect(XAiSessionUpdateNotification);
+
+const xAiSessionNotificationMethods = [
+  "x.ai/session_notification",
+  "_x.ai/session_notification",
+  "_x.ai/session/update",
+] as const;
+
 const XAI_TASK_COMPLETED_PROMPT_ID_PREFIX = "task-completed-";
 
 /**
@@ -487,6 +495,26 @@ export function xAiSubagentFinishedNotice(
     result: nonEmptyString(text ?? undefined) ?? null,
   };
 }
+
+/**
+ * Finishes background subagents from Grok's `subagent_finished`. These arrive
+ * on the session notification methods that also carry turn completion; a
+ * runtime from {@link makeXAiPromptCompletionRuntime} settles its prompt from
+ * each notification before passing it to this handler.
+ */
+export const registerXAiSubagentFinished = (
+  runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "handleExtNotification">,
+  finish: (notice: XAiSubagentFinishedNotice) => Effect.Effect<void>,
+): Effect.Effect<void> =>
+  Effect.forEach(
+    xAiSessionNotificationMethods,
+    (method) =>
+      runtime.handleExtNotification(method, XAiSessionUpdateNotification, (notification) => {
+        const notice = xAiSubagentFinishedNotice(notification);
+        return notice === null ? Effect.void : finish(notice);
+      }),
+    { discard: true },
+  );
 
 /**
  * Grok ACP often sends `title: "Tool"` even when rawInput has a useful
@@ -1438,12 +1466,14 @@ const rememberCompletedXAiPromptId = (
  */
 export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletionRuntime")(
   function* (runtime: AcpSessionRuntime.AcpSessionRuntime["Service"]) {
-    // The client allows one handler per extension method and this wrapper owns
-    // Grok's session notifications, so the other session updates it cares
-    // about are forwarded to handlers registered on the wrapped runtime.
-    const subagentFinishedHandlers: Array<
-      (notice: XAiSubagentFinishedNotice) => Effect.Effect<void>
-    > = [];
+    // Grok sends turn completion and other session updates (subagent_finished)
+    // on the same extension methods, and the client keeps one handler per
+    // method. This wrapper owns those methods: it settles prompts itself, then
+    // passes each notification to the handler registered on the wrapped runtime.
+    const sessionNotificationHandlers = new Map<
+      string,
+      (params: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>
+    >();
     let nextPromptFallbackId = 0;
     const allocatePromptFallbackId = Effect.sync(() => {
       nextPromptFallbackId += 1;
@@ -1473,26 +1503,44 @@ export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletion
     );
 
     yield* Effect.forEach(
-      ["x.ai/session_notification", "_x.ai/session_notification", "_x.ai/session/update"] as const,
+      xAiSessionNotificationMethods,
       (method) =>
-        runtime.handleExtNotification(method, XAiSessionUpdateNotification, (notification) => {
-          const finished = xAiSubagentFinishedNotice(notification);
-          if (finished !== null) {
-            return Effect.forEach(subagentFinishedHandlers, (handler) => handler(finished), {
-              discard: true,
-            });
-          }
-          const complete = xAiPromptCompleteFromSessionUpdate(notification);
-          if (complete === null) {
-            return Effect.void;
-          }
-          return settleFromPromptComplete(complete);
-        }),
+        runtime.handleExtNotification(method, Schema.Unknown, (params) =>
+          decodeXAiSessionUpdateNotification(params).pipe(
+            Effect.flatMap((notification) => {
+              const complete = xAiPromptCompleteFromSessionUpdate(notification);
+              return complete === null ? Effect.void : settleFromPromptComplete(complete);
+            }),
+            Effect.ignore,
+            Effect.andThen(
+              Effect.suspend(
+                () => sessionNotificationHandlers.get(method)?.(params) ?? Effect.void,
+              ),
+            ),
+          ),
+        ),
       { discard: true },
     );
 
-    const wrapped = {
+    return {
       ...runtime,
+      handleExtNotification: (method, payload, handler) =>
+        xAiSessionNotificationMethods.some((owned) => owned === method)
+          ? Effect.sync(() => {
+              sessionNotificationHandlers.set(method, (params) =>
+                Schema.decodeUnknownEffect(payload)(params).pipe(
+                  Effect.mapError((error) =>
+                    EffectAcpErrors.AcpProtocolParseError.fromSchemaError(
+                      "decode-notification-payload",
+                      method,
+                      error,
+                    ),
+                  ),
+                  Effect.flatMap(handler),
+                ),
+              );
+            })
+          : runtime.handleExtNotification(method, payload, handler),
       prompt: (payload, promptOptions?) =>
         Effect.gen(function* () {
           const started = yield* runtime.start();
@@ -1553,39 +1601,8 @@ export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletion
         yield* runtime.cancel;
       }),
     } satisfies AcpSessionRuntime.AcpSessionRuntime["Service"];
-    xAiSubagentFinishedRegistrations.set(wrapped, (handler) =>
-      Effect.sync(() => {
-        subagentFinishedHandlers.push(handler);
-      }),
-    );
-    return wrapped;
   },
 );
-
-const xAiSubagentFinishedRegistrations = new WeakMap<
-  AcpSessionRuntime.AcpSessionRuntime["Service"],
-  (handler: (notice: XAiSubagentFinishedNotice) => Effect.Effect<void>) => Effect.Effect<void>
->();
-
-/**
- * Handles Grok's `subagent_finished` on a runtime from
- * {@link makeXAiPromptCompletionRuntime}, which owns Grok's session
- * notification handlers. Any other runtime is a wiring defect: its subagents
- * would never finish, so this dies instead of silently dropping them.
- */
-export const handleXAiSubagentFinished = (
-  runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
-  handler: (notice: XAiSubagentFinishedNotice) => Effect.Effect<void>,
-): Effect.Effect<void> => {
-  const register = xAiSubagentFinishedRegistrations.get(runtime);
-  return register === undefined
-    ? Effect.die(
-        new Error(
-          "subagent_finished needs a runtime from makeXAiPromptCompletionRuntime, which owns Grok's session notifications.",
-        ),
-      )
-    : register(handler);
-};
 
 function promptResponseHasMissingXAiStopReason(response: EffectAcpSchema.PromptResponse): boolean {
   const meta = response._meta;
