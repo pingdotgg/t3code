@@ -422,3 +422,116 @@ describe("AntigravityAdapterV2 workspace changes", () => {
     }).pipe(Effect.provide(sessionLayer), Effect.scoped),
   );
 });
+
+describe("AntigravityAdapterV2 client file system under restrictive policies", () => {
+  // Antigravity asks before each of its own edits, so T3 serves an opted-in
+  // write whatever the thread's policy says, confined to the workspace.
+  it.effect("serves in-workspace reads and writes and still refuses outside paths", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig;
+      const crypto = yield* Crypto.Crypto;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      const policies = [
+        {
+          name: "read-only sandbox",
+          policy: {
+            runtimeMode: "full-access",
+            approvalPolicy: "never",
+            sandboxPolicy: { type: "readOnly" },
+          },
+        },
+        { name: "approval-required", policy: { runtimeMode: "approval-required" } },
+      ] as const;
+      for (const { name, policy } of policies) {
+        let readTextFile: Parameters<RuntimeService["handleReadTextFile"]>[0] | undefined;
+        let writeTextFile: Parameters<RuntimeService["handleWriteTextFile"]>[0] | undefined;
+        const instanceId = ProviderInstanceId.make(`antigravity-restrictive-${policy.runtimeMode}`);
+        const adapter = makeAntigravityAdapterV2({
+          instanceId,
+          crypto,
+          selfInvocation: yield* resolveSelfInvocation(),
+          fileSystem,
+          path,
+          idAllocator: yield* IdAllocatorV2,
+          serverConfig,
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [mockAgentPath],
+                cwd: input.cwd,
+                env: { T3_ACP_ANTIGRAVITY: "1" },
+              },
+            }).pipe(
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.map((runtime): RuntimeService => ({
+                ...runtime,
+                handleReadTextFile: (handler) =>
+                  Effect.sync(() => {
+                    readTextFile = handler;
+                  }).pipe(Effect.andThen(runtime.handleReadTextFile(handler))),
+                handleWriteTextFile: (handler) =>
+                  Effect.sync(() => {
+                    writeTextFile = handler;
+                  }).pipe(Effect.andThen(runtime.handleWriteTextFile(handler))),
+              })),
+            ),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.succeed(undefined),
+        });
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-ag-restrictive-",
+        });
+        const outside = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-ag-restrictive-outside-",
+        });
+        yield* fileSystem.writeFileString(path.join(workspace, "existing.ts"), "existing");
+        const threadId = ThreadId.make(`thread-antigravity-restrictive-${policy.runtimeMode}`);
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          ...policy,
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(
+            `provider-session-antigravity-restrictive-${policy.runtimeMode}`,
+          ),
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+        if (readTextFile === undefined || writeTextFile === undefined) {
+          return yield* Effect.die("Antigravity sessions must serve client file requests");
+        }
+        const context = (method: string) => ({ requestId: `test-${method}`, method });
+        const read = yield* readTextFile(
+          { sessionId: "mock-session-1", path: path.join(workspace, "existing.ts") },
+          context("fs/read_text_file"),
+        );
+        assert.equal(read.content, "existing", name);
+        const written = path.join(workspace, "src", "edited.ts");
+        yield* writeTextFile(
+          { sessionId: "mock-session-1", path: written, content: "edited" },
+          context("fs/write_text_file"),
+        );
+        assert.equal(yield* fileSystem.readFileString(written), "edited", name);
+        const outsideWrite = yield* writeTextFile(
+          { sessionId: "mock-session-1", path: path.join(outside, "x.ts"), content: "x" },
+          context("fs/write_text_file"),
+        ).pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(outsideWrite), name);
+        assert.isFalse(yield* fileSystem.exists(path.join(outside, "x.ts")), name);
+      }
+    }).pipe(Effect.provide(sessionLayer), Effect.scoped),
+  );
+});
