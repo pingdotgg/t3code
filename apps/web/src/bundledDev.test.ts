@@ -33,6 +33,10 @@ it("initializes React refresh before a shared UI chunk runs in bundled dev", asy
       await NodeFSP.copyFile(new URL(`../${file}`, import.meta.url), NodePath.join(root, file));
     }
     await NodeFSP.writeFile(
+      NodePath.join(root, "src/branding.ts"),
+      'export const APP_BASE_NAME = "Chromeria";\n',
+    );
+    await NodeFSP.writeFile(
       NodePath.join(root, "src/shared.tsx"),
       "export function Shared() { return <div>ready</div>; }",
     );

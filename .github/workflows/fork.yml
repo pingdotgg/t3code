@@ -1,0 +1,33 @@
+name: Fork
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+# Runs alongside upstream's own CI: ci.yml covers the project's checks and
+# tests, this workflow covers the fork-stack model. Both must be green.
+jobs:
+  fork-model:
+    name: Fork Stack Model
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          # Check the PR head itself; the default PR merge ref is a merge commit.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Fetch upstream base
+        run: |
+          git remote add upstream https://github.com/pingdotgg/t3code.git 2>/dev/null || true
+          git fetch upstream main --depth 100
+
+      - name: Check fork stack
+        run: bash scripts/fork-check.sh --upstream upstream
