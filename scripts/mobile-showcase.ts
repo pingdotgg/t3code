@@ -838,6 +838,20 @@ async function suppressIosSystemFollowUps(udid: string): Promise<void> {
 
 async function normalizeIosSimulator(appearance: ShowcaseAppearance, udid: string): Promise<void> {
   await runCommand("xcrun", ["simctl", "ui", udid, "appearance", appearance]);
+  // Always-on displays (Pro Max) dim a locked screen instead of turning it
+  // off, which the lock-screen wake cannot tell from a lit one. Without it the
+  // locked display goes dark and the wake lights it fully.
+  await runCommand("xcrun", [
+    "simctl",
+    "spawn",
+    udid,
+    "defaults",
+    "write",
+    "com.apple.springboard",
+    "SBEnableAlwaysOn",
+    "-bool",
+    "false",
+  ]);
   await runCommand("xcrun", [
     "simctl",
     "status_bar",
