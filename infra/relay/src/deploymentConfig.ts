@@ -117,6 +117,10 @@ export function managedEndpointForHostname(hostname: string): RelayManagedEndpoi
   };
 }
 
+export function managedEndpointTunnelNamePrefix(stage: string): string {
+  return `${MANAGED_ENDPOINT_TUNNEL_PREFIX}-${relayStageSlug(stage)}-`;
+}
+
 export function managedEndpointTunnelName(stage: string, hash: string): string {
-  return `${MANAGED_ENDPOINT_TUNNEL_PREFIX}-${relayStageSlug(stage)}-${stableSuffix(hash)}`;
+  return `${managedEndpointTunnelNamePrefix(stage)}${stableSuffix(hash)}`;
 }
