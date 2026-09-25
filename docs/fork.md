@@ -65,10 +65,13 @@ any modified upstream file missing from `scripts/fork-upstream-edits.txt`.
   `settings/ThemePreviewCircles.tsx` and `sidebar/SidebarChrome.tsx` under
   `apps/web/src/components/`, with expectations in
   `apps/web/src/bootstrap.test.ts` and `apps/web/src/branding.test.ts`.
-- Child threads (#8, #10): `apps/server/src/mcp/McpHttpServer.ts`
-  registers the threads MCP toolkit; `apps/web/src/components/AgentsPanel.tsx`
-  links agents to their child threads; `apps/web/src/components/Sidebar.tsx`
-  and `apps/web/src/components/LegacySidebar.tsx` hide child threads from the
+- Child threads and project-scoped supervision (#8, #10, #15):
+  `apps/server/src/mcp/McpHttpServer.ts` registers the threads MCP toolkit;
+  `apps/server/src/mcp/toolkits/threads/childThreads.test.ts`, `handlers.ts`
+  and `tools.ts` implement and test child and same-project listing, reading and
+  messaging; `apps/web/src/components/AgentsPanel.tsx` links agents to their
+  child threads; `apps/web/src/components/Sidebar.tsx` and
+  `apps/web/src/components/LegacySidebar.tsx` hide child threads from the
   sidebar.
 - `scripts/build-desktop-artifact.ts` (#10): the packaged-bundle
   self-containment probe clears an inherited `ELECTRON_RUN_AS_NODE`.

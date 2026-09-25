@@ -32,6 +32,9 @@ apps/web/src/lib/bootError.ts
 # Child threads in the Agents panel and threads MCP toolkit (#8, #10)
 apps/server/src/entrypoint.test.ts
 apps/server/src/mcp/McpHttpServer.ts
+apps/server/src/mcp/toolkits/threads/childThreads.test.ts
+apps/server/src/mcp/toolkits/threads/handlers.ts
+apps/server/src/mcp/toolkits/threads/tools.ts
 apps/web/src/components/AgentsPanel.tsx
 apps/web/src/components/LegacySidebar.tsx
 apps/web/src/components/Sidebar.tsx

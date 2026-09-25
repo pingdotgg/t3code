@@ -21,9 +21,20 @@ import * as ProjectionSnapshotQuery from "../../../orchestration/Services/Projec
 import * as ProviderService from "../../../provider/Services/ProviderService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { isSubagentThreadId, makeSubagentThreadId, parentThreadIdOf } from "./subagentThreadId.ts";
-import { type SubagentStatus, ThreadsToolError, ThreadsToolkit } from "./tools.ts";
+import {
+  type SubagentStatus,
+  type ThreadScope,
+  ThreadsToolError,
+  ThreadsToolkit,
+} from "./tools.ts";
 
 const REPORT_TEXT_LIMIT = 4_000;
+type ThreadScopeIdentity = { readonly id: string; readonly projectId: string };
+type ThreadLifecycle = ThreadScopeIdentity & {
+  readonly archivedAt: string | null;
+  readonly settledOverride: "settled" | "active" | null;
+  readonly settledAt: string | null;
+};
 
 /** The toolkit's coarse status vocabulary for a thread's provider session. */
 export function subagentStatusOf(session: OrchestrationSession | null): SubagentStatus {
@@ -75,6 +86,49 @@ const fail = (reason: string) => Effect.fail(new ThreadsToolError({ reason }));
  */
 export function deliveryOf(statusBefore: SubagentStatus): "new-turn" | "steer" {
   return statusBefore === "running" ? "steer" : "new-turn";
+}
+
+export function isSettled(thread: Pick<ThreadLifecycle, "settledOverride" | "settledAt">) {
+  return thread.settledOverride === "settled" || thread.settledAt !== null;
+}
+
+export function threadIsInScope(
+  thread: ThreadScopeIdentity,
+  caller: ThreadScopeIdentity,
+  scope: ThreadScope,
+) {
+  return scope === "project"
+    ? thread.projectId === caller.projectId
+    : parentThreadIdOf(thread.id) === caller.id;
+}
+
+export function threadShouldBeListed(
+  thread: ThreadLifecycle,
+  caller: ThreadScopeIdentity,
+  scope: ThreadScope,
+  includeSettled: boolean,
+) {
+  return (
+    thread.archivedAt === null &&
+    (includeSettled || !isSettled(thread)) &&
+    threadIsInScope(thread, caller, scope)
+  );
+}
+
+export function scopeRefusal(threadId: string, scope: ThreadScope) {
+  return scope === "children"
+    ? `Thread ${threadId} is not in scope: children. Use scope: "project" to access threads in this project.`
+    : `Thread ${threadId} is outside scope: project.`;
+}
+
+export function attributedMessage(
+  text: string,
+  caller: { readonly id: string; readonly title: string },
+  target: Pick<ThreadScopeIdentity, "id">,
+) {
+  return parentThreadIdOf(target.id) === caller.id
+    ? text
+    : `[Message from ${caller.title} (thread ${caller.id})]\n\n${text}`;
 }
 
 const make = Effect.gen(function* () {
@@ -138,26 +192,58 @@ const make = Effect.gen(function* () {
       const last = yield* lastAssistantMessage(thread.id);
       return {
         threadId: thread.id,
+        id: thread.id,
         title: thread.title,
         status: subagentStatusOf(thread.session),
         instanceId: thread.session?.providerInstanceId ?? thread.modelSelection.instanceId,
+        provider: thread.session?.providerInstanceId ?? thread.modelSelection.instanceId,
         model: thread.modelSelection.model,
+        parentId: parentThreadIdOf(thread.id),
         lastError: thread.session?.lastError ?? null,
         lastAssistantMessage: last?.text ?? null,
         userMessageCount: last?.userMessageCount ?? 0,
       };
     });
 
-  /** The calling thread, plus a guard that the target is one of its children. */
-  const callerChild = (threadId: string) =>
+  /** The calling thread, plus a guard that the target is in the requested scope. */
+  const callerScopedThread = (threadId: string, scope: ThreadScope) =>
     Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      if (parentThreadIdOf(threadId) !== scope.threadId) {
-        return yield* fail(`Thread ${threadId} is not a child of this thread.`);
-      }
-      const child = yield* threadShell(threadId);
-      if (!child) return yield* fail(`Thread ${threadId} was not found.`);
-      return child;
+      const invocation = yield* McpInvocationContext.McpInvocationContext;
+      const caller = yield* threadShell(invocation.threadId);
+      if (!caller) return yield* fail(`Thread ${invocation.threadId} was not found.`);
+      const target = yield* threadShell(threadId);
+      if (!target) return yield* fail(`Thread ${threadId} was not found.`);
+      if (!threadIsInScope(target, caller, scope))
+        return yield* fail(scopeRefusal(threadId, scope));
+      return { caller, target };
+    });
+
+  const listThreads = (scope: ThreadScope, includeSettled: boolean) =>
+    Effect.gen(function* () {
+      const invocation = yield* McpInvocationContext.McpInvocationContext;
+      const caller = yield* threadShell(invocation.threadId);
+      if (!caller) return yield* fail(`Thread ${invocation.threadId} was not found.`);
+      const shells = yield* snapshots.getShellSnapshot().pipe(
+        Effect.map((snapshot) => snapshot.threads),
+        Effect.catchCause(() => fail("Could not read threads.")),
+      );
+      const threads = shells.filter((thread) =>
+        threadShouldBeListed(thread, caller, scope, includeSettled),
+      );
+      return { threads: yield* Effect.forEach(threads, summarize) };
+    });
+
+  const listChildThreads = () =>
+    Effect.gen(function* () {
+      const invocation = yield* McpInvocationContext.McpInvocationContext;
+      const caller = yield* threadShell(invocation.threadId);
+      if (!caller) return yield* fail(`Thread ${invocation.threadId} was not found.`);
+      const shells = yield* snapshots.getShellSnapshot().pipe(
+        Effect.map((snapshot) => snapshot.threads),
+        Effect.catchCause(() => fail("Could not read threads.")),
+      );
+      const children = shells.filter((thread) => threadIsInScope(thread, caller, "children"));
+      return { threads: yield* Effect.forEach(children, summarize) };
     });
 
   const appendParentActivity = (
@@ -352,27 +438,20 @@ const make = Effect.gen(function* () {
         yield* startTurn(child, input.task);
         return { threadId: childId, parentThreadId: parent.id, instanceId, model };
       }),
-    message_thread: ({ threadId, text }) =>
+    message_thread: ({ threadId, text, scope }) =>
       Effect.gen(function* () {
-        const child = yield* callerChild(threadId);
-        const statusBefore = subagentStatusOf(child.session);
+        const { caller, target } = yield* callerScopedThread(threadId, scope);
+        const statusBefore = subagentStatusOf(target.session);
         if (statusBefore === "starting") {
           return yield* fail(`Thread ${threadId} is still starting. Retry in a few seconds.`);
         }
-        yield* startTurn(child, text);
+        yield* startTurn(target, attributedMessage(text, caller, target));
         return { threadId, statusBefore, delivery: deliveryOf(statusBefore) };
       }),
-    read_thread: ({ threadId }) => callerChild(threadId).pipe(Effect.flatMap(summarize)),
-    list_child_threads: () =>
-      Effect.gen(function* () {
-        const scope = yield* McpInvocationContext.McpInvocationContext;
-        const shells = yield* snapshots.getShellSnapshot().pipe(
-          Effect.map((snapshot) => snapshot.threads),
-          Effect.catchCause(() => fail("Could not read threads.")),
-        );
-        const children = shells.filter((thread) => parentThreadIdOf(thread.id) === scope.threadId);
-        return { threads: yield* Effect.forEach(children, summarize) };
-      }),
+    read_thread: ({ threadId, scope }) =>
+      callerScopedThread(threadId, scope).pipe(Effect.flatMap(({ target }) => summarize(target))),
+    list_child_threads: () => listChildThreads(),
+    list_threads: ({ scope, includeSettled }) => listThreads(scope, includeSettled),
   });
 });
 

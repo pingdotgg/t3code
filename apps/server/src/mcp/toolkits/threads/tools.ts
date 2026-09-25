@@ -1,4 +1,5 @@
 import { RuntimeMode, TrimmedNonEmptyString } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Tool from "effect/unstable/ai/Tool";
 import * as Toolkit from "effect/unstable/ai/Toolkit";
@@ -17,6 +18,14 @@ export class ThreadsToolError extends Schema.TaggedError<ThreadsToolError>()("Th
 
 export const SubagentStatus = Schema.Literals(["starting", "running", "idle", "failed", "stopped"]);
 export type SubagentStatus = typeof SubagentStatus.Type;
+
+export const ThreadScope = Schema.Literals(["children", "project"]);
+export type ThreadScope = typeof ThreadScope.Type;
+
+const threadScope = ThreadScope.pipe(
+  Schema.withDecodingDefault(Effect.succeed("children" as const)),
+);
+const includeSettled = Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false)));
 
 export const SpawnThreadInput = Schema.Struct({
   task: TrimmedNonEmptyString.annotate({
@@ -57,8 +66,9 @@ export const SpawnThreadResult = Schema.Struct({
 });
 
 export const MessageThreadInput = Schema.Struct({
-  threadId: TrimmedNonEmptyString.annotate({ description: "A child thread of this thread." }),
+  threadId: TrimmedNonEmptyString.annotate({ description: "A thread in the selected scope." }),
   text: TrimmedNonEmptyString,
+  scope: threadScope,
 });
 
 export const MessageThreadResult = Schema.Struct({
@@ -72,10 +82,13 @@ export const MessageThreadResult = Schema.Struct({
 
 export const ThreadSummary = Schema.Struct({
   threadId: Schema.String,
+  id: Schema.String,
   title: Schema.String,
   status: SubagentStatus,
   instanceId: Schema.NullOr(Schema.String),
+  provider: Schema.NullOr(Schema.String),
   model: Schema.String,
+  parentId: Schema.NullOr(Schema.String),
   lastError: Schema.NullOr(Schema.String),
   lastAssistantMessage: Schema.NullOr(Schema.String),
   userMessageCount: Schema.Int,
@@ -97,7 +110,7 @@ const SpawnThreadTool = Tool.make("spawn_thread", {
 
 const MessageThreadTool = Tool.make("message_thread", {
   description:
-    "Send a message to one of this thread's child threads once it has started working or gone idle. A child that is still starting refuses with a retryable error; retry in a few seconds.",
+    "Send a message to a child thread by default, or any thread in this project with scope: project, once it has started working or gone idle. A thread that is still starting refuses with a retryable error; retry in a few seconds.",
   parameters: MessageThreadInput,
   success: MessageThreadResult,
   failure: ThreadsToolError,
@@ -111,8 +124,8 @@ const MessageThreadTool = Tool.make("message_thread", {
 
 const ReadThreadTool = Tool.make("read_thread", {
   description:
-    "Read a child thread's status and its latest assistant reply. Poll it, or rely on reportBack, to learn when the child is done.",
-  parameters: Schema.Struct({ threadId: TrimmedNonEmptyString }),
+    "Read a thread's status and its latest assistant reply. The default scope is this thread's children; use scope: project for any thread in this project, including settled threads.",
+  parameters: Schema.Struct({ threadId: TrimmedNonEmptyString, scope: threadScope }),
   success: ThreadSummary,
   failure: ThreadsToolError,
   dependencies,
@@ -135,9 +148,24 @@ const ListChildThreadsTool = Tool.make("list_child_threads", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+const ListThreadsTool = Tool.make("list_threads", {
+  description:
+    "List active threads in this thread's children by default, or all non-archived threads in this project with scope: project. Set includeSettled: true to include settled threads.",
+  parameters: Schema.Struct({ scope: threadScope, includeSettled }),
+  success: Schema.Struct({ threads: Schema.Array(ThreadSummary) }),
+  failure: ThreadsToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "List threads")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 export const ThreadsToolkit = Toolkit.make(
   SpawnThreadTool,
   MessageThreadTool,
   ReadThreadTool,
   ListChildThreadsTool,
+  ListThreadsTool,
 );
