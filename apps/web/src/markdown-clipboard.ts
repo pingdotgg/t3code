@@ -119,7 +119,9 @@ function serializeTable(table: Element): string {
 }
 
 function serializeListItem(item: Element, ordered: boolean, index: number): string {
-  const checkbox = item.querySelector('input[type="checkbox"]');
+  const checkbox = item.querySelector(
+    ':scope > input[type="checkbox"], :scope > p > input[type="checkbox"]',
+  );
   const task = checkbox ? `[${(checkbox as HTMLInputElement).checked ? "x" : " "}] ` : "";
   const marker = ordered ? `${index}. ${task}` : `- ${task}`;
   let content = serializeChildren(item)
