@@ -56,6 +56,7 @@ import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistr
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
+import { TerminalManager } from "../terminal/Manager.ts";
 import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 import { importRecentAgentThreads } from "./AgentSessionImporter.ts";
@@ -931,6 +932,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
           Layer.provide(Layer.mock(GitWorkflowService)({})),
           Layer.provide(Layer.mock(VcsStatusBroadcaster)({})),
           Layer.provide(Layer.mock(TextGeneration)({})),
+          Layer.provide(Layer.mock(TerminalManager)({ closeIdle: () => Effect.void })),
           Layer.provide(ServerSettingsService.layerTest()),
         );
 
