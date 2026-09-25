@@ -18,6 +18,7 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
+import * as Config from "effect/Config";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -119,7 +120,7 @@ const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
 
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
-const REACTOR_THREAD_LANES = 16;
+const DEFAULT_PROVIDER_COMMAND_LANES = 16;
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
 function providerErrorLabel(value: string | undefined): string {
@@ -1865,10 +1866,14 @@ const make = Effect.gen(function* () {
 
   // Events for one thread stay ordered, but a slow provider session start on one
   // thread must not delay turn starts, interrupts or stops on unrelated threads.
+  // Lanes are concurrent I/O queues, not CPU cores; 1 restores the old global ordering.
+  const providerCommandLanes = yield* Config.Int("T3CODE_PROVIDER_COMMAND_LANES").pipe(
+    Config.withDefault(DEFAULT_PROVIDER_COMMAND_LANES),
+  );
   const worker = yield* makeKeyedDrainableWorker(
     processDomainEventSafely,
     (event) => event.payload.threadId,
-    REACTOR_THREAD_LANES,
+    providerCommandLanes,
   );
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
