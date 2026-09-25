@@ -7,6 +7,7 @@ import {
   ClientSettingsPatch,
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
+  ProjectSettingsOverrides,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -17,6 +18,7 @@ const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
+const decodeProjectSettingsOverrides = Schema.decodeUnknownSync(ProjectSettingsOverrides);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
@@ -835,6 +837,18 @@ describe("ServerSettings worktree defaults", () => {
     );
     expect(decodeServerSettings({ worktreeSubmodules: "shallow" }).worktreeSubmodules).toBeNull();
     expect(decodeServerSettingsPatch({ worktreeSubmodules: null }).worktreeSubmodules).toBeNull();
+  });
+
+  it("defaults the worktree branch prefix to t3code and keeps an empty prefix", () => {
+    expect(decodeServerSettings({}).worktreeBranchPrefix).toBe("t3code");
+    expect(decodeServerSettings({ worktreeBranchPrefix: " yekta " }).worktreeBranchPrefix).toBe(
+      "yekta",
+    );
+    expect(decodeServerSettings({ worktreeBranchPrefix: "" }).worktreeBranchPrefix).toBe("");
+    expect(decodeServerSettingsPatch({ worktreeBranchPrefix: "" }).worktreeBranchPrefix).toBe("");
+    expect(
+      decodeProjectSettingsOverrides({ worktreeBranchPrefix: "team/yekta" }).worktreeBranchPrefix,
+    ).toBe("team/yekta");
   });
 });
 

@@ -67,6 +67,7 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
         value as keyof typeof PULL_REQUEST_MERGE_METHOD_LABELS
       ];
     }
+    if (key === "worktreeBranchPrefix" && value === "") return "No prefix";
     return value === "" ? "Empty" : value;
   }
   if (Array.isArray(value)) return `${value.length} ${value.length === 1 ? "item" : "items"}`;
