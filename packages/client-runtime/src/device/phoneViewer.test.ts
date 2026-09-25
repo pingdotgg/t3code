@@ -280,7 +280,7 @@ it("stops a hinge turn when a loaded model replaces the fold scene", async () =>
   viewer.setFoldAngle(180);
   draw(0);
   viewer.setFoldAngle(0);
-  viewer.setModel({ id: "test-fold-model", url: "/fold.glb" });
+  viewer.setModel({ id: "iphone-18-pro", url: "/fold.glb" });
   const asset = new Group();
   const body = new Mesh(new BoxGeometry(1, 2, 0.1), new MeshBasicMaterial());
   const display = new Mesh(new PlaneGeometry(0.9, 1.9), new MeshBasicMaterial());
