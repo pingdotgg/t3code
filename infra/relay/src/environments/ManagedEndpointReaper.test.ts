@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 
 import * as RelayConfiguration from "../Config.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
@@ -572,6 +573,54 @@ describe("ManagedEndpointReaper", () => {
       expect((yield* reaper.sweep).deleted).toBe(100);
       expect(state.deleted).toHaveLength(100);
     }).pipe(Effect.provide(state.layer));
+  });
+
+  it.effect("records dry-run counters on the sweep span", () => {
+    const spans: Array<Tracer.NativeSpan> = [];
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        spans.push(span);
+        return span;
+      },
+    });
+    const expired = [
+      tunnel({
+        id: "recoverable",
+        suffix: "aaaaaaaaaaaaaaaa",
+        status: "down",
+        timestamp: "2026-08-25T11:00:00.000Z",
+      }),
+      tunnel({
+        id: "legacy",
+        suffix: "bbbbbbbbbbbbbbbb",
+        status: "down",
+        timestamp: "2026-08-25T11:00:00.000Z",
+      }),
+    ];
+    const state = harness({
+      cleanupMode: "dry-run",
+      tunnels: expired,
+      allocations: [
+        allocation({ tunnelId: "recoverable", recoveryEnabled: true }),
+        allocation({ tunnelId: "legacy", recoveryEnabled: false }),
+      ],
+    });
+
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MILLIS);
+      const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
+      yield* reaper.sweep;
+      const sweepSpan = spans.find((span) => span.name === "relay.managed_endpoint_reaper.sweep");
+      expect(Object.fromEntries(sweepSpan?.attributes ?? [])).toMatchObject({
+        "relay.managed_endpoint_reaper.mode": "dry-run",
+        "relay.managed_endpoint_reaper.scanned": 2,
+        "relay.managed_endpoint_reaper.wouldDelete": 1,
+        "relay.managed_endpoint_reaper.skippedLegacy": 1,
+        "relay.managed_endpoint_reaper.deleted": 0,
+      });
+      expect(state.deleted).toEqual([]);
+    }).pipe(Effect.provide(state.layer), Effect.withTracer(tracer));
   });
 
   it.effect("does no Cloudflare work while cleanup is off", () => {
