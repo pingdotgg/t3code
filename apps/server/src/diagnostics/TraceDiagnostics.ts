@@ -395,8 +395,7 @@ type TraceFileReadResult =
   | { readonly _tag: "Loaded"; readonly path: string; readonly text: string }
   | { readonly _tag: "Missing"; readonly path: string };
 
-/** Reads one trace file. A missing file is a normal result, not an error. */
-export function readTraceFile(
+function readTraceFile(
   fileSystem: FileSystem.FileSystem,
   path: string,
 ): Effect.Effect<TraceFileReadResult, TraceFileReadError> {

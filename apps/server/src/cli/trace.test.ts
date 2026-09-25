@@ -38,8 +38,7 @@ it("reports count, rate, percentiles, and exits per span name", () => {
     ),
   );
   const summarizer = makeTraceSpanSummary();
-  summarizer.add(refreshes.slice(0, 5).join("\n"));
-  summarizer.add(`${refreshes.slice(5).join("\n")}\n${span("probe", 2_500, 10 * MINUTE_MS)}\n`);
+  [...refreshes, span("probe", 2_500, 10 * MINUTE_MS), ""].forEach(summarizer.addLine);
   const summary = summarizer.finish();
 
   assert.strictEqual(summary.spanCount, 11);
@@ -70,14 +69,12 @@ it("reports count, rate, percentiles, and exits per span name", () => {
 
 it("drops spans that ended before the window and counts unreadable lines", () => {
   const summarizer = makeTraceSpanSummary(MINUTE_MS);
-  summarizer.add(
-    [
-      span("old", 1, 0),
-      "{not json",
-      JSON.stringify({ name: "no-duration" }),
-      span("recent", 4, 5 * MINUTE_MS),
-    ].join("\n"),
-  );
+  [
+    span("old", 1, 0),
+    "{not json",
+    JSON.stringify({ name: "no-duration" }),
+    span("recent", 4, 5 * MINUTE_MS),
+  ].forEach(summarizer.addLine);
   const summary = summarizer.finish();
 
   assert.strictEqual(summary.skippedLineCount, 2);
@@ -89,13 +86,11 @@ it("drops spans that ended before the window and counts unreadable lines", () =>
 
 it("reads failures and interrupts of browser spans from their OTLP status", () => {
   const summarizer = makeTraceSpanSummary();
-  summarizer.add(
-    [
-      browserSpan("render", { code: "2", message: "boom" }),
-      browserSpan("render", { code: "1", message: "Interrupted" }),
-      browserSpan("render", { code: "1" }),
-    ].join("\n"),
-  );
+  [
+    browserSpan("render", { code: "2", message: "boom" }),
+    browserSpan("render", { code: "1", message: "Interrupted" }),
+    browserSpan("render", { code: "1" }),
+  ].forEach(summarizer.addLine);
 
   const [render] = summarizer.finish().spans;
   assert.deepStrictEqual([render?.count, render?.interrupted, render?.failures], [3, 1, 1]);

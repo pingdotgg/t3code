@@ -13,10 +13,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/unstable/cli";
 
 import * as ServerConfig from "../config.ts";
-import { readTraceFile, toRotatedTracePaths } from "../diagnostics/TraceDiagnostics.ts";
+import { toRotatedTracePaths, TraceFileReadError } from "../diagnostics/TraceDiagnostics.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { baseDirFlag, DurationFromString, traceFileConfig, traceMaxFilesConfig } from "./config.ts";
 
@@ -42,40 +43,41 @@ const decodeTraceSpanLine = Schema.decodeUnknownOption(
 );
 
 /**
- * Groups trace NDJSON by span name. Call `add` once per file, so only one
- * file's text is in memory at a time, then `finish` for the summary. Spans
- * that ended before `sinceMs` are left out. Rates are per minute between the
- * first and last span end, since spans are written when they end.
+ * Groups trace NDJSON by span name. Call `addLine` once per line as the files
+ * stream in, then `finish` for the summary. Spans that ended before `sinceMs`
+ * are left out. Rates are per minute between the first and last span end,
+ * since spans are written when they end.
  */
 export function makeTraceSpanSummary(sinceMs = -Infinity) {
+  // Keep each span's duration (8 bytes, a few MB for the default 110 MB of
+  // rotated traces) for exact percentiles. A bounded sketch would save little
+  // and make p50 and p90 approximate.
   const byName = new Map<string, { durations: number[]; interrupted: number; failures: number }>();
   let spanCount = 0;
   let skippedLineCount = 0;
   let firstEndMs = Infinity;
   let lastEndMs = -Infinity;
 
-  const add = (text: string) => {
-    for (const line of text.split("\n")) {
-      if (line.trim().length === 0) continue;
-      const span = Option.getOrUndefined(decodeTraceSpanLine(line));
-      if (span === undefined) {
-        skippedLineCount += 1;
-        continue;
-      }
-      const endMs = span.endTimeUnixNano / 1_000_000;
-      if (endMs < sinceMs) continue;
-
-      spanCount += 1;
-      firstEndMs = Math.min(firstEndMs, endMs);
-      lastEndMs = Math.max(lastEndMs, endMs);
-      const stats = byName.get(span.name) ?? { durations: [], interrupted: 0, failures: 0 };
-      stats.durations.push(span.durationMs);
-      if (span.exit?._tag === "Interrupted" || span.status?.message === "Interrupted") {
-        stats.interrupted += 1;
-      }
-      if (span.exit?._tag === "Failure" || span.status?.code === "2") stats.failures += 1;
-      byName.set(span.name, stats);
+  const addLine = (line: string) => {
+    if (line.trim().length === 0) return;
+    const span = Option.getOrUndefined(decodeTraceSpanLine(line));
+    if (span === undefined) {
+      skippedLineCount += 1;
+      return;
     }
+    const endMs = span.endTimeUnixNano / 1_000_000;
+    if (endMs < sinceMs) return;
+
+    spanCount += 1;
+    firstEndMs = Math.min(firstEndMs, endMs);
+    lastEndMs = Math.max(lastEndMs, endMs);
+    const stats = byName.get(span.name) ?? { durations: [], interrupted: 0, failures: 0 };
+    stats.durations.push(span.durationMs);
+    if (span.exit?._tag === "Interrupted" || span.status?.message === "Interrupted") {
+      stats.interrupted += 1;
+    }
+    if (span.exit?._tag === "Failure" || span.status?.code === "2") stats.failures += 1;
+    byName.set(span.name, stats);
   };
 
   const finish = () => {
@@ -101,7 +103,7 @@ export function makeTraceSpanSummary(sinceMs = -Infinity) {
     return { spanCount, skippedLineCount, firstEndMs, lastEndMs, minutes, spans };
   };
 
-  return { add, finish };
+  return { addLine, finish };
 }
 
 const formatMs = (ms: number) =>
@@ -180,13 +182,26 @@ const traceSummaryCommand = Command.make("summary", {
         ? (yield* Clock.currentTimeMillis) - Duration.toMillis(flags.since.value)
         : undefined;
       const summarizer = makeTraceSpanSummary(sinceMs);
+      // Stream each file line by line. Only one chunk of text is in memory at a
+      // time, so memory does not grow with the size of the trace files.
       yield* Effect.forEach(
         toRotatedTracePaths(traceFilePath, yield* traceMaxFilesConfig),
         (path) =>
-          readTraceFile(fs, path).pipe(
-            Effect.map((file) => {
-              if (file._tag === "Loaded") summarizer.add(file.text);
-            }),
+          fs.stream(path).pipe(
+            Stream.decodeText,
+            Stream.splitLines,
+            Stream.runForEachArray((lines) => Effect.sync(() => lines.forEach(summarizer.addLine))),
+            Effect.catchTag("PlatformError", (cause) =>
+              cause.reason._tag === "NotFound"
+                ? Effect.void
+                : Effect.fail(
+                    new TraceFileReadError({
+                      traceFilePath: path,
+                      causeTag: cause.reason._tag,
+                      cause,
+                    }),
+                  ),
+            ),
           ),
         { discard: true },
       );
