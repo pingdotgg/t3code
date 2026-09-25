@@ -41,6 +41,7 @@ import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { useThreadActions } from "./useThreadActions";
+import { exportThreadAsMarkdown } from "../lib/threadExport";
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -272,6 +273,9 @@ export function useThreadActionMenu(input: {
             return;
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
+            return;
+          case "export-markdown":
+            await exportThreadAsMarkdown(threadRef);
             return;
           case "archive": {
             if (confirmThreadArchive) {
