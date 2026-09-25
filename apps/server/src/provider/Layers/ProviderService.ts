@@ -429,13 +429,10 @@ function readPersistedCwd(
 
 /** Stopped rows with no active turn are settled; shutdown leaves them untouched. */
 function isSettledBinding(binding: ProviderSessionDirectory.ProviderRuntimeBinding): boolean {
+  if (binding.status !== "stopped") return false;
   const payload = binding.runtimePayload;
-  const hasActiveTurn =
-    payload !== null &&
-    typeof payload === "object" &&
-    "activeTurnId" in payload &&
-    payload.activeTurnId != null;
-  return binding.status === "stopped" && !hasActiveTurn;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return true;
+  return !("activeTurnId" in payload) || payload.activeTurnId == null;
 }
 
 const dieOnMissingBindingInstanceId = (
