@@ -469,10 +469,11 @@ export function createDuoViewer(options: {
       context.fillStyle = "#080a10";
       context.fillRect(0, 0, canvas.width, canvas.height);
       context.translate(canvas.width / 2, canvas.height / 2);
-      if (id === 3) context.rotate(Math.PI / 2);
+      const rotate = id === 3 && source.height > source.width;
+      if (rotate) context.rotate(Math.PI / 2);
       const scale = Math.min(
-        canvas.width / (id === 3 ? source.height : source.width),
-        canvas.height / (id === 3 ? source.width : source.height),
+        canvas.width / (rotate ? source.height : source.width),
+        canvas.height / (rotate ? source.width : source.height),
       );
       context.drawImage(
         source,

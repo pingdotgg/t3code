@@ -61,7 +61,7 @@ export function DeviceDuoControls(props: {
                 tabIndex={0}
                 role="alert"
                 aria-label={props.state.error}
-                className="text-xs text-destructive"
+                className="pointer-events-auto text-xs text-destructive"
               >
                 !
               </span>
