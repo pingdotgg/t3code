@@ -1043,13 +1043,19 @@ describe("MessagesTimeline", () => {
       }),
       getScrollableNode: () => ({ scrollTop: 700, getBoundingClientRect: () => ({ top: 0 }) }),
     } as unknown as LegendListRef;
-    const renderTimeline = (liveFollowEnabled: boolean) => (
+    const renderTimeline = (
+      liveFollowEnabled: boolean,
+      anchorMessageId: MessageId | null = null,
+    ) => (
       <MessagesTimeline
         {...props}
         isWorking
         liveFollowEnabled={liveFollowEnabled}
+        anchorMessageId={anchorMessageId}
         routeThreadKey={threadKey}
-        timelineEntries={entries}
+        timelineEntries={
+          anchorMessageId ? [buildUserTimelineEntry("First send"), ...entries] : entries
+        }
       />
     );
     try {
@@ -1061,6 +1067,11 @@ describe("MessagesTimeline", () => {
 
       // Once the user scrolls away, the same offset is a reading position.
       act(() => renderer.update(renderTimeline(false)));
+      act(() => list().props.onScroll());
+      expect(readTimelinePosition(threadKey)).toMatchObject({ atEnd: false, scrollOffset: 700 });
+
+      // A first send anchored near the top is not following the end either.
+      act(() => renderer.update(renderTimeline(true, MessageId.make("message-1"))));
       act(() => list().props.onScroll());
       expect(readTimelinePosition(threadKey)).toMatchObject({ atEnd: false, scrollOffset: 700 });
     } finally {

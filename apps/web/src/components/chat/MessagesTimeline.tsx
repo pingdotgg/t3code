@@ -1031,7 +1031,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           scrollOffset: element.scrollTop,
           // While live-following, a gap to the end is the follow scroll
           // trailing streamed output, not a reading position to restore.
-          atEnd: isAtEnd || liveFollowEnabled,
+          // Anchored end space holds the first send near the top instead of
+          // following, so its gap is a real position.
+          atEnd: isAtEnd || (liveFollowEnabled && !anchoredEndSpace),
           disclosures: {
             turns: paintedExpandedTurnIds,
             workGroups: paintedExpandedWorkGroupIds,
@@ -1090,6 +1092,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     rows,
     listIdentityKey,
     liveFollowEnabled,
+    anchoredEndSpace,
     restoringThreadPosition,
     listRef,
     minimapItems,
