@@ -96,4 +96,53 @@ describe("makeKeyedDrainableWorker", () => {
       }),
     ),
   );
+
+  it.live("drain waits for work enqueued on an already idle lane while another lane is busy", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const processed: string[] = [];
+        const busyStarted = yield* Deferred.make<void>();
+        const releaseBusy = yield* Deferred.make<void>();
+        const lateStarted = yield* Deferred.make<void>();
+        const releaseLate = yield* Deferred.make<void>();
+
+        const worker = yield* makeKeyedDrainableWorker(
+          (item: { key: string; name: string }) =>
+            Effect.gen(function* () {
+              if (item.name === "busy") {
+                yield* Deferred.succeed(busyStarted, undefined).pipe(Effect.orDie);
+                yield* Deferred.await(releaseBusy);
+              }
+              if (item.name === "late") {
+                yield* Deferred.succeed(lateStarted, undefined).pipe(Effect.orDie);
+                yield* Deferred.await(releaseLate);
+              }
+              processed.push(item.name);
+            }),
+          (item) => item.key,
+          1024,
+        );
+
+        yield* worker.enqueue({ key: "thread-b", name: "busy" });
+        yield* Deferred.await(busyStarted);
+
+        const drained = yield* Deferred.make<void>();
+        yield* Effect.forkChild(
+          worker.drain.pipe(
+            Effect.tap(() => Deferred.succeed(drained, undefined).pipe(Effect.orDie)),
+          ),
+        );
+
+        yield* worker.enqueue({ key: "thread-a", name: "late" });
+        yield* Deferred.await(lateStarted);
+        yield* Deferred.succeed(releaseBusy, undefined);
+        yield* Effect.sleep("20 millis");
+        expect(yield* Deferred.isDone(drained)).toBe(false);
+
+        yield* Deferred.succeed(releaseLate, undefined);
+        yield* Deferred.await(drained);
+        expect(processed).toEqual(["busy", "late"]);
+      }),
+    ),
+  );
 });

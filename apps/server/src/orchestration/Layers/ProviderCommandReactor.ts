@@ -1867,6 +1867,7 @@ const make = Effect.gen(function* () {
   // Events for one thread stay ordered, but a slow provider session start on one
   // thread must not delay turn starts, interrupts or stops on unrelated threads.
   // Lanes are concurrent I/O queues, not CPU cores; 1 restores the old global ordering.
+  // makeKeyedDrainableWorker clamps the value to 1..MAX_KEYED_WORKER_LANES.
   const providerCommandLanes = yield* Config.Int("T3CODE_PROVIDER_COMMAND_LANES").pipe(
     Config.withDefault(DEFAULT_PROVIDER_COMMAND_LANES),
   );
