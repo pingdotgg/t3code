@@ -186,6 +186,7 @@ In Default mode, strongly prefer making reasonable assumptions and executing the
 
 export interface CodexRuntimeInfo {
   readonly model: string;
+  readonly modelName?: string | undefined;
   readonly reasoningEffort: string;
 }
 
