@@ -57,9 +57,9 @@ export function DeviceControlsRail(props: {
     <aside
       aria-label="Device controls"
       data-layout="rail"
-      className="pointer-events-none absolute inset-y-0 right-0 z-10 flex w-14 flex-col items-center justify-center py-3 pr-2"
+      className="pointer-events-none absolute inset-y-0 right-0 z-10 flex w-14 flex-col items-center gap-2 overflow-y-auto [justify-content:safe_center] py-3 pr-2 [scrollbar-width:none]"
     >
-      <div className="pointer-events-auto flex max-h-full shrink-0 flex-col items-center gap-1 overflow-y-auto rounded-full border border-border/50 bg-background/80 p-2 shadow-sm [scrollbar-width:none]">
+      <div className="pointer-events-auto flex shrink-0 flex-col items-center gap-1 overflow-y-auto rounded-full border border-border/50 bg-background/80 p-2 shadow-sm [scrollbar-width:none]">
         <RailButton
           tooltipSide={popupSide}
           label="Home"
@@ -255,11 +255,12 @@ export function DeviceControlsRail(props: {
           </RailButton>
         ) : null}
         {view.phone ? (
-          <RailButton tooltipSide={popupSide} label="Reset phone view" onClick={view.resetView}>
+          <RailButton tooltipSide={popupSide} label="Restore 3D view" onClick={view.resetView}>
             <Maximize />
           </RailButton>
         ) : null}
       </div>
+      {view.foldingControls}
     </aside>
   );
 }

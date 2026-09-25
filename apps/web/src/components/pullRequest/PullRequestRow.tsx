@@ -27,10 +27,11 @@ import {
  * narrow row shows one label and a "+N" while a wide one spreads out up to three. The "+N"
  * rides on whichever pill is the last visible one, and is hidden as soon as the next slot shows.
  */
+// Each slot's pill appears at a wider row, and its overflow count yields to the next slot.
 const LABEL_SLOTS = [
-  { pill: "", overflow: "@xl/pr-row-meta:hidden" },
-  { pill: "hidden @xl/pr-row-meta:inline-flex", overflow: "@3xl/pr-row-meta:hidden" },
-  { pill: "hidden @3xl/pr-row-meta:inline-flex", overflow: "" },
+  { overflow: "@xl/pr-row-meta:hidden" },
+  { overflow: "@3xl/pr-row-meta:hidden" },
+  { overflow: "" },
 ] as const;
 
 function PullRequestRowLabels({ labels }: { labels: EnvironmentPullRequestEntry["labels"] }) {
@@ -42,7 +43,17 @@ function PullRequestRowLabels({ labels }: { labels: EnvironmentPullRequestEntry[
         if (!label) return null;
         const remaining = labels.length - index - 1;
         return (
-          <PullRequestLabelChip key={label.name} label={label} className={slot.pill}>
+          <PullRequestLabelChip
+            key={label.name}
+            label={label}
+            className={
+              index === 0
+                ? ""
+                : index === 1
+                  ? "hidden @xl/pr-row-meta:inline-flex"
+                  : "hidden @3xl/pr-row-meta:inline-flex"
+            }
+          >
             {remaining > 0 ? (
               <span className={cn("shrink-0", slot.overflow)}>+{remaining}</span>
             ) : null}
@@ -193,7 +204,7 @@ function PullRequestRowImpl({
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-[10px]" />
+                    <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-3xs" />
                   }
                 >
                   <span className="sr-only">matched in the description</span>
