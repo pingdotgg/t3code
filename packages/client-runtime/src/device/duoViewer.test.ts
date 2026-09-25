@@ -445,25 +445,6 @@ it("previews hinge articulation while preserving the laptop lid orientation and 
   viewer.dispose();
 });
 
-it("fills the inner display with native landscape frames without turning them sideways", () => {
-  const { viewer, drawImage } = fixture();
-  viewer.setScreen({
-    width: 2853,
-    height: 2007,
-    orientation: "landscape_left",
-    screenId: 3,
-    hingeAngle: 90,
-    hingePose: "laptop",
-  });
-  const frame = { width: 2853, height: 2007 } as HTMLCanvasElement;
-  viewer.frameUpdated(3, frame);
-  const [source, , , width, height] = drawImage.mock.calls.at(-1)!;
-  expect(source).toBe(frame);
-  expect(width).toBeGreaterThan(1550);
-  expect(height).toBe(1125);
-  viewer.dispose();
-});
-
 it("does not restart an animated preset on duplicate native configurations", async () => {
   let now = 100;
   vi.stubGlobal("performance", { now: () => now });

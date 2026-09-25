@@ -469,7 +469,8 @@ export function createDuoViewer(options: {
       context.fillStyle = "#080a10";
       context.fillRect(0, 0, canvas.width, canvas.height);
       context.translate(canvas.width / 2, canvas.height / 2);
-      const rotate = id === 3 && source.height > source.width;
+      // The inner panel is mounted a quarter turn from the native framebuffer.
+      const rotate = id === 3;
       if (rotate) context.rotate(Math.PI / 2);
       const scale = Math.min(
         canvas.width / (rotate ? source.height : source.width),
