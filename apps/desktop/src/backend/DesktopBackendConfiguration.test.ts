@@ -780,12 +780,11 @@ describe("DesktopBackendConfiguration", () => {
         const config = yield* configuration.resolveWsl({ port: 5050, distro: null });
 
         // No settings.json exists here: the endpoints come from the desktop
-        // process's env, which a WSL child cannot inherit, so the bootstrap
-        // has to carry them or log export stays off inside the distro.
+        // environment, and the bootstrap carries them for a WSL child that
+        // lacks the variables.
         assert.equal(config.bootstrap.otlpTracesUrl, "http://127.0.0.1:4318/v1/traces");
         assert.equal(config.bootstrap.otlpMetricsUrl, "http://127.0.0.1:4318/v1/metrics");
         assert.equal(config.bootstrap.otlpLogsUrl, "http://127.0.0.1:4318/v1/logs");
-        assert.notInclude(config.env.WSLENV ?? "", "T3CODE_OTLP_LOGS_URL");
       }).pipe(
         Effect.provide(
           DesktopBackendConfiguration.layer.pipe(
@@ -996,6 +995,73 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect(
+    "resolveWsl carries the standard OTLP endpoint, headers, and protocol into the distro",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-desktop-backend-config-test-",
+        });
+
+        const standard = {
+          OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector.example.com:4318/base?api_key=secret",
+          OTEL_EXPORTER_OTLP_LOGS_HEADERS: "authorization=Bearer%20token",
+          T3CODE_OTLP_TRACES_URL: "http://t3.example.com:4318/v1/traces",
+        };
+        const previousWslEnv = process.env.WSLENV;
+        // A developer's own OTLP variables would be forwarded too.
+        const ambientOtel = Object.entries(process.env).filter(
+          ([name]) => name.startsWith("OTEL_") || name.startsWith("T3CODE_OTLP_"),
+        );
+        try {
+          for (const [name] of ambientOtel) delete process.env[name];
+          delete process.env.WSLENV;
+          Object.assign(process.env, standard);
+
+          yield* Effect.gen(function* () {
+            const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+            const config = yield* configuration.resolveWsl({ port: 5050, distro: null });
+
+            assert.equal(
+              config.env.OTEL_EXPORTER_OTLP_ENDPOINT,
+              "https://collector.example.com:4318/base?api_key=secret",
+            );
+            assert.equal(
+              config.env.OTEL_EXPORTER_OTLP_LOGS_HEADERS,
+              "authorization=Bearer%20token",
+            );
+            // Without a flag, WSL passes the values through untranslated.
+            const wslEnv = (config.env.WSLENV ?? "").split(":");
+            assert.include(wslEnv, "OTEL_EXPORTER_OTLP_ENDPOINT");
+            assert.include(wslEnv, "OTEL_EXPORTER_OTLP_LOGS_HEADERS");
+            assert.equal(config.env.T3CODE_OTLP_TRACES_URL, "http://t3.example.com:4318/v1/traces");
+            assert.include(wslEnv, "T3CODE_OTLP_TRACES_URL");
+          }).pipe(
+            Effect.provide(
+              DesktopBackendConfiguration.layer.pipe(
+                Layer.provideMerge(serverExposureLayer),
+                Layer.provideMerge(DesktopAppSettings.layerTest()),
+                Layer.provideMerge(DesktopWslServerTree.layerTest()),
+                Layer.provideMerge(
+                  DesktopWslEnvironment.layerTest({
+                    isAvailable: true,
+                    windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
+                    getDistroIp: () => Option.some("172.27.0.99"),
+                  }),
+                ),
+                Layer.provideMerge(makeEnvironmentLayer(baseDir, { platform: "win32" })),
+              ),
+            ),
+          );
+        } finally {
+          for (const name of Object.keys(standard)) delete process.env[name];
+          restoreEnv("WSLENV", previousWslEnv);
+          for (const [name, value] of ambientOtel) restoreEnv(name, value);
+        }
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("resolveWsl preserves existing WSLENV entries when forwarding backend secrets", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1008,7 +1074,10 @@ describe("DesktopBackendConfiguration", () => {
       const previousAnthropicKey = process.env.ANTHROPIC_API_KEY;
       const previousOtlpHeaders = process.env.T3CODE_OTLP_HEADERS;
       const previousOtlpProtocol = process.env.T3CODE_OTLP_PROTOCOL;
+      // A developer's own OTEL_* variables would be forwarded too.
+      const ambientOtel = Object.entries(process.env).filter(([name]) => name.startsWith("OTEL_"));
       try {
+        for (const [name] of ambientOtel) delete process.env[name];
         process.env.WSLENV = "GOPATH/p:OPENAI_API_KEY/u:EMPTY::AZURE_DEVOPS_EXT_PAT/u";
         process.env.OPENAI_API_KEY = "openai-key";
         process.env.ANTHROPIC_API_KEY = "anthropic-key";
@@ -1065,6 +1134,7 @@ describe("DesktopBackendConfiguration", () => {
         restoreEnv("ANTHROPIC_API_KEY", previousAnthropicKey);
         restoreEnv("T3CODE_OTLP_HEADERS", previousOtlpHeaders);
         restoreEnv("T3CODE_OTLP_PROTOCOL", previousOtlpProtocol);
+        for (const [name, value] of ambientOtel) restoreEnv(name, value);
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
