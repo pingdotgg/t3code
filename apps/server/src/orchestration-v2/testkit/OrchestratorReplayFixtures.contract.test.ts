@@ -82,6 +82,7 @@ describe("orchestrator replay fixture contract", () => {
                 (step) =>
                   step.type !== "advance_clock" &&
                   step.type !== "await_run_status" &&
+                  step.type !== "finish_held_run" &&
                   step.type !== "capture_shell_snapshot" &&
                   step.type !== "release_replay_gate" &&
                   step.type !== "release_replay_gate_after_waiting",

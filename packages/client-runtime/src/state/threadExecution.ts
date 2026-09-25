@@ -2,8 +2,17 @@ import {
   latestRootProviderFailure,
   threadErrorSummary,
 } from "@t3tools/shared/orchestrationV2ThreadError";
-import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import {
+  isOrchestrationV2WorkActive,
+  isProviderNativeSubagentThread,
+  type ModelSelection,
+  type ServerProviderModel,
+  type OrchestrationV2ExecutionNode,
+  type OrchestrationV2ThreadProjection,
+} from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { getProviderOptionCurrentLabel, getProviderOptionDescriptors } from "@t3tools/shared/model";
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
 
 import {
@@ -65,6 +74,107 @@ export function deriveThreadActivityRun(
     latestMatchingRun(projection, (candidate) => ACTIVITY_RUN_STATUSES.has(candidate.status)) ??
     latestMatchingRun(projection, () => true);
   return run === null ? null : summarizeThreadRun(projection, run);
+}
+
+/**
+ * Provider-native subagent threads never get app runs: their work is a runless
+ * root turn whose status follows the subagent. Returns when that work started
+ * while it is still active, so clients can show the same working state (and
+ * timer) as a run. Stop, queue, and steer stay run-only.
+ */
+export function deriveRunlessWorkStartedAt(
+  projection: OrchestrationV2ThreadProjection,
+): string | null {
+  const status = deriveProviderSubagentStatus(projection);
+  return status !== null && isOrchestrationV2WorkActive(status.status) ? status.startedAt : null;
+}
+
+export interface ProviderSubagentStatus {
+  readonly status: OrchestrationV2ExecutionNode["status"];
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+}
+
+/**
+ * Status of a provider-native subagent thread (see
+ * isProviderNativeSubagentThread), read from its runless root turn. Null
+ * until that root turn arrives, and for every other thread.
+ */
+export function deriveProviderSubagentStatus(
+  projection: OrchestrationV2ThreadProjection,
+): ProviderSubagentStatus | null {
+  if (!isProviderNativeSubagentThread(projection.thread)) return null;
+  const node = projection.nodes.findLast(
+    (candidate) => candidate.kind === "root_turn" && candidate.runId === null,
+  );
+  if (node === undefined) return null;
+  return {
+    status: node.status,
+    startedAt: node.startedAt === null ? null : DateTime.formatIso(node.startedAt),
+    completedAt: node.completedAt === null ? null : DateTime.formatIso(node.completedAt),
+  };
+}
+
+// Option ids providers use for reasoning effort (Codex, Claude, Grok/ACP, OpenCode).
+const REASONING_EFFORT_OPTION_IDS = ["reasoningEffort", "effort", "reasoning", "variant"] as const;
+
+/**
+ * The reasoning effort a thread's model runs at, resolved and named the way
+ * the composer's effort picker does: the stored choice when valid, else the
+ * descriptor's current value, else the model's default. Null when the
+ * provider catalog has no effort option for this model (a subagent on a
+ * model the catalog does not describe), rather than guessing.
+ */
+export function formatModelSelectionEffort(
+  selection: ModelSelection,
+  models: ReadonlyArray<ServerProviderModel> = [],
+): string | null {
+  const caps = models.find((model) => model.slug === selection.model)?.capabilities;
+  if (!caps) return null;
+  const descriptors = getProviderOptionDescriptors({ caps, selections: selection.options });
+  for (const id of REASONING_EFFORT_OPTION_IDS) {
+    const descriptor = descriptors.find((candidate) => candidate.id === id);
+    if (descriptor?.type !== "select") continue;
+    const label = getProviderOptionCurrentLabel(descriptor);
+    if (label) return label;
+  }
+  return null;
+}
+
+const SUBAGENT_STATUS_LABELS: Record<OrchestrationV2ExecutionNode["status"], string> = {
+  idle: "Idle",
+  pending: "Working",
+  running: "Working",
+  waiting: "Waiting",
+  completed: "Completed",
+  interrupted: "Interrupted",
+  failed: "Failed",
+  cancelled: "Cancelled",
+  rolled_back: "Cancelled",
+};
+
+/**
+ * One line for the read-only subagent bar: "Working 12s", "Completed in 34s",
+ * or just the status when no duration is known.
+ */
+export function formatProviderSubagentStatus(
+  status: ProviderSubagentStatus | null,
+  nowMs: number,
+): string {
+  if (status === null) return "Starting";
+  const label = SUBAGENT_STATUS_LABELS[status.status];
+  const live = isOrchestrationV2WorkActive(status.status);
+  if (!live && status.status !== "completed") return label;
+  const start = status.startedAt === null ? Number.NaN : Date.parse(status.startedAt);
+  const end = live
+    ? nowMs
+    : status.completedAt === null
+      ? Number.NaN
+      : Date.parse(status.completedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return label;
+  // Whole seconds: a ticking label must not flicker through tenths.
+  const elapsed = formatDuration(Math.max(1_000, Math.floor((end - start) / 1_000) * 1_000));
+  return live ? `${label} ${elapsed}` : `${label} in ${elapsed}`;
 }
 
 export function deriveThreadRuntime(

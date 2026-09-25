@@ -14,7 +14,9 @@ import { ServerConfig } from "../../config.ts";
 import { GROK_ACP_CANCEL_META } from "../../provider/acp/GrokAcpSupport.ts";
 import { makeXAiPromptCompletionRuntime } from "../../provider/acp/XAiAcpExtension.ts";
 import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
+import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
 import { makeLayerEffect as makeProviderAdapterRegistryLayerEffect } from "../ProviderAdapterRegistry.ts";
+import type { ProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
 import { makeReplayServerConfig } from "../testkit/ProviderReplayHarness.ts";
 import {
@@ -28,7 +30,10 @@ import { GROK_DEFAULT_INSTANCE_ID, GROK_PROVIDER, makeGrokAdapterV2 } from "./Gr
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeUnknownSync(GrokSettings)({});
 
-function makeGrokProviderAdapterRegistryReplayLayer(transcript: AcpReplayTranscript) {
+function makeGrokProviderAdapterRegistryReplayLayer(
+  transcript: AcpReplayTranscript,
+  options: { readonly replayGate?: ProviderReplayGate } = {},
+) {
   const serverConfigLayer = Layer.effect(
     ServerConfig,
     makeReplayServerConfig(`grok-${transcript.scenario}`).pipe(Effect.orDie),
@@ -43,6 +48,9 @@ function makeGrokProviderAdapterRegistryReplayLayer(transcript: AcpReplayTranscr
       const hostPlatform = yield* HostProcessPlatform;
       const idAllocator = yield* IdAllocatorV2;
       const serverConfig = yield* ServerConfig;
+      // Same queue the continuation worker drains when the fixture runs it.
+      const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+      const replayGate = options.replayGate;
       const replayDir = yield* fileSystem
         .makeTempDirectory({
           prefix: `t3-orchestration-v2-grok-replay-${transcript.scenario}-`,
@@ -72,13 +80,31 @@ function makeGrokProviderAdapterRegistryReplayLayer(transcript: AcpReplayTranscr
             scriptPath,
             childProcessSpawner,
             fileSystem,
+            ...(replayGate === undefined ? {} : { replayGate }),
             cancelMeta: GROK_ACP_CANCEL_META,
           })(runtimeInput).pipe(Effect.flatMap(makeXAiPromptCompletionRuntime)),
+        continuationRequests,
         assertComplete: makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript),
+        ...(replayGate === undefined
+          ? {}
+          : {
+              testHooks: {
+                onDeferredFinalizeScheduled: (debounce) =>
+                  Effect.sync(() => replayGate.recordFinishArmed(debounce)),
+              },
+            }),
       });
       return [adapter];
     }),
-  ).pipe(Layer.provide(Layer.mergeAll(serverConfigLayer, NodeServices.layer, idAllocatorLayer)));
+  ).pipe(
+    Layer.provide(Layer.mergeAll(serverConfigLayer, NodeServices.layer, idAllocatorLayer)),
+    // Held inbound lines must not outlive the scenario and wedge teardown.
+    Layer.merge(
+      Layer.effectDiscard(
+        Effect.addFinalizer(() => Effect.sync(() => options.replayGate?.releaseAll())),
+      ),
+    ),
+  );
 }
 
 export const GrokOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<

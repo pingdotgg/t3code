@@ -6,6 +6,8 @@ import {
   COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX,
   COMPOSER_RESTING_EXPANSION_MIN_PX,
   getRestingComposerImagePreviewCounts,
+  composerModelPickerCanStayOpen,
+  overlayComposerIsResting,
   resolveComposerTimelineInset,
   resolveScrollToEndClearance,
   resolveRestingComposerControlsLayout,
@@ -74,6 +76,38 @@ describe("shouldUseCompactComposerPrimaryActions", () => {
         hasWideActions: true,
       }),
     ).toBe(false);
+  });
+});
+
+describe("composerModelPickerCanStayOpen", () => {
+  it("closes the picker while a native subagent hides the thread settings", () => {
+    expect(
+      composerModelPickerCanStayOpen({ controlsHidden: false, threadSettingsHidden: true }),
+    ).toBe(false);
+    expect(
+      composerModelPickerCanStayOpen({ controlsHidden: true, threadSettingsHidden: false }),
+    ).toBe(false);
+    expect(
+      composerModelPickerCanStayOpen({ controlsHidden: false, threadSettingsHidden: false }),
+    ).toBe(true);
+  });
+});
+
+describe("overlayComposerIsResting", () => {
+  it("drops a resting reservation once a status bar replaces the composer", () => {
+    // The composer rested on a scroll, then the thread swapped it for the
+    // subagent bar. The bar's 56px overlay must not keep the resting estimate.
+    const isResting = overlayComposerIsResting({
+      composerMounted: false,
+      composerReportedResting: true,
+    });
+    expect(isResting).toBe(false);
+    expect(resolveComposerTimelineInset({ currentInset: 0, overlayHeight: 56, isResting })).toBe(
+      56,
+    );
+    expect(overlayComposerIsResting({ composerMounted: true, composerReportedResting: true })).toBe(
+      true,
+    );
   });
 });
 

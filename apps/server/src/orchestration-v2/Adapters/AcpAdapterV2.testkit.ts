@@ -9,10 +9,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
+import type { ProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
 import { ACP_PROTOCOL, type AcpAdapterV2RuntimeInput } from "./AcpAdapterV2.ts";
 
 export const AcpReplayTranscript = Schema.Struct({
@@ -151,6 +153,34 @@ function acpReplayAgentArgs(scriptPath: string): ReadonlyArray<string> {
   return ["--experimental-strip-types", scriptPath];
 }
 
+/**
+ * Holds the replay agent's inbound lines at a gate the scenario releases.
+ * The agent writes one line per `emit_inbound` entry in transcript order, so
+ * the Nth line it writes belongs to the Nth inbound entry and carries its
+ * label. Lines after a held one wait with it, which keeps wire order.
+ */
+function holdGatedReplayLines(
+  transcript: AcpReplayTranscript,
+  replayGate: ProviderReplayGate,
+): NonNullable<AcpSessionRuntime.AcpSessionRuntimeOptions["transformStdout"]> {
+  const inboundLabels = transcript.entries.flatMap((entry) =>
+    entry.type === "emit_inbound" ? [entry.label] : [],
+  );
+  let inboundIndex = 0;
+  const encoder = new TextEncoder();
+  return (stdout) =>
+    stdout.pipe(
+      Stream.decodeText,
+      Stream.splitLines,
+      Stream.mapEffect((line) => {
+        const label = line.trim().length === 0 ? undefined : inboundLabels[inboundIndex++];
+        return Effect.promise((signal) => replayGate.beforeEmit(label, signal)).pipe(
+          Effect.as(encoder.encode(`${line}\n`)),
+        );
+      }),
+    );
+}
+
 export function makeAcpReplayRuntime(input: {
   readonly transcript: AcpReplayTranscript;
   readonly statusPath: string;
@@ -158,6 +188,7 @@ export function makeAcpReplayRuntime(input: {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly fileSystem: FileSystem.FileSystem;
   readonly cancelMeta?: AcpSessionRuntime.AcpSessionRuntimeOptions["cancelMeta"];
+  readonly replayGate?: ProviderReplayGate;
 }): (
   runtimeInput: AcpAdapterV2RuntimeInput,
 ) => Effect.Effect<
@@ -197,6 +228,9 @@ export function makeAcpReplayRuntime(input: {
           },
           authMethodId: "replay",
           ...(input.cancelMeta === undefined ? {} : { cancelMeta: input.cancelMeta }),
+          ...(input.replayGate === undefined
+            ? {}
+            : { transformStdout: holdGatedReplayLines(input.transcript, input.replayGate) }),
         }).pipe(
           Layer.provide(
             Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),

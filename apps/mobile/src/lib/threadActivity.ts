@@ -1019,6 +1019,8 @@ export function deriveThreadFeedPresentation(
   expandedRunIds: ReadonlySet<RunId>,
   expandedWorkGroupIds: ReadonlySet<string> = new Set(),
   activeWorkStartedAt: string | null = null,
+  /** The live work is a provider-native subagent's runless root turn. */
+  runlessWorkActive = false,
 ): ThreadFeedEntry[] {
   const sourceFeed = feed.filter(
     (entry) =>
@@ -1037,9 +1039,11 @@ export function deriveThreadFeedPresentation(
   }
   const result: ThreadFeedEntry[] = [];
   for (const entry of sourceFeed) {
+    // A provider-native subagent works without a run: its null-run tail is
+    // live only while that runless work is active.
     const isActiveTailGroup =
       isWorking &&
-      activeRunId !== null &&
+      (activeRunId !== null || runlessWorkActive) &&
       entry.type === "activity-group" &&
       activeTailGroup?.type === "activity-group" &&
       activeTailGroup.id === entry.id &&

@@ -418,6 +418,17 @@ export const OrchestrationV2AppThread = Schema.Struct({
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
 
+/**
+ * A subagent the provider spawned on its own (Claude's Agent tool, Codex or
+ * Cursor native subagents). The provider owns its conversation, so it cannot
+ * take messages; T3 delegate_task children (`creationSource: "mcp"`) can.
+ */
+export function isProviderNativeSubagentThread(
+  thread: Pick<OrchestrationV2AppThread, "lineage" | "creationSource">,
+): boolean {
+  return thread.lineage.relationshipToParent === "subagent" && thread.creationSource === "provider";
+}
+
 export const OrchestrationV2RunStatus = Schema.Literals([
   "preparing",
   "queued",

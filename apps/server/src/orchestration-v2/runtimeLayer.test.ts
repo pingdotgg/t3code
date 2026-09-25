@@ -863,6 +863,164 @@ it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
     }),
   );
 
+  it.effect("answers a native subagent's question while refusing messages to it", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const eventSink = yield* EventSinkV2;
+      const now = yield* DateTime.now;
+      const parentId = ThreadId.make("runtime-native-child-parent");
+      const childId = ThreadId.make("runtime-native-child");
+      const requestId = RuntimeRequestId.make("runtime-native-child-request");
+      const nodeId = NodeId.make("runtime-native-child-question-node");
+      const itemId = TurnItemId.make("runtime-native-child-question-item");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("runtime-native-child-parent-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId: parentId,
+        projectId: ProjectId.make("runtime-native-child-project"),
+        title: "Native child parent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const parent = yield* orchestrator.getThreadProjection(parentId);
+      // A Codex native subagent asks an async (message-mode) question on its
+      // own child thread, as CodexAdapterV2 writes it.
+      yield* eventSink.write({
+        commandId: CommandId.make("runtime-native-child-seed"),
+        events: [
+          {
+            id: EventId.make("runtime-native-child-thread-event"),
+            type: "thread.created",
+            threadId: childId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              ...parent.thread,
+              id: childId,
+              title: "Native child",
+              createdBy: "agent",
+              creationSource: "provider",
+              activeProviderThreadId: null,
+              lineage: {
+                parentThreadId: parentId,
+                relationshipToParent: "subagent",
+                rootThreadId: parentId,
+              },
+              forkedFrom: { type: "node", nodeId: NodeId.make("runtime-native-child-subagent") },
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+          {
+            id: EventId.make("runtime-native-child-question-node-event"),
+            type: "node.updated",
+            threadId: childId,
+            nodeId,
+            occurredAt: now,
+            payload: {
+              id: nodeId,
+              threadId: childId,
+              runId: null,
+              parentNodeId: null,
+              rootNodeId: nodeId,
+              kind: "user_input_request",
+              status: "waiting",
+              countsForRun: false,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              runtimeRequestId: requestId,
+              checkpointScopeId: null,
+              startedAt: now,
+              completedAt: null,
+            },
+          },
+          {
+            id: EventId.make("runtime-native-child-question-request-event"),
+            type: "runtime-request.updated",
+            threadId: childId,
+            nodeId,
+            occurredAt: now,
+            payload: {
+              id: requestId,
+              nodeId,
+              providerTurnId: null,
+              nativeRequestRef: null,
+              kind: "user_input",
+              status: "pending",
+              responseCapability: { type: "message" },
+              createdAt: now,
+              resolvedAt: null,
+            },
+          },
+          {
+            id: EventId.make("runtime-native-child-question-item-event"),
+            type: "turn-item.updated",
+            threadId: childId,
+            nodeId,
+            occurredAt: now,
+            payload: {
+              id: itemId,
+              type: "user_input_request",
+              threadId: childId,
+              runId: null,
+              nodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 0,
+              status: "waiting",
+              title: null,
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+              requestId,
+              responseMode: "message",
+              questions: [{ id: "scope", header: "Scope", question: "Which files?", options: [] }],
+            },
+          },
+        ],
+      });
+
+      const refused = yield* orchestrator
+        .dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("runtime-native-child-send"),
+          createdBy: "user",
+          creationSource: "web",
+          threadId: childId,
+          messageId: MessageId.make("runtime-native-child-send-message"),
+          text: "Also check the tests.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+        })
+        .pipe(Effect.flip);
+      assert.equal(refused._tag, "OrchestratorSubagentThreadReadOnlyError");
+      assert.deepEqual((yield* orchestrator.getThreadProjection(childId)).messages, []);
+
+      yield* orchestrator.dispatch({
+        type: "runtime-request.respond",
+        commandId: CommandId.make("runtime-native-child-answer"),
+        threadId: childId,
+        requestId,
+        answers: { scope: "Only the adapters" },
+      });
+      const answered = yield* orchestrator.getThreadProjection(childId);
+      assert.equal(answered.runtimeRequests[0]?.status, "resolved");
+      assert.equal(answered.turnItems.find((item) => item.id === itemId)?.status, "completed");
+      assert.deepEqual(
+        answered.messages.map((message) => message.text),
+        ["Which files?\nOnly the adapters"],
+      );
+    }),
+  );
+
   it.effect("dismisses message-capable questions directly and while settling", () =>
     Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;

@@ -38,6 +38,7 @@ import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -137,6 +138,15 @@ import {
 } from "../ProviderAdapter.ts";
 
 export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
+
+/**
+ * Quiet window after a settled turn's last background rearm before it
+ * finalizes, so a slightly late post-hydration assistant chunk stays in the
+ * same turn. Grok commonly sends its final summary just over two seconds after
+ * the hydrated tool frame; two seconds split that tail into a second synthetic
+ * wake. Longer floors (4–20s) only prolonged Working. No per-model carveouts.
+ */
+const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
 
 export interface AcpAdapterV2RuntimeInput {
   readonly cwd: string;
@@ -462,6 +472,12 @@ export interface AcpAdapterV2Options {
     readonly offer: (request: ProviderContinuationRequest) => Effect.Effect<void>;
   };
   readonly testHooks?: {
+    /**
+     * A settled turn with no background work left armed its finish debounce
+     * ({@link ACP_DEFERRED_FINALIZE_DEBOUNCE}); replay advances its test clock
+     * by exactly that on this receipt.
+     */
+    readonly onDeferredFinalizeScheduled?: (debounce: Duration.Input) => Effect.Effect<void>;
     readonly afterNativeResponseTransportClosed?: () => Effect.Effect<void>;
     readonly afterHardTeardownTransportDrained?: () => Effect.Effect<void>;
     readonly beforeNativeResponseAdmissionCheck?: (
@@ -6400,15 +6416,8 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             if (hasDeferredBackgroundWork(context)) return;
             context.backgroundFinalizeGeneration += 1;
             const generation = context.backgroundFinalizeGeneration;
-            // Minimal quiet for all models (no per-model carveouts). Defer +
-            // awaitingBackgroundHydration hold the turn through monitors; this
-            // is only a short debounce after the last rearm so a slightly late
-            // post-hydration assistant chunk stays in the same continuation.
-            // Grok commonly sends its final summary just over two seconds after
-            // the hydrated tool frame; two seconds split that tail into a second
-            // synthetic wake. Longer floors (4–20s) only prolonged Working.
             yield* Effect.gen(function* () {
-              yield* Effect.sleep("3000 millis");
+              yield* Effect.sleep(ACP_DEFERRED_FINALIZE_DEBOUNCE);
               if (
                 context.finalized ||
                 context.interrupted ||
@@ -6420,6 +6429,10 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               const status = context.promptSettledStatus ?? "completed";
               yield* finalizeTurn(context, status);
             }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
+            yield* (
+              options.testHooks?.onDeferredFinalizeScheduled?.(ACP_DEFERRED_FINALIZE_DEBOUNCE) ??
+                Effect.void
+            );
           });
 
         const resolvePromptParts = Effect.fnUntraced(function* (

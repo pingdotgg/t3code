@@ -31,6 +31,7 @@ import {
   SUBAGENT_CONTINUE_PARENT_PROMPT,
   SUBAGENT_CONTINUE_PROMPT,
   SUBAGENT_PROMPT,
+  SUBAGENT_V2_APPROVAL_PROMPT,
   SUBAGENT_V2_PROMPT,
   SUBAGENT_V2_NESTED_PROMPT,
   THREAD_ROLLBACK_AFTER_PROMPT,
@@ -86,6 +87,7 @@ const SCENARIO_NAMES = [
   "subagent",
   "subagent_continue",
   "subagent_v2",
+  "subagent_v2_approval",
   "subagent_v2_nested",
   "multi_turn",
   "queued_turn",
@@ -466,6 +468,31 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
           description:
             "The default model runs multi-agent v2, so Codex emits subAgentActivity items.",
           steps: [{ type: "turn", label: "spawn-v2-subagent", prompt: SUBAGENT_V2_PROMPT }],
+        },
+      ],
+    },
+    {
+      name: "subagent_v2_approval",
+      fileName: "subagent_v2_approval.ndjson",
+      description:
+        "One root turn in approval-required mode whose multi-agent v2 subagent runs a command that needs approval.",
+      runs: [
+        {
+          name: "spawn-v2-subagent-needing-approval",
+          description:
+            "The child inherits the root's approval policy, so its write asks the client for approval on the child's native thread and turn.",
+          // The adapter's approval-required turn defaults.
+          turnDefaults: {
+            approvalPolicy: "untrusted",
+            sandboxPolicy: { type: "readOnly" },
+          },
+          steps: [
+            {
+              type: "turn",
+              label: "spawn-v2-subagent-needing-approval",
+              prompt: SUBAGENT_V2_APPROVAL_PROMPT,
+            },
+          ],
         },
       ],
     },

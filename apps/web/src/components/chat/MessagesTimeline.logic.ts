@@ -1039,6 +1039,11 @@ export function deriveMessagesTimelineRows(input: {
   expandedAttemptIds?: ReadonlySet<RunAttemptId>;
   expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
+  /**
+   * The live work has no app run (a provider-native subagent thread), so
+   * runless entries are the current response instead of settled history.
+   */
+  runlessWorkActive?: boolean;
   activeTurnStartedAt?: string | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   supportsConversationRollback: boolean;
@@ -1098,11 +1103,13 @@ export function deriveMessagesTimelineRows(input: {
       }
     }
   }
+  const runlessWorkActive = input.isWorking && input.runlessWorkActive === true;
+  const runIdIsActiveResponse = (runId: RunId | null | undefined) =>
+    runId == null ? runlessWorkActive : activeVisualResponseRunIds.has(runId);
   const workEntryIsInActiveRun = (entry: WorkLogEntry) =>
     input.isWorking &&
-    unsettledRunId !== null &&
     entry.toolLifecycleStatus === "inProgress" &&
-    entry.runId === unsettledRunId;
+    (entry.runId == null ? runlessWorkActive : entry.runId === unsettledRunId);
 
   // A steer continues the current turn. Keep its elapsed-time header below
   // the initiating prompt (or automatic wake), rather than moving it down.
@@ -1115,7 +1122,7 @@ export function deriveMessagesTimelineRows(input: {
   // and once everything settles it keeps the latest tool in past tense
   // instead of vanishing (#8984).
   const activeToolEntries: Array<Extract<TimelineEntry, { kind: "work" }>> = [];
-  if (input.isWorking && unsettledRunId !== null) {
+  if (input.isWorking && (unsettledRunId !== null || runlessWorkActive)) {
     let tailAttemptId: string | null | undefined;
     for (let index = timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
       const entry = timelineEntries[index]!;
@@ -1125,8 +1132,7 @@ export function deriveMessagesTimelineRows(input: {
         entry.entry.sourceActivityKind === "runtime.error" ||
         entry.entry.itemType === "system_notice" ||
         entry.entry.itemType === "notification" ||
-        entry.entry.runId == null ||
-        !activeVisualResponseRunIds.has(entry.entry.runId) ||
+        !runIdIsActiveResponse(entry.entry.runId) ||
         entry.entry.sourceActivityKind === "context-compaction" ||
         collapsedEntryIds.has(entry.id) ||
         collapsedSupersededEntryIds.has(entry.id) ||
@@ -1469,9 +1475,7 @@ export function deriveMessagesTimelineRows(input: {
 
     const assistantResponseStillInProgress =
       timelineEntry.message.role === "assistant" &&
-      timelineEntry.message.runId !== null &&
-      timelineEntry.message.runId !== undefined &&
-      activeVisualResponseRunIds.has(timelineEntry.message.runId);
+      runIdIsActiveResponse(timelineEntry.message.runId);
 
     const durationStart =
       durationStartByMessageId.get(timelineEntry.message.id) ?? timelineEntry.message.createdAt;

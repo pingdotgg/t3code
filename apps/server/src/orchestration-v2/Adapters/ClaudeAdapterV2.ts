@@ -2459,6 +2459,9 @@ interface ActiveClaudeSubagent {
   readonly childRootNodeId: OrchestrationV2ExecutionNode["id"];
   readonly turnItemId: OrchestrationV2TurnItem["id"];
   readonly turnItemOrdinal: number;
+  // The tool call that started the current run: the Agent launch, then each
+  // SendMessage that resumes the subagent. A new one means a new prompt.
+  readonly runToolUseId: string | null;
   nextChildItemOrdinal: number;
   progressItemOrdinal: number | null;
   progressStartedAt: DateTime.Utc | null;
@@ -3431,6 +3434,17 @@ export function makeClaudeAdapterV2(
           ) {
             return;
           }
+          // A task_started under a tool call other than the current run's is
+          // a resume: SendMessage re-emits task_started for the same task id
+          // under its own tool_use_id, with the sent message as the prompt.
+          const resumeToolUseId =
+            input.reopen === true &&
+            existingSubagent !== undefined &&
+            input.toolUseId !== undefined &&
+            input.toolUseId !== existingSubagent.runToolUseId &&
+            input.prompt !== undefined
+              ? input.toolUseId
+              : null;
           const lifecycleChanged =
             existingSubagent === undefined ||
             existingSubagent.task.status !== input.status ||
@@ -3533,6 +3547,10 @@ export function makeClaudeAdapterV2(
                 nativeItemId: `${nativeItemId}:subagent`,
               }),
             turnItemOrdinal,
+            runToolUseId:
+              existingSubagent === undefined
+                ? (input.toolUseId ?? null)
+                : (resumeToolUseId ?? existingSubagent.runToolUseId),
             nextChildItemOrdinal: existingSubagent?.nextChildItemOrdinal ?? 100,
             progressItemOrdinal: existingSubagent?.progressItemOrdinal ?? null,
             progressStartedAt: existingSubagent?.progressStartedAt ?? null,
@@ -3654,8 +3672,15 @@ export function makeClaudeAdapterV2(
               },
             });
           }
-          if (existingSubagent === undefined) {
-            const promptNativeItemId = `${nativeItemId}:prompt`;
+          // Each run opens with its own prompt in the child thread: the launch
+          // task, then every message that resumes the subagent.
+          const promptNativeItemId =
+            existingSubagent === undefined
+              ? `${nativeItemId}:prompt`
+              : resumeToolUseId === null
+                ? null
+                : `${nativeItemId}:prompt:${resumeToolUseId}`;
+          if (promptNativeItemId !== null) {
             const promptArtifacts = makeSubagentConversationArtifacts({
               senderThreadId: input.context.input.threadId,
               messageId: idAllocator.derive.messageFromProviderItem({
@@ -3677,7 +3702,7 @@ export function makeClaudeAdapterV2(
               },
               role: "user",
               text: task.prompt,
-              ordinal: 100,
+              ordinal: existingSubagent === undefined ? 100 : ++subagent.nextChildItemOrdinal,
               now,
             });
             yield* emitProviderEvent({
@@ -5362,8 +5387,55 @@ export function makeClaudeAdapterV2(
             context.toolCalls.delete(toolCall.nativeItemId);
           }
 
-          const assistantText = assistantTextFromSdkMessage(message);
           const assistantParentToolUseId = parentToolUseIdFromSdkMessage(message);
+          if (message.type === "assistant" && assistantParentToolUseId !== null) {
+            // Claude never streams subagent output, so each thinking block
+            // arrives whole in its own snapshot and lands in the child thread.
+            const thinking = message.message.content.flatMap((block) =>
+              block.type === "thinking" && block.thinking.trim().length > 0 ? [block.thinking] : [],
+            );
+            const subagent =
+              thinking.length === 0
+                ? undefined
+                : yield* resolveSubagentByToolUseId(context, assistantParentToolUseId);
+            if (subagent !== undefined) {
+              const now = yield* DateTime.now;
+              for (const [index, text] of thinking.entries()) {
+                const nativeItemId = `${message.uuid}:thinking:${index}`;
+                yield* emitProviderEvent({
+                  type: "turn_item.updated",
+                  driver: CLAUDE_PROVIDER,
+                  turnItem: {
+                    id: idAllocator.derive.turnItemFromProviderItem({
+                      driver: CLAUDE_PROVIDER,
+                      nativeItemId,
+                    }),
+                    threadId: subagent.childThreadId,
+                    runId: null,
+                    nodeId: subagent.childRootNodeId,
+                    providerThreadId: null,
+                    providerTurnId: null,
+                    nativeItemRef: {
+                      driver: CLAUDE_PROVIDER,
+                      nativeId: nativeItemId,
+                      strength: "strong",
+                    },
+                    parentItemId: null,
+                    ordinal: ++subagent.nextChildItemOrdinal,
+                    type: "reasoning",
+                    title: "Thinking",
+                    text,
+                    streaming: false,
+                    status: "completed",
+                    startedAt: now,
+                    completedAt: now,
+                    updatedAt: now,
+                  },
+                });
+              }
+            }
+          }
+          const assistantText = assistantTextFromSdkMessage(message);
           if (
             assistantText !== null &&
             assistantText.text.length > 0 &&

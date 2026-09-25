@@ -188,6 +188,7 @@ import {
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import {
+  composerModelPickerCanStayOpen,
   getRestingComposerImagePreviewCounts,
   resolveRestingComposerControlsLayout,
   shouldAnimateComposerRestingTransition,
@@ -1511,6 +1512,11 @@ export interface ChatComposerProps {
   isLocalDraftThread: boolean;
   forceExpandedOnMobile: boolean;
   projectSelectionRequired: boolean;
+  /**
+   * The thread's model, effort, and access belong to its provider (a native
+   * subagent answering a question): hide those pickers and attachments.
+   */
+  hideThreadSettings?: boolean;
 
   // Session phase
   phase: SessionPhase;
@@ -1685,6 +1691,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isLocalDraftThread: _isLocalDraftThread,
     forceExpandedOnMobile,
     projectSelectionRequired,
+    hideThreadSettings = false,
     phase,
     isConnecting,
     isSendBusy,
@@ -2754,6 +2761,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const showCollapsedMobilePromptRow =
     isComposerCollapsedMobile && !isComposerApprovalState && pendingUserInputs.length === 0;
   const showComposerAttachAction =
+    !hideThreadSettings &&
     fileStagingLimit !== null &&
     (!activePendingProgress ||
       (supportsQuestionAttachments &&
@@ -5058,7 +5066,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerControlsVisibleInStrip =
     composerControlsCollapsed && restingControlsHost !== null && restingControlsVisible;
   const composerControlsHidden = composerControlsCollapsed && !restingControlsVisible;
-  if (composerControlsHidden && isComposerModelPickerOpen) {
+  if (
+    isComposerModelPickerOpen &&
+    !composerModelPickerCanStayOpen({
+      controlsHidden: composerControlsHidden,
+      threadSettingsHidden: hideThreadSettings,
+    })
+  ) {
     setIsComposerModelPickerOpen(false);
   }
   useLayoutEffect(() => {
@@ -5304,7 +5318,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const hiddenRestingBlockIds = restingBlockDefs
     .slice(restingBlockDefs.length - restingHiddenBlockCount)
     .map((def) => def.id);
-  const composerControls = showProviderUnavailable ? (
+  const composerControls = hideThreadSettings ? null : showProviderUnavailable ? (
     <ComposerControl
       type="button"
       disabled={!providerSetupInstanceId}

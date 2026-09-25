@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   EventId,
   IsoDateTime,
+  isProviderNativeSubagentThread,
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderCapabilities,
@@ -3212,6 +3213,11 @@ describe("orchestrator MCP toolkit", () => {
             delegated.resultContextTransferId,
           );
 
+          // Delegated children are subagent threads too, but T3 owns them, so
+          // they keep taking follow-ups (provider-native children do not).
+          const delegatedChild = yield* orchestrator.getThreadProjection(delegated.childThreadId);
+          expect(delegatedChild.thread.lineage.relationshipToParent).toBe("subagent");
+          expect(isProviderNativeSubagentThread(delegatedChild.thread)).toBe(false);
           const followupStartSequence = yield* orchestrator.getThreadEventSequence(
             delegated.childThreadId,
           );

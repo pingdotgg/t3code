@@ -277,6 +277,7 @@ export interface ThreadFeedProps {
   readonly agentLabel: string;
   readonly latestRun: ThreadFeedLatestRun | null;
   readonly activeWorkStartedAt: string | null;
+  readonly runlessWorkActive?: boolean;
   readonly listRef: RefObject<LegendListRef | null>;
   readonly freeze: SharedValue<boolean>;
   readonly anchorMessageId: MessageId | null;
@@ -2606,6 +2607,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               .map(([groupId]) => groupId),
           ),
           props.activeWorkStartedAt,
+          props.runlessWorkActive ?? false,
         ),
         props.feed,
         props.queuedMessages,
@@ -2615,6 +2617,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       expandedTurnIds,
       expandedWorkGroups,
       props.activeWorkStartedAt,
+      props.runlessWorkActive,
       props.feed,
       props.latestRun,
     ],
