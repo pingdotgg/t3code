@@ -289,7 +289,7 @@ export function StorageCleanupPreviewPanel({
       <div>
         {controls && (
           <div className="@container/storage-headings px-3 sm:px-4">
-            <div className="hidden items-center gap-8 border-b border-border/60 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70 @min-[32rem]/storage-headings:flex">
+            <div className="hidden items-center gap-8 border-b border-border/60 py-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground/70 @min-[32rem]/storage-headings:flex">
               <span className="min-w-0 flex-1">Category</span>
               <div className="flex shrink-0 gap-4 text-right">
                 <span className="w-20">Space used</span>
