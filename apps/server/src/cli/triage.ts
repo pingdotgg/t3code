@@ -201,7 +201,11 @@ export const triageCommand = Command.make("triage", {
             dbPath: paths.dbPath,
             settingsPath: paths.settingsPath,
             logsDir: paths.logsDir,
-            serverLogPath: paths.serverLogPath,
+            // The server writes no plain log file (`paths.serverLogPath` is
+            // never written). The boot service and the desktop app capture its
+            // output here; see bootService.ts and DesktopObservability.ts.
+            serviceLogPath: path.join(paths.logsDir, "boot-service.log"),
+            desktopBackendLogPath: path.join(paths.logsDir, "server-child.log"),
             serverTracePath: paths.serverTracePath,
             providerEventLogPath: paths.providerEventLogPath,
             terminalLogsDir: paths.terminalLogsDir,
