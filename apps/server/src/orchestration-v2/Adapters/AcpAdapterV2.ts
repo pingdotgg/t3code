@@ -272,16 +272,17 @@ export interface AcpAdapterV2Flavor {
   /**
    * Serves the agent's `fs/read_text_file` and `fs/write_text_file` requests in
    * place of the generic handlers, after the runtime policy guard. Receives the
-   * session cwd. Antigravity confines them to its workspace.
+   * session's policy cwd, which is null when the session has no workspace.
+   * Antigravity confines them to its workspace.
    */
   readonly clientFileSystem?: {
     readonly readTextFile: (
       request: EffectAcpSchema.ReadTextFileRequest,
-      cwd: string,
+      cwd: string | null,
     ) => Effect.Effect<EffectAcpSchema.ReadTextFileResponse, EffectAcpErrors.AcpError>;
     readonly writeTextFile: (
       request: EffectAcpSchema.WriteTextFileRequest,
-      cwd: string,
+      cwd: string | null,
     ) => Effect.Effect<EffectAcpSchema.WriteTextFileResponse, EffectAcpErrors.AcpError>;
   };
   /**
@@ -5396,7 +5397,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             );
           // A flavor's own handlers replace the generic ones: effect-acp keeps
           // only the last handler registered per method.
-          const sessionCwd = input.runtimePolicy.cwd ?? process.cwd();
+          const sessionCwd = input.runtimePolicy.cwd;
           yield* targetRuntime.handleReadTextFile((request) =>
             guardClientFsRead(request.path).pipe(
               Effect.andThen(

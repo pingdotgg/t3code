@@ -122,6 +122,13 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
 export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options,
 ): AcpAdapterV2Flavor {
+  // The attachments dir grant lets the agent read pasted files at the paths
+  // the turn text references. It is a leaf directory of uploads. A session
+  // without a workspace gets no workspace root rather than the server's cwd.
+  const antigravityClientFileRoots = (cwd: string | null) =>
+    cwd === null
+      ? [options.serverConfig.attachmentsDir]
+      : [cwd, options.serverConfig.attachmentsDir];
   const makeRuntime = (input: AcpAdapterV2RuntimeInput) =>
     Effect.gen(function* () {
       // AcpAdapterV2 owns the runtime scope; sign-in and sign-out stop the
@@ -177,21 +184,19 @@ export function makeAntigravityAcpAdapterFlavor(
         });
       }),
     sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
-    // The attachments dir grant lets the agent read pasted files at the paths
-    // the turn text references. It is a leaf directory of uploads.
     clientFileSystem: {
       readTextFile: (request, cwd) =>
         readAntigravityClientTextFile({
           fileSystem: options.fileSystem,
           path: options.path,
-          allowedRoots: [cwd, options.serverConfig.attachmentsDir],
+          allowedRoots: antigravityClientFileRoots(cwd),
           request,
         }),
       writeTextFile: (request, cwd) =>
         writeAntigravityClientTextFile({
           fileSystem: options.fileSystem,
           path: options.path,
-          allowedRoots: [cwd, options.serverConfig.attachmentsDir],
+          allowedRoots: antigravityClientFileRoots(cwd),
           request,
         }),
     },
