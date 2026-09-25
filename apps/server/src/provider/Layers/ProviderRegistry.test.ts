@@ -2118,6 +2118,106 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }),
       );
 
+      it.effect("shares one full refresh that outlives an interrupted caller", () =>
+        Effect.gen(function* () {
+          const codexDriver = ProviderDriverKind.make("codex");
+          const codexInstanceId = ProviderInstanceId.make("codex");
+          const pendingProvider = {
+            instanceId: codexInstanceId,
+            driver: codexDriver,
+            status: "warning",
+            enabled: true,
+            installed: false,
+            auth: { status: "unknown" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: null,
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const refreshedProvider = {
+            ...pendingProvider,
+            status: "ready",
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-06-10T00:01:00.000Z",
+            version: "1.0.0",
+          } as const satisfies ServerProvider;
+          const refreshCalls = yield* Ref.make(0);
+          const probeStarted = yield* Deferred.make<void>();
+          const releaseProbe = yield* Deferred.make<void>();
+          const instance = {
+            instanceId: codexInstanceId,
+            driverKind: codexDriver,
+            continuationIdentity: {
+              driverKind: codexDriver,
+              continuationKey: "codex:instance:codex",
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: codexDriver,
+                    packageName: null,
+                  }),
+                ),
+              getSnapshot: Effect.succeed(pendingProvider),
+              refresh: Effect.gen(function* () {
+                yield* Ref.update(refreshCalls, (count) => count + 1);
+                yield* Deferred.succeed(probeStarted, undefined);
+                yield* Deferred.await(releaseProbe);
+                return refreshedProvider;
+              }),
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+            },
+            adapter: {} as ProviderInstance["adapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          } satisfies ProviderInstance;
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (instanceId) =>
+                Effect.succeed(instanceId === codexInstanceId ? instance : undefined),
+              listInstances: Effect.succeed([instance]),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+            },
+          );
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-shared-refresh-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            const interruptedCaller = yield* registry.refresh().pipe(Effect.forkChild);
+            yield* Deferred.await(probeStarted);
+            const joinedCaller = yield* registry.refresh().pipe(Effect.forkChild);
+            yield* Effect.yieldNow;
+            yield* Fiber.interrupt(interruptedCaller);
+            yield* Deferred.succeed(releaseProbe, undefined);
+
+            const expected = [withBundledCompatibility(refreshedProvider)];
+            assert.deepStrictEqual(yield* Fiber.join(joinedCaller), expected);
+            assert.deepStrictEqual(yield* registry.getProviders, expected);
+            assert.strictEqual(yield* Ref.get(refreshCalls), 1);
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
       it.effect("keeps consuming registry changes after one sync fails", () =>
         Effect.gen(function* () {
           const codexDriver = ProviderDriverKind.make("codex");

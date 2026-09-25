@@ -2390,6 +2390,21 @@ const makeWsRpcLayer = (
               if (input.instanceId === undefined) {
                 yield* usageLimitSources.refresh;
               }
+              // A full catalog refresh probes each instance itself, because the
+              // shared `refresh()` run may have started before the caches above
+              // were cleared.
+              const refreshAll = input.refreshModels
+                ? providerInstances.listInstances.pipe(
+                    Effect.flatMap((instances) =>
+                      Effect.forEach(
+                        instances,
+                        (instance) => providerRegistry.refreshInstance(instance.instanceId),
+                        { concurrency: "unbounded", discard: true },
+                      ),
+                    ),
+                    Effect.andThen(providerRegistry.getProviders),
+                  )
+                : providerRegistry.refresh();
               let providers = yield* input.cwd !== undefined && input.instanceId !== undefined
                 ? providerRegistry.refreshWorkspaceSnapshot({
                     instanceId: input.instanceId,
@@ -2397,7 +2412,7 @@ const makeWsRpcLayer = (
                   })
                 : input.instanceId !== undefined
                   ? providerRegistry.refreshInstance(input.instanceId)
-                  : providerRegistry.refresh();
+                  : refreshAll;
               if (input.refreshModels) {
                 const instances = yield* providerInstances.listInstances;
                 for (const instance of instances) {

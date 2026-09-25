@@ -32,8 +32,11 @@ import {
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as Fiber from "effect/Fiber";
+import * as FiberHandle from "effect/FiberHandle";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -573,9 +576,27 @@ export const ProviderRegistryLive = Layer.effect(
       }).pipe(Effect.andThen(Ref.get(providersRef)));
     });
 
+    // Untargeted refreshes share one run that lives in the registry scope.
+    // Callers only join it, so a caller interrupt (a dropped socket) stops the
+    // wait while the probes still finish and land in `providersRef`.
+    const refreshAllFiber = yield* FiberHandle.make<ReadonlyArray<ServerProvider>, never>();
+    const refreshAllGate = yield* Semaphore.make(1);
+    const sharedRefreshAll = refreshAllGate
+      .withPermits(1)(
+        FiberHandle.get(refreshAllFiber).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () => FiberHandle.run(refreshAllFiber, refreshAll()),
+              onSome: Effect.succeed,
+            }),
+          ),
+        ),
+      )
+      .pipe(Effect.flatMap(Fiber.join));
+
     const refresh = Effect.fn("refresh")(function* (provider?: ProviderDriverKind) {
       if (provider === undefined) {
-        return yield* refreshAll();
+        return yield* sharedRefreshAll;
       }
       // Kind-scoped refreshes target the default instance for that driver.
       const defaultInstanceId = defaultInstanceIdForDriver(provider);
