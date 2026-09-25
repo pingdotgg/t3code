@@ -26,8 +26,12 @@ import type {
   DesktopPreviewTabDefaults,
   PreviewAutomationClickInput,
   PreviewAutomationActionEvent,
+  PreviewAutomationCompletedNetworkRecord,
   PreviewAutomationConsoleEntry,
+  PreviewAutomationDiagnosticsInput,
+  PreviewAutomationDiagnosticsResult,
   PreviewAutomationEvaluateInput,
+  PreviewAutomationNavigationTiming,
   PreviewAutomationPressInput,
   PreviewAutomationNetworkEntry,
   PreviewAutomationScrollInput,
@@ -156,6 +160,11 @@ const PICTURE_IN_PICTURE_MIN_WIDTH = 240;
 const PICTURE_IN_PICTURE_MIN_HEIGHT = 160;
 const PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON = 0.002;
 const DIAGNOSTIC_BUFFER_LIMIT = 200;
+const DIAGNOSTIC_CONSOLE_TEXT_LIMIT = 4_096;
+const DIAGNOSTIC_URL_LIMIT = 2_048;
+const DIAGNOSTIC_STACK_LIMIT = 12;
+const DIAGNOSTIC_RESPONSE_BODY_MAX_ENCODED_BYTES = 262_144;
+const DIAGNOSTIC_RESPONSE_BODY_LIMIT = 65_536;
 const MAX_ARTIFACT_SITE_SLUG_LENGTH = 80;
 const AGENT_CURSOR_MOVE_MS = 160;
 const AGENT_CURSOR_CLICK_LEAD_MS = 40;
@@ -493,12 +502,88 @@ interface BrowserControlSession {
 interface BrowserDiagnostics {
   readonly consoleEntries: ReadonlyArray<PreviewAutomationConsoleEntry>;
   readonly networkEntries: ReadonlyArray<PreviewAutomationNetworkEntry>;
-  readonly requests: ReadonlyMap<string, { url: string; method: string }>;
+  readonly requests: ReadonlyMap<string, ActiveNetworkRequest>;
+  readonly completedRequests: ReadonlyArray<PreviewAutomationCompletedNetworkRecord>;
 }
 
 const isRecordingInput = Schema.is(DesktopPreviewRecordingInputSchema);
 
 type RecordingInputListener = (event: DesktopPreviewRecordingInputEvent) => Effect.Effect<void>;
+
+interface ActiveNetworkRequest {
+  readonly url: string;
+  readonly method: string;
+  readonly resourceType?: string;
+  readonly startedAt: string;
+  readonly startedAtMillis: number;
+  readonly status?: number;
+  readonly mimeType?: string;
+  readonly protocol?: string;
+  readonly fromDiskCache?: boolean;
+}
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+
+const boundedDiagnosticText = (value: unknown, limit: number): string =>
+  Array.from(String(value)).slice(0, limit).join("");
+
+const boundedDiagnosticUrl = (value: unknown): string | undefined => {
+  if (typeof value !== "string") return undefined;
+  return boundedDiagnosticText(value, DIAGNOSTIC_URL_LIMIT);
+};
+
+const oneBasedDiagnosticNumber = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isInteger(value) && value >= 0 ? value + 1 : undefined;
+
+const diagnosticStackFrames = (
+  value: unknown,
+): ReadonlyArray<{
+  readonly functionName?: string;
+  readonly url?: string;
+  readonly lineNumber?: number;
+  readonly columnNumber?: number;
+}> => {
+  const callFrames = asRecord(value).callFrames;
+  if (!Array.isArray(callFrames)) return [];
+  return callFrames.slice(0, DIAGNOSTIC_STACK_LIMIT).map((frame) => {
+    const record = asRecord(frame);
+    const functionName =
+      typeof record.functionName === "string"
+        ? boundedDiagnosticText(record.functionName, DIAGNOSTIC_CONSOLE_TEXT_LIMIT)
+        : undefined;
+    const url = boundedDiagnosticUrl(record.url);
+    const lineNumber = oneBasedDiagnosticNumber(record.lineNumber);
+    const columnNumber = oneBasedDiagnosticNumber(record.columnNumber);
+    return {
+      ...(functionName === undefined ? {} : { functionName }),
+      ...(url === undefined ? {} : { url }),
+      ...(lineNumber === undefined ? {} : { lineNumber }),
+      ...(columnNumber === undefined ? {} : { columnNumber }),
+    };
+  });
+};
+
+const diagnosticLocationFields = (
+  source: Record<string, unknown>,
+  stack: ReadonlyArray<{
+    readonly functionName?: string;
+    readonly url?: string;
+    readonly lineNumber?: number;
+    readonly columnNumber?: number;
+  }>,
+) => {
+  const firstFrame = stack[0];
+  const url = boundedDiagnosticUrl(source.url) ?? firstFrame?.url;
+  const lineNumber = oneBasedDiagnosticNumber(source.lineNumber) ?? firstFrame?.lineNumber;
+  const columnNumber = oneBasedDiagnosticNumber(source.columnNumber) ?? firstFrame?.columnNumber;
+  return {
+    ...(url === undefined ? {} : { url }),
+    ...(lineNumber === undefined ? {} : { lineNumber }),
+    ...(columnNumber === undefined ? {} : { columnNumber }),
+    ...(stack.length === 0 ? {} : { stack }),
+  };
+};
 
 type PointerEventListener = (event: DesktopPreviewPointerEvent) => Effect.Effect<void>;
 
@@ -1141,6 +1226,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     params: Record<string, unknown>,
   ) {
     const timestamp = yield* currentIso;
+    const capturedAtMillis = yield* currentMillis;
     yield* Ref.update(diagnosticsRef, (allDiagnostics) => {
       const current = allDiagnostics.get(webContentsId);
       if (!current) return allDiagnostics;
@@ -1152,107 +1238,198 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             .map((arg) => {
               if (typeof arg !== "object" || arg === null) return String(arg);
               const value = arg as Record<string, unknown>;
-              return String(value["value"] ?? value["description"] ?? "");
+              return String(
+                value["value"] ?? value["description"] ?? value["unserializableValue"] ?? "",
+              );
             })
             .join(" ");
+          const stack = diagnosticStackFrames(params["stackTrace"]);
+          const location = diagnosticLocationFields(asRecord(params), stack);
           return {
             ...current,
             consoleEntries: pushBounded(current.consoleEntries, {
               level: typeof params["type"] === "string" ? params["type"] : "log",
-              text,
+              text: boundedDiagnosticText(text, DIAGNOSTIC_CONSOLE_TEXT_LIMIT),
               timestamp,
               source: "console",
+              ...location,
             }),
           };
         }
         if (method === "Runtime.exceptionThrown") {
-          const details =
-            typeof params["exceptionDetails"] === "object" && params["exceptionDetails"] !== null
-              ? (params["exceptionDetails"] as Record<string, unknown>)
-              : {};
+          const details = asRecord(params["exceptionDetails"]);
+          const exception = asRecord(details["exception"]);
+          const stack = diagnosticStackFrames(details["stackTrace"] ?? exception["stackTrace"]);
+          const description =
+            typeof exception["description"] === "string"
+              ? exception["description"]
+              : typeof exception["value"] === "string"
+                ? exception["value"]
+                : typeof details["message"] === "string"
+                  ? details["message"]
+                  : details["text"];
           return {
             ...current,
             consoleEntries: pushBounded(current.consoleEntries, {
               level: "error",
-              text: String(details["text"] ?? "Uncaught exception"),
+              text: boundedDiagnosticText(
+                description ?? "Uncaught exception",
+                DIAGNOSTIC_CONSOLE_TEXT_LIMIT,
+              ),
               timestamp,
               source: "exception",
+              ...diagnosticLocationFields(details, stack),
             }),
           };
         }
         if (method === "Log.entryAdded") {
-          const entry =
-            typeof params["entry"] === "object" && params["entry"] !== null
-              ? (params["entry"] as Record<string, unknown>)
-              : {};
+          const entry = asRecord(params["entry"]);
+          const stack = diagnosticStackFrames(entry["stackTrace"]);
           return {
             ...current,
             consoleEntries: pushBounded(current.consoleEntries, {
               level: typeof entry["level"] === "string" ? entry["level"] : "info",
-              text: String(entry["text"] ?? ""),
+              text: boundedDiagnosticText(entry["text"] ?? "", DIAGNOSTIC_CONSOLE_TEXT_LIMIT),
               timestamp,
               source: typeof entry["source"] === "string" ? entry["source"] : "log",
+              ...diagnosticLocationFields(entry, stack),
             }),
           };
         }
         if (method === "Network.requestWillBeSent" && requestId) {
-          const request =
-            typeof params["request"] === "object" && params["request"] !== null
-              ? (params["request"] as Record<string, unknown>)
-              : {};
+          const request = asRecord(params["request"]);
           return {
             ...current,
             requests: replaceMap(current.requests, (copy) => {
               copy.set(requestId, {
-                url: String(request["url"] ?? ""),
+                url: boundedDiagnosticText(request["url"] ?? "", DIAGNOSTIC_URL_LIMIT),
                 method: String(request["method"] ?? "GET"),
+                ...(typeof params["type"] === "string" ? { resourceType: params["type"] } : {}),
+                startedAt: timestamp,
+                startedAtMillis: capturedAtMillis,
               });
+              while (copy.size > DIAGNOSTIC_BUFFER_LIMIT) {
+                const oldest = copy.keys().next().value;
+                if (oldest === undefined) break;
+                copy.delete(oldest);
+              }
             }),
           };
         }
         if (method === "Network.responseReceived" && requestId) {
           const request = current.requests.get(requestId);
-          const response =
-            typeof params["response"] === "object" && params["response"] !== null
-              ? (params["response"] as Record<string, unknown>)
-              : {};
+          const response = asRecord(params["response"]);
           const status = typeof response["status"] === "number" ? response["status"] : null;
-          return request && status !== null && status >= 400
-            ? {
-                ...current,
-                networkEntries: pushBounded(current.networkEntries, {
-                  ...request,
-                  status,
-                  failed: true,
-                  timestamp,
-                }),
-              }
-            : current;
+          if (!request) return current;
+          const updatedRequest: ActiveNetworkRequest = {
+            ...request,
+            ...(status === null ? {} : { status }),
+            ...(typeof response["mimeType"] === "string" ? { mimeType: response["mimeType"] } : {}),
+            ...(typeof response["protocol"] === "string" ? { protocol: response["protocol"] } : {}),
+            ...(typeof response["fromDiskCache"] === "boolean"
+              ? { fromDiskCache: response["fromDiskCache"] }
+              : {}),
+          };
+          return {
+            ...current,
+            requests: replaceMap(current.requests, (copy) => copy.set(requestId, updatedRequest)),
+            ...(status !== null && status >= 400
+              ? {
+                  networkEntries: pushBounded(current.networkEntries, {
+                    url: request.url,
+                    method: request.method,
+                    status,
+                    failed: true,
+                    timestamp,
+                  }),
+                }
+              : {}),
+          };
         }
         if (method === "Network.loadingFailed" && requestId) {
           const request = current.requests.get(requestId);
+          const errorText = boundedDiagnosticText(
+            params["errorText"] ?? "Network request failed",
+            DIAGNOSTIC_CONSOLE_TEXT_LIMIT,
+          );
+          const completedAt = timestamp;
+          const completed = request
+            ? {
+                requestId: boundedDiagnosticText(requestId, 256),
+                url: request.url,
+                method: request.method,
+                ...(request.resourceType === undefined
+                  ? {}
+                  : { resourceType: request.resourceType }),
+                ...(request.status === undefined ? {} : { status: request.status }),
+                ...(request.mimeType === undefined ? {} : { mimeType: request.mimeType }),
+                ...(request.protocol === undefined ? {} : { protocol: request.protocol }),
+                ...(request.fromDiskCache === undefined
+                  ? {}
+                  : { fromDiskCache: request.fromDiskCache }),
+                failed: true,
+                errorText,
+                startedAt: request.startedAt,
+                completedAt,
+                durationMs: Math.max(0, capturedAtMillis - request.startedAtMillis),
+              }
+            : null;
           return {
             ...current,
             requests: replaceMap(current.requests, (copy) => {
               copy.delete(requestId);
             }),
+            completedRequests: completed
+              ? pushBounded(current.completedRequests, completed)
+              : current.completedRequests,
             networkEntries: request
               ? pushBounded(current.networkEntries, {
                   ...request,
                   status: null,
                   failed: true,
-                  errorText: String(params["errorText"] ?? "Network request failed"),
+                  errorText,
                   timestamp,
                 })
               : current.networkEntries,
           };
         }
         if (method === "Network.loadingFinished" && requestId) {
+          const request = current.requests.get(requestId);
+          const encodedDataLength =
+            typeof params["encodedDataLength"] === "number" &&
+            Number.isFinite(params["encodedDataLength"]) &&
+            params["encodedDataLength"] >= 0
+              ? params["encodedDataLength"]
+              : undefined;
+          const completed = request
+            ? {
+                requestId: boundedDiagnosticText(requestId, 256),
+                url: request.url,
+                method: request.method,
+                ...(request.resourceType === undefined
+                  ? {}
+                  : { resourceType: request.resourceType }),
+                ...(request.status === undefined ? {} : { status: request.status }),
+                ...(request.mimeType === undefined ? {} : { mimeType: request.mimeType }),
+                ...(request.protocol === undefined ? {} : { protocol: request.protocol }),
+                ...(request.fromDiskCache === undefined
+                  ? {}
+                  : { fromDiskCache: request.fromDiskCache }),
+                ...(encodedDataLength === undefined ? {} : { encodedDataLength }),
+                failed: request.status !== undefined && request.status >= 400,
+                startedAt: request.startedAt,
+                completedAt: timestamp,
+                durationMs: Math.max(0, capturedAtMillis - request.startedAtMillis),
+              }
+            : null;
           return {
             ...current,
             requests: replaceMap(current.requests, (copy) => {
               copy.delete(requestId);
             }),
+            completedRequests: completed
+              ? pushBounded(current.completedRequests, completed)
+              : current.completedRequests,
           };
         }
         return current;
@@ -1395,6 +1572,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                   consoleEntries: [],
                   networkEntries: [],
                   requests: new Map(),
+                  completedRequests: [],
                 });
               }),
             );
@@ -3769,6 +3947,190 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  const readPerformanceMetrics = (send: SendCommand) =>
+    send("Performance.getMetrics").pipe(
+      Effect.map((raw) => {
+        const metrics = Array.isArray((raw as Record<string, unknown> | undefined)?.metrics)
+          ? ((raw as Record<string, unknown>).metrics as ReadonlyArray<unknown>)
+          : [];
+        return metrics
+          .flatMap((metric) => {
+            const record = asRecord(metric);
+            return typeof record.name === "string" &&
+              typeof record.value === "number" &&
+              Number.isFinite(record.value)
+              ? [{ name: record.name, value: record.value }]
+              : [];
+          })
+          .toSorted((left, right) => left.name.localeCompare(right.name));
+      }),
+    );
+
+  const navigationTimingExpression = `(() => {
+    const entry = performance.getEntriesByType("navigation")[0];
+    if (!entry) return null;
+    return {
+      type: entry.type,
+      startTime: entry.startTime,
+      duration: entry.duration,
+      domInteractive: entry.domInteractive,
+      domContentLoadedEventEnd: entry.domContentLoadedEventEnd,
+      loadEventEnd: entry.loadEventEnd,
+      transferSize: entry.transferSize,
+      encodedBodySize: entry.encodedBodySize,
+      decodedBodySize: entry.decodedBodySize
+    };
+  })()`;
+
+  const readNavigationTiming = (tabId: string, send: SendCommand) =>
+    evaluateWithDebugger<PreviewAutomationNavigationTiming | null>(
+      tabId,
+      send,
+      navigationTimingExpression,
+      true,
+    ).pipe(Effect.catch(() => Effect.succeed(null)));
+
+  const automationDiagnostics = Effect.fn("PreviewManager.automationDiagnostics")(function* (
+    tabId: string,
+    input: PreviewAutomationDiagnosticsInput,
+  ): Effect.fn.Return<PreviewAutomationDiagnosticsResult, PreviewManagerError> {
+    const wc = yield* requireWebContents(tabId);
+    return yield* withControlSession(tabId, wc, "diagnostics", (send) =>
+      Effect.gen(function* () {
+        const diagnostics = (yield* Ref.get(diagnosticsRef)).get(wc.id);
+        const kind = input.kind;
+        if (kind === "console") {
+          const entries = [...(diagnostics?.consoleEntries ?? [])];
+          const limit = input.limit ?? 50;
+          const returnedEntries = entries.slice(-limit);
+          return {
+            kind,
+            tabId,
+            entries: returnedEntries,
+            capturedCount: entries.length,
+            returnedCount: returnedEntries.length,
+            truncated: entries.length > limit,
+          };
+        }
+
+        if (kind === "network") {
+          const records = [...(diagnostics?.completedRequests ?? [])];
+          const limit = input.limit ?? 50;
+          const selectedRequestId = input.requestId;
+          const selectedRecord = selectedRequestId
+            ? records.find((record) => record.requestId === selectedRequestId)
+            : undefined;
+          const selectedRecords = selectedRequestId
+            ? selectedRecord
+              ? [selectedRecord]
+              : []
+            : records.slice(-limit).toReversed();
+          const responseBodyDetails = yield* Effect.gen(function* () {
+            if (!selectedRequestId || !input.includeResponseBody) return {};
+            if (!selectedRecord) return {};
+            if (selectedRecord.encodedDataLength === undefined) {
+              return {
+                responseBodyUnavailableReason:
+                  "Response body is unavailable because encoded response size is unknown.",
+              };
+            }
+            if (selectedRecord.encodedDataLength > DIAGNOSTIC_RESPONSE_BODY_MAX_ENCODED_BYTES) {
+              return {
+                responseBodyUnavailableReason:
+                  "Response body is unavailable because encoded response size exceeds 262144 bytes.",
+              };
+            }
+            const rawBody = yield* send("Network.getResponseBody", {
+              requestId: selectedRequestId,
+            }).pipe(
+              Effect.map((raw) => asRecord(raw)),
+              Effect.catch((cause) =>
+                Effect.succeed({
+                  responseBodyUnavailableReason: boundedDiagnosticText(
+                    cause instanceof Error ? cause.message : String(cause),
+                    DIAGNOSTIC_CONSOLE_TEXT_LIMIT,
+                  ),
+                }),
+              ),
+            );
+            if ("responseBodyUnavailableReason" in rawBody) return rawBody;
+            const body = typeof rawBody.body === "string" ? rawBody.body : null;
+            if (body === null) {
+              return { responseBodyUnavailableReason: "CDP returned no response body." };
+            }
+            const responseBody = boundedDiagnosticText(body, DIAGNOSTIC_RESPONSE_BODY_LIMIT);
+            return {
+              responseBody,
+              responseBodyBase64Encoded: rawBody.base64Encoded === true,
+              responseBodyTruncated: Array.from(body).length > DIAGNOSTIC_RESPONSE_BODY_LIMIT,
+            };
+          });
+          return {
+            kind,
+            tabId,
+            records: selectedRecords,
+            capturedCount: records.length,
+            returnedCount: selectedRecords.length,
+            truncated: selectedRequestId ? false : records.length > limit,
+            ...(selectedRequestId === undefined ? {} : { selectedRequestId }),
+            ...(selectedRecord === undefined ? {} : { selectedRecord }),
+            ...(selectedRequestId === undefined
+              ? {}
+              : { requestFound: selectedRecord !== undefined }),
+            ...responseBodyDetails,
+          };
+        }
+
+        if (kind === "performance") {
+          yield* send("Performance.enable");
+          const sampleMs = input.sampleMs ?? 0;
+          const before = yield* readPerformanceMetrics(send);
+          if (sampleMs > 0) yield* Effect.sleep(sampleMs);
+          const after = sampleMs > 0 ? yield* readPerformanceMetrics(send) : before;
+          const delta =
+            sampleMs > 0
+              ? after.flatMap((metric) => {
+                  const prior = before.find((candidate) => candidate.name === metric.name);
+                  return prior === undefined
+                    ? []
+                    : [{ name: metric.name, value: metric.value - prior.value }];
+                })
+              : undefined;
+          const navigation = yield* readNavigationTiming(tabId, send);
+          return {
+            kind,
+            tabId,
+            metrics: after,
+            ...(sampleMs > 0 ? { before, after, delta } : {}),
+            navigation,
+          };
+        }
+
+        const heap = asRecord(yield* send("Runtime.getHeapUsage"));
+        const dom = asRecord(yield* send("Memory.getDOMCounters"));
+        return {
+          kind,
+          tabId,
+          heapUsage: {
+            usedSize: typeof heap.usedSize === "number" ? heap.usedSize : 0,
+            totalSize: typeof heap.totalSize === "number" ? heap.totalSize : 0,
+            ...(typeof heap.embedderHeapUsedSize === "number"
+              ? { embedderHeapSize: heap.embedderHeapUsedSize }
+              : {}),
+            ...(typeof heap.backingStorageSize === "number"
+              ? { backingStorageSize: heap.backingStorageSize }
+              : {}),
+          },
+          domCounters: {
+            documents: typeof dom.documents === "number" ? dom.documents : 0,
+            nodes: typeof dom.nodes === "number" ? dom.nodes : 0,
+            jsEventListeners: typeof dom.jsEventListeners === "number" ? dom.jsEventListeners : 0,
+          },
+        };
+      }),
+    );
+  });
+
   const resolveClickPoint = Effect.fn("PreviewManager.resolveClickPoint")(function* (
     tabId: string,
     send: SendCommand,
@@ -4609,6 +4971,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   return {
     automationClick,
+    automationDiagnostics,
     automationEvaluate,
     automationPress,
     automationScroll,
@@ -5025,6 +5388,10 @@ export class PreviewManager extends Context.Service<
     readonly automationSnapshot: (
       tabId: string,
     ) => Effect.Effect<PreviewAutomationSnapshot, PreviewManagerError>;
+    readonly automationDiagnostics: (
+      tabId: string,
+      input: PreviewAutomationDiagnosticsInput,
+    ) => Effect.Effect<PreviewAutomationDiagnosticsResult, PreviewManagerError>;
     readonly automationClick: (
       tabId: string,
       input: PreviewAutomationClickInput,
@@ -5140,6 +5507,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     saveRecording: operations.saveRecording,
     automationStatus: operations.automationStatus,
     automationSnapshot: operations.automationSnapshot,
+    automationDiagnostics: operations.automationDiagnostics,
     automationClick: operations.automationClick,
     automationType: operations.automationType,
     automationPress: operations.automationPress,

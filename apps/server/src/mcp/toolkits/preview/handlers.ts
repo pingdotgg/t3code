@@ -6,6 +6,8 @@ import {
   PREVIEW_RECORDING_STOP_TIMEOUT_MS,
   PreviewAutomationRecordingTransferError,
   PreviewAutomationRecordingDesktopUpdateRequiredError,
+  type PreviewAutomationDiagnosticsInput,
+  type PreviewAutomationDiagnosticsResult,
   PreviewAutomationRecordingArtifact,
   type ToolActivityIcon,
   type ThreadId,
@@ -29,6 +31,11 @@ import { resolveAttachmentRelativePath } from "../../../attachmentPaths.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import {
+  mcpToolCallDuration,
+  mcpToolCallsTotal,
+  withMetrics,
+} from "../../../observability/Metrics.ts";
 import { PreviewSnapshotToolkit, PreviewStandardToolkit, PreviewToolkit } from "./tools.ts";
 
 /**
@@ -63,16 +70,32 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
   const scope = yield* McpInvocationContext.requireMcpCapability("preview");
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   let targetTabId = tabId;
-  const result = yield* broker.invoke<A>({
-    onTargetTab: (resolvedTabId) => {
-      targetTabId = resolvedTabId;
+  const result = yield* withMetrics(
+    broker
+      .invoke<A>({
+        onTargetTab: (resolvedTabId) => {
+          targetTabId = resolvedTabId;
+        },
+        scope,
+        operation,
+        input,
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        ...(tabId === undefined ? {} : { tabId }),
+      })
+      .pipe(
+        Effect.withSpan("t3.mcp.tool", {
+          attributes: {
+            "mcp.tool.family": "preview",
+            "mcp.tool.operation": operation,
+          },
+        }),
+      ),
+    {
+      counter: mcpToolCallsTotal,
+      timer: mcpToolCallDuration,
+      attributes: { family: "preview", operation },
     },
-    scope,
-    operation,
-    input,
-    ...(timeoutMs === undefined ? {} : { timeoutMs }),
-    ...(tabId === undefined ? {} : { tabId }),
-  });
+  );
   if (["status", "open", "navigate", "snapshot"].includes(operation)) return { result };
   const statusTabId =
     (operation !== "evaluate" && typeof result === "object" && result !== null
@@ -202,6 +225,11 @@ const handlers = {
     const { includeImage: _includeImage, save: _save, ...operationInput } = input ?? {};
     return invokeTargeted<PreviewAutomationSnapshot>("snapshot", operationInput);
   },
+  preview_diagnostics: (input) =>
+    invokeTargeted<PreviewAutomationDiagnosticsResult>(
+      "diagnostics",
+      input as PreviewAutomationDiagnosticsInput,
+    ),
   preview_click: (input) => invokeTargeted<object>("click", input, input.timeoutMs),
   preview_type: (input) => invokeTargeted<object>("type", input, input.timeoutMs),
   preview_press: (input) => invokeTargeted<object>("press", input),

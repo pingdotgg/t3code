@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import {
   ApprovalRequestId,
   CodexSettings,
+  EnvironmentId,
   EventId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -37,6 +38,7 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
@@ -296,6 +298,177 @@ validationLayer("CodexAdapterLive validation", (it) => {
         threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
       });
+    }),
+  );
+
+  it.effect("configures capability-specific Codex MCP catalogs without the legacy root", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-mcp-catalogs");
+      const baseConfig = {
+        environmentId: EnvironmentId.make("environment-test"),
+        threadId,
+        providerSessionId: "provider-session",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        previewEndpoint: "http://127.0.0.1:43123/mcp/preview",
+        deviceEndpoint: "http://127.0.0.1:43123/mcp/device",
+        pullRequestsEndpoint: "http://127.0.0.1:43123/mcp/pull-requests",
+        workStateEndpoint: "http://127.0.0.1:43123/mcp/work-state",
+        authorizationHeader: "Bearer test-token",
+      } as const;
+
+      McpProviderSession.setMcpProviderSession({
+        ...baseConfig,
+        capabilities: new Set(["pull-requests", "work_state"]),
+      });
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const workOnly = validationRuntimeFactory.factory.mock.calls.at(-1)?.[0];
+      NodeAssert.deepStrictEqual(workOnly?.appServerArgs, [
+        "-c",
+        "mcp_servers.t3-pull-requests.url=http://127.0.0.1:43123/mcp/pull-requests",
+        "-c",
+        'mcp_servers.t3-pull-requests.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+        "-c",
+        "mcp_servers.hyde-work-state.url=http://127.0.0.1:43123/mcp/work-state",
+        "-c",
+        'mcp_servers.hyde-work-state.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+      ]);
+      NodeAssert.equal(
+        workOnly?.appServerArgs?.some((value) => value.includes("t3-code.url")),
+        false,
+      );
+      NodeAssert.deepStrictEqual(
+        workOnly?.mcpCapabilities,
+        new Set(["pull-requests", "work_state"]),
+      );
+      yield* adapter.stopSession(threadId);
+
+      const combinedThreadId = asThreadId("thread-mcp-combined");
+      McpProviderSession.setMcpProviderSession({
+        ...baseConfig,
+        threadId: combinedThreadId,
+        capabilities: new Set(["preview", "device", "pull-requests", "work_state"]),
+      });
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: combinedThreadId,
+        runtimeMode: "full-access",
+      });
+      const combined = validationRuntimeFactory.factory.mock.calls.at(-1)?.[0];
+      NodeAssert.deepStrictEqual(combined?.appServerArgs, [
+        "-c",
+        "mcp_servers.t3-preview.url=http://127.0.0.1:43123/mcp/preview",
+        "-c",
+        'mcp_servers.t3-preview.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+        "-c",
+        "mcp_servers.t3-pull-requests.url=http://127.0.0.1:43123/mcp/pull-requests",
+        "-c",
+        'mcp_servers.t3-pull-requests.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+        "-c",
+        "mcp_servers.t3-device.url=http://127.0.0.1:43123/mcp/device",
+        "-c",
+        'mcp_servers.t3-device.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+        "-c",
+        "mcp_servers.hyde-work-state.url=http://127.0.0.1:43123/mcp/work-state",
+        "-c",
+        'mcp_servers.hyde-work-state.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+      ]);
+      NodeAssert.equal(
+        combined?.appServerArgs?.some((value) => value.includes("t3-code.url")),
+        false,
+      );
+      NodeAssert.deepStrictEqual(
+        combined?.mcpCapabilities,
+        new Set(["preview", "device", "pull-requests", "work_state"]),
+      );
+      yield* adapter.stopSession(combinedThreadId);
+      McpProviderSession.clearAllMcpProviderSessions();
+    }),
+  );
+
+  it.effect("reports only MCP capabilities backed by a configured endpoint", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      validationRuntimeFactory.factory.mockClear();
+      McpProviderSession.clearAllMcpProviderSessions();
+
+      const noMcpThread = asThreadId("thread-mcp-none");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: noMcpThread,
+        runtimeMode: "full-access",
+      });
+      const noMcp = validationRuntimeFactory.factory.mock.calls.at(-1)?.[0];
+      NodeAssert.equal(noMcp?.appServerArgs, undefined);
+      NodeAssert.equal(noMcp?.mcpCapabilities, undefined);
+      yield* adapter.stopSession(noMcpThread);
+
+      const startConfigured = (
+        threadId: ThreadId,
+        config: Parameters<typeof McpProviderSession.setMcpProviderSession>[0],
+      ) =>
+        Effect.gen(function* () {
+          McpProviderSession.setMcpProviderSession(config);
+          yield* adapter.startSession({
+            provider: ProviderDriverKind.make("codex"),
+            threadId,
+            runtimeMode: "full-access",
+          });
+          const options = validationRuntimeFactory.factory.mock.calls.at(-1)?.[0];
+          yield* adapter.stopSession(threadId);
+          return options;
+        });
+
+      const common = {
+        environmentId: EnvironmentId.make("environment-test"),
+        providerSessionId: "provider-session",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer test-token",
+      } as const;
+
+      const legacyPreview = yield* startConfigured(asThreadId("thread-mcp-legacy-preview"), {
+        ...common,
+        threadId: asThreadId("thread-mcp-legacy-preview"),
+        capabilities: new Set(["preview"]),
+      });
+      NodeAssert.deepStrictEqual(legacyPreview?.mcpCapabilities, new Set(["preview"]));
+      NodeAssert.equal(
+        legacyPreview?.appServerArgs?.includes(
+          "mcp_servers.t3-code.url=http://127.0.0.1:43123/mcp",
+        ),
+        true,
+      );
+
+      const workOnly = yield* startConfigured(asThreadId("thread-mcp-work-only"), {
+        ...common,
+        threadId: asThreadId("thread-mcp-work-only"),
+        workStateEndpoint: "http://127.0.0.1:43123/mcp/work-state",
+        capabilities: new Set(["work_state"]),
+      });
+      NodeAssert.deepStrictEqual(workOnly?.mcpCapabilities, new Set(["work_state"]));
+
+      const missingWorkEndpoint = yield* startConfigured(
+        asThreadId("thread-mcp-missing-work-endpoint"),
+        {
+          ...common,
+          threadId: asThreadId("thread-mcp-missing-work-endpoint"),
+          previewEndpoint: "http://127.0.0.1:43123/mcp/preview",
+          capabilities: new Set(["preview", "work_state"]),
+        },
+      );
+      NodeAssert.deepStrictEqual(missingWorkEndpoint?.mcpCapabilities, new Set(["preview"]));
+      NodeAssert.equal(
+        missingWorkEndpoint?.appServerArgs?.some((value) => value.includes("hyde-work-state")),
+        false,
+      );
+
+      McpProviderSession.clearAllMcpProviderSessions();
     }),
   );
 });

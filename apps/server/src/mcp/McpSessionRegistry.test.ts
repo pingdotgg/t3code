@@ -163,3 +163,51 @@ it.effect("does not keep credentials of other threads alive", () =>
     expect(yield* registry.resolve(token)).toBeUndefined();
   }),
 );
+
+it.effect("issues capability-specific endpoints over the shared bearer registry", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const previewOnly = yield* registry.issue({
+      threadId: ThreadId.make("thread-preview-only"),
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      capabilities: new Set(["preview"]),
+    });
+    expect(previewOnly.config.capabilities).toEqual(new Set(["preview", "pull-requests"]));
+    expect(previewOnly.config.previewEndpoint).toBe("http://127.0.0.1:43123/mcp/preview");
+    expect(previewOnly.config.pullRequestsEndpoint).toBe(
+      "http://127.0.0.1:43123/mcp/pull-requests",
+    );
+    expect(previewOnly.config.workStateEndpoint).toBeUndefined();
+
+    const workStateOnly = yield* registry.issue({
+      threadId: ThreadId.make("thread-work-state-only"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["work_state"]),
+    });
+    expect(workStateOnly.config.endpoint).toBe("http://127.0.0.1:43123/mcp");
+    expect(workStateOnly.config.pullRequestsEndpoint).toBe(
+      "http://127.0.0.1:43123/mcp/pull-requests",
+    );
+    expect(workStateOnly.config.workStateEndpoint).toBe("http://127.0.0.1:43123/mcp/work-state");
+    expect(workStateOnly.config.capabilities).toEqual(new Set(["pull-requests", "work_state"]));
+    expect(workStateOnly.config.previewEndpoint).toBeUndefined();
+
+    const token = workStateOnly.config.authorizationHeader.replace(/^Bearer\s+/u, "");
+    expect((yield* registry.resolve(token))?.capabilities).toEqual(
+      new Set(["pull-requests", "work_state"]),
+    );
+
+    const combined = yield* registry.issue({
+      threadId: ThreadId.make("thread-combined"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["preview", "device", "work_state"]),
+    });
+    expect(combined.config.capabilities).toEqual(
+      new Set(["preview", "device", "pull-requests", "work_state"]),
+    );
+    expect(combined.config.previewEndpoint).toContain("/mcp/preview");
+    expect(combined.config.deviceEndpoint).toContain("/mcp/device");
+    expect(combined.config.pullRequestsEndpoint).toContain("/mcp/pull-requests");
+    expect(combined.config.workStateEndpoint).toContain("/mcp/work-state");
+  }),
+);

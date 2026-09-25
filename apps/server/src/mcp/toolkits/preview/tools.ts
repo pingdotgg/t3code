@@ -1,6 +1,8 @@
 import {
   ToolActivityIcon,
   PreviewAutomationClickInput,
+  PreviewAutomationDiagnosticsInput,
+  PreviewAutomationDiagnosticsResult,
   PreviewAutomationError,
   PreviewAutomationEvaluateInput,
   PreviewAutomationNavigateInput,
@@ -141,6 +143,17 @@ export const PreviewSnapshotTool = readonlyBrowserTool(
   }).annotate(Tool.Title, "Inspect browser page"),
 );
 
+export const PreviewDiagnosticsTool = readonlyBrowserTool(
+  Tool.make("preview_diagnostics", {
+    description:
+      "Inspect bounded console, completed network, performance, or memory evidence from the exact collaborative browser tab. Use kind console, network, performance, or memory; select one completed network request with requestId and includeResponseBody=true when a small response body is needed.",
+    parameters: PreviewAutomationDiagnosticsInput,
+    success: PreviewAutomationDiagnosticsResult,
+    failure: PreviewAutomationError,
+    dependencies,
+  }).annotate(Tool.Title, "Inspect preview diagnostics"),
+);
+
 const PreviewClickTool = browserTool(
   Tool.make("preview_click", {
     description:
@@ -248,6 +261,7 @@ export const PreviewToolkit = Toolkit.make(
   PreviewResizeTool,
   PreviewSetAppearanceTool,
   PreviewSnapshotTool,
+  PreviewDiagnosticsTool,
   PreviewClickTool,
   PreviewTypeTool,
   PreviewPressTool,
@@ -264,6 +278,7 @@ export const PreviewStandardToolkit = Toolkit.make(
   PreviewNavigateTool,
   PreviewResizeTool,
   PreviewSetAppearanceTool,
+  PreviewDiagnosticsTool,
   PreviewClickTool,
   PreviewTypeTool,
   PreviewPressTool,

@@ -4554,6 +4554,390 @@ describe("PreviewOperationError", () => {
 });
 
 describe("Preview automation diagnostics", () => {
+  effectIt.effect(
+    "captures bounded console details, completed network records, selected bodies, and memory",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const bodyCalls: string[] = [];
+          const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+            if (method === "Runtime.evaluate") {
+              return {
+                result: {
+                  value: {
+                    url: "https://example.com",
+                    title: "Example",
+                    loading: false,
+                    visibleText: "Example",
+                    interactiveElements: [],
+                  },
+                },
+              };
+            }
+            if (method === "Accessibility.getFullAXTree") return { nodes: [] };
+            if (method === "Runtime.getHeapUsage") {
+              return {
+                usedSize: 10,
+                totalSize: 20,
+                embedderHeapUsedSize: 3,
+                backingStorageSize: 4,
+              };
+            }
+            if (method === "Memory.getDOMCounters") {
+              return { documents: 1, nodes: 5, jsEventListeners: 4 };
+            }
+            if (method === "Network.getResponseBody") {
+              bodyCalls.push(String(params?.requestId));
+              return { body: "x".repeat(70_000), base64Encoded: false };
+            }
+            return undefined;
+          });
+          const on = vi.fn();
+          const capturePage = vi.fn(async () => ({
+            toPNG: () => Buffer.from("png"),
+            toJPEG: () => Buffer.from("jpeg"),
+            getSize: () => ({ width: 100, height: 80 }),
+          }));
+          const wc = makeTestPreviewWebContents(capturePage as never);
+          Object.assign(wc, { isDevToolsOpened: () => false });
+          Object.assign(wc.debugger, { sendCommand, on });
+          fromId.mockReturnValue(wc);
+          yield* manager.createTab("tab_diagnostics");
+          yield* manager.registerWebview("tab_diagnostics", wc.id);
+
+          const emptyConsole = yield* manager.automationDiagnostics("tab_diagnostics", {
+            kind: "console",
+          });
+          expect(emptyConsole).toMatchObject({ kind: "console", tabId: "tab_diagnostics" });
+          const debuggerMessage = on.mock.calls[0]?.[1] as (
+            event: Electron.Event,
+            method: string,
+            params: Record<string, unknown>,
+          ) => void;
+          const longText = "x".repeat(5_000);
+          debuggerMessage({} as Electron.Event, "Runtime.consoleAPICalled", {
+            type: "error",
+            args: [{ value: longText }],
+            stackTrace: {
+              callFrames: Array.from({ length: 20 }, (_, index) => ({
+                functionName: `frame-${index}`,
+                url: "https://example.com/app.js",
+                lineNumber: index,
+                columnNumber: index,
+              })),
+            },
+          });
+          debuggerMessage({} as Electron.Event, "Runtime.exceptionThrown", {
+            exceptionDetails: {
+              text: "fallback text",
+              lineNumber: 2,
+              columnNumber: 3,
+              url: "https://example.com/app.js",
+              exception: { description: "ReferenceError: missingValue is not defined" },
+            },
+          });
+
+          debuggerMessage({} as Electron.Event, "Network.requestWillBeSent", {
+            requestId: "success-request",
+            request: { url: "https://example.com/data.json", method: "GET" },
+            type: "Fetch",
+          });
+          debuggerMessage({} as Electron.Event, "Network.responseReceived", {
+            requestId: "success-request",
+            response: {
+              status: 200,
+              mimeType: "application/json",
+              protocol: "h2",
+              fromDiskCache: false,
+            },
+          });
+          debuggerMessage({} as Electron.Event, "Network.loadingFinished", {
+            requestId: "success-request",
+            encodedDataLength: 12,
+          });
+          debuggerMessage({} as Electron.Event, "Network.requestWillBeSent", {
+            requestId: "http-failure",
+            request: { url: "https://example.com/missing", method: "GET" },
+            type: "Document",
+          });
+          debuggerMessage({} as Electron.Event, "Network.responseReceived", {
+            requestId: "http-failure",
+            response: { status: 500, mimeType: "text/plain", protocol: "h2" },
+          });
+          debuggerMessage({} as Electron.Event, "Network.loadingFinished", {
+            requestId: "http-failure",
+            encodedDataLength: 8,
+          });
+          debuggerMessage({} as Electron.Event, "Network.requestWillBeSent", {
+            requestId: "transport-failure",
+            request: { url: "https://example.com/offline", method: "POST" },
+            type: "XHR",
+          });
+          debuggerMessage({} as Electron.Event, "Network.loadingFailed", {
+            requestId: "transport-failure",
+            errorText: "net::ERR_FAILED",
+          });
+          yield* settle(() => false);
+
+          const consoleResult = yield* manager.automationDiagnostics("tab_diagnostics", {
+            kind: "console",
+            limit: 2,
+          });
+          expect(consoleResult.kind).toBe("console");
+          if (consoleResult.kind === "console") {
+            expect(consoleResult.capturedCount).toBe(2);
+            expect(consoleResult.entries).toHaveLength(2);
+            const exception = consoleResult.entries.find((entry) => entry.source === "exception");
+            const consoleMessage = consoleResult.entries.find(
+              (entry) => entry.source === "console",
+            );
+            expect(exception?.text).toBe("ReferenceError: missingValue is not defined");
+            expect(consoleMessage?.text.length).toBe(4_096);
+            expect(consoleMessage?.stack).toHaveLength(12);
+            expect(exception?.lineNumber).toBe(3);
+            expect(exception?.columnNumber).toBe(4);
+          }
+
+          const networkResult = yield* manager.automationDiagnostics("tab_diagnostics", {
+            kind: "network",
+            limit: 3,
+          });
+          expect(networkResult.kind).toBe("network");
+          if (networkResult.kind === "network") {
+            expect(networkResult.records.map((record) => record.requestId)).toEqual([
+              "transport-failure",
+              "http-failure",
+              "success-request",
+            ]);
+            expect(networkResult.records[1]).toMatchObject({ status: 500, failed: true });
+            expect(networkResult.records[0]).toMatchObject({
+              failed: true,
+              errorText: "net::ERR_FAILED",
+            });
+            const diagnosticKeys = [
+              ...Object.keys(networkResult),
+              ...networkResult.records.flatMap((record) => Object.keys(record)),
+            ];
+            expect(diagnosticKeys).not.toEqual(
+              expect.arrayContaining(["headers", "cookies", "postData", "authorization"]),
+            );
+          }
+
+          debuggerMessage({} as Electron.Event, "Network.requestWillBeSent", {
+            requestId: "large-request",
+            request: { url: "https://example.com/large", method: "GET" },
+            type: "XHR",
+          });
+          debuggerMessage({} as Electron.Event, "Network.responseReceived", {
+            requestId: "large-request",
+            response: { status: 200, mimeType: "application/octet-stream" },
+          });
+          debuggerMessage({} as Electron.Event, "Network.loadingFinished", {
+            requestId: "large-request",
+            encodedDataLength: 262_145,
+          });
+          yield* settle(() => false);
+          const oversized = yield* manager.automationDiagnostics("tab_diagnostics", {
+            kind: "network",
+            requestId: "large-request",
+            includeResponseBody: true,
+          });
+          expect(oversized).toMatchObject({
+            kind: "network",
+            requestFound: true,
+            responseBodyUnavailableReason: expect.stringContaining("exceeds"),
+          });
+          expect(bodyCalls).toEqual([]);
+
+          const selected = yield* manager.automationDiagnostics("tab_diagnostics", {
+            kind: "network",
+            requestId: "success-request",
+            includeResponseBody: true,
+          });
+          expect(selected.kind).toBe("network");
+          if (selected.kind === "network") {
+            expect(selected.requestFound).toBe(true);
+            expect(selected.selectedRecord?.requestId).toBe("success-request");
+            expect(selected.responseBody).toHaveLength(65_536);
+            expect(selected.responseBodyTruncated).toBe(true);
+          }
+          expect(bodyCalls).toEqual(["success-request"]);
+
+          const memory = yield* manager.automationDiagnostics("tab_diagnostics", {
+            kind: "memory",
+          });
+          expect(memory).toMatchObject({
+            kind: "memory",
+            tabId: "tab_diagnostics",
+            heapUsage: { usedSize: 10, totalSize: 20, embedderHeapSize: 3, backingStorageSize: 4 },
+            domCounters: { documents: 1, nodes: 5, jsEventListeners: 4 },
+          });
+
+          const snapshot = yield* manager.automationSnapshot("tab_diagnostics");
+          expect(snapshot.networkEntries).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                url: "https://example.com/missing",
+                status: 500,
+                failed: true,
+              }),
+            ]),
+          );
+        }),
+      ),
+  );
+
+  effectIt.effect(
+    "keeps performance sampling deterministic and avoids heap-profiler commands",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          let metricRead = 0;
+          const sendCommand = vi.fn(async (method: string, _params?: Record<string, unknown>) => {
+            if (method === "Performance.getMetrics") {
+              metricRead += 1;
+              return {
+                metrics: [
+                  { name: "TaskDuration", value: metricRead === 1 ? 1 : 3 },
+                  { name: "Frames", value: 2 },
+                ],
+              };
+            }
+            if (method === "Runtime.evaluate") {
+              return {
+                result: {
+                  value: {
+                    type: "navigate",
+                    startTime: 0,
+                    duration: 12,
+                    domInteractive: 4,
+                    domContentLoadedEventEnd: 8,
+                    loadEventEnd: 12,
+                    transferSize: 10,
+                    encodedBodySize: 8,
+                    decodedBodySize: 20,
+                  },
+                },
+              };
+            }
+            return undefined;
+          });
+          const wc = makeTestPreviewWebContents(
+            vi.fn(async () => ({
+              toPNG: () => Buffer.from("png"),
+              toJPEG: () => Buffer.from("jpeg"),
+              getSize: () => ({ width: 100, height: 80 }),
+            })) as never,
+          );
+          Object.assign(wc, { isDevToolsOpened: () => false });
+          Object.assign(wc.debugger, { sendCommand });
+          fromId.mockReturnValue(wc);
+          yield* manager.createTab("tab_performance");
+          yield* manager.registerWebview("tab_performance", wc.id);
+
+          const pending = yield* manager
+            .automationDiagnostics("tab_performance", { kind: "performance", sampleMs: 100 })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* TestClock.adjust(100);
+          const result = yield* Fiber.join(pending);
+
+          expect(result).toMatchObject({
+            kind: "performance",
+            before: [
+              { name: "Frames", value: 2 },
+              { name: "TaskDuration", value: 1 },
+            ],
+            after: [
+              { name: "Frames", value: 2 },
+              { name: "TaskDuration", value: 3 },
+            ],
+            delta: [
+              { name: "Frames", value: 0 },
+              { name: "TaskDuration", value: 2 },
+            ],
+            navigation: { type: "navigate", duration: 12 },
+          });
+          expect(sendCommand.mock.calls.some(([method]) => method === "Performance.enable")).toBe(
+            true,
+          );
+          expect(sendCommand).not.toHaveBeenCalledWith("HeapProfiler.collectGarbage");
+          expect(sendCommand).not.toHaveBeenCalledWith("HeapProfiler.takeHeapSnapshot");
+          expect(
+            sendCommand.mock.calls.filter(([method]) => method === "Performance.getMetrics"),
+          ).toHaveLength(2);
+        }),
+      ),
+  );
+
+  effectIt.effect("cleans diagnostic state when a webContents is replaced and isolates tabs", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const makeDiagnosticWebContents = (id: number) => {
+          const wc = makeTestPreviewWebContents(
+            vi.fn(async () => ({
+              toPNG: () => Buffer.from("png"),
+              toJPEG: () => Buffer.from("jpeg"),
+              getSize: () => ({ width: 100, height: 80 }),
+            })) as never,
+            id,
+          );
+          Object.assign(wc, { isDevToolsOpened: () => false });
+          return wc;
+        };
+        const first = makeDiagnosticWebContents(41);
+        const second = makeDiagnosticWebContents(42);
+        const byId = new Map([
+          [41, first],
+          [42, second],
+        ]);
+        fromId.mockImplementation((id) => (id === undefined ? null : (byId.get(id) ?? null)));
+        yield* manager.createTab("tab_first");
+        yield* manager.createTab("tab_second");
+        yield* manager.registerWebview("tab_first", 41);
+        yield* manager.registerWebview("tab_second", 42);
+        yield* manager.automationDiagnostics("tab_first", { kind: "console" });
+        yield* manager.automationDiagnostics("tab_second", { kind: "console" });
+        const firstMessage = (first.debugger.on as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as (
+          event: Electron.Event,
+          method: string,
+          params: Record<string, unknown>,
+        ) => void;
+        const secondMessage = (second.debugger.on as ReturnType<typeof vi.fn>).mock
+          .calls[0]?.[1] as (
+          event: Electron.Event,
+          method: string,
+          params: Record<string, unknown>,
+        ) => void;
+        firstMessage({} as Electron.Event, "Runtime.consoleAPICalled", {
+          type: "log",
+          args: [{ value: "first" }],
+        });
+        secondMessage({} as Electron.Event, "Runtime.consoleAPICalled", {
+          type: "log",
+          args: [{ value: "second" }],
+        });
+        yield* settle(() => false);
+        const firstResult = yield* manager.automationDiagnostics("tab_first", { kind: "console" });
+        const secondResult = yield* manager.automationDiagnostics("tab_second", {
+          kind: "console",
+        });
+        expect(firstResult).toMatchObject({ entries: [{ text: "first" }] });
+        expect(secondResult).toMatchObject({ entries: [{ text: "second" }] });
+
+        byId.set(43, makeDiagnosticWebContents(43));
+        yield* manager.registerWebview("tab_first", 43);
+        const replacementResult = yield* manager.automationDiagnostics("tab_first", {
+          kind: "console",
+        });
+        expect(replacementResult).toMatchObject({ entries: [], capturedCount: 0 });
+        const isolatedResult = yield* manager.automationDiagnostics("tab_second", {
+          kind: "console",
+        });
+        expect(isolatedResult).toMatchObject({ entries: [{ text: "second" }] });
+      }),
+    ),
+  );
+
   it("keeps browser exception detail out of structural diagnostics", () => {
     const secret = "unrelated-browser-payload-secret";
     const detail = "ReferenceError: missingValue is not defined";

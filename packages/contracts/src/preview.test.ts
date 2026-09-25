@@ -12,8 +12,12 @@ import {
   PreviewViewportSetting,
 } from "./preview.ts";
 import {
+  PREVIEW_AUTOMATION_OPERATIONS,
+  PREVIEW_AUTOMATION_V1_OPERATIONS,
   PreviewAutomationHost,
   PreviewAutomationError,
+  PreviewAutomationDiagnosticsInput,
+  PreviewAutomationDiagnosticsResult,
   PreviewAutomationOpenInput,
   PreviewAutomationResizeInput,
   PreviewAutomationResizeResult,
@@ -32,6 +36,8 @@ const decodeResizeResult = Schema.decodeUnknownSync(PreviewAutomationResizeResul
 const decodeAutomationHost = Schema.decodeUnknownSync(PreviewAutomationHost);
 const decodeAutomationError = Schema.decodeUnknownSync(PreviewAutomationError);
 const decodeAutomationStatus = Schema.decodeUnknownSync(PreviewAutomationStatus);
+const decodeDiagnosticsInput = Schema.decodeUnknownSync(PreviewAutomationDiagnosticsInput);
+const decodeDiagnosticsResult = Schema.decodeUnknownSync(PreviewAutomationDiagnosticsResult);
 
 describe("PreviewAutomationOpenInput", () => {
   it("accepts the inline preview visibility flag", () => {
@@ -40,6 +46,131 @@ describe("PreviewAutomationOpenInput", () => {
 
   it("retains the legacy show visibility alias", () => {
     expect(decodeOpenInput({ show: false })).toEqual({ show: false });
+  });
+});
+
+describe("PreviewAutomationDiagnostics", () => {
+  it("advertises diagnostics only on current hosts", () => {
+    expect(PREVIEW_AUTOMATION_OPERATIONS).toContain("diagnostics");
+    expect(PREVIEW_AUTOMATION_V1_OPERATIONS).not.toContain("diagnostics");
+  });
+
+  it("decodes all bounded input variants", () => {
+    expect(decodeDiagnosticsInput({ kind: "console" })).toEqual({ kind: "console" });
+    expect(
+      decodeDiagnosticsInput({
+        kind: "network",
+        tabId: "tab-network",
+        requestId: "request-1",
+        includeResponseBody: true,
+        limit: 10,
+      }),
+    ).toMatchObject({ kind: "network", requestId: "request-1", limit: 10 });
+    expect(decodeDiagnosticsInput({ kind: "performance", sampleMs: 5000 })).toEqual({
+      kind: "performance",
+      sampleMs: 5000,
+    });
+    expect(decodeDiagnosticsInput({ kind: "memory", tabId: "tab-memory" })).toEqual({
+      kind: "memory",
+      tabId: "tab-memory",
+    });
+  });
+
+  it("rejects invalid bounds, body-selection contradictions, and cross-kind options", () => {
+    expect(() => decodeDiagnosticsInput({ kind: "console", limit: 0 })).toThrow();
+    expect(() => decodeDiagnosticsInput({ kind: "network", limit: 101 })).toThrow();
+    expect(() => decodeDiagnosticsInput({ kind: "performance", sampleMs: 5001 })).toThrow();
+    expect(() => decodeDiagnosticsInput({ kind: "network", includeResponseBody: true })).toThrow();
+    expect(() => decodeDiagnosticsInput({ kind: "network", requestId: "r".repeat(257) })).toThrow();
+    expect(() => decodeDiagnosticsInput({ kind: "console", requestId: "request-1" })).toThrow();
+    expect(() => decodeDiagnosticsInput({ kind: "console", includeResponseBody: false })).toThrow();
+    expect(() => decodeDiagnosticsInput({ kind: "network", sampleMs: 0 })).toThrow();
+    expect(() => decodeDiagnosticsInput({ kind: "performance", limit: 10 })).toThrow();
+    expect(() => decodeDiagnosticsInput({ kind: "memory", limit: 10 })).toThrow();
+    expect(() => decodeDiagnosticsInput({ kind: "memory", requestId: "request-1" })).toThrow();
+  });
+
+  it("round-trips representative result schemas and backward-compatible console entries", () => {
+    const consoleResult = decodeDiagnosticsResult({
+      kind: "console",
+      tabId: "tab-console",
+      entries: [
+        {
+          level: "error",
+          text: "boom",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          source: "exception",
+          url: "http://localhost:5173/app.js",
+          lineNumber: 4,
+          columnNumber: 8,
+          stack: [
+            {
+              functionName: "run",
+              url: "http://localhost:5173/app.js",
+              lineNumber: 4,
+              columnNumber: 8,
+            },
+          ],
+        },
+      ],
+      capturedCount: 1,
+      returnedCount: 1,
+      truncated: false,
+    });
+    expect(consoleResult.kind).toBe("console");
+    expect(
+      decodeDiagnosticsResult({
+        kind: "console",
+        tabId: "tab-old-console",
+        entries: [{ level: "log", text: "old", timestamp: "2026-01-01T00:00:00.000Z" }],
+        capturedCount: 1,
+        returnedCount: 1,
+        truncated: false,
+      }),
+    ).toMatchObject({ kind: "console", entries: [{ text: "old" }] });
+    expect(
+      decodeDiagnosticsResult({
+        kind: "network",
+        tabId: "tab-network",
+        records: [
+          {
+            requestId: "request-1",
+            url: "http://localhost:5173/data.json",
+            method: "GET",
+            status: 200,
+            failed: false,
+            startedAt: "2026-01-01T00:00:00.000Z",
+            completedAt: "2026-01-01T00:00:00.010Z",
+            durationMs: 10,
+          },
+        ],
+        capturedCount: 1,
+        returnedCount: 1,
+        truncated: false,
+        selectedRequestId: "request-1",
+        requestFound: true,
+        responseBody: '{"ok":true}',
+        responseBodyBase64Encoded: false,
+        responseBodyTruncated: false,
+      }),
+    ).toMatchObject({ kind: "network", requestFound: true });
+    expect(
+      decodeDiagnosticsResult({
+        kind: "performance",
+        tabId: "tab-performance",
+        metrics: [{ name: "TaskDuration", value: 1.5 }],
+        delta: [{ name: "TaskDuration", value: 0.5 }],
+        navigation: null,
+      }),
+    ).toMatchObject({ kind: "performance", metrics: [{ name: "TaskDuration" }] });
+    expect(
+      decodeDiagnosticsResult({
+        kind: "memory",
+        tabId: "tab-memory",
+        heapUsage: { usedSize: 10, totalSize: 20 },
+        domCounters: { documents: 1, nodes: 3, jsEventListeners: 2 },
+      }),
+    ).toMatchObject({ kind: "memory", domCounters: { nodes: 3 } });
   });
 });
 

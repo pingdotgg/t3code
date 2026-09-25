@@ -77,6 +77,12 @@ export interface ProjectionThreadDetailQuery {
  * ProjectionSnapshotQueryShape - Service API for read-model snapshots.
  */
 export interface ProjectionSnapshotQueryShape {
+  /** Read the newest activity of one kind without hydrating thread history. */
+  readonly getLatestThreadActivityByKind?: (input: {
+    readonly threadId: ThreadId;
+    readonly kind: string;
+  }) => Effect.Effect<Option.Option<OrchestrationThreadActivity>, ProjectionRepositoryError>;
+
   /** Read the latest request or resolution without loading the thread history. */
   readonly getUserInputActivity: (input: {
     readonly threadId: ThreadId;

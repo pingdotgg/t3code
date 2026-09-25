@@ -6,7 +6,15 @@ import * as Fiber from "effect/Fiber";
 import * as Metric from "effect/Metric";
 import * as TestClock from "effect/testing/TestClock";
 
-import { withMetrics } from "./Metrics.ts";
+import {
+  contextCompactionTokensRemovedTotal,
+  contextCompactionsTotal,
+  mcpToolCallDuration,
+  mcpToolCallsTotal,
+  mcpWorkStateResultsTotal,
+  increment,
+  withMetrics,
+} from "./Metrics.ts";
 
 const hasMetricSnapshot = (
   snapshots: ReadonlyArray<Metric.Metric.Snapshot>,
@@ -30,6 +38,132 @@ const findHistogramSnapshot = (
       snapshot.id === id &&
       Object.entries(attributes).every(([key, value]) => snapshot.attributes?.[key] === value),
   );
+
+it.effect("exposes capability metrics with bounded attributes", () =>
+  Effect.gen(function* () {
+    yield* Effect.void.pipe(
+      withMetrics({
+        counter: mcpToolCallsTotal,
+        timer: mcpToolCallDuration,
+        attributes: { family: "work_state", operation: "read" },
+      }),
+    );
+    yield* Effect.void.pipe(
+      withMetrics({
+        counter: mcpToolCallsTotal,
+        timer: mcpToolCallDuration,
+        attributes: { family: "work_state", operation: "checkpoint" },
+      }),
+    );
+    yield* withMetrics(Effect.fail("boom"), {
+      counter: mcpToolCallsTotal,
+      timer: mcpToolCallDuration,
+      attributes: { family: "preview", operation: "status" },
+    }).pipe(Effect.exit);
+    const workStateResults = [
+      "present",
+      "absent",
+      "changed",
+      "noop",
+      "revision_conflict",
+      "capability_unavailable",
+      "thread_not_found",
+      "read_failed",
+      "write_failed",
+      "state_invalid",
+    ] as const;
+    for (const result of workStateResults) {
+      yield* increment(mcpWorkStateResultsTotal, { operation: "read", result });
+    }
+    yield* increment(contextCompactionsTotal, { provider: "codex" });
+    yield* increment(contextCompactionTokensRemovedTotal, { provider: "codex" }, 6_000);
+
+    const snapshots = yield* Metric.snapshot;
+    assert.equal(
+      hasMetricSnapshot(snapshots, "t3_mcp_tool_calls_total", {
+        family: "work_state",
+        operation: "read",
+        outcome: "success",
+      }),
+      true,
+    );
+    assert.equal(
+      hasMetricSnapshot(snapshots, "t3_mcp_tool_calls_total", {
+        family: "work_state",
+        operation: "checkpoint",
+        outcome: "success",
+      }),
+      true,
+    );
+    assert.equal(
+      hasMetricSnapshot(snapshots, "t3_mcp_tool_call_duration", {
+        family: "work_state",
+        operation: "read",
+      }),
+      true,
+    );
+    assert.equal(
+      hasMetricSnapshot(snapshots, "t3_mcp_tool_call_duration", {
+        family: "work_state",
+        operation: "checkpoint",
+      }),
+      true,
+    );
+    assert.equal(
+      hasMetricSnapshot(snapshots, "t3_mcp_tool_calls_total", {
+        family: "preview",
+        operation: "status",
+        outcome: "failure",
+      }),
+      true,
+    );
+    for (const result of workStateResults) {
+      assert.equal(
+        hasMetricSnapshot(snapshots, "t3_mcp_work_state_results_total", {
+          operation: "read",
+          result,
+        }),
+        true,
+      );
+    }
+    assert.equal(
+      findHistogramSnapshot(snapshots, "t3_mcp_tool_call_duration", {
+        family: "work_state",
+        operation: "read",
+      })?.state.count,
+      1,
+    );
+    assert.equal(
+      hasMetricSnapshot(snapshots, "t3_context_compactions_total", {
+        provider: "codex",
+      }),
+      true,
+    );
+    assert.equal(
+      hasMetricSnapshot(snapshots, "t3_context_compaction_tokens_removed_total", {
+        provider: "codex",
+      }),
+      true,
+    );
+
+    const allowedAttributes = new Set([
+      "family",
+      "operation",
+      "outcome",
+      "result",
+      "provider",
+      "time_unit",
+    ]);
+    for (const snapshot of snapshots) {
+      if (!snapshot.id.startsWith("t3_mcp_") && !snapshot.id.startsWith("t3_context_")) {
+        continue;
+      }
+      for (const key of Object.keys(snapshot.attributes ?? {})) {
+        assert.equal(allowedAttributes.has(key), true);
+      }
+    }
+  }),
+);
 
 describe("withMetrics", () => {
   it.effect("supports pipe-style usage", () =>

@@ -628,6 +628,8 @@ describe("T3 browser developer instructions", () => {
       NodeAssert.match(instructions, /t3-code/);
       NodeAssert.match(instructions, /preview_status/);
       NodeAssert.match(instructions, /preview_open/);
+      NodeAssert.match(instructions, /preview_diagnostics/);
+      NodeAssert.match(instructions, /upcoming navigation or action/);
       NodeAssert.match(instructions, /Do not switch to global browser skills/);
     }
   });
@@ -637,6 +639,7 @@ describe("T3 browser developer instructions", () => {
       const instructions = buildCodexDeveloperInstructions(mode, runtime, false);
       NodeAssert.doesNotMatch(instructions, /preview_status/);
       NodeAssert.doesNotMatch(instructions, /preview_open/);
+      NodeAssert.doesNotMatch(instructions, /preview_diagnostics/);
       NodeAssert.doesNotMatch(instructions, /T3 Code collaborative browser/);
       // Steering away from other browser automation must go with the tools;
       // keeping it would leave the model talked out of its only option.
@@ -653,6 +656,51 @@ describe("T3 browser developer instructions", () => {
       buildCodexDeveloperInstructions("default", runtime, false),
       /preview_open/,
     );
+  });
+});
+
+describe("HYDE durable work-state developer instructions", () => {
+  const runtime = { model: "gpt-5.3-codex", reasoningEffort: "high" };
+
+  it("gates work-state guidance independently from preview and device tools", () => {
+    const defaultWorkState = buildCodexDeveloperInstructions("default", runtime, {
+      browser: false,
+      device: false,
+      workState: true,
+    });
+    NodeAssert.match(defaultWorkState, /hyde_work_state_read/);
+    NodeAssert.match(defaultWorkState, /hyde_work_state_checkpoint/);
+    NodeAssert.match(defaultWorkState, /first tool action of every such turn MUST be/);
+    NodeAssert.match(defaultWorkState, /last tool action before the final assistant response/);
+    NodeAssert.match(defaultWorkState, /revision conflict.*reread and reconcile/);
+    NodeAssert.doesNotMatch(defaultWorkState, /preview_status/);
+    NodeAssert.doesNotMatch(defaultWorkState, /device_list/);
+
+    const planWorkState = buildCodexDeveloperInstructions("plan", runtime, {
+      browser: false,
+      device: false,
+      workState: true,
+    });
+    NodeAssert.match(planWorkState, /hyde_work_state_read/);
+    NodeAssert.match(planWorkState, /Do not call `hyde_work_state_checkpoint`/);
+    NodeAssert.doesNotMatch(planWorkState, /After any material workspace\/repository mutation/);
+
+    const previewOnly = buildCodexDeveloperInstructions("default", runtime, {
+      browser: true,
+      device: false,
+      workState: false,
+    });
+    NodeAssert.match(previewOnly, /preview_status/);
+    NodeAssert.doesNotMatch(previewOnly, /hyde_work_state_read/);
+
+    const combined = buildCodexDeveloperInstructions("default", runtime, {
+      browser: true,
+      device: true,
+      workState: true,
+    });
+    NodeAssert.match(combined, /preview_status/);
+    NodeAssert.match(combined, /device_list/);
+    NodeAssert.match(combined, /hyde_work_state_read/);
   });
 });
 
@@ -893,6 +941,65 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  it.effect("persists work-state guidance on both thread start and resume", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ method: string; payload: Record<string, unknown> }> = [];
+      const response = makeThreadOpenResponse("provider-thread-work-state");
+      const client = {
+        request: (
+          method: "thread/start",
+          payload: CodexRpc.ClientRequestParamsByMethod["thread/start"],
+        ) =>
+          Effect.sync(() => {
+            calls.push({ method, payload: payload as unknown as Record<string, unknown> });
+            return response;
+          }),
+        raw: {
+          request: (
+            method: "thread/resume",
+            payload: CodexRpc.ClientRequestParamsByMethod["thread/resume"] & {
+              readonly excludeTurns?: boolean;
+            },
+          ) =>
+            Effect.sync(() => {
+              calls.push({ method, payload: payload as unknown as Record<string, unknown> });
+              return response;
+            }),
+        },
+      };
+
+      yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-work-state"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+        workStateToolsAvailable: true,
+      });
+      yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-work-state"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: "provider-thread-work-state",
+        workStateToolsAvailable: true,
+      });
+
+      NodeAssert.equal(calls.length, 2);
+      for (const call of calls) {
+        const developerInstructions = call.payload.developerInstructions;
+        NodeAssert.equal(typeof developerInstructions, "string");
+        NodeAssert.match(String(developerInstructions), /hyde_work_state_read/);
+        NodeAssert.match(String(developerInstructions), /hyde_work_state_checkpoint/);
+        NodeAssert.doesNotMatch(String(developerInstructions), /preview_status/);
+      }
+    }),
+  );
+
   it.effect("resumes metadata when historical turns contain unknown error values", () =>
     Effect.gen(function* () {
       const response = makeThreadOpenResponse("saved-thread");

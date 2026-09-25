@@ -2272,6 +2272,47 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? getCodexServiceTierOptionValue(input.modelSelection)
             : undefined;
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+        const mcpServerArgs: string[] = [];
+        const configuredMcpCapabilities = new Set<string>();
+        if (mcpSession) {
+          const addMcpServer = (name: string, url: string) => {
+            mcpServerArgs.push(
+              "-c",
+              `mcp_servers.${name}.url=${url}`,
+              "-c",
+              `mcp_servers.${name}.bearer_token_env_var="T3_MCP_BEARER_TOKEN"`,
+            );
+          };
+          let legacyRootAttached = false;
+          const attachLegacyRoot = () => {
+            if (!legacyRootAttached) {
+              addMcpServer("t3-code", mcpSession.endpoint);
+              legacyRootAttached = true;
+            }
+          };
+          if (mcpSession.capabilities.has("preview")) {
+            if (mcpSession.previewEndpoint) addMcpServer("t3-preview", mcpSession.previewEndpoint);
+            else attachLegacyRoot();
+            configuredMcpCapabilities.add("preview");
+          }
+          if (mcpSession.capabilities.has("pull-requests")) {
+            if (mcpSession.pullRequestsEndpoint) {
+              addMcpServer("t3-pull-requests", mcpSession.pullRequestsEndpoint);
+            } else {
+              attachLegacyRoot();
+            }
+            configuredMcpCapabilities.add("pull-requests");
+          }
+          if (mcpSession.capabilities.has("device")) {
+            if (mcpSession.deviceEndpoint) addMcpServer("t3-device", mcpSession.deviceEndpoint);
+            else attachLegacyRoot();
+            configuredMcpCapabilities.add("device");
+          }
+          if (mcpSession.capabilities.has("work_state") && mcpSession.workStateEndpoint) {
+            addMcpServer("hyde-work-state", mcpSession.workStateEndpoint);
+            configuredMcpCapabilities.add("work_state");
+          }
+        }
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
@@ -2288,7 +2329,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? { model: input.modelSelection.model }
             : {}),
           ...(serviceTier ? { serviceTier } : {}),
-          ...(mcpSession
+          ...(mcpSession && mcpServerArgs.length > 0
             ? {
                 environment: {
                   ...McpProviderSession.withAgentDeviceEnvironment(
@@ -2297,13 +2338,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                   ),
                   T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
                 },
-                appServerArgs: [
-                  "-c",
-                  `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
-                  "-c",
-                  'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
-                ],
-                mcpCapabilities: mcpSession.capabilities,
+                appServerArgs: mcpServerArgs,
+                mcpCapabilities: configuredMcpCapabilities,
               }
             : {}),
         };

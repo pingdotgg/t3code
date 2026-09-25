@@ -413,6 +413,24 @@ const hasMetricSnapshot = (
       Object.entries(attributes).every(([key, value]) => snapshot.attributes?.[key] === value),
   );
 
+const findCounterSnapshot = (
+  snapshots: ReadonlyArray<Metric.Metric.Snapshot>,
+  id: string,
+  attributes: Readonly<Record<string, string>>,
+) =>
+  snapshots.find(
+    (snapshot): snapshot is Extract<Metric.Metric.Snapshot, { readonly type: "Counter" }> =>
+      snapshot.type === "Counter" &&
+      snapshot.id === id &&
+      Object.entries(attributes).every(([key, value]) => snapshot.attributes?.[key] === value),
+  );
+
+const counterValue = (
+  snapshots: ReadonlyArray<Metric.Metric.Snapshot>,
+  id: string,
+  attributes: Readonly<Record<string, string>>,
+): number => Number(findCounterSnapshot(snapshots, id, attributes)?.state.count ?? 0);
+
 function makeProviderServiceLayer(
   input: {
     readonly directory?: ProviderSessionDirectory.ProviderSessionDirectory["Service"];
@@ -5064,16 +5082,15 @@ describe("agent browser access", () => {
       return issued;
     });
 
-  // The capability on the credential is the observable that matters: a session
-  // always gets a credential (the pull request toolkit is never withheld), and
-  // `preview` on it is what actually grants or denies the browser tools.
+  // The credential always retains upstream pull-request access and Codex-only
+  // durable work-state continuity. Preview/device remain controlled independently.
   it.effect("issues a credential without preview when agent browser access is off", () =>
     Effect.gen(function* () {
       const threadId = asThreadId("thread-browser-off");
 
       const issued = yield* startSessionWith(false, threadId);
 
-      assert.deepEqual(issued, [{ threadId, capabilities: ["pull-requests"] }]);
+      assert.deepEqual(issued, [{ threadId, capabilities: ["pull-requests", "work_state"] }]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -5084,7 +5101,7 @@ describe("agent browser access", () => {
       const issued = yield* startSessionWith(true, threadId);
 
       assert.deepEqual(issued, [
-        { threadId, capabilities: ["device", "preview", "pull-requests"] },
+        { threadId, capabilities: ["device", "preview", "pull-requests", "work_state"] },
       ]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -5095,7 +5112,9 @@ describe("agent browser access", () => {
 
       const issued = yield* startSessionWith({ browser: false, device: true }, threadId);
 
-      assert.deepEqual(issued, [{ threadId, capabilities: ["device", "pull-requests"] }]);
+      assert.deepEqual(issued, [
+        { threadId, capabilities: ["device", "pull-requests", "work_state"] },
+      ]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -5103,7 +5122,7 @@ describe("agent browser access", () => {
     Effect.gen(function* () {
       const threadId = asThreadId("thread-project-browser-off");
       const issued = yield* startSessionWith({ browser: true, device: false }, threadId, false);
-      assert.deepEqual(issued, [{ threadId, capabilities: ["pull-requests"] }]);
+      assert.deepEqual(issued, [{ threadId, capabilities: ["pull-requests", "work_state"] }]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -5111,7 +5130,9 @@ describe("agent browser access", () => {
     Effect.gen(function* () {
       const threadId = asThreadId("thread-project-browser-off-device-on");
       const issued = yield* startSessionWith(true, threadId, false);
-      assert.deepEqual(issued, [{ threadId, capabilities: ["device", "pull-requests"] }]);
+      assert.deepEqual(issued, [
+        { threadId, capabilities: ["device", "pull-requests", "work_state"] },
+      ]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -5119,7 +5140,9 @@ describe("agent browser access", () => {
     Effect.gen(function* () {
       const threadId = asThreadId("thread-project-browser-on");
       const issued = yield* startSessionWith({ browser: false, device: false }, threadId, true);
-      assert.deepEqual(issued, [{ threadId, capabilities: ["preview", "pull-requests"] }]);
+      assert.deepEqual(issued, [
+        { threadId, capabilities: ["preview", "pull-requests", "work_state"] },
+      ]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -5129,7 +5152,9 @@ describe("agent browser access", () => {
       const issued = yield* startSessionWith({ browser: false, device: false }, threadId, {
         device: true,
       });
-      assert.deepEqual(issued, [{ threadId, capabilities: ["device", "pull-requests"] }]);
+      assert.deepEqual(issued, [
+        { threadId, capabilities: ["device", "pull-requests", "work_state"] },
+      ]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -5144,7 +5169,101 @@ describe("agent browser access", () => {
         { device: false },
         { withoutOrchestration: true },
       );
-      assert.deepEqual(issued, [{ threadId, capabilities: ["preview", "pull-requests"] }]);
+      assert.deepEqual(issued, [
+        { threadId, capabilities: ["preview", "pull-requests", "work_state"] },
+      ]);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+const compactionMetrics = makeProviderServiceLayer();
+compactionMetrics.layer("ProviderServiceLive compaction metrics", (it) => {
+  it.effect("records canonical compaction metrics with bounded token removal", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-compaction-metrics");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: fixtureCwd("project-compaction-metrics"),
+        runtimeMode: "full-access",
+      });
+
+      const emitAndAwait = (event: LegacyProviderRuntimeEvent) =>
+        Effect.gen(function* () {
+          const observed = yield* Stream.take(provider.streamEvents, 1).pipe(
+            Stream.runDrain,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          compactionMetrics.codex.emit(event);
+          yield* Fiber.join(observed);
+        });
+      const compactionId = "t3_context_compactions_total";
+      const removedTokensId = "t3_context_compaction_tokens_removed_total";
+      const attributes = { provider: CODEX_DRIVER };
+      const initial = yield* Metric.snapshot;
+
+      yield* emitAndAwait({
+        type: "thread.state.changed",
+        eventId: asEventId("evt-compaction-metrics-with-tokens"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        payload: { state: "compacted", beforeTokens: 10_000, afterTokens: 4_000 },
+      });
+      const afterWithTokens = yield* Metric.snapshot;
+      assert.equal(
+        counterValue(afterWithTokens, compactionId, attributes) -
+          counterValue(initial, compactionId, attributes),
+        1,
+      );
+      assert.equal(
+        counterValue(afterWithTokens, removedTokensId, attributes) -
+          counterValue(initial, removedTokensId, attributes),
+        6_000,
+      );
+
+      yield* emitAndAwait({
+        type: "thread.state.changed",
+        eventId: asEventId("evt-compaction-metrics-without-tokens"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:01.000Z",
+        threadId,
+        payload: { state: "compacted" },
+      });
+      const afterWithoutTokens = yield* Metric.snapshot;
+      assert.equal(
+        counterValue(afterWithoutTokens, compactionId, attributes) -
+          counterValue(afterWithTokens, compactionId, attributes),
+        1,
+      );
+      assert.equal(
+        counterValue(afterWithoutTokens, removedTokensId, attributes) -
+          counterValue(afterWithTokens, removedTokensId, attributes),
+        0,
+      );
+
+      yield* emitAndAwait({
+        type: "message.delta",
+        eventId: asEventId("evt-compaction-metrics-non-compaction"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:02.000Z",
+        threadId,
+        payload: { delta: "not compacted" },
+      });
+      const afterNonCompaction = yield* Metric.snapshot;
+      assert.equal(
+        counterValue(afterNonCompaction, compactionId, attributes) -
+          counterValue(afterWithoutTokens, compactionId, attributes),
+        0,
+      );
+      assert.equal(
+        counterValue(afterNonCompaction, removedTokensId, attributes) -
+          counterValue(afterWithoutTokens, removedTokensId, attributes),
+        0,
+      );
+    }),
   );
 });
