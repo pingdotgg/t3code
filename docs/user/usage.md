@@ -26,6 +26,16 @@ results appear as each one responds.
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.
 
+### Servers in containers
+
+Set `T3CODE_HOST_ID` in the server's environment to a stable name, such as `build-host`, if
+container recreations change its hostname. Usage uses this ID to recognize the host of each
+provider history directory. Use the same ID for servers sharing those directories on the same
+host, including worktree servers, and different IDs for separate hosts. Directory paths and
+filesystem identities must also match for Usage to count a shared history only once.
+
+When `T3CODE_HOST_ID` is unset or blank, Usage uses the machine's hostname.
+
 ## Set custom model prices
 
 On web or desktop, open the environment dropdown on **Usage**, then choose **Model prices** to add,
