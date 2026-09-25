@@ -2,7 +2,11 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
-import { readClaudeRelayUsageLimits, zaiQuotaResponseToLimits } from "./claudeRelayUsageLimits.ts";
+import {
+  kimiUsageResponseToLimits,
+  readClaudeRelayUsageLimits,
+  zaiQuotaResponseToLimits,
+} from "./claudeRelayUsageLimits.ts";
 
 const checkedAt = "2026-09-25T00:00:00.000Z";
 
@@ -169,6 +173,117 @@ describe("Z.ai usage limits", () => {
         ),
       );
       expect(failed?.unavailable?.reason).toBe("probeFailed");
+    }),
+  );
+});
+
+describe("Kimi Code usage limits", () => {
+  it("maps the weekly summary and the rolling five-hour limit like Kimi's own /usage", () => {
+    const limits = kimiUsageResponseToLimits(
+      {
+        usage: { limit: "100", remaining: "74", resetTime: "2026-09-28T05:24:18.443553353Z" },
+        limits: [
+          {
+            window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+            detail: { limit: 100, used: 40, reset_in: 3600 },
+          },
+        ],
+      },
+      checkedAt,
+    );
+    expect(limits.windows).toEqual([
+      {
+        id: "limit_300m",
+        kind: "session",
+        label: "Session",
+        usedPercent: 40,
+        windowDurationMins: 300,
+        resetsAt: "2026-09-25T01:00:00.000Z",
+      },
+      {
+        id: "weekly",
+        kind: "weekly",
+        label: "Weekly",
+        usedPercent: 26,
+        windowDurationMins: 10080,
+        resetsAt: "2026-09-28T05:24:18.443Z",
+      },
+    ]);
+  });
+
+  it("skips rows without a usable limit and keeps unsized windows without a duration", () => {
+    const limits = kimiUsageResponseToLimits(
+      {
+        limits: [
+          { name: "Monthly credits", limit: 50, used: "75" },
+          { detail: { limit: 0, used: 1 } },
+          { detail: { used: 3 } },
+        ],
+      },
+      checkedAt,
+    );
+    expect(limits.windows).toEqual([
+      { id: "limit_0", kind: "other", label: "Monthly credits", usedPercent: 100 },
+    ]);
+    expect(kimiUsageResponseToLimits({}, checkedAt).unavailable?.reason).toBe("unsupported");
+  });
+
+  it("sizes week and month windows and keeps same-sized rows apart", () => {
+    const limits = kimiUsageResponseToLimits(
+      {
+        limits: [
+          { window: { duration: 1, timeUnit: "TIME_UNIT_WEEK" }, detail: { limit: 10, used: 1 } },
+          { window: { duration: 2, timeUnit: "TIME_UNIT_WEEK" }, detail: { limit: 10, used: 5 } },
+          { window: { duration: 1, timeUnit: "TIME_UNIT_MONTH" }, detail: { limit: 10, used: 2 } },
+          { window: { duration: 5, timeUnit: "TIME_UNIT_HOUR" }, detail: { limit: 10, used: 3 } },
+          {
+            window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+            detail: { limit: 10, used: 4 },
+          },
+        ],
+      },
+      checkedAt,
+    );
+    expect(
+      limits.windows.map(({ id, kind, label, windowDurationMins }) => ({
+        id,
+        kind,
+        label,
+        windowDurationMins,
+      })),
+    ).toEqual([
+      { id: "limit_300m", kind: "session", label: "Session", windowDurationMins: 300 },
+      { id: "limit_300m_4", kind: "session", label: "Session", windowDurationMins: 300 },
+      { id: "limit_10080m", kind: "weekly", label: "Weekly", windowDurationMins: 10080 },
+      { id: "limit_20160m", kind: "weekly", label: "2-week", windowDurationMins: 20160 },
+      { id: "limit_1mo", kind: "monthly", label: "Monthly", windowDurationMins: undefined },
+    ]);
+  });
+
+  it.effect("reads Kimi Code's usages endpoint with the CLI's key as a bearer token", () =>
+    Effect.gen(function* () {
+      const client = HttpClient.make((request) => {
+        expect(request.url).toBe("https://api.kimi.com/coding/v1/usages");
+        expect(request.headers.authorization).toBe("Bearer sk-kimi-token");
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(request, Response.json({ usage: { limit: 10, used: 5 } })),
+        );
+      });
+      const limits = yield* readClaudeRelayUsageLimits({
+        ANTHROPIC_BASE_URL: "https://api.kimi.com/coding/",
+        ANTHROPIC_API_KEY: "sk-kimi-token",
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+      expect(limits?.windows[0]?.usedPercent).toBe(50);
+    }),
+  );
+
+  it.effect("leaves Moonshot's open platform alone: it has no coding plan to meter", () =>
+    Effect.gen(function* () {
+      const limits = yield* readClaudeRelayUsageLimits({
+        ANTHROPIC_BASE_URL: "https://api.moonshot.ai/anthropic",
+        ANTHROPIC_API_KEY: "sk-token",
+      }).pipe(Effect.provideService(HttpClient.HttpClient, refuseRequests));
+      expect(limits).toBeUndefined();
     }),
   );
 });
