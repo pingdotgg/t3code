@@ -1237,6 +1237,32 @@ export function assertConversationMessageRoles(
   );
 }
 
+/**
+ * ACP agents run their own file and shell work: T3 advertises neither
+ * capability (the transcript pins its initialize) and the agent never asks.
+ */
+export function assertNoAcpClientFileOrTerminalRequests(transcript: ProviderReplayTranscript) {
+  const frames = transcript.entries.flatMap((entry) =>
+    entry.type === "runtime_exit"
+      ? []
+      : [entry.frame as { method?: unknown; params?: { clientCapabilities?: unknown } }],
+  );
+  assert.deepInclude(
+    frames.find((frame) => frame.method === "initialize")?.params?.clientCapabilities ?? {},
+    { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+    "T3 must not advertise client fs or terminals",
+  );
+  assert.deepEqual(
+    frames.flatMap((frame) =>
+      typeof frame.method === "string" && /^(fs|terminal)\//u.test(frame.method)
+        ? [frame.method]
+        : [],
+    ),
+    [],
+    "the agent must not route file or terminal work through T3",
+  );
+}
+
 export function assertUserMessagesInclude(
   projection: OrchestrationV2ThreadProjection,
   expectedTexts: ReadonlyArray<string>,

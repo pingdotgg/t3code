@@ -471,6 +471,28 @@ function makeMockRuntime(input: {
     });
 }
 
+/** Serves opted-in client fs requests straight from disk, so tests see only the policy guard. */
+function diskClientFileSystem(
+  fileSystem: FileSystem.FileSystem,
+): NonNullable<AcpAdapterV2Flavor["clientFileSystem"]> {
+  const failed = () => EffectAcpErrors.AcpRequestError.internalError("test fs request failed");
+  return {
+    readTextFile: (request) =>
+      fileSystem.readFileString(request.path).pipe(
+        Effect.map((content) => ({ content })),
+        Effect.mapError(failed),
+      ),
+    writeTextFile: (request) =>
+      fileSystem
+        .makeDirectory(NodePath.dirname(request.path), { recursive: true })
+        .pipe(
+          Effect.andThen(fileSystem.writeFileString(request.path, request.content)),
+          Effect.as({}),
+          Effect.mapError(failed),
+        ),
+  };
+}
+
 function rawProtocolMethod(event: EffectAcpProtocol.AcpProtocolLogEvent): string | undefined {
   if (event.stage !== "raw" || typeof event.payload !== "string") return undefined;
   for (const line of event.payload.split("\n")) {
@@ -2143,6 +2165,7 @@ describe("AcpAdapterV2", () => {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
           makeRuntime,
+          clientFileSystem: diskClientFileSystem(fileSystem),
         },
         fileSystem,
         idAllocator,
@@ -2222,6 +2245,7 @@ describe("AcpAdapterV2", () => {
                 }).pipe(Effect.andThen(runtime.handleReadTextFile(handler))),
             }),
           }),
+          clientFileSystem: diskClientFileSystem(fileSystem),
         },
         fileSystem,
         idAllocator,

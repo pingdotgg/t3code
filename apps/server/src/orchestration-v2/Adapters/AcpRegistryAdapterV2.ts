@@ -196,11 +196,17 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
     idAllocator: options.idAllocator,
     serverConfig: options.serverConfig,
     selfInvocation: options.selfInvocation,
-    clientTerminals: {
-      childProcessSpawner: options.childProcessSpawner,
-      environment: options.environment,
-      shellCommands: isDevin,
-    },
+    // Devin runs commands through client terminals and has no ask mode over
+    // ACP to fall back on. Every other registry agent runs its own.
+    ...(isDevin
+      ? {
+          clientTerminals: {
+            childProcessSpawner: options.childProcessSpawner,
+            environment: options.environment,
+            shellCommands: true,
+          },
+        }
+      : {}),
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
   });
 }

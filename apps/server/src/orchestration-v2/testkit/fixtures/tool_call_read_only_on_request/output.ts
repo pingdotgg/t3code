@@ -6,6 +6,7 @@ import {
   assertBaseProjection,
   assertSemanticProjectionIntegrity,
   assertUserMessagesInclude,
+  assertNoAcpClientFileOrTerminalRequests,
   assertVisibleTurnItemsMirrorLocalTurnItems,
   projectionFor,
   TOOL_CALL_WRITE_PROMPT,
@@ -65,36 +66,25 @@ export function assertToolCallReadOnlyOnRequestOutput(
   }
 }
 
-// Grok never asks permission to read and routes every read through the
-// client's fs/read_text_file. Reads follow the sandbox, not the approval
-// policy, so T3 must serve the read-back of the approved write without a
-// second request (the shared assertion pins the write as the only one).
+// T3 advertises no client fs or terminal to Grok, so Grok reads and writes the
+// workspace itself and gates the write with its own permission prompt: T3
+// answers that prompt (the shared assertion pins it as the only request) and
+// never serves a file or terminal request.
 export function assertToolCallReadOnlyOnRequestGrokOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
 ) {
   assertToolCallReadOnlyOnRequestOutput(result, transcript);
-  const readResponses = transcript.entries.flatMap((entry) => {
-    if (entry.type !== "expect_outbound") return [];
+  assertNoAcpClientFileOrTerminalRequests(transcript);
+  const permissionKinds = transcript.entries.flatMap((entry) => {
+    if (entry.type !== "emit_inbound") return [];
     const frame = entry.frame as {
       method?: unknown;
-      result?: { content?: unknown };
-      error?: { message?: unknown };
+      params?: { toolCall?: { kind?: unknown } };
     };
-    return frame.method === "fs/read_text_file" ? [frame] : [];
+    return frame.method === "session/request_permission" ? [frame.params?.toolCall?.kind] : [];
   });
-  assert.isTrue(
-    readResponses.some(
-      (frame) =>
-        typeof frame.result?.content === "string" && frame.result.content.includes(PROBE_CONTENT),
-    ),
-    "T3 must serve Grok's client-mediated read of the approved file without asking",
-  );
-  // Grok probes the path before creating it, so a not-found error is expected;
-  // a refusal by the runtime policy is not.
-  for (const frame of readResponses) {
-    assert.notInclude(String(frame.error?.message ?? ""), "runtime policy");
-  }
+  assert.deepEqual(permissionKinds, ["edit"], "Grok must ask T3 before its own write");
 }
 
 function writtenContent(item: OrchestrationV2TurnItem): string | undefined {

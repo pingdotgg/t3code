@@ -6,6 +6,7 @@ import {
   assertAssistantTextIncludes,
   assertBaseProjection,
   assertExecutionNodeKinds,
+  assertNoAcpClientFileOrTerminalRequests,
   assertSemanticProjectionIntegrity,
   assertTurnItemTypes,
   assertUserMessagesInclude,
@@ -32,6 +33,7 @@ export function assertTodoListGrokOutput(
   ]);
   assertUserMessagesInclude(projection, [TODO_LIST_PROMPT]);
   assertAssistantTextIncludes(projection, "todo list fixture complete");
+  if (transcript.provider === "grok") assertNoAcpClientFileOrTerminalRequests(transcript);
 
   const planEvents = result.domainEvents.filter((event) => event.type === "plan.updated");
   assert.lengthOf(planEvents, 2);

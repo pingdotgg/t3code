@@ -79,7 +79,6 @@ import type {
   AcpSessionRuntimeOptions,
   AcpSessionRuntimeStartResult,
 } from "../../provider/acp/AcpSessionRuntime.ts";
-import { acpReadTextFile, acpWriteTextFile } from "../../provider/acp/AcpClientFs.ts";
 import {
   acpClientExecuteDisposition,
   acpClientReadDisposition,
@@ -270,10 +269,12 @@ export interface AcpAdapterV2Flavor {
   /** Native session mode to select for a runtime policy (e.g. Antigravity `yolo`). */
   readonly sessionModeForPolicy?: (policy: ProviderAdapterV2RuntimePolicy) => string | undefined;
   /**
-   * Serves the agent's `fs/read_text_file` and `fs/write_text_file` requests in
-   * place of the generic handlers, after the runtime policy guard. Receives the
-   * cwd of the policy active when the request arrives, which is null when the
-   * session has no workspace. Antigravity confines them to its workspace.
+   * Opts the session into the ACP client `fs` capability. Agents read and write
+   * files themselves under their own permission model unless a flavor sets
+   * this. Requests pass the runtime policy guard, then these handlers, which
+   * receive the cwd of the policy active when the request arrives (null when
+   * the session has no workspace). Antigravity sets it and confines requests
+   * to that workspace.
    */
   readonly clientFileSystem?: {
     readonly readTextFile: (
@@ -480,9 +481,10 @@ export interface AcpAdapterV2Options {
   /** How agents spawn this install's `acp-mcp-bridge`; see `resolveSelfInvocation`. */
   readonly selfInvocation: SelfInvocation;
   /**
-   * Enables the ACP client `terminal` capability. Sessions advertise
-   * `terminal: true` and run agent-created terminals through this spawner
-   * with the provider instance's environment.
+   * Opts the session into the ACP client `terminal` capability. Agents run
+   * commands themselves unless an adapter sets this; with it, sessions
+   * advertise `terminal: true` and run agent-created terminals through this
+   * spawner with the provider instance's environment. Devin sets it.
    */
   readonly clientTerminals?: {
     readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
@@ -1973,7 +1975,10 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
             interruptPromptOnCancel: flavor.interruptPromptOnCancel ?? false,
             clientCapabilities: {
-              fs: { readTextFile: true, writeTextFile: true },
+              fs: {
+                readTextFile: flavor.clientFileSystem !== undefined,
+                writeTextFile: flavor.clientFileSystem !== undefined,
+              },
               terminal: clientTerminals !== undefined,
               elicitation: { form: {}, ...(flavor.onUrlElicitation ? { url: {} } : {}) },
               ...(flavor.clientCapabilitiesMeta ? { _meta: flavor.clientCapabilitiesMeta } : {}),
@@ -5395,31 +5400,26 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               Effect.succeed(request),
               requestContext.requestId,
             );
-          // A flavor's own handlers replace the generic ones: effect-acp keeps
-          // only the last handler registered per method. They confine requests
-          // to the workspace of the policy the guard checks at request time,
-          // not the one the session opened with.
+          // Without the capability no fs handler is registered, so a stray
+          // request (OpenCode and Kilo send one after approved edits) gets
+          // method-not-found and cannot touch the disk. Opted-in handlers
+          // confine requests to the workspace of the policy the guard checks
+          // at request time, not the one the session opened with.
           const clientFileSystem = flavor.clientFileSystem;
-          yield* targetRuntime.handleReadTextFile((request) =>
-            guardClientFsRead(request.path).pipe(
-              Effect.andThen(clientPolicyContext),
-              Effect.flatMap(({ policy }) =>
-                clientFileSystem === undefined
-                  ? acpReadTextFile(options.fileSystem, request)
-                  : clientFileSystem.readTextFile(request, policy.cwd),
+          if (clientFileSystem !== undefined) {
+            yield* targetRuntime.handleReadTextFile((request) =>
+              guardClientFsRead(request.path).pipe(
+                Effect.andThen(clientPolicyContext),
+                Effect.flatMap(({ policy }) => clientFileSystem.readTextFile(request, policy.cwd)),
               ),
-            ),
-          );
-          yield* targetRuntime.handleWriteTextFile((request) =>
-            guardClientFsWrite(request.path).pipe(
-              Effect.andThen(clientPolicyContext),
-              Effect.flatMap(({ policy }) =>
-                clientFileSystem === undefined
-                  ? acpWriteTextFile(options.fileSystem, request)
-                  : clientFileSystem.writeTextFile(request, policy.cwd),
+            );
+            yield* targetRuntime.handleWriteTextFile((request) =>
+              guardClientFsWrite(request.path).pipe(
+                Effect.andThen(clientPolicyContext),
+                Effect.flatMap(({ policy }) => clientFileSystem.writeTextFile(request, policy.cwd)),
               ),
-            ),
-          );
+            );
+          }
           if (handlerOptions.mcp !== false) {
             yield* wireAcpRuntimeMcpHandlers(targetRuntime, runtimeMcpBridge);
           }
