@@ -1802,6 +1802,28 @@ const makeWsRpcLayer = (
           );
       };
 
+      const path = yield* Path.Path;
+      // A chats folder inside a checkout (a dev worktree's .t3, a dotfiles
+      // home) would inherit that repo's git status and checkpoints, so the
+      // folder is only offered when the data dir is outside any work tree.
+      // Detection failures fail closed and hide the folder, never the config.
+      // Probed once per connection: a negative VCS detection is not cached.
+      // A cached probe memoizes an interrupt exit too, so a config load that
+      // is cancelled mid-probe invalidates it and the next load probes again.
+      const [cachedChatWorkspaceRoot, invalidateChatWorkspaceRoot] =
+        yield* Effect.cachedInvalidateWithTTL(
+          gitWorkflow.isRepository(config.baseDir).pipe(
+            Effect.map((isRepository) =>
+              isRepository ? undefined : path.join(config.baseDir, "chats"),
+            ),
+            Effect.catchCause(() => Effect.succeed(undefined)),
+          ),
+          Duration.infinity,
+        );
+      const resolveChatWorkspaceRoot = cachedChatWorkspaceRoot.pipe(
+        Effect.onInterrupt(() => invalidateChatWorkspaceRoot),
+      );
+
       // Only clients that answer /usage-limits themselves see it in the catalogs;
       // an older client would send the injected command to the provider.
       const loadServerConfig = (options: { readonly usageLimitsCommand: boolean }) =>
@@ -1816,6 +1838,7 @@ const makeWsRpcLayer = (
           );
           const environment = yield* serverEnvironment.getDescriptor;
           const auth = yield* serverAuth.getDescriptor();
+          const chatWorkspaceRoot = yield* resolveChatWorkspaceRoot;
           const availableEditors: ReadonlyArray<EditorId> = yield* resolveAvailableEditorsForConfig(
             externalLauncher.resolveAvailableEditors(),
           );
@@ -1864,6 +1887,7 @@ const makeWsRpcLayer = (
             threadResumeCompletionMarker: true,
             threadSnapshotPagination: true,
             reasoningMessages: true,
+            ...(chatWorkspaceRoot === undefined ? {} : { chatWorkspaceRoot }),
           };
         });
 

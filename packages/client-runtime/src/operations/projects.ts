@@ -322,3 +322,40 @@ export function buildProjectCreateCommand(input: {
     createdAt: input.createdAt,
   };
 }
+
+/** Title of the plain-folder project that hosts threads started without a repository. */
+export const CHAT_PROJECT_TITLE = "Chats";
+
+/**
+ * The project an environment uses for "just chat" threads, if the user has
+ * started one before. It is an ordinary project rooted at the folder the
+ * server advertises in `ServerConfig.chatWorkspaceRoot`.
+ */
+export function findChatProject(input: {
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly environmentId: EnvironmentId;
+  readonly chatWorkspaceRoot: string;
+}): EnvironmentProject | null {
+  return findExistingAddProject({
+    projects: input.projects,
+    environmentId: input.environmentId,
+    path: input.chatWorkspaceRoot,
+  });
+}
+
+export function buildChatProjectCreateCommand(input: {
+  readonly commandId: CommandId;
+  readonly projectId: ProjectId;
+  readonly chatWorkspaceRoot: string;
+  readonly createdAt: string;
+}): Extract<OrchestrationCommand, { type: "project.create" }> {
+  return {
+    ...buildProjectCreateCommand({
+      commandId: input.commandId,
+      projectId: input.projectId,
+      workspaceRoot: input.chatWorkspaceRoot,
+      createdAt: input.createdAt,
+    }),
+    title: CHAT_PROJECT_TITLE,
+  };
+}

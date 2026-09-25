@@ -604,6 +604,12 @@ export const ServerConfig = Schema.Struct({
   /** Whether thread reads accept the reasoningMessages opt-in. */
   reasoningMessages: Schema.optionalKey(Schema.Boolean),
   /**
+   * Folder this environment offers for threads that need no repository. A
+   * client that wants "just chat" adds an ordinary project rooted here. Absent
+   * on servers that predate the feature.
+   */
+  chatWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
    * Palettes published by this environment's machine. Never sent in a config
    * snapshot: the theme stream emits the current set before any change, so a
    * snapshot carrying it too would hand every subscriber the same array twice

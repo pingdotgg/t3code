@@ -7,7 +7,15 @@ import {
   type StaticScreenProps,
 } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
+import {
+  buildChatProjectCreateCommand,
+  canCreateProjectInEnvironment,
+  findChatProject,
+} from "@t3tools/client-runtime/operations/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { CommandId, type EnvironmentId, ProjectId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -17,7 +25,11 @@ import { MaterialButton } from "../../components/MaterialButton";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { AppText as Text } from "../../components/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import { useProjects } from "../../state/entities";
+import { uuidv4 } from "../../lib/uuid";
+import { useProjects, useServerConfigs, waitForProject } from "../../state/entities";
+import { projectEnvironment } from "../../state/projects";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import { useWorkspaceState } from "../../state/workspace";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
@@ -156,6 +168,25 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
           project.id === incomingShare.destination?.projectId,
       ) ?? null)
     : null;
+  const serverConfigs = useServerConfigs();
+  const { connectedEnvironments } = useRemoteConnectionStatus();
+  const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
+  // "Just chat" needs a connected environment whose server offers a chat
+  // folder. When the list is scoped to selectedEnvironmentId only that
+  // environment qualifies; an unscoped list takes the first one that does.
+  const chatEnvironment =
+    connectedEnvironments.find(
+      (environment) =>
+        (selectedEnvironmentId === null || environment.environmentId === selectedEnvironmentId) &&
+        canCreateProjectInEnvironment(environment.connectionState) &&
+        serverConfigs.get(environment.environmentId)?.chatWorkspaceRoot !== undefined,
+    ) ?? null;
+  const chatStartInFlightRef = useRef(false);
+  const chatWorkspaceRoot = chatEnvironment
+    ? (serverConfigs.get(chatEnvironment.environmentId)?.chatWorkspaceRoot ?? null)
+    : null;
+  const canJustChat =
+    chatEnvironment !== null && chatWorkspaceRoot !== null && reservedDestinationProject === null;
 
   async function selectProject(project: EnvironmentProject): Promise<void> {
     if (incomingShare?.destination && !reservedDestinationProject) {
@@ -187,6 +218,53 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         incomingShareId: incomingShare?.id,
       }),
     );
+  }
+
+  async function startChat(): Promise<void> {
+    if (!chatEnvironment || chatWorkspaceRoot === null || chatStartInFlightRef.current) return;
+    const environmentId = chatEnvironment.environmentId;
+    const existing = findChatProject({ projects, environmentId, chatWorkspaceRoot });
+    if (existing) {
+      await selectProject(existing);
+      return;
+    }
+    chatStartInFlightRef.current = true;
+    try {
+      await createChatProject(environmentId);
+    } finally {
+      chatStartInFlightRef.current = false;
+    }
+  }
+
+  async function createChatProject(environmentId: EnvironmentId): Promise<void> {
+    if (chatWorkspaceRoot === null) return;
+    const projectId = ProjectId.make(uuidv4());
+    const result = await createProject({
+      environmentId,
+      input: buildChatProjectCreateCommand({
+        commandId: CommandId.make(uuidv4()),
+        projectId,
+        chatWorkspaceRoot,
+        createdAt: new Date().toISOString(),
+      }),
+    });
+    if (AsyncResult.isFailure(result)) {
+      const error = Cause.squash(result.cause);
+      Alert.alert(
+        "Could not start chat",
+        error instanceof Error ? error.message : "The chat folder could not be created.",
+      );
+      return;
+    }
+    const project = await waitForProject({ environmentId, projectId });
+    if (project === null) {
+      Alert.alert(
+        "Could not start chat",
+        "The chat folder was created but has not reached this device yet. Pick Chats from the project list once it appears.",
+      );
+      return;
+    }
+    await selectProject(project);
   }
 
   useEffect(() => {
@@ -264,15 +342,24 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                 {projectEmptyState.detail}
               </Text>
               {Platform.OS === "android" ? (
-                <MaterialButton
-                  label={catalogState.hasReadyEnvironment ? "Add new project" : "Add environment"}
-                  tone="primary"
-                  onPress={() =>
-                    catalogState.hasReadyEnvironment
-                      ? navigation.dispatch(StackActions.push("AddProject"))
-                      : navigation.navigate("ConnectionsNew")
-                  }
-                />
+                <>
+                  <MaterialButton
+                    label={catalogState.hasReadyEnvironment ? "Add new project" : "Add environment"}
+                    tone="primary"
+                    onPress={() =>
+                      catalogState.hasReadyEnvironment
+                        ? navigation.dispatch(StackActions.push("AddProject"))
+                        : navigation.navigate("ConnectionsNew")
+                    }
+                  />
+                  {canJustChat ? (
+                    <MaterialButton
+                      label="Just chat"
+                      tone="secondary"
+                      onPress={() => void startChat()}
+                    />
+                  ) : null}
+                </>
               ) : !catalogState.hasReadyEnvironment ? (
                 <Pressable
                   className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
@@ -283,14 +370,24 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                   </Text>
                 </Pressable>
               ) : (
-                <Pressable
-                  className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
-                  onPress={() => navigation.dispatch(StackActions.push("AddProject"))}
-                >
-                  <Text className="text-sm font-t3-bold text-primary-foreground">
-                    Add new project
-                  </Text>
-                </Pressable>
+                <>
+                  <Pressable
+                    className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
+                    onPress={() => navigation.dispatch(StackActions.push("AddProject"))}
+                  >
+                    <Text className="text-sm font-t3-bold text-primary-foreground">
+                      Add new project
+                    </Text>
+                  </Pressable>
+                  {canJustChat ? (
+                    <Pressable
+                      className="rounded-full bg-subtle px-4 py-2.5 active:opacity-70"
+                      onPress={() => void startChat()}
+                    >
+                      <Text className="text-sm font-t3-bold text-foreground">Just chat</Text>
+                    </Pressable>
+                  ) : null}
+                </>
               )}
             </View>
           ) : visibleScopes.length === 0 ? (
@@ -390,6 +487,55 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               })}
             </View>
           )}
+          {canJustChat && projectScopes.length > 0 ? (
+            Platform.OS === "android" ? (
+              <View collapsable={false} className="overflow-hidden rounded-[28px] bg-card">
+                <MaterialListRow
+                  title="Just chat"
+                  subtitle="Start a task without a repository"
+                  onPress={() => void startChat()}
+                  leading={
+                    <SymbolView
+                      name="bubble.left"
+                      size={22}
+                      tintColorClassName="accent-icon-muted"
+                      type="monochrome"
+                    />
+                  }
+                />
+              </View>
+            ) : (
+              <View collapsable={false} className="overflow-hidden rounded-[24px] bg-card">
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Just chat"
+                  onPress={() => void startChat()}
+                  className="flex-row items-center gap-3 bg-card px-4 py-3.5"
+                >
+                  <View className="h-7 w-7 items-center justify-center">
+                    <SymbolView
+                      name="bubble.left"
+                      size={18}
+                      tintColorClassName="accent-icon-muted"
+                      type="monochrome"
+                    />
+                  </View>
+                  <View className="min-w-0 flex-1">
+                    <Text className="text-base font-t3-bold leading-snug">Just chat</Text>
+                    <Text className="text-xs leading-snug text-foreground-muted" numberOfLines={1}>
+                      Start a task without a repository
+                    </Text>
+                  </View>
+                  <SymbolView
+                    name="chevron.right"
+                    size={14}
+                    tintColorClassName="accent-chevron"
+                    type="monochrome"
+                  />
+                </Pressable>
+              </View>
+            )
+          ) : null}
         </ScrollView>
       </MaterialScreenContent>
     </View>
