@@ -4,6 +4,7 @@ import {
   normalizeGitRemoteUrl,
 } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -13,8 +14,11 @@ import * as Layer from "effect/Layer";
 import * as ProcessRunner from "../processRunner.ts";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
-const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(1);
-const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
+// Settlement and pull request sweeps resolve every project each minute, so these
+// must outlast the sweep interval or every sweep respawns git per project.
+// Callers that know the repository changed pass `refresh: true`.
+const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(10);
+const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(5);
 
 export interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
@@ -107,7 +111,14 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
       })
       .pipe(Effect.option);
     if (topLevelResult._tag === "None" || topLevelResult.value.code !== 0) {
-      return null;
+      // Remember git's "not a repository" verdict; retry timeouts and other failures.
+      if (
+        topLevelResult._tag === "Some" &&
+        /not a git repository/i.test(topLevelResult.value.stderr)
+      ) {
+        return null;
+      }
+      return yield* new Cause.NoSuchElementError("Git root lookup failed");
     }
 
     const candidate = topLevelResult.value.stdout.trim();
@@ -143,7 +154,11 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
   const refine = options.refine ?? Effect.succeed;
 
-  const repositoryRootCache = yield* Cache.makeWith<string, string | null>(
+  const repositoryRootCache = yield* Cache.makeWith<
+    string,
+    string | null,
+    Cause.NoSuchElementError
+  >(
     (cwd) =>
       resolveRepositoryIdentityCacheKey(cwd).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
@@ -152,7 +167,9 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
       capacity: cacheCapacity,
       timeToLive: Exit.match({
         onSuccess: (value) =>
-          value === null ? Duration.zero : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
+          value === null
+            ? (options.negativeCacheTtl ?? DEFAULT_NEGATIVE_CACHE_TTL)
+            : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
         onFailure: () => Duration.zero,
       }),
     },
@@ -183,7 +200,9 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     "RepositoryIdentityResolver.resolve",
   )(function* (cwd, options) {
     if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
-    const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
+    const cacheKey = yield* Cache.get(repositoryRootCache, cwd).pipe(
+      Effect.orElseSucceed(() => null),
+    );
     if (cacheKey === null) return null;
     if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
     return yield* Cache.get(repositoryIdentityCache, cacheKey);
