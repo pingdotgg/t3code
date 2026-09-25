@@ -135,3 +135,18 @@ export function isAutoSettlementCandidate(thread: OrchestrationThreadShell, now:
     Date.parse(thread.latestTurn.completedAt) > Date.parse(thread.snoozedAt);
   return wokeOnError || wokeOnCompletion;
 }
+
+/** Whether a settled thread has stayed settled long enough to archive. */
+export function isAutoArchiveDue(
+  thread: Pick<
+    OrchestrationThreadShell,
+    "archivedAt" | "settledOverride" | "settledAt" | "session"
+  >,
+  now: string,
+  autoArchiveAfterDays: number | null,
+): boolean {
+  if (autoArchiveAfterDays === null || thread.archivedAt !== null) return false;
+  if (thread.settledOverride !== "settled" || thread.settledAt === null) return false;
+  if (thread.session?.status === "starting" || thread.session?.status === "running") return false;
+  return Date.parse(thread.settledAt) <= Date.parse(now) - autoArchiveAfterDays * DAY_MS;
+}

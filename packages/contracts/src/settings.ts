@@ -89,6 +89,8 @@ export const SidebarAutoSettleAfterDays = Schema.Number.check(
 );
 export type SidebarAutoSettleAfterDays = typeof SidebarAutoSettleAfterDays.Type;
 const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 3;
+/** Days a thread stays settled before it archives, when auto-archive is on. */
+export const DEFAULT_SIDEBAR_AUTO_ARCHIVE_AFTER_DAYS: SidebarAutoSettleAfterDays = 30;
 export const MIN_GLASS_OPACITY = 40;
 export const MAX_GLASS_OPACITY = 100;
 export const GlassOpacity = Schema.Int.check(
@@ -1015,6 +1017,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "pullRequestMergeMethod",
   "sidebarAutoSettleOnMerge",
   "sidebarAutoSettleAfterDays",
+  "sidebarAutoArchiveAfterDays",
   "continueThreadsAfterServerUpdate",
   "responseStreamingMode",
 ] as const;
@@ -1023,7 +1026,7 @@ export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTIN
 /**
  * One project's overrides. An absent key inherits the environment value;
  * `null` is a real value where the environment type is nullable (no default
- * model, no dedicated writer model, never auto-settle).
+ * model, no dedicated writer model, never auto-settle or auto-archive).
  */
 export const ProjectSettingsOverrides = Schema.Struct({
   worktreeCleanup: Schema.optionalKey(WorktreeCleanup),
@@ -1042,6 +1045,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
+  sidebarAutoArchiveAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);
@@ -1065,6 +1069,7 @@ const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettin
   "sourceControlWriterModelSelection",
   "pullRequestMergeMethod",
   "sidebarAutoSettleAfterDays",
+  "sidebarAutoArchiveAfterDays",
 ]);
 
 export const StorageCleanupSettings = Schema.Struct({
@@ -1163,6 +1168,10 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Days a thread stays settled before the server archives it. Null (off) by default.
+  sidebarAutoArchiveAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   backgroundActivity: BackgroundActivitySettings,
   // Legacy flat fields retained for old settings files and old clients. New
   // consumers should resolve `backgroundActivity` instead.
@@ -1500,6 +1509,7 @@ export const ServerSettingsPatch = Schema.Struct({
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
+  sidebarAutoArchiveAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),

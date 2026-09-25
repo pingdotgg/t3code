@@ -25,6 +25,7 @@ const SHARED_SERVER_SETTING_KEYS = [
   "continueThreadsAfterServerUpdate",
   "sidebarAutoSettleAfterDays",
   "sidebarAutoSettleOnMerge",
+  "sidebarAutoArchiveAfterDays",
   "newWorktreesStartFromOrigin",
   "sourceControlWritingStyle",
   "textGenerationModelSelection",
@@ -33,6 +34,12 @@ const SHARED_SERVER_SETTING_KEYS = [
 export type SharedServerSettingKey = (typeof SHARED_SERVER_SETTING_KEYS)[number];
 
 const SHARED_KEY_SET = new Set<string>(SHARED_SERVER_SETTING_KEYS);
+
+/** Capabilities that gate newer shared preferences. */
+type SharedSettingsCapabilities = Pick<
+  ExecutionEnvironmentCapabilities,
+  "threadRestartContinuation" | "threadAutoArchive"
+>;
 
 /** Split a server patch into the keys every environment should receive and the primary-only rest. */
 export function splitSharedServerPatch(patch: ServerSettingsPatch): {
@@ -57,7 +64,7 @@ export function splitSharedServerPatch(patch: ServerSettingsPatch): {
 /** Filter unsupported preferences; direct model writes retain the server's fallback behavior. */
 export function filterSharedServerPatch(
   patch: ServerSettingsPatch,
-  capabilities: Pick<ExecutionEnvironmentCapabilities, "threadRestartContinuation"> | undefined,
+  capabilities: SharedSettingsCapabilities | undefined,
   settings?: ServerSettings,
   sourceSettings = settings,
   targetIsSource = false,
@@ -79,15 +86,18 @@ export function filterSharedServerPatch(
   ) {
     patch = Struct.omit(patch, ["textGenerationModelSelection"]);
   }
-  return capabilities?.threadRestartContinuation === true
+  if (capabilities?.threadRestartContinuation !== true) {
+    patch = Struct.omit(patch, ["continueThreadsAfterServerUpdate"]);
+  }
+  return capabilities?.threadAutoArchive === true
     ? patch
-    : Struct.omit(patch, ["continueThreadsAfterServerUpdate"]);
+    : Struct.omit(patch, ["sidebarAutoArchiveAfterDays"]);
 }
 
 /** The shared subset supported by one environment. */
 export function pickSharedServerSettings(
   settings: ServerSettings,
-  capabilities?: Pick<ExecutionEnvironmentCapabilities, "threadRestartContinuation">,
+  capabilities?: SharedSettingsCapabilities,
 ): ServerSettingsPatch {
   return filterSharedServerPatch(
     Struct.pick(settings, SHARED_SERVER_SETTING_KEYS),
@@ -119,9 +129,7 @@ export interface SharedSettingsEnvironment {
   readonly label: string;
   readonly syncEligible: boolean;
   readonly settings: ServerSettings | null;
-  readonly capabilities?:
-    | Pick<ExecutionEnvironmentCapabilities, "threadRestartContinuation">
-    | undefined;
+  readonly capabilities?: SharedSettingsCapabilities | undefined;
 }
 
 /**
@@ -135,9 +143,7 @@ export interface SharedSettingsEnvironment {
 export function findSharedSettingsMismatches(input: {
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly primarySettings: ServerSettings | null;
-  readonly primaryCapabilities?:
-    | Pick<ExecutionEnvironmentCapabilities, "threadRestartContinuation">
-    | undefined;
+  readonly primaryCapabilities?: SharedSettingsCapabilities | undefined;
   readonly environments: ReadonlyArray<SharedSettingsEnvironment>;
 }): ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }> {
   if (input.primaryEnvironmentId === null || input.primarySettings === null) {

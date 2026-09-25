@@ -6,7 +6,11 @@ import { useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  DEFAULT_SIDEBAR_AUTO_ARCHIVE_AFTER_DAYS,
+  type ServerSettingsPatch,
+} from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { AppText as Text } from "../../components/AppText";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
@@ -20,7 +24,7 @@ import {
   AndroidSettingsEnvironmentFilter,
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
-import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
+import { planAutoSettleSettingsSync } from "./autoSettleSettingsSync";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import {
   planMobileScopedSettingsClear,
@@ -84,7 +88,7 @@ function AutoSettleSettingsRows() {
     return null;
   }
 
-  const writeToAll = (patch: Partial<AutoSettleSettings>) => {
+  const writeToAll = (patch: ServerSettingsPatch) => {
     if (writeInFlight.current) return;
     const writes = planMobileScopedSettingsPatch(syncTargets, projectSelected, patch);
     if (writes.length === 0) return;
@@ -116,6 +120,9 @@ function AutoSettleSettingsRows() {
     })),
   );
 
+  const supportsAutoArchive = syncTargets.every(
+    (target) => target.environment.serverConfig.environment.capabilities.threadAutoArchive === true,
+  );
   const supportsProjectOverrides = syncTargets.every(
     (target) =>
       target.environment.serverConfig.environment.capabilities.projectSettingsOverrides === true,
@@ -126,13 +133,15 @@ function AutoSettleSettingsRows() {
     syncTargets.some(
       (target) =>
         target.sources.sidebarAutoSettleOnMerge === "project" ||
-        target.sources.sidebarAutoSettleAfterDays === "project",
+        target.sources.sidebarAutoSettleAfterDays === "project" ||
+        target.sources.sidebarAutoArchiveAfterDays === "project",
     );
   const clearProjectOverrides = () => {
     if (writeInFlight.current) return;
     const writes = planMobileScopedSettingsClear(syncTargets, [
       "sidebarAutoSettleOnMerge",
       "sidebarAutoSettleAfterDays",
+      "sidebarAutoArchiveAfterDays",
     ]);
     if (writes.length === 0) return;
     writeInFlight.current = true;
@@ -150,6 +159,7 @@ function AutoSettleSettingsRows() {
   };
 
   const afterDays = referenceSettings.sidebarAutoSettleAfterDays;
+  const archiveAfterDays = referenceSettings.sidebarAutoArchiveAfterDays;
 
   return (
     <View className="gap-6">
@@ -186,11 +196,39 @@ function AutoSettleSettingsRows() {
             <AutoSettleDaysField
               value={afterDays}
               disabled={disabled}
+              action="auto-settle"
               onValueChange={(value) => writeToAll({ sidebarAutoSettleAfterDays: value })}
             />
           </View>
         ) : null}
       </SettingsSection>
+      {supportsAutoArchive ? (
+        <SettingsSection title="Auto-archive">
+          <SettingsSwitchRow
+            icon="archivebox"
+            label="Auto-archive settled threads"
+            value={archiveAfterDays !== null}
+            disabled={disabled}
+            onValueChange={(value) =>
+              writeToAll({
+                sidebarAutoArchiveAfterDays: value ? DEFAULT_SIDEBAR_AUTO_ARCHIVE_AFTER_DAYS : null,
+              })
+            }
+          />
+          {archiveAfterDays !== null ? (
+            <View className="flex-row items-center gap-4 px-4 py-4 android:min-h-14 android:py-3">
+              <View className="w-[22px] android:w-6" />
+              <Text className="flex-1 text-foreground text-lg android:text-base">Settled days</Text>
+              <AutoSettleDaysField
+                value={archiveAfterDays}
+                disabled={disabled}
+                action="auto-archive"
+                onValueChange={(value) => writeToAll({ sidebarAutoArchiveAfterDays: value })}
+              />
+            </View>
+          ) : null}
+        </SettingsSection>
+      ) : null}
       {pendingWrites === 0 && mismatches.length > 0 ? (
         <SettingsSection title="Across environments">
           <View className="gap-3 p-4">

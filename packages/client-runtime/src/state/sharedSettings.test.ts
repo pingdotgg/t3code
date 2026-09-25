@@ -233,6 +233,14 @@ describe("filterSharedServerPatch", () => {
       );
     },
   );
+
+  it("sends auto-archive only to servers that archive settled threads", () => {
+    const patch = { sidebarAutoArchiveAfterDays: 30, sidebarAutoSettleAfterDays: 7 };
+    expect(filterSharedServerPatch(patch, { threadAutoArchive: true })).toEqual(patch);
+    expect(filterSharedServerPatch(patch, restartCapabilities)).toEqual({
+      sidebarAutoSettleAfterDays: 7,
+    });
+  });
 });
 
 describe("findSharedSettingsMismatches", () => {
