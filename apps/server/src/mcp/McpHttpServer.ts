@@ -213,10 +213,10 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
   };
 
   // Per-field caps do not sum below the ceiling: three log arrays of 40 capped
-  // entries alone can pass 60 KB. Shed the least useful lists first, halving
-  // one list per round, until the JSON fits. Page text is halved last: the
-  // caps count characters, and wide characters can keep it over the ceiling
-  // alone. The identifier caps bound the rest, so this terminates.
+  // entries alone can pass 60 KB, and the caps count characters, not bytes.
+  // Halve one thing per round until the JSON fits: logs first, then page
+  // text, then the locators. The identifier caps bound the rest, so this
+  // terminates.
   const shedOrder = [
     "actionTimeline",
     "networkEntries",
@@ -247,9 +247,14 @@ const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
     const key =
       shedOrder.find(
         (candidate) => candidate !== "interactiveElements" && lists[candidate].length > 0,
-      ) ?? (lists.interactiveElements.length > 0 ? "interactiveElements" : undefined);
-    if (key === undefined) {
-      if (visibleTextChars === 0) break;
+      ) ??
+      (visibleTextChars > 0
+        ? "visibleText"
+        : lists.interactiveElements.length > 0
+          ? "interactiveElements"
+          : undefined);
+    if (key === undefined) break;
+    if (key === "visibleText") {
       visibleTextChars = Math.floor(visibleTextChars / 2);
     } else {
       const keep = Math.floor(lists[key].length / 2);
