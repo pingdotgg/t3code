@@ -1,9 +1,12 @@
 import {
+  BoxGeometry,
+  CircleGeometry,
   CylinderGeometry,
   ExtrudeGeometry,
   Group,
   Mesh,
   MeshBasicMaterial,
+  MeshPhysicalMaterial,
   MeshStandardMaterial,
   PlaneGeometry,
   Raycaster,
@@ -21,10 +24,14 @@ const HEIGHT = 2.2;
 const DEPTH = 0.075;
 const INSET = 0.026;
 const CREASE = 0.004;
+const BEVEL = 0.008;
+// The hinge axis sits just above the inner screens so closed halves meet face to face.
+const PIVOT_Z = DEPTH / 2 + 0.005;
+const SPINE_RADIUS = PIVOT_Z + DEPTH / 2 - 0.002;
 
-function panelPath(side: "left" | "right", inset: number, radius: number) {
-  const left = side === "left" ? -HALF_WIDTH + inset : CREASE / 2;
-  const right = side === "left" ? -CREASE / 2 : HALF_WIDTH - inset;
+function panelPath(side: "left" | "right", inset: number, radius: number, hingeInset = 0) {
+  const left = side === "left" ? -HALF_WIDTH + inset : CREASE / 2 + hingeInset;
+  const right = side === "left" ? -CREASE / 2 - hingeInset : HALF_WIDTH - inset;
   const bottom = -HEIGHT / 2 + inset;
   const top = HEIGHT / 2 - inset;
   const path = new Shape();
@@ -48,10 +55,7 @@ function panelPath(side: "left" | "right", inset: number, radius: number) {
   return path;
 }
 
-function coverPath() {
-  const width = HALF_WIDTH - INSET * 2;
-  const height = HEIGHT - INSET * 2;
-  const radius = 0.075;
+function roundedRectPath(width: number, height: number, radius: number) {
   const path = new Shape();
   path.moveTo(-width / 2 + radius, -height / 2);
   path.lineTo(width / 2 - radius, -height / 2);
@@ -66,7 +70,11 @@ function coverPath() {
   return path;
 }
 
-/** A deliberately simple foldable: one fixed half, one half rotating around a shared hinge. */
+function coverPath() {
+  return roundedRectPath(HALF_WIDTH - INSET * 2 - 0.02, HEIGHT - INSET * 2 - 0.04, 0.07);
+}
+
+/** A procedural book-style foldable: one fixed half, one half rotating around a shared hinge. */
 export function createAndroidFoldScene(
   texture: Texture,
   layout: PhoneDisplayLayout,
@@ -78,27 +86,90 @@ export function createAndroidFoldScene(
   const left = new Group();
   const right = new Group();
   orientation.add(left, right);
-  const shell = new MeshStandardMaterial({ color: 0x48545b, metalness: 0.65, roughness: 0.38 });
-  const bezel = new MeshStandardMaterial({ color: 0x14191c, metalness: 0.22, roughness: 0.5 });
+  const frameMetal = new MeshStandardMaterial({
+    color: 0xa3abb2,
+    metalness: 0.9,
+    roughness: 0.28,
+  });
+  const polishedMetal = new MeshStandardMaterial({
+    color: 0xc4cad0,
+    metalness: 0.95,
+    roughness: 0.16,
+  });
+  const bezel = new MeshPhysicalMaterial({
+    color: 0x0b0d10,
+    metalness: 0.1,
+    roughness: 0.2,
+    clearcoat: 1,
+  });
+  const backGlass = new MeshPhysicalMaterial({
+    color: 0x2c3237,
+    metalness: 0.35,
+    roughness: 0.52,
+    clearcoat: 0.4,
+    clearcoatRoughness: 0.6,
+  });
+  const island = new MeshPhysicalMaterial({
+    color: 0x1a1e22,
+    metalness: 0.55,
+    roughness: 0.3,
+    clearcoat: 1,
+  });
+  const lensMaterial = new MeshPhysicalMaterial({
+    color: 0x061022,
+    metalness: 0.6,
+    roughness: 0.1,
+    clearcoat: 1,
+  });
+  const flashMaterial = new MeshBasicMaterial({ color: 0xf2ead6 });
   const displayMaterial = new MeshBasicMaterial({ map: texture, toneMapped: false });
   const hitMaterial = new MeshBasicMaterial({ colorWrite: false, depthWrite: false });
   const coverMaterial = new MeshBasicMaterial({ map: texture, toneMapped: false });
-  const materials = [shell, bezel, displayMaterial, hitMaterial, coverMaterial];
+  const materials = [
+    frameMetal,
+    polishedMetal,
+    bezel,
+    backGlass,
+    island,
+    lensMaterial,
+    flashMaterial,
+    displayMaterial,
+    hitMaterial,
+    coverMaterial,
+  ];
 
-  function half(group: Group, side: "left" | "right") {
+  // Each half's meshes live in body coordinates; `left` pivots them around the hinge axis.
+  left.position.z = PIVOT_Z;
+  const leftBody = new Group();
+  leftBody.position.z = -PIVOT_Z;
+  left.add(leftBody);
+
+  function half(group: Group, side: "left" | "right", back: MeshPhysicalMaterial) {
     const body = new Mesh(
-      new ExtrudeGeometry(panelPath(side, 0, 0.105), {
-        depth: DEPTH,
-        bevelEnabled: false,
+      new ExtrudeGeometry(panelPath(side, BEVEL, 0.1, BEVEL), {
+        depth: DEPTH - BEVEL * 2,
+        bevelEnabled: true,
+        bevelSize: BEVEL,
+        bevelThickness: BEVEL,
+        bevelSegments: 3,
         curveSegments: 12,
       }),
-      shell,
+      frameMetal,
     );
-    body.position.z = -DEPTH / 2;
+    body.position.z = -DEPTH / 2 + BEVEL;
     group.add(body);
-    const frame = new Mesh(new ShapeGeometry(panelPath(side, 0.009, 0.096)), bezel);
+    const frame = new Mesh(new ShapeGeometry(panelPath(side, 0.01, 0.095, 0.002), 12), bezel);
     frame.position.z = DEPTH / 2 + 0.001;
     group.add(frame);
+    // A back-facing shape mirrors X, so it is drawn from the opposite side's outline.
+    const rear = new Mesh(
+      new ShapeGeometry(panelPath(side === "left" ? "right" : "left", 0.01, 0.095, 0.002), 12),
+      back,
+    );
+    rear.name = `${side}-back`;
+    rear.rotation.y = Math.PI;
+    rear.position.set(0, 0, -DEPTH / 2 - 0.001);
+    group.add(rear);
     const geometry = new ShapeGeometry(panelPath(side, INSET, 0.076));
     geometry.computeBoundingBox();
     const display = new Mesh(geometry, hitMaterial);
@@ -108,8 +179,8 @@ export function createAndroidFoldScene(
     return display;
   }
 
-  const innerLeft = half(left, "left");
-  const innerRight = half(right, "right");
+  const innerLeft = half(leftBody, "left", bezel);
+  const innerRight = half(right, "right", backGlass);
   // One indexed surface keeps adjacent pixels joined at the crease. The
   // physical halves move separately underneath it.
   const screenWidth = 2 * (HALF_WIDTH - INSET);
@@ -133,14 +204,89 @@ export function createAndroidFoldScene(
   const innerSurface = new Mesh(screenGeometry, displayMaterial);
   innerSurface.name = "continuous-inner-screen";
   orientation.add(innerSurface);
-  const hinge = new Mesh(new CylinderGeometry(0.016, 0.016, HEIGHT - 0.05, 16), shell);
-  hinge.position.z = -DEPTH / 2 - 0.01;
-  orientation.add(hinge);
+  // The outer half of the hinge housing. It tucks behind the back glass when
+  // open and becomes the rounded spine when closed.
+  const spineSlack = 0.15;
+  const spine = new Mesh(
+    new CylinderGeometry(
+      SPINE_RADIUS,
+      SPINE_RADIUS,
+      HEIGHT - 0.012,
+      32,
+      1,
+      false,
+      Math.PI / 2 + spineSlack,
+      Math.PI - spineSlack * 2,
+    ),
+    polishedMetal,
+  );
+  spine.name = "hinge-spine";
+  spine.position.z = PIVOT_Z;
+  orientation.add(spine);
+
   const cover = new Mesh(new ShapeGeometry(coverPath()), coverMaterial);
   cover.name = "cover-screen";
   cover.position.set(-HALF_WIDTH / 2, 0, -DEPTH / 2 - 0.003);
   cover.rotation.y = Math.PI;
-  left.add(cover);
+  leftBody.add(cover);
+
+  // Rear components use back-surface coordinates, with outward positive Z.
+  const rearCamera = new Group();
+  rearCamera.name = "rear-camera";
+  const islandWidth = 0.46;
+  const islandHeight = 0.2;
+  rearCamera.position.set(
+    HALF_WIDTH - 0.07 - islandWidth / 2,
+    HEIGHT / 2 - 0.08 - islandHeight / 2,
+    -DEPTH / 2 - 0.002,
+  );
+  rearCamera.rotation.y = Math.PI;
+  right.add(rearCamera);
+  const plateDepth = 0.02;
+  const plate = new Mesh(
+    new ExtrudeGeometry(roundedRectPath(islandWidth, islandHeight, 0.07), {
+      depth: plateDepth,
+      bevelEnabled: true,
+      bevelSize: 0.008,
+      bevelThickness: 0.006,
+      bevelSegments: 3,
+      curveSegments: 12,
+    }),
+    island,
+  );
+  plate.name = "camera-plate";
+  rearCamera.add(plate);
+  const plateFront = plateDepth + 0.006;
+  for (const [x, radius] of [
+    [-0.14, 0.05],
+    [-0.01, 0.05],
+    [0.105, 0.036],
+  ] as const) {
+    const ring = new Mesh(
+      new CylinderGeometry(radius + 0.012, radius + 0.012, 0.012, 32),
+      frameMetal,
+    );
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(x, 0, plateFront + 0.004);
+    rearCamera.add(ring);
+    const lens = new Mesh(new CircleGeometry(radius, 32), lensMaterial);
+    lens.name = "camera-lens";
+    lens.position.set(x, 0, plateFront + 0.0105);
+    rearCamera.add(lens);
+  }
+  const flash = new Mesh(new CircleGeometry(0.018, 20), flashMaterial);
+  flash.position.set(0.185, 0.045, plateFront + 0.0005);
+  rearCamera.add(flash);
+
+  // Power and volume keys sit on the fixed half's outer edge.
+  for (const [y, length] of [
+    [0.52, 0.16],
+    [0.2, 0.3],
+  ] as const) {
+    const key = new Mesh(new BoxGeometry(0.02, length, DEPTH * 0.45), frameMetal);
+    key.position.set(HALF_WIDTH + 0.008, y, 0);
+    right.add(key);
+  }
 
   const raycaster = new Raycaster();
   const pointer = new Vector2();
@@ -158,12 +304,11 @@ export function createAndroidFoldScene(
   const setAngle = (next: number) => {
     angle = Math.max(0, Math.min(180, next));
     left.rotation.y = Math.PI * (1 - angle / 180);
-    // Keep the cover slightly in front of the fixed half when closed.
-    left.position.z = 0.01 * (1 - angle / 180);
+    spine.rotation.y = left.rotation.y / 2;
     const radians = left.rotation.y;
     const cosine = Math.cos(radians);
     const sine = Math.sin(radians);
-    const frontZ = DEPTH / 2 + 0.004;
+    const frontZ = DEPTH / 2 + 0.004 - PIVOT_Z;
     for (let i = 0; i < screenPositions.count; i++) {
       const x = baseX[i]!;
       if (x < 0) {
@@ -171,10 +316,10 @@ export function createAndroidFoldScene(
           i,
           x * cosine + frontZ * sine,
           screenPositions.getY(i),
-          -x * sine + frontZ * cosine + left.position.z,
+          -x * sine + frontZ * cosine + PIVOT_Z,
         );
       } else {
-        screenPositions.setXYZ(i, x, screenPositions.getY(i), frontZ);
+        screenPositions.setXYZ(i, x, screenPositions.getY(i), frontZ + PIVOT_Z);
       }
     }
     screenPositions.needsUpdate = true;
