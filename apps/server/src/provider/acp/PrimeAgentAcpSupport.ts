@@ -127,6 +127,55 @@ export const applyPrimeAgentAcpModelSelection = Effect.fn("applyPrimeAgentAcpMod
 );
 
 const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+const TEXT_FILE_EXTENSIONS = new Set([
+  ".txt",
+  ".md",
+  ".mdx",
+  ".json",
+  ".jsonl",
+  ".yaml",
+  ".yml",
+  ".toml",
+  ".xml",
+  ".csv",
+  ".tsv",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+  ".ts",
+  ".tsx",
+  ".html",
+  ".css",
+  ".scss",
+  ".less",
+  ".py",
+  ".rs",
+  ".go",
+  ".java",
+  ".kt",
+  ".swift",
+  ".c",
+  ".h",
+  ".cc",
+  ".cpp",
+  ".hpp",
+  ".cs",
+  ".rb",
+  ".php",
+  ".sh",
+  ".bash",
+  ".zsh",
+  ".sql",
+  ".graphql",
+  ".svelte",
+  ".vue",
+  ".log",
+  ".diff",
+  ".patch",
+  ".ini",
+  ".conf",
+]);
 
 export const buildPrimeAgentPrompt = Effect.fn("buildPrimeAgentPrompt")(function* (input: {
   readonly input: ProviderSendTurnInput["input"];
@@ -150,7 +199,9 @@ export const buildPrimeAgentPrompt = Effect.fn("buildPrimeAgentPrompt")(function
     const pdf = attachment.type === "file" && mimeType === "application/pdf";
     const textFile =
       attachment.type === "file" &&
-      (mimeType.startsWith("text/") || mimeType === "application/json");
+      (mimeType.startsWith("text/") ||
+        mimeType === "application/json" ||
+        TEXT_FILE_EXTENSIONS.has(path.extname(attachment.name).toLowerCase()));
     if (!image && !pdf && !textFile) {
       return yield* EffectAcpErrors.AcpRequestError.invalidParams(
         `Prime Agent does not support '${attachment.name}' (${attachment.mimeType}). Attach a PNG, JPEG, WebP, GIF, PDF, or text file.`,

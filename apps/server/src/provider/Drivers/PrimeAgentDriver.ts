@@ -94,6 +94,13 @@ export const PrimeAgentDriver: ProviderDriver<PrimeAgentSettings, PrimeAgentDriv
               }),
           ),
         );
+        if (result.code !== 0) {
+          return yield* new ProviderSetupError({
+            instanceId,
+            operation: "resolve",
+            detail: `Prime Agent exited with code ${result.code} when reporting its version.`,
+          });
+        }
         const version = parseGenericCliVersion(result.stdout || result.stderr) ?? "unknown";
         return {
           protocolVersion: 1,
