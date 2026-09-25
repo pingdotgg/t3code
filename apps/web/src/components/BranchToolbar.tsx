@@ -56,10 +56,12 @@ import { Separator } from "./ui/separator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { ComposerSurface } from "./chat/ComposerSurface";
+import { COMPOSER_CONTEXT_LAYOUT_EVENT } from "./chat/composerControlsTransition";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import { measureRestingComposerControls } from "./chat/restingComposerControlsMeasurement";
 import { resolveRestingComposerControlsNaturalWidth } from "./composerFooterLayout";
 import { cn } from "~/lib/utils";
+import { usePanelAnimationSettings } from "../panelAnimations";
 
 export interface BranchToolbarHandle {
   openBranchPicker: () => void;
@@ -325,6 +327,8 @@ const COMPOSER_CONTEXT_MOTION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 const COMPOSER_CONTEXT_LABEL_SELECTOR = "[data-composer-label]";
 
 function useLabelsOverflow(element: HTMLDivElement | null): boolean {
+  const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
+    usePanelAnimationSettings();
   const [overflows, setOverflows] = useState(false);
   const pendingLabelRectsRef = useRef<Map<HTMLElement, DOMRect> | null>(null);
   const labelAnimationsRef = useRef(new Map<HTMLElement, Animation>());
@@ -391,6 +395,23 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
       let textWidth = label.scrollWidth;
       for (const inner of label.querySelectorAll<HTMLElement>("*")) {
         textWidth = Math.max(textWidth, inner.scrollWidth);
+        // Middle-truncated labels split the text across flex children. A
+        // collapsed wrapper only exposes one half through scrollWidth, so
+        // reserve both halves or the compact decision can alternate forever.
+        const style = getComputedStyle(inner);
+        if (style.display === "flex" || style.display === "inline-flex") {
+          const childrenWidth = Array.from(inner.children).reduce(
+            (width, child) => width + child.scrollWidth,
+            0,
+          );
+          const maxWidth = style.maxWidth.endsWith("px")
+            ? Number.parseFloat(style.maxWidth)
+            : Number.NaN;
+          textWidth = Math.max(
+            textWidth,
+            Math.min(childrenWidth, Number.isFinite(maxWidth) ? maxWidth : Infinity),
+          );
+        }
       }
       // Subtract the visible width even during an animation. The content
       // sum already includes it; only the hidden text needs reserving.
@@ -421,12 +442,35 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
     }
     labelAnimationsRef.current.clear();
 
+    const composerTransition = !!element?.closest("[data-composer-layout-transition]");
+    if (composerTransition && !panelAnimationsActive) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
     for (const [label, previousRect] of previousRects) {
       if (!label.isConnected) continue;
       const nextWidth = label.getBoundingClientRect().width;
       if (Math.abs(previousRect.width - nextWidth) < 0.5) continue;
+
+      if (composerTransition) {
+        // Reserve the destination width immediately for the moving controls,
+        // but reveal the label only after they have cleared the context strip.
+        if (nextWidth > previousRect.width) {
+          const animation = label.animate(
+            [
+              { clipPath: "inset(0 100% 0 0)", opacity: 0 },
+              { clipPath: "inset(0 0 0 0)", opacity: 1 },
+            ],
+            {
+              delay: panelAnimationDurationMs / 2,
+              duration: panelAnimationDurationMs / 2,
+              easing: COMPOSER_CONTEXT_MOTION_EASING,
+              fill: "backwards",
+            },
+          );
+          labelAnimationsRef.current.set(label, animation);
+        }
+        continue;
+      }
 
       // Animate the space occupied by each label so flex layout keeps the
       // trailing controls anchored. Translating the whole group after its
@@ -453,7 +497,14 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
         { once: true },
       );
     }
-  }, [overflows]);
+  }, [overflows, element, panelAnimationsActive, panelAnimationDurationMs]);
+
+  useLayoutEffect(() => {
+    const shell = element?.closest('[data-slot="composer-shell"]');
+    if (!shell) return;
+    shell.addEventListener(COMPOSER_CONTEXT_LAYOUT_EVENT, measure);
+    return () => shell.removeEventListener(COMPOSER_CONTEXT_LAYOUT_EVENT, measure);
+  }, [element, measure]);
 
   useEffect(
     () => () => {

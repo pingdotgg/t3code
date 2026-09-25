@@ -1,3 +1,9 @@
+import {
+  animateComposerControls,
+  captureComposerControls,
+  COMPOSER_CONTEXT_LAYOUT_EVENT,
+  type ComposerControlPositions,
+} from "./composerControlsTransition";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -398,13 +404,13 @@ const COMPOSER_SCROLL_COLLAPSE_THRESHOLD_PX = 24;
 const COMPOSER_SCROLL_GESTURE_RESET_MS = 120;
 const COMPOSER_RESTING_TRANSITION_CLEANUP_BUFFER_MS = 50;
 const COMPOSER_RESTING_TRANSITION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
-const COMPOSER_RESTING_CONTROLS_ARRIVAL_DRIFT_PX = 4;
 
 function useComposerRestingTransition(
   isCollapsed: boolean,
   isResting: boolean,
   restingControlsRef: React.RefObject<HTMLDivElement | null>,
   onOverlayHeightChange: (height: number) => void,
+  measureRestingControls: () => void,
   animationsActive: boolean,
   animationDurationMs: number,
 ) {
@@ -416,12 +422,14 @@ function useComposerRestingTransition(
   const previousContentOffsetsRef = useRef<{
     promptFromTop: number | null;
     promptHeight: number | null;
-    actionFromBottom: number | null;
-  }>({ promptFromTop: null, promptHeight: null, actionFromBottom: null });
+  }>({ promptFromTop: null, promptHeight: null });
   const animationRef = useRef<Animation | null>(null);
   const animationTargetHeightRef = useRef<number | null>(null);
   const contentAnimationsRef = useRef<Animation[]>([]);
   const stateChangeAnimationsRef = useRef<Animation[]>([]);
+  const previousControlsRef = useRef<ComposerControlPositions>(new Map());
+  const controlsTransitionRef = useRef<ReturnType<typeof animateComposerControls> | null>(null);
+  const layoutTransitionShellRef = useRef<Element | null>(null);
   const pinnedOverlayRef = useRef<HTMLElement | null>(null);
   const transitionCleanupTimeoutRef = useRef<number | null>(null);
   const transitionLayoutRequestRef = useRef(0);
@@ -464,6 +472,16 @@ function useComposerRestingTransition(
       if (!element || !surface) return;
 
       const nextIsCollapsed = isCollapsedRef.current;
+      const shell = element.closest<HTMLElement>('[data-slot="composer-shell"]');
+      const controls = nextIsCollapsed
+        ? restingControlsRef.current
+        : element.querySelector<HTMLElement>('[data-chat-composer-controls="left"]');
+      const previousControls = new Map([
+        ...previousControlsRef.current,
+        ...(controlsTransitionRef.current?.capture() ?? []),
+      ]);
+      controlsTransitionRef.current?.finish();
+      controlsTransitionRef.current = null;
 
       const visibleTransitionElement = (selector: string) =>
         Array.from(element.querySelectorAll<HTMLElement>(selector)).find(
@@ -477,9 +495,6 @@ function useComposerRestingTransition(
       const interruptedAnimation = animationRef.current;
       const interruptedPromptTop = interruptedAnimation
         ? (prompt?.getBoundingClientRect().top ?? null)
-        : null;
-      const interruptedActionTop = interruptedAnimation
-        ? (action?.getBoundingClientRect().top ?? null)
         : null;
       const interruptedHeight = interruptedAnimation
         ? element.getBoundingClientRect().height
@@ -521,7 +536,6 @@ function useComposerRestingTransition(
       }
       const nextPromptRect = prompt?.getBoundingClientRect() ?? null;
       const nextPromptTop = nextPromptRect?.top ?? null;
-      const nextActionTop = action?.getBoundingClientRect().top ?? null;
       const previousHeight = interruptedHeight ?? previousHeightRef.current;
       const targetChanged =
         interruptedTargetHeight === null || Math.abs(interruptedTargetHeight - nextHeight) >= 0.5;
@@ -593,11 +607,6 @@ function useComposerRestingTransition(
           (previousContentOffsetsRef.current.promptFromTop === null
             ? null
             : animatedRect.top + previousContentOffsetsRef.current.promptFromTop);
-        const previousActionTop =
-          interruptedActionTop ??
-          (previousContentOffsetsRef.current.actionFromBottom === null
-            ? null
-            : animatedRect.bottom - previousContentOffsetsRef.current.actionFromBottom);
         const contentAnimations: Animation[] = [];
         const animateContentPosition = (
           content: HTMLElement | null,
@@ -617,7 +626,6 @@ function useComposerRestingTransition(
           );
         };
         animateContentPosition(prompt, previousPromptTop);
-        animateContentPosition(action, previousActionTop);
         contentAnimationsRef.current = contentAnimations;
 
         if (stateChanged) {
@@ -650,37 +658,6 @@ function useComposerRestingTransition(
             );
           }
 
-          // The footer controls teleport between the composer footer and the
-          // context strip below it in a single commit. Fading the arriving
-          // cluster in along its direction of travel reads as one continuous
-          // move instead of a pop. Collapsing controls land in empty strip
-          // space and can appear immediately, but expanding controls return
-          // to the bottom row the prompt still occupies while the surface is
-          // short, so they stay hidden through the first half of the tween
-          // and fade in once the geometry has mostly settled.
-          const arrivingControls = nextIsCollapsed
-            ? restingControlsRef.current
-            : element.querySelector<HTMLElement>('[data-chat-composer-controls="left"]');
-          if (arrivingControls) {
-            const drift = nextIsCollapsed
-              ? -COMPOSER_RESTING_CONTROLS_ARRIVAL_DRIFT_PX
-              : COMPOSER_RESTING_CONTROLS_ARRIVAL_DRIFT_PX;
-            stateChangeAnimations.push(
-              arrivingControls.animate(
-                [
-                  { opacity: 0, transform: `translateY(${String(drift)}px)` },
-                  { opacity: 1, transform: "none" },
-                ],
-                {
-                  duration: nextIsCollapsed ? duration : duration / 2,
-                  delay: nextIsCollapsed ? 0 : duration / 2,
-                  fill: "backwards",
-                  easing: COMPOSER_RESTING_TRANSITION_EASING,
-                },
-              ),
-            );
-          }
-
           const arrivingImagePreviews = nextIsCollapsed
             ? Array.from(
                 element.querySelectorAll<HTMLElement>('[data-chat-composer-resting-images="true"]'),
@@ -699,6 +676,20 @@ function useComposerRestingTransition(
             );
           }
           stateChangeAnimationsRef.current = stateChangeAnimations;
+        }
+
+        // Keep the visual controls above both clipped hosts. If the body
+        // changes size mid-transition, continue from their current positions.
+        if (shell) {
+          controlsTransitionRef.current = animateComposerControls(
+            shell,
+            previousControls,
+            new Map([
+              ...captureComposerControls(controls, shell),
+              ...captureComposerControls(action ?? null, shell, "action:"),
+            ]),
+            { duration, easing: COMPOSER_RESTING_TRANSITION_EASING },
+          );
         }
 
         const finishTransition = (cancelAnimations: boolean) => {
@@ -720,7 +711,16 @@ function useComposerRestingTransition(
           animationTargetHeightRef.current = null;
           contentAnimationsRef.current = [];
           stateChangeAnimationsRef.current = [];
+          controlsTransitionRef.current?.finish();
+          controlsTransitionRef.current = null;
           clearTransitionStyles();
+          shell?.removeAttribute("data-composer-layout-transition");
+          if (shell) {
+            previousControlsRef.current = new Map([
+              ...captureComposerControls(controls, shell),
+              ...captureComposerControls(action ?? null, shell, "action:"),
+            ]);
+          }
         };
         void animation.finished.catch(() => undefined).then(() => finishTransition(false));
         // A suspended document timeline can leave `finished` pending while
@@ -732,14 +732,20 @@ function useComposerRestingTransition(
         );
       } else {
         animationTargetHeightRef.current = null;
+        shell?.removeAttribute("data-composer-layout-transition");
       }
 
+      if (shell && !controlsTransitionRef.current) {
+        previousControlsRef.current = new Map([
+          ...captureComposerControls(controls, shell),
+          ...captureComposerControls(action ?? null, shell, "action:"),
+        ]);
+      }
       previousCollapsedRef.current = nextIsCollapsed;
       previousHeightRef.current = nextHeight;
       previousContentOffsetsRef.current = {
         promptFromTop: nextPromptTop === null ? null : nextPromptTop - nextRect.top,
         promptHeight: nextPromptRect?.height ?? null,
-        actionFromBottom: nextActionTop === null ? null : nextRect.bottom - nextActionTop,
       };
     },
     [
@@ -755,10 +761,22 @@ function useComposerRestingTransition(
     const requestId = transitionLayoutRequestRef.current + 1;
     transitionLayoutRequestRef.current = requestId;
     const stateChanged = previousCollapsedRef.current !== isCollapsed;
+    const shell = elementRef.current?.closest('[data-slot="composer-shell"]');
+    if (stateChanged && shell) {
+      layoutTransitionShellRef.current = shell;
+      shell.setAttribute("data-composer-layout-transition", "");
+    }
     // A non-Git context strip enters or leaves flow through ChatView state in
     // an earlier layout effect. Let React flush that parent update before the
     // FLIP reads its destination geometry, while still running before paint.
     queueMicrotask(() => {
+      if (transitionLayoutRequestRef.current !== requestId) return;
+      if (stateChanged && shell) {
+        // Reserve the strip's final label widths, then decide which controls
+        // fit there. Both layouts settle before measuring the motion path.
+        flushSync(() => shell.dispatchEvent(new Event(COMPOSER_CONTEXT_LAYOUT_EVENT)));
+        flushSync(measureRestingControls);
+      }
       if (transitionLayoutRequestRef.current !== requestId) return;
       transitionToCurrentGeometry(stateChanged);
     });
@@ -767,7 +785,7 @@ function useComposerRestingTransition(
         transitionLayoutRequestRef.current += 1;
       }
     };
-  }, [isCollapsed, transitionToCurrentGeometry]);
+  }, [isCollapsed, measureRestingControls, transitionToCurrentGeometry]);
 
   // The resting flag can change while the collapsed layout stays the same,
   // for example when an unfocused thread crosses the phone breakpoint. The
@@ -787,6 +805,7 @@ function useComposerRestingTransition(
 
     const body = element.querySelector<HTMLElement>('[data-chat-composer-body="true"]');
     const observer = new ResizeObserver((entries) => {
+      if (previousCollapsedRef.current !== isCollapsedRef.current) return;
       if (animationRef.current) {
         if (body && entries.some((entry) => entry.target === body)) {
           transitionToCurrentGeometry(false);
@@ -801,20 +820,31 @@ function useComposerRestingTransition(
       const promptRect = visibleTransitionElement(
         '[data-testid="composer-editor"], [data-chat-composer-transition-prompt="true"]',
       )?.getBoundingClientRect();
-      const actionTop = visibleTransitionElement(
-        '[data-chat-composer-transition-actions="true"]',
-      )?.getBoundingClientRect().top;
+      const actions = visibleTransitionElement('[data-chat-composer-transition-actions="true"]');
+      const shell = element.closest<HTMLElement>('[data-slot="composer-shell"]');
+      if (shell) {
+        const controls = isCollapsedRef.current
+          ? restingControlsRef.current
+          : element.querySelector<HTMLElement>('[data-chat-composer-controls="left"]');
+        previousControlsRef.current = new Map([
+          ...captureComposerControls(controls, shell),
+          ...captureComposerControls(actions, shell, "action:"),
+        ]);
+      }
       previousHeightRef.current = elementRect.height;
       previousContentOffsetsRef.current = {
         promptFromTop: promptRect === undefined ? null : promptRect.top - elementRect.top,
         promptHeight: promptRect?.height ?? null,
-        actionFromBottom: actionTop === undefined ? null : elementRect.bottom - actionTop,
       };
     });
     observer.observe(element);
     if (body) observer.observe(body);
+    const controls = isCollapsed
+      ? restingControlsRef.current
+      : element.querySelector<HTMLElement>('[data-chat-composer-controls="left"]');
+    for (const control of controls?.querySelectorAll("button") ?? []) observer.observe(control);
     return () => observer.disconnect();
-  }, [transitionToCurrentGeometry]);
+  }, [isCollapsed, transitionToCurrentGeometry, restingControlsRef]);
 
   useEffect(() => {
     // Host discovery and width measurement settle through layout updates on
@@ -826,6 +856,9 @@ function useComposerRestingTransition(
         window.clearTimeout(transitionCleanupTimeoutRef.current);
         transitionCleanupTimeoutRef.current = null;
       }
+      controlsTransitionRef.current?.finish();
+      controlsTransitionRef.current = null;
+      layoutTransitionShellRef.current?.removeAttribute("data-composer-layout-transition");
       animationRef.current?.cancel();
       animationRef.current = null;
       animationTargetHeightRef.current = null;
@@ -836,6 +869,35 @@ function useComposerRestingTransition(
       clearTransitionStyles();
     };
   }, [clearTransitionStyles]);
+
+  useLayoutEffect(() => {
+    const element = elementRef.current;
+    const shell = element?.closest<HTMLElement>('[data-slot="composer-shell"]');
+    const actions = Array.from(
+      element?.querySelectorAll<HTMLElement>('[data-chat-composer-transition-actions="true"]') ??
+        [],
+    ).find((candidate) => candidate.getClientRects().length > 0);
+    if (!shell || !actions) return;
+    const captureActions = () => {
+      if (animationRef.current || previousCollapsedRef.current !== isCollapsed) return;
+      for (const key of previousControlsRef.current.keys()) {
+        if (key.startsWith("action:")) previousControlsRef.current.delete(key);
+      }
+      for (const [key, value] of captureComposerControls(actions, shell, "action:")) {
+        previousControlsRef.current.set(key, value);
+      }
+    };
+    captureActions();
+    // Send/stop can change without resizing the composer or its model controls.
+    const observer = new MutationObserver(captureActions);
+    observer.observe(actions, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["aria-label", "disabled"],
+    });
+    return () => observer.disconnect();
+  }, [isCollapsed]);
 
   return elementRef;
 }
@@ -1070,6 +1132,7 @@ function useRestingComposerControlsLayout(host: HTMLDivElement | null, useContro
     hiddenBlockCount: layout.hiddenCount,
     iconOnlyBlockCount: layout.iconOnlyCount ?? 0,
     controlsVisible: layout.visible,
+    measure,
   };
 }
 
@@ -2657,6 +2720,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     hiddenBlockCount: restingControlsHiddenBlockCount,
     iconOnlyBlockCount: restingControlsIconOnlyBlockCount,
     controlsVisible: restingControlsVisible,
+    measure: measureRestingControls,
   } = useRestingComposerControlsLayout(restingControlsHost);
   const expandedControlsLayout = useRestingComposerControlsLayout(null, true);
   const pendingPrimaryAction = useMemo(
@@ -4827,6 +4891,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerResting,
     restingComposerControlsRef,
     onComposerOverlayHeightChange,
+    measureRestingControls,
     panelAnimationsActive,
     panelAnimationDurationMs,
   );
