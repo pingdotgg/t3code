@@ -283,7 +283,7 @@ export function surfaceShortcutTargetsTypingContext(
   );
 }
 
-function agentsWorkingLabel(count: number): string {
+export function agentsWorkingLabel(count: number): string {
   return `${count} ${count === 1 ? "agent" : "agents"} working`;
 }
 
