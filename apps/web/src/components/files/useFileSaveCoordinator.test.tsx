@@ -1,4 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import { REACT_ACT_SAFE_FAKE_TIMER_METHODS } from "@t3tools/shared/testing/reactActFakeTimers";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { act, StrictMode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -50,7 +51,7 @@ function changeHandler(): (contents: string) => void {
 
 beforeEach(() => {
   renderer = null;
-  vi.useFakeTimers();
+  vi.useFakeTimers({ toFake: [...REACT_ACT_SAFE_FAKE_TIMER_METHODS] });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   writeFile.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   confirmFile.mockReset();

@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import type { FileDiffMetadata } from "@pierre/diffs";
 
+import { REACT_ACT_SAFE_FAKE_TIMER_METHODS } from "@t3tools/shared/testing/reactActFakeTimers";
+
 import { DiffFileTree, type DiffFileTreeEntry } from "./DiffFileTree";
 import { diffFileTreeEntries } from "./diffFileTree.logic";
 import { useCodeViewFileReveal } from "./useCodeViewFileReveal";
@@ -102,7 +104,7 @@ describe("diff tree file activation", () => {
 
   beforeEach(() => {
     targets.length = 0;
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: [...REACT_ACT_SAFE_FAKE_TIMER_METHODS] });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("HTMLElement", TreeRow);
   });
