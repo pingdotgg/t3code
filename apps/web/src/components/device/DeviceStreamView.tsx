@@ -10,6 +10,7 @@ import { deviceKeyboard, deviceModel } from "./deviceModels";
 import { fitDeviceFrame } from "./deviceFrameLayout";
 import { DeviceDuoViewport } from "./DeviceDuoViewport";
 import { DeviceDuoControls } from "./DeviceDuoControls";
+import { DeviceAndroidFoldControls } from "./DeviceAndroidFoldControls";
 import type { DuoControlState } from "@t3tools/client-runtime/device/duo-control";
 import { DevicePhoneViewport } from "./DevicePhoneViewport";
 import { DeviceLoadingView } from "./DeviceLoadingView";
@@ -94,7 +95,9 @@ export function DeviceStreamView(props: {
   const clientRef = useRef<DeviceStreamClient | null>(null);
   const [status, setStatus] = useState<DeviceStreamStatus>("connecting");
   const [detail, setDetail] = useState<string | undefined>(undefined);
+  const [showRestartNotice, setShowRestartNotice] = useState(false);
   const [screen, setScreen] = useState<DeviceScreenSize | null>(null);
+  const [foldAngle, setFoldAngle] = useState<number | null>(null);
   const [mjpegUrl, setMjpegUrl] = useState<string | null>(null);
   const [mjpegGeneration, setMjpegGeneration] = useState(0);
   const attachMjpegImage = useCallback((image: HTMLImageElement | null) => {
@@ -121,6 +124,7 @@ export function DeviceStreamView(props: {
         onStatus: (next, nextDetail) => {
           setStatus(next);
           setDetail(nextDetail);
+          if (next !== "connecting") setShowRestartNotice(false);
         },
         onScreen: (next) => {
           setScreen(next);
@@ -136,6 +140,7 @@ export function DeviceStreamView(props: {
         },
         onInputConnected: (connected, detail) => {
           setInputState({ connected, ...(detail ? { detail } : {}) });
+          if (!connected) setShowRestartNotice(false);
           onHandle?.({
             pressButton: client.pressButton,
             rotate: client.rotate,
@@ -183,15 +188,27 @@ export function DeviceStreamView(props: {
     return w / h;
   }, [props.platform, screen]);
 
+  // Android restarts its encoder when a fold changes the framebuffer size.
+  // Keep the last decoded frame and viewer mounted while the next keyframe arrives.
+  const retainingAndroidFrame =
+    props.platform === "android" &&
+    status === "connecting" &&
+    inputState.connected &&
+    screen !== null;
   const showPhone =
     props.allowPhoneView &&
-    status === "streaming" &&
+    (status === "streaming" || retainingAndroidFrame) &&
     props.visible &&
     presentation === "phone" &&
     !phoneUnavailable &&
     !mjpegUrl &&
     !props.axOverlay &&
     (!isDuo || screen?.supportsHingeAngle === true);
+  useEffect(() => {
+    if (!retainingAndroidFrame || !showPhone) return;
+    const timeout = window.setTimeout(() => setShowRestartNotice(true), 2_000);
+    return () => window.clearTimeout(timeout);
+  }, [retainingAndroidFrame, showPhone]);
   const controlsInset = props.renderControls && !showPhone ? CONTROLS_RAIL_WIDTH : 0;
 
   // The frame is the largest box at `aspect` that fits the container, so a
@@ -330,7 +347,18 @@ export function DeviceStreamView(props: {
             streaming: status === "streaming",
             phoneUnavailableReason,
             foldingControls:
-              showPhone && isDuo && screen?.supportsHingeAngle ? (
+              props.platform === "android" && access ? (
+                <DeviceAndroidFoldControls
+                  key={`${props.hostId}:${props.deviceId}`}
+                  access={access}
+                  deviceId={props.deviceId}
+                  visible={props.visible}
+                  enabled={status === "streaming"}
+                  screenWidth={screen?.width}
+                  screenHeight={screen?.height}
+                  onFoldAngle={setFoldAngle}
+                />
+              ) : showPhone && isDuo && screen?.supportsHingeAngle ? (
                 <DeviceDuoControls
                   screen={screen}
                   state={duoControl}
@@ -471,6 +499,7 @@ export function DeviceStreamView(props: {
             onInputCancel={onInputCancel}
             onResetReady={onResetReady}
             screen={screen}
+            foldAngle={foldAngle}
             onUnavailable={onPhoneUnavailable}
           />
         ) : null}
@@ -503,7 +532,14 @@ export function DeviceStreamView(props: {
             </span>
           </div>
         ) : null}
-        {status !== "streaming" ? (
+        {retainingAndroidFrame && showPhone && showRestartNotice ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-2">
+            <span className="rounded-md bg-background/85 px-2 py-1 text-xs text-muted-foreground">
+              Waiting for device video…
+            </span>
+          </div>
+        ) : null}
+        {status !== "streaming" && !(retainingAndroidFrame && showPhone) ? (
           <div className="absolute inset-0">
             <DeviceLoadingView
               name={props.deviceName ?? "Device"}

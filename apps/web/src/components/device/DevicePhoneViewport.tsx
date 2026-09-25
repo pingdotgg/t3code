@@ -22,6 +22,7 @@ export function DevicePhoneViewport(props: {
   readonly onInputCancel: (cancel: (() => void) | null) => void;
   readonly client: RefObject<DeviceStreamClient | null>;
   readonly screen: DeviceScreenSize | null;
+  readonly foldAngle: number | null;
   readonly onUnavailable: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -29,10 +30,16 @@ export function DevicePhoneViewport(props: {
   const viewerRef = useRef<PhoneViewer | null>(null);
   const interactionRef = useRef<ReturnType<typeof createPhoneInteraction> | null>(null);
   const screenRef = useRef(props.screen);
+  const foldAngleRef = useRef(props.foldAngle);
   const profileRef = useRef(props.profile);
   const modelRef = useRef(props.model);
   const accessoryRef = useRef(props.accessory);
   const { source, onFrameListener, client, onInputCancel, onResetReady, onUnavailable } = props;
+
+  useEffect(() => {
+    foldAngleRef.current = props.foldAngle;
+    viewerRef.current?.setFoldAngle(props.foldAngle);
+  }, [props.foldAngle]);
 
   useEffect(() => {
     screenRef.current = props.screen;
@@ -76,6 +83,7 @@ export function DevicePhoneViewport(props: {
           profile: profileRef.current,
           model: modelRef.current,
           accessory: accessoryRef.current,
+          foldAngle: foldAngleRef.current,
         });
         viewerRef.current = viewer;
         onResetReady(viewer.resetPose);
