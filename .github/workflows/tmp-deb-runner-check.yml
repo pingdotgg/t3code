@@ -90,5 +90,23 @@ jobs:
           XZ_DEFAULTS=-T0 electron-builder --linux --${{ matrix.arch }} --prepackaged "$RUNNER_TEMP/unpacked" --publish never
           echo "::notice::${{ matrix.runner }}: .deb built in $(( $(date +%s) - start ))s, $(( $(stat -c %s out/*.deb) / 1048576 )) MB, nproc=$(nproc)"
           dpkg-deb -f out/*.deb Package Version Architecture
-          dpkg-deb --info out/*.deb | grep -E 'data.tar'
+          ar t out/*.deb
           cat out/latest-linux*.yml
+
+  old-mirrors-on-arm:
+    name: Old apt mirror script on arm64
+    runs-on: blacksmith-16vcpu-ubuntu-2404-arm
+    timeout-minutes: 10
+    steps:
+      - name: Run the pre-change mirror script, then apt
+        run: |
+          printf '%s\tpriority:%s\n' \
+            https://archive.ubuntu.com/ubuntu 1 \
+            https://mirrors.edge.kernel.org/ubuntu 2 \
+            https://mirror.math.princeton.edu/pub/ubuntu 3 \
+            | sudo tee /etc/apt/blacksmith-ubuntu-mirrors.txt > /dev/null
+          sudo find /etc/apt -maxdepth 2 -type f \( -name '*.list' -o -name '*.sources' \) \
+            -exec sed -i -E \
+            's#https?://(([^/]+\.)?archive|security)\.ubuntu\.com/ubuntu/?#mirror+file:/etc/apt/blacksmith-ubuntu-mirrors.txt#g' {} +
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config
