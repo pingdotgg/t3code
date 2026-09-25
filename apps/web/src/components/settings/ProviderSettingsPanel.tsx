@@ -39,6 +39,7 @@ import {
 } from "../../hooks/useSettings";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { cn } from "../../lib/utils";
+import { replaceInstanceFavorites } from "../../modelOrdering";
 import { resolveAppModelSelectionState } from "../../modelSelection";
 import {
   useEnvironments,
@@ -120,13 +121,6 @@ function withoutProviderInstanceKey<V>(
   const next = { ...record } as Record<ProviderInstanceId, V>;
   delete next[key];
   return next;
-}
-
-function withoutProviderInstanceFavorites(
-  favorites: ReadonlyArray<{ readonly provider: ProviderInstanceId; readonly model: string }>,
-  instanceId: ProviderInstanceId,
-) {
-  return favorites.filter((favorite) => favorite.provider !== instanceId);
 }
 
 const PROVIDER_SETTINGS = DRIVER_OPTIONS.map((definition) => ({
@@ -859,10 +853,7 @@ export function EnvironmentProviderSettings({
       ),
     ];
     updateClientSettings({
-      favorites: [
-        ...withoutProviderInstanceFavorites(settings.favorites ?? [], instanceId),
-        ...favoriteModels.map((model) => ({ provider: instanceId, model })),
-      ],
+      favorites: replaceInstanceFavorites(settings.favorites ?? [], instanceId, favoriteModels),
     });
   };
 

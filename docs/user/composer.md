@@ -63,6 +63,13 @@ On web and desktop, use Settings → Providers → **Models** to add an unlisted
 name and options. Only options supported by the provider integration affect turns. Antigravity
 uses its account catalog and does not support custom models.
 
+## Favorite models
+
+On web and desktop, star a model in the model picker to add it to **Favorites**, the picker's first
+tab. Drag favorites into the order you want; the `mod+1` through `mod+9` model shortcuts follow it.
+Reordering a provider's models in Settings → Providers → **Models** does not change your favorites
+order.
+
 ## Model defaults
 
 T3 Code remembers your provider, model, and model options for new threads. A
