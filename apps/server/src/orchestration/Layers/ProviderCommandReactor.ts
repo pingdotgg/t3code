@@ -18,6 +18,7 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
+import * as Config from "effect/Config";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -30,8 +31,9 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { makeDrainableWorker, makeKeyedDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
@@ -119,6 +121,8 @@ const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
 
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
+const DEFAULT_PROVIDER_COMMAND_LANES = 16;
+const DEFAULT_PROVIDER_SESSION_START_CONCURRENCY = 4;
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
 function providerErrorLabel(value: string | undefined): string {
@@ -222,6 +226,17 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  // Starting a provider session is expensive. After a server restart many threads
+  // restart at once; capping concurrent starts lets each finish sooner instead of
+  // all of them competing. Interrupts, stops and turns on live sessions do not wait.
+  const providerSessionStartConcurrency = yield* Config.Int(
+    "T3CODE_PROVIDER_SESSION_START_CONCURRENCY",
+  ).pipe(Config.withDefault(DEFAULT_PROVIDER_SESSION_START_CONCURRENCY));
+  const providerSessionStartSemaphore = yield* Semaphore.make(
+    Number.isFinite(providerSessionStartConcurrency)
+      ? Math.max(1, Math.floor(providerSessionStartConcurrency))
+      : DEFAULT_PROVIDER_SESSION_START_CONCURRENCY,
+  );
   /** Environment settings with the thread's project overrides applied. */
   const projectSettingsForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     const settings = yield* serverSettingsService.getSettings;
@@ -507,10 +522,16 @@ const make = Effect.gen(function* () {
       Effect.map((settings) => settings.worktreeSubmodules),
       Effect.orElseSucceed(() => null),
     );
-    yield* gitWorkflow.pruneWorktrees({ cwd }).pipe(
-      Effect.andThen(
-        gitWorkflow.createWorktree({ cwd, refName: branch, path: worktreePath }, { submodules }),
+    // Threads run in parallel lanes, so serialize prune/add per checkout: both
+    // mutate the shared Git worktree metadata.
+    yield* withWorkspaceLease(
+      path.resolve(cwd),
+      gitWorkflow.pruneWorktrees({ cwd }).pipe(
+        Effect.andThen(
+          gitWorkflow.createWorktree({ cwd, refName: branch, path: worktreePath }, { submodules }),
+        ),
       ),
+    ).pipe(
       Effect.catchCauseIf(
         (cause) => !Cause.hasInterruptsOnly(cause),
         (cause) =>
@@ -726,7 +747,10 @@ const make = Effect.gen(function* () {
           ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
           runtimeMode: desiredRuntimeMode,
         })
-        .pipe(Effect.tap(() => refreshWorkspaceSnapshot));
+        .pipe(
+          providerSessionStartSemaphore.withPermits(1),
+          Effect.tap(() => refreshWorkspaceSnapshot),
+        );
 
     const bindSessionToThread = (session: ProviderSession) =>
       Effect.gen(function* () {
@@ -1862,7 +1886,18 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processDomainEventSafely);
+  // Events for one thread stay ordered, but a slow provider session start on one
+  // thread must not delay turn starts, interrupts or stops on unrelated threads.
+  // Lanes are concurrent I/O queues, not CPU cores; 1 restores the old global ordering.
+  // makeKeyedDrainableWorker clamps the value to 1..MAX_KEYED_WORKER_LANES.
+  const providerCommandLanes = yield* Config.Int("T3CODE_PROVIDER_COMMAND_LANES").pipe(
+    Config.withDefault(DEFAULT_PROVIDER_COMMAND_LANES),
+  );
+  const worker = yield* makeKeyedDrainableWorker(
+    processDomainEventSafely,
+    (event) => event.payload.threadId,
+    providerCommandLanes,
+  );
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const pendingTitles = yield* findPendingThreadTitles().pipe(

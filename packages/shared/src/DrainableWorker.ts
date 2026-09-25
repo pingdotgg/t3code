@@ -68,3 +68,69 @@ export const makeDrainableWorker = <A, E, R>(
 
     return { enqueue, drain } satisfies DrainableWorker<A>;
   });
+
+/** Upper bound for keyed worker lanes; each lane owns one queue and one fiber. */
+export const MAX_KEYED_WORKER_LANES = 256;
+
+/**
+ * Create a drainable worker that keeps items with the same key in order while
+ * letting items with different keys run concurrently.
+ *
+ * Items are routed by a stable hash of `keyOf(item)` into independent serial
+ * lanes, so one slow item only delays items that share its lane. All lanes
+ * share one outstanding counter, so `drain` resolves only when every lane is
+ * idle at the same moment, including work enqueued while draining.
+ *
+ * @param process - The effect to run for each queued item.
+ * @param keyOf - Returns the ordering key for an item.
+ * @param lanes - Number of lanes, clamped to `1..MAX_KEYED_WORKER_LANES`.
+ */
+export const makeKeyedDrainableWorker = <A, E, R>(
+  process: (item: A) => Effect.Effect<void, E, R>,
+  keyOf: (item: A) => string,
+  lanes: number,
+): Effect.Effect<DrainableWorker<A>, never, Scope.Scope | R> =>
+  Effect.gen(function* () {
+    const laneCount = Number.isFinite(lanes)
+      ? Math.min(MAX_KEYED_WORKER_LANES, Math.max(1, Math.floor(lanes)))
+      : 1;
+    const outstanding = yield* TxRef.make(0);
+    const queues: Array<TxQueue.TxQueue<A>> = [];
+
+    for (let index = 0; index < laneCount; index++) {
+      const queue = yield* Effect.acquireRelease(TxQueue.unbounded<A>(), TxQueue.shutdown);
+      queues.push(queue);
+      yield* TxQueue.take(queue).pipe(
+        Effect.tap((a) =>
+          Effect.ensuring(
+            process(a),
+            TxRef.update(outstanding, (n) => n - 1),
+          ),
+        ),
+        Effect.forever,
+        Effect.forkScoped,
+      );
+    }
+
+    const queueFor = (item: A): TxQueue.TxQueue<A> => {
+      const key = keyOf(item);
+      let hash = 0;
+      for (let index = 0; index < key.length; index++) {
+        hash = (Math.imul(hash, 31) + key.charCodeAt(index)) >>> 0;
+      }
+      return queues[hash % queues.length]!;
+    };
+
+    const drain: DrainableWorker<A>["drain"] = TxRef.get(outstanding).pipe(
+      Effect.tap((n) => (n > 0 ? Effect.txRetry : Effect.void)),
+      Effect.tx,
+    );
+
+    const enqueue = (item: A): Effect.Effect<boolean, never, never> =>
+      TxQueue.offer(queueFor(item), item).pipe(
+        Effect.tap(() => TxRef.update(outstanding, (n) => n + 1)),
+        Effect.tx,
+      );
+
+    return { enqueue, drain } satisfies DrainableWorker<A>;
+  });
