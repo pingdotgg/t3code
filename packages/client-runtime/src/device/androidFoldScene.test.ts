@@ -1,4 +1,4 @@
-import { Box3, PerspectiveCamera, Texture, Vector3 } from "three";
+import { Box3, Mesh, PerspectiveCamera, Texture, Vector3 } from "three";
 import { describe, expect, it } from "vite-plus/test";
 import { createAndroidFoldScene } from "./androidFoldScene.ts";
 import { phoneDisplayLayout } from "./phoneScene.ts";
@@ -14,6 +14,13 @@ describe("Android fold scene", () => {
     const moving = scene.orientation.children[0]!;
     const fixed = scene.orientation.children[1]!;
     const openWidth = new Box3().setFromObject(scene.root).getSize(new Vector3()).x;
+    const leftScreen = scene.root.getObjectByName("left-inner-screen") as Mesh;
+    const rightScreen = scene.root.getObjectByName("right-inner-screen") as Mesh;
+    leftScreen.geometry.computeBoundingBox();
+    rightScreen.geometry.computeBoundingBox();
+    const creaseWidth =
+      rightScreen.geometry.boundingBox!.min.x - leftScreen.geometry.boundingBox!.max.x;
+    expect(creaseWidth).toBeLessThan(0.01);
     scene.setAngle(90);
     expect(moving.rotation.y).toBeCloseTo(Math.PI / 2);
     expect(fixed.rotation.y).toBe(0);

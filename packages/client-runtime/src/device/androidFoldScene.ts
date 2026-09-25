@@ -1,12 +1,13 @@
 import {
-  BoxGeometry,
   CylinderGeometry,
+  ExtrudeGeometry,
   Group,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
-  PlaneGeometry,
   Raycaster,
+  Shape,
+  ShapeGeometry,
   Vector2,
   Vector3,
   type Camera,
@@ -17,7 +18,52 @@ import type { PhoneDisplayLayout } from "./phoneScene.ts";
 const HALF_WIDTH = 1.04;
 const HEIGHT = 2.2;
 const DEPTH = 0.075;
-const INSET = 0.035;
+const INSET = 0.026;
+const CREASE = 0.004;
+
+function panelPath(side: "left" | "right", inset: number, radius: number) {
+  const left = side === "left" ? -HALF_WIDTH + inset : CREASE / 2;
+  const right = side === "left" ? -CREASE / 2 : HALF_WIDTH - inset;
+  const bottom = -HEIGHT / 2 + inset;
+  const top = HEIGHT / 2 - inset;
+  const path = new Shape();
+  if (side === "left") {
+    path.moveTo(left + radius, bottom);
+    path.lineTo(right, bottom);
+    path.lineTo(right, top);
+    path.lineTo(left + radius, top);
+    path.quadraticCurveTo(left, top, left, top - radius);
+    path.lineTo(left, bottom + radius);
+    path.quadraticCurveTo(left, bottom, left + radius, bottom);
+  } else {
+    path.moveTo(left, bottom);
+    path.lineTo(right - radius, bottom);
+    path.quadraticCurveTo(right, bottom, right, bottom + radius);
+    path.lineTo(right, top - radius);
+    path.quadraticCurveTo(right, top, right - radius, top);
+    path.lineTo(left, top);
+  }
+  path.closePath();
+  return path;
+}
+
+function coverPath() {
+  const width = HALF_WIDTH - INSET * 2;
+  const height = HEIGHT - INSET * 2;
+  const radius = 0.075;
+  const path = new Shape();
+  path.moveTo(-width / 2 + radius, -height / 2);
+  path.lineTo(width / 2 - radius, -height / 2);
+  path.quadraticCurveTo(width / 2, -height / 2, width / 2, -height / 2 + radius);
+  path.lineTo(width / 2, height / 2 - radius);
+  path.quadraticCurveTo(width / 2, height / 2, width / 2 - radius, height / 2);
+  path.lineTo(-width / 2 + radius, height / 2);
+  path.quadraticCurveTo(-width / 2, height / 2, -width / 2, height / 2 - radius);
+  path.lineTo(-width / 2, -height / 2 + radius);
+  path.quadraticCurveTo(-width / 2, -height / 2, -width / 2 + radius, -height / 2);
+  path.closePath();
+  return path;
+}
 
 /** A deliberately simple foldable: one fixed half, one half rotating around a shared hinge. */
 export function createAndroidFoldScene(
@@ -38,30 +84,33 @@ export function createAndroidFoldScene(
   const materials = [shell, bezel, displayMaterial, coverMaterial];
 
   function half(group: Group, side: "left" | "right") {
-    const center = side === "left" ? -HALF_WIDTH / 2 : HALF_WIDTH / 2;
-    const body = new Mesh(new BoxGeometry(HALF_WIDTH - 0.012, HEIGHT, DEPTH), shell);
-    body.position.x = center;
+    const body = new Mesh(
+      new ExtrudeGeometry(panelPath(side, 0, 0.105), {
+        depth: DEPTH,
+        bevelEnabled: false,
+        curveSegments: 12,
+      }),
+      shell,
+    );
+    body.position.z = -DEPTH / 2;
     group.add(body);
-    const frame = new Mesh(new PlaneGeometry(HALF_WIDTH - 0.026, HEIGHT - 0.026), bezel);
-    frame.position.set(center, 0, DEPTH / 2 + 0.001);
+    const frame = new Mesh(new ShapeGeometry(panelPath(side, 0.009, 0.096)), bezel);
+    frame.position.z = DEPTH / 2 + 0.001;
     group.add(frame);
-    const geometry = new PlaneGeometry(HALF_WIDTH - INSET * 2, HEIGHT - INSET * 2);
+    const geometry = new ShapeGeometry(panelPath(side, INSET, 0.076));
     const display = new Mesh(geometry, displayMaterial);
     display.name = `${side}-inner-screen`;
-    display.position.set(center, 0, DEPTH / 2 + 0.003);
+    display.position.z = DEPTH / 2 + 0.003;
     group.add(display);
     return display;
   }
 
   const innerLeft = half(left, "left");
   const innerRight = half(right, "right");
-  const hinge = new Mesh(new CylinderGeometry(0.044, 0.044, HEIGHT - 0.045, 18), shell);
-  hinge.position.z = -DEPTH / 2;
+  const hinge = new Mesh(new CylinderGeometry(0.016, 0.016, HEIGHT - 0.05, 16), shell);
+  hinge.position.z = -DEPTH / 2 - 0.01;
   orientation.add(hinge);
-  const cover = new Mesh(
-    new PlaneGeometry(HALF_WIDTH - INSET * 2, HEIGHT - INSET * 2),
-    coverMaterial,
-  );
+  const cover = new Mesh(new ShapeGeometry(coverPath()), coverMaterial);
   cover.name = "cover-screen";
   cover.position.set(-HALF_WIDTH / 2, 0, -DEPTH / 2 - 0.003);
   cover.rotation.y = Math.PI;
@@ -96,10 +145,14 @@ export function createAndroidFoldScene(
       [innerRight, 0.5, 1],
       [cover, 0, 1],
     ] as const) {
+      mesh.geometry.computeBoundingBox();
+      const bounds = mesh.geometry.boundingBox!;
       const uv = mesh.geometry.getAttribute("uv");
       for (let i = 0; i < uv.count; i++) {
-        const u = mesh.geometry.getAttribute("position").getX(i) / (HALF_WIDTH - INSET * 2) + 0.5;
-        uv.setX(i, start + u * (end - start));
+        const position = mesh.geometry.getAttribute("position");
+        const u = (position.getX(i) - bounds.min.x) / (bounds.max.x - bounds.min.x);
+        const v = (position.getY(i) - bounds.min.y) / (bounds.max.y - bounds.min.y);
+        uv.setXY(i, start + u * (end - start), v);
       }
       uv.needsUpdate = true;
     }
@@ -123,7 +176,7 @@ export function createAndroidFoldScene(
       const screens = cover.visible ? [cover] : [innerLeft, innerRight];
       const hit = raycaster.intersectObjects(screens, false)[0];
       if (!hit && !captured) return null;
-      const display = hit?.object ?? screens[0];
+      const display = (hit?.object as Mesh | undefined) ?? screens[0];
       if (!display) return null;
       if (hit) local.copy(hit.point);
       else {
@@ -135,8 +188,9 @@ export function createAndroidFoldScene(
         local.copy(raycaster.ray.direction).multiplyScalar(distance).add(raycaster.ray.origin);
       }
       display.worldToLocal(local);
-      const u = Math.max(0, Math.min(1, local.x / (HALF_WIDTH - INSET * 2) + 0.5));
-      const v = Math.max(0, Math.min(1, 0.5 - local.y / (HEIGHT - INSET * 2)));
+      const bounds = display.geometry.boundingBox!;
+      const u = Math.max(0, Math.min(1, (local.x - bounds.min.x) / (bounds.max.x - bounds.min.x)));
+      const v = Math.max(0, Math.min(1, (bounds.max.y - local.y) / (bounds.max.y - bounds.min.y)));
       const across = display === cover ? u : (display === innerLeft ? u : 1 + u) / 2;
       return activeLayout.rotation === Math.PI ? { x: 1 - across, y: 1 - v } : { x: across, y: v };
     },
