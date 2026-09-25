@@ -44,6 +44,7 @@ describe("Android fold scene", () => {
     };
     expect(project(-0.52)?.x).toBeCloseTo(0.25, 1);
     expect(project(0.52)?.x).toBeCloseTo(0.75, 1);
+    expect(scene.screenPoint(0.99, 0.5, camera, true)?.x).toBe(1);
     scene.setAngle(0);
     expect(project(0.52)?.x).toBeCloseTo(0.5, 1);
     scene.dispose();

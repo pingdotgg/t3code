@@ -119,6 +119,7 @@ export function createAndroidFoldScene(
   const raycaster = new Raycaster();
   const pointer = new Vector2();
   const local = new Vector3();
+  let capturedDisplay: Mesh | null = null;
   let activeLayout = layout;
   let angle = initialAngle;
   const updateVisibleScreen = () => {
@@ -175,9 +176,15 @@ export function createAndroidFoldScene(
       raycaster.setFromCamera(pointer, camera);
       const screens = cover.visible ? [cover] : [innerLeft, innerRight];
       const hit = raycaster.intersectObjects(screens, false)[0];
-      if (!hit && !captured) return null;
-      const display = (hit?.object as Mesh | undefined) ?? screens[0];
+      if (!hit && !captured) {
+        capturedDisplay = null;
+        return null;
+      }
+      const display =
+        (hit?.object as Mesh | undefined) ??
+        (capturedDisplay?.visible ? capturedDisplay : screens[0]);
       if (!display) return null;
+      if (hit) capturedDisplay = display;
       if (hit) local.copy(hit.point);
       else {
         const plane = new Vector3(0, 0, 1).transformDirection(display.matrixWorld);
