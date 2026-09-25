@@ -39,9 +39,19 @@ export function createDelayedStatus<A>(
     clearTimeout(timer);
     timer = undefined;
   };
-  const setShown = (value: A | null) => {
+  const hide = () => {
+    shown = null;
+    onChange(null);
+  };
+  // Every shown value, including a new label, gets the full minimum visible time.
+  const show = (value: A) => {
     shown = value;
-    onChange(value === null ? null : { key, value });
+    onChange({ key, value });
+    clearTimer();
+    timer = setTimeout(() => {
+      timer = undefined;
+      if (latest === null) hide();
+    }, STATUS_MIN_VISIBLE_MS);
   };
 
   return {
@@ -49,7 +59,7 @@ export function createDelayedStatus<A>(
       if (nextKey !== key) {
         key = nextKey;
         clearTimer();
-        if (shown !== null) setShown(null);
+        if (shown !== null) hide();
       }
       latest = value;
 
@@ -58,20 +68,17 @@ export function createDelayedStatus<A>(
           clearTimer();
         } else if (timer === undefined) {
           timer = setTimeout(() => {
-            setShown(latest);
-            timer = setTimeout(() => {
-              timer = undefined;
-              if (latest === null) setShown(null);
-            }, STATUS_MIN_VISIBLE_MS);
+            timer = undefined;
+            if (latest !== null) show(latest);
           }, STATUS_SHOW_DELAY_MS);
         }
         return;
       }
 
       if (value !== null) {
-        if (value !== shown) setShown(value);
+        if (value !== shown) show(value);
       } else if (timer === undefined) {
-        setShown(null);
+        hide();
       }
     },
     dispose: clearTimer,

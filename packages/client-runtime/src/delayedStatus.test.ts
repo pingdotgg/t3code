@@ -31,12 +31,14 @@ describe("createDelayedStatus", () => {
     expect(changes).toEqual([]);
   });
 
-  it("holds a shown status for the minimum time, then hides it at once", () => {
+  it("holds each shown status for the minimum time, then hides it at once", () => {
     const { changes, status } = track();
     status.update("a", "loading");
     vi.advanceTimersByTime(STATUS_SHOW_DELAY_MS);
     expect(changes).toEqual([{ key: "a", value: "loading" }]);
 
+    // A new label gets its own hold, even after the first label's hold ended.
+    vi.advanceTimersByTime(STATUS_MIN_VISIBLE_MS);
     status.update("a", "syncing");
     status.update("a", null);
     vi.advanceTimersByTime(STATUS_MIN_VISIBLE_MS - 1);
