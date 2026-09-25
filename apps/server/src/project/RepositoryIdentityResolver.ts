@@ -13,7 +13,10 @@ import * as Layer from "effect/Layer";
 import * as ProcessRunner from "../processRunner.ts";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
-const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(1);
+// Background sweeps resolve every project each minute, so a found identity must
+// outlive that cadence. Clone and publish resolve with `refresh: true`.
+const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(15);
+// Short, so a folder that gains a repository or a remote shows up quickly.
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
 
 export interface RepositoryIdentityResolverOptions {
@@ -152,7 +155,9 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
       capacity: cacheCapacity,
       timeToLive: Exit.match({
         onSuccess: (value) =>
-          value === null ? Duration.zero : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
+          value === null
+            ? (options.negativeCacheTtl ?? DEFAULT_NEGATIVE_CACHE_TTL)
+            : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
         onFailure: () => Duration.zero,
       }),
     },
@@ -179,15 +184,17 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     },
   );
 
-  const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fn(
-    "RepositoryIdentityResolver.resolve",
-  )(function* (cwd, options) {
-    if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
-    const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
-    if (cacheKey === null) return null;
-    if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
-    return yield* Cache.get(repositoryIdentityCache, cacheKey);
-  });
+  // Untraced because almost every call is a cache hit. The lookups that spawn
+  // git keep their own spans.
+  const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fnUntraced(
+    function* (cwd, options) {
+      if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
+      const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
+      if (cacheKey === null) return null;
+      if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
+      return yield* Cache.get(repositoryIdentityCache, cacheKey);
+    },
+  );
 
   return RepositoryIdentityResolver.of({ resolve });
 });
