@@ -424,6 +424,12 @@ export function elapsedShare(window: ServerProviderUsageWindow, now: number): nu
 
 export type LimitPace = "ahead" | "on" | "under";
 
+export const LIMIT_PACE_LABEL = {
+  ahead: "Ahead of pace",
+  on: "On pace",
+  under: "Under pace",
+} as const satisfies Record<LimitPace, string>;
+
 /**
  * Usage against the clock. Spending evenly leaves the same share of quota as
  * there is time left in the window; within five points of that counts as on
