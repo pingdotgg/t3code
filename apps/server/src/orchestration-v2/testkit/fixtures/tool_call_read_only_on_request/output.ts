@@ -65,6 +65,38 @@ export function assertToolCallReadOnlyOnRequestOutput(
   }
 }
 
+// Grok never asks permission to read and routes every read through the
+// client's fs/read_text_file. Reads follow the sandbox, not the approval
+// policy, so T3 must serve the read-back of the approved write without a
+// second request (the shared assertion pins the write as the only one).
+export function assertToolCallReadOnlyOnRequestGrokOutput(
+  result: OrchestratorV2ScenarioResult,
+  transcript: ProviderReplayTranscript,
+) {
+  assertToolCallReadOnlyOnRequestOutput(result, transcript);
+  const readResponses = transcript.entries.flatMap((entry) => {
+    if (entry.type !== "expect_outbound") return [];
+    const frame = entry.frame as {
+      method?: unknown;
+      result?: { content?: unknown };
+      error?: { message?: unknown };
+    };
+    return frame.method === "fs/read_text_file" ? [frame] : [];
+  });
+  assert.isTrue(
+    readResponses.some(
+      (frame) =>
+        typeof frame.result?.content === "string" && frame.result.content.includes(PROBE_CONTENT),
+    ),
+    "T3 must serve Grok's client-mediated read of the approved file without asking",
+  );
+  // Grok probes the path before creating it, so a not-found error is expected;
+  // a refusal by the runtime policy is not.
+  for (const frame of readResponses) {
+    assert.notInclude(String(frame.error?.message ?? ""), "runtime policy");
+  }
+}
+
 function writtenContent(item: OrchestrationV2TurnItem): string | undefined {
   switch (item.type) {
     case "command_execution":

@@ -105,6 +105,30 @@ function acpPolicyRequiresApproval(runtimePolicy: AcpRuntimePolicy): boolean {
     : runtimePolicy.approvalPolicy !== "never";
 }
 
+function isAcpReadKind(toolKind: string): boolean {
+  return toolKind === "read" || toolKind === "search" || toolKind === "think";
+}
+
+/**
+ * Reads follow the sandbox alone and never ask. Approval policy governs writes
+ * and commands, as it does for Codex and Claude, and every sandbox T3 knows
+ * lets the agent read. That includes no explicit sandbox, since the strictest
+ * runtime mode (approval-required) implies a read-only one. Unknown sandbox
+ * types still fail closed.
+ */
+function acpReadDisposition(runtimePolicy: AcpRuntimePolicy): "allow" | "deny" {
+  switch (unknownRecord(runtimePolicy.sandboxPolicy)?.type) {
+    case undefined:
+    case "readOnly":
+    case "workspaceWrite":
+    case "dangerFullAccess":
+    case "externalSandbox":
+      return "allow";
+    default:
+      return "deny";
+  }
+}
+
 function acpWorkspaceWriteAllowsMutation(
   runtimePolicy: AcpRuntimePolicy,
   sandboxPolicy: Record<string, unknown>,
@@ -156,22 +180,19 @@ function acpOperationDisposition(
   runtimePolicy: AcpRuntimePolicy,
   operation: AcpPolicyOperation,
 ): AcpPermissionDisposition {
+  const toolKind = operation.kind ?? "other";
+  if (isAcpReadKind(toolKind)) {
+    return acpReadDisposition(runtimePolicy);
+  }
   if (acpPolicyRequiresApproval(runtimePolicy)) {
     return "ask";
   }
 
   const sandboxPolicy = unknownRecord(runtimePolicy.sandboxPolicy);
-  const sandboxType = sandboxPolicy?.type;
-  const toolKind = operation.kind ?? "other";
-  switch (sandboxType) {
+  switch (sandboxPolicy?.type) {
     case "readOnly":
-      return toolKind === "read" || toolKind === "search" || toolKind === "think"
-        ? "allow"
-        : "deny";
+      return "deny";
     case "workspaceWrite":
-      if (toolKind === "read" || toolKind === "search" || toolKind === "think") {
-        return "allow";
-      }
       if (toolKind === "edit" || toolKind === "delete" || toolKind === "move") {
         return acpWorkspaceWriteAllowsMutation(
           runtimePolicy,
@@ -229,12 +250,9 @@ export function acpClientWriteDisposition(
   return acpOperationDisposition(runtimePolicy, { kind: "edit", locations: [{ path }] });
 }
 
-/** Disposition of a client-mediated `fs/read_text_file` from one path. */
-export function acpClientReadDisposition(
-  runtimePolicy: AcpRuntimePolicy,
-  path: string,
-): AcpPermissionDisposition {
-  return acpOperationDisposition(runtimePolicy, { kind: "read", locations: [{ path }] });
+/** Disposition of a client-mediated `fs/read_text_file`. Reads never ask. */
+export function acpClientReadDisposition(runtimePolicy: AcpRuntimePolicy): "allow" | "deny" {
+  return acpReadDisposition(runtimePolicy);
 }
 
 /** Disposition of a client-mediated `terminal/create`. */
@@ -256,11 +274,6 @@ export interface AcpApprovalGrantInput {
 
 export interface AcpClientPolicyGrants {
   readonly recordApproval: (input: AcpApprovalGrantInput) => void;
-  readonly allowsRead: (input: {
-    readonly path: string;
-    readonly cwd: string | null;
-    readonly turnKey: string | null;
-  }) => boolean;
   readonly allowsWrite: (input: {
     readonly path: string;
     readonly cwd: string | null;
@@ -278,23 +291,19 @@ export interface AcpClientPolicyGrants {
  * requests the agent issues to carry it out, so grants are scoped as tightly as
  * the protocol allows: an accepted file change authorizes client writes to its
  * canonical reported locations (or the whole scope when the agent reported
- * none), an accepted file read does the same for reads, and an accepted command
- * authorizes client terminals. Grants last for the approving turn, or for the
+ * none), and an accepted command authorizes client terminals. Reads need no
+ * grant because they never ask. Grants last for the approving turn, or for the
  * session on accept-for-session.
  */
 export function makeAcpClientPolicyGrants(): AcpClientPolicyGrants {
   interface ScopeGrants {
     execute: boolean;
-    unscopedRead: boolean;
     unscopedWrite: boolean;
-    readRoots: Array<string>;
     writeRoots: Array<string>;
   }
   const emptyScope = (): ScopeGrants => ({
     execute: false,
-    unscopedRead: false,
     unscopedWrite: false,
-    readRoots: [],
     writeRoots: [],
   });
   const session = emptyScope();
@@ -311,34 +320,6 @@ export function makeAcpClientPolicyGrants(): AcpClientPolicyGrants {
   const activeScopes = (turnKey: string | null): Array<ScopeGrants> =>
     turn !== null && turnKey !== null && turn.key === turnKey ? [session, turn.grants] : [session];
 
-  const recordPathGrant = (roots: Array<string>, input: AcpApprovalGrantInput): void => {
-    for (const location of input.locations) {
-      const resolved = resolveAcpPermissionPath(location, input.cwd);
-      const canonical =
-        resolved === undefined ? undefined : acpCanonicalPathForContainment(resolved);
-      if (canonical === undefined) continue;
-      roots.push(canonical);
-      if (roots.length > MAX_GRANTED_WRITE_ROOTS) roots.shift();
-    }
-  };
-
-  const allowsPath = (input: {
-    readonly path: string;
-    readonly cwd: string | null;
-    readonly turnKey: string | null;
-    readonly unscoped: keyof Pick<ScopeGrants, "unscopedRead" | "unscopedWrite">;
-    readonly roots: keyof Pick<ScopeGrants, "readRoots" | "writeRoots">;
-  }): boolean => {
-    const scopes = activeScopes(input.turnKey);
-    if (scopes.some((scope) => scope[input.unscoped])) return true;
-    const resolved = resolveAcpPermissionPath(input.path, input.cwd);
-    const canonical = resolved === undefined ? undefined : acpCanonicalPathForContainment(resolved);
-    if (canonical === undefined) return false;
-    return scopes.some((scope) =>
-      scope[input.roots].some((root) => acpPathIsWithinRoot(canonical, root)),
-    );
-  };
-
   return {
     recordApproval: (input) => {
       const grants = scopeFor(input);
@@ -346,25 +327,31 @@ export function makeAcpClientPolicyGrants(): AcpClientPolicyGrants {
         grants.execute = true;
         return;
       }
-      if (input.kind === "file-read") {
-        if (input.locations.length === 0) {
-          grants.unscopedRead = true;
-          return;
-        }
-        recordPathGrant(grants.readRoots, input);
-        return;
-      }
       if (input.kind !== "file-change") return;
       if (input.locations.length === 0) {
         grants.unscopedWrite = true;
         return;
       }
-      recordPathGrant(grants.writeRoots, input);
+      for (const location of input.locations) {
+        const resolved = resolveAcpPermissionPath(location, input.cwd);
+        const canonical =
+          resolved === undefined ? undefined : acpCanonicalPathForContainment(resolved);
+        if (canonical === undefined) continue;
+        grants.writeRoots.push(canonical);
+        if (grants.writeRoots.length > MAX_GRANTED_WRITE_ROOTS) grants.writeRoots.shift();
+      }
     },
-    allowsRead: ({ path, cwd, turnKey }) =>
-      allowsPath({ path, cwd, turnKey, unscoped: "unscopedRead", roots: "readRoots" }),
-    allowsWrite: ({ path, cwd, turnKey }) =>
-      allowsPath({ path, cwd, turnKey, unscoped: "unscopedWrite", roots: "writeRoots" }),
+    allowsWrite: ({ path, cwd, turnKey }) => {
+      const scopes = activeScopes(turnKey);
+      if (scopes.some((scope) => scope.unscopedWrite)) return true;
+      const resolved = resolveAcpPermissionPath(path, cwd);
+      const canonical =
+        resolved === undefined ? undefined : acpCanonicalPathForContainment(resolved);
+      if (canonical === undefined) return false;
+      return scopes.some((scope) =>
+        scope.writeRoots.some((root) => acpPathIsWithinRoot(canonical, root)),
+      );
+    },
     allowsExecute: (turnKey) => activeScopes(turnKey).some((scope) => scope.execute),
   };
 }

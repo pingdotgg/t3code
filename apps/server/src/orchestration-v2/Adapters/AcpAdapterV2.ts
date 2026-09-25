@@ -5185,17 +5185,11 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
 
         const guardClientFsRead = (path: string) =>
           clientPolicyContext.pipe(
-            Effect.flatMap(({ policy, turnKey }) => {
-              const disposition = acpClientReadDisposition(policy, path);
-              if (
-                disposition === "allow" ||
-                (disposition === "ask" &&
-                  clientPolicyGrants.allowsRead({ path, cwd: policy.cwd, turnKey }))
-              ) {
-                return Effect.void;
-              }
-              return denyClientRequest(`fs/read_text_file for '${path}'`, disposition);
-            }),
+            Effect.flatMap(({ policy }) =>
+              acpClientReadDisposition(policy) === "allow"
+                ? Effect.void
+                : denyClientRequest(`fs/read_text_file for '${path}'`, "deny"),
+            ),
           );
 
         const guardClientTerminalCreate = clientPolicyContext.pipe(

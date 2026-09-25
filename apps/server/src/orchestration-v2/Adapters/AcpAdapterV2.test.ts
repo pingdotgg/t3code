@@ -2138,7 +2138,7 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
-  it.effect("rejects unapproved client-mediated reads in approval-required mode", () =>
+  it.effect("serves client-mediated reads without approval in approval-required mode", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2198,11 +2198,11 @@ describe("AcpAdapterV2", () => {
         return yield* Effect.die("ACP runtime must register the fs read handler");
       }
 
-      const deniedRead = yield* readTextFile(
+      const read = yield* readTextFile(
         { sessionId: "mock-session-1", path: readablePath },
         { requestId: "test-unapproved-read", method: "fs/read_text_file" },
-      ).pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(deniedRead));
+      );
+      assert.equal(read.content, "existing");
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 

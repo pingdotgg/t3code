@@ -91,7 +91,8 @@ instead of disappearing.
 ## Permissions and terminals
 
 Registry agents follow the thread's approval mode at the T3 client boundary: full-access threads
-approve mediated permission requests automatically, while approval-required threads keep asking.
+approve mediated permission requests automatically, while approval-required threads keep asking
+before edits and commands. File reads and searches are never gated behind an approval prompt.
 For ACP v1 agents, T3 can mediate the file and terminal requests they send through the client. ACP
 v2 terminals are instead owned by the agent; T3 displays their command, output, and exit state when
 the agent publishes them, but does not execute or control those terminals.

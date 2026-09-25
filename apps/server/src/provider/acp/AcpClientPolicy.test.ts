@@ -91,6 +91,21 @@ describe("acpPermissionDisposition", () => {
     assert.equal(acpPermissionDisposition(policy, permissionRequest("execute")), "deny");
   });
 
+  it("auto-allows read-kind permission requests under on-request approval", () => {
+    for (const runtimePolicy of [
+      { ...policy, approvalPolicy: "on-request" },
+      { ...policy, approvalPolicy: "on-request", sandboxPolicy: { type: "readOnly" } },
+      { runtimeMode: "approval-required", cwd },
+    ] satisfies ReadonlyArray<AcpRuntimePolicy>) {
+      for (const kind of ["read", "search", "think"] as const) {
+        assert.equal(acpPermissionDisposition(runtimePolicy, permissionRequest(kind)), "allow");
+      }
+      for (const kind of ["edit", "delete", "move", "execute", "fetch", "other"] as const) {
+        assert.equal(acpPermissionDisposition(runtimePolicy, permissionRequest(kind)), "ask");
+      }
+    }
+  });
+
   it.effect("denies mutations through workspace symlinks that escape the writable roots", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -262,9 +277,9 @@ describe("acpMcpToolApprovalElicitationDisposition", () => {
 describe("client-mediated dispositions", () => {
   const cwd = NodePath.resolve(process.cwd(), "acp-client-policy-workspace");
 
-  it("asks in approval-required mode for reads, writes, and terminals", () => {
+  it("asks for writes and terminals but allows reads in approval-required mode", () => {
     const policy: AcpRuntimePolicy = { runtimeMode: "approval-required", cwd };
-    assert.equal(acpClientReadDisposition(policy, NodePath.join(cwd, "file.ts")), "ask");
+    assert.equal(acpClientReadDisposition(policy), "allow");
     assert.equal(acpClientWriteDisposition(policy, NodePath.join(cwd, "file.ts")), "ask");
     assert.equal(acpClientExecuteDisposition(policy), "ask");
   });
@@ -272,7 +287,7 @@ describe("client-mediated dispositions", () => {
   it("allows in auto and full-access modes without an explicit sandbox", () => {
     for (const runtimeMode of ["auto", "auto-accept-edits", "full-access"] as const) {
       const policy: AcpRuntimePolicy = { runtimeMode, cwd };
-      assert.equal(acpClientReadDisposition(policy, NodePath.join(cwd, "file.ts")), "allow");
+      assert.equal(acpClientReadDisposition(policy), "allow");
       assert.equal(acpClientWriteDisposition(policy, NodePath.join(cwd, "file.ts")), "allow");
       assert.equal(acpClientExecuteDisposition(policy), "allow");
     }
@@ -285,7 +300,7 @@ describe("client-mediated dispositions", () => {
       approvalPolicy: "never",
       sandboxPolicy: { type: "readOnly" },
     };
-    assert.equal(acpClientReadDisposition(policy, NodePath.join(cwd, "file.ts")), "allow");
+    assert.equal(acpClientReadDisposition(policy), "allow");
     assert.equal(acpClientWriteDisposition(policy, NodePath.join(cwd, "file.ts")), "deny");
     assert.equal(acpClientExecuteDisposition(policy), "deny");
   });
@@ -297,10 +312,39 @@ describe("client-mediated dispositions", () => {
       approvalPolicy: "never",
       sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: false },
     };
-    assert.equal(acpClientReadDisposition(policy, "/tmp/outside-workspace/file.ts"), "allow");
+    assert.equal(acpClientReadDisposition(policy), "allow");
     assert.equal(acpClientWriteDisposition(policy, NodePath.join(cwd, "src/file.ts")), "allow");
     assert.equal(acpClientWriteDisposition(policy, "/tmp/outside-workspace/file.ts"), "deny");
     assert.equal(acpClientExecuteDisposition(policy), "deny");
+  });
+
+  it("allows reads without asking under on-request approval while writes and terminals ask", () => {
+    for (const sandboxPolicy of [
+      { type: "readOnly" },
+      { type: "workspaceWrite", writableRoots: [], networkAccess: false },
+    ]) {
+      const policy: AcpRuntimePolicy = {
+        runtimeMode: "full-access",
+        cwd,
+        approvalPolicy: "on-request",
+        sandboxPolicy,
+      };
+      assert.equal(acpClientReadDisposition(policy), "allow");
+      assert.equal(acpClientWriteDisposition(policy, NodePath.join(cwd, "file.ts")), "ask");
+      assert.equal(acpClientExecuteDisposition(policy), "ask");
+    }
+  });
+
+  it("denies reads under a sandbox type it does not recognize", () => {
+    for (const approvalPolicy of ["never", "on-request"]) {
+      const policy: AcpRuntimePolicy = {
+        runtimeMode: "full-access",
+        cwd,
+        approvalPolicy,
+        sandboxPolicy: { type: "futureSandbox" },
+      };
+      assert.equal(acpClientReadDisposition(policy), "deny");
+    }
   });
 });
 
@@ -355,7 +399,7 @@ describe("makeAcpClientPolicyGrants", () => {
     );
   });
 
-  it("grants reads only to approved locations and terminals only from commands", () => {
+  it("grants terminals only from commands, never from an approved read", () => {
     const grants = makeAcpClientPolicyGrants();
     grants.recordApproval({
       kind: "file-read",
@@ -364,11 +408,6 @@ describe("makeAcpClientPolicyGrants", () => {
       scope: "turn",
       turnKey: "turn-1",
     });
-    assert.isTrue(grants.allowsRead({ path: filePath, cwd, turnKey: "turn-1" }));
-    assert.isFalse(
-      grants.allowsRead({ path: NodePath.join(cwd, "src", "other.ts"), cwd, turnKey: "turn-1" }),
-    );
-    assert.isFalse(grants.allowsRead({ path: filePath, cwd, turnKey: "turn-2" }));
     assert.isFalse(grants.allowsExecute("turn-1"));
     assert.isFalse(grants.allowsWrite({ path: filePath, cwd, turnKey: "turn-1" }));
     grants.recordApproval({
