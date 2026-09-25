@@ -71,6 +71,7 @@ type Runtime = Pick<
   | "handleRequestPermission"
   | "start"
   | "setModel"
+  | "setSessionModel"
   | "getConfigOptions"
   | "getEvents"
   | "drainEvents"

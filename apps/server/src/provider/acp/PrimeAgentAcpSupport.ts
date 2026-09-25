@@ -79,10 +79,16 @@ export const makePrimeAgentAcpRuntime = Effect.fn("makePrimeAgentAcpRuntime")(fu
   return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(Effect.provide(context));
 });
 
+export function primeAgentModelConfigOption(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+) {
+  return configOptions.find((option) => option.id === "model" || option.category === "model");
+}
+
 export function primeAgentModelOptions(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
 ) {
-  const model = configOptions.find((option) => option.id === "model");
+  const model = primeAgentModelConfigOption(configOptions);
   if (model?.type !== "select") return [];
   return model.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options));
 }
@@ -91,7 +97,7 @@ export function resolvePrimeAgentModel(input: {
   readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
   readonly model: string | null | undefined;
 }): string | undefined {
-  const modelConfig = input.configOptions.find((option) => option.id === "model");
+  const modelConfig = primeAgentModelConfigOption(input.configOptions);
   const current = modelConfig?.type === "select" ? modelConfig.currentValue : undefined;
   const requested = input.model?.trim();
   return requested && requested !== PRIME_AGENT_DEFAULT_MODEL ? requested : current;
@@ -101,18 +107,18 @@ export const applyPrimeAgentAcpModelSelection = Effect.fn("applyPrimeAgentAcpMod
   function* <E>(input: {
     readonly runtime: Pick<
       AcpSessionRuntime.AcpSessionRuntime["Service"],
-      "getConfigOptions" | "setModel"
+      "getConfigOptions" | "setModel" | "setSessionModel"
     >;
     readonly model: string | null | undefined;
     readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
   }): Effect.fn.Return<string | undefined, E> {
     const configOptions = yield* input.runtime.getConfigOptions;
-    const modelConfig = configOptions.find((option) => option.id === "model");
+    const modelConfig = primeAgentModelConfigOption(configOptions);
     const current = modelConfig?.type === "select" ? modelConfig.currentValue : undefined;
     const resolved = resolvePrimeAgentModel({ configOptions, model: input.model });
     if (resolved === undefined || resolved === current) return current;
     const options = primeAgentModelOptions(configOptions);
-    if (!options.some((option) => option.value === resolved)) {
+    if (modelConfig?.type === "select" && !options.some((option) => option.value === resolved)) {
       return yield* Effect.fail(
         input.mapError(
           EffectAcpErrors.AcpRequestError.invalidParams(
@@ -121,7 +127,11 @@ export const applyPrimeAgentAcpModelSelection = Effect.fn("applyPrimeAgentAcpMod
         ),
       );
     }
-    yield* input.runtime.setModel(resolved).pipe(Effect.mapError(input.mapError));
+    if (modelConfig?.type === "select") {
+      yield* input.runtime.setModel(resolved).pipe(Effect.mapError(input.mapError));
+    } else {
+      yield* input.runtime.setSessionModel(resolved).pipe(Effect.mapError(input.mapError));
+    }
     return resolved;
   },
 );

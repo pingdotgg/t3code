@@ -3,10 +3,12 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import type * as EffectAcpSchema from "effect-acp/schema";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
@@ -16,7 +18,11 @@ import { ProviderDriverError } from "../Errors.ts";
 import { makePrimeAgentAdapter } from "../Layers/PrimeAgentAdapter.ts";
 import { makePrimeAgentProvider } from "../Layers/PrimeAgentProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
-import { parseGenericCliVersion, spawnAndCollect } from "../providerSnapshot.ts";
+import {
+  isCommandMissingCause,
+  parseGenericCliVersion,
+  spawnAndCollect,
+} from "../providerSnapshot.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -79,17 +85,29 @@ export const PrimeAgentDriver: ProviderDriver<PrimeAgentSettings, PrimeAgentDriv
       // Health runs --version so a status poll never starts Prime Agent's daemon.
       const probe = Effect.gen(function* () {
         const command = settings.binaryPath.trim() || "prime-agent";
-        const result = yield* spawnAndCollect(
-          command,
-          ChildProcess.make(command, ["--version"], { env: processEnvironment }),
-        ).pipe(
+        const result = yield* Effect.gen(function* () {
+          const spawnCommand = yield* resolveSpawnCommand(command, ["--version"], {
+            env: processEnvironment,
+          });
+          return yield* spawnAndCollect(
+            command,
+            ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+              env: processEnvironment,
+              shell: spawnCommand.shell,
+            }),
+          );
+        }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.mapError(
             (cause) =>
               new ProviderSetupError({
                 instanceId,
                 operation: "resolve",
-                detail: `Prime Agent is not installed or its executable could not be found at '${command}'.`,
+                detail:
+                  isCommandMissingCause(cause) ||
+                  (Predicate.isObject(cause) && cause.code === "ENOENT")
+                    ? `Prime Agent is not installed or its executable could not be found at '${command}'.`
+                    : `Prime Agent could not be started from '${command}'. Check its permissions.`,
                 cause,
               }),
           ),

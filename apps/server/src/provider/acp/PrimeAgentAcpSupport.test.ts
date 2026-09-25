@@ -26,6 +26,19 @@ describe("primeAgentModelOptions", () => {
     ]);
   });
 
+  it("finds a model option by category when its id differs", () => {
+    const categorized = [
+      { ...configOptions[0]!, id: "prime-model", category: "model" },
+    ] satisfies ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+    expect(primeAgentModelOptions(categorized).map((option) => option.value)).toEqual([
+      "anthropic/claude-sonnet-4",
+      "openai/gpt-5",
+    ]);
+    expect(resolvePrimeAgentModel({ configOptions: categorized, model: undefined })).toBe(
+      "anthropic/claude-sonnet-4",
+    );
+  });
+
   it("returns nothing without a model select", () => {
     expect(primeAgentModelOptions([])).toEqual([]);
   });

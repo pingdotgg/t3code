@@ -333,11 +333,17 @@ function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings
     : fallbackTextGenerationProvider(settings);
 }
 
+// Drivers whose text generation is not implemented but whose `providers` entry
+// still decodes as enabled. The fallback must skip them, or a thread title or
+// commit message can route to a provider that fails every operation.
+const TEXT_GENERATION_UNSUPPORTED_DRIVERS: ReadonlySet<string> = new Set(["primeAgent"]);
+
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
   // Same precedence as isModelSelectionProviderEnabled: an explicit provider
   // instance wins over the legacy providers map, which decodes to defaults
   // (codex enabled) when the Providers UI has only written providerInstances.
   const fallbackEntry = Object.entries(settings.providers).find(([driver, provider]) => {
+    if (TEXT_GENERATION_UNSUPPORTED_DRIVERS.has(driver)) return false;
     const instance = settings.providerInstances[ProviderInstanceId.make(driver)];
     return instance === undefined ? provider.enabled : resolveProviderInstanceEnabled(instance);
   });
