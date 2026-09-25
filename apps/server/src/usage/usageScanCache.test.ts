@@ -24,6 +24,7 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
       reasoningTokens: 0,
     },
     reportedCostUsd: null,
+    fast: false,
     dedupeKey: "msg_1:",
     ...overrides,
   };
@@ -57,7 +58,11 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
 describe("scan cache round trip", () => {
   it("restores records unchanged", () => {
     const original = cacheWith([
-      ["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5" })]],
+      [
+        "/a.jsonl",
+        100,
+        [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5-5", fast: true })],
+      ],
       ["/b.jsonl", 200, [record({ sessionId: "session-b", reportedCostUsd: 1.5 })]],
     ]);
     original.set("/grok.jsonl", {
@@ -125,7 +130,7 @@ describe("scan cache round trip", () => {
 
   it("rejects a document from the previous cache version", () => {
     const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
-    const previous = { ...encoded, version: 2 };
+    const previous = { ...encoded, version: 3 };
 
     expect(decodeScanCache(JSON.parse(JSON.stringify(previous))).size).toBe(0);
   });
