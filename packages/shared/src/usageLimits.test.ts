@@ -16,6 +16,7 @@ import {
   collectLimitAccounts,
   collectLimitNotices,
   collectLimitPools,
+  displayLimitWindows,
   elapsedShare,
   formatResetsIn,
   limitsNotice,
@@ -684,6 +685,53 @@ describe("pooled account columns", () => {
     ];
     expect(keys(collectLimitPools(accounts, now)[0]!)).toEqual([["a", "b", "y", "z"]]);
     expect(keys(collectLimitPools(accounts.toReversed(), now)[0]!)).toEqual([["a", "b", "y", "z"]]);
+  });
+});
+
+describe("Cursor limit presentation", () => {
+  const cursorAccount: LimitAccount = {
+    key: "cursor",
+    driver: ProviderDriverKind.make("cursor"),
+    displayName: "Cursor",
+    email: undefined,
+    plan: undefined,
+    accentColor: undefined,
+    environments: [],
+    sourceLabel: "Cursor",
+    redeem: null,
+    limits: {
+      checkedAt: "2026-09-03T11:00:00.000Z",
+      windows: [
+        { id: "apiPercentUsed", kind: "monthly", label: "Other Models", usedPercent: 49 },
+        { id: "autoPercentUsed", kind: "monthly", label: "Cursor Models", usedPercent: 9 },
+        { id: "totalPercentUsed", kind: "monthly", label: "Overall", usedPercent: 15 },
+      ],
+    },
+  };
+
+  it("hides the combined percentage and orders the two pools", () => {
+    const [pool] = collectLimitPools([cursorAccount], now);
+    const display = displayLimitWindows(pool!);
+    expect(display.map((window) => window.id)).toEqual(["autoPercentUsed", "apiPercentUsed"]);
+  });
+
+  it("keeps the combined percentage as a card if either allowance is missing", () => {
+    const [pool] = collectLimitPools(
+      [
+        {
+          ...cursorAccount,
+          limits: {
+            ...cursorAccount.limits,
+            windows: cursorAccount.limits.windows.filter(
+              (window) => window.id !== "apiPercentUsed",
+            ),
+          },
+        },
+      ],
+      now,
+    );
+    const display = displayLimitWindows(pool!);
+    expect(display.map((window) => window.id)).toEqual(["totalPercentUsed", "autoPercentUsed"]);
   });
 });
 

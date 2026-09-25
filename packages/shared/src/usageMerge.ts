@@ -11,6 +11,7 @@ import {
   type EnvironmentId,
   type UsageBucket,
   type UsageProviderKind,
+  type UsageSource,
   type UsageSourceFingerprint,
   type UsageSummary,
 } from "@t3tools/contracts";
@@ -113,20 +114,46 @@ function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
   ].join(" ");
 }
 
+function bucketsForSource(summary: UsageSummary, source: UsageSource): readonly UsageBucket[] {
+  const providerSources = summary.sources.filter(
+    (entry) => entry.fingerprint.provider === source.fingerprint.provider,
+  );
+  return summary.buckets.filter(
+    (bucket) =>
+      bucket.provider === source.fingerprint.provider &&
+      (bucket.sourcePath === source.fingerprint.resolvedHomePath ||
+        (bucket.sourcePath === undefined && providerSources.length === 1)),
+  );
+}
+
+function bucketKey(bucket: UsageBucket): string {
+  return JSON.stringify([bucket.day, bucket.hourStart ?? null, bucket.provider, bucket.model]);
+}
+
 /**
  * Decides which environment owns each physical transcript directory.
  *
  * Several environments on one machine (worktree servers, for instance) resolve
  * the same provider home and would otherwise double count every token. The
- * most recently read summary claims a fingerprint; the rest have that provider's
- * buckets dropped. Environment ids break ties so the winner is stable when
- * summaries have the same read time.
+ * Complete scans claim a fingerprint ahead of partial scans, then the most
+ * recently read scan wins within each status. A newer partial scan can still
+ * contribute cells absent from an older complete scan. Environment ids break
+ * ties so the result is stable when summaries have the same read time.
  */
 function claimSources(environments: readonly EnvironmentUsage[]): {
   readonly ownerByFingerprint: ReadonlyMap<string, EnvironmentId>;
+  readonly supplementalBucketsByEnvironment: ReadonlyMap<EnvironmentId, ReadonlySet<UsageBucket>>;
+  readonly sessionsByFingerprint: ReadonlyMap<string, number>;
   readonly duplicates: readonly string[];
 } {
   const ownerByFingerprint = new Map<string, EnvironmentId>();
+  const ownerScanByFingerprint = new Map<
+    string,
+    { environment: EnvironmentUsage; source: UsageSource }
+  >();
+  const seenBucketKeysByFingerprint = new Map<string, Set<string>>();
+  const supplementalBucketsByEnvironment = new Map<EnvironmentId, Set<UsageBucket>>();
+  const sessionsByFingerprint = new Map<string, number>();
   const duplicates: string[] = [];
 
   const ordered = [...environments].sort(
@@ -135,30 +162,82 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
       a.environmentId.localeCompare(b.environmentId),
   );
 
-  for (const environment of ordered) {
-    for (const source of environment.summary.sources) {
-      if (source.status === "missing") continue;
-      const key = fingerprintKey(source.fingerprint);
-      if (ownerByFingerprint.has(key)) {
-        duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
-        continue;
+  // A complete scan takes precedence over a newer partial scan of the same
+  // directory. Partial history still contributes when no complete copy exists.
+  for (const status of ["ok", "partial", "failed"] as const) {
+    for (const environment of ordered) {
+      for (const source of environment.summary.sources) {
+        if (source.status !== status) continue;
+        const key = fingerprintKey(source.fingerprint);
+        if (ownerByFingerprint.has(key)) {
+          duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
+          continue;
+        }
+        ownerByFingerprint.set(key, environment.environmentId);
+        ownerScanByFingerprint.set(key, { environment, source });
+        sessionsByFingerprint.set(key, source.distinctSessions);
       }
-      ownerByFingerprint.set(key, environment.environmentId);
     }
   }
 
-  return { ownerByFingerprint, duplicates };
+  // A newer partial scan may contain usage recorded after an older complete
+  // scan. Keep cells absent from the complete scan. Aggregated cells do not
+  // reveal enough to reconcile overlapping records without double counting.
+  for (const environment of ordered) {
+    for (const source of environment.summary.sources) {
+      if (source.status !== "partial") continue;
+      const key = fingerprintKey(source.fingerprint);
+      const owner = ownerScanByFingerprint.get(key);
+      if (
+        owner?.source.status !== "ok" ||
+        Date.parse(environment.summary.readAt) <= Date.parse(owner.environment.summary.readAt)
+      ) {
+        continue;
+      }
+      let seen = seenBucketKeysByFingerprint.get(key);
+      if (seen === undefined) {
+        seen = new Set(bucketsForSource(owner.environment.summary, owner.source).map(bucketKey));
+        seenBucketKeysByFingerprint.set(key, seen);
+      }
+      const supplemental =
+        supplementalBucketsByEnvironment.get(environment.environmentId) ?? new Set<UsageBucket>();
+      let added = false;
+      for (const bucket of bucketsForSource(environment.summary, source)) {
+        const cell = bucketKey(bucket);
+        if (seen.has(cell)) continue;
+        seen.add(cell);
+        supplemental.add(bucket);
+        added = true;
+      }
+      if (!added) continue;
+      supplementalBucketsByEnvironment.set(environment.environmentId, supplemental);
+      sessionsByFingerprint.set(
+        key,
+        Math.max(sessionsByFingerprint.get(key) ?? 0, source.distinctSessions),
+      );
+    }
+  }
+
+  return {
+    ownerByFingerprint,
+    supplementalBucketsByEnvironment,
+    sessionsByFingerprint,
+    duplicates,
+  };
 }
 
 /** Sources this environment owns after fingerprint claims, plus their buckets. */
 function ownedContribution(
   environment: EnvironmentUsage,
   ownerByFingerprint: ReadonlyMap<string, EnvironmentId>,
+  supplementalBuckets: ReadonlySet<UsageBucket>,
+  sessionsByFingerprint: ReadonlyMap<string, number>,
 ): {
   readonly buckets: readonly UsageBucket[];
   readonly sessionsByProvider: ReadonlyMap<UsageProviderKind, number>;
 } {
   const ownedProviders = new Set<UsageProviderKind>();
+  const ownedSources = new Set<string>();
   const sessionsByProvider = new Map<UsageProviderKind, number>();
   for (const source of environment.summary.sources) {
     if (source.status === "missing") continue;
@@ -166,16 +245,24 @@ function ownedContribution(
     if (ownerByFingerprint.get(key) === environment.environmentId) {
       const provider = source.fingerprint.provider;
       ownedProviders.add(provider);
+      ownedSources.add(`${provider}\u0000${source.fingerprint.resolvedHomePath}`);
       // Distinct within a directory. Summing per-bucket session counts instead
       // would count a session once per day and model it spans.
       sessionsByProvider.set(
         provider,
-        (sessionsByProvider.get(provider) ?? 0) + source.distinctSessions,
+        (sessionsByProvider.get(provider) ?? 0) +
+          (sessionsByFingerprint.get(key) ?? source.distinctSessions),
       );
     }
   }
   return {
-    buckets: environment.summary.buckets.filter((bucket) => ownedProviders.has(bucket.provider)),
+    buckets: environment.summary.buckets.filter(
+      (bucket) =>
+        supplementalBuckets.has(bucket) ||
+        (bucket.sourcePath === undefined
+          ? ownedProviders.has(bucket.provider)
+          : ownedSources.has(`${bucket.provider}\u0000${bucket.sourcePath}`)),
+    ),
     sessionsByProvider,
   };
 }
@@ -246,7 +333,12 @@ export function mergeUsage(
     }
   }
 
-  const { ownerByFingerprint, duplicates } = claimSources(current);
+  const {
+    ownerByFingerprint,
+    supplementalBucketsByEnvironment,
+    sessionsByFingerprint,
+    duplicates,
+  } = claimSources(current);
 
   let costUsd = 0;
   let uncachedInputTokens = 0;
@@ -295,7 +387,12 @@ export function mergeUsage(
   const contributingEnvironments: EnvironmentId[] = [];
 
   for (const environment of current) {
-    const { buckets, sessionsByProvider } = ownedContribution(environment, ownerByFingerprint);
+    const { buckets, sessionsByProvider } = ownedContribution(
+      environment,
+      ownerByFingerprint,
+      supplementalBucketsByEnvironment.get(environment.environmentId) ?? new Set(),
+      sessionsByFingerprint,
+    );
     if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
 
     for (const [providerKind, providerSessions] of sessionsByProvider) {

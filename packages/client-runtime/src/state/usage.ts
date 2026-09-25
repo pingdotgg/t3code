@@ -16,9 +16,18 @@ export async function refreshUsageLimits<A>(
   environmentId: EnvironmentId,
   refresh: () => Promise<A>,
   automatic = false,
+  afterPending = false,
 ): Promise<A | undefined> {
   const pending = limitsRefreshes.get(environmentId);
   if (pending !== undefined) {
+    if (afterPending) {
+      try {
+        await pending;
+      } catch {
+        // The new check still needs to run if the earlier one failed.
+      }
+      return refreshUsageLimits(environmentId, refresh, false, true);
+    }
     // Manual refresh waits for the current check; automatic refresh does not repeat it.
     return automatic ? undefined : ((await pending) as A);
   }
