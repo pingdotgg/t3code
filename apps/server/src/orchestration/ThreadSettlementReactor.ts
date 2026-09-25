@@ -105,7 +105,10 @@ export const make = Effect.gen(function* () {
         (threadId === undefined || thread.id === threadId) &&
         (thread.settledOverride !== "active" ||
           (resolveProjectSettings(settings, thread.projectId).settings.sidebarAutoSettleOnMerge &&
-            (thread.branch !== null || thread.pullRequests.length > 0))) &&
+            (thread.branch !== null ||
+              thread.pullRequests.length > 0 ||
+              thread.linkedPullRequest != null ||
+              thread.branchPullRequest != null))) &&
         isAutoSettlementCandidate(thread, now, { allowActiveOnMerge: true }),
     );
 
