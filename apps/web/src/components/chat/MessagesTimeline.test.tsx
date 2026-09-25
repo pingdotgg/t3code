@@ -223,6 +223,7 @@ function buildProps() {
     onAnchorReady: () => {},
     contentInsetEndAdjustment: 0,
     liveFollowEnabled: true,
+    isLiveFollowLatched: () => true,
     onIsAtEndChange: () => {},
     onManualNavigation: () => {},
   };
@@ -1027,7 +1028,8 @@ describe("MessagesTimeline", () => {
     ];
     let renderer!: ReactTestRenderer;
     const list = () => renderer.root.findByType(LegendList);
-    const props = buildProps();
+    let latched = true;
+    const props = { ...buildProps(), isLiveFollowLatched: () => latched };
     // Streamed output has grown the list 500px past the viewport, and the
     // follow scroll has not caught up yet.
     props.listRef.current = {
@@ -1062,6 +1064,14 @@ describe("MessagesTimeline", () => {
       act(() => {
         renderer = create(renderTimeline(true));
       });
+      act(() => list().props.onScroll());
+      expect(readTimelinePosition(threadKey)?.atEnd).toBe(true);
+
+      // A gesture releases the latch before the next render turns follow off.
+      latched = false;
+      act(() => list().props.onScroll());
+      expect(readTimelinePosition(threadKey)).toMatchObject({ atEnd: false, scrollOffset: 700 });
+      latched = true;
       act(() => list().props.onScroll());
       expect(readTimelinePosition(threadKey)?.atEnd).toBe(true);
 

@@ -447,6 +447,11 @@ interface MessagesTimelineProps {
    * scroll-mode refs whenever the user drifts near the bottom.
    */
   liveFollowEnabled: boolean;
+  /**
+   * Reads ChatView's live-follow latch. A navigation gesture releases it
+   * synchronously, before `liveFollowEnabled` re-renders.
+   */
+  isLiveFollowLatched: () => boolean;
   onIsAtEndChange: (isAtEnd: boolean) => void;
   /**
    * Whether the real rows extend past the viewport above the composer.
@@ -511,6 +516,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onAnchorReady,
   contentInsetEndAdjustment,
   liveFollowEnabled,
+  isLiveFollowLatched,
   onIsAtEndChange,
   onContentOverflowChange,
   onToolOutputCollapsedAtEnd,
@@ -1032,8 +1038,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           // While live-following, a gap to the end is the follow scroll
           // trailing streamed output, not a reading position to restore.
           // Anchored end space holds the first send near the top instead of
-          // following, so its gap is a real position.
-          atEnd: isAtEnd || (liveFollowEnabled && !anchoredEndSpace),
+          // following, so its gap is a real position. The latch covers a
+          // gesture that released follow before this render caught up.
+          atEnd: isAtEnd || (liveFollowEnabled && isLiveFollowLatched() && !anchoredEndSpace),
           disclosures: {
             turns: paintedExpandedTurnIds,
             workGroups: paintedExpandedWorkGroupIds,
@@ -1092,6 +1099,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     rows,
     listIdentityKey,
     liveFollowEnabled,
+    isLiveFollowLatched,
     anchoredEndSpace,
     restoringThreadPosition,
     listRef,
