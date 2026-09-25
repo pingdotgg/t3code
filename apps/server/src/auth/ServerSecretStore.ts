@@ -1,7 +1,5 @@
-import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -9,7 +7,6 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as PlatformError from "effect/PlatformError";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
@@ -152,37 +149,6 @@ export class ServerSecretStore extends Context.Service<
   }
 >()("t3/auth/ServerSecretStore") {}
 
-// Single-use DPoP and cloud-proof replay markers. Each proof is only accepted for a few
-// minutes after it is issued, so a marker older than the retention window guards nothing.
-const REPLAY_GUARD_FILE = /^(?:dpop-proof-|cloud-(?:mint|health)-(?:nonce|jti)-).*\.bin$/;
-const REPLAY_GUARD_RETENTION = Duration.hours(1);
-const REPLAY_GUARD_SWEEP_INTERVAL = Duration.minutes(10);
-
-/** Removes replay-guard files in `secretsDir` last written before the retention window. */
-export const pruneReplayGuards = Effect.fn("ServerSecretStore.pruneReplayGuards")(function* (
-  secretsDir: string,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const cutoff = (yield* Clock.currentTimeMillis) - Duration.toMillis(REPLAY_GUARD_RETENTION);
-  const names = yield* fileSystem.readDirectory(secretsDir);
-  yield* Effect.forEach(
-    names.filter((name) => REPLAY_GUARD_FILE.test(name)),
-    (name) => {
-      const filePath = path.join(secretsDir, name);
-      return fileSystem.stat(filePath).pipe(
-        Effect.flatMap((info) =>
-          Option.exists(info.mtime, (mtime) => mtime.getTime() < cutoff)
-            ? fileSystem.remove(filePath)
-            : Effect.void,
-        ),
-        Effect.ignore,
-      );
-    },
-    { concurrency: 16, discard: true },
-  );
-});
-
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
@@ -199,16 +165,6 @@ export const make = Effect.gen(function* () {
           cause,
         }),
     ),
-  );
-
-  yield* pruneReplayGuards(serverConfig.secretsDir).pipe(
-    Effect.catch((error) =>
-      Effect.logWarning("secret-store.replay-guard-prune-failed", {
-        category: error.reason._tag,
-      }),
-    ),
-    Effect.repeat(Schedule.spaced(REPLAY_GUARD_SWEEP_INTERVAL)),
-    Effect.forkScoped,
   );
 
   const resolveSecretPath = (name: string) => path.join(serverConfig.secretsDir, `${name}.bin`);
