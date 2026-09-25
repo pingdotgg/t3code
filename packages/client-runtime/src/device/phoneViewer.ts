@@ -328,6 +328,8 @@ export function createPhoneViewer(options: {
       if (disposed || next === foldAngle) return;
       const previous = foldAngle;
       foldAngle = next;
+      // A loaded model owns the scene; install() reads foldAngle if it is removed.
+      if (imported) return;
       if (next === null || !("setAngle" in phone)) {
         scene.remove(phone.root);
         phone.dispose();

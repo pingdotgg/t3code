@@ -294,6 +294,30 @@ it("stops a hinge turn when a loaded model replaces the fold scene", async () =>
   viewer.dispose();
 });
 
+it("keeps a loaded model when the fold angle changes and releases it once", async () => {
+  const { viewer, draw, state } = fixture(ANDROID_PHONE_SHAPE);
+  viewer.setModel({ id: "iphone-18-pro", url: "/pro.glb" });
+  const asset = new Group();
+  const body = new Mesh(new BoxGeometry(1.15, 2.3, 0.1), new MeshBasicMaterial());
+  body.position.z = -0.02;
+  const display = new Mesh(new PlaneGeometry(1, 2.2), new MeshBasicMaterial());
+  display.geometry.translate(0, 0, 0.043);
+  display.name = "device-screen";
+  asset.add(body, display);
+  const dispose = vi.fn(() => disposeDeviceModel(asset));
+  models.pending[0]!.resolve({ asset, dispose });
+  await Promise.resolve();
+  draw();
+  const loaded = state.frames.at(-1)!.phone;
+  expect(loaded?.getObjectByName("device-screen")).toBe(display);
+  viewer.setFoldAngle(180);
+  viewer.setFoldAngle(0);
+  draw();
+  expect(state.frames.at(-1)!.phone).toBe(loaded);
+  viewer.dispose();
+  expect(dispose).toHaveBeenCalledOnce();
+});
+
 it("retains the loaded model and pose through rotation and framebuffer resolution changes, then releases it once", async () => {
   const { viewer, draw, source, state } = fixture();
   viewer.orbit(0.08, 0.04);
