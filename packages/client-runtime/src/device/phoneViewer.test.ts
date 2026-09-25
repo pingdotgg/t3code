@@ -111,7 +111,13 @@ function fixture(profile?: DeviceShapeProfile) {
   const source = { width: 1206, height: 2622 } as HTMLCanvasElement;
   const onUnavailable = vi.fn();
   const onFramingAspect = vi.fn();
-  const viewer = createPhoneViewer({ canvas, source, onUnavailable, onFramingAspect, profile });
+  const viewer = createPhoneViewer({
+    canvas,
+    source,
+    onUnavailable,
+    onFramingAspect,
+    ...(profile ? { profile } : {}),
+  });
   const draw = (time = now) => {
     now = time;
     const callbacks = [...pending.values()];
