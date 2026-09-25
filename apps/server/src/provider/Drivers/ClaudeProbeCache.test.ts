@@ -2,6 +2,7 @@ import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
@@ -29,26 +30,30 @@ const failedQuery = () =>
   }) as ReturnType<typeof ClaudeSdk.query>;
 
 // Stands in for the SDK. Each probe reports the Claude home it was started
-// with as the account email.
-const mockSdk = Effect.gen(function* () {
-  const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
-    ({ options }) =>
-      ({
-        initializationResult: async () => ({
-          account: { email: options?.env?.CLAUDE_CONFIG_DIR ?? "" },
-          commands: [{ name: "review", description: "Review changes", argumentHint: "" }],
-        }),
-        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () =>
-          Promise.reject(new Error("usage unavailable")),
-      }) as ReturnType<typeof ClaudeSdk.query>,
-  );
-  yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
-  return query;
-});
+// with as the account email. Probes finish once `ready` resolves.
+const mockSdk = (ready: Promise<void> = Promise.resolve()) =>
+  Effect.gen(function* () {
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+      ({ options }) =>
+        ({
+          initializationResult: async () => {
+            await ready;
+            return {
+              account: { email: options?.env?.CLAUDE_CONFIG_DIR ?? "" },
+              commands: [{ name: "review", description: "Review changes", argumentHint: "" }],
+            };
+          },
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () =>
+            Promise.reject(new Error("usage unavailable")),
+        }) as ReturnType<typeof ClaudeSdk.query>,
+    );
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    return query;
+  });
 
 it.effect("instances with the same probe input share one probe", () =>
   Effect.gen(function* () {
-    const query = yield* mockSdk;
+    const query = yield* mockSdk();
     const cache = yield* ClaudeProbeCache.ClaudeProbeCache;
 
     const [first, second] = yield* Effect.all(
@@ -66,7 +71,7 @@ it.effect("instances with the same probe input share one probe", () =>
 
 it.effect("different homes or instance env vars run separate probes", () =>
   Effect.gen(function* () {
-    const query = yield* mockSdk;
+    const query = yield* mockSdk();
     const cache = yield* ClaudeProbeCache.ClaudeProbeCache;
 
     const work = yield* cache.capabilities(input("/homes/work"));
@@ -83,7 +88,7 @@ it.effect("different homes or instance env vars run separate probes", () =>
 
 it.effect("retries a failed probe after a short TTL and keeps a success longer", () =>
   Effect.gen(function* () {
-    const query = yield* mockSdk;
+    const query = yield* mockSdk();
     query.mockImplementationOnce(failedQuery);
     const cache = yield* ClaudeProbeCache.ClaudeProbeCache;
 
@@ -103,7 +108,7 @@ it.effect("retries a failed probe after a short TTL and keeps a success longer",
 
 it.effect("invalidate re-probes only that input", () =>
   Effect.gen(function* () {
-    const query = yield* mockSdk;
+    const query = yield* mockSdk();
     const cache = yield* ClaudeProbeCache.ClaudeProbeCache;
 
     yield* cache.capabilities(input("/homes/work"));
@@ -113,5 +118,25 @@ it.effect("invalidate re-probes only that input", () =>
     yield* cache.capabilities(input("/homes/personal"));
 
     assert.equal(query.mock.calls.length, 3);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect("runs at most 3 SDK probes at once", () =>
+  Effect.gen(function* () {
+    const { promise: released, resolve: release } = Promise.withResolvers<void>();
+    const query = yield* mockSdk(released);
+    const cache = yield* ClaudeProbeCache.ClaudeProbeCache;
+    const homes = ["a", "b", "c", "d", "e"].map((name) => `/homes/${name}`);
+
+    const probes = yield* Effect.forEach(homes, (home) => cache.capabilities(input(home)), {
+      concurrency: "unbounded",
+    }).pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    assert.equal(query.mock.calls.length, 3);
+
+    release();
+    const results = yield* Fiber.join(probes);
+    assert.equal(query.mock.calls.length, 5);
+    assert.isTrue(results.every((result) => result !== undefined));
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );

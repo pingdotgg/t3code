@@ -8,8 +8,8 @@
  * Unlike Codex, the Claude snapshot probe may invoke a secondary probe
  * (`probeClaudeCapabilities`) to read Anthropic account + slash-command
  * metadata. That probe goes through the server-wide `ClaudeProbeCache`, keyed
- * on the full probe input, so instances on one home share one probe and
- * instances on different homes never see each other's account.
+ * on the full probe input, so instances with the same probe input share one
+ * probe and instances on different homes never see each other's account.
  *
  * @module provider/Drivers/ClaudeDriver
  */
