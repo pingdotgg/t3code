@@ -317,13 +317,16 @@ const COMPOSER_CONTEXT_MOTION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 const COMPOSER_CONTEXT_LABEL_SELECTOR = "[data-composer-label]";
 
 /**
- * The width a label's text needs on one line, clipped parts included.
+ * The width a label takes when shown, clipped parts included.
  *
  * Text keeps its full width when its box clips it, so each text run measures
  * whole. A label can hold more than one run (MiddleTruncate splits a branch
  * into a head and a tail), so the runs are added. Reading one element's
  * scrollWidth drops the tail when the label is hidden or squeezed, and the
  * strip then flips between labels and icons on every measure.
+ *
+ * A shown label never grows past its motion span's max width, so longer text
+ * reserves only that much.
  */
 function labelTextWidth(label: HTMLElement, range: Range): number {
   const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
@@ -332,7 +335,9 @@ function labelTextWidth(label: HTMLElement, range: Range): number {
     range.selectNodeContents(node);
     width += range.getBoundingClientRect().width;
   }
-  return width;
+  const motion = label.querySelector<HTMLElement>("[data-composer-label-motion]");
+  const maxWidth = motion ? Number.parseFloat(getComputedStyle(motion).maxWidth) : Number.NaN;
+  return Number.isFinite(maxWidth) ? Math.min(width, maxWidth) : width;
 }
 
 /**
