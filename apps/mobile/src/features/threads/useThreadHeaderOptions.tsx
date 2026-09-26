@@ -1,3 +1,4 @@
+import type { ScreenHeaderMenu, ScreenHeaderMenuItem } from "../../components/ScreenHeader.types";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useMemo } from "react";
 import type { AppNativeStackNavigationOptions } from "../../native/StackHeader";
@@ -9,9 +10,26 @@ import {
   useThreadGitRightHeaderItems,
 } from "./ThreadGitControls";
 
+function nativeLifecycleItems(
+  items: ReadonlyArray<ScreenHeaderMenuItem>,
+): Array<Record<string, unknown>> {
+  return items.map((item) =>
+    "items" in item
+      ? { type: "submenu", title: item.title ?? "", items: nativeLifecycleItems(item.items) }
+      : {
+          type: "action",
+          label: item.title,
+          icon: item.icon ? { type: "sfSymbol", name: item.icon } : undefined,
+          disabled: item.disabled,
+          onPress: item.onPress,
+        },
+  );
+}
+
 type NativeHeaderItems = ReadonlyArray<Record<string, unknown>>;
 
 export function useThreadHeaderOptions(props: {
+  readonly lifecycleMenu?: ScreenHeaderMenu;
   readonly title: string;
   readonly subtitle: string;
   readonly headerColor: string;
@@ -103,8 +121,24 @@ export function useThreadHeaderOptions(props: {
     // Search lives in the persistent sidebar, so the split header keeps
     // the git controls on the RIGHT (no center items — center space is
     // reserved for future breadcrumbs/status).
-    unstable_headerRightItems: () =>
-      layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems,
+    unstable_headerRightItems: () => [
+      ...(layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems),
+      ...(props.lifecycleMenu
+        ? [
+            {
+              type: "menu",
+              identifier: "thread-lifecycle",
+              label: props.lifecycleMenu.title,
+              accessibilityLabel: props.lifecycleMenu.title,
+              icon: { type: "sfSymbol", name: "ellipsis.circle" },
+              menu: {
+                title: props.lifecycleMenu.title,
+                items: nativeLifecycleItems(props.lifecycleMenu.items),
+              },
+            },
+          ]
+        : []),
+    ],
     unstable_headerSubtitle: props.usesNativeHeaderGlass ? props.subtitle : undefined,
     contentStyle: undefined,
   };
