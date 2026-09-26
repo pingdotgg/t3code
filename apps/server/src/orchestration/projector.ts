@@ -58,8 +58,8 @@ import {
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
-// The activity kinds openRequests reads. The command model drops all other
-// activities.
+// The activity kinds openRequests in decider.ts reads. The command model
+// drops all other activities.
 const REQUEST_ACTIVITY_KINDS: ReadonlySet<string> = new Set([
   "approval.requested",
   "approval.resolved",
@@ -69,59 +69,26 @@ const REQUEST_ACTIVITY_KINDS: ReadonlySet<string> = new Set([
   "provider.user-input.respond.failed",
 ]);
 
-function isStaleRequestFailureDetail(payload: Record<string, unknown>): boolean {
-  const detail = typeof payload.detail === "string" ? payload.detail.toLowerCase() : null;
-  if (detail === null) return false;
-  return (
-    detail.includes("stale pending approval request") ||
-    detail.includes("unknown pending approval request") ||
-    detail.includes("unknown pending permission request") ||
-    detail.includes("stale pending user-input request") ||
-    detail.includes("unknown pending user-input request") ||
-    detail.includes("unknown pending user input request") ||
-    detail.includes("unknown pending codex user input request")
-  );
-}
-
-/**
- * Blocked-on-you work in a thread's activities: each approval or user-input
- * request with no later resolution for the same requestId, keyed by
- * requestId. The decider uses it to block settle, snooze, and history import.
- * It is the server-side twin of the shell's hasPendingApprovals and
- * hasPendingUserInput flags. The clearing rules MUST match
- * ProjectionPipeline's pending accounting: resolved activities always clear,
- * and respond.failed clears only when its detail marks the request stale or
- * unknown. Otherwise settle is rejected on threads whose shell flags are clear.
- */
-export function openRequests(activities: OrchestrationThread["activities"]) {
-  const requests = new Map<string, OrchestrationThread["activities"][number]>();
+// Async questions can stay open while the agent produces more activity.
+// Match the database snapshot's pending-question retention.
+function retainThreadActivities(activities: OrchestrationThread["activities"]) {
+  const recentStart = activities.length - 500;
+  if (recentStart <= 0) return activities;
+  const pending = new Map<string, OrchestrationThread["activities"][number]>();
   for (const activity of activities) {
     if (!Predicate.isObject(activity.payload)) continue;
     const requestId = activity.payload.requestId;
     if (typeof requestId !== "string") continue;
-    if (activity.kind === "approval.requested" || activity.kind === "user-input.requested") {
-      requests.set(requestId, activity);
-    } else if (activity.kind === "approval.resolved" || activity.kind === "user-input.resolved") {
-      requests.delete(requestId);
-    } else if (
-      (activity.kind === "provider.approval.respond.failed" ||
-        activity.kind === "provider.user-input.respond.failed") &&
-      isStaleRequestFailureDetail(activity.payload)
-    ) {
-      requests.delete(requestId);
+    if (activity.kind === "user-input.requested" && activity.payload.responseMode === "message") {
+      pending.set(requestId, activity);
+    } else if (activity.kind === "user-input.resolved") {
+      pending.delete(requestId);
     }
   }
-  return requests;
-}
-
-// Safety cap for the retained request activities. Open requests stay past the
-// cap, so the decider still sees them. Match the database snapshot, which
-// pins pending approvals and user-input requests the same way.
-function retainThreadActivities(activities: OrchestrationThread["activities"]) {
-  const recentStart = activities.length - 500;
-  if (recentStart <= 0) return activities;
-  const open = new Set(openRequests(activities).values());
-  return activities.filter((activity, index) => index >= recentStart || open.has(activity));
+  const pendingActivities = new Set(pending.values());
+  return activities.filter(
+    (activity, index) => index >= recentStart || pendingActivities.has(activity),
+  );
 }
 
 function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error") {
@@ -264,7 +231,7 @@ function retainThreadMessagesAfterRevert(
 ): ReadonlyArray<OrchestrationMessage> {
   const retainedMessageIds = new Set<string>();
   for (const message of messages) {
-    if (isImportedAgentSessionMessageId(message.id)) {
+    if (message.role === "system" || isImportedAgentSessionMessageId(message.id)) {
       retainedMessageIds.add(message.id);
       continue;
     }

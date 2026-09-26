@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import { it as effectIt } from "@effect/vitest";
 import { describe, expect, it } from "vite-plus/test";
 
-import { createEmptyReadModel, openRequests, projectEvent } from "./projector.ts";
+import { createEmptyReadModel, projectEvent } from "./projector.ts";
 
 function makeEvent(input: {
   sequence: number;
@@ -708,68 +708,6 @@ describe("orchestration projector", () => {
       ]);
       // Dropped events still move updatedAt, which the decider re-emits.
       expect(thread?.updatedAt).toBe(at(7));
-    }),
-  );
-
-  effectIt.effect("keeps open requests past the activity cap", () =>
-    Effect.gen(function* () {
-      const threadId = "thread-requests";
-      const createdAt = "2026-02-23T09:00:00.000Z";
-      let sequence = 0;
-      const event = (type: OrchestrationEvent["type"], payload: object) =>
-        makeEvent({
-          sequence: ++sequence,
-          type,
-          aggregateKind: "thread",
-          aggregateId: threadId,
-          occurredAt: createdAt,
-          commandId: `cmd-${sequence}`,
-          payload: { threadId, ...payload },
-        });
-      const activity = (kind: string, payload: object) =>
-        event("thread.activity-appended", {
-          activity: {
-            id: `activity-${sequence + 1}`,
-            tone: "approval",
-            kind,
-            summary: kind,
-            payload,
-            turnId: null,
-            sequence: sequence + 1,
-            createdAt,
-          },
-        });
-
-      const events = [
-        event("thread.created", {
-          projectId: "project-1",
-          title: "demo",
-          modelSelection: { provider: ProviderDriverKind.make("codex"), model: "gpt-5.3-codex" },
-          runtimeMode: "approval-required",
-          branch: null,
-          worktreePath: null,
-          createdAt,
-          updatedAt: createdAt,
-        }),
-        activity("approval.requested", { requestId: "open" }),
-        activity("approval.requested", { requestId: "stale" }),
-        activity("provider.approval.respond.failed", {
-          requestId: "stale",
-          detail: "Stale pending approval request: stale",
-        }),
-        ...Array.from({ length: 300 }, (_, index) => [
-          activity("approval.requested", { requestId: `later-${index}` }),
-          activity("approval.resolved", { requestId: `later-${index}` }),
-        ]).flat(),
-      ];
-      let model = createEmptyReadModel(createdAt);
-      for (const next of events) {
-        model = yield* projectEvent(model, next);
-      }
-
-      const activities = model.threads[0]?.activities ?? [];
-      expect(activities).toHaveLength(501);
-      expect([...openRequests(activities).keys()]).toEqual(["open"]);
     }),
   );
 
