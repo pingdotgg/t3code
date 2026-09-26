@@ -542,8 +542,12 @@ export const make = Effect.gen(function* () {
   // Publishes the active threads once. Returns why it did not, so the retry
   // knows whether it is waiting on a link or on the publish setting.
   const publishActiveThreadsUnsafe = Effect.gen(function* () {
-    const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
-    if (!relayConfig) {
+    // One secret read settles the common never-linked case; the full link
+    // config is read only once publishing is on.
+    const relayUrl = yield* readSecretString(RELAY_URL_SECRET).pipe(
+      Effect.orElseSucceed(() => null),
+    );
+    if (!relayUrl) {
       yield* Effect.logDebug("agent activity snapshot skipped; relay link credentials unavailable");
       return "unlinked" as const;
     }
@@ -553,6 +557,11 @@ export const make = Effect.gen(function* () {
     if (!publishAgentActivity) {
       yield* Effect.logDebug("agent activity snapshot skipped; publication disabled");
       return "disabled" as const;
+    }
+    const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
+    if (!relayConfig) {
+      yield* Effect.logDebug("agent activity snapshot skipped; relay link credentials unavailable");
+      return "unlinked" as const;
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
     const snapshot = yield* snapshotQuery.getShellSnapshot();
