@@ -610,6 +610,7 @@ describe("SQLite usage readers", () => {
       generation.run(0, new Uint8Array(protoBytes(1, protoText(19, "Gemini 3.7 Flash Control"))));
       step.run(0, new Uint8Array(protoBytes(9, protoNumber(2, 10))));
       step.run(1, new Uint8Array(protoBytes(9, [...protoNumber(1, 1319), ...protoNumber(2, 11)])));
+      step.run(2, new Uint8Array(protoBytes(9, [...protoNumber(1, 1132), ...protoNumber(2, 12)])));
     } finally {
       db.close();
     }
@@ -622,6 +623,7 @@ describe("SQLite usage readers", () => {
       [
         ["gemini-3.7-flash-control", "gemini-3.7-flash"],
         ["gemini-3.8-flash-medium", "gemini-3.8-flash"],
+        ["gemini-3-flash-agent", "gemini-3-flash-preview"],
       ],
     );
   });
