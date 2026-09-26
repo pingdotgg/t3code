@@ -2070,18 +2070,18 @@ function SidebarSubagentCountsBadge(props: { counts: SidebarSubagentCounts }) {
       aria-label={label}
       className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-xs font-medium tabular-nums"
     >
-      <span className="inline-flex items-center gap-0.5 text-sky-600 dark:text-sky-400">
+      <span className="inline-flex items-center gap-0.5 text-info-foreground">
         <CircleDashedIcon aria-hidden className="size-3.5 shrink-0" />
         {working}
       </span>
       {done > 0 ? (
-        <span className="inline-flex items-center gap-0.5 text-emerald-700 dark:text-emerald-300">
+        <span className="inline-flex items-center gap-0.5 text-success-foreground">
           <CheckIcon aria-hidden className="size-3 shrink-0" />
           {done}
         </span>
       ) : null}
       {failed > 0 ? (
-        <span className="inline-flex items-center gap-0.5 text-red-700 dark:text-red-300">
+        <span className="inline-flex items-center gap-0.5 text-error-foreground">
           <CircleAlertIcon aria-hidden className="size-3.5 shrink-0" />
           {failed}
         </span>
