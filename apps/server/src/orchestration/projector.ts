@@ -809,7 +809,7 @@ export function projectEvent(
         if (payload.role !== "user" && thread.messages.length > 0) {
           return {
             ...nextBase,
-            threads: updateThread(nextBase.threads, payload.threadId, {
+            threads: patchThreadAt(nextBase.threads, threadIndex, {
               updatedAt: event.occurredAt,
             }),
           };
@@ -1107,7 +1107,7 @@ export function projectEvent(
           if (!REQUEST_ACTIVITY_KINDS.has(payload.activity.kind)) {
             return {
               ...nextBase,
-              threads: updateThread(nextBase.threads, payload.threadId, {
+              threads: patchThreadAt(nextBase.threads, threadIndex, {
                 updatedAt: event.occurredAt,
               }),
             };
