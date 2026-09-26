@@ -572,6 +572,20 @@ function SortableSidebarMarker(props: {
 
 // Empty targets stay measurable without reserving space at rest. The sorting
 // strategy opens their hint space during a drag.
+// The hover X sits on the row's own click target and the draft store keeps
+// no snapshot, so both discard paths ask first, like mobile and thread delete.
+async function confirmDiscardDraft(): Promise<boolean> {
+  const api = readLocalApi();
+  if (!api) return false;
+  const confirmed = await settlePromise(() =>
+    api.dialogs.confirm(
+      ["Discard draft?", "The unsent message and its attachments will be removed."].join("\n"),
+      { variant: "destructive" },
+    ),
+  );
+  return confirmed._tag === "Success" && confirmed.value;
+}
+
 function SidebarSectionPlaceholder(props: {
   marker: "active-placeholder" | "settled-placeholder";
   label: string;
@@ -894,11 +908,14 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   ]);
   const handleDiscard = useCallback(
     (draftId: DraftId) => {
-      // The /draft/$draftId route redirects home on its own when the draft
-      // it renders disappears, so discarding the open draft needs no
-      // special-casing here.
-      releaseComposerDraftUploads(draftId);
-      clearDraftThread(draftId);
+      void confirmDiscardDraft().then((confirmed) => {
+        if (!confirmed) return;
+        // The /draft/$draftId route redirects home on its own when the draft
+        // it renders disappears, so discarding the open draft needs no
+        // special-casing here.
+        releaseComposerDraftUploads(draftId);
+        clearDraftThread(draftId);
+      });
     },
     [clearDraftThread],
   );
@@ -1075,8 +1092,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     (event: ReactMouseEvent) => {
       event.preventDefault();
       event.stopPropagation();
-      releaseComposerDraftUploads(threadRef);
-      clearComposerContent(threadRef);
+      void confirmDiscardDraft().then((confirmed) => {
+        if (!confirmed) return;
+        releaseComposerDraftUploads(threadRef);
+        clearComposerContent(threadRef);
+      });
     },
     [clearComposerContent, threadRef],
   );
