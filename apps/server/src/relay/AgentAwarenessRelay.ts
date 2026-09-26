@@ -566,8 +566,13 @@ export const make = Effect.gen(function* () {
     return true;
   });
 
+  // Publishes the catch-up snapshot of active threads once the environment is
+  // linked and publishing is enabled. Many environments never link, so the
+  // retry backs off from 5 s to 60 s. It polls because `t3 connect` can write
+  // the secrets from another process.
   const publishActiveThreadsOnceWhenConfigured = (logEnabledWhenReady: boolean) =>
     Effect.gen(function* () {
+      let retryDelayMs = 5_000;
       while (!(yield* Ref.get(activeSnapshotPublishedRef))) {
         const published = yield* publishActiveThreadsUnsafe.pipe(Effect.orElseSucceed(() => false));
         if (published) {
@@ -580,7 +585,8 @@ export const make = Effect.gen(function* () {
           }
           return;
         }
-        yield* Effect.sleep("5 seconds");
+        yield* Effect.sleep(retryDelayMs);
+        retryDelayMs = Math.min(retryDelayMs * 2, 60_000);
       }
     });
 

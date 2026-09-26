@@ -28,6 +28,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -652,6 +653,72 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           expect(threadShellRequests).toEqual([threadId]);
           expect(fetchCallCount).toBe(0);
           yield* Deferred.succeed(releaseThreadShell, undefined);
+        }).pipe(
+          Effect.provide(
+            AgentAwarenessRelay.layer.pipe(
+              Layer.provide(layer),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
+  it.effect("checks an unlinked environment once a minute and still catches up once linked", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const secrets = makeMemorySecretStore();
+        let publishSettingReads = 0;
+        let shellSnapshotReads = 0;
+        const countingStore = {
+          ...secrets.store,
+          get: (name: string) =>
+            Effect.suspend(() => {
+              if (name === PUBLISH_AGENT_ACTIVITY_SECRET) publishSettingReads += 1;
+              return secrets.store.get(name);
+            }),
+        } satisfies ServerSecretStore.ServerSecretStore["Service"];
+
+        const layer = Layer.mergeAll(
+          Layer.succeed(ServerSecretStore.ServerSecretStore, countingStore),
+          Layer.succeed(ServerEnvironment.ServerEnvironment, {
+            getEnvironmentId: Effect.succeed("env-1" as EnvironmentId),
+            getDescriptor: Effect.die("unused descriptor"),
+          }),
+          Layer.succeed(OrchestrationEngineService, {
+            streamDomainEvents: Stream.never,
+          } as unknown as OrchestrationEngineShape),
+          Layer.succeed(ProjectionSnapshotQuery, {
+            getShellSnapshot: () =>
+              Effect.sync(() => {
+                shellSnapshotReads += 1;
+                return {
+                  snapshotSequence: 1,
+                  projects: [],
+                  threads: [],
+                  updatedAt: "2026-05-25T00:00:00.000Z",
+                } satisfies OrchestrationShellSnapshot;
+              }),
+          } as unknown as ProjectionSnapshotQueryShape),
+        );
+
+        yield* Effect.gen(function* () {
+          const relay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
+          yield* relay.start();
+
+          // Get past the backoff ramp, then count checks in a steady window.
+          yield* TestClock.adjust("10 minutes");
+          const readsBeforeWindow = publishSettingReads;
+          yield* TestClock.adjust("10 minutes");
+          expect(publishSettingReads - readsBeforeWindow).toBe(10);
+          expect(shellSnapshotReads).toBe(0);
+
+          yield* secrets.setString(RELAY_URL_SECRET, "https://relay.example.test");
+          yield* secrets.setString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "relay-credential");
+          yield* secrets.setString(PUBLISH_AGENT_ACTIVITY_SECRET, "true");
+          yield* TestClock.adjust("1 minute");
+          expect(shellSnapshotReads).toBe(1);
         }).pipe(
           Effect.provide(
             AgentAwarenessRelay.layer.pipe(
