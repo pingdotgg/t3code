@@ -114,7 +114,7 @@ export interface PeerRuntimeStatus {
   readonly lastError: string | null;
 }
 
-export class FederationPeerStoreError extends Schema.TaggedErrorClass<FederationPeerStoreError>()(
+export class FederationPeerStoreError extends Schema.TaggedError<FederationPeerStoreError>()(
   "FederationPeerStoreError",
   { operation: Schema.Literals(["read", "write"]), cause: Schema.Defect() },
 ) {

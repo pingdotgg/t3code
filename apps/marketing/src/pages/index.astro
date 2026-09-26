@@ -37,7 +37,7 @@ const mobileEndorsementRows = [
     <div class="hero-float" aria-hidden="true">
       {[
         { key: "opencode", icon: "/harnesses/opencode-dark.svg", cls: "hf-opencode" },
-        { key: "antigravity", icon: "/harnesses/antigravity.png", cls: "hf-antigravity" },
+        { key: "antigravity", icon: "/harnesses/antigravity.svg", cls: "hf-antigravity" },
         { key: "claude", icon: "/harnesses/claude-ai-icon.svg", cls: "hf-claude" },
         { key: "codex", icon: "/harnesses/openai_dark.svg", cls: "hf-codex" },
         { key: "grok", icon: "/harnesses/grok-dark.svg", cls: "hf-grok" },
@@ -247,7 +247,7 @@ const mobileEndorsementRows = [
           </div>
         </div>
         <div class="harness">
-          <div class="harness-mark"><img src="/harnesses/antigravity.png" alt="" /></div>
+          <div class="harness-mark"><img src="/harnesses/antigravity.svg" alt="" /></div>
           <div class="harness-meta">
             <div class="harness-name">Antigravity</div>
             <div class="harness-tag">Google sign-in</div>
@@ -444,7 +444,7 @@ const mobileEndorsementRows = [
       return assets.find((a) => a.name.endsWith("-arm64.dmg"))?.browser_download_url ?? null;
     }
     if (platform.os === "linux") {
-      return assets.find((a) => a.name.endsWith(".AppImage"))?.browser_download_url ?? null;
+      return assets.find((a) => a.name.endsWith("-x86_64.AppImage"))?.browser_download_url ?? null;
     }
     return null;
   }
@@ -709,11 +709,6 @@ const mobileEndorsementRows = [
     object-fit: contain;
   }
 
-  /* The Antigravity icon ships with its own rounded dark tile, so it fills the
-     card edge to edge instead of sitting inside it. */
-  .hf-antigravity .hero-float-card { background: #0d0d10; border-color: rgba(255, 255, 255, 0.1); }
-  .hf-antigravity .hero-float-card img { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
-
   @keyframes mark-in {
     from { opacity: 0; transform: translate(var(--fx), var(--fy)) rotate(calc(var(--rot) + 24deg)) scale(0.6); }
     to { opacity: 1; transform: translate(0, 0) rotate(var(--rot)) scale(1); }
@@ -829,7 +824,7 @@ const mobileEndorsementRows = [
     flex-shrink: 0; width: 28px; height: 28px;
     display: grid; place-items: center;
   }
-  .harness-mark img { width: 22px; height: 22px; object-fit: contain; border-radius: 5px; }
+  .harness-mark img { width: 22px; height: 22px; object-fit: contain; }
 
   .harness-meta { flex: 1; min-width: 0; }
   .harness-name {

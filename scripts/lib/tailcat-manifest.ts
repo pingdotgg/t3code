@@ -73,7 +73,7 @@ export const decodeTailcatManifestJson = Schema.decodeUnknownEffect(
 );
 export const encodeTailcatManifestJson = Schema.encodeEffect(fromJsonStringPretty(TailcatManifest));
 
-export class TailcatManifestError extends Schema.TaggedErrorClass<TailcatManifestError>()(
+export class TailcatManifestError extends Schema.TaggedError<TailcatManifestError>()(
   "TailcatManifestError",
   {
     manifestPath: Schema.String,

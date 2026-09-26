@@ -13,9 +13,11 @@ import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
 import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { PreviewAutomationError } from "@t3tools/contracts";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
+import * as DeviceService from "../device/DeviceService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -28,6 +30,17 @@ import {
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
+import { PullRequestsToolkitHandlersLive } from "./toolkits/pullRequests/handlers.ts";
+import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
+import {
+  DeviceScreenshotToolkitHandlersLive,
+  DeviceStandardToolkitHandlersLive,
+} from "./toolkits/device/handlers.ts";
+import {
+  DeviceScreenshotTool,
+  DeviceScreenshotToolkit,
+  DeviceStandardToolkit,
+} from "./toolkits/device/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -102,12 +115,15 @@ const McpAuthMiddlewareLive = HttpRouter.middleware<{
 }>()(makeMcpAuthMiddleware).layer;
 
 /**
- * Claude Code drops every MCP result above 25k tokens (~100 KB of text) and
- * hands the agent a truncation notice instead, so a snapshot that carries the
- * full accessibility tree and 20 KB of page text loses its locators too. Keep
- * the text under that ceiling and tell the agent what was cut.
+ * Claude Code moves an MCP result above its output limit to a file and hands
+ * the agent a notice instead, so a snapshot that carries the full
+ * accessibility tree and page text loses its locators too. Claude Code also
+ * shows the model `structuredContent` in place of the text blocks when a
+ * result has both, so both carry the same bounded snapshot. Keep it near
+ * 20 KB and tell the agent what was cut. The short `omitted` notes may go a
+ * little over; the provider limit is far above this.
  */
-export const MAX_SNAPSHOT_TEXT_BYTES = 60_000;
+export const MAX_SNAPSHOT_TEXT_BYTES = 20_000;
 const MAX_SNAPSHOT_VISIBLE_TEXT_CHARS = 8_000;
 const MAX_SNAPSHOT_ELEMENT_NAME_CHARS = 200;
 const MAX_SNAPSHOT_LOG_ENTRIES = 40;
@@ -152,12 +168,11 @@ type SnapshotMetadata = {
 /**
  * Drops the accessibility tree, shortens page text, element names, identifiers,
  * and log strings, keeps only the newest log entries, and finally sheds
- * interactive elements until the JSON fits. Returns the text plus notes on
- * what is missing so the agent can reach for preview_evaluate.
+ * interactive elements until the JSON fits. Returns the bounded value, its
+ * text, and notes on what is missing so the agent can reach for
+ * preview_evaluate.
  */
-const boundSnapshotMetadata = (
-  metadata: SnapshotMetadata,
-): { readonly text: string; readonly omitted: ReadonlyArray<string> } => {
+const boundSnapshotMetadata = (metadata: SnapshotMetadata) => {
   const omitted: Array<string> = [];
   const { accessibilityTree, ...withoutTree } = metadata;
   if (accessibilityTree !== undefined) {
@@ -186,16 +201,10 @@ const boundSnapshotMetadata = (
   ) {
     omitted.push(`element names longer than ${MAX_SNAPSHOT_ELEMENT_NAME_CHARS} characters`);
   }
-  if (metadata.visibleText.length > MAX_SNAPSHOT_VISIBLE_TEXT_CHARS) {
-    omitted.push(
-      `visibleText after ${MAX_SNAPSHOT_VISIBLE_TEXT_CHARS} characters (use preview_evaluate for more)`,
-    );
-  }
   const bounded = {
     ...withoutTree,
     url: cutText(metadata.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
     title: cutText(metadata.title, MAX_SNAPSHOT_IDENTIFIER_CHARS),
-    visibleText: cutText(metadata.visibleText, MAX_SNAPSHOT_VISIBLE_TEXT_CHARS),
     interactiveElements: metadata.interactiveElements.map((element) => ({
       ...element,
       name: cutText(element.name, MAX_SNAPSHOT_ELEMENT_NAME_CHARS),
@@ -206,9 +215,10 @@ const boundSnapshotMetadata = (
   };
 
   // Per-field caps do not sum below the ceiling: three log arrays of 40 capped
-  // entries alone can pass 60 KB. Shed the least useful lists first, halving
-  // one list per round, until the JSON fits. With every list empty the rest
-  // is bounded by the identifier and visibleText caps, so this terminates.
+  // entries alone can pass 60 KB, and the caps count characters, not bytes.
+  // Halve one thing per round until the JSON fits: logs first, then page
+  // text, then the locators. The identifier caps bound the rest, so this
+  // terminates.
   const shedOrder = [
     "actionTimeline",
     "networkEntries",
@@ -227,31 +237,51 @@ const boundSnapshotMetadata = (
     networkEntries: 0,
     actionTimeline: 0,
   };
-  let text = encodeJsonText({ ...bounded, ...lists });
+  let visibleTextChars = Math.min(metadata.visibleText.length, MAX_SNAPSHOT_VISIBLE_TEXT_CHARS);
+  const value = () => ({
+    ...bounded,
+    visibleText: cutText(metadata.visibleText, visibleTextChars),
+    ...lists,
+  });
+  let text = encodeJsonText(value());
   while (utf8Length(text) > MAX_SNAPSHOT_TEXT_BYTES) {
     // Elements carry the locators, so they go last; logs shed newest-last.
     const key =
       shedOrder.find(
         (candidate) => candidate !== "interactiveElements" && lists[candidate].length > 0,
-      ) ?? (lists.interactiveElements.length > 0 ? "interactiveElements" : undefined);
+      ) ??
+      (visibleTextChars > 0
+        ? "visibleText"
+        : lists.interactiveElements.length > 0
+          ? "interactiveElements"
+          : undefined);
     if (key === undefined) break;
-    const keep = Math.floor(lists[key].length / 2);
-    dropped[key] += lists[key].length - keep;
-    // slice(-0) keeps everything, so spell out the empty case.
-    lists[key] =
-      keep === 0
-        ? []
-        : key === "interactiveElements"
-          ? lists[key].slice(0, keep)
-          : lists[key].slice(-keep);
-    text = encodeJsonText({ ...bounded, ...lists });
+    if (key === "visibleText") {
+      visibleTextChars = Math.floor(visibleTextChars / 2);
+    } else {
+      const keep = Math.floor(lists[key].length / 2);
+      dropped[key] += lists[key].length - keep;
+      // slice(-0) keeps everything, so spell out the empty case.
+      lists[key] =
+        keep === 0
+          ? []
+          : key === "interactiveElements"
+            ? lists[key].slice(0, keep)
+            : lists[key].slice(-keep);
+    }
+    text = encodeJsonText(value());
+  }
+  if (visibleTextChars < metadata.visibleText.length) {
+    omitted.push(
+      `visibleText after ${visibleTextChars} characters (use preview_evaluate for more)`,
+    );
   }
   for (const key of shedOrder) {
     if (dropped[key] > 0) {
       omitted.push(`${dropped[key]} of ${bounded[key].length} ${key}`);
     }
   }
-  return { text, omitted };
+  return { value: value(), text, omitted };
 };
 
 export class PreviewScreenshotSaveError extends Schema.TaggedError<PreviewScreenshotSaveError>()(
@@ -299,6 +329,8 @@ const saveScreenshot = Effect.fn("McpHttpServer.saveScreenshot")(function* (
   return screenshotPath;
 });
 
+const isPreviewAutomationError = Schema.is(PreviewAutomationError);
+
 const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
   if (Cause.hasInterrupts(cause) || cause.reasons.some(Cause.isDieReason)) {
     return Effect.failCause(cause).pipe(Effect.orDie);
@@ -312,6 +344,9 @@ const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
     typeof firstFailure._tag === "string"
       ? firstFailure._tag
       : "PreviewSnapshotError";
+  // Preview errors build their message on the server, never from page output,
+  // and it tells the agent what to do next, such as falling back to a shell browser.
+  const message = isPreviewAutomationError(firstFailure) ? firstFailure.message : undefined;
   const result = new McpSchema.CallToolResult({
     isError: true,
     structuredContent: {
@@ -319,10 +354,11 @@ const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
         _tag: errorTag,
         operation: "snapshot",
         failureCount: failures.length,
+        ...(message === undefined ? {} : { message }),
       },
     },
-    // Agents usually see only the text content, so name the tag there too.
-    content: [{ type: "text", text: `Preview snapshot failed: ${errorTag}.` }],
+    // Some clients show only the text content and others only structuredContent, so both carry it.
+    content: [{ type: "text", text: `Preview snapshot failed: ${message ?? `${errorTag}.`}` }],
   });
   return Effect.logWarning("preview snapshot failed", {
     operation: "snapshot",
@@ -384,6 +420,18 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
               const png = new Uint8Array(Buffer.from(screenshot.data, "base64"));
               const screenshotPath =
                 payload?.save === true ? yield* saveScreenshot(snapshot.url, png) : undefined;
+              if (screenshotPath !== undefined && payload?.includeImage === false) {
+                // The agent only wants a file to show the user. The url keeps the site icon on the tool row.
+                const saved = {
+                  url: cutText(snapshot.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
+                  screenshotPath,
+                };
+                return new McpSchema.CallToolResult({
+                  isError: false,
+                  structuredContent: saved,
+                  content: [{ type: "text", text: encodeJsonText(saved) }],
+                });
+              }
               const metadata = {
                 ...page,
                 screenshot: {
@@ -396,8 +444,18 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
               const bounded = boundSnapshotMetadata(metadata);
               return new McpSchema.CallToolResult({
                 isError: false,
-                structuredContent: metadata,
+                structuredContent:
+                  bounded.omitted.length === 0
+                    ? bounded.value
+                    : { ...bounded.value, omitted: bounded.omitted },
                 content: [
+                  // Keep the page identity readable even if a provider truncates the snapshot.
+                  {
+                    type: "text",
+                    text: encodeJsonText({
+                      url: cutText(snapshot.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
+                    }),
+                  },
                   { type: "text", text: bounded.text },
                   ...(bounded.omitted.length === 0
                     ? []
@@ -424,6 +482,154 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
   });
 });
 
+interface ImageToolResult {
+  readonly screenshot: {
+    readonly mimeType: "image/png";
+    readonly data: string;
+    readonly width: number;
+    readonly height: number;
+  };
+  readonly [key: string]: unknown;
+}
+
+/**
+ * Failures surface only their tag: the remote message may carry renderer or
+ * device output the agent should not see, and the tag is what it can act on.
+ */
+const imageToolFailure =
+  (toolName: string, operation: string, failureText: string) =>
+  <E>(cause: Cause.Cause<E>) => {
+    if (Cause.hasInterrupts(cause) || cause.reasons.some(Cause.isDieReason)) {
+      return Effect.failCause(cause).pipe(Effect.orDie);
+    }
+    const failures = cause.reasons.filter(Cause.isFailReason);
+    const firstFailure = failures[0]?.error;
+    const errorTag =
+      typeof firstFailure === "object" &&
+      firstFailure !== null &&
+      "_tag" in firstFailure &&
+      typeof firstFailure._tag === "string"
+        ? firstFailure._tag
+        : `${toolName}Error`;
+    const result = new McpSchema.CallToolResult({
+      isError: true,
+      structuredContent: {
+        error: {
+          _tag: errorTag,
+          operation,
+          failureCount: failures.length,
+        },
+      },
+      content: [{ type: "text", text: failureText }],
+    });
+    return Effect.logWarning(`${toolName} failed`, {
+      operation,
+      errorTag,
+      failureCount: failures.length,
+    }).pipe(Effect.as(result));
+  };
+
+/**
+ * `McpServer.toolkit` serializes every result as JSON text, which is the
+ * wrong shape for a screenshot: the model needs image content. Tools whose
+ * result carries a `screenshot` field are registered by hand so the PNG goes
+ * out as an image block and the rest of the payload as JSON metadata.
+ */
+const registerImageTool = <T extends Tool.Any, E, R>(
+  tool: T,
+  handle: (payload: Tool.Parameters<T>) => Effect.Effect<{ readonly encodedResult: unknown }, E, R>,
+  provide: (
+    effect: Effect.Effect<{ readonly encodedResult: unknown }, E, R>,
+  ) => Effect.Effect<
+    { readonly encodedResult: unknown },
+    E,
+    McpInvocationContext.McpInvocationContext
+  >,
+  operation: string,
+  failureText: string,
+) =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    yield* server.addTool({
+      tool: new McpSchema.Tool({
+        name: tool.name,
+        description: Tool.getDescription(tool),
+        inputSchema: Tool.getJsonSchema(tool),
+        annotations: {
+          ...Context.getOption(tool.annotations, Tool.Title).pipe(
+            Option.map((title) => ({ title })),
+            Option.getOrUndefined,
+          ),
+          readOnlyHint: Context.get(tool.annotations, Tool.Readonly),
+          destructiveHint: Context.get(tool.annotations, Tool.Destructive),
+          idempotentHint: Context.get(tool.annotations, Tool.Idempotent),
+          openWorldHint: Context.get(tool.annotations, Tool.OpenWorld),
+        },
+      }),
+      annotations: tool.annotations,
+      handle: (payload) =>
+        Effect.withFiber((fiber) => {
+          const invocation = Context.getUnsafe(
+            fiber.context,
+            McpInvocationContext.McpInvocationContext,
+          );
+          return provide(handle(payload as Tool.Parameters<T>)).pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+            Effect.matchCauseEffect({
+              onFailure: imageToolFailure(tool.name, operation, failureText),
+              onSuccess: ({ encodedResult }) => {
+                const { screenshot, ...rest } = encodedResult as ImageToolResult;
+                const includeImage =
+                  (payload as { readonly includeImage?: boolean } | undefined)?.includeImage !==
+                  false;
+                const metadata = {
+                  ...rest,
+                  screenshot: {
+                    mimeType: screenshot.mimeType,
+                    width: screenshot.width,
+                    height: screenshot.height,
+                  },
+                };
+                return Effect.succeed(
+                  new McpSchema.CallToolResult({
+                    isError: false,
+                    structuredContent: metadata,
+                    content: [
+                      { type: "text", text: JSON.stringify(metadata) },
+                      ...(includeImage
+                        ? [
+                            {
+                              type: "image" as const,
+                              data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
+                              mimeType: screenshot.mimeType,
+                            },
+                          ]
+                        : []),
+                    ],
+                  }),
+                );
+              },
+            }),
+          );
+        }),
+    });
+  });
+
+const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreenshot")(function* () {
+  const devices = yield* DeviceService.DeviceService;
+  const built = yield* DeviceScreenshotToolkit;
+  yield* registerImageTool(
+    DeviceScreenshotTool,
+    (payload) =>
+      built
+        .handle("device_screenshot", payload)
+        .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption)),
+    (effect) => effect.pipe(Effect.provideService(DeviceService.DeviceService, devices)),
+    "screenshot",
+    "Device screenshot failed.",
+  );
+});
+
 const PreviewStandardToolkitRegistrationLive = McpServer.toolkit(PreviewStandardToolkit).pipe(
   Layer.provide(PreviewStandardToolkitHandlersLive),
 );
@@ -437,6 +643,23 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
   PreviewSnapshotRegistrationLive,
 );
 
+export const PullRequestsToolkitRegistrationLive = McpServer.toolkit(PullRequestsToolkit).pipe(
+  Layer.provide(PullRequestsToolkitHandlersLive),
+);
+
+const DeviceStandardToolkitRegistrationLive = McpServer.toolkit(DeviceStandardToolkit).pipe(
+  Layer.provide(DeviceStandardToolkitHandlersLive),
+);
+
+const DeviceScreenshotRegistrationLive = Layer.effectDiscard(registerDeviceScreenshot()).pipe(
+  Layer.provide(DeviceScreenshotToolkitHandlersLive),
+);
+
+export const DeviceToolkitRegistrationLive = Layer.mergeAll(
+  DeviceStandardToolkitRegistrationLive,
+  DeviceScreenshotRegistrationLive,
+);
+
 const McpTransportLive = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
@@ -444,4 +667,8 @@ const McpTransportLive = McpServer.layerHttp({
   protocols: [McpProtocol.v2025_06_18],
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
-export const layer = PreviewToolkitRegistrationLive.pipe(Layer.provideMerge(McpTransportLive));
+export const layer = Layer.mergeAll(
+  PreviewToolkitRegistrationLive,
+  PullRequestsToolkitRegistrationLive,
+  DeviceToolkitRegistrationLive,
+).pipe(Layer.provideMerge(McpTransportLive));

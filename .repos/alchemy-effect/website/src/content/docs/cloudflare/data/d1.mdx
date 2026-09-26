@@ -91,7 +91,7 @@ export default Cloudflare.Worker(
   "Worker",
   { main: import.meta.url },
   Effect.gen(function* () {
-    // init: register the binding, get a typed client
+    // Construction: register the binding, get a typed client
     const db = yield* Cloudflare.D1.QueryDatabase(Database);
 
     return {

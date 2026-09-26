@@ -3,6 +3,20 @@ import { assertFalse, assertTrue, strictEqual } from "@effect/vitest/utils"
 import { Deferred, Effect, Exit, Fiber, FiberHandle, Option, pipe, Ref } from "effect"
 import { TestClock } from "effect/testing"
 
+const makeWorker = Effect.gen(function*() {
+  const ready = yield* Deferred.make<void>()
+  const cleanups = yield* Ref.make(0)
+  const fiber = yield* Effect.forkScoped(
+    Deferred.succeed(ready, undefined).pipe(
+      Effect.andThen(Effect.never),
+      Effect.ensuring(Ref.update(cleanups, (n) => n + 1))
+    ),
+    { startImmediately: true }
+  )
+  yield* Deferred.await(ready)
+  return { fiber, cleanups }
+})
+
 describe("FiberHandle", () => {
   it.effect("interrupts the current fiber when the scope closes", () =>
     Effect.gen(function*() {
@@ -86,6 +100,34 @@ describe("FiberHandle", () => {
       assertTrue(Exit.hasInterrupts(yield* Fiber.await(fiberC)))
       strictEqual(fiberA.pollUnsafe(), undefined)
     }))
+
+  it.effect("onlyIfMissing keeps the same registered fiber", () =>
+    Effect.gen(function*() {
+      const handle = yield* FiberHandle.make()
+      const worker = yield* makeWorker
+      FiberHandle.setUnsafe(handle, worker.fiber)
+      FiberHandle.setUnsafe(handle, worker.fiber, { onlyIfMissing: true })
+
+      strictEqual(Option.getOrUndefined(FiberHandle.getUnsafe(handle)), worker.fiber)
+      strictEqual(worker.fiber.pollUnsafe(), undefined)
+      strictEqual(yield* Ref.get(worker.cleanups), 0)
+    }))
+
+  for (const propagateInterruption of [false, true]) {
+    it.effect(`same-fiber registration preserves propagateInterruption: ${propagateInterruption}`, () =>
+      Effect.gen(function*() {
+        const handle = yield* FiberHandle.make()
+        const worker = yield* makeWorker
+        FiberHandle.setUnsafe(handle, worker.fiber, { propagateInterruption })
+        FiberHandle.setUnsafe(handle, worker.fiber, {
+          onlyIfMissing: true,
+          propagateInterruption: !propagateInterruption
+        })
+
+        yield* Fiber.interrupt(worker.fiber)
+        strictEqual(yield* Deferred.isDone(handle.deferred), propagateInterruption)
+      }))
+  }
 
   it.effect("clear does not remove a newer fiber installed while interrupting the previous one", () =>
     Effect.gen(function*() {

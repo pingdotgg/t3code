@@ -217,6 +217,9 @@ const extract: {
       readonly isDefault?: boolean | undefined
     }
   ): Extract<V, A> => {
+    if (options?.isDefault === true && Schema.isSchema(self)) {
+      return self as any
+    }
     const cache = options?.isDefault === true
       ? self[defaultCacheSymbol] ?? (self[defaultCacheSymbol] = Object.create(null))
       : self[cacheSymbol] ?? (self[cacheSymbol] = Object.create(null))

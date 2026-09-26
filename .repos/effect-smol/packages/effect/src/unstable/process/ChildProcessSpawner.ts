@@ -68,7 +68,7 @@ export const ProcessId: Brand.Constructor<ProcessId> = Brand.nominal<ProcessId>(
  */
 export type Reref = Effect.Effect<void, PlatformError.PlatformError>
 
-const HandleTypeId = "~effect/ChildProcessSpawner/ChildProcessHandle"
+const HandleTypeId = "~effect/process/ChildProcessSpawner/ChildProcessHandle"
 
 /**
  * A handle to a running child process.

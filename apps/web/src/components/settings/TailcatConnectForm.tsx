@@ -165,7 +165,8 @@ export const TailcatConnectForm = memo(function TailcatConnectForm({
           autoCapitalize="off"
           autoCorrect="off"
           disabled={!desktopAvailable || isConnecting}
-          className="font-mono text-xs leading-relaxed break-all"
+          font="mono"
+          className="break-all"
         />
       </div>
       {!desktopAvailable ? (
@@ -181,7 +182,7 @@ export const TailcatConnectForm = memo(function TailcatConnectForm({
               <span className="text-muted-foreground">· t3@{preview.payload.serverVersion}</span>
             ) : null}
           </p>
-          <p className="truncate font-mono text-[11px] text-muted-foreground">
+          <p className="truncate font-mono text-2xs text-muted-foreground">
             {preview.payload.address}:{preview.payload.port}
           </p>
           {environmentMismatch ? (

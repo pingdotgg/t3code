@@ -43,7 +43,7 @@ export class FederationIdentity extends Context.Service<
   }
 >()("t3/federation/FederationIdentity") {}
 
-export class FederationIdentitySignError extends Schema.TaggedErrorClass<FederationIdentitySignError>()(
+export class FederationIdentitySignError extends Schema.TaggedError<FederationIdentitySignError>()(
   "FederationIdentitySignError",
   { cause: Schema.Defect() },
 ) {
@@ -52,7 +52,7 @@ export class FederationIdentitySignError extends Schema.TaggedErrorClass<Federat
   }
 }
 
-export class FederationIdentityVerifyError extends Schema.TaggedErrorClass<FederationIdentityVerifyError>()(
+export class FederationIdentityVerifyError extends Schema.TaggedError<FederationIdentityVerifyError>()(
   "FederationIdentityVerifyError",
   {
     reason: Schema.Literals(["signature", "challenge"]),

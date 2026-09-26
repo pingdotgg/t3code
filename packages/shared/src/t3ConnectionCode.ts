@@ -14,7 +14,7 @@ const T3_CONNECTION_CODE_SCHEME = "t3c:";
 export const T3ConnectionCodeKind = Schema.Literals(["tailcat", "peer"]);
 export type T3ConnectionCodeKind = typeof T3ConnectionCodeKind.Type;
 
-export class T3ConnectionCodeInvalidError extends Schema.TaggedErrorClass<T3ConnectionCodeInvalidError>()(
+export class T3ConnectionCodeInvalidError extends Schema.TaggedError<T3ConnectionCodeInvalidError>()(
   "T3ConnectionCodeInvalidError",
   {
     reason: Schema.Literals([

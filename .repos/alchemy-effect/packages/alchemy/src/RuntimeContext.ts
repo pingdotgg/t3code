@@ -136,7 +136,7 @@ export const packEnvValueKeepRedacted = (
  *
  * Runtime `get` accessors MUST feed this from the raw environment
  * (`process.env[key]` / the platform env object) — never through
- * `Config.string`: the ambient runtime `ConfigProvider` reifies bound
+ * `Config.String`: the ambient runtime `ConfigProvider` reifies bound
  * values (unwrapping the marker before it could be detected here), and
  * during init the ambient provider is the interceptor installed in
  * `Platform.ts`, whose runtime branch calls back into `ctx.get(key)` —

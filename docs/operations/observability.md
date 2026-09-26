@@ -6,7 +6,7 @@ T3 Code has one server-side observability model:
 
 - pretty logs go to stdout for humans
 - completed spans go to a local NDJSON trace file
-- traces and metrics can also be exported over OTLP to a real backend like Grafana LGTM
+- traces, metrics, and logs can also be exported over OTLP to a real backend like Grafana LGTM
 
 The local trace file is the persisted source of truth for normal local launches. Those launches do not
 write a separate server log file, but SSH-managed launches also persist the remote process's
@@ -22,8 +22,15 @@ Logs are human-facing:
 - format: `Logger.consolePretty()`
 - normal local persistence: none
 - SSH-managed launch persistence: `~/.t3/ssh-launch/<state>/server.log`
+- remote export: OTLP only, when configured
 
 If you want a log message to show up in the trace file, emit it inside an active span with `Effect.log...`. `Logger.tracerLogger` will attach it as a span event.
+
+Configuring a logs endpoint takes over that job. The server then exports log records, which cover
+every message instead of only the ones inside an active span and carry the trace and span ids so
+they still line up with the trace. `Logger.tracerLogger` is dropped in that mode, so the same
+message is not exported twice and the trace file stops carrying log messages. stdout output and
+SSH-managed launch persistence stay unchanged either way.
 
 ### Traces
 
@@ -54,6 +61,21 @@ attribute. A `time_window` failure means that a signed proof was too old or too
 far in the future for the environment server's allowed window. It can point to
 a date or time problem on either device, but it can also result from a delayed
 request.
+
+#### Summarize the trace file
+
+`t3 trace summary` reads the trace file and its rotated backups directly, so it works while the
+server is stalled or stopped. It prints counts, rates, and latency percentiles per span name. Use
+it to measure background work or to compare two builds.
+
+```bash
+t3 trace summary --since 30m --limit 40
+```
+
+It reads `T3CODE_TRACE_FILE` if set, else `<home>/userdata/logs/server.trace.ndjson` for
+`--base-dir` or `T3CODE_HOME`, plus the `T3CODE_TRACE_MAX_FILES` rotated backups. For a dev run or
+a copied file, set `T3CODE_TRACE_FILE`. `--since 30m` keeps spans that ended in the last 30
+minutes. The rate is per minute between the first and last span end.
 
 ### Metrics
 
@@ -121,7 +143,8 @@ Default Grafana login:
 ```bash
 export T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces
 export T3CODE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics
-export T3CODE_OTLP_SERVICE_NAME=t3-local
+export T3CODE_OTLP_LOGS_URL=http://localhost:4318/v1/logs
+export OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=development
 ```
 
 Optional:
@@ -160,7 +183,7 @@ macOS app bundle example:
 ```bash
 T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
 T3CODE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
-T3CODE_OTLP_SERVICE_NAME=t3-desktop \
+T3CODE_OTLP_LOGS_URL=http://localhost:4318/v1/logs \
 "/Applications/T3 Code.app/Contents/MacOS/T3 Code"
 ```
 
@@ -169,7 +192,7 @@ Direct binary example:
 ```bash
 T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
 T3CODE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
-T3CODE_OTLP_SERVICE_NAME=t3-desktop \
+T3CODE_OTLP_LOGS_URL=http://localhost:4318/v1/logs \
 ./path/to/your/desktop-app-binary
 ```
 
@@ -301,11 +324,13 @@ Recommended flow in Grafana:
 2. Pick the `Tempo` data source.
 3. Set the time range to something recent like `Last 15 minutes`.
 4. Start broad. Do not begin with a very narrow query.
-5. Look for spans from your configured service name, then narrow by span name or attributes.
+5. Look for spans from the `t3code-server` or `t3code-desktop` service, then narrow by span name or
+   attributes.
 
 Good first searches:
 
-- service name such as `t3-local`, `t3-dev`, or `t3-desktop`
+- service name `t3code-server` or `t3code-desktop`, plus a resource attribute such as
+  `deployment.environment.name`
 - span names like `sendTurn` or a Git operation such as `GitVcsDriver.statusDetails.status`
 - Git spans whose `git.operation` attribute identifies the operation
 - orchestration spans with attributes like `orchestration.command_type`
@@ -509,7 +534,16 @@ It provides:
 - local NDJSON tracer
 - optional OTLP trace exporter
 - optional OTLP metrics exporter
+- optional OTLP log exporter
 - Effect trace-level and timing refs
+
+The desktop main process is a second producer, assembled in
+`apps/desktop/src/app/DesktopObservability.ts`. It reads the same `T3CODE_OTLP_*` names and the same
+Settings entries as the backend it supervises, and covers work the backend cannot see: app startup,
+window and menu handling, backend supervision, and updates. It reports as service
+`t3code-desktop`, so a collector shows it alongside the backend rather than mixed into it. It
+exports traces and logs only; the main process records no metrics, so the metrics endpoint applies
+to the backend alone.
 
 ### Env Vars
 
@@ -526,10 +560,44 @@ OTLP export:
 
 - `T3CODE_OTLP_TRACES_URL`: OTLP trace endpoint
 - `T3CODE_OTLP_METRICS_URL`: OTLP metric endpoint
+- `T3CODE_OTLP_LOGS_URL`: OTLP log endpoint
 - `T3CODE_OTLP_EXPORT_INTERVAL_MS`: export interval, default `10000`
-- `T3CODE_OTLP_SERVICE_NAME`: service name, default `t3-server`
+- `T3CODE_OTLP_HEADERS`: extra headers for all three exporters, same format as
+  `OTEL_EXPORTER_OTLP_HEADERS`: comma-separated `key=value` pairs with percent-encoded values.
+- `T3CODE_OTLP_PROTOCOL`: `http/json` (default) or `http/protobuf`
 
-If the OTLP URLs are unset, local tracing still works and metrics stay in-process only.
+The server and the desktop app also read the standard
+`OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_ENDPOINT` and generic `OTEL_EXPORTER_OTLP_ENDPOINT` (with
+`/v1/traces`, `/v1/metrics`, or `/v1/logs` appended), for a collector expecting those instead. A
+non-blank `T3CODE_OTLP_*_URL` wins over either, and a per-signal endpoint wins over the generic one
+for its signal. A blank value counts as unset. A signal with an OTEL endpoint takes its headers from
+`OTEL_EXPORTER_OTLP_HEADERS` and its protocol from `OTEL_EXPORTER_OTLP_PROTOCOL` (default
+`http/protobuf`, read case-insensitively), and a per-signal
+`OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_HEADERS` or `_PROTOCOL` wins over the generic one for its
+signal. `T3CODE_OTLP_HEADERS` and `T3CODE_OTLP_PROTOCOL` never apply to it. An endpoint that is not
+an `http` or `https` URL, a protocol other than `http/protobuf` or `http/json` such as `grpc`, or
+headers that are not `key=value` pairs with percent-encoded values turn that signal's export off
+with a startup warning, rather than sending it to the Settings endpoint.
+
+Service names are fixed: `t3code-server` for the backend and `t3code-desktop` for the desktop main
+process, both in `service.namespace` `t3code`. `OTEL_SERVICE_NAME` and a `service.name` or
+`service.namespace` in `OTEL_RESOURCE_ATTRIBUTES` are ignored. Tell installations apart with other
+resource attributes, such as `OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=development`.
+
+If the OTLP URLs are unset, local tracing still works, metrics stay in-process only, and logs stay
+on stdout only.
+
+### The Kill Switch
+
+`T3CODE_OTEL_SDK_DISABLED` and `OTEL_SDK_DISABLED` turn off every OTLP export in both the server and
+the desktop main process, overriding any endpoint from the environment or Settings. Local trace
+files and stdout logs are unaffected.
+
+`T3CODE_OTEL_SDK_DISABLED` wins when set, so `T3CODE_OTEL_SDK_DISABLED=false` re-enables export on a
+machine that sets `OTEL_SDK_DISABLED` for everything else. It accepts the usual boolean spellings
+(`true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0`, `y`/`n`). `OTEL_SDK_DISABLED` follows the
+OpenTelemetry specification and only `true` disables export, so `OTEL_SDK_DISABLED=1` does not.
+Values are case-insensitive and trimmed. An unrecognized value is ignored with a startup warning.
 
 ### What Is Instrumented Today
 
@@ -550,5 +618,3 @@ Current high-value span and metric boundaries include:
 - logs outside spans are not persisted in the trace file; SSH-managed launch stdout/stderr is still
   captured in its launcher log
 - metrics are not snapshotted locally
-- the old `serverLogPath` still exists in config for compatibility, but the trace file is the primary
-  structured persisted artifact

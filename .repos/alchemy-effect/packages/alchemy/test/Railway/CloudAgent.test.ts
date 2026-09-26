@@ -23,12 +23,17 @@ const logLevel = Effect.provideService(
 
 const listLive = (environmentId: string) =>
   railway
-    .cloudAgents({ environmentId, mine: true })
-    .pipe(
-      Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-        Effect.succeed([]),
-      ),
-    );
+    .cloudAgents(
+      { environmentId, mine: true },
+      {
+        id: true,
+        name: true,
+        status: true,
+        environmentId: true,
+        projectId: true,
+      },
+    )
+    .pipe(railway.catchTags(["RailwayNotFound"], () => Effect.succeed([])));
 
 const waitUntilAgentGone = (environmentId: string, cloudAgentId: string) =>
   listLive(environmentId).pipe(
@@ -48,8 +53,8 @@ const waitUntilAgentGone = (environmentId: string, cloudAgentId: string) =>
 
 const deleteAgent = (id: string) =>
   railway
-    .cloudAgentDelete({ id })
-    .pipe(Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.void));
+    .deleteCloudAgent({ id })
+    .pipe(railway.catchTags(["RailwayNotFound"], () => Effect.void));
 
 test.provider(
   "create, list, and delete a cloud agent",
@@ -65,18 +70,22 @@ test.provider(
       );
 
       const probe = yield* Effect.result(
-        railway.cloudAgentCreate({
-          input: {
-            environmentId: projectOnly.environment.environmentId,
-            name: projectOnly.project.name,
+        railway.createCloudAgent(
+          {
+            input: {
+              environmentId: projectOnly.environment.environmentId,
+              name: projectOnly.project.name,
+            },
           },
-        }),
+          { id: true },
+        ),
       );
       if (Result.isFailure(probe)) {
         expect(
-          ["RailwayForbidden", "RailwayPlanLimitExceeded"].includes(
-            probe.failure._tag,
-          ),
+          railway.isErrorTag(probe.failure, [
+            "RailwayForbidden",
+            "RailwayPlanLimitExceeded",
+          ]),
         ).toEqual(true);
         yield* stack.destroy();
         return;
@@ -147,5 +156,5 @@ test.provider(
       );
       expect(agentGone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  { timeout: 120_000 },
 );

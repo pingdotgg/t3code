@@ -18,8 +18,6 @@ import ProducerWorker from "./fixtures/dedicated-producer-worker.ts";
 
 const { test } = Test.make({ providers: Cloudflare.providers() });
 
-const TEST_STAGE = "test";
-
 const logLevel = Effect.provideService(
   MinimumLogLevel,
   process.env.DEBUG ? "Debug" : "Info",
@@ -33,6 +31,7 @@ const logLevel = Effect.provideService(
  */
 const seedDevQueue = (input: {
   stackName: string;
+  stage: string;
   fqn: string;
   queueId: string;
   queueName: string;
@@ -42,7 +41,7 @@ const seedDevQueue = (input: {
     const state = yield* yield* State;
     yield* state.set({
       stack: input.stackName,
-      stage: TEST_STAGE,
+      stage: input.stage,
       fqn: input.fqn,
       value: {
         kind: "resource",
@@ -86,6 +85,7 @@ test.provider("promotes a dev queue to a live queue on deploy", (stack) =>
     const devQueueId = generateLocalId();
     yield* seedDevQueue({
       stackName: stack.name,
+      stage: stack.stage,
       fqn: "Q",
       queueId: devQueueId,
       queueName: "dev-placeholder-name",
@@ -125,7 +125,7 @@ test.provider("promotes a dev queue to a live queue on deploy", (stack) =>
       const state = yield* yield* State;
       return yield* state.get({
         stack: stack.name,
-        stage: TEST_STAGE,
+        stage: stack.stage,
         fqn: "Q",
       });
     });
@@ -193,6 +193,7 @@ test.provider("suppresses deletion of a dev-only queue", (stack) =>
     const devQueueId = generateLocalId();
     yield* seedDevQueue({
       stackName: stack.name,
+      stage: stack.stage,
       fqn: "Q",
       queueId: devQueueId,
       queueName: "dev-placeholder-name",
@@ -208,7 +209,7 @@ test.provider("suppresses deletion of a dev-only queue", (stack) =>
       const state = yield* yield* State;
       return yield* state.get({
         stack: stack.name,
-        stage: TEST_STAGE,
+        stage: stack.stage,
         fqn: "Q",
       });
     });
@@ -260,7 +261,7 @@ test.provider.skipIf(!!process.env.FAST)(
                 Schedule.exponential("500 millis"),
                 Schedule.spaced("3 seconds"),
               ]),
-              Schedule.recurs(30),
+              Schedule.recurs(10),
             ]),
           }),
           Effect.orDie,
@@ -280,9 +281,9 @@ test.provider.skipIf(!!process.env.FAST)(
         Effect.flatMap((res) => res.json),
         Effect.map((body) => (body as { bodies?: string[] })?.bodies ?? []),
         Effect.repeat({
-          schedule: Schedule.spaced("2 seconds"),
+          schedule: Schedule.spaced("4 seconds"),
           until: (bodies) => bodies.includes("dedicated"),
-          times: 45,
+          times: 10,
         }),
         Effect.orDie,
       );
@@ -290,5 +291,5 @@ test.provider.skipIf(!!process.env.FAST)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 300_000 },
+  { timeout: 120_000 },
 );

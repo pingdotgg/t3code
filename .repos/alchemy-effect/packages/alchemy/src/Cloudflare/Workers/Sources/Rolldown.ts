@@ -18,6 +18,7 @@ import {
 } from "../DurableObject.ts";
 import type { SourceContext, SourceProvider } from "../Source.ts";
 import { bundleSource } from "./shared.ts";
+import { workerModulePlugin } from "./WorkerModulePlugin.ts";
 
 /**
  * Bundler options for a Worker: the generic {@link Bundle.BundleExtraOptions}
@@ -109,6 +110,35 @@ export const WorkerBundle = Effect.gen(function* () {
         ]),
       );
     const realMain = yield* sanitizeMain(options.main);
+    const cwd = yield* findCwdForBundle(realMain).pipe(
+      Effect.mapError(
+        (cause) =>
+          new Bundle.BundleError({
+            message: `Failed to find cwd for bundle: ${realMain}`,
+            cause,
+          }),
+      ),
+      Effect.provide(context),
+    );
+    // The Cloudflare-flavored plugin set, shared by the parent build and
+    // by every nested `?worker` module build (see WorkerModulePlugin.ts).
+    const cloudflarePlugins = () =>
+      rebindEsmExternalRequirePlugin(
+        cloudflareRolldown({
+          compatibilityDate: options.compatibility.date,
+          compatibilityFlags: options.compatibility.flags,
+        }),
+        esmExternalRequirePlugin,
+      );
+    const workerModules: rolldown.Plugin = workerModulePlugin({
+      loadRolldown: () => import("rolldown"),
+      nested: async () => ({
+        external: ["lightningcss", "fsevents"],
+        cwd,
+        plugins: [cloudflarePlugins(), workerModules],
+        checks: { unresolvedImport: false, ineffectiveDynamicImport: false },
+      }),
+    });
     const inputOptions: rolldown.InputOptions = {
       input: realMain,
       preserveEntrySignatures: options.extraOptions?.preserveEntrySignatures,
@@ -118,24 +148,10 @@ export const WorkerBundle = Effect.gen(function* () {
       // (darwin-only) trip [UNRESOLVED_IMPORT] before DCE can prune them.
       // See rolldown/tsdown#212.
       external: ["lightningcss", "fsevents"],
-      cwd: yield* findCwdForBundle(realMain).pipe(
-        Effect.mapError(
-          (cause) =>
-            new Bundle.BundleError({
-              message: `Failed to find cwd for bundle: ${realMain}`,
-              cause,
-            }),
-        ),
-        Effect.provide(context),
-      ),
+      cwd,
       plugins: [
-        rebindEsmExternalRequirePlugin(
-          cloudflareRolldown({
-            compatibilityDate: options.compatibility.date,
-            compatibilityFlags: options.compatibility.flags,
-          }),
-          esmExternalRequirePlugin,
-        ),
+        cloudflarePlugins(),
+        workerModules,
         options.entry.kind === "effect"
           ? [
               virtualEntryPlugin(
@@ -147,7 +163,7 @@ export const WorkerBundle = Effect.gen(function* () {
       checks: {
         // Suppress unresolved import warnings for unrelated AWS packages
         unresolvedImport: false,
-        // Suppress warning caused by static import of `@effect/platform-node/NodeServices` in `WorkerBridge.ts`
+        // The shared platform boundary keeps guarded Node/Bun adapter imports.
         ineffectiveDynamicImport: false,
       },
     };
@@ -227,7 +243,7 @@ export const makeEffectVirtualEntry = (
 import * as Effect from "effect/Effect";
 
 import { env, DurableObject, WorkerEntrypoint${hasWfClasses ? ", WorkflowEntrypoint" : ""} } from "cloudflare:workers";
-import { makeDurableObjectBridge, makeWorkerBridge${hasWfClasses ? ", makeWorkflowBridge" : ""} } from "alchemy/Cloudflare";
+import { makeDurableObjectBridge, makeWorkerBridge${hasWfClasses ? ", makeWorkflowBridge" : ""} } from "alchemy/Cloudflare/Bridge";
 import { makeEntrypointLayer } from "alchemy/Runtime";
 
 import entrypoint from ${JSON.stringify(importPath)};

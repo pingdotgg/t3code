@@ -25,7 +25,7 @@ export type DesktopTailcatBridge = Pick<
   | "restartTailcatEnvironment"
 >;
 
-export class DesktopTailcatUnavailableError extends Schema.TaggedErrorClass<DesktopTailcatUnavailableError>()(
+export class DesktopTailcatUnavailableError extends Schema.TaggedError<DesktopTailcatUnavailableError>()(
   "DesktopTailcatUnavailableError",
   {},
 ) {
@@ -34,7 +34,7 @@ export class DesktopTailcatUnavailableError extends Schema.TaggedErrorClass<Desk
   }
 }
 
-export class DesktopTailcatBridgeError extends Schema.TaggedErrorClass<DesktopTailcatBridgeError>()(
+export class DesktopTailcatBridgeError extends Schema.TaggedError<DesktopTailcatBridgeError>()(
   "DesktopTailcatBridgeError",
   { operation: Schema.String, cause: Schema.Defect() },
 ) {

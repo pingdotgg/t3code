@@ -7,6 +7,7 @@ import {
   NonNegativeInt,
   PositiveInt,
   ProjectId,
+  ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { SourceControlProviderKind } from "./sourceControl.ts";
@@ -120,6 +121,8 @@ export const PullRequestBaseComparison = Schema.Literals(["up-to-date", "behind"
 export type PullRequestBaseComparison = typeof PullRequestBaseComparison.Type;
 
 export const PullRequestActor = Schema.Struct({
+  /** Present when the host identifies an automated account. */
+  isBot: Schema.optional(Schema.Boolean),
   login: TrimmedNonEmptyString,
   name: Schema.NullOr(Schema.String),
   /** Null where a host does not report one, which is what the initials fall back to. */
@@ -369,6 +372,14 @@ export const PullRequestReviewerCapabilities = Schema.Struct({
 export type PullRequestReviewerCapabilities = typeof PullRequestReviewerCapabilities.Type;
 
 /**
+ * Who remembers which files a reader has cleared. `host` is the host's own record, so the marks
+ * are the ones its web UI shows and a review can be carried on from either side. `environment` is
+ * this server's record, for a host that keeps none anything outside one browser can read.
+ */
+export const PullRequestViewedFilesStore = Schema.Literals(["host", "environment"]);
+export type PullRequestViewedFilesStore = typeof PullRequestViewedFilesStore.Type;
+
+/**
  * What a provider can actually do, so a surface can hide what is missing rather than offer an
  * action that would fail. Every provider fills this in for itself; nothing is assumed.
  *
@@ -404,6 +415,11 @@ export const PullRequestCapabilities = Schema.Struct({
    * what every server before this field was.
    */
   reactions: Schema.optional(Schema.Boolean),
+  /**
+   * Where the reader's own marks are kept, or absent where they are kept nowhere and the
+   * checkbox is not offered at all. Optional for the same reason as `reactions`.
+   */
+  viewedFiles: Schema.optional(PullRequestViewedFilesStore),
   review: PullRequestReviewCapabilities,
   reviewers: PullRequestReviewerCapabilities,
   /**
@@ -412,6 +428,12 @@ export const PullRequestCapabilities = Schema.Struct({
    * what every server before this one was.
    */
   edit: Schema.optional(PullRequestEditCapabilities),
+  /**
+   * The host keeps stacks of change requests as objects of its own, so a linked thread can show
+   * the stack the host shows. Absent means chains are only ever inferred from base branches.
+   */
+  stacks: Schema.optional(Schema.Boolean),
+  stackActions: Schema.optional(Schema.Boolean),
   /**
    * The repository's labels can be listed, and one put on a change request or taken off it.
    * Optional for the same reason `edit` is: a server that says nothing about labels has no way
@@ -432,6 +454,8 @@ export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
  * offering one they may not use ends in the host's own refusal — which at least says why.
  */
 export const PullRequestViewerPermissions = Schema.Struct({
+  /** May request remote stack rebases, including when this layer is already current. */
+  stackRebase: Schema.optional(Schema.Boolean),
   /** Which of the actions this viewer may take; anything absent is theirs to look at only. */
   actions: Schema.Array(PullRequestAction),
   /** This viewer may write a remark: a comment, a reply, or a note against a line. */
@@ -463,7 +487,16 @@ export const PullRequestMergeCapabilities = Schema.Struct({
 });
 export type PullRequestMergeCapabilities = typeof PullRequestMergeCapabilities.Type;
 
+export const PullRequestStackMembership = Schema.Struct({
+  number: PositiveInt,
+  position: PositiveInt,
+  size: PositiveInt,
+  base: TrimmedNonEmptyString,
+});
+export type PullRequestStackMembership = typeof PullRequestStackMembership.Type;
+
 export const PullRequestListEntry = Schema.Struct({
+  stack: Schema.optional(PullRequestStackMembership),
   provider: SourceControlProviderKind,
   /**
    * The host below which `repository` is addressed, so the same provider kind can serve more
@@ -492,6 +525,8 @@ export const PullRequestListEntry = Schema.Struct({
   deletions: NonNegativeInt,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  /** Server epoch milliseconds when the provider read started; preserved on cache hits. */
+  observedAt: Schema.optional(Schema.Finite),
   viewerReviewRequested: Schema.Boolean,
   labels: Schema.Array(PullRequestLabel),
   /** Absent where the host does not summarise its reviews, which is every host but GitHub. */
@@ -615,12 +650,74 @@ export const PullRequestListResult = Schema.Struct({
 });
 export type PullRequestListResult = typeof PullRequestListResult.Type;
 
+/**
+ * Addresses one pull request for reads and writes. `projectId` picks the checkout the host
+ * CLI runs in and, when its repository matches, the credentials; `host` lets the server
+ * route a pull request from another repository through any project on the same host
+ * (a frontend project's thread linking a backend PR). Absent `host` means "the project's
+ * own host", which is every reference from before thread links became host-level.
+ */
 export const PullRequestRef = Schema.Struct({
   projectId: ProjectId,
+  host: Schema.optional(TrimmedNonEmptyString),
+  /** Refuse a routed operation unless this GitHub account still owns the active credential. */
+  expectedAccountId: Schema.optional(TrimmedNonEmptyString),
+  /** Let another environment answer when this one's cached response has expired. */
+  allowStale: Schema.optional(Schema.Boolean),
   repository: TrimmedNonEmptyString,
   number: PositiveInt,
 });
 export type PullRequestRef = typeof PullRequestRef.Type;
+
+/** Account discovery never needs the originating project's private repository metadata. */
+export const PullRequestRoutingIdentityInput = Schema.Struct({
+  host: TrimmedNonEmptyString,
+});
+export type PullRequestRoutingIdentityInput = typeof PullRequestRoutingIdentityInput.Type;
+
+export const PullRequestRoutingIdentityResult = Schema.Struct({
+  accountId: TrimmedNonEmptyString,
+  host: TrimmedNonEmptyString,
+  provider: Schema.Literal("github"),
+  viewer: TrimmedNonEmptyString,
+});
+export type PullRequestRoutingIdentityResult = typeof PullRequestRoutingIdentityResult.Type;
+
+export const PullRequestRoutingResult = Schema.Struct({
+  accountId: TrimmedNonEmptyString,
+  host: TrimmedNonEmptyString,
+  provider: SourceControlProviderKind,
+  viewer: TrimmedNonEmptyString,
+  projectTitle: TrimmedNonEmptyString,
+  workspaceRoot: TrimmedNonEmptyString,
+});
+export type PullRequestRoutingResult = typeof PullRequestRoutingResult.Type;
+
+export const PullRequestLinkedThreadsResult = Schema.Struct({
+  threads: Schema.Array(
+    Schema.Struct({
+      id: ThreadId,
+      projectId: ProjectId,
+      title: Schema.String,
+      archivedAt: Schema.NullOr(IsoDateTime),
+    }),
+  ),
+});
+export type PullRequestLinkedThreadsResult = typeof PullRequestLinkedThreadsResult.Type;
+
+/** The complete hover card, without checks, permissions, or branch comparisons. */
+export const PullRequestPreview = Schema.Struct({
+  projectId: ProjectId,
+  repository: TrimmedNonEmptyString,
+  number: PositiveInt,
+  title: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  author: Schema.NullOr(PullRequestActor),
+  state: PullRequestState,
+  isDraft: Schema.Boolean,
+  createdAt: IsoDateTime,
+});
+export type PullRequestPreview = typeof PullRequestPreview.Type;
 
 /**
  * The small live shape a linked thread needs. Keeping it separate from detail means a sidebar
@@ -641,8 +738,36 @@ export const PullRequestSummary = Schema.Struct({
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   updatedAt: IsoDateTime,
+  /** Server epoch milliseconds when the provider read started; preserved on cache hits. */
+  observedAt: Schema.optional(Schema.Finite),
+  author: Schema.optional(Schema.NullOr(PullRequestActor)),
+  additions: Schema.optional(NonNegativeInt),
+  deletions: Schema.optional(NonNegativeInt),
+  changedFiles: Schema.optional(NonNegativeInt),
+  reviewDecision: Schema.optional(Schema.NullOr(PullRequestReviewDecision)),
+  checksState: Schema.optional(Schema.NullOr(PullRequestChecksState)),
+  mergeability: Schema.optional(PullRequestMergeability),
 });
 export type PullRequestSummary = typeof PullRequestSummary.Type;
+
+/** The host-native stack a pull request belongs to, in the thread link's shape. */
+export const PullRequestStack = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  number: PositiveInt,
+  url: TrimmedNonEmptyString,
+  base: TrimmedNonEmptyString,
+  layers: Schema.Array(
+    Schema.Struct({
+      number: PositiveInt,
+      title: Schema.optional(Schema.String),
+      isDraft: Schema.optional(Schema.Boolean),
+      headSha: Schema.optional(TrimmedNonEmptyString),
+      headBranch: TrimmedNonEmptyString,
+      state: PullRequestState,
+    }),
+  ),
+});
+export type PullRequestStack = typeof PullRequestStack.Type;
 
 /**
  * One row's line counts, read after the listing rather than inside it. On GitHub the pair is
@@ -690,6 +815,8 @@ export type PullRequestListStatsResult = typeof PullRequestListStatsResult.Type;
  */
 export const PullRequestInvalidateInput = Schema.Struct({
   reference: Schema.optional(PullRequestRef),
+  /** Refresh review progress across routed environments without discarding the patch. */
+  filesViewedOnly: Schema.optional(Schema.Boolean),
 });
 export type PullRequestInvalidateInput = typeof PullRequestInvalidateInput.Type;
 
@@ -718,6 +845,8 @@ export const PullRequestDetail = Schema.Struct({
   baseBranch: TrimmedNonEmptyString,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  /** Server epoch milliseconds when the provider read started; preserved on cache hits. */
+  observedAt: Schema.optional(Schema.Finite),
   mergedAt: Schema.NullOr(IsoDateTime),
   closedAt: Schema.NullOr(IsoDateTime),
   reviewers: Schema.Array(PullRequestActor),
@@ -859,7 +988,76 @@ export const PullRequestDiffFileContentsResult = Schema.Struct({
 });
 export type PullRequestDiffFileContentsResult = typeof PullRequestDiffFileContentsResult.Type;
 
+/**
+ * Bounded because a path arrives from a client rather than from the host: one element of a write
+ * batch could otherwise carry a megabyte into a SQL statement or a GraphQL field.
+ */
+const MAX_FILE_PATH_LENGTH = 4096;
+/**
+ * Not trimmed: a leading or trailing space is a legal part of a file's name, and the mark is
+ * keyed by the name the host gave, so trimming files it under a name nothing else uses.
+ */
+const FilePath = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(MAX_FILE_PATH_LENGTH));
+
+/**
+ * Where one file of a change request stands with the person reading it. `dismissed` is the file
+ * that was cleared and has since been pushed to, which is worth telling a reader apart from
+ * `unviewed`: this file and not the other forty is the one that moved.
+ */
+export const PullRequestFileViewedState = Schema.Literals(["unviewed", "viewed", "dismissed"]);
+export type PullRequestFileViewedState = typeof PullRequestFileViewedState.Type;
+
+export const PullRequestFileViewed = Schema.Struct({
+  path: FilePath,
+  state: PullRequestFileViewedState,
+});
+export type PullRequestFileViewed = typeof PullRequestFileViewed.Type;
+
+/**
+ * Which files of a change request the reader has cleared. Its own read rather than a field on the
+ * patch: a patch changes when somebody pushes and is cached by the minute, this changes on every
+ * press, so one read would have to be wrong for the other to be right.
+ */
+export const PullRequestFilesViewedResult = Schema.Struct({
+  /** Only the files the host reported a state for. A file missing from this list is unviewed. */
+  files: Schema.Array(PullRequestFileViewed),
+  /** The host had more files than were read, so the count is short and says so. */
+  truncated: Schema.Boolean,
+});
+export type PullRequestFilesViewedResult = typeof PullRequestFilesViewedResult.Type;
+
+/**
+ * How many presses one write carries. Every element is a statement of its own inside one
+ * transaction here, or a field of its own in one GraphQL document on GitHub. Matched to what a
+ * read of the marks carries, so a client cannot write more of them than it can ever read back.
+ */
+const MAX_FILES_VIEWED_PRESSES = 500;
+
+/**
+ * Files to clear, or to put back. Several at once because a reader working down a diff ticks
+ * boxes far faster than a host answers, so a burst is gathered into one request.
+ */
+export const PullRequestSetFilesViewedInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  files: Schema.Array(
+    Schema.Struct({
+      path: FilePath,
+      viewed: Schema.Boolean,
+    }),
+  ).check(Schema.isMaxLength(MAX_FILES_VIEWED_PRESSES)),
+});
+export type PullRequestSetFilesViewedInput = typeof PullRequestSetFilesViewedInput.Type;
+
+export const PullRequestStackHead = Schema.Struct({
+  number: PositiveInt,
+  headSha: TrimmedNonEmptyString,
+});
+export type PullRequestStackHead = typeof PullRequestStackHead.Type;
+
 export const PullRequestActionInput = Schema.Struct({
+  /** Native stack scope; only send to environments advertising pullRequestStackActions. */
+  stackNumber: Schema.optional(PositiveInt),
+  expectedStackHeads: Schema.optional(Schema.Array(PullRequestStackHead)),
   ...PullRequestRef.fields,
   action: PullRequestAction,
   /**
@@ -1061,6 +1259,12 @@ const PROVIDER_REQUIREMENT: Partial<
       "GitHub CLI (`gh`) is required to browse change requests on this host. Install it from https://cli.github.com/ and reload.",
     unauthenticated: "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
   },
+  forgejo: {
+    missing:
+      "Install Forgejo CLI (`fj` 0.6 or later) from https://codeberg.org/forgejo-contrib/forgejo-cli or Gitea CLI (`tea` 0.16 or later) from https://gitea.com/gitea/tea to browse Forgejo pull requests.",
+    unauthenticated:
+      "Authenticate your Forgejo or Gitea server with `fj --host <server-url> auth add-token` on the T3 Code server. If fj is missing or unconfigured for that server, use `tea login add`. A configured fj account must be repaired with fj.",
+  },
   gitlab: {
     missing:
       "GitLab CLI (`glab`) is required to browse change requests on this host. Install it from https://gitlab.com/gitlab-org/cli and reload.",
@@ -1088,9 +1292,24 @@ const PROVIDER_REQUIREMENT: Partial<
  * knows its hosts before the listing answers, and the two must agree on what they are called.
  */
 export function pullRequestHostOf(
-  identity: { readonly canonicalKey?: string | undefined } | null | undefined,
+  identity:
+    | {
+        readonly canonicalKey?: string | undefined;
+        readonly locator?: { readonly remoteUrl: string } | undefined;
+      }
+    | null
+    | undefined,
   kind: SourceControlProviderKind,
 ): string {
+  if (kind === "forgejo") {
+    try {
+      const remote = new URL(identity?.locator?.remoteUrl ?? "");
+      if (remote.protocol === "http:" || remote.protocol === "https:")
+        return remote.host.toLowerCase();
+    } catch {
+      // SSH remotes retain their canonical host; the CLI resolves their web endpoint.
+    }
+  }
   const host = identity?.canonicalKey?.split("/")[0]?.trim();
   return host === undefined || host.length === 0 ? kind : host.toLowerCase();
 }

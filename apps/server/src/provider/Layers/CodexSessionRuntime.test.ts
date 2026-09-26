@@ -9,7 +9,10 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
-import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
+import {
+  buildCodexAdditionalContext,
+  buildCodexDeveloperInstructions,
+} from "../CodexDeveloperInstructions.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
@@ -18,9 +21,103 @@ import {
   isRecoverableThreadResumeError,
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
+  readCodexThread,
+  rollbackCodexThread,
   toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+
+describe("Codex thread history", () => {
+  for (const numTurns of [1, 2, 3, 5]) {
+    it.effect(`reverts ${numTurns} paginated turns at the durable boundary`, () =>
+      Effect.gen(function* () {
+        let retained = ["turn-1", "turn-2", "turn-3"];
+        const client: Parameters<typeof rollbackCodexThread>[0] = {
+          request: () => Effect.die("Legacy history API must not be used for paginated threads"),
+          raw: {
+            request: (method, params) =>
+              Effect.sync(() => {
+                if (method === "thread/read") return { thread: { historyMode: "paginated" } };
+                if (method === "thread/turns/list") {
+                  const { cursor } = params as { cursor: string | null };
+                  const start = cursor === null ? 0 : Number(cursor);
+                  const ids = retained.slice(start, start + 2);
+                  return {
+                    data: ids.map((id) => ({ id, items: [], status: "completed" })),
+                    nextCursor: start + 2 < retained.length ? String(start + 2) : null,
+                  };
+                }
+                NodeAssert.equal(method, "thread/revert");
+                const { beforeTurnId } = params as { beforeTurnId: string };
+                retained = retained.slice(0, retained.indexOf(beforeTurnId));
+                return { thread: { id: "thread-1", turns: [] } };
+              }),
+          },
+        };
+        const result = yield* rollbackCodexThread(client, "thread-1", numTurns);
+        const expected = ["turn-1", "turn-2", "turn-3"].slice(0, Math.max(0, 3 - numTurns));
+        NodeAssert.deepEqual(
+          result.turns.map((turn) => turn.id),
+          expected,
+        );
+        NodeAssert.deepEqual(
+          (yield* readCodexThread(client, "thread-1")).turns.map((turn) => turn.id),
+          expected,
+        );
+      }),
+    );
+  }
+
+  for (const cursors of [
+    ["next", "next"],
+    ["first", "second", "first"],
+  ]) {
+    it.effect(`rejects a pagination cursor cycle: ${cursors.join(", ")}`, () =>
+      Effect.gen(function* () {
+        let pageCount = 0;
+        const client: Parameters<typeof readCodexThread>[0] = {
+          request: () => Effect.die("Unexpected legacy request"),
+          raw: {
+            request: (method) =>
+              Effect.sync(() => {
+                if (method === "thread/read") return { thread: { historyMode: "paginated" } };
+                NodeAssert.ok(pageCount < cursors.length, "Repeated cursor was requested");
+                return { data: [], nextCursor: cursors[pageCount++] };
+              }),
+          },
+        };
+        const error = yield* Effect.flip(readCodexThread(client, "thread-1"));
+        NodeAssert.ok(isCodexAppServerRequestError(error));
+        NodeAssert.equal(pageCount, cursors.length);
+      }),
+    );
+  }
+
+  it.effect("surfaces Codex rejecting a revert of a legacy thread", () =>
+    Effect.gen(function* () {
+      const rejection = CodexErrors.CodexAppServerRequestError.invalidRequest(
+        "thread/revert only supports paginated threads",
+      );
+      const client: Parameters<typeof rollbackCodexThread>[0] = {
+        raw: {
+          request: (method) => {
+            if (method === "thread/read") return Effect.succeed({ thread: {} });
+            if (method === "thread/revert") return Effect.fail(rejection);
+            return Effect.die(`Unexpected raw request: ${method}`);
+          },
+        },
+        request: <M extends CodexRpc.ClientRequestMethod>(method: M) => {
+          NodeAssert.equal(method, "thread/read");
+          return Effect.succeed({
+            thread: { id: "legacy-thread", turns: [{ id: "turn-1", items: [] }] },
+          } as unknown as CodexRpc.ClientRequestResponsesByMethod[M]);
+        },
+      };
+      const error = yield* Effect.flip(rollbackCodexThread(client, "legacy-thread", 1));
+      NodeAssert.strictEqual(error, rejection);
+    }),
+  );
+});
 
 describe("CodexSessionRuntimeIdentifierGenerationError", () => {
   it("retains identifier purpose and the random source failure", () => {
@@ -63,6 +160,23 @@ function makeThreadOpenResponse(
 }
 
 describe("buildTurnStartParams", () => {
+  it.effect("sends currency skill aliases in Codex's canonical dollar form", () =>
+    Effect.gen(function* () {
+      for (const symbol of ["€", "£", "¥", "₹", "₩", "₿", "𑿝"]) {
+        const prose = `${symbol}20 ${symbol}20k ${symbol}100M ${symbol}1e6 5${symbol}review`;
+        const params = yield* buildTurnStartParams({
+          threadId: "provider-thread-1",
+          runtimeMode: "full-access",
+          prompt: `${symbol}review ${symbol}2spec $existing ${prose} ${symbol}last`,
+        });
+
+        NodeAssert.deepEqual(params.input, [
+          { type: "text", text: `$review $2spec $existing ${prose} $last` },
+        ]);
+      }
+    }),
+  );
+
   it("keeps invalid turn values only in the schema cause", () => {
     const secret = "codex-turn-input-secret-sentinel";
     const error = Effect.runSync(
@@ -71,8 +185,8 @@ describe("buildTurnStartParams", () => {
         runtimeMode: "full-access",
         attachments: [
           {
-            type: "image",
-            url: { secret } as unknown as string,
+            type: "localImage",
+            path: { secret } as unknown as string,
           },
         ],
       }).pipe(Effect.flip),
@@ -121,12 +235,13 @@ describe("buildTurnStartParams", () => {
         settings: {
           model: "gpt-5.3-codex",
           reasoning_effort: "medium",
-          developer_instructions: buildCodexDeveloperInstructions("plan", {
-            model: "gpt-5.3-codex",
-            reasoningEffort: "medium",
-          }),
+          developer_instructions: buildCodexDeveloperInstructions("plan"),
         },
       },
+      additionalContext: buildCodexAdditionalContext({
+        model: "gpt-5.3-codex",
+        reasoningEffort: "medium",
+      }),
     });
   });
 
@@ -140,8 +255,8 @@ describe("buildTurnStartParams", () => {
         interactionMode: "default",
         attachments: [
           {
-            type: "image",
-            url: "data:image/png;base64,abc",
+            type: "localImage",
+            path: "/tmp/generated.png",
           },
         ],
       }),
@@ -160,8 +275,8 @@ describe("buildTurnStartParams", () => {
           text: "Implement it",
         },
         {
-          type: "image",
-          url: "data:image/png;base64,abc",
+          type: "localImage",
+          path: "/tmp/generated.png",
         },
       ],
       model: "gpt-5.3-codex",
@@ -170,12 +285,13 @@ describe("buildTurnStartParams", () => {
         settings: {
           model: "gpt-5.3-codex",
           reasoning_effort: "medium",
-          developer_instructions: buildCodexDeveloperInstructions("default", {
-            model: "gpt-5.3-codex",
-            reasoningEffort: "medium",
-          }),
+          developer_instructions: buildCodexDeveloperInstructions("default"),
         },
       },
+      additionalContext: buildCodexAdditionalContext({
+        model: "gpt-5.3-codex",
+        reasoningEffort: "medium",
+      }),
     });
   });
 
@@ -192,8 +308,28 @@ describe("buildTurnStartParams", () => {
     const settings = params.collaborationMode?.settings;
     NodeAssert.equal(settings?.model, DEFAULT_MODEL);
     NodeAssert.equal(settings?.reasoning_effort, "medium");
-    NodeAssert.ok(settings?.developer_instructions?.includes(`as ${DEFAULT_MODEL} with medium`));
+    NodeAssert.ok(
+      params.additionalContext?.t3_code_runtime?.value.includes(`as ${DEFAULT_MODEL} with medium`),
+    );
   });
+
+  it.effect("names the model by display name and slug in the runtime context", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        model: "gpt-5.3-codex",
+        modelName: "GPT-5.3-Codex",
+        effort: "high",
+        interactionMode: "plan",
+      });
+
+      NodeAssert.match(
+        params.additionalContext?.t3_code_runtime?.value ?? "",
+        /as GPT-5\.3-Codex \(model slug: gpt-5\.3-codex\) with high reasoning effort/,
+      );
+    }),
+  );
 
   it.effect("routes approvals to the auto reviewer in auto mode", () =>
     Effect.gen(function* () {
@@ -449,99 +585,82 @@ describe("Codex MCP elicitation approvals", () => {
 });
 
 describe("buildCodexDeveloperInstructions", () => {
-  it("appends runtime info after the mode instructions", () => {
-    const instructions = buildCodexDeveloperInstructions("default", {
-      model: "gpt-5.3-codex",
-      reasoningEffort: "high",
-    });
-
-    NodeAssert.match(instructions, /^<collaboration_mode># Collaboration Mode: Default/);
-    NodeAssert.match(instructions, /T3 Code/);
-    NodeAssert.match(instructions, /Codex harness/);
-    NodeAssert.match(instructions, /as gpt-5\.3-codex with high reasoning effort/);
-  });
-
-  it("describes Markdown media support in the runtime context in both modes", () => {
+  it("keeps T3 context out of the mode prompt, which the model catalog can replace", () => {
     for (const mode of ["default", "plan"] as const) {
-      const instructions = buildCodexDeveloperInstructions(mode, {
-        model: "gpt-5.3-codex",
-        reasoningEffort: "high",
-      });
-      NodeAssert.match(
-        instructions,
-        /<runtime_info>.*embed images and videos.*Markdown.*<\/runtime_info>/,
-      );
+      const instructions = buildCodexDeveloperInstructions(mode);
+      NodeAssert.match(instructions, /^<collaboration_mode>[\s\S]*<\/collaboration_mode>$/);
+      NodeAssert.doesNotMatch(instructions, /runtime_info|pull_request_linking|preview_|device_/);
     }
-  });
-
-  it("includes runtime info alongside plan mode instructions", () => {
-    const instructions = buildCodexDeveloperInstructions("plan", {
-      model: "gpt-5.3-codex",
-      reasoningEffort: "medium",
-    });
-
-    NodeAssert.match(instructions, /^<collaboration_mode># Plan Mode/);
-    NodeAssert.match(instructions, /as gpt-5\.3-codex with medium reasoning effort/);
-  });
-
-  it("varies with the model and effort of each turn", () => {
-    const first = buildCodexDeveloperInstructions("default", {
-      model: "gpt-5.3-codex",
-      reasoningEffort: "medium",
-    });
-    const second = buildCodexDeveloperInstructions("default", {
-      model: "gpt-5.4",
-      reasoningEffort: "high",
-    });
-
-    NodeAssert.notEqual(first, second);
-  });
-
-  it("flattens multiline metadata into single-line runtime info", () => {
-    const instructions = buildCodexDeveloperInstructions("default", {
-      model: "gpt\n5.3\ncodex",
-      reasoningEffort: " high\neffort ",
-    });
-
-    NodeAssert.match(instructions, /as gpt 5\.3 codex with high effort reasoning effort/);
-    NodeAssert.doesNotMatch(instructions, /<runtime_info>[^<]*\n/);
   });
 });
 
-describe("T3 browser developer instructions", () => {
+describe("buildCodexAdditionalContext", () => {
+  const runtime = { model: "gpt-5.3-codex", reasoningEffort: "high" };
+  const runtimeValue = (context: ReturnType<typeof buildCodexAdditionalContext>) =>
+    context.t3_code_runtime?.value ?? "";
+
+  it("describes the harness, model, effort, and Markdown media support", () => {
+    const context = buildCodexAdditionalContext(runtime);
+
+    NodeAssert.equal(context.t3_code_runtime?.kind, "application");
+    NodeAssert.match(
+      runtimeValue(context),
+      /<runtime_info>.*Codex harness, as gpt-5\.3-codex with high reasoning effort.*embed images and videos.*Markdown.*<\/runtime_info>/,
+    );
+  });
+
+  it("varies with the model and effort of each turn", () => {
+    NodeAssert.notEqual(
+      runtimeValue(
+        buildCodexAdditionalContext({ model: "gpt-5.3-codex", reasoningEffort: "medium" }),
+      ),
+      runtimeValue(buildCodexAdditionalContext({ model: "gpt-5.4", reasoningEffort: "high" })),
+    );
+  });
+
+  it("flattens multiline metadata into single-line runtime info", () => {
+    const value = runtimeValue(
+      buildCodexAdditionalContext({ model: "gpt\n5.3\ncodex", reasoningEffort: " high\neffort " }),
+    );
+
+    NodeAssert.match(value, /as gpt 5\.3 codex with high effort reasoning effort/);
+    NodeAssert.doesNotMatch(value, /<runtime_info>[^<]*\n/);
+  });
+
+  it("keeps every entry under Codex's 1,000 token cap per entry", () => {
+    const context = buildCodexAdditionalContext(runtime, { browser: true, device: true });
+    for (const entry of Object.values(context)) {
+      // Codex estimates 4 bytes per token and truncates the middle of longer values.
+      NodeAssert.ok(Buffer.byteLength(entry.value) < 4_000);
+    }
+  });
+});
+
+describe("T3 tool instructions", () => {
   const runtime = { model: "gpt-5.3-codex", reasoningEffort: "high" };
 
-  it("prefers the product-native preview tools in both collaboration modes", () => {
-    for (const mode of ["default", "plan"] as const) {
-      const instructions = buildCodexDeveloperInstructions(mode, runtime, true);
-      NodeAssert.match(instructions, /t3-code/);
-      NodeAssert.match(instructions, /preview_status/);
-      NodeAssert.match(instructions, /preview_open/);
-      NodeAssert.match(instructions, /Do not switch to global browser skills/);
-    }
+  it("prefers the product-native preview tools when they are attached", () => {
+    const tools = buildCodexAdditionalContext(runtime, true).t3_code_tools?.value ?? "";
+    NodeAssert.match(tools, /t3-code/);
+    NodeAssert.match(tools, /preview_status/);
+    NodeAssert.match(tools, /preview_open/);
+    NodeAssert.match(tools, /Do not switch to global browser skills/);
+    NodeAssert.doesNotMatch(tools, /device_open/);
   });
 
-  it("omits the browser block entirely when the preview tools are not attached", () => {
-    for (const mode of ["default", "plan"] as const) {
-      const instructions = buildCodexDeveloperInstructions(mode, runtime, false);
-      NodeAssert.doesNotMatch(instructions, /preview_status/);
-      NodeAssert.doesNotMatch(instructions, /preview_open/);
-      NodeAssert.doesNotMatch(instructions, /T3 Code collaborative browser/);
-      // Steering away from other browser automation must go with the tools;
-      // keeping it would leave the model talked out of its only option.
-      NodeAssert.doesNotMatch(instructions, /Do not switch to global browser skills/);
-      // The rest of the collaboration mode is untouched.
-      NodeAssert.match(instructions, /<collaboration_mode>/);
-      NodeAssert.match(instructions, /<\/collaboration_mode>/);
-    }
+  it("describes device tools only when the credential grants them", () => {
+    const tools =
+      buildCodexAdditionalContext(runtime, { browser: false, device: true }).t3_code_tools?.value ??
+      "";
+    NodeAssert.match(tools, /device_open/);
+    NodeAssert.doesNotMatch(tools, /preview_open/);
   });
 
-  it("tracks the turn's MCP configuration rather than defaulting to on", () => {
-    NodeAssert.match(buildCodexDeveloperInstructions("default", runtime, true), /preview_open/);
-    NodeAssert.doesNotMatch(
-      buildCodexDeveloperInstructions("default", runtime, false),
-      /preview_open/,
-    );
+  it("omits the tool entry entirely when no tools are attached", () => {
+    // Steering away from other browser automation must go with the tools;
+    // keeping it would leave the model talked out of its only option.
+    const context = buildCodexAdditionalContext(runtime, false);
+    NodeAssert.deepStrictEqual(Object.keys(context), ["t3_code_runtime"]);
   });
 });
 
@@ -572,6 +691,7 @@ function makeThreadStartedNotification(
         id: threadId,
         modelProvider: "openai",
         preview: "",
+        projectId: null,
         sessionId: threadId,
         source,
         status: { type: "idle" as const },

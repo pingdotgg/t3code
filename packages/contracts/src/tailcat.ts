@@ -166,7 +166,7 @@ export const TailcatRenameTrustedPeerInput = Schema.Struct({
 });
 export type TailcatRenameTrustedPeerInput = typeof TailcatRenameTrustedPeerInput.Type;
 
-export class TailcatRemoteAccessError extends Schema.TaggedErrorClass<TailcatRemoteAccessError>()(
+export class TailcatRemoteAccessError extends Schema.TaggedError<TailcatRemoteAccessError>()(
   "TailcatRemoteAccessError",
   {
     code: TailcatFailureCode,

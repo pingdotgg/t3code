@@ -3,6 +3,7 @@ import type {
   Module,
   RuntimeWorker,
 } from "@alchemy.run/cloudflare-runtime/core";
+import { DEFAULT_COMPATIBILITY_DATE } from "@alchemy.run/cloudflare-runtime/core/internal/constants";
 import * as Runtime from "@alchemy.run/cloudflare-runtime/core/Runtime";
 import * as RuntimeServices from "@alchemy.run/cloudflare-runtime/core/RuntimeServices";
 import * as DurableObjectNamespace from "@alchemy.run/cloudflare-runtime/core/bindings/DurableObjectNamespace";
@@ -120,8 +121,7 @@ export const listEdgeFunctions = (manifest: unknown): Array<string> => {
   return functions === undefined ? [] : Object.keys(functions);
 };
 
-/** The default compatibility date when the options provide none. */
-export const DEFAULT_COMPATIBILITY_DATE = "2026-05-12";
+export { DEFAULT_COMPATIBILITY_DATE };
 
 /** The server-module name of the worker entry (`serverModules[0]`). */
 export const WORKER_ENTRY_MODULE = `worker/${Bundle.WORKER_ENTRY_NAME}`;

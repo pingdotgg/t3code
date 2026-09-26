@@ -7,21 +7,16 @@ permissions: {}
 jobs:
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-linux-small
     timeout-minutes: 30
     env:
       EFFECT_CLUSTER_TESTS: "1"
+      # The ephemeral runner provides cleanup without a Ryuk sidecar.
+      TESTCONTAINERS_RYUK_DISABLED: "true"
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-
-      - name: Pre-pull test container images
-        run: |
-          docker pull testcontainers/ryuk:0.14.0 &
-          docker pull postgres:alpine &
-          docker pull mysql:lts &
-          wait
 
       - name: Install dependencies
         uses: ./.github/actions/setup

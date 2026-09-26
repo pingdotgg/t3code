@@ -52,6 +52,7 @@ const makeThreadShell = (
   interactionMode: "default",
   branch: null,
   worktreePath: null,
+  pullRequests: [],
   latestTurn: null,
   createdAt,
   updatedAt: createdAt,

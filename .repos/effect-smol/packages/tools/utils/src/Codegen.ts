@@ -182,7 +182,10 @@ export const layer: Layer.Layer<BarrelGenerator, never, FileSystem.FileSystem | 
         nodir: true
       })
 
-      const results = yield* Effect.forEach(indexFiles, (file) => discoverFile(path.join(cwd, file)))
+      const results = yield* Effect.forEach(
+        indexFiles,
+        (file) => discoverFile(path.isAbsolute(file) ? file : path.join(cwd, file))
+      )
       return results.filter((file) => file !== undefined)
     })
 

@@ -9,9 +9,9 @@ import * as ServerConfig from "../config.ts";
 /**
  * Resolves the Tailcat executable for this server process. Preference order:
  * an explicit `T3CODE_TAILCAT_BINARY` override, the path the desktop app hands
- * over in its bootstrap (the binary it ships), the copy bundled next to the CLI
- * bundle (`dist/tailcat/<platform>/`), the monorepo's fetched runtime, and
- * finally a `tailcat` already on PATH.
+ * over in its bootstrap (the binary it ships), the copy a CLI archive carries
+ * beside its executable (`tailcat/<platform>/`), the monorepo's fetched runtime,
+ * and finally a `tailcat` already on PATH.
  */
 export const layer = Layer.unwrap(
   Effect.gen(function* () {

@@ -2148,29 +2148,45 @@ export const TableProvider = () =>
           // cleanup and strands the rules — CloudWatch rejects direct
           // deletion of DynamoDB-managed rules with AccessDenied, so only
           // AWS support can remove them afterwards.
-          yield* Effect.gen(function* () {
-            const insightsStatus = yield* waitForContributorInsightsSettled(
-              session,
-              output.tableName,
+          //
+          // Observe existence first: `waitForContributorInsightsSettled`
+          // retries `ResourceNotFoundException` as a control-plane blip (its
+          // reconcile-side callers run right after the table was created),
+          // so a table that is already gone would otherwise spin through the
+          // full ~90s settle budget before this delete can notice.
+          const tableExists = yield* dynamodb
+            .describeTable({ TableName: output.tableName })
+            .pipe(
+              Effect.as(true),
+              Effect.catchTag("ResourceNotFoundException", () =>
+                Effect.succeed(false),
+              ),
             );
-            if (insightsStatus !== "DISABLED") {
-              yield* session.note(
-                `Table ${output.tableName}: disabling Contributor Insights before delete`,
-              );
-              yield* updateTableContributorInsights(output.tableName, false);
-              yield* waitForContributorInsightsSettled(
+          if (tableExists) {
+            yield* Effect.gen(function* () {
+              const insightsStatus = yield* waitForContributorInsightsSettled(
                 session,
                 output.tableName,
               );
-            }
-            yield* waitForContributorInsightsRulesDeleted(
-              session,
-              output.tableName,
+              if (insightsStatus !== "DISABLED") {
+                yield* session.note(
+                  `Table ${output.tableName}: disabling Contributor Insights before delete`,
+                );
+                yield* updateTableContributorInsights(output.tableName, false);
+                yield* waitForContributorInsightsSettled(
+                  session,
+                  output.tableName,
+                );
+              }
+              yield* waitForContributorInsightsRulesDeleted(
+                session,
+                output.tableName,
+              );
+            }).pipe(
+              // Table vanished mid-teardown — nothing left to tear down.
+              Effect.catchTag("ResourceNotFoundException", () => Effect.void),
             );
-          }).pipe(
-            // Table already gone — nothing to tear down.
-            Effect.catchTag("ResourceNotFoundException", () => Effect.void),
-          );
+          }
 
           let deleteAttempt = 0;
 

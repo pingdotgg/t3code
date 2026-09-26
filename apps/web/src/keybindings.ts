@@ -8,9 +8,11 @@ import {
   type ModelPickerJumpKeybindingCommand,
   type ThreadJumpKeybindingCommand,
 } from "@t3tools/contracts";
+import { isElectron } from "./env";
 import { isMacPlatform } from "./lib/utils";
 
 export interface ShortcutEventLike {
+  getModifierState?: (key: "AltGraph") => boolean;
   type?: string;
   code?: string;
   key: string;
@@ -32,6 +34,11 @@ export interface ShortcutMatchContext {
   terminalOpen: boolean;
   previewFocus: boolean;
   previewOpen: boolean;
+  isWeb: boolean;
+  isDesktop: boolean;
+  /** A text field, textarea, select or rich-text editor owns the keyboard.
+      Optional: only chords that collide with native editing consult it. */
+  editableFocus?: boolean;
   [key: string]: boolean;
 }
 
@@ -123,6 +130,12 @@ function matchesShortcut(
   shortcut: KeybindingShortcut,
   platform = navigator.platform,
 ): boolean {
+  if (
+    !isMacPlatform(platform) &&
+    event.getModifierState?.("AltGraph") &&
+    !/^[a-z0-9]$/i.test(event.key)
+  )
+    return false;
   if (!matchesShortcutModifiers(event, shortcut, platform)) return false;
   return resolveEventKeys(event).has(shortcut.key);
 }
@@ -137,6 +150,9 @@ function resolveContext(options: ShortcutMatchOptions | undefined): ShortcutMatc
     terminalOpen: false,
     previewFocus: false,
     previewOpen: false,
+    isWeb: !isElectron,
+    isDesktop: isElectron,
+    editableFocus: false,
     ...options?.context,
   };
 }
@@ -397,6 +413,23 @@ export function isOpenFavoriteEditorShortcut(
   options?: ShortcutMatchOptions,
 ): boolean {
   return matchesCommandShortcut(event, keybindings, "editor.openFavorite", options);
+}
+
+/**
+ * Whether the keypress is the rich-text bold chord (Mod+B without extra
+ * modifiers). Tiptap binds the same chord, so app shortcuts captured ahead
+ * of the editor must yield when the rich-text composer is focused.
+ */
+export function isRichTextBoldShortcut(event: ShortcutEventLike): boolean {
+  if (event.type !== undefined && event.type !== "keydown") {
+    return false;
+  }
+  return (
+    event.key.toLowerCase() === "b" &&
+    (event.metaKey || event.ctrlKey) &&
+    !event.altKey &&
+    !event.shiftKey
+  );
 }
 
 export function isTerminalClearShortcut(

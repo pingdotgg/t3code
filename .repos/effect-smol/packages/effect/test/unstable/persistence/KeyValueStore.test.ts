@@ -5,100 +5,102 @@ import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore"
 import * as Persistence from "effect/unstable/persistence/Persistence"
 
 export const testLayer = <E>(layer: Layer.Layer<KeyValueStore.KeyValueStore, E>) => {
-  const run = <E, A>(effect: Effect.Effect<A, E, KeyValueStore.KeyValueStore>) =>
-    Effect.runPromise(Effect.provide(effect, layer))
+  describe("store operations", { concurrent: false }, () => {
+    const run = <E, A>(effect: Effect.Effect<A, E, KeyValueStore.KeyValueStore>) =>
+      Effect.runPromise(Effect.provide(effect, layer))
 
-  afterEach(() =>
-    run(Effect.gen(function*() {
-      const kv = yield* (KeyValueStore.KeyValueStore)
-      yield* kv.clear
-    }))
-  )
+    afterEach(() =>
+      run(Effect.gen(function*() {
+        const kv = yield* (KeyValueStore.KeyValueStore)
+        yield* kv.clear
+      }))
+    )
 
-  it("set", () =>
-    run(Effect.gen(function*() {
-      const kv = yield* (KeyValueStore.KeyValueStore)
-      yield* (kv.set("/foo/bar", "bar"))
+    it("set", () =>
+      run(Effect.gen(function*() {
+        const kv = yield* (KeyValueStore.KeyValueStore)
+        yield* (kv.set("/foo/bar", "bar"))
 
-      const value = yield* (kv.get("/foo/bar"))
-      const length = yield* (kv.size)
+        const value = yield* (kv.get("/foo/bar"))
+        const length = yield* (kv.size)
 
-      strictEqual(value, "bar")
-      strictEqual(length, 1)
-    })))
+        strictEqual(value, "bar")
+        strictEqual(length, 1)
+      })))
 
-  it("get/ missing", () =>
-    run(Effect.gen(function*() {
-      const kv = yield* (KeyValueStore.KeyValueStore)
-      yield* (kv.clear)
-      const value = yield* (kv.get("foo"))
+    it("get/ missing", () =>
+      run(Effect.gen(function*() {
+        const kv = yield* (KeyValueStore.KeyValueStore)
+        yield* (kv.clear)
+        const value = yield* (kv.get("foo"))
 
-      strictEqual(value, undefined)
-    })))
+        strictEqual(value, undefined)
+      })))
 
-  it("remove", () =>
-    run(Effect.gen(function*() {
-      const kv = yield* (KeyValueStore.KeyValueStore)
-      yield* (kv.set("foo", "bar"))
-      yield* (kv.remove("foo"))
+    it("remove", () =>
+      run(Effect.gen(function*() {
+        const kv = yield* (KeyValueStore.KeyValueStore)
+        yield* (kv.set("foo", "bar"))
+        yield* (kv.remove("foo"))
 
-      const value = yield* (kv.get("foo"))
-      const length = yield* (kv.size)
+        const value = yield* (kv.get("foo"))
+        const length = yield* (kv.size)
 
-      strictEqual(value, undefined)
-      strictEqual(length, 0)
-    })))
+        strictEqual(value, undefined)
+        strictEqual(length, 0)
+      })))
 
-  it("clear", () =>
-    run(Effect.gen(function*() {
-      const kv = yield* (KeyValueStore.KeyValueStore)
-      yield* (kv.set("foo", "bar"))
-      yield* (kv.clear)
+    it("clear", () =>
+      run(Effect.gen(function*() {
+        const kv = yield* (KeyValueStore.KeyValueStore)
+        yield* (kv.set("foo", "bar"))
+        yield* (kv.clear)
 
-      const value = yield* (kv.get("foo"))
-      const length = yield* (kv.size)
+        const value = yield* (kv.get("foo"))
+        const length = yield* (kv.size)
 
-      strictEqual(value, undefined)
-      strictEqual(length, 0)
-    })))
+        strictEqual(value, undefined)
+        strictEqual(length, 0)
+      })))
 
-  it("modify", () =>
-    run(Effect.gen(function*() {
-      const kv = yield* (KeyValueStore.KeyValueStore)
-      yield* (kv.set("foo", "bar"))
+    it("modify", () =>
+      run(Effect.gen(function*() {
+        const kv = yield* (KeyValueStore.KeyValueStore)
+        yield* (kv.set("foo", "bar"))
 
-      const value = yield* (kv.modify("foo", (v) => v + "bar"))
-      const length = yield* (kv.size)
+        const value = yield* (kv.modify("foo", (v) => v + "bar"))
+        const length = yield* (kv.size)
 
-      strictEqual(value, "barbar")
-      strictEqual(length, 1)
-    })))
+        strictEqual(value, "barbar")
+        strictEqual(length, 1)
+      })))
 
-  it("modify - none", () =>
-    run(Effect.gen(function*() {
-      const kv = yield* (KeyValueStore.KeyValueStore)
+    it("modify - none", () =>
+      run(Effect.gen(function*() {
+        const kv = yield* (KeyValueStore.KeyValueStore)
 
-      const value = yield* (kv.modify("foo", (v) => v + "bar"))
-      const length = yield* (kv.size)
+        const value = yield* (kv.modify("foo", (v) => v + "bar"))
+        const length = yield* (kv.size)
 
-      strictEqual(value, undefined)
-      strictEqual(length, 0)
-    })))
+        strictEqual(value, undefined)
+        strictEqual(length, 0)
+      })))
 
-  it("setMany stores entries without a TTL", () =>
-    run(
-      Effect.gen(function*() {
-        const backing = yield* Persistence.BackingPersistence
-        const store = yield* backing.make("store")
+    it("setMany stores entries without a TTL", () =>
+      run(
+        Effect.gen(function*() {
+          const backing = yield* Persistence.BackingPersistence
+          const store = yield* backing.make("store")
 
-        yield* store.setMany([["key", { value: 1 }, undefined]])
+          yield* store.setMany([["key", { value: 1 }, undefined]])
 
-        deepStrictEqual(yield* store.get("key"), { value: 1 })
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(Persistence.layerBackingKvs)
-      )
-    ))
+          deepStrictEqual(yield* store.get("key"), { value: 1 })
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(Persistence.layerBackingKvs)
+        )
+      ))
+  })
 }
 
 describe("KeyValueStore / layerMemory", () => testLayer(KeyValueStore.layerMemory))

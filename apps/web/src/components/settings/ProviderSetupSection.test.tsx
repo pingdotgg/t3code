@@ -138,7 +138,9 @@ function renderSetup(
 function button(view: unknown, label: string) {
   return visitElements(
     view,
-    (element) => element.props.children === label && typeof element.props.onClick === "function",
+    (element) =>
+      (element.props.children === label || element.props["aria-label"] === label) &&
+      typeof element.props.onClick === "function",
   );
 }
 

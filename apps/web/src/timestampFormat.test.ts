@@ -52,6 +52,32 @@ describe("formatShortTimestamp", () => {
   });
 });
 
+describe("resolveWeekStartsOn", () => {
+  it.each([
+    ["en-US", 0],
+    ["en-GB", 1],
+    ["pl-PL", 1],
+    ["ar-EG", 6],
+  ])("starts the %s week on weekday %i", async (locale, weekday) => {
+    const { resolveWeekStartsOn } = await import("./timestampFormat");
+    expect(resolveWeekStartsOn(locale)).toBe(weekday);
+  });
+
+  it("leaves the default to the caller for a malformed locale", async () => {
+    const { resolveWeekStartsOn } = await import("./timestampFormat");
+    expect(resolveWeekStartsOn("not a locale")).toBeUndefined();
+  });
+
+  it("follows the locale the desktop host reports", async () => {
+    vi.stubGlobal("window", { desktopBridge: { getSystemLocale: () => "en-GB" } });
+    vi.resetModules();
+    const { weekStartsOn } = await import("./timestampFormat");
+    expect(weekStartsOn).toBe(1);
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+});
+
 describe("formatChatTimestampTooltip", () => {
   afterEach(() => {
     vi.restoreAllMocks();

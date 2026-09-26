@@ -5,7 +5,10 @@ import {
   type ResolvedCredentials,
 } from "@distilled.cloud/cloudflare/Credentials";
 import { describe, expect, it } from "alchemy-test";
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 
 /**
  * Regression spec for "alchemy dev breaks once the Cloudflare OAuth access
@@ -22,14 +25,15 @@ import * as Effect from "effect/Effect";
 
 const MINUTE_MS = 60_000;
 
-const makeOAuthResolver = (clock: { now: number }) => {
+const makeOAuthResolver = () => {
   let resolutions = 0;
-  const resolve = Effect.sync(() => {
+  const resolve = Effect.gen(function* () {
     resolutions++;
+    const now = yield* Clock.currentTimeMillis;
     return oauthCredentials({
       accessToken: `token-${resolutions}`,
       // each freshly resolved token is valid for 1 hour from "now"
-      expiresAt: clock.now + 60 * MINUTE_MS,
+      expiresAt: now + 60 * MINUTE_MS,
     }) as ResolvedCredentials;
   });
   return { resolve, count: () => resolutions };
@@ -38,12 +42,11 @@ const makeOAuthResolver = (clock: { now: number }) => {
 describe("Cloudflare Credentials cacheUntilExpiry", () => {
   it.effect("caches OAuth credentials while they are valid", () =>
     Effect.gen(function* () {
-      const clock = { now: 0 };
-      const resolver = makeOAuthResolver(clock);
-      const credentials = cacheUntilExpiry(resolver.resolve, () => clock.now);
+      const resolver = makeOAuthResolver();
+      const credentials = yield* cacheUntilExpiry(resolver.resolve);
 
       const first = yield* credentials;
-      clock.now += 10 * MINUTE_MS;
+      yield* TestClock.adjust(Duration.minutes(10));
       const second = yield* credentials;
 
       expect(resolver.count()).toBe(1);
@@ -55,22 +58,21 @@ describe("Cloudflare Credentials cacheUntilExpiry", () => {
     "re-resolves OAuth credentials once the refresh window is reached",
     () =>
       Effect.gen(function* () {
-        const clock = { now: 0 };
-        const resolver = makeOAuthResolver(clock);
-        const credentials = cacheUntilExpiry(resolver.resolve, () => clock.now);
+        const resolver = makeOAuthResolver();
+        const credentials = yield* cacheUntilExpiry(resolver.resolve);
 
         const first = yield* credentials;
         expect(first.type).toBe("oauth");
 
         // 56 minutes in: inside the 5-minute refresh window of the 1h token.
-        clock.now += 56 * MINUTE_MS;
+        yield* TestClock.adjust(Duration.minutes(56));
         const second = yield* credentials;
 
         expect(resolver.count()).toBe(2);
         expect(second).not.toBe(first);
 
         // The re-resolved token is cached again in turn.
-        clock.now += 10 * MINUTE_MS;
+        yield* TestClock.adjust(Duration.minutes(10));
         const third = yield* credentials;
         expect(resolver.count()).toBe(2);
         expect(third).toBe(second);
@@ -81,13 +83,12 @@ describe("Cloudflare Credentials cacheUntilExpiry", () => {
     "re-resolves OAuth credentials that are already fully expired",
     () =>
       Effect.gen(function* () {
-        const clock = { now: 0 };
-        const resolver = makeOAuthResolver(clock);
-        const credentials = cacheUntilExpiry(resolver.resolve, () => clock.now);
+        const resolver = makeOAuthResolver();
+        const credentials = yield* cacheUntilExpiry(resolver.resolve);
 
         yield* credentials;
         // The machine slept through the token's entire lifetime.
-        clock.now += 6 * 60 * MINUTE_MS;
+        yield* TestClock.adjust(Duration.hours(6));
         yield* credentials;
 
         expect(resolver.count()).toBe(2);
@@ -96,7 +97,6 @@ describe("Cloudflare Credentials cacheUntilExpiry", () => {
 
   it.effect("caches non-expiring credentials (api tokens) forever", () =>
     Effect.gen(function* () {
-      const clock = { now: 0 };
       let resolutions = 0;
       const resolve = Effect.sync(() => {
         resolutions++;
@@ -104,10 +104,10 @@ describe("Cloudflare Credentials cacheUntilExpiry", () => {
           apiToken: "static",
         }) as ResolvedCredentials;
       });
-      const credentials = cacheUntilExpiry(resolve, () => clock.now);
+      const credentials = yield* cacheUntilExpiry(resolve);
 
       yield* credentials;
-      clock.now += 365 * 24 * 60 * MINUTE_MS;
+      yield* TestClock.adjust(Duration.days(365));
       yield* credentials;
 
       expect(resolutions).toBe(1);
@@ -116,18 +116,17 @@ describe("Cloudflare Credentials cacheUntilExpiry", () => {
 
   it.live("concurrent cold-cache resolutions are single-flight", () =>
     Effect.gen(function* () {
-      const clock = { now: 0 };
       let resolutions = 0;
       const resolve = Effect.sleep("20 millis").pipe(
         Effect.map(() => {
           resolutions++;
           return oauthCredentials({
             accessToken: `token-${resolutions}`,
-            expiresAt: clock.now + 60 * MINUTE_MS,
+            expiresAt: Date.now() + 60 * MINUTE_MS,
           }) as ResolvedCredentials;
         }),
       );
-      const credentials = cacheUntilExpiry(resolve, () => clock.now);
+      const credentials = yield* cacheUntilExpiry(resolve);
 
       const results = yield* Effect.all(
         [credentials, credentials, credentials, credentials],

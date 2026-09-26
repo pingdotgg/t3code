@@ -224,7 +224,7 @@ export const makeKmsAuth = (
  * error — keep the client's error channel free of `ConfigError`.
  */
 const envName = (key: string): Effect.Effect<string> =>
-  Config.string(key).pipe(Effect.orDie);
+  Config.String(key).pipe(Effect.orDie);
 
 const toNameEffect = (value: unknown): Effect.Effect<string> => {
   if (typeof value === "string") return Effect.succeed(value);

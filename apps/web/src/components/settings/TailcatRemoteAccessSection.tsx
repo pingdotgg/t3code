@@ -204,7 +204,8 @@ const ConnectionCodeReveal = memo(function ConnectionCodeReveal({
           value={issued.result.code}
           rows={4}
           aria-label="Tailcat connection code"
-          className="font-mono text-[11px] leading-relaxed break-all"
+          font="mono"
+          className="break-all"
           onFocus={(event) => event.currentTarget.select()}
           onClick={(event) => event.currentTarget.select()}
         />
@@ -213,7 +214,7 @@ const ConnectionCodeReveal = memo(function ConnectionCodeReveal({
             <CopyIcon aria-hidden />
             Copy code
           </Button>
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-2xs text-muted-foreground">
             {formatExpiresInLabel(issued.result.expiresAt, nowMs)} · single use, expires in{" "}
             {issued.lifetimeMinutes} min
           </span>
@@ -469,7 +470,7 @@ export const TailcatRemoteAccessRow = memo(function TailcatRemoteAccessRow({
                 <Tooltip>
                   <TooltipTrigger
                     render={
-                      <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
+                      <code className="min-w-0 flex-1 truncate font-mono text-2xs text-muted-foreground">
                         {address}
                       </code>
                     }
@@ -526,11 +527,11 @@ export const TailcatRemoteAccessRow = memo(function TailcatRemoteAccessRow({
               {issuedCode !== null ? (
                 <ConnectionCodeReveal issued={issuedCode} />
               ) : !state.enabled ? (
-                <p className="text-[11px] text-muted-foreground/70">
+                <p className="text-2xs text-muted-foreground/70">
                   Enable remote access to create codes.
                 </p>
               ) : state.status !== "ready" ? (
-                <p className="text-[11px] text-muted-foreground/70">
+                <p className="text-2xs text-muted-foreground/70">
                   Codes can be created once the listener is ready.
                 </p>
               ) : null}
@@ -566,7 +567,7 @@ export const TailcatRemoteAccessRow = memo(function TailcatRemoteAccessRow({
             </section>
 
             <div className="flex items-center justify-between gap-3 border-t border-border/50 pt-3">
-              <p className="text-[11px] text-muted-foreground/70">
+              <p className="text-2xs text-muted-foreground/70">
                 Updated {formatAbsoluteTimestamp(state.updatedAt)}
               </p>
               <div className="flex items-center gap-1">

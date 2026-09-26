@@ -16,7 +16,7 @@ import * as Result from "../Result.ts"
 import type { NoInfer } from "../Types.ts"
 
 /** @internal */
-export const HashMapTypeId = "~effect/collections/HashMap"
+export const HashMapTypeId = "~effect/HashMap"
 
 /** @internal */
 export type HashMapTypeId = typeof HashMapTypeId
@@ -410,8 +410,10 @@ class CollisionNode<K, V> extends Node<K, V> {
     return new CollisionNode(edit, this.hash, newEntries)
   }
 
-  iterator(): Iterator<[K, V]> {
-    return this.entries[Symbol.iterator]()
+  *iterator(): Iterator<[K, V]> {
+    for (const [key, value] of this.entries) {
+      yield [key, value]
+    }
   }
 
   [Symbol.iterator](): Iterator<[K, V]> {

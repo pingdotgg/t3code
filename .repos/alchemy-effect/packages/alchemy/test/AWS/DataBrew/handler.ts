@@ -2,6 +2,7 @@ import * as DataBrew from "@/AWS/DataBrew";
 import * as IAM from "@/AWS/IAM";
 import * as Lambda from "@/AWS/Lambda";
 import * as S3 from "@/AWS/S3";
+import type * as databrew from "@distilled.cloud/aws/databrew";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -14,6 +15,19 @@ import path from "pathe";
 const main = path.resolve(import.meta.dirname, "handler.ts");
 
 export const SOURCE_KEY = "raw/data.csv";
+
+// DataBrew can observe a fresh role's grants at different times per operation.
+const authorizationPolicy = {
+  while: (
+    error:
+      | databrew.StartJobRunError
+      | databrew.PublishRecipeError
+      | databrew.StartProjectSessionError
+      | databrew.SendProjectSessionActionError,
+  ) => error._tag === "AccessDeniedException",
+  schedule: Schedule.spaced("3 seconds"),
+  times: 8,
+};
 
 /**
  * Shared foundation for the bindings fixture: bucket + DataBrew service role
@@ -143,7 +157,9 @@ export default DataBrewTestFunction.make(
         switch (route) {
           // ---- job-run plane ----
           case "POST /run/start": {
-            const result = yield* errorTagged(startJobRun());
+            const result = yield* errorTagged(
+              startJobRun().pipe(Effect.retry(authorizationPolicy)),
+            );
             return yield* HttpServerResponse.json(
               "errorTag" in result ? result : { runId: result.RunId },
             );
@@ -175,7 +191,9 @@ export default DataBrewTestFunction.make(
           // ---- recipe plane ----
           case "POST /recipe/publish": {
             const result = yield* errorTagged(
-              publishRecipe({ Description: "published by bindings fixture" }),
+              publishRecipe({
+                Description: "published by bindings fixture",
+              }).pipe(Effect.retry(authorizationPolicy)),
             );
             return yield* HttpServerResponse.json(
               "errorTag" in result ? result : { name: result.Name },
@@ -185,13 +203,14 @@ export default DataBrewTestFunction.make(
           // ---- interactive-session plane ----
           case "POST /session/run": {
             const started = yield* errorTagged(
-              startProjectSession({ AssumeControl: true }),
+              startProjectSession({ AssumeControl: true }).pipe(
+                Effect.retry(authorizationPolicy),
+              ),
             );
             if ("errorTag" in started) {
               return yield* HttpServerResponse.json({ started });
             }
-            // A fresh session takes a little while to become actionable —
-            // surfaced as ConflictException. Bounded retry (6 × 5s).
+            // Session readiness and IAM propagation share one bounded retry.
             const action = yield* errorTagged(
               sendProjectSessionAction({
                 Preview: true,

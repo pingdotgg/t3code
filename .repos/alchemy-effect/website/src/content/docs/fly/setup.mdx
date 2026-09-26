@@ -81,29 +81,29 @@ Sprite.
 
 There is no separate credentials step. The first time you run
 `alchemy deploy` (or `plan`, `dev`, `destroy`) on a stack that uses
-`Fly.providers()`, alchemy walks you through an interactive login
-with two options:
-
-- **API Token** — paste the token you generated above. It's verified
-  against the Machines API and saved under
-  `~/.alchemy/credentials/<profile>/`.
-- **Environment Variables** — reads `FLY_API_TOKEN` from the
-  environment on every run (plus an optional `FLY_API_HOSTNAME` to
-  override the Machines API root, default
-  `https://api.machines.dev/v1`). This is the method for CI — when
-  alchemy detects `CI=true` it skips the prompt and uses the
-  environment automatically.
-
-Either choice is saved to your **`default`**
+`Fly.providers()`, alchemy prompts for the token you generated above
+(and, optionally, a Machines API hostname — default
+`https://api.machines.dev/v1`). It is saved under
+`~/.alchemy/credentials/<profile>/` in your **`default`**
 [profile](/environments/profiles) and reused on every subsequent
 command.
+
+In CI (`CI=true`) alchemy skips the prompt and reads `FLY_API_TOKEN`
+(plus an optional `FLY_API_HOSTNAME`) from the environment instead.
 
 To re-run the setup later (e.g. to rotate the token, or configure a
 separate `prod` profile):
 
 ```sh
-alchemy login --configure
-alchemy login --profile prod --configure
+# Re-run the interactive setup (e.g. to rotate the token)
+alchemy profile edit --reconfigure Fly
+
+# Or connect Fly in a separate `prod` profile
+alchemy profile create prod
+alchemy profile edit --profile prod --add Fly
+
+# Non-interactive (scripts, agents)
+alchemy profile edit --add Fly --method stored --set apiKey=env:FLY_API_TOKEN
 ```
 
 Inspect what's stored (secrets are redacted):

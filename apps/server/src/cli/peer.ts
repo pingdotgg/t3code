@@ -71,11 +71,12 @@ export const runningServerWsUrl = (origin: string): string => {
 
 // Node's `ws` client rather than the global WebSocket: the administrative
 // bearer token has to ride on the upgrade request, and only `ws` takes headers.
+// Socket.makeWebSocket only ever passes its `protocols` option here.
 const bearerWebSocketConstructorLayer = (token: string) =>
   Layer.succeed(
     Socket.WebSocketConstructor,
     (url, protocols) =>
-      new NodeSocket.NodeWS.WebSocket(url, protocols, {
+      new NodeSocket.NodeWS.WebSocket(url, protocols as string | string[] | undefined, {
         headers: { authorization: `Bearer ${token}` },
       }) as unknown as globalThis.WebSocket,
   );
@@ -258,7 +259,7 @@ const followRemoteRun = Effect.fn("peer.followRemoteRun")(function* (
   return yield* Ref.get(latest);
 });
 
-const peerIdArgument = Argument.string("peer-id").pipe(
+const peerIdArgument = Argument.String("peer-id").pipe(
   Argument.withDescription("Peer environment id, as listed by `t3 peer list`."),
   Argument.withSchema(EnvironmentId),
 );
@@ -267,11 +268,11 @@ const scopeDescription = `Repeat for several; defaults to ${FEDERATION_DEFAULT_S
 
 const peerCodeCommand = Command.make("code", {
   baseDir: baseDirFlag,
-  scope: Flag.choice("scope", FederationScope.literals).pipe(
+  scope: Flag.Literals("scope", FederationScope.literals).pipe(
     Flag.withDescription(`Scope offered to the server that redeems the code. ${scopeDescription}`),
     Flag.atLeast(0),
   ),
-  ttl: Flag.string("ttl").pipe(
+  ttl: Flag.String("ttl").pipe(
     Flag.withSchema(DurationFromString),
     Flag.withDescription(
       "How long the code stays redeemable, for example `5m` or `1h`. Defaults to 5 minutes.",
@@ -301,11 +302,11 @@ const peerCodeCommand = Command.make("code", {
 
 const peerAddCommand = Command.make("add", {
   baseDir: baseDirFlag,
-  code: Argument.string("code").pipe(
+  code: Argument.String("code").pipe(
     Argument.withDescription("Peer code issued by `t3 peer code` on the other server."),
     Argument.withSchema(TrimmedNonEmptyString),
   ),
-  grant: Flag.choice("grant", FederationScope.literals).pipe(
+  grant: Flag.Literals("grant", FederationScope.literals).pipe(
     Flag.withDescription(`Scope this server grants the new peer. ${scopeDescription}`),
     Flag.atLeast(0),
   ),
@@ -394,20 +395,20 @@ const peerProjectsCommand = Command.make("projects", {
 const peerRunCommand = Command.make("run", {
   baseDir: baseDirFlag,
   peerId: peerIdArgument,
-  projectId: Argument.string("project-id").pipe(
+  projectId: Argument.String("project-id").pipe(
     Argument.withDescription("Project on the peer, as listed by `t3 peer projects`."),
     Argument.withSchema(ProjectId),
   ),
-  prompt: Argument.string("prompt").pipe(
+  prompt: Argument.String("prompt").pipe(
     Argument.withDescription("Prompt for the run; several words are joined with spaces."),
     Argument.withSchema(TrimmedNonEmptyString),
     Argument.variadic({ min: 1 }),
   ),
-  title: Flag.string("title").pipe(
+  title: Flag.String("title").pipe(
     Flag.withDescription("Optional thread title on the peer."),
     Flag.optional,
   ),
-  wait: Flag.boolean("wait").pipe(
+  wait: Flag.Boolean("wait").pipe(
     Flag.withDescription("Follow the run and print its events until it finishes."),
     Flag.withDefault(false),
   ),

@@ -59,7 +59,7 @@ export const makeMicrovmRuntimeContext = (
       }),
     get: <T>(key: string) =>
       // Read straight from `process.env` — see `unpackEnvValue` for why
-      // this must never resolve through `Config.string`.
+      // this must never resolve through `Config.String`.
       Effect.sync(() => unpackEnvValue<T>(process.env[key]) as T),
     run: ((effect: Effect.Effect<void, never, any>) =>
       Effect.sync(() => {

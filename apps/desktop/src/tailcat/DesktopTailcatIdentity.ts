@@ -42,7 +42,7 @@ const IdentityRecordJson = Schema.fromJsonString(IdentityRecord);
 const decodeIdentityRecord = Schema.decodeUnknownEffect(IdentityRecordJson);
 const encodeIdentityRecord = Schema.encodeEffect(IdentityRecordJson);
 
-export class DesktopTailcatIdentityError extends Schema.TaggedErrorClass<DesktopTailcatIdentityError>()(
+export class DesktopTailcatIdentityError extends Schema.TaggedError<DesktopTailcatIdentityError>()(
   "DesktopTailcatIdentityError",
   {
     operation: Schema.Literals(["load", "generate", "store", "materialize"]),

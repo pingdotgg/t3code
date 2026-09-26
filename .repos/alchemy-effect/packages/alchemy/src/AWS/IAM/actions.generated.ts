@@ -2,7 +2,7 @@
 //
 // Regenerate with: bun scripts/generate-iam-actions.ts
 //
-// Source: distilled/packages/aws/src/services/*.ts (429 service modules,
+// Source: submodules/distilled/packages/aws/src/services/*.ts (429 service modules,
 // 357 IAM action prefixes, 18270 operations).
 //
 // A SHALLOW literal union (no template-literal type computation) of

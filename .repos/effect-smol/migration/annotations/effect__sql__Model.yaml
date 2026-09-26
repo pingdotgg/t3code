@@ -10,6 +10,9 @@
 "@effect/sql/Model#Class":
   replacement: "effect/unstable/schema/Model#Class"
   note: "Moved; model variants remain select, insert, update, json, jsonCreate, and jsonUpdate."
+"@effect/sql/Model#Date":
+  replacement: "effect/unstable/schema/Model#Date"
+  note: "Moved; still serializes DateTime.Utc as a YYYY-MM-DD string."
 "@effect/sql/Model#DateTimeFromDate":
   replacement: "effect/Schema#DateTimeUtcFromDate"
   note: "Moved to core Schema and retains Date to DateTime.Utc conversion."
@@ -24,7 +27,7 @@
   note: "Renamed and now read-only, with select and json variants only. Use Model.Field with select, update, and json to preserve writable v3 behavior."
 "@effect/sql/Model#makeDataLoaders":
   replacement: "effect/unstable/sql/SqlModel#makeResolvers"
-  note: "Returns RequestResolvers instead of callable loaders; execute with SqlResolver.request and use RequestResolver delay/batch combinators for batching controls."
+  note: "Returns RequestResolvers instead of callable loaders; execute with SqlResolver.request and use RequestResolver delay/batch combinators for batching controls. The insert resolver requires model decoding services as well as insert-schema encoding services."
 "@effect/sql/Model#Override":
   replacement: "effect/unstable/schema/Model#Override"
   note: "Moved with the same explicit-default override purpose."

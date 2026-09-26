@@ -73,6 +73,8 @@ const transformTypesFlags = (): Array<string> => {
 };
 
 export interface BuildChildOptions {
+  /** Use Node from PATH for toolchains that cannot build under Bun. Requires native TypeScript support when running source modules. */
+  readonly runtime?: "node" | undefined;
   /**
    * File URL of the module exporting `buildInChild` — pass
    * `import.meta.url`. The shared runner entry (resolved as a sibling of
@@ -88,7 +90,8 @@ export interface BuildChildOptions {
   /**
    * Extra process env for the child only. Merged over the parent's env
    * at spawn time so Vite/nitro/`import.meta.env` see site `env` without
-   * the parent mutating `process.env` (plugins in the child may still
+   * the parent mutating `process.env`. NODE_ENV defaults to production;
+   * an explicit value here overrides that default (plugins in the child may still
    * mutate theirs — that is why this is a child).
    */
   readonly env?: Record<string, string> | undefined;
@@ -144,7 +147,9 @@ export const runBuildChild = (
         ),
       );
       const isBun =
+        options.runtime !== "node" &&
         typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
+      const executable = options.runtime === "node" ? "node" : process.execPath;
       const payload: BuildChildPayload = {
         module: options.module,
         config: options.config,
@@ -153,7 +158,7 @@ export const runBuildChild = (
       const args = [
         ...(isBun
           ? ["run"]
-          : entry.endsWith(".ts")
+          : entry.endsWith(".ts") && options.runtime !== "node"
             ? transformTypesFlags()
             : []),
         entry,
@@ -170,18 +175,18 @@ export const runBuildChild = (
       );
 
       const exitCode = yield* Effect.gen(function* () {
-        const child = yield* ChildProcess.make(process.execPath, args, {
+        const child = yield* ChildProcess.make(executable, args, {
           cwd: options.rootDir,
           stdin: "ignore",
           stdout: "pipe",
           stderr: "pipe",
-          ...(options.env !== undefined
-            ? { env: { ...process.env, ...options.env } }
-            : {}),
+          // Default builds to production rather than inheriting the CLI/test
+          // runner's mode, while preserving deliberate build-env overrides.
+          env: { ...process.env, NODE_ENV: "production", ...options.env },
         }).pipe(
           Effect.mapError(
             fail(
-              `Failed to spawn the ${options.framework} build child (${process.execPath})`,
+              `Failed to spawn the ${options.framework} build child (${executable})`,
             ),
           ),
         );

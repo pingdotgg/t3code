@@ -1,6 +1,6 @@
-// Test fixture: boots an RpcSpawner, starts the Command.Dev RPC sidecar,
-// reconciles a real DevServer through that sidecar, prints the dev-server pid,
-// then idles until the test harness kills this parent process.
+// Test fixture: boots an RpcSpawner, starts the dev sidecar, reconciles a
+// real DevServer through its Command.Dev provider group, prints the
+// dev-server pid, then idles until the test harness kills this parent process.
 // Relative imports (not `@/` alias) so this file runs under both Bun and Node
 // without a paths-aware loader.
 import { newWebSocketRpcSession } from "capnweb";
@@ -22,12 +22,13 @@ import { layerServer, RpcSpawner } from "../../../src/Local/RpcSpawner.ts";
 import { PlatformServices } from "../../../src/Util/PlatformServices.ts";
 
 const sidecarEntry = process.argv[2];
-const command = process.argv[3];
-const pidFile = process.argv[4];
+const providersUrl = process.argv[3];
+const command = process.argv[4];
+const pidFile = process.argv[5];
 
-if (!sidecarEntry || !command || !pidFile) {
+if (!sidecarEntry || !providersUrl || !command || !pidFile) {
   console.error(
-    "usage: rpc-spawner-devserver-parent.ts <sidecar-entry-url> <command> <pid-file>",
+    "usage: rpc-spawner-devserver-parent.ts <sidecar-entry-url> <providers-url> <command> <pid-file>",
   );
   process.exit(2);
 }
@@ -58,7 +59,7 @@ const program = Effect.gen(function* () {
   const session = newWebSocketRpcSession<RpcProxyApi>(sessionUrl.toString());
   const wrapped = yield* Effect.promise(
     () =>
-      session.getProvider("Command.Dev") as ReturnType<
+      session.getProvider("Command.Dev", providersUrl) as ReturnType<
         RpcProxyApi["getProvider"]
       >,
   );

@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   FEDERATION_PROTOCOL_VERSION,
+  ORCHESTRATION_PROTOCOL_VERSION,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
@@ -127,13 +128,12 @@ const makeIdentity = Effect.gen(function* () {
       });
       yield* fileSystem.writeFileString(tempPath, `${value}\n`);
       // Publish the completed file without replacing an ID created by another process.
-      yield* fileSystem
-        .link(tempPath, destinationPath)
-        .pipe(
-          Effect.catch((cause) =>
-            cause.reason._tag === "AlreadyExists" ? Effect.void : Effect.fail(cause),
-          ),
-        );
+      yield* fileSystem.link(tempPath, destinationPath).pipe(
+        Effect.catchIf(
+          (cause) => cause.reason._tag === "AlreadyExists",
+          () => Effect.void,
+        ),
+      );
       if (mode === "recover") {
         // Keep the recovery ID so delayed initializers also publish the same winner.
         yield* fileSystem.remove(tempPath);
@@ -213,6 +213,7 @@ export const make = Effect.gen(function* () {
       ...(machine === null ? {} : { machine }),
     },
     serverVersion: packageJson.version,
+    orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
     capabilities: {
       repositoryIdentity: true,
       connectionProbe: true,
@@ -220,9 +221,14 @@ export const make = Effect.gen(function* () {
       questionAttachments: true,
       fileAttachments: { maxUploadBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES },
       pullRequests: true,
+      inlineMessageContext: true,
+      requiredWorktreeBootstrap: true,
       threadSettlement: true,
       threadAutoSettlement: true,
+      storageCleanup: true,
+      projectWorktreeCleanup: true,
       threadRestartContinuation: true,
+      projectSettingsOverrides: true,
       threadSnooze: true,
       environmentThemes: true,
       usageLimitSources: true,
@@ -230,9 +236,13 @@ export const make = Effect.gen(function* () {
       threadPinning: true,
       threadPinReorder: true,
       threadActiveReorder: true,
+      threadAutoSettleOptOut: true,
       threadTitleRegeneration: true,
+      threadPullRequests: true,
+      pullRequestStackActions: true,
       threadPullRequestLinking: true,
       environmentIcon: true,
+      projectCloneTracking: true,
       tailcatRemoteAccess: true,
       federation: { protocolVersion: FEDERATION_PROTOCOL_VERSION },
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),

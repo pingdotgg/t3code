@@ -146,7 +146,7 @@ export type GatewayProvider = Resource<
  * const secret = yield* Cloudflare.SecretsStore.Secret("OpenAiKey", {
  *   store,
  *   name: "my-gateway_openai_default",
- *   value: yield* Config.redacted("OPENAI_API_KEY"),
+ *   value: yield* Config.Redacted("OPENAI_API_KEY"),
  *   scopes: ["ai_gateway"],
  * });
  *

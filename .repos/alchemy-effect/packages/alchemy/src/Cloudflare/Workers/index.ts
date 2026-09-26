@@ -32,6 +32,7 @@ export * from "./SecretKey.ts";
 export * from "./SecretKeyBinding.ts";
 export * from "./Source.ts";
 export * from "./Subdomain.ts";
+export * from "./Telemetry.ts";
 export * from "./VersionMetadata.ts";
 export * from "./VersionMetadataBinding.ts";
 export * from "./WebSocket.ts";

@@ -29,7 +29,7 @@ export const TailcatArchiveReason = Schema.Literals([
 ]);
 export type TailcatArchiveReason = typeof TailcatArchiveReason.Type;
 
-export class TailcatArchiveError extends Schema.TaggedErrorClass<TailcatArchiveError>()(
+export class TailcatArchiveError extends Schema.TaggedError<TailcatArchiveError>()(
   "TailcatArchiveError",
   {
     archive: Schema.String,

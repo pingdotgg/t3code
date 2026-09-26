@@ -15,12 +15,16 @@ import {
 import * as ProviderLayer from "../Local/ProviderLayer.ts";
 import { Resource } from "../Resource.ts";
 import {
-  PrismaClient,
-  extractConnectionSecrets,
-  isConflict,
-  isNotFound,
-  type PrismaManagementClient,
-} from "./Client.ts";
+  type GetConnectionsResponse,
+  deleteConnection,
+  getConnections,
+  getConnection,
+  getDatabaseConnections,
+  createConnection,
+  createConnectionRotate,
+} from "@distilled.cloud/prisma/management";
+import { Retry } from "@distilled.cloud/prisma";
+import { extractConnectionSecrets } from "./Client.ts";
 import type { Database } from "./Database.ts";
 import {
   deriveConnectionAttrs,
@@ -36,11 +40,9 @@ import {
   resolveDatabaseId,
   unresolvedDatabaseIdOf,
 } from "./Refs.ts";
-import type {
-  DatabaseConnection,
-  DatabaseConnectionWithSecrets,
-  PrismaSecretConnection,
-} from "./Types.ts";
+import type { ObservedConnectionRecord } from "./Internal/Observed.ts";
+import type { PrismaSecretConnection } from "./Types.ts";
+import { PrismaPaginationError } from "./Internal/Pagination.ts";
 
 export interface ConnectionProps {
   /**
@@ -261,14 +263,65 @@ export interface Connection extends Resource<
  */
 export const Connection = Resource<Connection>("Prisma.Connection");
 
+// Distilled emits the cursor-paginated list operations as plain ops, so
+// callers walk `pagination` themselves (see `src/Neon/Project.ts`).
+const listDatabaseConnections = (databaseId: string) =>
+  Effect.gen(function* () {
+    const connections: GetConnectionsResponse["data"][number][] = [];
+    let cursor: string | undefined;
+    while (true) {
+      const page = yield* getDatabaseConnections(
+        cursor === undefined
+          ? { databaseId, limit: 100 }
+          : { databaseId, limit: 100, cursor },
+      );
+      connections.push(...page.data);
+      const nextCursor = page.pagination.nextCursor;
+      if (!page.pagination.hasMore) break;
+      if (nextCursor === null) {
+        return yield* Effect.fail(
+          new PrismaPaginationError({
+            message:
+              "Invalid Prisma Management API pagination response from getDatabaseConnections: hasMore was true without a non-empty nextCursor",
+          }),
+        );
+      }
+      cursor = nextCursor;
+    }
+    return connections;
+  });
+
+const listAllConnections = () =>
+  Effect.gen(function* () {
+    const connections: GetConnectionsResponse["data"][number][] = [];
+    let cursor: string | undefined;
+    while (true) {
+      const page = yield* getConnections(
+        cursor === undefined ? {} : { cursor },
+      );
+      connections.push(...page.data);
+      const nextCursor = page.pagination.nextCursor;
+      if (!page.pagination.hasMore) break;
+      if (nextCursor === null) {
+        return yield* Effect.fail(
+          new PrismaPaginationError({
+            message:
+              "Invalid Prisma Management API pagination response from getConnections: hasMore was true without a non-empty nextCursor",
+          }),
+        );
+      }
+      cursor = nextCursor;
+    }
+    return connections;
+  });
+
 const findConnection = (
-  client: PrismaManagementClient,
   databaseId: string,
-  predicate: (connection: DatabaseConnection) => boolean,
+  predicate: (connection: ObservedConnectionRecord) => boolean,
 ) =>
-  client
-    .listDatabaseConnections(databaseId, { limit: 100 })
-    .pipe(Effect.map((connections) => connections.filter(predicate)));
+  listDatabaseConnections(databaseId).pipe(
+    Effect.map((connections) => connections.filter(predicate)),
+  );
 
 class AmbiguousPrismaConnectionError extends Error {
   readonly _tag = "AmbiguousPrismaConnectionError";
@@ -298,12 +351,11 @@ const validateConnectionName = (name: string) => {
 };
 
 const uniqueConnection = (
-  client: PrismaManagementClient,
   databaseId: string,
   description: string,
-  predicate: (connection: DatabaseConnection) => boolean,
+  predicate: (connection: ObservedConnectionRecord) => boolean,
 ) =>
-  findConnection(client, databaseId, predicate).pipe(
+  findConnection(databaseId, predicate).pipe(
     Effect.flatMap((connections) =>
       connections.length <= 1
         ? Effect.succeed(connections[0])
@@ -325,12 +377,10 @@ const generatedConnectionRecoverySchedule = Schedule.max([
 ]);
 
 const recoverGeneratedConnectionAfterConflict = (
-  client: PrismaManagementClient,
   databaseId: string,
   expectedName: string,
 ) =>
   uniqueConnection(
-    client,
     databaseId,
     expectedName,
     (candidate) => candidate.name === expectedName,
@@ -372,7 +422,7 @@ const isAdoptablePhysicalConnectionName = (
   isGeneratedPhysicalConnectionName(physicalName, logicalName);
 
 const attrsFrom = (
-  connection: DatabaseConnection | DatabaseConnectionWithSecrets,
+  connection: ObservedConnectionRecord,
   secrets: PrismaSecretConnection,
 ): Connection["Attributes"] => ({
   connectionId: connection.id,
@@ -393,17 +443,14 @@ const ProviderLive = () =>
   Provider.effect(
     Connection,
     Effect.gen(function* () {
-      const client = yield* PrismaClient;
       return {
         stables: ["connectionId"],
         list: () =>
-          client
-            .listConnections()
-            .pipe(
-              Effect.map((connections) =>
-                connections.map((c) => attrsFrom(c, {})),
-              ),
+          listAllConnections().pipe(
+            Effect.map((connections) =>
+              connections.map((c) => attrsFrom(c, {})),
             ),
+          ),
         diff: Effect.fn(function* ({ id, olds, news, output }) {
           if (!isInputObject(news)) return undefined;
           if (isPrismaDevId(output?.connectionId)) {
@@ -434,11 +481,12 @@ const ProviderLive = () =>
             ? undefined
             : output?.connectionId;
           if (connectionId && output) {
-            const connection = yield* client
-              .getConnection(connectionId)
-              .pipe(
-                Effect.catchIf(isNotFound, () => Effect.succeed(undefined)),
-              );
+            const connection = yield* getConnection({
+              id: connectionId,
+            }).pipe(
+              Effect.map((response) => response.data),
+              Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
+            );
             if (!connection) return undefined;
             if (
               connection.database.id !== output.databaseId ||
@@ -466,7 +514,6 @@ const ProviderLive = () =>
           const name = yield* validateConnectionName(olds.name ?? id);
           const expectedName = physicalInstanceName(name, instanceId);
           const owned = yield* uniqueConnection(
-            client,
             databaseId,
             expectedName,
             (connection) => connection.name === expectedName,
@@ -475,7 +522,6 @@ const ProviderLive = () =>
 
           const prefix = physicalConnectionPrefix(name);
           const generated = yield* uniqueConnection(
-            client,
             databaseId,
             `${prefix}<instance-id>`,
             (connection) =>
@@ -485,7 +531,6 @@ const ProviderLive = () =>
           const connection =
             generated ??
             (yield* uniqueConnection(
-              client,
               databaseId,
               name,
               (connection) => connection.name === name,
@@ -505,12 +550,11 @@ const ProviderLive = () =>
           const connectionId = isPrismaDevId(output?.connectionId)
             ? undefined
             : output?.connectionId;
-          let connection = connectionId
-            ? yield* client
-                .getConnection(connectionId)
-                .pipe(
-                  Effect.catchIf(isNotFound, () => Effect.succeed(undefined)),
-                )
+          let connection: ObservedConnectionRecord | undefined = connectionId
+            ? yield* getConnection({ id: connectionId }).pipe(
+                Effect.map((response) => response.data),
+                Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
+              )
             : undefined;
 
           const expectedName = physicalInstanceName(name, instanceId);
@@ -540,7 +584,6 @@ const ProviderLive = () =>
 
           if (!connection && !connectionId) {
             connection = yield* uniqueConnection(
-              client,
               databaseId,
               expectedName,
               (candidate) => candidate.name === expectedName,
@@ -551,15 +594,19 @@ const ProviderLive = () =>
             ? extractConnectionSecrets(connection)
             : {};
           if (!connection) {
-            const create = client.createConnection({
+            const create = createConnection({
               databaseId,
               name: physicalName,
-            });
+            }).pipe(
+              // A replayed create would mint a second connection; the retry
+              // policy cannot see the request, so opt out explicitly.
+              Retry.none,
+              Effect.map((response) => response.data),
+            );
             connection = yield* physicalName === expectedName
               ? create.pipe(
-                  Effect.catchIf(isConflict, () =>
+                  Effect.catchTag("Conflict", () =>
                     recoverGeneratedConnectionAfterConflict(
-                      client,
                       databaseId,
                       expectedName,
                     ),
@@ -581,7 +628,14 @@ const ProviderLive = () =>
             recoveringOwnedGeneratedSecrets ||
             (news.rotate === true && olds?.rotate !== true)
           ) {
-            const rotated = yield* client.rotateConnection(connection.id);
+            const rotated = yield* createConnectionRotate({
+              id: connection.id,
+            }).pipe(
+              // Rotation mints new credentials; a replay would revoke the
+              // ones we just persisted, so opt out of the retry policy.
+              Retry.none,
+              Effect.map((response) => response.data),
+            );
             if (
               rotated.id !== connection.id ||
               rotated.database.id !== databaseId ||
@@ -619,9 +673,12 @@ const ProviderLive = () =>
         }),
         delete: Effect.fn(function* ({ output }) {
           if (isPrismaDevId(output.connectionId)) return;
-          const connection = yield* client
-            .getConnection(output.connectionId)
-            .pipe(Effect.catchIf(isNotFound, () => Effect.succeed(undefined)));
+          const connection = yield* getConnection({
+            id: output.connectionId,
+          }).pipe(
+            Effect.map((response) => response.data),
+            Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
+          );
           if (!connection) return;
           if (
             connection.database.id !== output.databaseId ||
@@ -633,9 +690,9 @@ const ProviderLive = () =>
               ),
             );
           }
-          yield* client
-            .deleteConnection(connection.id)
-            .pipe(Effect.catchIf(isNotFound, () => Effect.void));
+          yield* deleteConnection({ id: connection.id }).pipe(
+            Effect.catchTag("NotFound", () => Effect.void),
+          );
         }),
       };
     }),

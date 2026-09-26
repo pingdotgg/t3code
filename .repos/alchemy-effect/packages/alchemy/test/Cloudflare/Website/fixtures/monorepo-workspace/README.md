@@ -1,6 +1,6 @@
 # fixtures/monorepo-workspace
 
-Mirrors `fixtures/monorepo-workspace`: a two-directory
+Mirrors `packages/frontend-frameworks/fixtures/monorepo-workspace`: a two-directory
 monorepo where the app's source imports a sibling `lib/` directory across
 the package boundary.
 

@@ -82,7 +82,7 @@ export interface RunningServerSession {
  * federation failure: rejected credentials, an internal error, a transport
  * failure, or no answer at all. The cause stays attached for logs.
  */
-export class RunningServerRequestError extends Schema.TaggedErrorClass<RunningServerRequestError>()(
+export class RunningServerRequestError extends Schema.TaggedError<RunningServerRequestError>()(
   "RunningServerRequestError",
   {
     operation: Schema.String,
@@ -104,7 +104,7 @@ export class RunningServerRequestError extends Schema.TaggedErrorClass<RunningSe
   }
 }
 
-export class TailcatUnavailableError extends Schema.TaggedErrorClass<TailcatUnavailableError>()(
+export class TailcatUnavailableError extends Schema.TaggedError<TailcatUnavailableError>()(
   "TailcatUnavailableError",
   {
     code: TailcatFailureCode,
@@ -119,7 +119,7 @@ export class TailcatUnavailableError extends Schema.TaggedErrorClass<TailcatUnav
   }
 }
 
-export class TailcatNotReadyError extends Schema.TaggedErrorClass<TailcatNotReadyError>()(
+export class TailcatNotReadyError extends Schema.TaggedError<TailcatNotReadyError>()(
   "TailcatNotReadyError",
   {
     status: TailcatServeStatus,
@@ -476,11 +476,11 @@ const tailcatDisableCommand = Command.make("disable", {
 
 const tailcatCodeCommand = Command.make("code", {
   baseDir: baseDirFlag,
-  label: Flag.string("label").pipe(
+  label: Flag.String("label").pipe(
     Flag.withDescription("Optional label for the device that will redeem the code."),
     Flag.optional,
   ),
-  ttl: Flag.string("ttl").pipe(
+  ttl: Flag.String("ttl").pipe(
     Flag.withSchema(DurationFromString),
     Flag.withDescription(
       "How long the code stays redeemable, for example `5m` or `1h`. Defaults to 5 minutes.",
@@ -522,7 +522,7 @@ const tailcatPeersCommand = Command.make("peers", {
 
 const tailcatRevokeCommand = Command.make("revoke", {
   baseDir: baseDirFlag,
-  peerId: Argument.string("peer-id").pipe(
+  peerId: Argument.String("peer-id").pipe(
     Argument.withDescription("Trusted peer id to revoke, as listed by `peers`."),
     Argument.withSchema(TrimmedNonEmptyString),
   ),

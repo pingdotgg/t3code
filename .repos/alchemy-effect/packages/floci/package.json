@@ -1,6 +1,6 @@
 {
   "name": "@alchemy.run/floci",
-  "version": "2.0.0-beta.76",
+  "version": "2.0.0-beta.78",
   "description": "Effect-native manager for the floci local cloud emulator: ensure the container is running, health-gate it, and resolve the endpoint for alchemy's AWS local dev.",
   "homepage": "https://alchemy.run",
   "license": "Apache-2.0",
@@ -44,11 +44,11 @@
     "access": "public"
   },
   "peerDependencies": {
-    "effect": "catalog:effect"
+    "effect": "catalog:"
   },
   "devDependencies": {
-    "@types/node": "catalog:tooling",
-    "effect": "catalog:effect",
-    "typescript": "catalog:build"
+    "@types/node": "catalog:",
+    "effect": "catalog:",
+    "typescript": "catalog:"
   }
 }

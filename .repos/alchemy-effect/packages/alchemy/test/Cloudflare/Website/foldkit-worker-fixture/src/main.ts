@@ -1,7 +1,7 @@
 import { Match as M, Schema as S } from "effect";
-import { Command, Runtime } from "foldkit";
+import type { Runtime, Update } from "foldkit";
 import type { Document, HtmlBuilder } from "foldkit/html";
-import { m } from "foldkit/message";
+import { defineMessageUnion } from "foldkit/message";
 
 // MODEL
 
@@ -10,8 +10,10 @@ export type Model = typeof Model.Type;
 
 // MESSAGE
 
-export const ClickedIncrement = m("ClickedIncrement");
-export const Message = S.Union([ClickedIncrement]);
+export const Message = defineMessageUnion({
+  ClickedIncrement: {},
+});
+export const { ClickedIncrement } = Message;
 export type Message = typeof Message.Type;
 
 // UPDATE
@@ -19,22 +21,19 @@ export type Message = typeof Message.Type;
 export const update = (
   model: Model,
   message: Message,
-): readonly [Model, ReadonlyArray<Command.Command<Message>>] =>
+): Update.Return<Model, Message> =>
   M.value(message).pipe(
-    M.withReturnType<
-      readonly [Model, ReadonlyArray<Command.Command<Message>>]
-    >(),
+    M.withReturnType<Update.Return<Model, Message>>(),
     M.tagsExhaustive({
-      ClickedIncrement: () => [{ count: model.count + 1 }, []],
+      ClickedIncrement: () => ({ model: { count: model.count + 1 } }),
     }),
   );
 
 // INIT
 
-export const init: Runtime.ApplicationInit<Model, Message> = () => [
-  { count: 0 },
-  [],
-];
+export const init: Runtime.ApplicationInit<Model, Message> = () => ({
+  model: { count: 0 },
+});
 
 // VIEW
 

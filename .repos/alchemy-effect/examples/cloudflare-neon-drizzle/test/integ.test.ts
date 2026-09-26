@@ -30,9 +30,15 @@ afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), {
 
 // Fresh `workers.dev` URLs transiently 404 (route still propagating) or 5xx
 // (Hyperdrive/Neon binding still settling). `Test.getWhenReady` fails on that
-// cold-start window and retries until the worker answers; the first hit in
-// each test rides it, subsequent requests run against the warmed worker.
+// cold-start window and retries until the worker answers — but one 200 does
+// not mean the route has converged everywhere: for the first ~30s after
+// "Enabling workers.dev subdomain" consecutive requests can interleave 200s
+// with edge-generated HTML 404s. The worker itself only ever answers JSON
+// (including its own 400/405/500), so guard the client on content-type: any
+// HTML edge page is rejected and retried, while the worker's real statuses
+// stay observable for the assertions below.
 const { getWhenReady } = Test;
+const jsonClient = Test.guardedFetchLayer("application/json", { times: 10 });
 
 test(
   "worker exposes a URL, hyperdrive id, and neon branch id",
@@ -124,7 +130,7 @@ test(
     expect(finalBody.users.some((user) => user.id === createdUser.id)).toBe(
       false,
     );
-  }),
+  }).pipe(Effect.provide(jsonClient)),
   // The cold-start `getWhenReady` window plus a full CRUD round-trip against a
   // freshly-warmed Neon/Hyperdrive connection routinely exceeds 20s. Match the
   // sequential-query case's budget.
@@ -154,6 +160,6 @@ test(
       Effect.zip(jitter),
       Effect.repeat(Schedule.recurs(99)),
     );
-  }),
+  }).pipe(Effect.provide(jsonClient)),
   { timeout: 120_000 },
 );

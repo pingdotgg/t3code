@@ -11,7 +11,7 @@ const TailcatErrorFields = {
   detail: Schema.String,
 };
 
-export class TailcatBinaryMissingError extends Schema.TaggedErrorClass<TailcatBinaryMissingError>()(
+export class TailcatBinaryMissingError extends Schema.TaggedError<TailcatBinaryMissingError>()(
   "TailcatBinaryMissingError",
   {
     ...TailcatErrorFields,
@@ -23,7 +23,7 @@ export class TailcatBinaryMissingError extends Schema.TaggedErrorClass<TailcatBi
   }
 }
 
-export class TailcatBinaryNotExecutableError extends Schema.TaggedErrorClass<TailcatBinaryNotExecutableError>()(
+export class TailcatBinaryNotExecutableError extends Schema.TaggedError<TailcatBinaryNotExecutableError>()(
   "TailcatBinaryNotExecutableError",
   {
     ...TailcatErrorFields,
@@ -35,7 +35,7 @@ export class TailcatBinaryNotExecutableError extends Schema.TaggedErrorClass<Tai
   }
 }
 
-export class TailcatVersionIncompatibleError extends Schema.TaggedErrorClass<TailcatVersionIncompatibleError>()(
+export class TailcatVersionIncompatibleError extends Schema.TaggedError<TailcatVersionIncompatibleError>()(
   "TailcatVersionIncompatibleError",
   {
     ...TailcatErrorFields,
@@ -49,7 +49,7 @@ export class TailcatVersionIncompatibleError extends Schema.TaggedErrorClass<Tai
   }
 }
 
-export class TailcatCommandError extends Schema.TaggedErrorClass<TailcatCommandError>()(
+export class TailcatCommandError extends Schema.TaggedError<TailcatCommandError>()(
   "TailcatCommandError",
   {
     ...TailcatErrorFields,
@@ -63,7 +63,7 @@ export class TailcatCommandError extends Schema.TaggedErrorClass<TailcatCommandE
   }
 }
 
-export class TailcatAddressInvalidError extends Schema.TaggedErrorClass<TailcatAddressInvalidError>()(
+export class TailcatAddressInvalidError extends Schema.TaggedError<TailcatAddressInvalidError>()(
   "TailcatAddressInvalidError",
   {
     ...TailcatErrorFields,
@@ -74,7 +74,7 @@ export class TailcatAddressInvalidError extends Schema.TaggedErrorClass<TailcatA
   }
 }
 
-export class TailcatPortInUseError extends Schema.TaggedErrorClass<TailcatPortInUseError>()(
+export class TailcatPortInUseError extends Schema.TaggedError<TailcatPortInUseError>()(
   "TailcatPortInUseError",
   {
     ...TailcatErrorFields,
@@ -86,7 +86,7 @@ export class TailcatPortInUseError extends Schema.TaggedErrorClass<TailcatPortIn
   }
 }
 
-export class TailcatStartupError extends Schema.TaggedErrorClass<TailcatStartupError>()(
+export class TailcatStartupError extends Schema.TaggedError<TailcatStartupError>()(
   "TailcatStartupError",
   {
     ...TailcatErrorFields,
@@ -101,7 +101,7 @@ export class TailcatStartupError extends Schema.TaggedErrorClass<TailcatStartupE
   }
 }
 
-export class TailcatTimeoutError extends Schema.TaggedErrorClass<TailcatTimeoutError>()(
+export class TailcatTimeoutError extends Schema.TaggedError<TailcatTimeoutError>()(
   "TailcatTimeoutError",
   {
     ...TailcatErrorFields,
@@ -114,7 +114,7 @@ export class TailcatTimeoutError extends Schema.TaggedErrorClass<TailcatTimeoutE
   }
 }
 
-export class TailcatProcessExitedError extends Schema.TaggedErrorClass<TailcatProcessExitedError>()(
+export class TailcatProcessExitedError extends Schema.TaggedError<TailcatProcessExitedError>()(
   "TailcatProcessExitedError",
   {
     ...TailcatErrorFields,

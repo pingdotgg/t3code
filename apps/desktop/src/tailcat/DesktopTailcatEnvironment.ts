@@ -48,7 +48,7 @@ import * as DesktopTailcatIdentity from "./DesktopTailcatIdentity.ts";
 export const TAILCAT_FORWARD_READINESS_TIMEOUT = Duration.seconds(20);
 export const TAILCAT_FORWARD_MAX_RESTARTS = 8;
 
-export class DesktopTailcatEnvironmentError extends Schema.TaggedErrorClass<DesktopTailcatEnvironmentError>()(
+export class DesktopTailcatEnvironmentError extends Schema.TaggedError<DesktopTailcatEnvironmentError>()(
   "DesktopTailcatEnvironmentError",
   {
     code: TailcatFailureCode,

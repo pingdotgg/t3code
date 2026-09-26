@@ -45,6 +45,20 @@ const escapeRegExp = (value: string) =>
  * Matching is rooted at the context. Descendants of a matched directory are
  * handled by checking each path's parents in {@link isDockerIgnored}.
  */
+const cleanDockerIgnorePath = (value: string) => {
+  const parts: string[] = [];
+  for (const part of value.split("/")) {
+    if (part.length === 0 || part === ".") continue;
+    if (part === "..") {
+      if (parts.length > 0 && parts.at(-1) !== "..") parts.pop();
+      else parts.push(part);
+    } else {
+      parts.push(part);
+    }
+  }
+  return parts.join("/");
+};
+
 const compileDockerIgnoreRule = (raw: string): DockerIgnoreRule | undefined => {
   if (raw.startsWith("#")) {
     return undefined;
@@ -63,10 +77,12 @@ const compileDockerIgnoreRule = (raw: string): DockerIgnoreRule | undefined => {
     pattern = pattern.slice(1).trim();
   }
 
-  pattern = pattern
-    .replace(/^\.\/+/, "")
-    .replace(/^\/+/, "")
-    .replace(/\/+$/, "");
+  pattern = cleanDockerIgnorePath(
+    pattern
+      .replace(/^\.\/+/, "")
+      .replace(/^\/+/, "")
+      .replace(/\/+$/, ""),
+  );
   if (pattern.length === 0 || pattern === ".") {
     return undefined;
   }
@@ -197,11 +213,62 @@ const resolveDockerIgnore = Effect.fn(function* ({
       path.isAbsolute(relativePath)
         ? undefined
         : relativePath,
-    rules: content.split(/\r?\n/).flatMap((line) => {
-      const rule = compileDockerIgnoreRule(line);
-      return rule === undefined ? [] : [rule];
-    }),
+    rules: content
+      .replace(/^\uFEFF/, "")
+      .split(/\r?\n/)
+      .flatMap((line) => {
+        const rule = compileDockerIgnoreRule(line);
+        return rule === undefined ? [] : [rule];
+      }),
   } satisfies DockerIgnore;
+});
+
+interface DockerBuildContextSelection {
+  /** Absolute build-context directory. */
+  readonly context: string;
+  /** Absolute Dockerfile path. */
+  readonly dockerfile: string;
+  /** Dockerfile path relative to the context, if it is inside the context. */
+  readonly dockerfilePath: string | undefined;
+  /** Return whether an entry must be sent to the Docker builder. */
+  readonly includes: (relativePath: string) => boolean;
+}
+
+/**
+ * Select the effective files sent for a Docker build.
+ *
+ * Dockerfile-specific ignore files take precedence over `.dockerignore`.
+ * The Dockerfile and selected ignore file stay in the upload even when an
+ * ignore rule matches them, as Docker clients must send both to the builder.
+ */
+export const selectDockerBuildContext = Effect.fn(function* (
+  source: Pick<DockerBuildSource, "context" | "dockerfile">,
+) {
+  const path = yield* Path.Path;
+  const { context, dockerfile } = yield* resolveDockerBuildPaths(source);
+  const dockerignore = yield* resolveDockerIgnore({ context, dockerfile });
+  const relativeDockerfile = normalizeRelativePath(
+    path.relative(context, dockerfile),
+  );
+  const dockerfilePath =
+    relativeDockerfile === ".." ||
+    relativeDockerfile.startsWith("../") ||
+    path.isAbsolute(relativeDockerfile)
+      ? undefined
+      : relativeDockerfile;
+
+  return {
+    context,
+    dockerfile,
+    dockerfilePath,
+    includes: (relativePath: string) => {
+      const normalized = normalizeRelativePath(relativePath);
+      if (normalized === dockerfilePath || normalized === dockerignore?.path) {
+        return true;
+      }
+      return !isDockerIgnored(normalized, dockerignore?.rules ?? []);
+    },
+  } satisfies DockerBuildContextSelection;
 });
 
 /**

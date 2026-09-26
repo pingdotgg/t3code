@@ -83,7 +83,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isStringFinite()),
       id: "effect/schema/isStringFinite",
       payload: null,
-      reviver: Schema.isStringFiniteReviver,
+      reviver: SchemaRepresentation.isStringFiniteReviver,
       valid: "1.5",
       invalid: "Infinity"
     })
@@ -94,7 +94,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isStringBigInt()),
       id: "effect/schema/isStringBigInt",
       payload: null,
-      reviver: Schema.isStringBigIntReviver,
+      reviver: SchemaRepresentation.isStringBigIntReviver,
       valid: "-10",
       invalid: "1.5"
     })
@@ -105,7 +105,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isStringSymbol()),
       id: "effect/schema/isStringSymbol",
       payload: null,
-      reviver: Schema.isStringSymbolReviver,
+      reviver: SchemaRepresentation.isStringSymbolReviver,
       valid: "Symbol(shared)",
       invalid: "shared"
     })
@@ -116,7 +116,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isMinLength(1.8)),
       id: "effect/schema/isMinLength",
       payload: { minLength: 1 },
-      reviver: Schema.isMinLengthReviver,
+      reviver: SchemaRepresentation.isMinLengthReviver,
       valid: "a",
       invalid: ""
     })
@@ -127,7 +127,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isMaxLength(3.8)),
       id: "effect/schema/isMaxLength",
       payload: { maxLength: 3 },
-      reviver: Schema.isMaxLengthReviver,
+      reviver: SchemaRepresentation.isMaxLengthReviver,
       valid: "abc",
       invalid: "abcd"
     })
@@ -138,7 +138,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isLengthBetween(1.8, 3.8)),
       id: "effect/schema/isLengthBetween",
       payload: { minimum: 1, maximum: 3 },
-      reviver: Schema.isLengthBetweenReviver,
+      reviver: SchemaRepresentation.isLengthBetweenReviver,
       valid: "ab",
       invalid: ""
     })
@@ -149,7 +149,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isPattern(/^a+$/i)),
       id: "effect/schema/isPattern",
       payload: { source: "^a+$", flags: "i" },
-      reviver: Schema.isPatternReviver,
+      reviver: SchemaRepresentation.isPatternReviver,
       valid: "AAA",
       invalid: "bbb"
     })
@@ -160,7 +160,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isTrimmed()),
       id: "effect/schema/isTrimmed",
       payload: null,
-      reviver: Schema.isTrimmedReviver,
+      reviver: SchemaRepresentation.isTrimmedReviver,
       valid: "text",
       invalid: " text "
     })
@@ -171,7 +171,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isUUID(4)),
       id: "effect/schema/isUUID",
       payload: { version: 4 },
-      reviver: Schema.isUUIDReviver,
+      reviver: SchemaRepresentation.isUUIDReviver,
       valid: "123e4567-e89b-42d3-a456-426614174000",
       invalid: "123e4567-e89b-12d3-a456-426614174000"
     })
@@ -182,7 +182,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isGUID()),
       id: "effect/schema/isGUID",
       payload: null,
-      reviver: Schema.isGUIDReviver,
+      reviver: SchemaRepresentation.isGUIDReviver,
       valid: "123e4567-e89b-12d3-a456-426614174000",
       invalid: "not-a-guid"
     })
@@ -193,7 +193,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isULID()),
       id: "effect/schema/isULID",
       payload: null,
-      reviver: Schema.isULIDReviver,
+      reviver: SchemaRepresentation.isULIDReviver,
       valid: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
       invalid: "not-a-ulid"
     })
@@ -204,7 +204,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isBase64()),
       id: "effect/schema/isBase64",
       payload: null,
-      reviver: Schema.isBase64Reviver,
+      reviver: SchemaRepresentation.isBase64Reviver,
       valid: "YQ==",
       invalid: "?"
     })
@@ -215,7 +215,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isBase64Url()),
       id: "effect/schema/isBase64Url",
       payload: null,
-      reviver: Schema.isBase64UrlReviver,
+      reviver: SchemaRepresentation.isBase64UrlReviver,
       valid: "YQ",
       invalid: "?"
     })
@@ -226,7 +226,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isStartsWith("pre")),
       id: "effect/schema/isStartsWith",
       payload: { startsWith: "pre" },
-      reviver: Schema.isStartsWithReviver,
+      reviver: SchemaRepresentation.isStartsWithReviver,
       valid: "prefix",
       invalid: "suffix"
     })
@@ -237,7 +237,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isEndsWith("end")),
       id: "effect/schema/isEndsWith",
       payload: { endsWith: "end" },
-      reviver: Schema.isEndsWithReviver,
+      reviver: SchemaRepresentation.isEndsWithReviver,
       valid: "weekend",
       invalid: "ending"
     })
@@ -248,7 +248,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isIncludes("mid")),
       id: "effect/schema/isIncludes",
       payload: { includes: "mid" },
-      reviver: Schema.isIncludesReviver,
+      reviver: SchemaRepresentation.isIncludesReviver,
       valid: "middle",
       invalid: "outside"
     })
@@ -259,7 +259,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isUppercased()),
       id: "effect/schema/isUppercased",
       payload: null,
-      reviver: Schema.isUppercasedReviver,
+      reviver: SchemaRepresentation.isUppercasedReviver,
       valid: "ABC1",
       invalid: "Abc"
     })
@@ -270,7 +270,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isLowercased()),
       id: "effect/schema/isLowercased",
       payload: null,
-      reviver: Schema.isLowercasedReviver,
+      reviver: SchemaRepresentation.isLowercasedReviver,
       valid: "abc1",
       invalid: "Abc"
     })
@@ -281,7 +281,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isCapitalized()),
       id: "effect/schema/isCapitalized",
       payload: null,
-      reviver: Schema.isCapitalizedReviver,
+      reviver: SchemaRepresentation.isCapitalizedReviver,
       valid: "Hello",
       invalid: "hello"
     })
@@ -292,7 +292,7 @@ describe("SchemaRepresentation built-in string revivers", () => {
       schema: Schema.String.check(Schema.isUncapitalized()),
       id: "effect/schema/isUncapitalized",
       payload: null,
-      reviver: Schema.isUncapitalizedReviver,
+      reviver: SchemaRepresentation.isUncapitalizedReviver,
       valid: "hello",
       invalid: "Hello"
     })
@@ -319,7 +319,7 @@ describe("SchemaRepresentation built-in number revivers", () => {
       schema: Schema.Number.check(Schema.isFinite()),
       id: "effect/schema/isFinite",
       payload: null,
-      reviver: Schema.isFiniteReviver,
+      reviver: SchemaRepresentation.isFiniteReviver,
       valid: 1,
       invalid: Number.POSITIVE_INFINITY
     })
@@ -330,7 +330,7 @@ describe("SchemaRepresentation built-in number revivers", () => {
       schema: Schema.Number.check(Schema.isInt()),
       id: "effect/schema/isInt",
       payload: null,
-      reviver: Schema.isIntReviver,
+      reviver: SchemaRepresentation.isIntReviver,
       valid: 1,
       invalid: 1.5
     })
@@ -341,7 +341,7 @@ describe("SchemaRepresentation built-in number revivers", () => {
       schema: Schema.Number.check(Schema.isMultipleOf(3)),
       id: "effect/schema/isMultipleOf",
       payload: { divisor: 3 },
-      reviver: Schema.isMultipleOfReviver,
+      reviver: SchemaRepresentation.isMultipleOfReviver,
       valid: 6,
       invalid: 7
     })
@@ -352,7 +352,7 @@ describe("SchemaRepresentation built-in number revivers", () => {
       schema: Schema.Number.check(Schema.isGreaterThan(1)),
       id: "effect/schema/isGreaterThan",
       payload: { exclusiveMinimum: 1 },
-      reviver: Schema.isGreaterThanReviver,
+      reviver: SchemaRepresentation.isGreaterThanReviver,
       valid: 2,
       invalid: 1
     })
@@ -363,7 +363,7 @@ describe("SchemaRepresentation built-in number revivers", () => {
       schema: Schema.Number.check(Schema.isGreaterThanOrEqualTo(1)),
       id: "effect/schema/isGreaterThanOrEqualTo",
       payload: { minimum: 1 },
-      reviver: Schema.isGreaterThanOrEqualToReviver,
+      reviver: SchemaRepresentation.isGreaterThanOrEqualToReviver,
       valid: 1,
       invalid: 0
     })
@@ -374,7 +374,7 @@ describe("SchemaRepresentation built-in number revivers", () => {
       schema: Schema.Number.check(Schema.isLessThan(2)),
       id: "effect/schema/isLessThan",
       payload: { exclusiveMaximum: 2 },
-      reviver: Schema.isLessThanReviver,
+      reviver: SchemaRepresentation.isLessThanReviver,
       valid: 1,
       invalid: 2
     })
@@ -385,7 +385,7 @@ describe("SchemaRepresentation built-in number revivers", () => {
       schema: Schema.Number.check(Schema.isLessThanOrEqualTo(2)),
       id: "effect/schema/isLessThanOrEqualTo",
       payload: { maximum: 2 },
-      reviver: Schema.isLessThanOrEqualToReviver,
+      reviver: SchemaRepresentation.isLessThanOrEqualToReviver,
       valid: 2,
       invalid: 3
     })
@@ -398,7 +398,7 @@ describe("SchemaRepresentation built-in number revivers", () => {
       ),
       id: "effect/schema/isBetween",
       payload: { minimum: 1, maximum: 3, exclusiveMinimum: true },
-      reviver: Schema.isBetweenReviver,
+      reviver: SchemaRepresentation.isBetweenReviver,
       valid: 2,
       invalid: 1
     })
@@ -424,7 +424,7 @@ describe("SchemaRepresentation built-in number revivers", () => {
     ) as any
     json.representation.checks[0].representation.payload.divisor = "2"
 
-    expectInvalidPayload(json, Schema.isMultipleOfReviver)
+    expectInvalidPayload(json, SchemaRepresentation.isMultipleOfReviver)
   })
 
   it("rejects a non-canonical isBetween payload", () => {
@@ -435,7 +435,7 @@ describe("SchemaRepresentation built-in number revivers", () => {
     ) as any
     json.representation.checks[0].representation.payload.exclusiveMinimum = false
 
-    expectInvalidPayload(json, Schema.isBetweenReviver)
+    expectInvalidPayload(json, SchemaRepresentation.isBetweenReviver)
   })
 })
 
@@ -445,7 +445,7 @@ describe("SchemaRepresentation built-in BigInt revivers", () => {
       schema: Schema.BigInt.check(Schema.isGreaterThanBigInt(10n)),
       id: "effect/schema/isGreaterThanBigInt",
       payload: { exclusiveMinimum: "10" },
-      reviver: Schema.isGreaterThanBigIntReviver,
+      reviver: SchemaRepresentation.isGreaterThanBigIntReviver,
       valid: 11n,
       invalid: 10n
     })
@@ -456,7 +456,7 @@ describe("SchemaRepresentation built-in BigInt revivers", () => {
       schema: Schema.BigInt.check(Schema.isGreaterThanOrEqualToBigInt(10n)),
       id: "effect/schema/isGreaterThanOrEqualToBigInt",
       payload: { minimum: "10" },
-      reviver: Schema.isGreaterThanOrEqualToBigIntReviver,
+      reviver: SchemaRepresentation.isGreaterThanOrEqualToBigIntReviver,
       valid: 10n,
       invalid: 9n
     })
@@ -467,7 +467,7 @@ describe("SchemaRepresentation built-in BigInt revivers", () => {
       schema: Schema.BigInt.check(Schema.isLessThanBigInt(10n)),
       id: "effect/schema/isLessThanBigInt",
       payload: { exclusiveMaximum: "10" },
-      reviver: Schema.isLessThanBigIntReviver,
+      reviver: SchemaRepresentation.isLessThanBigIntReviver,
       valid: 9n,
       invalid: 10n
     })
@@ -478,7 +478,7 @@ describe("SchemaRepresentation built-in BigInt revivers", () => {
       schema: Schema.BigInt.check(Schema.isLessThanOrEqualToBigInt(10n)),
       id: "effect/schema/isLessThanOrEqualToBigInt",
       payload: { maximum: "10" },
-      reviver: Schema.isLessThanOrEqualToBigIntReviver,
+      reviver: SchemaRepresentation.isLessThanOrEqualToBigIntReviver,
       valid: 10n,
       invalid: 11n
     })
@@ -491,7 +491,7 @@ describe("SchemaRepresentation built-in BigInt revivers", () => {
       ),
       id: "effect/schema/isBetweenBigInt",
       payload: { minimum: "-10", maximum: "10", exclusiveMaximum: true },
-      reviver: Schema.isBetweenBigIntReviver,
+      reviver: SchemaRepresentation.isBetweenBigIntReviver,
       valid: 0n,
       invalid: 10n
     })
@@ -533,7 +533,7 @@ describe("SchemaRepresentation built-in Date revivers", () => {
       schema: Schema.Any.check(Schema.isGreaterThanDate(date(0))),
       id: "effect/schema/isGreaterThanDate",
       payload: { exclusiveMinimum: epoch },
-      reviver: Schema.isGreaterThanDateReviver,
+      reviver: SchemaRepresentation.isGreaterThanDateReviver,
       valid: date(1),
       invalid: date(0)
     })
@@ -544,7 +544,7 @@ describe("SchemaRepresentation built-in Date revivers", () => {
       schema: Schema.Any.check(Schema.isGreaterThanOrEqualToDate(date(0))),
       id: "effect/schema/isGreaterThanOrEqualToDate",
       payload: { minimum: epoch },
-      reviver: Schema.isGreaterThanOrEqualToDateReviver,
+      reviver: SchemaRepresentation.isGreaterThanOrEqualToDateReviver,
       valid: date(0),
       invalid: date(-1)
     })
@@ -555,7 +555,7 @@ describe("SchemaRepresentation built-in Date revivers", () => {
       schema: Schema.Any.check(Schema.isLessThanDate(date(0))),
       id: "effect/schema/isLessThanDate",
       payload: { exclusiveMaximum: epoch },
-      reviver: Schema.isLessThanDateReviver,
+      reviver: SchemaRepresentation.isLessThanDateReviver,
       valid: date(-1),
       invalid: date(0)
     })
@@ -566,7 +566,7 @@ describe("SchemaRepresentation built-in Date revivers", () => {
       schema: Schema.Any.check(Schema.isLessThanOrEqualToDate(date(0))),
       id: "effect/schema/isLessThanOrEqualToDate",
       payload: { maximum: epoch },
-      reviver: Schema.isLessThanOrEqualToDateReviver,
+      reviver: SchemaRepresentation.isLessThanOrEqualToDateReviver,
       valid: date(0),
       invalid: date(1)
     })
@@ -583,7 +583,7 @@ describe("SchemaRepresentation built-in Date revivers", () => {
         maximum: "1970-01-01T00:00:00.002Z",
         exclusiveMaximum: true
       },
-      reviver: Schema.isBetweenDateReviver,
+      reviver: SchemaRepresentation.isBetweenDateReviver,
       valid: date(1),
       invalid: date(2)
     })
@@ -622,7 +622,7 @@ describe("SchemaRepresentation built-in collection revivers", () => {
       schema: Schema.Any.check(Schema.isMinSize(2)),
       id: "effect/schema/isMinSize",
       payload: { minSize: 2 },
-      reviver: Schema.isMinSizeReviver,
+      reviver: SchemaRepresentation.isMinSizeReviver,
       valid: new Set([1, 2]),
       invalid: new Set([1])
     })
@@ -633,7 +633,7 @@ describe("SchemaRepresentation built-in collection revivers", () => {
       schema: Schema.Any.check(Schema.isMaxSize(1)),
       id: "effect/schema/isMaxSize",
       payload: { maxSize: 1 },
-      reviver: Schema.isMaxSizeReviver,
+      reviver: SchemaRepresentation.isMaxSizeReviver,
       valid: new Set([1]),
       invalid: new Set([1, 2])
     })
@@ -644,7 +644,7 @@ describe("SchemaRepresentation built-in collection revivers", () => {
       schema: Schema.Any.check(Schema.isSizeBetween(1, 2)),
       id: "effect/schema/isSizeBetween",
       payload: { minimum: 1, maximum: 2 },
-      reviver: Schema.isSizeBetweenReviver,
+      reviver: SchemaRepresentation.isSizeBetweenReviver,
       valid: new Set([1]),
       invalid: new Set()
     })
@@ -655,9 +655,21 @@ describe("SchemaRepresentation built-in collection revivers", () => {
       schema: Schema.Any.check(Schema.isUnique()),
       id: "effect/schema/isUnique",
       payload: null,
-      reviver: Schema.isUniqueReviver,
+      reviver: SchemaRepresentation.isUniqueReviver,
       valid: [1, 2],
       invalid: [1, 1]
+    })
+  })
+
+  it("revives isUniqueKey", () => {
+    assertFilterReviver({
+      schema: Schema.Any.check(Schema.isUniqueKey()),
+      id: "effect/schema/isUniqueKey",
+      payload: null,
+      reviver: SchemaRepresentation.isUniqueKeyReviver,
+      valid: [["a", 1], ["b", 1]],
+      invalid: [["a", 1], ["a", 2]],
+      hasToJsonSchema: false
     })
   })
 
@@ -689,7 +701,7 @@ describe("SchemaRepresentation built-in object revivers", () => {
       schema: Schema.Any.check(Schema.isMinProperties(2)),
       id: "effect/schema/isMinProperties",
       payload: { minProperties: 2 },
-      reviver: Schema.isMinPropertiesReviver,
+      reviver: SchemaRepresentation.isMinPropertiesReviver,
       valid: { a: 1, b: 2 },
       invalid: { a: 1 }
     })
@@ -700,7 +712,7 @@ describe("SchemaRepresentation built-in object revivers", () => {
       schema: Schema.Any.check(Schema.isMaxProperties(1)),
       id: "effect/schema/isMaxProperties",
       payload: { maxProperties: 1 },
-      reviver: Schema.isMaxPropertiesReviver,
+      reviver: SchemaRepresentation.isMaxPropertiesReviver,
       valid: { a: 1 },
       invalid: { a: 1, b: 2 }
     })
@@ -711,7 +723,7 @@ describe("SchemaRepresentation built-in object revivers", () => {
       schema: Schema.Any.check(Schema.isPropertiesLengthBetween(1, 2)),
       id: "effect/schema/isPropertiesLengthBetween",
       payload: { minimum: 1, maximum: 2 },
-      reviver: Schema.isPropertiesLengthBetweenReviver,
+      reviver: SchemaRepresentation.isPropertiesLengthBetweenReviver,
       valid: { a: 1 },
       invalid: {}
     })
@@ -724,8 +736,8 @@ describe("SchemaRepresentation built-in object revivers", () => {
       id: "effect/schema/isPropertyNames",
       payload: null,
       schemas: [names.ast],
-      reviver: Schema.isPropertyNamesReviver,
-      dependencies: [Schema.isPatternReviver],
+      reviver: SchemaRepresentation.isPropertyNamesReviver,
+      dependencies: [SchemaRepresentation.isPatternReviver],
       valid: { Alpha: 1 },
       invalid: { alpha: 1 }
     })
@@ -770,7 +782,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.Option(Schema.String),
       id: "effect/schema/Option",
       payload: null,
-      reviver: Schema.OptionReviver
+      reviver: SchemaRepresentation.OptionReviver
     })
   })
 
@@ -779,7 +791,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.Result(Schema.String, Schema.Number),
       id: "effect/schema/Result",
       payload: null,
-      reviver: Schema.ResultReviver
+      reviver: SchemaRepresentation.ResultReviver
     })
   })
 
@@ -788,7 +800,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.Redacted(Schema.String),
       id: "effect/schema/Redacted",
       payload: null,
-      reviver: Schema.RedactedReviver
+      reviver: SchemaRepresentation.RedactedReviver
     })
   })
 
@@ -797,7 +809,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.CauseReason(Schema.String, Schema.Number),
       id: "effect/schema/CauseReason",
       payload: null,
-      reviver: Schema.CauseReasonReviver
+      reviver: SchemaRepresentation.CauseReasonReviver
     })
   })
 
@@ -806,7 +818,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.Cause(Schema.String, Schema.Number),
       id: "effect/schema/Cause",
       payload: null,
-      reviver: Schema.CauseReviver
+      reviver: SchemaRepresentation.CauseReviver
     })
   })
 
@@ -815,7 +827,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.ErrorInstance(),
       id: "effect/schema/Error",
       payload: null,
-      reviver: Schema.ErrorInstanceReviver
+      reviver: SchemaRepresentation.ErrorInstanceReviver
     })
   })
 
@@ -824,7 +836,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.Exit(Schema.String, Schema.Number, Schema.Boolean),
       id: "effect/schema/Exit",
       payload: null,
-      reviver: Schema.ExitReviver
+      reviver: SchemaRepresentation.ExitReviver
     })
   })
 
@@ -833,7 +845,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.ReadonlyMap(Schema.String, Schema.Number),
       id: "effect/schema/ReadonlyMap",
       payload: null,
-      reviver: Schema.ReadonlyMapReviver
+      reviver: SchemaRepresentation.ReadonlyMapReviver
     })
   })
 
@@ -842,7 +854,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.HashMap(Schema.String, Schema.Number),
       id: "effect/schema/HashMap",
       payload: null,
-      reviver: Schema.HashMapReviver
+      reviver: SchemaRepresentation.HashMapReviver
     })
   })
 
@@ -851,7 +863,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.Graph("directed", Schema.String, Schema.Number),
       id: "effect/schema/Graph",
       payload: "directed",
-      reviver: Schema.GraphReviver
+      reviver: SchemaRepresentation.GraphReviver
     })
   })
 
@@ -860,7 +872,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.ReadonlySet(Schema.String),
       id: "effect/schema/ReadonlySet",
       payload: null,
-      reviver: Schema.ReadonlySetReviver
+      reviver: SchemaRepresentation.ReadonlySetReviver
     })
   })
 
@@ -869,7 +881,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.HashSet(Schema.String),
       id: "effect/schema/HashSet",
       payload: null,
-      reviver: Schema.HashSetReviver
+      reviver: SchemaRepresentation.HashSetReviver
     })
   })
 
@@ -878,7 +890,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.Chunk(Schema.String),
       id: "effect/schema/Chunk",
       payload: null,
-      reviver: Schema.ChunkReviver
+      reviver: SchemaRepresentation.ChunkReviver
     })
   })
 
@@ -887,7 +899,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.RegExp,
       id: "effect/schema/RegExp",
       payload: null,
-      reviver: Schema.RegExpReviver
+      reviver: SchemaRepresentation.RegExpReviver
     })
   })
 
@@ -896,7 +908,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.URL,
       id: "effect/schema/URL",
       payload: null,
-      reviver: Schema.URLReviver
+      reviver: SchemaRepresentation.URLReviver
     })
   })
 
@@ -905,7 +917,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.Date,
       id: "effect/schema/Date",
       payload: null,
-      reviver: Schema.DateReviver
+      reviver: SchemaRepresentation.DateReviver
     })
   })
 
@@ -914,7 +926,16 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.Duration,
       id: "effect/schema/Duration",
       payload: null,
-      reviver: Schema.DurationReviver
+      reviver: SchemaRepresentation.DurationReviver
+    })
+  })
+
+  it("revives ByteSize", () => {
+    assertDeclarationReviver({
+      schema: Schema.ByteSize,
+      id: "effect/schema/ByteSize",
+      payload: null,
+      reviver: SchemaRepresentation.ByteSizeReviver
     })
   })
 
@@ -923,7 +944,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.BigDecimal,
       id: "effect/schema/BigDecimal",
       payload: null,
-      reviver: Schema.BigDecimalReviver
+      reviver: SchemaRepresentation.BigDecimalReviver
     })
   })
 
@@ -932,7 +953,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.File,
       id: "effect/schema/File",
       payload: null,
-      reviver: Schema.FileReviver
+      reviver: SchemaRepresentation.FileReviver
     })
   })
 
@@ -941,7 +962,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.FormData,
       id: "effect/schema/FormData",
       payload: null,
-      reviver: Schema.FormDataReviver
+      reviver: SchemaRepresentation.FormDataReviver
     })
   })
 
@@ -950,7 +971,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.URLSearchParams,
       id: "effect/schema/URLSearchParams",
       payload: null,
-      reviver: Schema.URLSearchParamsReviver
+      reviver: SchemaRepresentation.URLSearchParamsReviver
     })
   })
 
@@ -959,7 +980,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.Uint8Array,
       id: "effect/schema/Uint8Array",
       payload: null,
-      reviver: Schema.Uint8ArrayReviver
+      reviver: SchemaRepresentation.Uint8ArrayReviver
     })
   })
 
@@ -968,7 +989,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.DateTimeUtc,
       id: "effect/schema/DateTimeUtc",
       payload: null,
-      reviver: Schema.DateTimeUtcReviver
+      reviver: SchemaRepresentation.DateTimeUtcReviver
     })
   })
 
@@ -977,7 +998,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.TimeZoneOffset,
       id: "effect/schema/TimeZoneOffset",
       payload: null,
-      reviver: Schema.TimeZoneOffsetReviver
+      reviver: SchemaRepresentation.TimeZoneOffsetReviver
     })
   })
 
@@ -986,7 +1007,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.TimeZoneNamed,
       id: "effect/schema/TimeZoneNamed",
       payload: null,
-      reviver: Schema.TimeZoneNamedReviver
+      reviver: SchemaRepresentation.TimeZoneNamedReviver
     })
   })
 
@@ -995,7 +1016,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.TimeZone,
       id: "effect/schema/TimeZone",
       payload: null,
-      reviver: Schema.TimeZoneReviver
+      reviver: SchemaRepresentation.TimeZoneReviver
     })
   })
 
@@ -1004,7 +1025,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.DateTimeZoned,
       id: "effect/schema/DateTimeZoned",
       payload: null,
-      reviver: Schema.DateTimeZonedReviver
+      reviver: SchemaRepresentation.DateTimeZonedReviver
     })
   })
 
@@ -1013,7 +1034,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.Json,
       id: "effect/schema/Json",
       payload: null,
-      reviver: Schema.JsonReviver
+      reviver: SchemaRepresentation.JsonReviver
     })
   })
 
@@ -1022,7 +1043,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       schema: Schema.MutableJson,
       id: "effect/schema/MutableJson",
       payload: null,
-      reviver: Schema.MutableJsonReviver
+      reviver: SchemaRepresentation.MutableJsonReviver
     })
   })
 

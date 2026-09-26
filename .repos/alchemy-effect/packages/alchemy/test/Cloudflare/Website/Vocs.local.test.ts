@@ -63,10 +63,12 @@ describe.concurrent("Vocs dev", () => {
         expect(site.url).toMatch(/^http:\/\/localhost:\d+/);
         yield* expectUrlContains(`${site.url!}/`, "Alchemy with Vocs", {
           timeout: "180 seconds",
+          headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
           label: "Vocs dev SSR home",
         });
         yield* expectUrlContains(`${site.url!}/guide`, "Deployment guide", {
           timeout: "60 seconds",
+          headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
           label: "Vocs dev MDX guide",
         });
         yield* expectUrlContains(
@@ -74,6 +76,7 @@ describe.concurrent("Vocs dev", () => {
           "hello from the Vocs public directory",
           {
             timeout: "60 seconds",
+            headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
             label: "Vocs dev public asset",
           },
         );
@@ -92,6 +95,7 @@ describe.concurrent("Vocs dev", () => {
           "This Vocs page was updated through HMR.",
           {
             timeout: "120 seconds",
+            headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
             label: "Vocs dev page after source edit",
           },
         );

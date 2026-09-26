@@ -33,7 +33,7 @@ export class PairingQrPayloadEmptyError extends Schema.TaggedError<PairingQrPayl
  * codes are redeemed by the desktop app (which runs the Tailcat tunnel), so
  * the message points there instead of calling the input an invalid URL.
  */
-export class PairingInputNotPairableError extends Schema.TaggedErrorClass<PairingInputNotPairableError>()(
+export class PairingInputNotPairableError extends Schema.TaggedError<PairingInputNotPairableError>()(
   "PairingInputNotPairableError",
   {
     kind: Schema.NullOr(Schema.String),

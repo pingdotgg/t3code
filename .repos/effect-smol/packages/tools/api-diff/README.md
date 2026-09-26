@@ -20,6 +20,11 @@ discovers every public package entrypoint independently, extracts both snapshots
 with one pinned TypeScript compiler API, and caches successful snapshots by
 commit and compiler.
 
+After updating the extractor, regenerate both snapshots with the same extractor
+before comparing them. Old snapshots may have lost information that the current
+extractor preserves; comparing snapshots from different extractor generations is
+not supported.
+
 The command writes:
 
 - `base.snapshot.json`

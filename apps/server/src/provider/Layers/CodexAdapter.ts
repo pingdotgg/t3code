@@ -22,6 +22,7 @@ import {
   type ToolActivityNativeAppReference,
   type ToolActivitySource,
   type ProviderUserInputAnswers,
+  type ServerProviderModel,
   RuntimeItemId,
   RuntimeRequestId,
   RuntimeTaskId,
@@ -36,7 +37,6 @@ import * as NodeCrypto from "node:crypto";
 import * as Crypto from "effect/Crypto";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -67,6 +67,7 @@ import {
   makeCodexSessionRuntime,
   type CodexSessionRuntimeError,
   type CodexSessionRuntimeOptions,
+  type CodexSessionRuntimeSendTurnInput,
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -89,6 +90,8 @@ const PROVIDER = ProviderDriverKind.make("codex");
 export interface CodexAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
+  /** The provider's model list; supplies model display names for runtime info. */
+  readonly models?: Effect.Effect<ReadonlyArray<ServerProviderModel>>;
   readonly makeRuntime?: (
     options: CodexSessionRuntimeOptions,
   ) => Effect.Effect<
@@ -832,6 +835,8 @@ function toRequestTypeFromMethod(method: string): CanonicalRequestType {
       return "file_change_approval";
     case "mcpServer/elicitation/request":
       return "mcp_elicitation_approval";
+    case "item/permissions/requestApproval":
+      return "permission_approval";
     case "applyPatchApproval":
       return "apply_patch_approval";
     case "execCommandApproval":
@@ -857,6 +862,8 @@ function toRequestTypeFromKind(kind: ProviderRequestKind | undefined): Canonical
       return "file_change_approval";
     case "mcp-elicitation":
       return "mcp_elicitation_approval";
+    case "permission":
+      return "permission_approval";
     default:
       return "unknown";
   }
@@ -1366,6 +1373,20 @@ function mapToRuntimeEvents(
         }
         case "mcpServer/elicitation/request":
           return elicitation?.message;
+        case "item/permissions/requestApproval": {
+          const payload = readPayload(
+            EffectCodexSchema.ServerRequest__PermissionsRequestApprovalParams,
+            event.payload,
+          );
+          const requestedPaths = [
+            ...(payload?.permissions.fileSystem?.read ?? []),
+            ...(payload?.permissions.fileSystem?.write ?? []),
+          ];
+          return (
+            nonEmptyDetail(payload?.reason) ??
+            (requestedPaths.length > 0 ? `Access: ${requestedPaths.join(", ")}` : undefined)
+          );
+        }
         case "applyPatchApproval": {
           const payload = readPayload(
             EffectCodexSchema.ServerRequest__ApplyPatchApprovalParams,
@@ -2218,7 +2239,6 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   options?: CodexAdapterLiveOptions,
 ) {
   const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("codex");
-  const fileSystem = yield* FileSystem.FileSystem;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const crypto = yield* Crypto.Crypto;
   const serverConfig = yield* Effect.service(ServerConfig);
@@ -2260,6 +2280,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           providerInstanceId: boundInstanceId,
           cwd: input.cwd ?? process.cwd(),
           binaryPath: codexConfig.binaryPath,
+          ...(options?.models ? { models: options.models } : {}),
           launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
           ...(options?.environment ? { environment: options.environment } : {}),
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
@@ -2274,7 +2295,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ...(mcpSession
             ? {
                 environment: {
-                  ...(options?.environment ?? process.env),
+                  ...McpProviderSession.withAgentDeviceEnvironment(
+                    options?.environment ?? process.env,
+                    mcpSession,
+                  ),
                   T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
                 },
                 appServerArgs: [
@@ -2283,6 +2307,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                   "-c",
                   'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
                 ],
+                mcpCapabilities: mcpSession.capabilities,
               }
             : {}),
         };
@@ -2487,27 +2512,18 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         detail: `Invalid attachment id '${attachment.id}'.`,
       });
     }
-    const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProviderAdapterRequestError({
-            provider: PROVIDER,
-            method: "turn/start",
-            detail: `Failed to read attachment file: ${cause.message}.`,
-            cause,
-          }),
-      ),
-    );
     return {
-      type: "image" as const,
-      url: `data:${attachment.mimeType};base64,${Buffer.from(bytes).toString("base64")}`,
+      type: "localImage" as const,
+      path: attachmentPath,
     };
   });
 
   const sendTurn: CodexAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
-    // Codex ingests images only. Anything else would be base64-encoded as an
-    // image and rejected or misread; generic files reach the agent through the
-    // path line ProviderService puts in the prompt.
+    // Codex ingests images only. Anything else would be inlined as an image
+    // and rejected or misread; generic files reach the agent through the path
+    // line ProviderService puts in the prompt. Images are passed by path
+    // instead of base64 so the turn/start request does not scale with file
+    // size; the CLI reads the file itself.
     const codexAttachments = yield* Effect.forEach(
       (input.attachments ?? []).filter((attachment) => attachment.type === "image"),
       (attachment) => resolveAttachment(input, attachment),

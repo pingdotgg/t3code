@@ -17,6 +17,35 @@ import {
 } from "./KeybindingsSettings.logic";
 
 describe("KeybindingsSettings.logic", () => {
+  it("lists composer, provider, and pull request commands with editable defaults", () => {
+    const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "");
+    for (const command of [
+      "composer.host",
+      "composer.effort",
+      "composer.mode",
+      "composer.workspace",
+      "composer.branch",
+      "composer.previousWorktree",
+      "modelPicker.previousProvider",
+      "modelPicker.nextProvider",
+      "thread.copyReference",
+      "pullRequest.copyNumber",
+    ]) {
+      expect(rows.find((row) => row.command === command)).toMatchObject({
+        source: "Default",
+        conflicts: [],
+      });
+    }
+  });
+  it.each(["pu", "pull request", "copy link", "thread id"])(
+    "finds the copy link shortcut with %s",
+    (query) => {
+      const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, query);
+      expect(rows).toContainEqual(
+        expect.objectContaining({ command: "thread.copyReference", key: "mod+shift+c" }),
+      );
+    },
+  );
   it("builds searchable rows with readable key and when values", () => {
     const rows = buildKeybindingRows(
       [
@@ -181,7 +210,15 @@ describe("KeybindingsSettings.logic", () => {
     const options = buildWhenVariableOptions();
 
     expect(options).toEqual(
-      expect.arrayContaining(["terminalFocus", "terminalOpen", "modelPickerOpen", "true", "false"]),
+      expect.arrayContaining([
+        "terminalFocus",
+        "terminalOpen",
+        "isWeb",
+        "isDesktop",
+        "modelPickerOpen",
+        "true",
+        "false",
+      ]),
     );
     expect(options).not.toContain("customModeActive");
   });
@@ -206,6 +243,7 @@ describe("KeybindingsSettings.logic", () => {
         "chat.new",
         "rightPanel.toggleMaximized",
         "thread.stop",
+        "usage.open",
         "script.setup-db.run",
       ]),
     );

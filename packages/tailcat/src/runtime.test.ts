@@ -5,6 +5,7 @@ import {
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 import * as NetService from "@t3tools/shared/Net";
+import * as ByteSize from "effect/ByteSize";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -173,7 +174,7 @@ const fileInfo = (mode: number): FileSystem.File.Info => ({
   uid: Option.none(),
   gid: Option.none(),
   rdev: Option.none(),
-  size: FileSystem.Size(0),
+  size: ByteSize.bytes(0),
   blksize: Option.none(),
   blocks: Option.none(),
 });

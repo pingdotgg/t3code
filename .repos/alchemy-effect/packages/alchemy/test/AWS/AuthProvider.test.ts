@@ -1,4 +1,7 @@
-import { applyEnvRegionOverride } from "@/AWS/AuthProvider.ts";
+import {
+  applyEnvRegionOverride,
+  parseAwsSsoLoginOutput,
+} from "@/AWS/AuthProvider.ts";
 import { loadConfigProvider } from "@/Util/ConfigProvider.ts";
 import { PlatformServices } from "@/Util/PlatformServices.ts";
 import { describe, expect, it } from "alchemy-test";
@@ -14,6 +17,37 @@ const withEnv = (env: Record<string, string>) =>
 // Simulates credentials resolved from an SSO profile whose ~/.aws/config
 // region differs from the region the user explicitly set in the environment.
 const profileCreds = { accountId: "123456789012", region: "us-west-2" };
+
+describe("parseAwsSsoLoginOutput", () => {
+  it("reads browser authorization JSON", () => {
+    expect(
+      parseAwsSsoLoginOutput(
+        JSON.stringify({
+          authorizationUrl: "https://oidc.example.com/authorize?state=abc",
+        }),
+      ),
+    ).toEqual({
+      url: "https://oidc.example.com/authorize?state=abc",
+      code: undefined,
+    });
+  });
+
+  it("reads the text AWS emits despite --output json", () => {
+    expect(
+      parseAwsSsoLoginOutput(`Browser will not be automatically opened.
+Please visit the following URL:
+
+https://example.awsapps.com/start/#/device
+
+Then enter the code:
+
+CRKF-LVXR`),
+    ).toEqual({
+      url: "https://example.awsapps.com/start/#/device",
+      code: "CRKF-LVXR",
+    });
+  });
+});
 
 describe("applyEnvRegionOverride", () => {
   it.effect("AWS_REGION overrides the profile region", () =>

@@ -226,6 +226,7 @@ export const makeWakuAwsTarget = (
   ...makeAwsAdapterTarget(config),
   build: (context: WakuTargetBuildContext) =>
     runBuildChild({
+      runtime: "node",
       module: import.meta.url,
       rootDir: context.root,
       framework: "waku",

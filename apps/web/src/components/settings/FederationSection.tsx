@@ -139,12 +139,12 @@ function ScopeChips({
 }) {
   return (
     <span className="flex flex-wrap items-center gap-1">
-      <span className="text-[11px] text-muted-foreground">{label}</span>
+      <span className="text-2xs text-muted-foreground">{label}</span>
       {scopes.length === 0 ? (
-        <span className="text-[11px] text-muted-foreground/70">none</span>
+        <span className="text-2xs text-muted-foreground/70">none</span>
       ) : (
         scopes.map((scope) => (
-          <Badge key={scope} variant="outline" size="sm" className="font-mono">
+          <Badge key={scope} variant="outline" size="sm">
             {scope}
           </Badge>
         ))
@@ -189,7 +189,8 @@ const PeerCodeReveal = memo(function PeerCodeReveal({
             value={issued.code}
             rows={4}
             aria-label="Federation peer code"
-            className="font-mono text-[11px] leading-relaxed break-all"
+            font="mono"
+            className="break-all"
             onFocus={(event) => event.currentTarget.select()}
             onClick={(event) => event.currentTarget.select()}
           />
@@ -199,9 +200,7 @@ const PeerCodeReveal = memo(function PeerCodeReveal({
               Copy code
             </Button>
             <span
-              className={
-                expired ? "text-[11px] text-destructive" : "text-[11px] text-muted-foreground"
-              }
+              className={expired ? "text-2xs text-destructive" : "text-2xs text-muted-foreground"}
             >
               {formatExpiresInLabel(issued.expiresAt, nowMs)} · single use
             </span>
@@ -213,7 +212,7 @@ const PeerCodeReveal = memo(function PeerCodeReveal({
           </div>
         )}
       </div>
-      <p className="text-[11px] text-muted-foreground/70">
+      <p className="text-2xs text-muted-foreground/70">
         Offers the redeeming environment: {issued.payload.scopes.join(", ")}.
       </p>
     </div>
@@ -271,7 +270,7 @@ const CreatePeerCodeDialog = memo(function CreatePeerCodeDialog({
             tick are what that environment may do here.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-4">
+        <DialogPanel>
           {issued === null ? (
             <ScopeChecklist
               heading="Offer the peer"
@@ -371,7 +370,7 @@ const AddPeerDialog = memo(function AddPeerDialog({
             the code carries what the peer offers you; tick what you grant it here.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-4">
+        <DialogPanel>
           <label className="block">
             <span className="mb-1.5 block text-xs font-medium text-foreground">Peer code</span>
             <Textarea
@@ -387,13 +386,14 @@ const AddPeerDialog = memo(function AddPeerDialog({
               autoCapitalize="off"
               autoCorrect="off"
               disabled={isAdding}
-              className="font-mono text-xs leading-relaxed break-all"
+              font="mono"
+              className="break-all"
             />
           </label>
           {preview.kind === "valid" ? (
             <div className="space-y-1 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs">
               <p className="font-medium text-foreground">{preview.payload.label}</p>
-              <p className="truncate font-mono text-[11px] text-muted-foreground">
+              <p className="truncate font-mono text-2xs text-muted-foreground">
                 {preview.payload.environmentId} · protocol v{preview.payload.protocolVersion}
               </p>
               <ScopeChips label="Offers you" scopes={preview.payload.scopes} />
@@ -448,7 +448,7 @@ const PeerRow = memo(function PeerRow({ peer, refreshing, onRefresh, onRemove }:
             />
             <h3 className="min-w-0 truncate text-sm font-medium text-foreground">{peer.label}</h3>
             {peer.remoteServerVersion ? (
-              <span className="rounded-md border border-border/50 bg-muted/50 px-1 py-0.5 text-[10px] text-muted-foreground/80">
+              <span className="rounded-md border border-border/50 bg-muted/50 px-1 py-0.5 text-3xs text-muted-foreground/80">
                 t3@{peer.remoteServerVersion}
               </span>
             ) : null}
@@ -576,7 +576,7 @@ const RemoteRunChangesDialog = memo(function RemoteRunChangesDialog({
             never applied to this machine.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-4">
+        <DialogPanel>
           {error ? <p className="text-xs text-destructive">{error}</p> : null}
           {artifacts === null ? (
             <p className="text-xs text-muted-foreground">
@@ -620,7 +620,7 @@ const RemoteRunChangesDialog = memo(function RemoteRunChangesDialog({
                       </Button>
                     </div>
                     {artifact.files.length > 0 ? (
-                      <ul className="space-y-0.5 font-mono text-[11px] text-muted-foreground">
+                      <ul className="space-y-0.5 font-mono text-2xs text-muted-foreground">
                         {artifact.files.map((file) => (
                           <li key={file.path} className="truncate">
                             <span className="text-foreground/70">{file.status}</span> {file.path}
@@ -646,7 +646,7 @@ const RemoteRunChangesDialog = memo(function RemoteRunChangesDialog({
                   Copy diff
                 </Button>
               </div>
-              <pre className="max-h-[40dvh] overflow-auto rounded-lg border border-border/60 bg-muted/30 p-3 font-mono text-[11px] leading-relaxed whitespace-pre text-foreground/85">
+              <pre className="max-h-[40dvh] overflow-auto rounded-lg border border-border/60 bg-muted/30 p-3 font-mono text-2xs leading-relaxed whitespace-pre text-foreground/85">
                 {fetched.diff.length > 0 ? fetched.diff : "(empty diff)"}
               </pre>
             </div>
@@ -696,7 +696,7 @@ const RemoteRunRow = memo(function RemoteRunRow({
           {remoteRun.syncError ? (
             <p className="text-xs text-destructive">{remoteRun.syncError}</p>
           ) : null}
-          <p className="text-[11px] text-muted-foreground/70">
+          <p className="text-2xs text-muted-foreground/70">
             Requested {formatAbsoluteTimestamp(run.requestedAt)}
             {run.completedAt ? ` · finished ${formatAbsoluteTimestamp(run.completedAt)}` : ""}
             {run.turnCount > 0
@@ -830,7 +830,7 @@ const RunOnPeerDialog = memo(function RunOnPeerDialog({
             environment only follows the run and can fetch its changes.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-4">
+        <DialogPanel>
           <div className="block">
             <span className="mb-1.5 block text-xs font-medium text-foreground">Peer</span>
             <Select
@@ -898,7 +898,7 @@ const RunOnPeerDialog = memo(function RunOnPeerDialog({
             {projectsQuery.error ? (
               <p className="mt-1.5 text-xs text-destructive">{projectsQuery.error}</p>
             ) : selectedProject ? (
-              <p className="mt-1.5 truncate font-mono text-[11px] text-muted-foreground">
+              <p className="mt-1.5 truncate font-mono text-2xs text-muted-foreground">
                 {selectedProject.workspaceRoot}
               </p>
             ) : null}

@@ -12,6 +12,8 @@ import * as Stream from "effect/Stream";
 import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
+import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerConfig from "../config.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -47,6 +49,18 @@ const TestLayer = McpHttpServer.PreviewToolkitRegistrationLive.pipe(
   Layer.provideMerge(PreviewAutomationBroker.layer),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-http-server-test-" })),
   Layer.provideMerge(NodeServices.layer),
+);
+const PullRequestsTestLayer = McpHttpServer.PullRequestsToolkitRegistrationLive.pipe(
+  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(ProjectionSnapshotQuery)({
+        getThreadShellById: () => Effect.succeedNone,
+      }),
+      Layer.mock(OrchestrationEngineService)({}),
+      NodeServices.layer,
+    ),
+  ),
 );
 
 const snapshotResult = {
@@ -147,19 +161,71 @@ it.effect.each([{}, { includeImage: false }])(
             Effect.provideService(McpSchema.McpServerClient, client),
           );
 
+        const message = "Preview automation snapshot failed on client mcp-failure-client.";
         expect(snapshot.isError).toBe(true);
         expect(snapshot.content).toEqual([
-          { type: "text", text: "Preview snapshot failed: PreviewAutomationExecutionError." },
+          { type: "text", text: `Preview snapshot failed: ${message}` },
         ]);
         expect(snapshot.structuredContent).toEqual({
           error: {
             _tag: "PreviewAutomationExecutionError",
             operation: "snapshot",
             failureCount: 1,
+            message,
           },
         });
       }),
     ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect.each([
+  { args: {}, advice: "No active preview tab was found for snapshot. Call preview_open first." },
+  {
+    args: { tabId: alternateTabId },
+    advice: `Preview tab ${alternateTabId} was not found for snapshot. Omit tabId to use the current tab, or call preview_open.`,
+  },
+])("tells the agent to open a tab when the snapshot has none $args", ({ args, advice }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const connected = yield* Deferred.make<void>();
+      const events = yield* broker.connect({ clientId: "mcp-no-tab-client", environmentId });
+      yield* Stream.runForEach(events, (event) =>
+        event.type === "connected"
+          ? Deferred.succeed(connected, undefined)
+          : broker.respond({
+              clientId: "mcp-no-tab-client",
+              connectionId: event.connectionId,
+              requestId: event.request.requestId,
+              ok: false,
+              error: { _tag: "PreviewAutomationTabNotFoundError", message: "no tab" },
+            }),
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+
+      const snapshot = yield* callSnapshot(args);
+
+      expect(snapshot.isError).toBe(true);
+      expect(snapshot.content).toEqual([
+        { type: "text", text: `Preview snapshot failed: ${advice}` },
+      ]);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("tells the agent how to fall back when no desktop app can run the snapshot", () =>
+  Effect.gen(function* () {
+    const snapshot = yield* callSnapshot({});
+
+    expect(snapshot.isError).toBe(true);
+    const [text] = snapshot.content;
+    expect(text?.type === "text" ? text.text : "").toContain(
+      "use a headless browser from the shell",
+    );
+    expect(snapshot.structuredContent).toMatchObject({
+      error: { _tag: "PreviewAutomationNoAvailableHostError" },
+    });
+  }).pipe(Effect.provide(TestLayer)),
 );
 
 it.effect.each([
@@ -234,8 +300,14 @@ it.effect.each([
         const metadata = { ...page, title: `Snapshot ${call}`, screenshot };
         const { accessibilityTree: _tree, ...boundedMetadata } = metadata;
         expect(snapshot.isError).toBe(false);
-        expect(snapshot.structuredContent).toEqual(metadata);
-        const [text, ...rest] = snapshot.content;
+        expect(snapshot.structuredContent).toEqual({
+          ...boundedMetadata,
+          omitted: ["accessibilityTree (use interactiveElements locators or preview_evaluate)"],
+        });
+        const [identity, text, ...rest] = snapshot.content;
+        expect(identity?.type === "text" ? decodeJsonText(identity.text) : null).toEqual({
+          url: page.url,
+        });
         expect(text?.type === "text" ? decodeJsonText(text.text) : null).toEqual(boundedMetadata);
         expect(rest).toEqual([
           {
@@ -264,8 +336,14 @@ it.effect.each([
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
-      expect(nextDefault.content.map((content) => content.type)).toEqual(["text", "text", "image"]);
-      expect(nextDefault.structuredContent).toEqual({ ...page, title: "Snapshot 7", screenshot });
+      expect(nextDefault.content.map((content) => content.type)).toEqual([
+        "text",
+        "text",
+        "text",
+        "image",
+      ]);
+      expect(nextDefault.structuredContent).toMatchObject({ title: "Snapshot 7", screenshot });
+      expect(nextDefault.structuredContent).not.toHaveProperty("accessibilityTree");
       expect(requests).toBe(7);
     }),
   ).pipe(Effect.provide(TestLayer)),
@@ -314,11 +392,20 @@ it.effect("saves the snapshot PNG on request and reports its path", () =>
         /^browser-screenshot-example-test-[0-9a-z]+-[0-9a-f]{8}\.png$/,
       );
       expect(Buffer.from(yield* fileSystem.readFile(screenshotPath!)).toString()).toBe("png");
-      const text = snapshot.content.find((content) => content.type === "text");
+      const [, text] = snapshot.content;
       expect(text?.type === "text" ? text.text : "").toContain(screenshotPath);
 
       const unsaved = yield* callSnapshot({});
       expect(unsaved.structuredContent).not.toHaveProperty("screenshotPath");
+
+      // A save without the image skips the page dump.
+      const pathOnly = yield* callSnapshot({ save: true, includeImage: false });
+      const saved = pathOnly.structuredContent as { readonly screenshotPath: string };
+      expect(saved).toEqual({ url: snapshotResult.url, screenshotPath: expect.any(String) });
+      expect(Buffer.from(yield* fileSystem.readFile(saved.screenshotPath)).toString()).toBe("png");
+      const [only, ...others] = pathOnly.content;
+      expect(others).toEqual([]);
+      expect(only?.type === "text" ? decodeJsonText(only.text) : null).toEqual(saved);
     }),
   ).pipe(Effect.provide(TestLayer)),
 );
@@ -343,6 +430,38 @@ it.effect("reports a tagged error when the screenshot cannot be saved", () =>
       });
     }),
   ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect(
+  "registers the pull request toolkit and surfaces a missing capability as a tool error",
+  () =>
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const names = server.tools.map(({ tool }) => tool.name);
+      expect(names).toEqual(
+        expect.arrayContaining([
+          "link_pull_request",
+          "unlink_pull_request",
+          "list_thread_pull_requests",
+        ]),
+      );
+      const linkTool = server.tools.find(({ tool }) => tool.name === "link_pull_request");
+      expect(linkTool?.tool.annotations?.idempotentHint).toBe(true);
+      expect(linkTool?.tool.annotations?.openWorldHint).toBe(false);
+      expect(linkTool?.tool.description).toContain("Register every pull request you open");
+
+      const denied = yield* server
+        .callTool({ name: "list_thread_pull_requests", arguments: {} })
+        .pipe(
+          // A preview-only credential: the token predates the toolkit or was minted elsewhere.
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(denied.isError).toBe(true);
+      expect(denied.content).toEqual([
+        { type: "text", text: "MCP credential does not grant the pull-requests capability." },
+      ]);
+    }).pipe(Effect.provide(PullRequestsTestLayer)),
 );
 
 it.effect("keeps the snapshot text under the agent's output ceiling", () =>
@@ -382,7 +501,10 @@ it.effect("keeps the snapshot text under the agent's output ceiling", () =>
       const snapshot = yield* callSnapshot({ includeImage: false });
 
       expect(snapshot.isError).toBe(false);
-      const [text, notice] = snapshot.content;
+      const [identity, text, notice] = snapshot.content;
+      expect(identity?.type === "text" ? decodeJsonText(identity.text) : null).toEqual({
+        url: oversized.url,
+      });
       expect(text?.type).toBe("text");
       const body = text?.type === "text" ? text.text : "";
       expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(
@@ -403,9 +525,10 @@ it.effect("keeps the snapshot text under the agent's output ceiling", () =>
       expect(parsed.consoleEntries[0]?.text).toBe("entry 60");
       expect(notice?.type === "text" ? notice.text : "").toContain("accessibilityTree");
       expect(notice?.type === "text" ? notice.text : "").toContain("60 older console entries");
-      // The structured result is untouched; only the text the agent reads is bounded.
-      expect(snapshot.structuredContent).toMatchObject({
-        accessibilityTree: oversized.accessibilityTree,
+      // Claude Code shows the model structuredContent instead of the text, so it is bounded too.
+      expect(snapshot.structuredContent).toEqual({
+        ...parsed,
+        omitted: expect.arrayContaining(["60 older console entries"]),
       });
     }),
   ).pipe(Effect.provide(TestLayer)),
@@ -424,7 +547,7 @@ it.effect("bounds the snapshot text even when nothing but logs and the title are
 
       const snapshot = yield* callSnapshot({ includeImage: false });
 
-      const [text] = snapshot.content;
+      const [, text] = snapshot.content;
       const body = text?.type === "text" ? text.text : "";
       expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(
         McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
@@ -435,10 +558,49 @@ it.effect("bounds the snapshot text even when nothing but logs and the title are
       };
       expect(parsed.title.length).toBe(2_049);
       expect(parsed.consoleEntries[0]?.text.length).toBe(501);
-      const notice = snapshot.content[1];
+      const notice = snapshot.content[2];
       const noticeText = notice?.type === "text" ? notice.text : "";
       expect(noticeText).toContain("url or title after 2048 characters");
       expect(noticeText).toContain("console entries text after 500 characters");
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("bounds page text made of wide characters before dropping locators", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      // The character caps alone leave 8,000 three-byte characters, about 24 KB.
+      yield* serveSnapshots("mcp-wide-text-client", {
+        ...snapshotResult,
+        visibleText: "界".repeat(9_000),
+        interactiveElements: Array.from({ length: 20 }, (_, i) => ({
+          tag: "button",
+          role: "button",
+          name: `Button ${i}`,
+          selector: `#button-${i}`,
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+        })),
+      });
+
+      const snapshot = yield* callSnapshot({ includeImage: false });
+
+      const [, text, notice] = snapshot.content;
+      const body = text?.type === "text" ? text.text : "";
+      expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(
+        McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
+      );
+      const parsed = decodeJsonText(body) as {
+        readonly visibleText: string;
+        readonly interactiveElements: ReadonlyArray<unknown>;
+      };
+      expect(parsed.visibleText).toMatch(/^界+…$/);
+      expect(parsed.interactiveElements).toHaveLength(20);
+      expect(notice?.type === "text" ? notice.text : "").toContain(
+        "visibleText after 4000 characters",
+      );
     }),
   ).pipe(Effect.provide(TestLayer)),
 );
@@ -486,7 +648,7 @@ it.effect("sheds log entries before locators when every list is full", () =>
 
       const snapshot = yield* callSnapshot({ includeImage: false });
 
-      const [text, notice] = snapshot.content;
+      const [, text, notice] = snapshot.content;
       const body = text?.type === "text" ? text.text : "";
       expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(
         McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
@@ -568,6 +730,10 @@ it.effect("registers annotated tools and preserves authenticated request context
     Effect.gen(function* () {
       const server = yield* McpServer.McpServer;
       const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const toolIcon = {
+        _tag: "website" as const,
+        pageUrl: "http://example.test/",
+      };
       const routedRequests: Array<{
         readonly operation: string;
         readonly tabId?: string | undefined;
@@ -617,9 +783,9 @@ it.effect("registers annotated tools and preserves authenticated request context
       expect(clickTool?.tool.annotations?.readOnlyHint).toBe(false);
       expect(clickTool?.tool.annotations?.destructiveHint).toBe(true);
       expect(clickTool?.tool.annotations?.openWorldHint).toBe(true);
-      expect(clickTool?.tool.outputSchema).toEqual({
+      expect(clickTool?.tool.outputSchema).toMatchObject({
         type: "object",
-        additionalProperties: false,
+        additionalProperties: true,
         description: "The preview action completed successfully.",
       });
 
@@ -674,10 +840,12 @@ it.effect("registers annotated tools and preserves authenticated request context
           Effect.provideService(McpSchema.McpServerClient, client),
         );
       expect(evaluated.isError).toBe(false);
-      expect(evaluated.structuredContent).toEqual({ value: ["Connect", "Continue"] });
-      expect(evaluated.content).toEqual([
-        { type: "text", text: '{"value":["Connect","Continue"]}' },
-      ]);
+      expect(evaluated.structuredContent).toEqual({ value: ["Connect", "Continue"], toolIcon });
+      const evaluatedText = evaluated.content[0];
+      expect(evaluatedText?.type === "text" ? decodeJsonText(evaluatedText.text) : null).toEqual({
+        toolIcon,
+        value: ["Connect", "Continue"],
+      });
 
       const actionRequests = [
         { name: "preview_click", arguments: { x: 10, y: 10 } },
@@ -694,8 +862,10 @@ it.effect("registers annotated tools and preserves authenticated request context
             Effect.provideService(McpSchema.McpServerClient, client),
           );
         expect(result.isError).toBe(false);
-        expect(result.structuredContent).toEqual({});
-        expect(result.content).toEqual([{ type: "text", text: "{}" }]);
+        expect(result.structuredContent).toEqual({ toolIcon });
+        expect(routedRequests.at(-1)?.operation).toBe("status");
+        const text = result.content[0];
+        expect(text?.type === "text" ? decodeJsonText(text.text) : null).toEqual({ toolIcon });
       }
     }),
   ).pipe(Effect.provide(TestLayer)),

@@ -100,7 +100,7 @@ export type NotificationWebhook = Resource<
  * const webhook = yield* Cloudflare.Alerting.NotificationWebhook("AlertsHook", {
  *   name: "production-alerts",
  *   url: "https://alerts.example.com/cf",
- *   secret: yield* Config.redacted("WEBHOOK_SECRET"),
+ *   secret: yield* Config.Redacted("WEBHOOK_SECRET"),
  * });
  * ```
  *

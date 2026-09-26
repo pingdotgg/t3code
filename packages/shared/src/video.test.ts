@@ -21,4 +21,9 @@ describe("videoMimeType", () => {
       expect(videoMimeType({ name, mimeType: "application/octet-stream" })).toBeNull();
     },
   );
+
+  it("keeps a declared non-video MIME type instead of inferring from the extension", () => {
+    expect(videoMimeType({ name: "recording.mp4", mimeType: "application/pdf" })).toBeNull();
+    expect(videoMimeType({ name: "recording.mp4", mimeType: "image/png" })).toBeNull();
+  });
 });

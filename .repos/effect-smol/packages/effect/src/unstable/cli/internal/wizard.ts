@@ -94,7 +94,7 @@ const promptCommand: (
       return
     }
 
-    const child = yield* Prompt.run(Prompt.select({
+    const child = yield* Prompt.run(Prompt.Select({
       message: "Command",
       choices: visibleSubcommands.map((command) => ({
         title: command.name,
@@ -130,7 +130,7 @@ const promptParam = Effect.fnUntraced(
     const metadata = Param.getParamMetadata(param)
 
     if (metadata.isOptional) {
-      const include = yield* Prompt.run(Prompt.confirm({
+      const include = yield* Prompt.run(Prompt.Confirm({
         message: `Set ${renderParamLabel(single)}?`,
         initial: false
       }))
@@ -142,7 +142,7 @@ const promptParam = Effect.fnUntraced(
 
     const count = !metadata.isVariadic
       ? 1
-      : yield* Prompt.run(Prompt.integer({
+      : yield* Prompt.run(Prompt.Int({
         message: `${renderParamLabel(single)} count`,
         default: Option.getOrElse(metadata.variadicMin, () => 0),
         min: Option.getOrElse(metadata.variadicMin, () => 0),
@@ -168,7 +168,12 @@ const promptParam = Effect.fnUntraced(
     if (single.kind === Param.argumentKind) {
       return values
     }
-    return values.flatMap((value) => [commandLineArg(`--${single.name}`), value])
+    // Inline option-looking values so the lexer cannot interpret them as flags or the -- delimiter.
+    return values.flatMap((value) =>
+      value.value.startsWith("-") && value.value.length > 1
+        ? [commandLineArg(`--${single.name}=${value.value}`, `--${single.name}=${value.displayValue}`)]
+        : [commandLineArg(`--${single.name}`), value]
+    )
   }
 )
 
@@ -179,7 +184,7 @@ const promptSingle = (
   switch (single.primitiveType._tag) {
     case "Boolean":
       return Effect.map(
-        Prompt.run(Prompt.confirm({
+        Prompt.run(Prompt.Confirm({
           message,
           label: {
             confirm: "true",
@@ -195,7 +200,7 @@ const promptSingle = (
     case "Choice": {
       const choices = Primitive.getChoiceKeys(single.primitiveType) ?? []
       return Effect.map(
-        Prompt.run(Prompt.select({
+        Prompt.run(Prompt.Select({
           message,
           choices: choices.map((choice) => ({ title: choice, value: choice }))
         })),
@@ -203,18 +208,18 @@ const promptSingle = (
       )
     }
     case "Date":
-      return Effect.map(Prompt.run(Prompt.date({ message })), (date) => commandLineArg(date.toISOString()))
-    case "Float":
-      return Effect.map(Prompt.run(Prompt.float({ message })), (value) => commandLineArg(String(value)))
-    case "Integer":
-      return Effect.map(Prompt.run(Prompt.integer({ message })), (value) => commandLineArg(String(value)))
+      return Effect.map(Prompt.run(Prompt.Date({ message })), (date) => commandLineArg(date.toISOString()))
+    case "Finite":
+      return Effect.map(Prompt.run(Prompt.Number({ message })), (value) => commandLineArg(String(value)))
+    case "Int":
+      return Effect.map(Prompt.run(Prompt.Int({ message })), (value) => commandLineArg(String(value)))
     case "Redacted":
       return Effect.map(
-        Prompt.run(Prompt.password({ message })),
+        Prompt.run(Prompt.Password({ message })),
         (value) => commandLineArg(Redacted.value(value), "<redacted>")
       )
     default:
-      return Effect.map(Prompt.run(Prompt.text({ message })), commandLineArg)
+      return Effect.map(Prompt.run(Prompt.String({ message })), commandLineArg)
   }
 }
 

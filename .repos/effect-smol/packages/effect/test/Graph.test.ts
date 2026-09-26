@@ -1952,13 +1952,19 @@ describe("Graph", () => {
       )
     })
 
-    it("ignores negative cycles that cannot affect the Bellman-Ford target", () => {
-      const graph = directed([0, 1, 2, 3], [[0, 1, 1], [1, 2, -2], [2, 1, 1], [0, 3, 5]])
+    it("ignores negative cycles separated from the Bellman-Ford target by impassable edges", () => {
+      const graph = directed([0, 1, 2, 3], [[0, 1, 1], [1, 2, -2], [2, 1, 1], [0, 3, 5], [2, 3, Infinity]])
       const expected = { path: [0, 3], edges: [3], distance: 5, costs: [5] }
       assertPath(Graph.bellmanFord(graph, { source: 0, target: 3, cost: (edge) => edge }), expected)
       assertPath(
         Graph.bellmanFord(Graph.beginMutation(graph), { source: 0, target: 3, cost: (edge) => edge }),
         expected
+      )
+
+      const unreachable = directed([0, 1, 2, 3], [[0, 1, 1], [1, 2, -2], [2, 1, 1], [2, 3, Infinity]])
+      assert.deepStrictEqual(
+        Graph.bellmanFord(unreachable, { source: 0, target: 3, cost: (edge) => edge }),
+        Option.none()
       )
     })
 

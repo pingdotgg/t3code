@@ -68,7 +68,7 @@ const LegacyProviderOptionSelectionsObject = Schema.Record(Schema.String, Schema
 const ProviderOptionSelectionsFromLegacyObject = LegacyProviderOptionSelectionsObject.pipe(
   Schema.decodeTo(
     Schema.Array(ProviderOptionSelection),
-    SchemaTransformation.transformOrFail({
+    SchemaTransformation.transformEffect({
       decode: (record) => Effect.succeed(coerceLegacyOptionsObjectToArray(record)),
       encode: (selections) => Effect.succeed(canonicalSelectionsToLegacyObject(selections)),
     }),
@@ -149,7 +149,7 @@ const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
 
-export const DEFAULT_MODEL = "gpt-5.6-sol";
+export const DEFAULT_MODEL = "gpt-6-astra";
 
 /**
  * Codex default-model preference, most preferred first. The provider snapshot
@@ -157,17 +157,18 @@ export const DEFAULT_MODEL = "gpt-5.6-sol";
  * default; when none are available, Codex's own `isDefault` flag wins.
  */
 export const PREFERRED_DEFAULT_CODEX_MODELS: ReadonlyArray<string> = [
+  DEFAULT_MODEL,
   "gpt-5.6-sol",
   "gpt-5.6-terra",
 ];
-export const DEFAULT_TEXT_GENERATION_MODEL = "gpt-5.6-luna";
+export const DEFAULT_TEXT_GENERATION_MODEL = "gpt-6-luna";
 /** Keep the official Antigravity session's current model. Never send this ID to ACP. */
 export const ANTIGRAVITY_DEFAULT_MODEL = "antigravity-default";
 export const DEFAULT_TEXT_GENERATION_REASONING_EFFORT = "low";
 
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
   [CODEX_DRIVER_KIND]: DEFAULT_MODEL,
-  [CLAUDE_DRIVER_KIND]: "claude-sonnet-5",
+  [CLAUDE_DRIVER_KIND]: "claude-fable-5-1",
   [CURSOR_DRIVER_KIND]: "auto",
   // Product slug, not an ACP model id. The Grok adapter treats it as "the session's current model".
   [GROK_DRIVER_KIND]: "grok-build",

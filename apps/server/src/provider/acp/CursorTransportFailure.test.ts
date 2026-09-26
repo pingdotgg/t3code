@@ -38,6 +38,8 @@ describe("CursorTransportFailure", () => {
     "Error: ConnectError: [unauthenticated] sign in",
     "Error: ConnectError: [permission_denied] subscription required",
     "Error: HTTP 500 from the application being debugged",
+    "Error: RetriableError: [internal] Failed to run step, exceeded max retries",
+    "Error: RetriableError: [internal] Failed to run step, exceeded max retries\n    at step (cli.js:1:2)",
   ])("preserves prose, code and non-transport errors: %s", (message) => {
     expect(failureFor([...message])).toBeUndefined();
   });

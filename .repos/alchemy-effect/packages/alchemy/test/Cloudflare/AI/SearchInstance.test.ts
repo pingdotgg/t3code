@@ -50,6 +50,25 @@ const expectGone = (accountId: string, id: string, namespace = "default") =>
     }),
   );
 
+// Keep each stack's credential explicit so Cloudflare cannot reuse a token
+// owned by another test stack.
+const scopedToken = Effect.gen(function* () {
+  const { accountId } = yield* yield* CloudflareEnvironment;
+  const apiToken = yield* Cloudflare.ApiToken.AccountApiToken("TokenSource", {
+    policies: [
+      {
+        effect: "allow",
+        permissionGroups: ["AI Search Index Engine"],
+        resources: { [`com.cloudflare.api.account.${accountId}`]: "*" },
+      },
+    ],
+  });
+  return yield* Cloudflare.AI.SearchToken("Token", {
+    cfApiId: apiToken.tokenId,
+    cfApiKey: apiToken.value,
+  });
+});
+
 // One program deploying both the R2 source bucket and the AI Search
 // instance indexing it. The instance's `source` references the bucket
 // name so the engine orders instance-after-bucket on deploy (and the
@@ -59,7 +78,9 @@ const program = (props?: Partial<Cloudflare.AI.SearchInstanceProps>) =>
     const bucket = yield* Cloudflare.R2.Bucket("AiSearchSource", {
       forceDestroy: true,
     });
+    const token = yield* scopedToken;
     const instance = yield* Cloudflare.AI.SearchInstance("Search", {
+      tokenId: token.id,
       source: bucket.bucketName,
       ...props,
     });
@@ -337,7 +358,9 @@ const nsProgram = (props?: Partial<Cloudflare.AI.SearchInstanceProps>) =>
     const bucket = yield* Cloudflare.R2.Bucket("AiSearchSource", {
       forceDestroy: true,
     });
+    const token = yield* scopedToken;
     const instance = yield* Cloudflare.AI.SearchInstance("Search", {
+      tokenId: token.id,
       source: bucket.bucketName,
       namespace: namespace.name,
       ...props,

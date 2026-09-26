@@ -27,6 +27,7 @@ import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/unstable/cli";
 
 import packageJson from "../../package.json" with { type: "json" };
+import * as BootService from "../cloud/bootService.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
@@ -142,12 +143,12 @@ const runInteractiveSession = (input: {
     child.once("exit", (code, signal) => resume(Effect.succeed(code ?? (signal === null ? 0 : 1))));
   });
 
-const agentFlag = Flag.choice("agent", ["claude", "codex"]).pipe(
+const agentFlag = Flag.Literals("agent", ["claude", "codex"]).pipe(
   Flag.withDescription("Agent CLI to use. Default: ask when both are installed."),
   Flag.optional,
 );
 
-const modelFlag = Flag.string("model").pipe(
+const modelFlag = Flag.String("model").pipe(
   Flag.withDescription("Model passed through to the agent CLI. Default: the agent's default."),
   Flag.optional,
 );
@@ -169,7 +170,7 @@ export const triageCommand = Command.make("triage", {
       // --base-dir wins; T3CODE_HOME is its documented env equivalent (same
       // precedence as `t3 pair`).
       const explicitBaseDir = Option.getOrUndefined(flags.baseDir);
-      const envHome = yield* Config.string("T3CODE_HOME").pipe(Config.option);
+      const envHome = yield* Config.String("T3CODE_HOME").pipe(Config.option);
       const baseDir = yield* resolveBaseDir(explicitBaseDir ?? Option.getOrUndefined(envHome));
       const paths = yield* ServerConfig.deriveServerPaths(baseDir, undefined, {});
 
@@ -189,8 +190,8 @@ export const triageCommand = Command.make("triage", {
         buildTriageContext({
           generatedAt: DateTime.formatIso(now),
           version,
-          releaseTag: version.includes("-nightly.")
-            ? `v${version} (nightly build; if this tag does not exist, clone main)`
+          releaseTag: /^[^-+]+-(?:nightly|preview)\./.test(version)
+            ? `v${version} (prerelease build; if this tag does not exist, clone main)`
             : `v${version}`,
           os: `${yield* HostProcessPlatform} ${yield* HostProcessArchitecture} (${NodeOS.release()})`,
           nodeVersion: process.version,
@@ -201,7 +202,11 @@ export const triageCommand = Command.make("triage", {
             dbPath: paths.dbPath,
             settingsPath: paths.settingsPath,
             logsDir: paths.logsDir,
-            serverLogPath: paths.serverLogPath,
+            // The server writes no log file of its own. Service installs and the
+            // desktop app capture its output. The glob covers every desktop backend
+            // (such as WSL) and rotated copies; names come from DesktopObservability.ts.
+            serviceLogPath: path.join(paths.logsDir, BootService.BOOT_SERVICE_LOG_FILE),
+            desktopBackendLogGlob: path.join(paths.logsDir, "server-child*.log*"),
             serverTracePath: paths.serverTracePath,
             providerEventLogPath: paths.providerEventLogPath,
             terminalLogsDir: paths.terminalLogsDir,

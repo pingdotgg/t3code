@@ -26,7 +26,7 @@ vi.mock("@clickhouse/client", () => ({
   })
 }))
 
-describe("ClickhouseClient", () => {
+describe("ClickhouseClient", { concurrent: false }, () => {
   it("preserves fractional JavaScript numbers in inferred parameters", () => {
     const sql = Statement.make(Effect.void as any, ClickhouseClient.makeCompiler(), [], undefined)
     const [query] = sql`SELECT ${1.5}`.compile()

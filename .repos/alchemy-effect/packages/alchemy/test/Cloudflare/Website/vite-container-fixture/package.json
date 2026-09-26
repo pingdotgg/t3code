@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "devDependencies": {
-    "@cloudflare/containers": "catalog:cloudflare",
+    "@cloudflare/containers": "catalog:",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect",
-    "vite": "catalog:build"
+    "effect": "catalog:",
+    "vite": "catalog:"
   }
 }

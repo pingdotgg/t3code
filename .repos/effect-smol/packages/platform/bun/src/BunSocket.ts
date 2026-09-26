@@ -29,13 +29,16 @@ export * from "@effect/platform-node-shared/NodeSocket"
 export const layerWebSocketConstructor: Layer.Layer<
   Socket.WebSocketConstructor
 > = Layer.succeed(Socket.WebSocketConstructor)(
-  (url, protocols) => new globalThis.WebSocket(url, protocols)
+  (url, options) =>
+    // Bun accepts `WebSocketOptions`, but `bun-types` selects the DOM overload
+    // when `lib.dom` is loaded and hides those constructor options.
+    new globalThis.WebSocket(url, options as string | Array<string> | undefined)
 )
 
 /**
  * Creates a `Socket.Socket` layer for a WebSocket URL using Bun's global
- * `WebSocket` constructor, honoring protocol, open-timeout, and close-code
- * error options.
+ * `WebSocket` constructor, honoring protocol, open-timeout, and
+ * high-water-mark options.
  *
  * @category layers
  * @since 4.0.0
@@ -43,9 +46,9 @@ export const layerWebSocketConstructor: Layer.Layer<
 export const layerWebSocket: (
   url: string | Effect<string>,
   options?: {
-    readonly closeCodeIsError?: ((code: number) => boolean) | undefined
     readonly openTimeout?: Duration.Input | undefined
     readonly protocols?: string | Array<string> | undefined
+    readonly highWaterMark?: number | undefined
   } | undefined
 ) => Layer.Layer<Socket.Socket, never, never> = flow(
   Socket.makeWebSocket,

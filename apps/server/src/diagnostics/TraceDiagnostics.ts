@@ -81,7 +81,12 @@ interface TraceDiagnosticsErrorSummary {
 const DEFAULT_SLOW_SPAN_THRESHOLD_MS = 1_000;
 const TOP_LIMIT = 10;
 const RECENT_LIMIT = 20;
-function toRotatedTracePaths(traceFilePath: string, maxFiles: number): ReadonlyArray<string> {
+
+/** The trace file and its rotated backups, oldest first. */
+export function toRotatedTracePaths(
+  traceFilePath: string,
+  maxFiles: number,
+): ReadonlyArray<string> {
   const backupCount = Math.max(0, Math.floor(maxFiles));
   const backups = Array.from(
     { length: backupCount },
@@ -420,8 +425,9 @@ export const make = Effect.gen(function* () {
       const readAt = options.readAt ?? (yield* DateTime.now);
       const slowSpanThresholdMs = options.slowSpanThresholdMs ?? DEFAULT_SLOW_SPAN_THRESHOLD_MS;
       const paths = toRotatedTracePaths(options.traceFilePath, options.maxFiles);
-      const results = yield* Effect.all(
-        paths.map((path) =>
+      const results = yield* Effect.forEach(
+        paths,
+        (path) =>
           readTraceFile(fileSystem, path).pipe(
             Effect.tapError((cause) =>
               Effect.logWarning("Failed to read local trace file.").pipe(
@@ -434,7 +440,6 @@ export const make = Effect.gen(function* () {
             ),
             Effect.result,
           ),
-        ),
         {
           concurrency: 1,
         },

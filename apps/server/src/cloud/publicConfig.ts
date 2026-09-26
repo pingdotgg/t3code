@@ -96,9 +96,9 @@ export function resolveRelayClientTracingConfig(
 }
 
 export function makeRelayUrlConfig(fallback = buildTimeRelayUrl) {
-  const runtimeConfig = Config.nonEmptyString("T3CODE_RELAY_URL");
+  const runtimeConfig = Config.NonEmptyString("T3CODE_RELAY_URL");
   return (fallback ? runtimeConfig.pipe(Config.withDefault(fallback)) : runtimeConfig).pipe(
-    Config.mapOrFail(validateRelayUrl),
+    Config.mapEffect(validateRelayUrl),
   );
 }
 
@@ -112,7 +112,7 @@ export const relayUrlConfig = makeRelayUrlConfig();
 export const hostedAppUrlConfig = makePublicValueConfig(
   "T3CODE_HOSTED_APP_URL",
   DEFAULT_HOSTED_APP_URL,
-).pipe(Config.mapOrFail(validateHostedAppUrl));
+).pipe(Config.mapEffect(validateHostedAppUrl));
 
 function validateHostedAppUrl(value: string) {
   try {
@@ -143,7 +143,7 @@ function validateHostedAppUrl(value: string) {
 }
 
 function makePublicValueConfig(name: string, fallback: string) {
-  const runtimeConfig = Config.nonEmptyString(name);
+  const runtimeConfig = Config.NonEmptyString(name);
   return (fallback ? runtimeConfig.pipe(Config.withDefault(fallback)) : runtimeConfig).pipe(
     Config.map((value) => value.trim()),
   );
@@ -152,11 +152,13 @@ function makePublicValueConfig(name: string, fallback: string) {
 /**
  * The CLI never calls Clerk's /oauth/authorize itself: the browser leg goes
  * through the hosted /connect page, which builds the authorize URL after a
- * Clerk session exists (see CliTokenManager.login). Only the token endpoint
- * is contacted directly.
+ * Clerk session exists (see CliTokenManager.login). The token endpoint and,
+ * for headless hosts, the device authorization endpoint are contacted
+ * directly.
  */
 export interface CloudCliOAuthConfig {
   readonly tokenEndpoint: string;
+  readonly deviceAuthorizationEndpoint: string;
   readonly clientId: string;
   readonly loopbackPort: number;
   readonly redirectUri: string;
@@ -180,7 +182,7 @@ export function makeCloudCliOAuthConfig({
       clerkCliOAuthClientIdFallback,
     ),
   }).pipe(
-    Config.mapOrFail(({ clerkPublishableKey, clientId }) =>
+    Config.mapEffect(({ clerkPublishableKey, clientId }) =>
       Effect.try({
         try: () => clerkFrontendApiUrlFromPublishableKey(clerkPublishableKey),
         catch: (cause) =>
@@ -195,6 +197,7 @@ export function makeCloudCliOAuthConfig({
           (clerkFrontendApiUrl) =>
             ({
               tokenEndpoint: `${clerkFrontendApiUrl}/oauth/token`,
+              deviceAuthorizationEndpoint: `${clerkFrontendApiUrl}/oauth/device_authorization`,
               clientId,
               loopbackPort: CLOUD_CLI_OAUTH_LOOPBACK_PORT,
               redirectUri: connectLoopbackRedirectUri(CLOUD_CLI_OAUTH_LOOPBACK_PORT),

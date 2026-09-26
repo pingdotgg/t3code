@@ -43,13 +43,40 @@ describe("planClaudeSkillDispatch", () => {
     });
   });
 
+  it("dispatches currency-prefixed mentions and preserves their source boundaries", () => {
+    for (const symbol of ["€", "£", "¥", "₹", "₩", "₿", "𑿝"]) {
+      expect(
+        planClaudeSkillDispatch(
+          `${symbol}review the diff, then ${symbol}implement the fixes`,
+          SKILLS,
+        ),
+      ).toEqual({
+        leadingText: "/review the diff, then",
+        commandText: "/implement the fixes",
+        skillName: "implement",
+      });
+      expect(planClaudeSkillDispatch(`${symbol}2spec for this`, SKILLS)).toEqual({
+        leadingText: undefined,
+        commandText: "/2spec for this",
+        skillName: "2spec",
+      });
+      expect(planClaudeSkillDispatch(`5${symbol}review ${symbol}unknown`, SKILLS)).toBeUndefined();
+    }
+  });
+
   it("ignores a dollar token glued to other text", () => {
     expect(planClaudeSkillDispatch("cost is 5$implement", SKILLS)).toBeUndefined();
   });
 
   it("ignores currency amounts and compact monetary expressions", () => {
-    const skillsWithCurrency = new Set([...SKILLS, "20", "20k", "100M"]);
-    expect(planClaudeSkillDispatch("pay $20 tomorrow", skillsWithCurrency)).toBeUndefined();
-    expect(planClaudeSkillDispatch("budget is $20k tomorrow", skillsWithCurrency)).toBeUndefined();
+    const skillsWithCurrency = new Set([...SKILLS, "20", "20k", "100M", "1e6"]);
+    for (const symbol of ["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"]) {
+      expect(
+        planClaudeSkillDispatch(
+          `pay ${symbol}20 ${symbol}20k ${symbol}100M ${symbol}1e6 tomorrow`,
+          skillsWithCurrency,
+        ),
+      ).toBeUndefined();
+    }
   });
 });

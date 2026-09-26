@@ -5,9 +5,9 @@
  *
  * Discovery is tag-driven: every alchemy resource is branded with
  * `alchemy::stack` / `alchemy::stage` / `alchemy::id` (see src/Tags.ts
- * createInternalTags). Test suites deploy with stage `"test"` (the default in
- * packages/alchemy/src/Test/Core.ts), so we sweep everything tagged
- * `alchemy::stage = test`.
+ * createInternalTags). Test suites deploy with stage `test_$USER` (the default
+ * in packages/alchemy/src/Test/Core.ts), so we sweep everything tagged
+ * `alchemy::stage = test_$USER`.
  *
  * Primary discovery path: resourcegroupstaggingapi GetResources (regional).
  * Fallbacks for resources the tagging API can't see from a regional query:
@@ -19,7 +19,7 @@
  *   bun scripts/aws-leak-sweep.ts                      # DRY RUN (default)
  *   bun scripts/aws-leak-sweep.ts --delete             # actually delete
  *   bun scripts/aws-leak-sweep.ts --older-than 12      # only >= 12h old (default 6)
- *   bun scripts/aws-leak-sweep.ts --stage test         # tag stage filter (default test)
+ *   bun scripts/aws-leak-sweep.ts --stage test_sam     # tag stage filter (default test_$USER)
  *   bun scripts/aws-leak-sweep.ts --region us-west-2   # region (default env or us-west-2)
  *
  * KMS keys are ALWAYS report-only — never deleted by this tool.
@@ -80,7 +80,9 @@ const parseArgs = Effect.sync((): Args => {
   return {
     delete: flag("delete"),
     olderThanHours: Number(opt("older-than") ?? 6),
-    stage: opt("stage") ?? "test",
+    stage:
+      opt("stage") ??
+      `test_${process.env.USER || process.env.USERNAME || "unknown"}`,
     region:
       opt("region") ??
       process.env.AWS_REGION ??

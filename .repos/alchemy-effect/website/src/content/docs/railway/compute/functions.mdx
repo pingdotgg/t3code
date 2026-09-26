@@ -47,7 +47,7 @@ image.
 
 ## Schemaless RPC
 
-Return methods next to `fetch`. Call `enableRailwayRpc()` in init
+Return methods next to `fetch`. Call `enableRailwayRpc()` in the constructor
 (the canvas start command is capped at 96KB, so the dispatcher is
 opt-in). Another Function or Service binds the class and calls
 them over `{name}.railway.internal` with a shared token. Public

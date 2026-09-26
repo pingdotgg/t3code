@@ -365,7 +365,7 @@ export const FederationErrorCode = Schema.Literals([
 ]);
 export type FederationErrorCode = typeof FederationErrorCode.Type;
 
-export class FederationError extends Schema.TaggedErrorClass<FederationError>()(
+export class FederationError extends Schema.TaggedError<FederationError>()(
   "FederationError",
   {
     code: FederationErrorCode,

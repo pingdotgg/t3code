@@ -29,6 +29,8 @@ import {
   WsFederationSubscribeRemoteRunsRpc,
 } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
+import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
+import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -128,8 +130,11 @@ const makeCliTestServerConfig = (baseDir: string) =>
       traceMaxFiles: 10,
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
-      otlpExportIntervalMs: 10_000,
-      otlpServiceName: "t3-server",
+      otlpLogsUrl: undefined,
+      otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
+      otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
+      otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
+      otelEnvironment: OtelEnvironment.none,
       mode: "web",
       port: 0,
       host: "127.0.0.1",
@@ -414,15 +419,14 @@ it.layer(NodeServices.layer)("t3 peer", (it) => {
       }
       assert.equal(badGrant.option, "grant");
 
-      // A variadic argument with a minimum reports "0 occurrences" as an invalid value.
       const noPrompt = expectShowHelpError(
         yield* flipCli(["peer", "run", "env-peer-1", "project-1"]),
-        "InvalidValue",
+        "MissingArgument",
       );
-      if (noPrompt?._tag !== "InvalidValue") {
-        assert.fail("Expected InvalidValue");
+      if (noPrompt?._tag !== "MissingArgument") {
+        assert.fail("Expected MissingArgument");
       }
-      assert.equal(noPrompt.option, "prompt");
+      assert.equal(noPrompt.argument, "prompt");
 
       expectShowHelpError(yield* flipCli(["peer", "remove", "   "]), "InvalidValue");
     }),

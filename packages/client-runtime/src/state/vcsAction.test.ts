@@ -1,7 +1,9 @@
 import {
   EnvironmentId,
+  ThreadId,
   WS_METHODS,
   type GitActionProgressEvent,
+  type GitRunStackedActionInput,
   type GitRunStackedActionResult,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -97,14 +99,14 @@ function progress<T extends GitActionProgressEvent>(event: T): T {
 
 function cacheStore(onClearVcsRefs: (environmentId: EnvironmentId) => void) {
   return Persistence.EnvironmentCacheStore.of({
-    loadShell: () => Effect.succeed(Option.none()),
+    loadShell: () => Effect.succeedNone,
     saveShell: () => Effect.void,
-    loadThread: () => Effect.succeed(Option.none()),
+    loadThread: () => Effect.succeedNone,
     saveThread: () => Effect.void,
     removeThread: () => Effect.void,
-    loadServerConfig: () => Effect.succeed(Option.none()),
+    loadServerConfig: () => Effect.succeedNone,
     saveServerConfig: () => Effect.void,
-    loadVcsRefs: () => Effect.succeed(Option.none()),
+    loadVcsRefs: () => Effect.succeedNone,
     saveVcsRefs: () => Effect.void,
     removeVcsRefs: () => Effect.void,
     clearVcsRefs: (environmentId) => Effect.sync(() => onClearVcsRefs(environmentId)),
@@ -589,9 +591,10 @@ describe("vcsActionState", () => {
           successfulActionId,
         );
         const failedTransportActionId = createVcsActionTransportId(targetKey, failedActionId);
+        const rpcInputs = new Array<GitRunStackedActionInput>();
         const client = {
-          [WS_METHODS.gitRunStackedAction]: (input: { readonly actionId: string }) =>
-            input.actionId === successfulTransportActionId
+          [WS_METHODS.gitRunStackedAction]: (input: GitRunStackedActionInput) =>
+            (rpcInputs.push(input), input.actionId === successfulTransportActionId)
               ? Stream.make(
                   progress({
                     kind: "action_finished",
@@ -652,16 +655,22 @@ describe("vcsActionState", () => {
         const state = vcsRefsCacheStateAtom({ environmentId });
 
         expect(registry.get(state).revision).toBe(0);
+        const threadId = ThreadId.make("thread-stacked-action");
         const successfulResult = yield* Effect.promise(() =>
           manager.runStackedAction(targetKey).run(registry, {
             actionId: successfulActionId,
             action,
+            threadId,
           }),
         );
 
         expect(AsyncResult.isSuccess(successfulResult)).toBe(true);
         expect(registry.get(state).revision).toBe(1);
         expect(removed).toEqual([`${environmentId}:*`]);
+        // The server links a created pull request to this thread, so the id must ride along.
+        expect(rpcInputs).toEqual([
+          { actionId: successfulTransportActionId, cwd, action, threadId },
+        ]);
 
         const failedResult = yield* Effect.promise(() =>
           manager.runStackedAction(targetKey).run(registry, {

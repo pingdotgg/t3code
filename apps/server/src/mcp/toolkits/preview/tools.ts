@@ -1,4 +1,5 @@
 import {
+  ToolActivityIcon,
   PreviewAutomationClickInput,
   PreviewAutomationError,
   PreviewAutomationEvaluateInput,
@@ -31,7 +32,9 @@ const dependencies = [
   PreviewAutomationBroker.PreviewAutomationBroker,
 ];
 
-const PreviewActionResult = Schema.Record(Schema.String, Schema.Never).annotate({
+const presentationFields = { toolIcon: Schema.optional(ToolActivityIcon) };
+
+const PreviewActionResult = Schema.Struct(presentationFields).annotate({
   description: "The preview action completed successfully.",
 });
 
@@ -89,7 +92,7 @@ const PreviewResizeTool = safeBrowserTool(
     description:
       "Resize a collaborative browser tab, optionally selected by tabId. Use {mode:'fill'}, {mode:'freeform',width:1024,height:768}, or {mode:'preset',preset:'iphone-12-pro',orientation:'portrait'}. This changes CSS layout breakpoints without changing the desktop browser user agent.",
     parameters: PreviewAutomationResizeInput,
-    success: PreviewAutomationResizeResult,
+    success: Schema.Struct({ ...PreviewAutomationResizeResult.fields, ...presentationFields }),
     failure: PreviewAutomationError,
     dependencies,
   })
@@ -102,7 +105,10 @@ const PreviewSetAppearanceTool = safeBrowserTool(
     description:
       "Emulate prefers-color-scheme in a collaborative browser tab, optionally selected by tabId. Use {colorScheme:'dark'} or {colorScheme:'light'} to preview the page in that appearance, and {colorScheme:'system'} to clear the override and follow the OS appearance.",
     parameters: PreviewAutomationSetColorSchemeInput,
-    success: PreviewAutomationSetColorSchemeResult,
+    success: Schema.Struct({
+      ...PreviewAutomationSetColorSchemeResult.fields,
+      ...presentationFields,
+    }),
     failure: PreviewAutomationError,
     dependencies,
   })
@@ -113,7 +119,7 @@ const PreviewSetAppearanceTool = safeBrowserTool(
 export const PreviewSnapshotTool = readonlyBrowserTool(
   Tool.make("preview_snapshot", {
     description:
-      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot. Set includeImage=false for text-only output with the same page metadata. Set save=true to also write the PNG to disk and get screenshotPath back; embed that path in your reply as ![alt](screenshotPath) so the user sees it. This is the only way to show the user a screenshot; the image in the tool result is not saved anywhere.",
+      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot. The text is capped near 20 KB and lists what it omitted; use preview_evaluate to read more. Set includeImage=false for text-only output with the same page metadata. Set save=true to also write the PNG to disk and get screenshotPath back; with includeImage=false, save=true returns only the url and screenshotPath. Embed that path in your reply as ![alt](screenshotPath) so the user sees it. This is the only way to show the user a screenshot; the image in the tool result is not saved anywhere.",
     parameters: Schema.Struct({
       ...PreviewAutomationTabTargetInput.fields,
       includeImage: Schema.optional(
@@ -125,7 +131,7 @@ export const PreviewSnapshotTool = readonlyBrowserTool(
       save: Schema.optional(
         Schema.Boolean.annotate({
           description:
-            "Write the screenshot PNG to disk and return its absolute path as screenshotPath. Defaults to false.",
+            "Write the screenshot PNG to disk and return its absolute path as screenshotPath. With includeImage=false, return only the url and screenshotPath. Defaults to false.",
         }),
       ),
     }),
@@ -185,6 +191,7 @@ const PreviewScrollTool = safeBrowserTool(
  * null valid instead of failing only for non-object expressions.
  */
 export const PreviewEvaluateResult = Schema.Struct({
+  ...presentationFields,
   value: Schema.Unknown.annotate({
     description: "The JSON-serializable value the expression produced, or null.",
   }),
@@ -217,7 +224,7 @@ const PreviewRecordingStartTool = safeBrowserTool(
     description:
       "Start recording the collaborative browser tab selected by tabId, or this agent session's current tab when omitted.",
     parameters: PreviewAutomationTabTargetInput,
-    success: PreviewAutomationRecordingStatus,
+    success: Schema.Struct({ ...PreviewAutomationRecordingStatus.fields, ...presentationFields }),
     failure: PreviewAutomationError,
     dependencies,
   }).annotate(Tool.Title, "Start browser recording"),
@@ -228,7 +235,7 @@ const PreviewRecordingStopTool = safeBrowserTool(
     description:
       "Stop recording the collaborative browser tab selected by tabId, or this agent session's current tab when omitted, and transfer the compressed recording once (up to 50 MiB) to an evidence file readable in this agent's environment. Returns its environment-local path after transfer succeeds.",
     parameters: PreviewAutomationTabTargetInput,
-    success: PreviewAutomationRecordingArtifact,
+    success: Schema.Struct({ ...PreviewAutomationRecordingArtifact.fields, ...presentationFields }),
     failure: PreviewAutomationError,
     dependencies: [...dependencies, FileSystem.FileSystem, ServerConfig.ServerConfig],
   }).annotate(Tool.Title, "Stop browser recording"),

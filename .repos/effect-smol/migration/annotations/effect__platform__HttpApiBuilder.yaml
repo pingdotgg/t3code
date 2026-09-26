@@ -8,8 +8,8 @@
   replacement: "effect/unstable/httpapi/HttpApiBuilder#group"
   note: "The group layer remains; names are now identifiers and API/group global error channels are gone."
 "@effect/platform/HttpApiBuilder#handler":
-  replacement: "effect/unstable/httpapi/HttpApiBuilder#endpoint"
-  note: "Use endpoint for a standalone typed endpoint implementation; inside a group pass callbacks to handlers.handle."
+  replacement: "effect/unstable/httpapi/HttpApiBuilder#handler"
+  note: "The typed callback helper remains; names are now identifiers and API/group global error channels are gone. Pass the returned callback to handlers.handle."
 "@effect/platform/HttpApiBuilder#Handlers":
   replacement: "effect/unstable/httpapi/HttpApiBuilder#Handlers"
   note: "Handlers now tracks an endpoint map and handled identifiers. Prefer Handlers.FromGroup<Group>."
@@ -25,6 +25,9 @@
 "@effect/platform/HttpApiBuilder#HandlersTypeId":
   replacement: "none"
   note: "The exported symbol was removed; do not inspect or construct the private Handlers marker."
+"@effect/platform/HttpApiBuilder#Middleware":
+  replacement: "none"
+  note: "The API-specific middleware service tag was removed. Declared HttpApiMiddleware services are applied while routes are built; use HttpRouter.middleware for additional global middleware."
 "@effect/platform/HttpApiBuilder#httpApp":
   replacement: "effect/unstable/http/HttpRouter#toHttpEffect"
   note: "Build the application from the assembled API route layer; HTTP apps are Effects in v4."

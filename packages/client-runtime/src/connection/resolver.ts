@@ -2,6 +2,7 @@ import type { AuthClientPresentationMetadata } from "@t3tools/contracts";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -17,7 +18,16 @@ import {
   TailcatConnectionProfile,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
-import { credentialMissingError, environmentMismatchError, profileMissingError } from "./errors.ts";
+import {
+  credentialMissingError,
+  environmentMismatchError,
+  mapRemoteEnvironmentError,
+  profileMissingError,
+} from "./errors.ts";
+import {
+  GitHubRoutingPermissions,
+  gitHubRoutingConnectionKey,
+} from "./githubRoutingPermissions.ts";
 import type {
   BearerConnectionTarget,
   ConnectionTarget,
@@ -29,6 +39,11 @@ import type {
 } from "./model.ts";
 import { ConnectionBlockedError, type ConnectionAttemptError } from "./model.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
+import {
+  appendOrchestrationProtocol,
+  orchestrationProtocolCompatibilityError,
+} from "./compatibility.ts";
+import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 
 export class ConnectionResolver extends Context.Service<
   ConnectionResolver,
@@ -98,10 +113,9 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
     entry: ConnectionCatalogEntry & { readonly target: BearerConnectionTarget },
   ) {
     const target = entry.target;
-    const profile = yield* Option.match(entry.profile, {
-      onNone: () => Effect.fail(profileMissingError(target.connectionId)),
-      onSome: Effect.succeed,
-    });
+    const profile = yield* Effect.fromOption(entry.profile, () =>
+      profileMissingError(target.connectionId),
+    );
     if (!isBearerProfile(profile)) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
@@ -174,10 +188,9 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
     entry: ConnectionCatalogEntry & { readonly target: SshConnectionTarget },
   ) {
     const target = entry.target;
-    const profile = yield* Option.match(entry.profile, {
-      onNone: () => Effect.fail(profileMissingError(target.connectionId)),
-      onSome: Effect.succeed,
-    });
+    const profile = yield* Effect.fromOption(entry.profile, () =>
+      profileMissingError(target.connectionId),
+    );
     if (!isSshProfile(profile)) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
@@ -195,14 +208,20 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
       expectedEnvironmentId: target.environmentId,
       target: profile.target,
     });
-    yield* profiles.put(
-      new SshConnectionProfile({
-        connectionId: profile.connectionId,
-        environmentId: profile.environmentId,
-        label: profile.label,
-        target: prepared.bootstrap.target,
-      }),
-    );
+    const preparedProfile = new SshConnectionProfile({
+      connectionId: profile.connectionId,
+      environmentId: profile.environmentId,
+      label: profile.label,
+      target: prepared.bootstrap.target,
+    });
+    if (
+      gitHubRoutingConnectionKey(entry) !==
+      gitHubRoutingConnectionKey({ ...entry, profile: Option.some(preparedProfile) })
+    ) {
+      const permissions = yield* GitHubRoutingPermissions;
+      yield* permissions.forget(target.environmentId);
+    }
+    yield* profiles.put(preparedProfile);
     const authorized = yield* remote.authorizeBearer({
       expectedEnvironmentId: target.environmentId,
       httpBaseUrl: prepared.bootstrap.httpBaseUrl,
@@ -235,10 +254,9 @@ const makeTailcatBroker = Effect.fn("clientRuntime.connection.broker.makeTailcat
     entry: ConnectionCatalogEntry & { readonly target: TailcatConnectionTarget },
   ) {
     const target = entry.target;
-    const profile = yield* Option.match(entry.profile, {
-      onNone: () => Effect.fail(profileMissingError(target.connectionId)),
-      onSome: Effect.succeed,
-    });
+    const profile = yield* Effect.fromOption(entry.profile, () =>
+      profileMissingError(target.connectionId),
+    );
     if (!isTailcatProfile(profile)) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
@@ -293,6 +311,7 @@ export const make = Effect.gen(function* () {
   const relay = yield* makeRelayBroker();
   const ssh = yield* makeSshBroker();
   const tailcat = yield* makeTailcatBroker();
+  const httpClient = yield* HttpClient.HttpClient;
 
   const prepare = Effect.fn("clientRuntime.connection.broker.prepare")(function* (
     entry: ConnectionCatalogEntry,
@@ -302,18 +321,37 @@ export const make = Effect.gen(function* () {
       "connection.environment.id": target.environmentId,
       "connection.target.kind": target._tag,
     });
-    switch (target._tag) {
-      case "PrimaryConnectionTarget":
-        return yield* primary(target);
-      case "BearerConnectionTarget":
-        return yield* bearer({ ...entry, target });
-      case "RelayConnectionTarget":
-        return yield* relay(target);
-      case "SshConnectionTarget":
-        return yield* ssh({ ...entry, target });
-      case "TailcatConnectionTarget":
-        return yield* tailcat({ ...entry, target });
+    const prepared = yield* (() => {
+      switch (target._tag) {
+        case "PrimaryConnectionTarget":
+          return primary(target);
+        case "BearerConnectionTarget":
+          return bearer({ ...entry, target });
+        case "RelayConnectionTarget":
+          return relay(target);
+        case "SshConnectionTarget":
+          return ssh({ ...entry, target });
+        case "TailcatConnectionTarget":
+          return tailcat({ ...entry, target });
+      }
+    })();
+    const descriptor = yield* fetchRemoteEnvironmentDescriptor({
+      httpBaseUrl: prepared.httpBaseUrl,
+    }).pipe(
+      Effect.mapError(mapRemoteEnvironmentError),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
+    if (descriptor.environmentId !== target.environmentId) {
+      return yield* environmentMismatchError({
+        expected: target.environmentId,
+        actual: descriptor.environmentId,
+      });
     }
+    const compatibilityError = orchestrationProtocolCompatibilityError(descriptor);
+    if (compatibilityError !== null) {
+      return yield* compatibilityError;
+    }
+    return { ...prepared, socketUrl: appendOrchestrationProtocol(prepared.socketUrl) };
   });
 
   return ConnectionResolver.of({ prepare });

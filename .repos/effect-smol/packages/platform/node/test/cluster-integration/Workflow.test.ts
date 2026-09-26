@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Cause, Clock, Duration, Effect, Exit, Fiber, Latch, Layer, Option, Schema } from "effect"
-import { ClusterWorkflowEngine, Entity, EntityId } from "effect/unstable/cluster"
+import { ClusterSchema, ClusterWorkflowEngine, Entity, EntityId, Sharding } from "effect/unstable/cluster"
 import { PersistedQueue } from "effect/unstable/persistence"
 import { Rpc } from "effect/unstable/rpc"
 import {
@@ -277,6 +277,143 @@ const InterruptWorkflow = Workflow.make("ClusterIntegrationInterrupt", {
 })
 
 const InterruptWorkflowLayer = InterruptWorkflow.toLayer(() => DurableDeferred.await(InterruptGate))
+
+const ShutdownActivityWorkflow = Workflow.make("ClusterIntegrationShutdownActivity", {
+  payload: { id: Schema.String },
+  success: Schema.String,
+  idempotencyKey: ({ id }) => id
+})
+
+const ShutdownSuspendActivityWorkflow = Workflow.make("ClusterIntegrationShutdownSuspendActivity", {
+  payload: { id: Schema.String },
+  success: Schema.String,
+  idempotencyKey: ({ id }) => id
+}).annotate(Workflow.SuspendOnFailure, true)
+
+const activityHandoffState = {
+  ready: Latch.makeUnsafe(),
+  start: Latch.makeUnsafe(),
+  faultArmed: false,
+  persisted: Latch.makeUnsafe(),
+  faultRelease: Latch.makeUnsafe(true),
+  runs: new Map<string, number>(),
+  compensations: new Set<string>(),
+  resourceEvents: new Map<string, Array<"acquire" | "release">>()
+}
+
+const abandon = Effect.interruptible(Effect.callback<never>(() => {
+  const fiber = Fiber.getCurrent()!
+  fiber.interruptUnsafe(fiber.id, ClusterSchema.Abandon.annotation)
+}))
+
+const resetActivityHandoffState = (id: string, options?: { readonly faultReleaseOpen?: boolean }) => {
+  activityHandoffState.ready = Latch.makeUnsafe()
+  activityHandoffState.start = Latch.makeUnsafe()
+  activityHandoffState.faultArmed = false
+  activityHandoffState.persisted = Latch.makeUnsafe()
+  activityHandoffState.faultRelease = Latch.makeUnsafe(options?.faultReleaseOpen ?? true)
+  activityHandoffState.runs.delete(id)
+  activityHandoffState.compensations.delete(id)
+  activityHandoffState.resourceEvents.set(id, [])
+}
+
+const ShutdownActivityWorkflowLayer = ShutdownActivityWorkflow.toLayer(({ id }) =>
+  Effect.gen(function*() {
+    yield* Effect.succeed(id).pipe(
+      ShutdownActivityWorkflow.withCompensation(() => Effect.sync(() => activityHandoffState.compensations.add(id)))
+    )
+    yield* Effect.acquireRelease(
+      Effect.sync(() => activityHandoffState.resourceEvents.get(id)!.push("acquire")),
+      () => Effect.sync(() => activityHandoffState.resourceEvents.get(id)!.push("release"))
+    ).pipe(Workflow.provideScope)
+    activityHandoffState.ready.openUnsafe()
+    yield* activityHandoffState.start.await
+    return yield* Activity.make({
+      name: "ShutdownActivity",
+      success: Schema.String,
+      execute: Effect.sync(() => {
+        activityHandoffState.runs.set(id, (activityHandoffState.runs.get(id) ?? 0) + 1)
+        return `completed:${id}`
+      })
+    })
+  })
+)
+
+const ShutdownSuspendActivityWorkflowLayer = ShutdownSuspendActivityWorkflow.toLayer(({ id }) =>
+  Effect.gen(function*() {
+    yield* Effect.succeed(id).pipe(
+      ShutdownSuspendActivityWorkflow.withCompensation(() =>
+        Effect.sync(() => activityHandoffState.compensations.add(id))
+      )
+    )
+    yield* Effect.acquireRelease(
+      Effect.sync(() => activityHandoffState.resourceEvents.get(id)!.push("acquire")),
+      () => Effect.sync(() => activityHandoffState.resourceEvents.get(id)!.push("release"))
+    ).pipe(Workflow.provideScope)
+    activityHandoffState.ready.openUnsafe()
+    yield* activityHandoffState.start.await
+    return yield* Activity.make({
+      name: "ShutdownActivity",
+      success: Schema.String,
+      execute: Effect.sync(() => {
+        activityHandoffState.runs.set(id, (activityHandoffState.runs.get(id) ?? 0) + 1)
+        return `completed:${id}`
+      })
+    })
+  })
+)
+
+const ActivityHandoffShardingLayer = Layer.effect(
+  Sharding.Sharding,
+  Effect.gen(function*() {
+    const sharding = yield* Sharding.Sharding
+    return Sharding.Sharding.of({
+      ...sharding,
+      makeClient: (entity) =>
+        // The wrapped factory returns the same dynamic RPC client shape, but
+        // its generic relationship to the entity protocol is no longer visible.
+        Effect.map(sharding.makeClient(entity), (makeClient) => (entityId: string) => {
+          // RPC clients expose their protocol methods dynamically, so the
+          // Proxy type cannot retain this client's generated method shape.
+          return new Proxy(makeClient(entityId), {
+            get(target, property, receiver) {
+              if (property !== "activity") return Reflect.get(target, property, receiver)
+              const activity = Reflect.get(target, property, receiver) as (
+                payload: { readonly name: string },
+                options?: object
+              ) => Effect.Effect<unknown, unknown, unknown>
+              return (payload: { readonly name: string }, options?: object) => {
+                if (!activityHandoffState.faultArmed) {
+                  return activity(payload, options)
+                }
+                activityHandoffState.faultArmed = false
+                // Mirror sendOutgoing's persisted abandon branch during a
+                // runner shutdown: accept the durable request, then interrupt
+                // the caller because this runner can never observe the reply.
+                return activity(payload, { ...options, discard: true }).pipe(
+                  Effect.tap(() => activityHandoffState.persisted.open),
+                  Effect.andThen(activityHandoffState.faultRelease.await),
+                  Effect.andThen(abandon)
+                )
+              }
+            }
+          }) as any
+        }) as any
+    })
+  })
+)
+
+const ShutdownActivityEntities = Layer.mergeAll(
+  ShutdownActivityWorkflowLayer,
+  ShutdownSuspendActivityWorkflowLayer
+).pipe(
+  Layer.provide(Layer.effect(
+    WorkflowEngine.WorkflowEngine,
+    ClusterWorkflowEngine.make
+  )),
+  Layer.provide(ActivityHandoffShardingLayer),
+  Layer.orDie
+)
 
 const CompleteDeferred = Rpc.make("CompleteDeferred", {
   payload: {
@@ -719,6 +856,126 @@ describe("cluster workflow integration", () => {
         assert(Exit.isFailure(result.exit))
         assert.isTrue(Exit.hasInterrupts(result.exit))
         assert.isTrue(Cause.hasInterrupts(result.exit.cause))
+      }))
+
+    it.live(`${backend}: replays a persisted activity handoff without leaking workflow resources`, () =>
+      Effect.gen(function*() {
+        const cluster = yield* make({ backend, entities: ShutdownActivityEntities })
+        yield* cluster.start(3)
+        yield* cluster.waitForStableAssignments()
+        for (
+          const [suffix, workflow] of [
+            ["default", ShutdownActivityWorkflow],
+            ["suspend-on-failure", ShutdownSuspendActivityWorkflow]
+          ] as const
+        ) {
+          const id = `${backend}-shutdown-activity-${suffix}`
+          resetActivityHandoffState(id)
+          const executionId = yield* withWorkflow(
+            cluster,
+            workflow.execute({ id }, { discard: true })
+          )
+          yield* cluster.waitUntil(
+            "The shutdown activity workflow did not start",
+            Effect.as(activityHandoffState.ready.await, true)
+          )
+
+          activityHandoffState.faultArmed = true
+          activityHandoffState.start.openUnsafe()
+
+          const result = yield* waitForComplete(cluster, workflow, executionId)
+          assert.isTrue(activityHandoffState.persisted.isOpen())
+          assert.deepStrictEqual(result.exit, Exit.succeed(`completed:${id}`))
+          assert.strictEqual(activityHandoffState.runs.get(id), 1)
+          assert.isFalse(activityHandoffState.compensations.has(id))
+          assert.deepStrictEqual(activityHandoffState.resourceEvents.get(id), [
+            "acquire",
+            "release",
+            "acquire",
+            "release"
+          ])
+        }
+      }))
+
+    it.live(`${backend}: preserves a safe interrupt during a persisted activity handoff`, () =>
+      Effect.gen(function*() {
+        const id = `${backend}-shutdown-activity-interrupt`
+        resetActivityHandoffState(id, { faultReleaseOpen: false })
+        const cluster = yield* make({ backend, entities: ShutdownActivityEntities })
+        yield* cluster.start(3)
+        yield* cluster.waitForStableAssignments()
+        const executionId = yield* withWorkflow(
+          cluster,
+          ShutdownActivityWorkflow.execute({ id }, { discard: true })
+        )
+        yield* cluster.waitUntil(
+          "The shutdown activity workflow did not start",
+          Effect.as(activityHandoffState.ready.await, true)
+        )
+
+        activityHandoffState.faultArmed = true
+        yield* withWorkflow(cluster, ShutdownActivityWorkflow.interrupt(executionId))
+        activityHandoffState.start.openUnsafe()
+        yield* cluster.waitUntil(
+          "The shutdown activity request was not persisted",
+          Effect.as(activityHandoffState.persisted.await, true)
+        )
+        yield* cluster.waitUntil(
+          "The shutdown activity request was not processed",
+          Effect.sync(() => activityHandoffState.runs.get(id) === 1)
+        )
+        activityHandoffState.faultRelease.openUnsafe()
+
+        const result = yield* waitForComplete(cluster, ShutdownActivityWorkflow, executionId)
+        assert.isTrue(Exit.isFailure(result.exit))
+        assert.isTrue(Exit.hasInterrupts(result.exit))
+        assert.isTrue(activityHandoffState.compensations.has(id))
+      }).pipe(
+        Effect.ensuring(Effect.sync(() => {
+          activityHandoffState.faultRelease.openUnsafe()
+        }))
+      ))
+
+    it.live(`${backend}: recovers a persisted activity across an actual owner handoff`, () =>
+      Effect.gen(function*() {
+        const id = `${backend}-shutdown-activity-handoff`
+        resetActivityHandoffState(id)
+        const cluster = yield* make({
+          backend,
+          config: { entityTerminationTimeout: 100 },
+          entities: ShutdownActivityWorkflowLayer.pipe(
+            Layer.provide(ClusterWorkflowEngine.layer),
+            Layer.orDie
+          )
+        })
+        yield* cluster.start(3)
+        yield* cluster.waitForStableAssignments()
+        const executionId = yield* withWorkflow(
+          cluster,
+          ShutdownActivityWorkflow.execute({ id }, { discard: true })
+        )
+        yield* cluster.waitUntil(
+          "The shutdown activity workflow did not start",
+          Effect.as(activityHandoffState.ready.await, true)
+        )
+
+        const owner = workflowOwner(cluster, executionId)
+        assert.isDefined(owner)
+        const stopping = yield* cluster.stop(owner!).pipe(Effect.forkChild({ startImmediately: true }))
+        activityHandoffState.start.openUnsafe()
+        yield* cluster.waitUntil(
+          "The shutdown activity workflow was not handed to another runner",
+          Effect.sync(() => {
+            const nextOwner = workflowOwner(cluster, executionId)
+            return nextOwner !== undefined && nextOwner !== owner
+          })
+        )
+
+        const result = yield* waitForComplete(cluster, ShutdownActivityWorkflow, executionId)
+        yield* Fiber.join(stopping)
+        assert.deepStrictEqual(result.exit, Exit.succeed(`completed:${id}`))
+        assert.strictEqual(activityHandoffState.runs.get(id), 1)
+        assert.strictEqual((yield* cluster.messageCounts()).unprocessed, 0)
       }))
   }
 })

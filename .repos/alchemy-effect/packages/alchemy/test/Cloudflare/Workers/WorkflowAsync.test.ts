@@ -329,3 +329,75 @@ test.provider(
     }).pipe(logLevel),
   { timeout: 120_000 },
 );
+
+// ---------------------------------------------------------------------------
+// #1473 regression: native Workflow schedules on the async (props-only)
+// reference form, driven by a file-based fixture (`main`, not inline
+// `script`). Yearly crons so the test never waits for a fire; create →
+// update → clear is asserted out-of-band via getWorkflow.
+// ---------------------------------------------------------------------------
+
+const scheduledWorkflowMain = `${import.meta.dirname}/fixtures/workflow-schedules/async-worker.ts`;
+
+const waitForAppliedSchedules = (workflowName: string, expected: string[]) =>
+  Effect.gen(function* () {
+    const { accountId } = yield* yield* CloudflareEnvironment;
+    const workflow = yield* workflows.getWorkflow({
+      accountId,
+      workflowName,
+    });
+    return (workflow.schedules ?? []).map((s) => s.cron);
+  }).pipe(
+    Effect.flatMap((crons) =>
+      crons.length === expected.length &&
+      crons.every((cron, index) => cron === expected[index])
+        ? Effect.succeed(crons)
+        : Effect.fail(
+            new Error(`schedules not applied yet: ${JSON.stringify(crons)}`),
+          ),
+    ),
+    Effect.retry({ schedule: Schedule.spaced("2 seconds"), times: 15 }),
+  );
+
+test.provider(
+  "async worker workflow binding applies native cron schedules",
+  (scratch) =>
+    Effect.gen(function* () {
+      const yearly = "0 0 1 1 *";
+      const other = "0 0 2 1 *";
+
+      const deployWith = (schedules: string[]) =>
+        scratch.deploy(
+          Effect.gen(function* () {
+            return {
+              worker: yield* Cloudflare.Worker("scheduled-workflow-worker", {
+                main: scheduledWorkflowMain,
+                env: {
+                  HOURLY: Cloudflare.Workflow("HourlyWorkflow", {
+                    className: "HourlyWorkflow",
+                    schedules,
+                  }),
+                },
+              }),
+            };
+          }),
+        );
+
+      const created = yield* deployWith([yearly]);
+      const workflowName = yield* readWorkflowName(created.worker.workerName);
+      expect(yield* waitForAppliedSchedules(workflowName, [yearly])).toEqual([
+        yearly,
+      ]);
+
+      yield* deployWith([other]);
+      expect(yield* waitForAppliedSchedules(workflowName, [other])).toEqual([
+        other,
+      ]);
+
+      yield* deployWith([]);
+      expect(yield* waitForAppliedSchedules(workflowName, [])).toEqual([]);
+
+      yield* scratch.destroy();
+    }).pipe(logLevel),
+  { timeout: 180_000 },
+);

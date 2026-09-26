@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode } from "react";
 import { useCallback, useMemo, useState } from "react";
 import {
+  Platform,
   Pressable,
   ScrollView,
   View,
@@ -14,6 +15,7 @@ import {
 import { cn } from "../lib/cn";
 import { AppText as Text } from "./AppText";
 import { SymbolView } from "./AppSymbol";
+import { useAndroidControlSizing } from "./useAndroidControlSizing";
 
 const COMPOSER_TOOLBAR_GAP = 8;
 const COMPOSER_TOOLBAR_FADE_WIDTH = 18;
@@ -30,15 +32,16 @@ export function ComposerInlineControl(props: {
   readonly disabled?: boolean;
   readonly emphasized?: boolean;
   readonly icon?: ComponentProps<typeof SymbolView>["name"];
-  readonly iconNode?: ReactNode;
+  readonly renderIcon?: (size: number) => ReactNode;
   readonly label: string;
-  readonly maxWidth?: number;
+  readonly maxWidth?: ViewStyle["maxWidth"];
   readonly onPress?: () => void;
   readonly selected?: boolean;
   readonly static?: boolean;
   readonly chevronDirection?: "down" | "right";
   readonly showChevron?: boolean;
 }) {
+  const { scale, smallIconSize } = useAndroidControlSizing();
   return (
     <Pressable
       accessibilityLabel={props.accessibilityLabel ?? props.label}
@@ -52,12 +55,17 @@ export function ComposerInlineControl(props: {
       onPress={props.onPress}
       style={{ maxWidth: props.maxWidth ?? 190, opacity: props.disabled ? 0.45 : 1 }}
     >
-      {props.iconNode ? (
-        <View className="size-4 shrink-0 items-center justify-center">{props.iconNode}</View>
+      {props.renderIcon ? (
+        <View
+          className="size-4 shrink-0 items-center justify-center"
+          style={Platform.OS === "android" ? { width: 14 * scale, height: 14 * scale } : undefined}
+        >
+          {props.renderIcon(smallIconSize)}
+        </View>
       ) : props.icon ? (
         <SymbolView
           name={props.icon}
-          size={16}
+          size={smallIconSize}
           tintColorClassName={
             props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"
           }
@@ -76,7 +84,7 @@ export function ComposerInlineControl(props: {
       {props.showChevron === false ? null : (
         <SymbolView
           name={props.chevronDirection === "right" ? "chevron.right" : "chevron.down"}
-          size={10}
+          size={Math.round(10 * scale)}
           tintColorClassName={
             props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"
           }
@@ -224,6 +232,8 @@ export function ComposerActionButton(props: {
   readonly onPress: () => void;
   readonly variant?: "primary" | "danger";
 }) {
+  const { scale, smallIconSize } = useAndroidControlSizing();
+  const circleSize = Math.round(30 * scale);
   return (
     <Pressable
       accessibilityLabel={props.accessibilityLabel}
@@ -234,8 +244,9 @@ export function ComposerActionButton(props: {
       onPress={props.onPress}
     >
       <View
+        style={{ width: circleSize, height: circleSize }}
         className={cn(
-          "size-[30px] items-center justify-center rounded-full",
+          "items-center justify-center rounded-full",
           props.variant === "danger"
             ? "bg-danger"
             : props.disabled
@@ -245,7 +256,7 @@ export function ComposerActionButton(props: {
       >
         <SymbolView
           name={props.icon}
-          size={16}
+          size={smallIconSize}
           weight="semibold"
           tintColorClassName={
             props.variant === "danger" ? "accent-danger-foreground" : "accent-primary-foreground"

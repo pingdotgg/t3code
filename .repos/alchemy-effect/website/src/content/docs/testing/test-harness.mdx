@@ -64,7 +64,7 @@ providers: Layer.mergeAll(Cloudflare.providers(), Stripe.providers()),
 ```
 
 Credentials resolve through the same `AuthProviders` registry as
-`alchemy deploy`, so tests pick up `alchemy login` profiles or
+`alchemy deploy`, so tests pick up stored profiles or
 the env-var auth methods registered by each provider.
 
 ### `state`
@@ -102,7 +102,8 @@ the same way the CLI does.
 ### `stage`
 
 Default stage for `deploy(Stack)` / `destroy(Stack)`. Defaults to
-`"test"`. Override per file, or per call:
+`test_$USER` (e.g. `test_sam`) so two people running the same suite
+against one account don't collide. Override per file, or per call:
 
 ```typescript
 Test.make({ providers, stage: "ci-pr-42" });

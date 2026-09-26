@@ -3,14 +3,14 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "next": "catalog:frontend",
-    "react": "catalog:frontend",
-    "react-dom": "catalog:frontend"
+    "next": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
   },
   "devDependencies": {
-    "@opennextjs/cloudflare": "catalog:frontend",
-    "@types/node": "catalog:tooling",
-    "@types/react": "catalog:frontend",
-    "typescript": "catalog:frontend"
+    "@opennextjs/cloudflare": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "typescript": "catalog:nextjs"
   }
 }

@@ -1,10 +1,13 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  EventId,
   ProjectId,
   ProviderInstanceId,
+  ProviderDriverKind,
   PullRequestOperationError,
   ThreadId,
   type OrchestrationCommand,
+  type OrchestrationEvent,
   type OrchestrationProjectShell,
   type OrchestrationShellSnapshot,
   type OrchestrationThreadShell,
@@ -15,8 +18,10 @@ import {
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { assert, describe, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -39,6 +44,16 @@ import {
 } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 import * as ThreadSettlementReactor from "./ThreadSettlementReactor.ts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Path from "effect/Path";
+import { ChildProcessSpawner } from "effect/unstable/process";
+import { ServerConfig } from "../config.ts";
+import * as StorageCleanup from "../storageCleanup.ts";
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+import { TerminalManager } from "../terminal/Manager.ts";
+import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
+import { ThreadDeletionReactor } from "./Services/ThreadDeletionReactor.ts";
+import { ProviderService } from "../provider/Services/ProviderService.ts";
 
 const NOW = "2026-08-28T12:00:00.000Z";
 const PROJECT_ID = ProjectId.make("settlement-project");
@@ -80,6 +95,7 @@ function makeThread(
     },
     runtimeMode: "full-access",
     interactionMode: "default",
+    pullRequests: [],
     branch: null,
     worktreePath: null,
     latestTurn: null,
@@ -170,6 +186,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const settingsReads = yield* Queue.unbounded<ServerSettings>();
   const settingsChanges = yield* PubSub.unbounded<ServerSettings>();
   const mergedPullRequests = yield* PubSub.unbounded<PullRequestMergeEvent>();
+  const domainEvents = yield* PubSub.unbounded<OrchestrationEvent>();
   const commands = yield* Ref.make<ReadonlyArray<AutoSettleCommand>>([]);
   const branchCalls = yield* Ref.make<
     ReadonlyArray<{ readonly cwd: string; readonly branch: string }>
@@ -257,6 +274,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       readEvents: () => Stream.empty,
       dispatch,
       streamDomainEvents: Stream.empty,
+      subscribeDomainEvents: PubSub.subscribe(domainEvents).pipe(
+        Effect.map((subscription) => Stream.fromSubscription(subscription)),
+      ),
       latestSequence: Effect.succeed(0),
     }),
     Layer.succeed(ServerSettingsService, serverSettings),
@@ -279,6 +299,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     summaryRecovery,
     invalidatedCwds,
     updateSettings,
+    publishEvent: (event: OrchestrationEvent) => PubSub.publish(domainEvents, event),
     publishMerge: PubSub.publish(mergedPullRequests, {
       projectId: PROJECT_ID,
       repository: "owner/repository",
@@ -301,6 +322,202 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 describe("ThreadSettlementReactor", () => {
+  it("distinguishes a project that inherits the threshold from one that disables it", () => {
+    const inherits = ThreadSettlementReactor.autoSettlementSettingsKey({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [PROJECT_ID]: { sidebarAutoSettleOnMerge: true } },
+    });
+    const never = ThreadSettlementReactor.autoSettlementSettingsKey({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [PROJECT_ID]: { sidebarAutoSettleOnMerge: true, sidebarAutoSettleAfterDays: null },
+      },
+    });
+    assert.notStrictEqual(inherits, never);
+  });
+
+  it("ignores project overrides that do not touch settlement", () => {
+    const base = ThreadSettlementReactor.autoSettlementSettingsKey({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [PROJECT_ID]: { sidebarAutoSettleOnMerge: false } },
+    });
+    const unrelated = ThreadSettlementReactor.autoSettlementSettingsKey({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [LINKED_PROJECT_ID]: { defaultThreadEnvMode: "worktree" },
+        [PROJECT_ID]: { sidebarAutoSettleOnMerge: false, defaultAutoPull: true },
+      },
+    });
+    assert.strictEqual(base, unrelated);
+  });
+
+  it.effect(
+    "settles synced terminal links immediately while open, unsynced, or running threads wait",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const link = (number: number, state: "open" | "closed" | "merged" | null) => ({
+            host: "example.test",
+            repository: "owner/repository",
+            number,
+            url: `https://example.test/owner/repository/pull/${number}`,
+            source: "manual" as const,
+            linkedAt: NOW,
+            stack: null,
+            snapshot:
+              state === null
+                ? null
+                : {
+                    state,
+                    title: "Review",
+                    headBranch: "feature",
+                    baseBranch: "main",
+                    isDraft: false,
+                    updatedAt: NOW,
+                    syncedAt: NOW,
+                    mergedAt: state === "merged" ? NOW : null,
+                    closedAt: state === "closed" ? NOW : null,
+                  },
+          });
+          const runningSession = {
+            threadId: ThreadId.make("running"),
+            status: "running" as const,
+            providerName: "Codex",
+            runtimeMode: "full-access" as const,
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: NOW,
+          };
+          const threads = [
+            makeThread("merged", { pullRequests: [link(1, "open"), link(2, "merged")] }),
+            makeThread("closed", { pullRequests: [link(1, "open")] }),
+            makeThread("open", { pullRequests: [link(1, "open"), link(2, "open")] }),
+            makeThread("unsynced", { pullRequests: [link(1, "open"), link(2, null)] }),
+            makeThread("running", {
+              pullRequests: [link(1, "open")],
+              session: runningSession,
+            }),
+          ];
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot(threads),
+            settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleOnMerge: true },
+            branchPullRequest: () => Effect.die("linked threads must not query the branch"),
+            pullRequestSummary: () => Effect.die("linked threads must use their snapshots"),
+          });
+          yield* Effect.gen(function* () {
+            const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+            yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+            assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+            const eventBase = {
+              sequence: 2,
+              eventId: EventId.make("pull-request-synced"),
+              aggregateKind: "thread" as const,
+              occurredAt: NOW,
+              commandId: null,
+              causationEventId: null,
+              correlationId: null,
+              metadata: {},
+            };
+            for (const thread of threads) {
+              const terminalLink = link(1, thread.id === "closed" ? "closed" : "merged");
+              yield* Ref.update(fixture.snapshots, (snapshot) => ({
+                ...snapshot,
+                threads: snapshot.threads.map((current) =>
+                  current.id === thread.id
+                    ? { ...current, pullRequests: [terminalLink, ...current.pullRequests.slice(1)] }
+                    : current,
+                ),
+              }));
+              yield* fixture.publishEvent({
+                ...eventBase,
+                type: "thread.pull-request-synced",
+                aggregateId: thread.id,
+                payload: {
+                  threadId: thread.id,
+                  host: terminalLink.host,
+                  repository: terminalLink.repository,
+                  number: terminalLink.number,
+                  snapshot: terminalLink.snapshot!,
+                  stack: null,
+                  updatedAt: NOW,
+                },
+              });
+              yield* Queue.take(fixture.snapshotReads);
+              yield* reactor.drain;
+            }
+            assert.deepStrictEqual(
+              (yield* Ref.get(fixture.commands)).map(({ threadId }) => threadId),
+              [ThreadId.make("merged"), ThreadId.make("closed")],
+            );
+            const readySession = { ...runningSession, status: "ready" as const };
+            yield* Ref.update(fixture.snapshots, (snapshot) => ({
+              ...snapshot,
+              threads: snapshot.threads.map((thread) =>
+                thread.id === readySession.threadId ? { ...thread, session: readySession } : thread,
+              ),
+            }));
+            yield* fixture.publishEvent({
+              ...eventBase,
+              type: "thread.session-set",
+              aggregateId: readySession.threadId,
+              payload: { threadId: readySession.threadId, session: readySession },
+            });
+            yield* Queue.take(fixture.snapshotReads);
+            yield* reactor.drain;
+            assert.deepStrictEqual(
+              (yield* Ref.get(fixture.commands)).map(({ threadId }) => threadId),
+              [ThreadId.make("merged"), ThreadId.make("closed"), ThreadId.make("running")],
+            );
+            assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), []);
+            assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), []);
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+  );
+  it.effect("skips the branch recheck when a terminal link would settle nothing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const previous = {
+          projectId: PROJECT_ID,
+          repository: "owner/repository",
+          number: 1,
+          url: "https://example.test/owner/repository/pull/1",
+        };
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(
+            [
+              makeThread("resumed-manual", {
+                branch: "main",
+                linkedPullRequest: previous,
+                latestUserMessageAt: "2026-08-28T00:00:00.000Z",
+              }),
+            ],
+            [makeProject()],
+          ),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleOnMerge: true,
+          },
+          branchPullRequest: () => Effect.succeed(makeBranchPullRequest("open")),
+          pullRequestSummary: (input) =>
+            Effect.succeed({
+              ...makePullRequestSummary({ ...input, state: "merged" }),
+              mergedAt: "2026-08-27T00:00:00.000Z",
+            }),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+          assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), []);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
   it.effect("uses saved PRs without settling resumed threads or branches with newer PRs", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -428,6 +645,59 @@ describe("ThreadSettlementReactor", () => {
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.commands)).map((command) => command.threadId).toSorted(),
             [ThreadId.make("branch-thread"), ThreadId.make("linked-thread")],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("a project override settles only that project's inactive threads", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const overriddenProject = ProjectId.make("overridden-project");
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(
+            [
+              makeThread("inherits-thread"),
+              makeThread("overridden-thread", { projectId: overriddenProject }),
+            ],
+            [makeProject(), makeProject(overriddenProject, "/workspace/overridden")],
+          ),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleOnMerge: false,
+            projectSettingsOverrides: {
+              [overriddenProject]: { sidebarAutoSettleAfterDays: 1 },
+            },
+          },
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* reactor.start();
+          yield* Queue.take(fixture.settingsReads);
+          yield* Deferred.succeed(fixture.activation, undefined);
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            [ThreadId.make("overridden-thread")],
+          );
+
+          // Clearing the override is a settlement change, so the sweep re-arms.
+          yield* fixture.updateSettings({
+            projectSettingsOverrides: { [overriddenProject]: null },
+            sidebarAutoSettleAfterDays: 1,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          // The static snapshot never records the first settlement, so the
+          // second sweep dispatches for both; the inheriting thread is new.
+          assert.include(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            ThreadId.make("inherits-thread"),
           );
         }).pipe(Effect.provide(fixture.layer));
       }),
@@ -1148,4 +1418,509 @@ describe("ThreadSettlementReactor", () => {
       }),
     ),
   );
+});
+
+describe("storage cleanup", () => {
+  it.effect("serializes users of one workspace while other workspaces can start", () =>
+    Effect.gen(function* () {
+      const releaseCleanup = yield* Deferred.make<void>();
+      const providerEntered = yield* Deferred.make<void>();
+      const cleanup = yield* withWorkspaceLease(
+        "/workspace/shared",
+        Deferred.await(releaseCleanup),
+      ).pipe(Effect.forkScoped({ startImmediately: true }));
+      const provider = yield* withWorkspaceLease(
+        "/workspace/shared",
+        Deferred.succeed(providerEntered, undefined),
+      ).pipe(Effect.forkScoped({ startImmediately: true }));
+      assert.strictEqual(yield* Deferred.isDone(providerEntered), false);
+      yield* withWorkspaceLease("/workspace/other", Effect.void);
+      yield* Deferred.succeed(releaseCleanup, undefined);
+      yield* Fiber.join(cleanup);
+      yield* Fiber.join(provider);
+      assert.strictEqual(yield* Deferred.isDone(providerEntered), true);
+    }).pipe(Effect.scoped),
+  );
+
+  for (const protection of [
+    "none",
+    "dirty",
+    "ignored",
+    "ignored-directory",
+    "shared",
+    "project-root",
+    "nested-project",
+    "new-nested-project",
+    "session",
+    "terminal-cwd",
+    "terminal-worktree",
+    "recent",
+    "merged",
+    "unmerged",
+    "unchanged",
+    "unchanged-two-worktrees",
+    "diverged",
+    "head-moved",
+    "deleted",
+    "deleted-event",
+    "deleted-dirty",
+    "deleted-ignored",
+    "deleted-shared",
+    "deleted-project",
+    "deleted-owner",
+    "deleted-owner-root",
+    "deleted-owner-nested",
+    "deleted-provider",
+    "project-off",
+    "project-custom",
+    "project-policy-disabled",
+    "deleted-project-custom",
+    "deleted-project-off",
+    "policy-disabled",
+    "policy-extended",
+    "files-disabled",
+    "files-extended",
+  ] as const) {
+    it.effect(
+      `retains protected worktrees (${protection}) and expires only old artifacts and rotated logs`,
+      () =>
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const config = yield* ServerConfig;
+          const worktreePath = path.join(config.worktreesDir, "feature");
+          yield* fs.makeDirectory(worktreePath, { recursive: true });
+          yield* fs.writeFileString(path.join(worktreePath, ".git"), "gitdir: /test/admin");
+          const secondWorktreePath = path.join(config.worktreesDir, "feature-two");
+          if (protection === "unchanged-two-worktrees") {
+            yield* fs.makeDirectory(secondWorktreePath);
+            yield* fs.writeFileString(
+              path.join(secondWorktreePath, ".git"),
+              "gitdir: /test/admin-two",
+            );
+          }
+          if (protection === "ignored" || protection === "deleted-ignored")
+            yield* fs.writeFileString(path.join(worktreePath, ".env"), "secret");
+          if (protection === "ignored-directory") {
+            yield* fs.makeDirectory(path.join(worktreePath, ".cache"));
+            yield* fs.writeFileString(path.join(worktreePath, ".cache", "local-data"), "keep");
+          }
+          yield* fs.makeDirectory(config.browserArtifactsDir, { recursive: true });
+          const oldImage = path.join(config.browserArtifactsDir, "old.png");
+          const recentImage = path.join(config.browserArtifactsDir, "recent.png");
+          const oldLog = path.join(config.logsDir, "server.log.1");
+          const activeLog = path.join(config.logsDir, "server.log");
+          const old = DateTime.toDateUtc(DateTime.makeUnsafe("2026-08-01T00:00:00.000Z"));
+          for (const file of [oldImage, oldLog, activeLog]) {
+            yield* fs.writeFileString(file, "keep or remove");
+            yield* fs.utimes(file, old, old);
+          }
+          yield* fs.writeFileString(recentImage, "recent");
+          const recent = DateTime.toDateUtc(DateTime.makeUnsafe(NOW));
+          yield* fs.utimes(recentImage, recent, recent);
+          const thread = makeThread("storage-thread", {
+            branch: "feature",
+            worktreePath,
+            latestUserMessageAt:
+              protection === "recent" ? "2026-08-26T00:00:00.000Z" : "2026-08-01T00:00:00.000Z",
+            ...(protection === "session"
+              ? {
+                  session: {
+                    threadId: ThreadId.make("storage-thread"),
+                    status: "ready",
+                    providerName: "codex",
+                    runtimeMode: "full-access",
+                    activeTurnId: null,
+                    lastError: null,
+                    updatedAt: NOW,
+                  },
+                }
+              : {}),
+          });
+          const snapshotRead = yield* Deferred.make<void>();
+          const deletionStarted = yield* Deferred.make<void>();
+          const deletionStopped = yield* Deferred.make<void>();
+          if (protection !== "deleted-event") yield* Deferred.succeed(deletionStopped, undefined);
+          const domainEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+          const deleteRule = protection.startsWith("deleted");
+          let tombstoned = deleteRule && protection !== "deleted-event";
+          const removals: string[] = [];
+          const mergeRule = protection === "merged" || protection === "unmerged";
+          const unchangedRule =
+            protection === "unchanged" ||
+            protection === "unchanged-two-worktrees" ||
+            protection === "diverged" ||
+            protection === "head-moved";
+          let headReads = 0;
+          let snapshotReads = 0;
+          let defaultRefFetched = false;
+          let fetches = 0;
+          const settingsService = yield* ServerSettingsService.pipe(
+            Effect.provide(
+              ServerSettingsService.layerTest({
+                projectSettingsOverrides: {
+                  [PROJECT_ID]:
+                    protection === "project-off" || protection === "deleted-project-off"
+                      ? { worktreeCleanup: { mode: "off" as const } }
+                      : protection === "project-custom" || protection === "deleted-project-custom"
+                        ? {
+                            worktreeCleanup: {
+                              mode: "custom" as const,
+                              rules: {
+                                worktreeAfterDays: protection === "project-custom" ? 8 : null,
+                                worktreeOnDelete: deleteRule,
+                                worktreeOnMerge: false,
+                                worktreeUnchanged: false,
+                              },
+                            },
+                          }
+                        : {},
+                },
+                storageCleanup: {
+                  worktreeAfterDays:
+                    deleteRule || mergeRule || unchangedRule || protection === "project-custom"
+                      ? null
+                      : 8,
+                  worktreeOnDelete: deleteRule && protection !== "deleted-project-custom",
+                  worktreeOnMerge: mergeRule,
+                  worktreeUnchanged: unchangedRule,
+                  browserArtifactsAfterDays: 8,
+                  logsAfterDays: 8,
+                },
+              }),
+            ),
+          );
+          const cleanup = yield* StorageCleanup.make.pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                Layer.succeed(ServerSettingsService, settingsService),
+                Layer.succeed(FileSystem.FileSystem, {
+                  ...fs,
+                  stat: (target) =>
+                    fs.stat(target).pipe(
+                      Effect.tap(() => {
+                        if (
+                          !protection.startsWith("files-") ||
+                          (target !== oldImage && target !== oldLog)
+                        )
+                          return Effect.void;
+                        return settingsService
+                          .updateSettings({
+                            storageCleanup: {
+                              [target === oldImage ? "browserArtifactsAfterDays" : "logsAfterDays"]:
+                                protection === "files-disabled" ? null : 60,
+                            },
+                          })
+                          .pipe(Effect.orDie);
+                      }),
+                    ),
+                }),
+                Layer.mock(ProjectionSnapshotQuery)({
+                  getDeletedWorktreeThreads: () =>
+                    Effect.succeed(
+                      tombstoned
+                        ? [
+                            {
+                              id: thread.id,
+                              projectId: thread.projectId,
+                              branch: "feature",
+                              worktreePath,
+                              workspaceRoot:
+                                protection === "deleted-owner-root"
+                                  ? worktreePath
+                                  : protection === "deleted-owner-nested"
+                                    ? path.join(worktreePath, "nested")
+                                    : config.baseDir,
+                              deletedAt: NOW,
+                            },
+                          ]
+                        : [],
+                    ),
+                  getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 2 }),
+                  getShellSnapshot: () =>
+                    Deferred.succeed(snapshotRead, undefined).pipe(
+                      Effect.andThen(
+                        Effect.sync(() => {
+                          snapshotReads++;
+                          const projects =
+                            protection.startsWith("deleted-owner") ||
+                            protection === "deleted-project-off" ||
+                            protection === "deleted-project-custom"
+                              ? []
+                              : [makeProject(PROJECT_ID, config.baseDir)];
+                          const threads = tombstoned ? [] : [thread];
+                          if (protection === "deleted-shared")
+                            threads.push({ ...thread, id: ThreadId.make("surviving-thread") });
+                          if (protection === "deleted-project")
+                            projects.push(makeProject(LINKED_PROJECT_ID, worktreePath));
+                          if (
+                            protection === "project-root" ||
+                            protection === "nested-project" ||
+                            (protection === "new-nested-project" && snapshotReads > 1)
+                          ) {
+                            projects.push(
+                              makeProject(
+                                LINKED_PROJECT_ID,
+                                protection === "project-root"
+                                  ? worktreePath
+                                  : path.join(worktreePath, "nested"),
+                              ),
+                            );
+                            threads.push(
+                              makeThread("local-project-thread", { projectId: LINKED_PROJECT_ID }),
+                            );
+                          }
+                          if (protection === "unchanged-two-worktrees") {
+                            threads.push({
+                              ...thread,
+                              id: ThreadId.make("second-worktree-thread"),
+                              branch: "feature-two",
+                              worktreePath: secondWorktreePath,
+                            });
+                          }
+                          return makeSnapshot(threads, projects);
+                        }),
+                      ),
+                    ),
+                  getArchivedShellSnapshot: () =>
+                    Effect.succeed(
+                      makeSnapshot(
+                        protection === "shared"
+                          ? [
+                              {
+                                ...thread,
+                                id: ThreadId.make("archived-sharing-thread"),
+                                archivedAt: NOW,
+                              },
+                            ]
+                          : [],
+                      ),
+                    ),
+                }),
+                Layer.mock(GitManager)({
+                  invalidateStatus: () => Effect.void,
+                  branchPullRequest: (_input, options) => {
+                    assert.strictEqual(options?.refresh, true);
+                    return Effect.succeed(
+                      makeBranchPullRequest(protection === "unmerged" ? "open" : "merged"),
+                    );
+                  },
+                }),
+                Layer.mock(OrchestrationEngineService)({
+                  subscribeDomainEvents: PubSub.subscribe(domainEvents).pipe(
+                    Effect.map((subscription) => Stream.fromSubscription(subscription)),
+                  ),
+                }),
+                Layer.mock(ThreadDeletionReactor)({
+                  drainThrough: (sequence) => {
+                    assert.strictEqual(sequence, 2);
+                    return Deferred.succeed(deletionStarted, undefined).pipe(
+                      Effect.andThen(Deferred.await(deletionStopped)),
+                    );
+                  },
+                }),
+                Layer.mock(ProviderService)({
+                  listSessions: () =>
+                    Effect.succeed(
+                      protection === "deleted-provider"
+                        ? [
+                            {
+                              threadId: thread.id,
+                              provider: ProviderDriverKind.make("codex"),
+                              status: "ready",
+                              runtimeMode: "full-access",
+                              cwd: worktreePath,
+                              createdAt: NOW,
+                              updatedAt: NOW,
+                            },
+                          ]
+                        : [],
+                    ),
+                }),
+                Layer.mock(GitVcsDriver)({
+                  resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+                  resolveDefaultBranchName: () => Effect.succeed("main"),
+                  fetchRemoteTrackingBranch: (input) =>
+                    Effect.sync(() => {
+                      assert.deepStrictEqual(input, {
+                        cwd: config.baseDir,
+                        remoteName: "origin",
+                        remoteBranch: "main",
+                      });
+                      defaultRefFetched = true;
+                      fetches++;
+                    }),
+                  resolveCommit: ({ revision }) =>
+                    Effect.sync(() => {
+                      if (revision !== "HEAD")
+                        return { commitSha: (defaultRefFetched ? "b" : "d").repeat(40) };
+                      headReads++;
+                      return {
+                        commitSha:
+                          protection === "head-moved" && headReads > 1
+                            ? "c".repeat(40)
+                            : "a".repeat(40),
+                      };
+                    }),
+                  statusDetailsLocal: (cwd) =>
+                    Effect.succeed({
+                      isRepo: true,
+                      hasOriginRemote: false,
+                      isDefaultBranch: false,
+                      branch: cwd === secondWorktreePath ? "feature-two" : "feature",
+                      upstreamRef: null,
+                      hasWorkingTreeChanges:
+                        protection === "dirty" || protection === "deleted-dirty",
+                      workingTree: { files: [], insertions: 0, deletions: 0 },
+                      hasUpstream: false,
+                      aheadCount: 0,
+                      behindCount: 0,
+                      aheadOfDefaultCount: 0,
+                    }),
+                  execute: (input) =>
+                    Effect.succeed({
+                      exitCode: ChildProcessSpawner.ExitCode(
+                        input.operation === "StorageCleanup.integratedBranch" &&
+                          (protection === "diverged" || input.args.at(-1) !== "b".repeat(40))
+                          ? 1
+                          : 0,
+                      ),
+                      stdout:
+                        protection === "ignored" || protection === "deleted-ignored"
+                          ? ".env\0"
+                          : protection === "ignored-directory"
+                            ? ".cache/\0"
+                            : "",
+                      stderr: "",
+                      stdoutTruncated: false,
+                      stderrTruncated: false,
+                    }).pipe(
+                      Effect.tap(() =>
+                        (protection.startsWith("policy-") ||
+                          protection === "project-policy-disabled") &&
+                        headReads > 1
+                          ? settingsService
+                              .updateSettings({
+                                ...(protection === "project-policy-disabled"
+                                  ? {
+                                      projectSettingsOverrides: {
+                                        [PROJECT_ID]: { worktreeCleanup: { mode: "off" as const } },
+                                      },
+                                    }
+                                  : {}),
+                                ...(protection === "project-policy-disabled"
+                                  ? {}
+                                  : {
+                                      storageCleanup: {
+                                        worktreeAfterDays:
+                                          protection === "policy-disabled" ? null : 60,
+                                      },
+                                    }),
+                              })
+                              .pipe(Effect.orDie)
+                          : Effect.void,
+                      ),
+                    ),
+                  removeWorktree: (input) => {
+                    assert.strictEqual(input.force, false);
+                    removals.push(input.path);
+                    return fs.remove(input.path, { recursive: true }).pipe(Effect.orDie);
+                  },
+                }),
+                Layer.mock(TerminalManager)({
+                  subscribeMetadata: (listener) =>
+                    listener({
+                      type: "snapshot",
+                      terminals:
+                        protection === "terminal-cwd" || protection === "terminal-worktree"
+                          ? [
+                              {
+                                threadId: "terminal-thread",
+                                terminalId: "default",
+                                cwd:
+                                  protection === "terminal-cwd"
+                                    ? `${worktreePath}${path.sep}`
+                                    : config.baseDir,
+                                worktreePath:
+                                  protection === "terminal-worktree"
+                                    ? `${worktreePath}${path.sep}`
+                                    : null,
+                                status: "running",
+                                pid: 42,
+                                exitCode: null,
+                                exitSignal: null,
+                                hasRunningSubprocess: false,
+                                label: "shell",
+                                updatedAt: NOW,
+                              },
+                            ]
+                          : [],
+                    }).pipe(Effect.as(() => {})),
+                }),
+              ),
+            ),
+          );
+          yield* cleanup.start();
+          yield* Deferred.await(snapshotRead);
+          yield* cleanup.drain;
+          if (protection === "deleted-event") {
+            assert.strictEqual(yield* fs.exists(worktreePath), true);
+            tombstoned = true;
+            yield* PubSub.publish(domainEvents, {
+              type: "thread.deleted",
+              sequence: 2,
+              eventId: EventId.make("storage-thread-deleted"),
+              aggregateKind: "thread",
+              aggregateId: thread.id,
+              occurredAt: NOW,
+              commandId: null,
+              causationEventId: null,
+              correlationId: null,
+              metadata: {},
+              payload: { threadId: thread.id, deletedAt: NOW },
+            });
+            yield* Deferred.await(deletionStarted);
+            assert.strictEqual(yield* fs.exists(worktreePath), true);
+            yield* Deferred.succeed(deletionStopped, undefined);
+            yield* cleanup.drain;
+          }
+          const removed =
+            protection === "project-custom" ||
+            protection === "deleted-project-custom" ||
+            protection === "none" ||
+            protection === "deleted" ||
+            protection === "deleted-event" ||
+            protection === "deleted-owner" ||
+            protection === "files-disabled" ||
+            protection === "files-extended" ||
+            protection === "merged" ||
+            protection === "unchanged" ||
+            protection === "unchanged-two-worktrees";
+          assert.strictEqual(yield* fs.exists(worktreePath), !removed);
+          assert.deepStrictEqual(
+            removals,
+            protection === "unchanged-two-worktrees"
+              ? [worktreePath, secondWorktreePath]
+              : removed
+                ? [worktreePath]
+                : [],
+          );
+          assert.strictEqual(fetches, mergeRule || unchangedRule ? 1 : 0);
+          assert.strictEqual(thread.worktreePath, worktreePath);
+          assert.strictEqual(thread.branch, "feature");
+          assert.strictEqual(yield* fs.exists(oldImage), protection.startsWith("files-"));
+          assert.strictEqual(yield* fs.exists(recentImage), true);
+          assert.strictEqual(yield* fs.exists(oldLog), protection.startsWith("files-"));
+          assert.strictEqual(yield* fs.exists(activeLog), true);
+        }).pipe(
+          Effect.provide(
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-storage-cleanup-" }).pipe(
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ),
+          Effect.scoped,
+        ),
+    );
+  }
 });

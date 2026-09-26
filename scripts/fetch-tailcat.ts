@@ -79,7 +79,7 @@ const textDecoder = new TextDecoder();
 
 // --- errors -----------------------------------------------------------------
 
-export class TailcatPlatformSelectionError extends Schema.TaggedErrorClass<TailcatPlatformSelectionError>()(
+export class TailcatPlatformSelectionError extends Schema.TaggedError<TailcatPlatformSelectionError>()(
   "TailcatPlatformSelectionError",
   {
     reason: Schema.Literals(["unsupported-host", "unknown-platform", "not-pinned"]),
@@ -98,7 +98,7 @@ export class TailcatPlatformSelectionError extends Schema.TaggedErrorClass<Tailc
   }
 }
 
-export class TailcatDownloadError extends Schema.TaggedErrorClass<TailcatDownloadError>()(
+export class TailcatDownloadError extends Schema.TaggedError<TailcatDownloadError>()(
   "TailcatDownloadError",
   {
     url: Schema.String,
@@ -120,7 +120,7 @@ export class TailcatDownloadError extends Schema.TaggedErrorClass<TailcatDownloa
   }
 }
 
-export class TailcatSourceBuildError extends Schema.TaggedErrorClass<TailcatSourceBuildError>()(
+export class TailcatSourceBuildError extends Schema.TaggedError<TailcatSourceBuildError>()(
   "TailcatSourceBuildError",
   {
     platformKey: TailcatPlatformKey,
@@ -147,7 +147,7 @@ export class TailcatSourceBuildError extends Schema.TaggedErrorClass<TailcatSour
   }
 }
 
-export class TailcatUpdateError extends Schema.TaggedErrorClass<TailcatUpdateError>()(
+export class TailcatUpdateError extends Schema.TaggedError<TailcatUpdateError>()(
   "TailcatUpdateError",
   {
     version: Schema.String,
@@ -630,43 +630,43 @@ const updateManifestPin = Effect.fn("updateManifestPin")(function* (input: {
 export const fetchTailcatCommand = Command.make(
   "fetch-tailcat",
   {
-    platform: Flag.string("platform").pipe(
+    platform: Flag.String("platform").pipe(
       Flag.withDescription(
         `Platform key to stage (${TAILCAT_PLATFORM_KEYS.join(", ")}). Defaults to this machine.`,
       ),
       Flag.optional,
     ),
-    all: Flag.boolean("all").pipe(
+    all: Flag.Boolean("all").pipe(
       Flag.withDescription("Stage or verify every platform key the manifest pins."),
     ),
-    verify: Flag.boolean("verify").pipe(
+    verify: Flag.Boolean("verify").pipe(
       Flag.withDescription(
         "Re-check staged binaries against the manifest instead of fetching; exits non-zero when one is missing or does not match.",
       ),
     ),
-    manifestOnly: Flag.boolean("manifest-only").pipe(
+    manifestOnly: Flag.Boolean("manifest-only").pipe(
       Flag.withDescription(
         "Only validate native/tailcat/manifest.json (schema and per-platform pins). No network, no binaries.",
       ),
     ),
-    out: Flag.string("out").pipe(
+    out: Flag.String("out").pipe(
       Flag.withDescription(
         "Directory that receives <platform-key>/. Defaults to native/tailcat/dist.",
       ),
       Flag.optional,
     ),
-    update: Flag.string("update").pipe(
+    update: Flag.String("update").pipe(
       Flag.withDescription(
         "Re-pin the manifest to this upstream version: downloads the new release assets, records their digests, and prints what changed.",
       ),
       Flag.optional,
     ),
-    buildFromSource: Flag.boolean("build-from-source").pipe(
+    buildFromSource: Flag.Boolean("build-from-source").pipe(
       Flag.withDescription(
         "Compile from the pinned tag with Go instead of downloading a release archive. Always used for darwin, which has no upstream archives.",
       ),
     ),
-    verbose: Flag.boolean("verbose").pipe(Flag.withDescription("Stream git and go output.")),
+    verbose: Flag.Boolean("verbose").pipe(Flag.withDescription("Stream git and go output.")),
   },
   (flags) =>
     Effect.gen(function* () {

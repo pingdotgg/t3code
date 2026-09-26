@@ -18,7 +18,7 @@ when you want a connection that is trusted per device instead of per network.
 ## Enable it on the machine you want to reach
 
 1. Open Settings → Connections.
-2. In "This environment", find **Remote access via Tailcat** and turn it on.
+2. In the section for this machine, find **Remote access via Tailcat** and turn it on.
 3. Wait for the status to read **Ready**. The card shows the machine's Tailcat address and
    which Tailcat build is in use.
 4. Click **Create connection code**. Copy the code, or scan the QR from your phone to send
@@ -76,8 +76,9 @@ Tailcat environment on other devices needs a fresh code.
   server and connect again.
 - **The connection shows Relay instead of Direct.** Both sides could not find a direct
   path, so traffic goes through an encrypted relay. It still works; it is just slower.
-  Use "Probe" in the environment's details to re-check the path later.
-- **Copy diagnostics** in the environment's details gathers the tunnel status, the path
+  Use **Probe** in **Tailcat details…**, in the saved environment's menu, to re-check the path
+  later.
+- **Copy diagnostics** in **Tailcat details…** gathers the tunnel status, the path
   probe, and the recent forwarder output with secrets removed. Attach it to a bug report.
 
 ## Working across two of your own machines

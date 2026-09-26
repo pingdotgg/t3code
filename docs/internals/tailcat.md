@@ -27,8 +27,8 @@ allowlist from its own pairing state.
 ## Runtime resolution
 
 `TailcatRuntime` resolves one executable, in order: the `T3CODE_TAILCAT_BINARY` override, the
-bundled candidates (`resources/tailcat/<platform-key>/`, `apps/server/dist/tailcat/…`,
-`native/tailcat/dist/…` in a checkout), then a `tailcat` on `PATH`. Every candidate is
+bundled candidates (`resources/tailcat/<platform-key>/`, `tailcat/<platform-key>/` beside a CLI
+executable, `native/tailcat/dist/…` in a checkout), then a `tailcat` on `PATH`. Every candidate is
 version-checked against the pinned manifest with `tailcat version`; a build outside the
 compatible range fails with `version-incompatible` rather than running. The resolution is
 cached per process and reported in `TailcatRuntimeInfo` (`source`, `version`, `pinnedVersion`,
@@ -37,7 +37,7 @@ cached per process and reported in `TailcatRuntimeInfo` (`source`, `version`, `p
 The runtime never downloads anything. Binaries are fetched at build time by
 `scripts/fetch-tailcat.ts` from the pinned upstream release (or built from the pinned source
 on macOS, which upstream does not publish), verified against `manifest.json` checksums, and
-staged into the desktop `extraResources` and the CLI dist. Bumping the pin is
+staged into the desktop `extraResources` and each CLI archive. Bumping the pin is
 `node scripts/fetch-tailcat.ts --update <version>` followed by a review of the manifest diff.
 
 ## Server: remote access lifecycle

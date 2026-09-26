@@ -1,4 +1,5 @@
 import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 export interface SettlementPullRequest {
   readonly state: "open" | "closed" | "merged";
@@ -72,7 +73,29 @@ export function resolveAutoSettlementAt(input: {
   readonly autoSettleAfterDays: number | null;
   readonly autoSettleOnMerge: boolean;
 }): string | null {
-  const { thread, pullRequest } = input;
+  const { thread } = input;
+  let pullRequest = input.pullRequest;
+  const links = visibleThreadPullRequests(thread.pullRequests);
+  if (links.some((link) => link.snapshot === null || link.snapshot.state === "open")) return null;
+  if (links.length > 0) {
+    const terminalTimestamp = (link: (typeof links)[number]) => {
+      const snapshot = link.snapshot;
+      const value = snapshot?.state === "merged" ? snapshot.mergedAt : snapshot?.closedAt;
+      const timestamp = Date.parse(value ?? "");
+      return Number.isNaN(timestamp) ? Number.NEGATIVE_INFINITY : timestamp;
+    };
+    const latest = links.reduce((current, candidate) =>
+      terminalTimestamp(candidate) > terminalTimestamp(current) ? candidate : current,
+    );
+    pullRequest =
+      latest.snapshot === null
+        ? null
+        : {
+            state: latest.snapshot.state,
+            mergedAt: latest.snapshot.mergedAt ?? null,
+            closedAt: latest.snapshot.closedAt ?? null,
+          };
+  }
   if (!isAutoSettlementCandidate(thread, input.now)) return null;
   const activityAt = latestTimestamp([
     thread.latestUserMessageAt,
@@ -94,6 +117,7 @@ export function resolveAutoSettlementAt(input: {
 /** Cheap checks that run before any source control lookup. */
 export function isAutoSettlementCandidate(thread: OrchestrationThreadShell, now: string): boolean {
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
+  if (thread.autoSettleDisabledAt != null) return false;
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
   if (thread.session?.status === "starting" || thread.session?.status === "running") return false;
   if (thread.backgroundLiveness != null) return false;

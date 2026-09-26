@@ -187,6 +187,8 @@ export const into: {
     | WorkflowInstance
     | Success["DecodingServices"]
     | Error["DecodingServices"]
+    | Success["EncodingServices"]
+    | Error["EncodingServices"]
   >
   <Success extends Schema.Constraint, Error extends Schema.Constraint, R>(
     effect: Effect.Effect<Success["Type"], Error["Type"], R>,
@@ -199,6 +201,8 @@ export const into: {
     | WorkflowInstance
     | Success["DecodingServices"]
     | Error["DecodingServices"]
+    | Success["EncodingServices"]
+    | Error["EncodingServices"]
   >
 } = dual(
   2,
@@ -213,6 +217,8 @@ export const into: {
     | WorkflowInstance
     | Success["DecodingServices"]
     | Error["DecodingServices"]
+    | Success["EncodingServices"]
+    | Error["EncodingServices"]
   > =>
     Effect.contextWith(
       (context: Context.Context<WorkflowEngine | WorkflowInstance>) => {

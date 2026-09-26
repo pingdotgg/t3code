@@ -1,4 +1,5 @@
 import * as Cloudflare from "@/Cloudflare/index.ts";
+import { Interaction } from "@/Interaction.ts";
 import { RpcProviderProxy } from "@/Local/RpcProviderProxy";
 import * as Test from "@/Test/Alchemy";
 import { expect } from "alchemy-test";
@@ -54,5 +55,16 @@ live.test(
   Effect.gen(function* () {
     const proxy = yield* Effect.serviceOption(RpcProviderProxy);
     expect(proxy._tag).toBe("None");
+  }),
+);
+
+live.test(
+  "test runtimes provide a non-interactive Interaction",
+  Effect.gen(function* () {
+    const interaction = yield* Interaction;
+    const failure = yield* Effect.flip(
+      interaction.prompt.confirm({ message: "?" }),
+    );
+    expect(failure._tag).toBe("NonInteractiveTerminal");
   }),
 );

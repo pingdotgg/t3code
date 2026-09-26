@@ -14,7 +14,6 @@ const { getWhenReady } = Test;
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: AWS.providers(),
   state: AWS.state(),
-  stage: "test",
 });
 
 // The first deploy runs the full Waku build AND creates a CloudFront

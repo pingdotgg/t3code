@@ -45,7 +45,6 @@ const getBodyWhenReady = (url: string, expected: string) =>
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: AWS.providers(),
   state: AWS.state(),
-  stage: "test",
 });
 
 // The first deploy runs the full Vite build AND creates a CloudFront

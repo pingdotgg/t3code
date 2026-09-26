@@ -40,6 +40,8 @@ export class HttpMarkerPresent extends Data.TaggedError("HttpMarkerPresent")<{
 }> {}
 
 export interface ExpectUrlContainsOptions {
+  /** Request headers, e.g. an explicit HTML Accept header for content negotiation. */
+  headers?: Record<string, string>;
   /** Maximum total time to retry before failing. Default 90s. */
   timeout?: Duration.Input;
   /** Initial backoff between attempts. Default 750ms. */
@@ -66,7 +68,11 @@ const looksLikeCloudflarePlaceholder = (body: string) =>
  */
 const ATTEMPT_SETTLEMENT_CAP_MS = 60_000;
 
-const fetchOnce = (url: string, marker: string) =>
+const fetchOnce = (
+  url: string,
+  marker: string,
+  headers?: Record<string, string>,
+) =>
   Effect.tryPromise({
     try: async (signal) => {
       // Cache-busting query string defeats both edge caches and any
@@ -84,6 +90,7 @@ const fetchOnce = (url: string, marker: string) =>
             // No keep-alive reuse: the wedge above starts with a reused
             // connection the server already closed.
             connection: "close",
+            ...headers,
           },
         });
         return { res, body: await res.text() };
@@ -155,7 +162,7 @@ export const expectUrlContains = (
   const initial = options.initialBackoff ?? "750 millis";
   const label = options.label ?? "url";
 
-  return fetchOnce(url, marker).pipe(
+  return fetchOnce(url, marker, options.headers).pipe(
     Effect.retry({
       // Cap individual sleeps at 8s so very long timeouts still
       // sample at a reasonable rate near the end of the budget.

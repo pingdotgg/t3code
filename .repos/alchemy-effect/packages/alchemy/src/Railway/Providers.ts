@@ -1,7 +1,7 @@
 import * as Layer from "effect/Layer";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import { CredentialsStoreLive } from "../Auth/Credentials.ts";
-import { ProfileLive } from "../Auth/Profile.ts";
+import { ProfileStoreLive } from "../Auth/Profile.ts";
 import * as Command from "../Command/index.ts";
 import * as Provider from "../Provider.ts";
 import { Random, RandomProvider } from "../Random.ts";
@@ -39,7 +39,6 @@ import {
 } from "./PrivateNetwork.ts";
 import { ReadRedisHttp } from "./ReadRedisHttp.ts";
 import { ReadWriteRedisHttp } from "./ReadWriteRedisHttp.ts";
-import { RailwayRetryPolicy } from "./RetryPolicy.ts";
 import { Redis, RedisProvider } from "./Redis.ts";
 import { Service } from "./Service.ts";
 import { ServiceProvider } from "./ServiceProvider.ts";
@@ -49,6 +48,10 @@ import {
   ServerProvider as WebsiteServerProvider,
 } from "../Website/Server.ts";
 import { ExecHttp, Sandbox, SandboxProvider } from "./Sandbox.ts";
+import {
+  SandboxCheckpoint,
+  SandboxCheckpointProvider,
+} from "./SandboxCheckpoint.ts";
 import { Volume, VolumeProvider } from "./Volume.ts";
 import { VolumeBackup, VolumeBackupProvider } from "./VolumeBackup.ts";
 import { WriteRedisHttp } from "./WriteRedisHttp.ts";
@@ -112,6 +115,7 @@ export const providers = () =>
       Bucket,
       CloudAgent,
       Sandbox,
+      SandboxCheckpoint,
       Random,
       WebsiteServer,
     ]),
@@ -140,6 +144,7 @@ export const providers = () =>
         BucketProvider(),
         CloudAgentProvider(),
         SandboxProvider(),
+        SandboxCheckpointProvider(),
         RandomProvider(),
         WebsiteServerProvider(),
       ),
@@ -161,11 +166,10 @@ export const providers = () =>
         ExecHttp,
       ),
     ),
-    Layer.provide(RailwayRetryPolicy),
     Layer.provideMerge(fromCredentials()),
     Layer.provideMerge(Credentials.fromAuthProvider()),
     Layer.provideMerge(RailwayAuth),
-    Layer.provideMerge(ProfileLive),
+    Layer.provideMerge(ProfileStoreLive),
     Layer.provideMerge(CredentialsStoreLive),
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(Command.providers()),

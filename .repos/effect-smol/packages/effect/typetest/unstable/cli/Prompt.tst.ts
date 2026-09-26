@@ -6,23 +6,48 @@ declare const stringEvents: Queue.Dequeue<string, never>
 declare const objectEvents: Queue.Dequeue<{ readonly tick: number }, never>
 
 describe("Prompt", () => {
+  it("allows select messages to be omitted but requires an autocomplete message", () => {
+    const options = { choices: [{ title: "First", value: "first" }] }
+    expect(Prompt.Select).type.toBeCallableWith(options)
+    expect(Prompt.MultiSelect).type.toBeCallableWith(options)
+    expect(Prompt.AutoComplete).type.not.toBeCallableWith(options)
+  })
+
+  it("numeric option types match their constructors", () => {
+    const intOptions: Prompt.IntOptions = { message: "Count", min: 0, incrementBy: 2 }
+    const numberOptions: Prompt.NumberOptions = { ...intOptions, precision: 3 }
+    expect(Prompt.Int).type.toBeCallableWith(intOptions)
+    expect(Prompt.Number).type.toBeCallableWith(numberOptions)
+    expect<Parameters<typeof Prompt.Int>[0]>().type.toBe<Prompt.IntOptions>()
+    expect<Parameters<typeof Prompt.Number>[0]>().type.toBe<Prompt.NumberOptions>()
+    expect<Prompt.NumberOptions>().type.toBeAssignableTo<Prompt.IntOptions>()
+  })
+
+  it("TextOptions remains shared by text controls", () => {
+    const options: Prompt.TextOptions = { message: "Value" }
+    expect(Prompt.String).type.toBeCallableWith(options)
+    expect(Prompt.Hidden).type.toBeCallableWith(options)
+    expect(Prompt.Password).type.toBeCallableWith(options)
+    expect<Prompt.ListOptions>().type.toBeAssignableTo<Prompt.TextOptions>()
+  })
+
   describe("Theme", () => {
     it("supports context and per-prompt customization", () => {
       expect(Prompt.makeTheme({ prefix: "!", primaryColor: "primary" })).type.toBe<Prompt.Theme>()
-      expect(Prompt.text).type.toBeCallableWith({
+      expect(Prompt.String).type.toBeCallableWith({
         message: "Name",
         theme: { prefix: "!", errorColor: "error" }
       })
     })
 
     it("does not expose the replaced prefix option", () => {
-      expect(Prompt.text).type.not.toBeCallableWith({ message: "Name", prefix: "!" })
+      expect(Prompt.String).type.not.toBeCallableWith({ message: "Name", prefix: "!" })
     })
   })
 
   describe("custom", () => {
     it("without events, process receives Terminal.UserInput", () => {
-      Prompt.custom(
+      Prompt.Custom(
         { count: 0 },
         {
           render: () => Effect.succeed(""),
@@ -36,7 +61,7 @@ describe("Prompt", () => {
     })
 
     it("with events, process receives ProcessInput<A>", () => {
-      Prompt.custom(
+      Prompt.Custom(
         { count: 0 },
         stringEvents,
         {
@@ -51,7 +76,7 @@ describe("Prompt", () => {
     })
 
     it("ProcessInput is a discriminated union narrowed by _tag", () => {
-      Prompt.custom(
+      Prompt.Custom(
         { count: 0 },
         objectEvents,
         {
@@ -70,7 +95,7 @@ describe("Prompt", () => {
     })
 
     it("returns Prompt<Output>", () => {
-      const prompt = Prompt.custom(
+      const prompt = Prompt.Custom(
         0,
         {
           render: () => Effect.succeed(""),
@@ -86,7 +111,7 @@ describe("Prompt", () => {
     })
 
     it("returns Prompt<Output> with events", () => {
-      const prompt = Prompt.custom(
+      const prompt = Prompt.Custom(
         0,
         stringEvents,
         {

@@ -2,16 +2,23 @@ import type {
   FlyMachineConfig,
   FlyMachineMount,
   FlyMachineService,
+  FlyMachineServiceCheck,
   ImageRef as FlyImageRef,
   Machine as FlyMachine,
   Volume as FlyVolume,
 } from "@distilled.cloud/fly-io/machines";
 import * as machines from "@distilled.cloud/fly-io/machines";
+import * as Retry from "@distilled.cloud/fly-io/Retry";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import { listOwnedApps } from "./App.ts";
-import type { MachineGuest, MachineImageRef } from "./Machine.ts";
+import type {
+  MachineGuest,
+  MachineImageRef,
+  MachineService,
+  MachineServiceCheck,
+} from "./Machine.ts";
 import {
   alchemyMetadataKeys,
   createMachineMetadata,
@@ -165,6 +172,46 @@ export const toGuestAttrs = (
   };
 };
 
+export const toFlyServiceCheck = (
+  check: MachineServiceCheck,
+): FlyMachineServiceCheck => ({
+  type: check.type,
+  port: check.port,
+  interval: check.interval,
+  timeout: check.timeout,
+  grace_period: check.gracePeriod,
+  method: check.method,
+  path: check.path,
+  protocol: check.protocol,
+  headers: check.headers?.map((header) => ({
+    name: header.name,
+    values: header.values,
+  })),
+  tls_server_name: check.tlsServerName,
+  tls_skip_verify: check.tlsSkipVerify,
+});
+
+export const toFlyService = (service: MachineService): FlyMachineService => ({
+  protocol: service.protocol,
+  internal_port: service.internalPort,
+  autostart: service.autostart,
+  autostop:
+    typeof service.autostop === "boolean"
+      ? service.autostop
+        ? "stop"
+        : "off"
+      : service.autostop,
+  min_machines_running: service.minMachinesRunning,
+  ports: service.ports?.map((port) => ({
+    port: port.port,
+    handlers: port.handlers,
+    force_https: port.forceHttps,
+    start_port: port.startPort,
+    end_port: port.endPort,
+  })),
+  checks: service.checks?.map(toFlyServiceCheck),
+});
+
 export const hasPublishedService = (
   services: FlyMachineService[] | undefined,
 ) =>
@@ -186,7 +233,8 @@ export const waitStarted = (appName: string, machineId: string) =>
       Effect.retry({
         times: 6,
         schedule: waitBackoff,
-        while: (e) => e._tag === "GatewayTimeout",
+        while: (e) =>
+          e._tag === "GatewayTimeout" || e._tag === "MachineWaitTimeout",
       }),
       Effect.timeout("50 seconds"),
     );
@@ -205,7 +253,8 @@ export const waitDestroyed = (appName: string, machineId: string) =>
       Effect.retry({
         times: 6,
         schedule: waitBackoff,
-        while: (e) => e._tag === "GatewayTimeout",
+        while: (e) =>
+          e._tag === "GatewayTimeout" || e._tag === "MachineWaitTimeout",
       }),
     );
 
@@ -216,17 +265,52 @@ export const ensureStarted = Effect.fn(function* (
 ) {
   const machineId = machine.id;
   if (machineId === undefined || skipLaunch) return machine;
-  const state = machine.state;
-  if (state !== "started" && state !== "starting") {
-    yield* machines
-      .startMachine({
+  return yield* Effect.gen(function* () {
+    // Create/update responses can lag Fly's automatic launch.
+    const current = yield* machines.getMachine({
+      app_name: appName,
+      machine_id: machineId,
+    });
+    yield* Effect.logDebug("Fly machine startup", {
+      appName,
+      machineId,
+      state: current.state,
+    });
+    if (
+      current.state === "stopped" ||
+      current.state === "suspended" ||
+      current.state === "failed"
+    ) {
+      yield* machines.startMachine({
         app_name: appName,
         machine_id: machineId,
+      });
+    }
+    // Re-observe state between waits instead of retrying the wait in the SDK.
+    yield* machines
+      .waitMachine({
+        app_name: appName,
+        machine_id: machineId,
+        state: "started",
+        timeout: WAIT_TIMEOUT_SECONDS,
       })
-      .pipe(Effect.catchTag(["NotFound", "Conflict"], () => Effect.void));
-  }
-  yield* waitStarted(appName, machineId);
-  return (yield* getMachineById(appName, machineId)) ?? machine;
+      .pipe(Retry.none);
+    return yield* machines.getMachine({
+      app_name: appName,
+      machine_id: machineId,
+    });
+  }).pipe(
+    Effect.retry({
+      times: 6,
+      schedule: waitBackoff,
+      while: (error) =>
+        error._tag === "MachineStartFromCreatedState" ||
+        error._tag === "MachineWaitTimeout" ||
+        error._tag === "Conflict" ||
+        error._tag === "GatewayTimeout",
+    }),
+    Effect.timeout("50 seconds"),
+  );
 });
 
 export const deleteMachine = Effect.fn(function* (

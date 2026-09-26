@@ -22,6 +22,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
+import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./AcpStderr.ts";
 import {
   collectSessionConfigOptionValues,
   decideToolCallUpdateEmission,
@@ -38,6 +39,8 @@ import {
   type AcpSessionModeState,
   type AcpToolCallState,
 } from "./AcpRuntimeModel.ts";
+
+const MAX_SHOWN_TOOL_CALL_IDS = 256;
 
 interface AcpToolCallTrackedState {
   readonly state: AcpToolCallState;
@@ -333,6 +336,9 @@ export const make = (
     const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
     const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallTrackedState>());
+    // Recently shown tool calls. A late update to a finished call is not a new
+    // boundary in the answer, although its progress state is gone.
+    const shownToolCallIds = new Set<string>();
     const assistantItemRuntimeId = yield* crypto.randomUUIDv4.pipe(
       Effect.mapError(
         (cause) =>
@@ -354,10 +360,13 @@ export const make = (
     );
     const stoppingRef = yield* Ref.make(false);
     const stderrFailure = yield* Deferred.make<never, EffectAcpErrors.AcpError>();
+    const stderrTailRef = yield* Ref.make("");
+    const stderrDrained = yield* Deferred.make<void>();
     const runtimeClosed = yield* Deferred.make<void>();
     const promptSerializationSemaphore = yield* Semaphore.make(1);
     const promptDispatchSemaphore = yield* Semaphore.make(1);
     const activePromptRef = yield* Ref.make<Option.Option<AcpActivePrompt>>(Option.none());
+    const assistantUpdatesOpenRef = yield* Ref.make(true);
     const sessionLoadGateRef = yield* Ref.make<Option.Option<SessionLoadGate>>(Option.none());
 
     const ensureConnected = Effect.gen(function* () {
@@ -373,22 +382,45 @@ export const make = (
       }
     });
 
+    const enrichProcessExitWithStderr = (
+      error: EffectAcpErrors.AcpError,
+    ): Effect.Effect<EffectAcpErrors.AcpError> =>
+      error._tag !== "AcpProcessExitedError" || (error.stderr?.trim().length ?? 0) > 0
+        ? Effect.succeed(error)
+        : Deferred.await(stderrDrained).pipe(
+            Effect.timeout("250 millis"),
+            Effect.ignore,
+            Effect.andThen(Ref.get(stderrTailRef)),
+            Effect.map((tail) => {
+              const stderr = sanitizeAcpStderrExcerpt(tail);
+              return stderr.length === 0
+                ? error
+                : new EffectAcpErrors.AcpProcessExitedError({
+                    ...(error.code !== undefined ? { code: error.code } : {}),
+                    ...(error.pid !== undefined ? { pid: error.pid } : {}),
+                    stderr,
+                    ...(error.cause !== undefined ? { cause: error.cause } : {}),
+                  });
+            }),
+          );
+
     const recordTermination = Effect.fn("AcpSessionRuntime.recordTermination")(function* (
       error: EffectAcpErrors.AcpError,
     ) {
       if (yield* Ref.get(stoppingRef)) {
         return;
       }
+      const enriched = yield* enrichProcessExitWithStderr(error);
       const firstTermination = yield* Ref.modify(terminationErrorRef, (current) =>
         Option.isSome(current)
           ? ([false, current] as const)
-          : ([true, Option.some(error)] as const),
+          : ([true, Option.some(enriched)] as const),
       );
       if (!firstTermination) {
         return;
       }
       yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
-      yield* Queue.offer(eventQueue, { _tag: "ConnectionTerminated", error });
+      yield* Queue.offer(eventQueue, { _tag: "ConnectionTerminated", error: enriched });
     });
 
     const logRequest = (event: AcpSessionRequestLogEvent) =>
@@ -405,6 +437,9 @@ export const make = (
             ? Effect.raceFirst(effect, Deferred.await(stderrFailure))
             : effect
           ).pipe(
+            Effect.catch((error) =>
+              enrichProcessExitWithStderr(error).pipe(Effect.flatMap(Effect.fail)),
+            ),
             Effect.tap((result) =>
               logRequest({
                 method,
@@ -452,10 +487,10 @@ export const make = (
     yield* child.stderr.pipe(
       Stream.decodeText(),
       Stream.runForEach((chunk) =>
-        (options.onStderr
-          ? options.onStderr(chunk.slice(-maxStderrChunkLength))
-          : Effect.void
-        ).pipe(
+        Ref.update(stderrTailRef, (current) => appendAcpStderrTail(current, chunk)).pipe(
+          Effect.andThen(
+            options.onStderr ? options.onStderr(chunk.slice(-maxStderrChunkLength)) : Effect.void,
+          ),
           Effect.catch((error) =>
             Effect.gen(function* () {
               yield* Deferred.fail(stderrFailure, error);
@@ -465,6 +500,7 @@ export const make = (
           ),
         ),
       ),
+      Effect.ensuring(Deferred.succeed(stderrDrained, undefined)),
       Effect.ignore,
       Effect.forkIn(runtimeScope),
     );
@@ -494,6 +530,7 @@ export const make = (
         modeStateRef,
         configOptionsRef,
         toolCallsRef,
+        shownToolCallIds,
         assistantSegmentRef,
         assistantItemRuntimeId,
         params: notification,
@@ -544,6 +581,13 @@ export const make = (
           if (
             startState._tag !== "Started" ||
             notification.sessionId !== startState.result.sessionId
+          ) {
+            return;
+          }
+          if (
+            !(yield* Ref.get(assistantUpdatesOpenRef)) &&
+            (notification.update.sessionUpdate === "agent_message_chunk" ||
+              notification.update.sessionUpdate === "agent_thought_chunk")
           ) {
             return;
           }
@@ -736,17 +780,16 @@ export const make = (
           resumePayload,
           acp.agent.resumeSession(resumePayload).pipe(
             Effect.timeoutOption(options.sessionLoadTimeout ?? defaultSessionLoadTimeout),
-            Effect.flatMap((result) =>
-              Option.isSome(result)
-                ? Effect.succeed(result.value)
-                : Effect.fail(
-                    new EffectAcpErrors.AcpTransportError({
-                      operation: "call-rpc",
-                      method: "session/resume",
-                      detail: "session/resume timed out waiting for the agent response.",
-                      cause: undefined,
-                    }),
-                  ),
+            Effect.flatMap(
+              Effect.fromOption(
+                () =>
+                  new EffectAcpErrors.AcpTransportError({
+                    operation: "call-rpc",
+                    method: "session/resume",
+                    detail: "session/resume timed out waiting for the agent response.",
+                    cause: undefined,
+                  }),
+              ),
             ),
           ),
         );
@@ -790,19 +833,16 @@ export const make = (
           ).pipe(
             Effect.ensuring(Fiber.interrupt(idleFiber).pipe(Effect.ignore)),
             Effect.timeoutOption(sessionLoadTimeout),
-            Effect.flatMap((result) =>
-              Option.match(result, {
-                onNone: () =>
-                  Effect.fail(
-                    new EffectAcpErrors.AcpTransportError({
-                      operation: "call-rpc",
-                      method: "session/load",
-                      detail: "session/load timed out waiting for RPC response or replay idle gap",
-                      cause: undefined,
-                    }),
-                  ),
-                onSome: Effect.succeed,
-              }),
+            Effect.flatMap(
+              Effect.fromOption(
+                () =>
+                  new EffectAcpErrors.AcpTransportError({
+                    operation: "call-rpc",
+                    method: "session/load",
+                    detail: "session/load timed out waiting for RPC response or replay idle gap",
+                    cause: undefined,
+                  }),
+              ),
             ),
             Effect.tap((result) =>
               logRequest({
@@ -905,7 +945,16 @@ export const make = (
         return;
       }
       const acknowledge = yield* Deferred.make<void>();
-      yield* Queue.offer(eventQueue, { _tag: "EventStreamBarrier", acknowledge });
+      yield* notificationSemaphore.withPermit(
+        Effect.gen(function* () {
+          // Keep a provider's final flushed chunks together until the adapter settles the turn.
+          if (Option.isNone(yield* Ref.get(activePromptRef))) {
+            yield* Ref.set(assistantUpdatesOpenRef, false);
+            yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
+          }
+          yield* Queue.offer(eventQueue, { _tag: "EventStreamBarrier", acknowledge });
+        }),
+      );
       yield* Effect.raceFirst(Deferred.await(acknowledge), Deferred.await(runtimeClosed));
     });
 
@@ -984,6 +1033,7 @@ export const make = (
               Effect.gen(function* () {
                 const started = yield* getStartedState;
                 yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
+                yield* Ref.set(assistantUpdatesOpenRef, true);
                 const requestPayload = {
                   sessionId: started.sessionId,
                   ...payload,
@@ -1000,16 +1050,17 @@ export const make = (
                   yield* Deferred.succeed(promptOptions.dispatched, undefined);
                 }
                 return active;
-              }),
+              }).pipe(notificationSemaphore.withPermit),
             ),
             (activePrompt) =>
               Fiber.join(activePrompt.fiber).pipe(
-                Effect.catchCause((cause) =>
-                  options.cancelBehavior !== "wait-for-prompt" && Cause.hasInterruptsOnly(cause)
-                    ? Effect.succeed({
-                        stopReason: "cancelled",
-                      } satisfies EffectAcpSchema.PromptResponse)
-                    : Effect.failCause(cause),
+                Effect.catchCauseIf(
+                  (cause) =>
+                    options.cancelBehavior !== "wait-for-prompt" && Cause.hasInterruptsOnly(cause),
+                  () =>
+                    Effect.succeed({
+                      stopReason: "cancelled",
+                    } satisfies EffectAcpSchema.PromptResponse),
                 ),
                 Effect.tap(() =>
                   closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef }),
@@ -1130,6 +1181,7 @@ const handleSessionUpdate = ({
   modeStateRef,
   configOptionsRef,
   toolCallsRef,
+  shownToolCallIds,
   assistantSegmentRef,
   assistantItemRuntimeId,
   params,
@@ -1138,6 +1190,7 @@ const handleSessionUpdate = ({
   readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
   readonly configOptionsRef: Ref.Ref<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
   readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallTrackedState>>;
+  readonly shownToolCallIds: Set<string>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
   readonly assistantItemRuntimeId: string;
   readonly params: EffectAcpSchema.SessionNotification;
@@ -1154,11 +1207,7 @@ const handleSessionUpdate = ({
     }
     for (const event of parsed.events) {
       if (event._tag === "ToolCallUpdated") {
-        yield* closeActiveAssistantSegment({
-          queue,
-          assistantSegmentRef,
-        });
-        const { merged, decision } = yield* Ref.modify(toolCallsRef, (current) => {
+        const { merged, decision, active } = yield* Ref.modify(toolCallsRef, (current) => {
           const tracked = current.get(event.toolCall.toolCallId);
           const previous = tracked?.state;
           const nextToolCall = mergeToolCallState(previous, event.toolCall);
@@ -1180,10 +1229,21 @@ const handleSessionUpdate = ({
               skippedSinceEmit: decision.skippedSinceEmit,
             });
           }
-          return [{ merged: nextToolCall, decision }, next] as const;
+          return [{ merged: nextToolCall, decision, active: tracked !== undefined }, next] as const;
         });
         if (!decision.emit) {
           continue;
+        }
+        // A new tool call is a boundary in the prose. Progress on a call that
+        // is already shown, such as a background command finishing, is not.
+        if (!shownToolCallIds.has(merged.toolCallId)) {
+          shownToolCallIds.add(merged.toolCallId);
+          // Only recent calls get late updates; keep a long session bounded.
+          if (shownToolCallIds.size > MAX_SHOWN_TOOL_CALL_IDS) {
+            shownToolCallIds.delete(shownToolCallIds.values().next().value!);
+          }
+          // A call still running is already on screen, even if it aged out.
+          if (!active) yield* closeActiveAssistantSegment({ queue, assistantSegmentRef });
         }
         yield* Queue.offer(queue, {
           _tag: "ToolCallUpdated",

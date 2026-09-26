@@ -144,7 +144,7 @@ export default class ApiFunction extends Lambda.Function<ApiFunction>()(
         const url = new URL(request.originalUrl);
 
         if (url.pathname === "/") {
-          const variable = yield* Config.string("MY_VARIABLE");
+          const variable = yield* Config.String("MY_VARIABLE");
           return yield* HttpServerResponse.json({ marker: MARKER, variable });
         }
 

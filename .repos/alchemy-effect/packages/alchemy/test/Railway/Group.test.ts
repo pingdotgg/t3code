@@ -1,6 +1,7 @@
 import * as railway from "@distilled.cloud/railway";
 import * as Provider from "@/Provider";
 import * as Railway from "@/Railway";
+import { projectGroups } from "@/Railway/GraphQL.ts";
 import { suitePartition } from "./suiteProject.ts";
 import * as Test from "@/Test/Alchemy";
 import { expect } from "alchemy-test";
@@ -36,30 +37,26 @@ const asGroupMap = (value: unknown): Record<string, { name?: string }> => {
 };
 
 const readConfigGroups = (environmentId: string, projectId: string) =>
-  railway.environment({ id: environmentId, projectId }).pipe(
+  railway.environment({ id: environmentId, projectId }, { config: true }).pipe(
     Effect.map((env) => asGroupMap(env.config)),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
+    railway.catchTags(["RailwayNotFound"], () =>
       Effect.succeed({} as Record<string, { name?: string }>),
     ),
   );
 
 const readProjectGroups = (projectId: string) =>
-  railway.project({ id: projectId }).pipe(
-    Effect.map((project) =>
-      project.groups.edges
-        .map((edge) => edge.node)
-        .filter((group) => group.name != null && group.name.length > 0),
+  projectGroups(projectId, { id: true, groupId: true, name: true }).pipe(
+    Effect.map((groups) =>
+      groups.filter((group) => group.name != null && group.name.length > 0),
     ),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.succeed([])),
+    railway.catchTags(["RailwayNotFound"], () => Effect.succeed([])),
   );
 
 const readService = (serviceId: string) =>
   railway
-    .service({ id: serviceId })
+    .service({ id: serviceId }, { id: true, groupId: true })
     .pipe(
-      Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-        Effect.succeed(undefined),
-      ),
+      railway.catchTags(["RailwayNotFound"], () => Effect.succeed(undefined)),
     );
 
 const waitUntilGroupGone = (
@@ -198,5 +195,5 @@ test.provider(
       );
       expect(groupGone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  { timeout: 120_000 },
 );

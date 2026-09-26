@@ -96,16 +96,13 @@ const DIST_REASON_TEXT: Record<TailcatDistReason, string> = {
   "digest-mismatch": "does not match the digest recorded when it was fetched",
 };
 
-export class TailcatDistError extends Schema.TaggedErrorClass<TailcatDistError>()(
-  "TailcatDistError",
-  {
-    platformKey: TailcatPlatformKey,
-    directory: Schema.String,
-    reason: TailcatDistReason,
-    detail: Schema.optionalKey(Schema.String),
-    cause: Schema.optionalKey(Schema.Defect()),
-  },
-) {
+export class TailcatDistError extends Schema.TaggedError<TailcatDistError>()("TailcatDistError", {
+  platformKey: TailcatPlatformKey,
+  directory: Schema.String,
+  reason: TailcatDistReason,
+  detail: Schema.optionalKey(Schema.String),
+  cause: Schema.optionalKey(Schema.Defect()),
+}) {
   override get message(): string {
     const detail = this.detail === undefined ? "" : ` ${this.detail}.`;
     const hint =

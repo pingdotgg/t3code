@@ -411,16 +411,16 @@ export const make = Effect.gen(function* () {
     }
     const grant = yield* pairingLinks.consume(request.token).pipe(
       Effect.mapError((error) =>
-        PairingGrantStore.isBootstrapCredentialInvalidError(error)
-          ? new FederationError({
+        PairingGrantStore.isBootstrapCredentialInternalError(error)
+          ? internalError(`Could not validate the peer code: ${error.message}`)
+          : new FederationError({
               code:
                 error._tag === "ExpiredBootstrapCredentialError" ? "code-expired" : "code-invalid",
               message:
                 error._tag === "ExpiredBootstrapCredentialError"
                   ? "This peer code has expired. Create a new one on the other machine."
                   : "This peer code is not valid or was already used.",
-            })
-          : internalError(`Could not validate the peer code: ${error.message}`),
+            }),
       ),
     );
     if (grant.subject !== FEDERATION_PEER_CODE_PAIRING_SUBJECT) {

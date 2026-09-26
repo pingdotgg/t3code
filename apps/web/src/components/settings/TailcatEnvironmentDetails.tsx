@@ -20,7 +20,6 @@ import {
   DialogPanel,
   DialogPopup,
   DialogTitle,
-  DialogTrigger,
 } from "../ui/dialog";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { TailcatConnectForm } from "./TailcatConnectForm";
@@ -72,26 +71,30 @@ const forwardStatusBadgeVariant = (status: TailcatConnectionDiagnostics["status"
 };
 
 type TailcatEnvironmentDetailsDialogProps = {
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly profile: TailcatConnectionProfile;
   readonly removing: boolean;
-  readonly onRemove: (environmentId: EnvironmentId) => void;
+  readonly onRemove: () => void;
 };
 
 /**
  * Transport details for one saved Tailcat environment: where the forwarder
  * listens, how packets travel, what it printed, and the repairs available
- * (restart the tunnel, re-pair with a fresh code, forget it).
+ * (restart the tunnel, re-pair with a fresh code, forget it). Opened from the
+ * environment row's menu.
  */
 export const TailcatEnvironmentDetailsDialog = memo(function TailcatEnvironmentDetailsDialog({
+  open,
+  onOpenChange,
   environmentId,
   environmentLabel,
   profile,
   removing,
   onRemove,
 }: TailcatEnvironmentDetailsDialogProps) {
-  const [open, setOpen] = useState(false);
   const [isProbing, setIsProbing] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -183,8 +186,7 @@ export const TailcatEnvironmentDetailsDialog = memo(function TailcatEnvironmentD
   const hasRecentOutput = diagnostics !== null && diagnostics.recentOutput.length > 0;
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button size="xs" variant="outline" />}>Details</DialogTrigger>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="max-h-[85dvh] sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{environmentLabel}</DialogTitle>
@@ -192,7 +194,7 @@ export const TailcatEnvironmentDetailsDialog = memo(function TailcatEnvironmentD
             Reached through a Tailcat tunnel the desktop app runs on this device.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-5">
+        <DialogPanel>
           <section className="space-y-2">
             <DetailRow label="Tailcat address" value={`${profile.address}:${profile.remotePort}`} />
             <DetailRow label="Environment id" value={environmentId} />
@@ -273,7 +275,7 @@ export const TailcatEnvironmentDetailsDialog = memo(function TailcatEnvironmentD
                 {hasRecentOutput ? (
                   <div className="space-y-1">
                     <p className="text-xs text-muted-foreground">Recent output</p>
-                    <pre className="max-h-40 overflow-auto rounded-lg border border-border/60 bg-muted/30 p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all text-foreground/85">
+                    <pre className="max-h-40 overflow-auto rounded-lg border border-border/60 bg-muted/30 p-2 font-mono text-2xs leading-relaxed whitespace-pre-wrap break-all text-foreground/85">
                       {diagnostics.recentOutput.join("\n")}
                     </pre>
                   </div>
@@ -314,7 +316,7 @@ export const TailcatEnvironmentDetailsDialog = memo(function TailcatEnvironmentD
             <TailcatConnectForm
               mode="repair"
               expectedEnvironmentId={environmentId}
-              onConnected={() => setOpen(false)}
+              onConnected={() => onOpenChange(false)}
             />
           </section>
         </DialogPanel>
@@ -323,13 +325,13 @@ export const TailcatEnvironmentDetailsDialog = memo(function TailcatEnvironmentD
             variant="destructive-outline"
             disabled={removing}
             onClick={() => {
-              onRemove(environmentId);
-              setOpen(false);
+              onOpenChange(false);
+              onRemove();
             }}
           >
-            {removing ? "Forgetting…" : "Forget environment"}
+            {removing ? "Removing…" : "Remove from this device…"}
           </Button>
-          <Button variant="outline" onClick={() => setOpen(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
             Done
           </Button>
         </DialogFooter>

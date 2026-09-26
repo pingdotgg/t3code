@@ -1,5 +1,5 @@
 import { sanitizeLockKey, withLock } from "@/Auth/Lock.ts";
-import { rootDir } from "@/Auth/Profile.ts";
+import { rootDir } from "@/Auth/Paths.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
@@ -42,7 +42,7 @@ describe("sanitizeLockKey", () => {
 layer(NodeServices.layer, { excludeTestServices: true })("withLock", (it) => {
   const lockPathOf = Effect.fn(function* (key: string) {
     const path = yield* Path.Path;
-    return path.join(rootDir, "lock", `${sanitizeLockKey(key)}.lock`);
+    return path.join(rootDir(), "lock", `${sanitizeLockKey(key)}.lock`);
   });
 
   /** Create a foreign lock as another process would have left it. */
@@ -227,17 +227,52 @@ layer(NodeServices.layer, { excludeTestServices: true })("withLock", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const key = "lock-test-release-on-interrupt";
       const lockPath = yield* lockPathOf(key);
-      const fiber = yield* withLock(key, Effect.never).pipe(Effect.forkScoped);
-      yield* fs.exists(lockPath).pipe(
-        Effect.repeat({
-          schedule: Schedule.spaced("25 millis"),
-          until: (exists) => exists,
-          times: 100,
-        }),
-      );
+      const entered = yield* Deferred.make<void>();
+      const fiber = yield* withLock(
+        key,
+        Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(entered);
       yield* Fiber.interrupt(fiber);
       expect(yield* fs.exists(lockPath)).toBe(false);
     }),
+  );
+
+  it.effect("releases the lock when interrupted during acquisition", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const key = "lock-test-interrupt-acquisition";
+      const lockPath = yield* lockPathOf(key);
+      const created = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      yield* Effect.addFinalizer(() => removeLock(lockPath).pipe(Effect.orDie));
+      const acquisitionFs: FileSystem.FileSystem = {
+        ...fs,
+        makeDirectory: (directory, options) =>
+          fs
+            .makeDirectory(directory, options)
+            .pipe(
+              Effect.andThen(
+                directory === lockPath
+                  ? Deferred.succeed(created, undefined).pipe(
+                      Effect.andThen(Deferred.await(resume)),
+                    )
+                  : Effect.void,
+              ),
+            ),
+      };
+      const holder = yield* withLock(key, Effect.never).pipe(
+        Effect.provideService(FileSystem.FileSystem, acquisitionFs),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(created);
+      const interrupted = yield* Fiber.interrupt(holder).pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* Deferred.succeed(resume, undefined);
+      yield* Fiber.join(interrupted);
+      expect(yield* fs.exists(lockPath)).toBe(false);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("dies with a timeout while a live foreign lock is held", () =>

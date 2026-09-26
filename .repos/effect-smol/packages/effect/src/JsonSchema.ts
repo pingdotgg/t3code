@@ -9,7 +9,7 @@
  * @since 4.0.0
  */
 import * as InternalRecord from "./internal/record.ts"
-import { escapeToken, unescapeToken } from "./JsonPointer.ts"
+import { formatUriFragment, parseUriFragment } from "./JsonPointer.ts"
 import * as Predicate from "./Predicate.ts"
 
 /**
@@ -218,9 +218,9 @@ function isMetaSchemaUri(value: unknown, uri: string): boolean {
 }
 
 function rewriteOpenApiComponentsReference(reference: string): string {
-  const path = reference.startsWith("#") ? parsePointerFragment(reference) : undefined
+  const path = reference.startsWith("#") ? parseUriFragment(reference) : undefined
   return path !== undefined && path[0] === "components" && path[1] === "schemas"
-    ? formatPointerFragment(["$defs", ...path.slice(2)])
+    ? formatUriFragment(["$defs", ...path.slice(2)])
     : reference
 }
 
@@ -627,7 +627,7 @@ export function toMultiDocumentOpenApi3_1(multiDocument: MultiDocument<"draft-20
     return transformSchema(schema, (schema, inEmbeddedResource) => {
       rejectKeywordCollisions(schema, OPEN_API_31_TARGET_COLLISIONS, "OpenAPI 3.1", "Draft 2020-12")
       rewriteSchemaRef(schema, (reference, keyword) => {
-        const path = reference.startsWith("#") ? parsePointerFragment(reference) : undefined
+        const path = reference.startsWith("#") ? parseUriFragment(reference) : undefined
         if (path === undefined || path[0] !== "$defs" || path.length < 2) return reference
         const key = path[1]
         if (isRootResource) {
@@ -643,7 +643,7 @@ export function toMultiDocumentOpenApi3_1(multiDocument: MultiDocument<"draft-20
         }
         return inEmbeddedResource
           ? reference
-          : formatPointerFragment(["components", "schemas", keyMap.get(key) ?? key, ...path.slice(2)])
+          : formatUriFragment(["components", "schemas", keyMap.get(key) ?? key, ...path.slice(2)])
       })
     }) as JsonSchema
   }
@@ -682,7 +682,7 @@ export function sanitizeOpenApiComponentsSchemasKey(s: string): string {
 
 /** @internal */
 export function getReferenceKey($ref: string): string | undefined {
-  const path = $ref.startsWith("#") ? parsePointerFragment($ref) : undefined
+  const path = $ref.startsWith("#") ? parseUriFragment($ref) : undefined
   return path !== undefined && path.length === 2 && path[0] === "$defs"
     ? path[1]
     : undefined
@@ -815,7 +815,7 @@ function runConverter<A>(adapter: Adapter, options: ConverterOptions | undefined
       let reference = value
       const resolved = resolveUrl(value, sourceResource)
       if (resolved !== undefined) {
-        const sourcePointer = parsePointerFragment(resolved.hash)
+        const sourcePointer = parseUriFragment(resolved.hash)
         resolved.hash = ""
         if (sourcePointer !== undefined) {
           const targetPath = locations.get(locationKey(resolved.href, sourcePointer))
@@ -927,29 +927,11 @@ function resolveResourceUri(value: unknown, base: string): string | undefined {
   return url.href
 }
 
-function parsePointerFragment(hash: string): Path | undefined {
-  if (hash.length === 0) return []
-  let pointer: string
-  try {
-    pointer = decodeURIComponent(hash.slice(1))
-  } catch {
-    return undefined
-  }
-  if (!pointer.startsWith("/")) return undefined
-  return /~(?:[^01]|$)/.test(pointer) ? undefined : pointer.slice(1).split("/").map(unescapeToken)
-}
-
 function relocateReference(reference: string, targetPath: Path): string {
   const index = reference.indexOf("#")
   if (index === -1 && targetPath.length === 0) return reference
   const uri = index === -1 ? reference : reference.slice(0, index)
-  return `${uri}${formatPointerFragment(targetPath)}`
-}
-
-function formatPointerFragment(path: Path): string {
-  return path.length === 0
-    ? "#"
-    : `#/${path.map((token) => encodeURI(escapeToken(token)).replace(/#/g, "%23")).join("/")}`
+  return `${uri}${formatUriFragment(targetPath)}`
 }
 
 function locationKey(resource: string, pointer: Path): string {

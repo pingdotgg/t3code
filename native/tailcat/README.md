@@ -17,11 +17,11 @@ and checked for version compatibility; they are not verified against the manifes
 - macOS: upstream publishes no macOS binaries. The fetch script clones the pinned tag, refuses to
   build unless `HEAD` is `source.commit`, and compiles `source.package` with `CGO_ENABLED=0`,
   `-trimpath`, `-buildvcs=false`, the upstream `build-tags.txt`, and the upstream `ldflags`. The
-  output is a function of the source and the Go toolchain (`source.goVersion`) alone, so the darwin
-  binaries cross-compiled by the Linux npm publisher match the ones built on the macOS runners.
+  output is a function of the source and the Go toolchain (`source.goVersion`) alone, so a darwin
+  binary cross-compiled on another host matches the one built on the macOS runners.
 - License: BSD-3-Clause. `LICENSE` in this directory is the upstream text (refreshed by `--update`),
   and every staged runtime directory carries the upstream copy as `LICENSE.txt` next to the binary,
-  which satisfies the binary-redistribution clause for the desktop app and the npm package.
+  which satisfies the binary-redistribution clause for the desktop app and the CLI archives.
 
 ## Staged layout
 
@@ -40,8 +40,8 @@ The manifest pins archive digests, not binary digests, so `provenance.json` is w
 binary checkable later: `--verify` confirms the provenance names the pinned version and archive
 digest (or pinned commit) and that the binary still hashes to the digest recorded when it was
 extracted. The packaging steps (`scripts/build-desktop-artifact.ts` and
-`apps/server/scripts/cli.ts publish`) run the same check before copying a binary into an artifact,
-so a stale `dist/` after a pin bump fails the build instead of shipping the previous version.
+`scripts/build-cli-archive.ts`) run the same check before copying a binary into an artifact, so a
+stale `dist/` after a pin bump fails the build instead of shipping the previous version.
 
 Companion files carry extensions on purpose: on macOS the signing pass codesigns every
 extension-less file under `Contents/`, which is how `tailcat` gets signed alongside the resource
@@ -71,9 +71,10 @@ on `PATH` also works, and `T3CODE_TAILCAT_BINARY=/path/to/tailcat` overrides bot
   build's platform keys (both darwin keys for a universal app) into
   `apps/desktop/prod-resources/tailcat/`, which electron-builder ships as
   `resources/tailcat/<platform-key>/`. Windows packaging rejects a payload without it.
-- CLI (`npx t3`): `apps/server/scripts/cli.ts publish` stages every pinned platform key into
-  `apps/server/dist/tailcat/<platform-key>/`, matching how the resource monitor ships in the one
-  platform-independent npm package. Release CI fetches all keys first (darwin is cross-compiled).
+- CLI: `scripts/build-cli-archive.ts` copies the archive's own platform key to
+  `tailcat/<platform-key>/` beside the executable, next to `resource-monitor/`. The npm platform
+  packages (`npx t3`) and the Windows desktop's WSL runtime are built from those archives, so they
+  carry it unchanged.
 
 ## Upgrading
 

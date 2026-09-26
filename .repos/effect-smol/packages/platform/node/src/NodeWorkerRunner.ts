@@ -38,11 +38,13 @@ export const layer: Layer.Layer<WorkerRunner.WorkerRunnerPlatform> = Layer.succe
         })
       }
 
-      const sendUnsafe = WorkerThreads.parentPort
+      const sendRaw = WorkerThreads.parentPort
         ? (_portId: number, message: any, transfers?: any) => WorkerThreads.parentPort!.postMessage(message, transfers)
         : (_portId: number, message: any, _transfers?: any) => process.send!(message)
+      const sendUnsafe = (_portId: number, message: O, transfers?: ReadonlyArray<unknown>) =>
+        sendRaw(_portId, [1, message], transfers)
       const send = (_portId: number, message: O, transfers?: ReadonlyArray<unknown>) =>
-        Effect.sync(() => sendUnsafe(_portId, [1, message], transfers as any))
+        Effect.sync(() => sendUnsafe(_portId, message, transfers))
 
       const run = <A, E, R>(
         handler: (portId: number, message: I) => Effect.Effect<A, E, R> | void
@@ -115,7 +117,7 @@ export const layer: Layer.Layer<WorkerRunner.WorkerRunnerPlatform> = Layer.succe
             })
           )
 
-          sendUnsafe(0, [0])
+          sendRaw(0, [0])
 
           return yield* Deferred.await(closeLatch)
         }))
