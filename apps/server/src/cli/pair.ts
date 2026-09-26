@@ -24,14 +24,17 @@ import {
   readTailscaleStatus,
 } from "@t3tools/tailscale";
 import * as Config from "effect/Config";
+import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { Command, Flag, GlobalFlag } from "effect/unstable/cli";
 import {
   FetchHttpClient,
@@ -60,6 +63,9 @@ import { baseDirFlag, DurationFromString } from "./config.ts";
 
 const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
 const PAIR_PROBE_TIMEOUT = Duration.millis(2_500);
+// The environment descriptor is a few hundred bytes; anything larger served
+// from the well-known path cannot be a T3 server.
+const MAX_PROBE_BODY_BYTES = 64 * 1024;
 // Tailscale provisions an HTTPS certificate on the first request to a fresh
 // serve mapping, which can take a few seconds.
 const TAILSCALE_PROBE_ATTEMPTS = 5;
@@ -148,6 +154,11 @@ export class DevServerNotProxiableError extends Schema.TaggedError<DevServerNotP
 
 const isDevServerNotProxiableError = Schema.is(DevServerNotProxiableError);
 
+// Compiled once: the probe decodes every candidate response through it.
+const decodeProbeDescriptor = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(ExecutionEnvironmentDescriptor),
+);
+
 /**
  * The local endpoint Tailscale Serve should proxy to. Dev servers are
  * single-origin, so the web dev server's port is the one to publish; the
@@ -205,12 +216,41 @@ type EnvironmentProbeResult =
   | { readonly _tag: "unreachable" }
   | { readonly _tag: "not-a-t3-server" };
 
+const readBoundedProbeBody = (ok: HttpClientResponse.HttpClientResponse, deadline: number) =>
+  Effect.gen(function* () {
+    const remaining = Math.max(0, deadline - (yield* Clock.currentTimeMillis));
+    return yield* ok.stream.pipe(
+      Stream.runFoldEffect(
+        () => ({ bytes: 0, chunks: [] as Array<Uint8Array> }),
+        (acc, chunk) => {
+          if (acc.bytes + chunk.byteLength > MAX_PROBE_BODY_BYTES) {
+            return Effect.fail({ _tag: "not-a-t3-server" } as const);
+          }
+          acc.bytes += chunk.byteLength;
+          acc.chunks.push(chunk);
+          return Effect.succeed(acc);
+        },
+      ),
+      Effect.map(({ bytes, chunks }) => {
+        const merged = new Uint8Array(bytes);
+        let offset = 0;
+        for (const chunk of chunks) {
+          merged.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        return new TextDecoder().decode(merged);
+      }),
+      Effect.timeout(Duration.millis(remaining)),
+    );
+  });
+
 const probeEnvironmentDescriptor = (
   baseUrl: string,
 ): Effect.Effect<EnvironmentProbeResult, never, HttpClient.HttpClient> =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
     const request = HttpClientRequest.get(new URL(WELL_KNOWN_ENVIRONMENT_PATH, baseUrl).toString());
+    const deadline = (yield* Clock.currentTimeMillis) + Duration.toMillis(PAIR_PROBE_TIMEOUT);
     const response = yield* client.execute(request).pipe(
       Effect.timeout(PAIR_PROBE_TIMEOUT),
       // Transport failure or timeout: nothing (reachable) is listening there.
@@ -219,14 +259,34 @@ const probeEnvironmentDescriptor = (
     // Bad-gateway family means a proxy (Tailscale Serve) answered for a
     // backend that is gone — a stale mapping, not a live occupant. Treating
     // it as unreachable lets `t3 pair --tailscale` repair its own mapping
-    // after the server's port changed.
+    // after the server's port changed. Drain the body so the pooled
+    // connection is reusable for the re-configured mapping; the drain itself
+    // is time-bounded and best-effort.
     if (response.status === 502 || response.status === 503 || response.status === 504) {
+      yield* Effect.ignore(readBoundedProbeBody(response, deadline));
       return { _tag: "unreachable" } as const;
     }
     // Anything else that answered HTTP but not with a valid descriptor is
-    // some other service.
-    const descriptor = yield* HttpClientResponse.filterStatusOk(response).pipe(
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(ExecutionEnvironmentDescriptor)),
+    // some other service. Refuse to decode a stranger's body blind: the
+    // descriptor is a few hundred bytes of JSON, so non-JSON content is
+    // classified without decoding, but the body is still drained boundedly
+    // so the pooled connection is reusable — a stranger that holds its body
+    // open must not pin pool slots across repeated probes.
+    const contentType = response.headers["content-type"] ?? "";
+    const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase();
+    if (mediaType !== "application/json" && !mediaType?.endsWith("+json")) {
+      yield* Effect.ignore(readBoundedProbeBody(response, deadline));
+      return { _tag: "not-a-t3-server" } as const;
+    }
+    // A non-2xx answer is still a stranger, but its body must be drained
+    // boundedly for the same reason: an unconsumed stream pins the pooled
+    // connection across repeated probes.
+    if (response.status < 200 || response.status >= 300) {
+      yield* Effect.ignore(readBoundedProbeBody(response, deadline));
+      return { _tag: "not-a-t3-server" } as const;
+    }
+    const descriptor = yield* readBoundedProbeBody(response, deadline).pipe(
+      Effect.flatMap(decodeProbeDescriptor),
       Effect.mapError(() => ({ _tag: "not-a-t3-server" }) as const),
     );
     return { _tag: "descriptor", descriptor } as const;
@@ -239,7 +299,7 @@ interface DiscoveredPairTarget {
   readonly descriptor: ExecutionEnvironmentDescriptor;
 }
 
-const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
+export const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
   explicitBaseDir: string | undefined,
 ) {
   const bases: Array<string> = [];
@@ -258,6 +318,11 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
   }
 
   const checkedStatePaths: Array<string> = [];
+  const candidates: Array<{
+    readonly baseDir: string;
+    readonly variant: PairStateVariant;
+    readonly state: PersistedServerRuntimeState;
+  }> = [];
   for (const baseDir of new Set(bases)) {
     for (const variant of ["userdata", "dev"] as const) {
       const derivedPaths = yield* ServerConfig.deriveServerPaths(
@@ -277,17 +342,33 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
       if (!isProcessAlive(state.value.pid)) {
         continue;
       }
-      const probed = yield* probeEnvironmentDescriptor(state.value.origin);
-      if (probed._tag !== "descriptor") {
-        continue;
-      }
-      return {
-        baseDir,
-        variant,
-        state: state.value,
-        descriptor: probed.descriptor,
-      } satisfies DiscoveredPairTarget;
+      candidates.push({ baseDir, variant, state: state.value });
     }
+  }
+  const hit = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const fibers = yield* Effect.forEach(candidates, (candidate) =>
+        probeEnvironmentDescriptor(candidate.state.origin).pipe(
+          Effect.forkScoped,
+          Effect.map((fiber) => ({ ...candidate, fiber })),
+        ),
+      );
+      for (const { fiber, baseDir, variant, state } of fibers) {
+        const result = yield* Fiber.join(fiber);
+        if (result._tag === "descriptor") {
+          return Option.some({
+            baseDir,
+            variant,
+            state,
+            descriptor: result.descriptor,
+          } satisfies DiscoveredPairTarget);
+        }
+      }
+      return Option.none<DiscoveredPairTarget>();
+    }),
+  );
+  if (Option.isSome(hit)) {
+    return hit.value;
   }
   return yield* new NoRunningServerError({ checkedStatePaths });
 });
@@ -349,14 +430,17 @@ const makePairServerConfig = Effect.fn(function* (input: {
   });
 });
 
-const awaitEnvironmentDescriptor = Effect.fn(function* (baseUrl: string) {
+export const awaitEnvironmentDescriptor = Effect.fn(function* (baseUrl: string) {
   let last: EnvironmentProbeResult = { _tag: "unreachable" };
   for (let attempt = 0; attempt < TAILSCALE_PROBE_ATTEMPTS; attempt += 1) {
     last = yield* probeEnvironmentDescriptor(baseUrl);
     if (last._tag === "descriptor") {
       return last;
     }
-    yield* Effect.sleep(TAILSCALE_PROBE_RETRY_DELAY);
+    // No sleep after the final attempt: nothing else will use the wait.
+    if (attempt + 1 < TAILSCALE_PROBE_ATTEMPTS) {
+      yield* Effect.sleep(TAILSCALE_PROBE_RETRY_DELAY);
+    }
   }
   return last;
 });

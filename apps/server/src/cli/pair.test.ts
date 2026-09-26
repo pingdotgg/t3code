@@ -8,10 +8,19 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
+import * as FileSystem from "effect/FileSystem";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
+import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { cli } from "../bin.ts";
 import {
@@ -25,7 +34,9 @@ import {
   type PersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import {
+  awaitEnvironmentDescriptor,
   DevServerNotProxiableError,
+  discoverPairTarget,
   resolveDirectPairingBaseUrl,
   resolveTailscaleLocalTarget,
 } from "./pair.ts";
@@ -142,6 +153,25 @@ const withDescriptorServer = <A, E, R>(run: (origin: string) => Effect.Effect<A,
     },
     (server) => Effect.sync(() => server.close()),
   );
+
+const makeDiscoveryFixture = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pair-probes-" });
+  const candidates = yield* Effect.forEach(["userdata", "dev"] as const, (variant, index) =>
+    Effect.gen(function* () {
+      const state = yield* makePersistedServerRuntimeState({
+        config: { host: "127.0.0.1", devUrl: undefined },
+        port: 10_000 + index,
+      });
+      yield* persistServerRuntimeState({
+        path: NodePath.join(baseDir, variant, "server-runtime.json"),
+        state,
+      });
+      return { variant, state };
+    }),
+  );
+  return { baseDir, candidates };
+});
 
 describe("t3 pair", () => {
   it.effect("mints a token and prints a QR pairing URL for a live server", () =>
@@ -287,5 +317,460 @@ describe("t3 pair", () => {
       );
       assert.include(rendered, "No running T3 Code server found.");
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not decode an oversized stranger body as a server descriptor", () =>
+    Effect.acquireUseRelease(
+      Effect.callback<NodeHttp.Server>((resume) => {
+        const server = NodeHttp.createServer((request, response) => {
+          if (request.url === "/.well-known/t3/environment") {
+            response.writeHead(200, { "content-type": "application/json" });
+            // A schema-valid descriptor padded far beyond any real one:
+            // discovery must reject it on size without a Schema decode
+            // (without the cap this decodes fine and pairs), not pair with it.
+            response.end(JSON.stringify({ ...testDescriptor, padding: "x".repeat(128 * 1024) }));
+            return;
+          }
+          response.writeHead(404);
+          response.end();
+        });
+        server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+      }),
+      (server) =>
+        Effect.gen(function* () {
+          const address = server.address();
+          if (address === null || typeof address === "string") {
+            return Effect.die(new Error("Expected a TCP address"));
+          }
+          const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-big-test-"));
+          const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+          yield* persistServerRuntimeState({
+            path: statePath,
+            state: yield* makePersistedServerRuntimeState({
+              config: { host: "127.0.0.1", devUrl: undefined },
+              port: address.port,
+            }),
+          });
+
+          const error = yield* provideCliTestLayers(
+            runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
+          );
+
+          const rendered = String(
+            typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
+          );
+          assert.include(rendered, "No running T3 Code server found.");
+        }),
+      (server) => Effect.sync(() => server.close()),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("rejects a descriptor that exceeds the cap in UTF-8 bytes only", () =>
+    Effect.acquireUseRelease(
+      Effect.callback<NodeHttp.Server>((resume) => {
+        const server = NodeHttp.createServer((request, response) => {
+          if (request.url === "/.well-known/t3/environment") {
+            response.writeHead(200, { "content-type": "application/json" });
+            // "é" is two bytes in UTF-8 but one UTF-16 code unit: this body
+            // is ~80 KiB on the wire yet under 64 KiB in string length, so a
+            // string-length check would accept and pair with it. The probe
+            // must enforce the cap in bytes, before decoding.
+            response.end(JSON.stringify({ ...testDescriptor, label: "é".repeat(40 * 1024) }));
+            return;
+          }
+          response.writeHead(404);
+          response.end();
+        });
+        server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+      }),
+      (server) =>
+        Effect.gen(function* () {
+          const address = server.address();
+          if (address === null || typeof address === "string") {
+            return Effect.die(new Error("Expected a TCP address"));
+          }
+          const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-utf8-test-"));
+          const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+          yield* persistServerRuntimeState({
+            path: statePath,
+            state: yield* makePersistedServerRuntimeState({
+              config: { host: "127.0.0.1", devUrl: undefined },
+              port: address.port,
+            }),
+          });
+
+          const error = yield* provideCliTestLayers(
+            runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
+          );
+
+          const rendered = String(
+            typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
+          );
+          assert.include(rendered, "No running T3 Code server found.");
+        }),
+      (server) => Effect.sync(() => server.close()),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not pair when a valid descriptor arrives as non-JSON", () =>
+    Effect.acquireUseRelease(
+      Effect.callback<NodeHttp.Server>((resume) => {
+        const server = NodeHttp.createServer((request, response) => {
+          if (request.url === "/.well-known/t3/environment") {
+            // Schema-valid JSON served as HTML: the probe must classify it
+            // as a stranger (and drain the body for connection reuse)
+            // instead of decoding and pairing with it.
+            response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+            response.end(JSON.stringify(testDescriptor));
+            return;
+          }
+          response.writeHead(404);
+          response.end();
+        });
+        server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+      }),
+      (server) =>
+        Effect.gen(function* () {
+          const address = server.address();
+          if (address === null || typeof address === "string") {
+            return Effect.die(new Error("Expected a TCP address"));
+          }
+          const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-ctype-test-"));
+          const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+          yield* persistServerRuntimeState({
+            path: statePath,
+            state: yield* makePersistedServerRuntimeState({
+              config: { host: "127.0.0.1", devUrl: undefined },
+              port: address.port,
+            }),
+          });
+
+          const error = yield* provideCliTestLayers(
+            runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
+          );
+
+          const rendered = String(
+            typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
+          );
+          assert.include(rendered, "No running T3 Code server found.");
+        }),
+      (server) => Effect.sync(() => server.close()),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not pair when a valid descriptor arrives with an error status", () =>
+    Effect.acquireUseRelease(
+      Effect.callback<NodeHttp.Server>((resume) => {
+        const server = NodeHttp.createServer((request, response) => {
+          if (request.url === "/.well-known/t3/environment") {
+            // A 500 carrying a schema-valid descriptor body: the probe must
+            // classify it as a stranger (draining the body for connection
+            // reuse) instead of decoding and pairing with it.
+            response.writeHead(500, { "content-type": "application/json" });
+            response.end(JSON.stringify(testDescriptor));
+            return;
+          }
+          response.writeHead(404);
+          response.end();
+        });
+        server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+      }),
+      (server) =>
+        Effect.gen(function* () {
+          const address = server.address();
+          if (address === null || typeof address === "string") {
+            return Effect.die(new Error("Expected a TCP address"));
+          }
+          const baseDir = NodeFS.mkdtempSync(
+            NodePath.join(NodeOS.tmpdir(), "t3-pair-status-test-"),
+          );
+          const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+          yield* persistServerRuntimeState({
+            path: statePath,
+            state: yield* makePersistedServerRuntimeState({
+              config: { host: "127.0.0.1", devUrl: undefined },
+              port: address.port,
+            }),
+          });
+
+          const error = yield* provideCliTestLayers(
+            runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
+          );
+
+          const rendered = String(
+            typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
+          );
+          assert.include(rendered, "No running T3 Code server found.");
+        }),
+      (server) => Effect.sync(() => server.close()),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each(["Application/JSON; charset=utf-8", "application/vnd.t3+json"])(
+    "pairs when the descriptor arrives with content type %s",
+    (contentType) =>
+      Effect.acquireUseRelease(
+        Effect.callback<NodeHttp.Server>((resume) => {
+          const server = NodeHttp.createServer((request, response) => {
+            if (request.url === "/.well-known/t3/environment") {
+              response.writeHead(200, { "content-type": contentType });
+              response.end(JSON.stringify(testDescriptor));
+              return;
+            }
+            response.writeHead(404);
+            response.end();
+          });
+          server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+        }),
+        (server) =>
+          Effect.gen(function* () {
+            const address = server.address();
+            if (address === null || typeof address === "string") {
+              return Effect.die(new Error("Expected a TCP address"));
+            }
+            const baseDir = NodeFS.mkdtempSync(
+              NodePath.join(NodeOS.tmpdir(), "t3-pair-ctype-test-"),
+            );
+            const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+            yield* persistServerRuntimeState({
+              path: statePath,
+              state: yield* makePersistedServerRuntimeState({
+                config: { host: "127.0.0.1", devUrl: undefined },
+                port: address.port,
+              }),
+            });
+
+            const output = yield* captureStdout(runCli(["pair", "--base-dir", baseDir]));
+
+            assert.include(output, "Pairing with pair-test (");
+            assert.include(output, "/pair#token=");
+          }),
+        (server) => Effect.sync(() => server.close()),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live.each([
+    { status: 200, contentType: "application/json" },
+    { status: 200, contentType: "text/html" },
+    { status: 500, contentType: "application/json" },
+  ])("times out a slow-drip $status $contentType body", ({ status, contentType }) => {
+    // Handoff from the raw Node request handler below: it holds the response
+    // open so the test fiber can drip into it. Completed synchronously from
+    // the callback via `doneUnsafe`, so no manual Effect runtime is created
+    // in the test (see `t3code(no-manual-effect-runtime-in-tests)`).
+    const dripTarget = Deferred.makeUnsafe<NodeHttp.ServerResponse>();
+    return Effect.acquireUseRelease(
+      Effect.callback<NodeHttp.Server>((resume) => {
+        const server = NodeHttp.createServer((request, response) => {
+          if (request.url === "/.well-known/t3/environment") {
+            response.writeHead(status, { "content-type": contentType });
+            // A never-ending drip that stays under the size cap: discovery
+            // must give up via the body timeout rather than hang on the open
+            // stream.
+            response.write(`{"environmentId":`);
+            Deferred.doneUnsafe(dripTarget, Effect.succeed(response));
+            return;
+          }
+          response.writeHead(404);
+          response.end();
+        });
+        server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+      }),
+      (server) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const address = server.address();
+            if (address === null || typeof address === "string") {
+              return Effect.die(new Error("Expected a TCP address"));
+            }
+            const baseDir = NodeFS.mkdtempSync(
+              NodePath.join(NodeOS.tmpdir(), "t3-pair-drip-test-"),
+            );
+            const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+            yield* persistServerRuntimeState({
+              path: statePath,
+              state: yield* makePersistedServerRuntimeState({
+                config: { host: "127.0.0.1", devUrl: undefined },
+                port: address.port,
+              }),
+            });
+
+            const cliFiber = yield* provideCliTestLayers(
+              runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
+            ).pipe(Effect.forkChild);
+            // The probe request holds the response open; the drip loop is a
+            // scoped fork, so it is interrupted when the test settles.
+            const dripResponse = yield* Deferred.await(dripTarget);
+            yield* Effect.repeat(
+              Effect.sync(() => {
+                if (!dripResponse.destroyed) {
+                  dripResponse.write(" ");
+                }
+              }),
+              Schedule.spaced("200 millis"),
+            ).pipe(Effect.forkScoped);
+
+            const error = yield* Fiber.join(cliFiber);
+
+            const rendered = String(
+              typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
+            );
+            assert.include(rendered, "No running T3 Code server found.");
+          }),
+        ),
+      (server) =>
+        Effect.sync(() => {
+          server.closeAllConnections();
+          server.close();
+        }),
+    ).pipe(Effect.provide(NodeServices.layer));
+  });
+  it.effect("overlaps probes and cancels a pending lower-priority request", () =>
+    Effect.gen(function* () {
+      const { baseDir } = yield* makeDiscoveryFixture;
+      const lowerStarted = yield* Deferred.make<AbortSignal>();
+      const interrupted = yield* Ref.make(false);
+      const client = HttpClient.make((request, url, signal) =>
+        url.port === "10000"
+          ? Deferred.await(lowerStarted).pipe(
+              Effect.as(HttpClientResponse.fromWeb(request, Response.json(testDescriptor))),
+            )
+          : Deferred.succeed(lowerStarted, signal).pipe(
+              Effect.andThen(Effect.never),
+              Effect.onInterrupt(() => Ref.set(interrupted, true)),
+            ),
+      );
+      const target = yield* discoverPairTarget(baseDir).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+      );
+      expect(target.variant).toBe("userdata");
+      expect(yield* Ref.get(interrupted)).toBe(true);
+      expect((yield* Deferred.await(lowerStarted)).aborted).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("pair discovery order", () => {
+  it.effect("shares the probe deadline between headers and body", () =>
+    Effect.gen(function* () {
+      const { baseDir } = yield* makeDiscoveryFixture;
+      const firstRequest = yield* Deferred.make<void>();
+      const client = HttpClient.make((request) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(firstRequest, undefined);
+          yield* Effect.sleep("2 seconds");
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(new ReadableStream<Uint8Array>(), {
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }),
+      );
+      const fiber = yield* discoverPairTarget(baseDir).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.flip,
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(firstRequest);
+      yield* TestClock.adjust("2 seconds");
+      yield* TestClock.adjust("500 millis");
+      const error = yield* Fiber.join(fiber);
+      expect(error._tag).toBe("NoRunningServerError");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([
+    { status: 200, winner: "userdata" },
+    { status: 503, winner: "dev" },
+    { status: 404, winner: "dev" },
+  ])(
+    "selects $winner when the earlier probe returns $status after the later success",
+    ({ status, winner }) =>
+      Effect.gen(function* () {
+        const { baseDir, candidates } = yield* makeDiscoveryFixture;
+        const lowerCompleted = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const firstStarted = yield* Deferred.make<void>();
+        const client = HttpClient.make((request, url) =>
+          Effect.gen(function* () {
+            if (url.port === "10000") {
+              yield* Deferred.succeed(firstStarted, undefined);
+              yield* Deferred.await(lowerCompleted);
+              yield* Deferred.await(releaseFirst);
+              return HttpClientResponse.fromWeb(request, Response.json(testDescriptor, { status }));
+            }
+            yield* Deferred.await(firstStarted);
+            yield* Deferred.succeed(lowerCompleted, undefined);
+            return HttpClientResponse.fromWeb(request, Response.json(testDescriptor));
+          }),
+        );
+        const fiber = yield* discoverPairTarget(baseDir).pipe(
+          Effect.provideService(HttpClient.HttpClient, client),
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(lowerCompleted);
+        yield* Deferred.succeed(releaseFirst, undefined);
+        const target = yield* Fiber.join(fiber);
+        expect(target.variant).toBe(winner);
+        expect(target.state).toEqual(
+          candidates.find((candidate) => candidate.variant === winner)?.state,
+        );
+        expect(target.descriptor).toEqual(testDescriptor);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("interrupts all pending requests when discovery is cancelled", () =>
+    Effect.gen(function* () {
+      const { baseDir } = yield* makeDiscoveryFixture;
+      const started = yield* Deferred.make<void>();
+      const signals = yield* Ref.make<Array<AbortSignal>>([]);
+      const client = HttpClient.make((_request, _url, signal) =>
+        Effect.gen(function* () {
+          const pending = yield* Ref.updateAndGet(signals, (current) => [...current, signal]);
+          if (pending.length === 2) {
+            yield* Deferred.succeed(started, undefined);
+          }
+          return yield* Effect.never;
+        }),
+      );
+      const fiber = yield* discoverPairTarget(baseDir).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(started);
+      yield* Fiber.interrupt(fiber);
+      expect((yield* Ref.get(signals)).map((signal) => signal.aborted)).toEqual([true, true]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("pair tailscale probe budget", () => {
+  it.effect("retries all attempts but sleeps only between them", () =>
+    Effect.gen(function* () {
+      const startedAt = yield* Clock.currentTimeMillis;
+      const attempts = yield* Ref.make<Array<number>>([]);
+      const firstAttempt = yield* Deferred.make<void>();
+      const client = HttpClient.make((request) =>
+        Effect.gen(function* () {
+          const now = yield* Clock.currentTimeMillis;
+          yield* Ref.update(attempts, (times) => [...times, now - startedAt]);
+          yield* Deferred.succeed(firstAttempt, undefined);
+          return HttpClientResponse.fromWeb(request, new Response(null, { status: 503 }));
+        }),
+      );
+      const fiber = yield* awaitEnvironmentDescriptor("http://127.0.0.1:1").pipe(
+        Effect.provide(Layer.succeed(HttpClient.HttpClient, client)),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(firstAttempt);
+      yield* TestClock.adjust(Duration.millis(3_999));
+      expect(yield* Ref.get(attempts)).toEqual([0, 1_000, 2_000, 3_000]);
+      yield* TestClock.adjust(Duration.millis(1));
+      const result = yield* Fiber.join(fiber);
+      expect(result._tag).toBe("unreachable");
+      expect(yield* Ref.get(attempts)).toEqual([0, 1_000, 2_000, 3_000, 4_000]);
+      expect((yield* Clock.currentTimeMillis) - startedAt).toBe(4_000);
+    }),
   );
 });
