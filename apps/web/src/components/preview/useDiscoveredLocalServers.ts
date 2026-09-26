@@ -18,6 +18,7 @@ export interface PreviewableServer extends DiscoveredLocalServer {
 interface UseDiscoveredLocalServersInput {
   environmentId: EnvironmentId;
   configuredUrls?: ReadonlyArray<string> | undefined;
+  preferredBaseUrl?: string | null;
 }
 
 /**
@@ -32,15 +33,22 @@ export function useDiscoveredLocalServers(
   return useMemo(
     () =>
       mergeServers({
-        scanner: scannerState.servers.map((server) => ({
-          ...server,
-          url: resolveDiscoveredServerUrl(input.environmentId, server.url),
-          requestedUrl: server.url,
-        })),
+        scanner: scannerState.servers.map((server) => {
+          const url = resolveDiscoveredServerUrl(
+            input.environmentId,
+            server.url,
+            input.preferredBaseUrl,
+          );
+          try {
+            return { ...server, url, host: new URL(url).hostname, requestedUrl: server.url };
+          } catch {
+            return { ...server, url, requestedUrl: server.url };
+          }
+        }),
         configuredUrls: input.configuredUrls ?? [],
         configuredUrlProbing: scannerState.configuredUrlProbing,
       }),
-    [input.environmentId, scannerState, input.configuredUrls],
+    [input.environmentId, input.preferredBaseUrl, scannerState, input.configuredUrls],
   );
 }
 
