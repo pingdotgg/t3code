@@ -55,7 +55,39 @@ describe("linuxSecretStorage", () => {
   it("forces gnome-libsecret for unrecognized Linux desktop sessions", () => {
     expect(autoSwitch({ XDG_CURRENT_DESKTOP: "niri" })).toBe("gnome-libsecret");
     expect(autoSwitch({ XDG_CURRENT_DESKTOP: "Hyprland" })).toBe("gnome-libsecret");
+    expect(autoSwitch({ XDG_CURRENT_DESKTOP: "gamescope" })).toBe("gnome-libsecret");
     expect(autoSwitch({})).toBe("gnome-libsecret");
+  });
+
+  it("uses an available KWallet 6 only in gamescope auto mode", () => {
+    expect(
+      resolveLinuxPasswordStoreSwitch({
+        preference: "auto",
+        env: { XDG_CURRENT_DESKTOP: "gamescope" },
+        gamescopeKwallet6Available: true,
+      }),
+    ).toBe("kwallet6");
+    expect(
+      resolveLinuxPasswordStoreSwitch({
+        preference: "auto",
+        env: { XDG_CURRENT_DESKTOP: "gamescope:niri" },
+        gamescopeKwallet6Available: true,
+      }),
+    ).toBe("kwallet6");
+    expect(
+      resolveLinuxPasswordStoreSwitch({
+        preference: "gnome-libsecret",
+        env: { XDG_CURRENT_DESKTOP: "gamescope" },
+        gamescopeKwallet6Available: true,
+      }),
+    ).toBe("gnome-libsecret");
+    expect(
+      resolveLinuxPasswordStoreSwitch({
+        preference: "auto",
+        env: { XDG_CURRENT_DESKTOP: "niri" },
+        gamescopeKwallet6Available: true,
+      }),
+    ).toBe("gnome-libsecret");
   });
 
   it("forces gnome-libsecret for desktops Electron recognizes but leaves on basic text", () => {

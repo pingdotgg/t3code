@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 
 import {
   DEFAULT_LINUX_PASSWORD_STORE,
+  isGamescopeDesktop,
   normalizeLinuxPasswordStorePreference,
   resolveLinuxPasswordStoreSwitch,
   type LinuxPasswordStoreSwitch,
@@ -20,6 +21,7 @@ interface EarlyDesktopSettingsInput {
   readonly homeDirectory: string;
   readonly joinPath: JoinPath;
   readonly readFileString: (path: string) => string;
+  readonly fileExists?: (path: string) => boolean;
 }
 
 type EarlyLinuxElectronOptionsInput = EarlyDesktopSettingsInput;
@@ -81,6 +83,47 @@ export function resolveEarlyLinuxPasswordStorePreference(
   }
 }
 
+const resolveDataHome = (input: EarlyDesktopSettingsInput): string => {
+  const configured = trimNonEmpty(input.env.XDG_DATA_HOME);
+  return configured?.startsWith("/")
+    ? configured
+    : input.joinPath(input.homeDirectory, ".local", "share");
+};
+
+function hasDbusService(input: EarlyDesktopSettingsInput, name: string): boolean {
+  const dataDirs = (
+    trimNonEmpty(input.env.XDG_DATA_DIRS)?.split(":") ?? ["/usr/local/share", "/usr/share"]
+  ).filter((directory) => directory.startsWith("/"));
+  for (const directory of [resolveDataHome(input), ...dataDirs]) {
+    try {
+      const service = input.readFileString(
+        input.joinPath(directory, "dbus-1", "services", `${name}.service`),
+      );
+      if (service.split(/\r?\n/).some((line) => line.trim() === `Name=${name}`)) {
+        return true;
+      }
+    } catch {
+      // A missing service file is normal on desktops using the other keyring.
+    }
+  }
+  return false;
+}
+
+function gamescopeHasKwallet6(input: EarlyDesktopSettingsInput): boolean {
+  if (!hasDbusService(input, "org.kde.kwalletd6")) {
+    return false;
+  }
+  // When both keyrings are installed, an existing wallet identifies the one
+  // this account uses. A GNOME keyring advertised by the session takes priority.
+  if (trimNonEmpty(input.env.GNOME_KEYRING_CONTROL) !== null) {
+    return false;
+  }
+  const walletPath = input.joinPath(resolveDataHome(input), "kwalletd", "kdewallet.kwl");
+  return (
+    input.fileExists?.(walletPath) === true || !hasDbusService(input, "org.freedesktop.secrets")
+  );
+}
+
 export function resolveEarlyLinuxElectronOptions(
   input: EarlyLinuxElectronOptionsInput,
 ): EarlyLinuxElectronOptions {
@@ -93,6 +136,10 @@ export function resolveEarlyLinuxElectronOptions(
     passwordStore: resolveLinuxPasswordStoreSwitch({
       preference,
       env: input.env,
+      gamescopeKwallet6Available:
+        preference === "auto" && isGamescopeDesktop(input.env.XDG_CURRENT_DESKTOP)
+          ? gamescopeHasKwallet6(input)
+          : false,
     }),
   };
 }

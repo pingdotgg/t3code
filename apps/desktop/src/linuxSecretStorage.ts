@@ -39,17 +39,26 @@ export function normalizeLinuxPasswordStorePreference(
 // Auto mode asks one question: will Electron select a real keyring on its own? If so, stay out of
 // the way, which is how canonical KDE sessions keep the KWallet generation Chromium picks for them.
 // Otherwise force gnome-libsecret, because the alternative is basic text, which is barely
-// encryption at all. Forcing never guesses a KWallet generation; a KDE session that needs a
-// specific one sets linuxPasswordStore explicitly.
+// encryption at all. Gamescope is handled separately because it can have either a GNOME
+// keyring or KWallet 6; explicit linuxPasswordStore still wins when both are configured.
 export function resolveLinuxPasswordStoreSwitch(input: {
   readonly preference: LinuxPasswordStorePreference;
   readonly env: NodeJS.ProcessEnv;
+  readonly gamescopeKwallet6Available?: boolean;
 }): LinuxPasswordStoreSwitch | null {
   if (input.preference !== "auto") {
     return input.preference;
   }
 
+  if (isGamescopeDesktop(input.env.XDG_CURRENT_DESKTOP) && input.gamescopeKwallet6Available) {
+    return "kwallet6";
+  }
+
   return electronSelectsProtectedBackend(input.env) ? null : "gnome-libsecret";
+}
+
+export function isGamescopeDesktop(value: string | undefined): boolean {
+  return splitDesktopNameList(value).some((name) => name.trim() === "gamescope");
 }
 
 // Only an exact XDG_CURRENT_DESKTOP literal proves Electron will protect the session. Chromium can
