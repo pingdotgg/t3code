@@ -560,6 +560,41 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect("installs a command in a directory whose name starts with two dots", () => {
+    const binaryBytes = new TextEncoder().encode("#!/bin/sh\necho example\n");
+    const agent = makeAgent({
+      binary: { "linux-x86_64": { archive: archiveUrl, cmd: "./..tools/example-agent" } },
+    });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-dot-dir-",
+      });
+      const resolver = yield* makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+      const resolved = yield* resolver.resolve(settings(), "/workspace");
+
+      expect(resolved.spawn.command).toContain("/linux-x86_64/..tools/example-agent");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        resolverLayer((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              request.url === registryUrl
+                ? new Response(makeRegistry(agent))
+                : new Response(binaryBytes.buffer as ArrayBuffer),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
   it.effect(
     "prepares the registry version despite an older PATH binary and permits explicit overrides",
     () => {

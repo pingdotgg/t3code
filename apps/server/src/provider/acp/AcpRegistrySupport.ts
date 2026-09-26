@@ -1301,7 +1301,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     const rootRealPath = yield* fileSystem.realPath(root);
     const executableRealPath = yield* fileSystem.realPath(executablePath);
     const relative = path.relative(rootRealPath, executableRealPath);
-    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    // A name like `..tools` is inside the root; only a `..` segment leaves it.
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
       return yield* new AcpRegistryError({
         reason: "archive_invalid",
         detail: "ACP Registry archive command resolves outside its installation directory.",
