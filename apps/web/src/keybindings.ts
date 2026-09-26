@@ -9,7 +9,7 @@ import {
   type ThreadJumpKeybindingCommand,
 } from "@t3tools/contracts";
 import { isElectron } from "./env";
-import { isMacPlatform } from "./lib/utils";
+import { isMacPlatform, isWindowsPlatform } from "./lib/utils";
 
 export interface ShortcutEventLike {
   getModifierState?: (key: "AltGraph") => boolean;
@@ -158,7 +158,7 @@ function resolveContext(options: ShortcutMatchOptions | undefined): ShortcutMatc
     isDesktop: isElectron,
     editableFocus: false,
     isMac: isMacPlatform(platform),
-    isWindows: /win/i.test(platform),
+    isWindows: isWindowsPlatform(platform),
     isLinux: /linux/i.test(platform),
     ...options?.context,
   };

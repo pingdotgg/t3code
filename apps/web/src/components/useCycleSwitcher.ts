@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { resolveShortcutCommand } from "../keybindings";
@@ -65,15 +65,20 @@ export function useCycleSwitcherController() {
     const commandInfo = cycleSwitcherCommandInfo(command);
     if (commandInfo === null) return;
 
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.repeat) return;
-
     if (mode === null || commandInfo.mode !== mode) {
       const commitModifiers = commitModifiersForShortcutEvent(event);
       // A hold gesture needs a primary modifier whose release can commit it.
       if (commitModifiers.length === 0) return;
       commitModifiersRef.current = commitModifiers;
+    }
+
+    // Consume the event only once it is a real hold gesture, so a bare Tab
+    // binding still performs normal focus traversal.
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.repeat) return;
+
+    if (mode === null || commandInfo.mode !== mode) {
       setMode(commandInfo.mode);
       setStepOffset(commandInfo.direction);
       setInitialDirection(commandInfo.direction);
@@ -92,7 +97,7 @@ export function useCycleSwitcherController() {
     mode,
     stepOffset,
     initialDirection,
-    selectIndex: setStepOffset,
+    selectStepOffset: setStepOffset,
     closeSwitcher,
     commitModifiersReleased: (event: KeyboardEvent) =>
       cycleSwitcherCommitModifiersReleased(event, commitModifiersRef.current),
@@ -139,7 +144,9 @@ export function useCycleSwitcherSession({
 
   const handleWindowBlur = useEffectEvent(closeSwitcher);
 
-  useEffect(() => {
+  // Install synchronously so a modifier released in the same frame as the
+  // opening keydown cannot land before the listener exists.
+  useLayoutEffect(() => {
     window.addEventListener("keyup", handleKeyUp, true);
     window.addEventListener("blur", handleWindowBlur);
     return () => {

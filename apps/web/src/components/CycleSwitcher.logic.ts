@@ -43,6 +43,17 @@ export function cycleSwitcherCommandInfo(
   }
 }
 
+// With no current entry, start just before the first item when cycling
+// forward and just after it when cycling backward. The first press then
+// selects the first or last item instead of skipping one.
+function resolveCycleSwitcherStartIndex(
+  currentIndex: number,
+  initialDirection: CycleSwitcherDirection,
+): number {
+  if (currentIndex >= 0) return currentIndex;
+  return initialDirection === 1 ? -1 : 0;
+}
+
 /** Maps a signed step offset onto a wrapping list index. */
 export function resolveCycleSwitcherIndex(input: {
   readonly stepOffset: number;
@@ -53,11 +64,21 @@ export function resolveCycleSwitcherIndex(input: {
   const { stepOffset, length, currentIndex, initialDirection } = input;
   if (length <= 0) return 0;
 
-  // With no current entry, start just before the first item when cycling
-  // forward and just after it when cycling backward. The first press then
-  // selects the first or last item instead of skipping one.
-  const startIndex = currentIndex >= 0 ? currentIndex : initialDirection === 1 ? -1 : 0;
+  const startIndex = resolveCycleSwitcherStartIndex(currentIndex, initialDirection);
   return (((startIndex + stepOffset) % length) + length) % length;
+}
+
+/** The step offset that makes `index` the active entry for the open gesture. */
+export function resolveCycleSwitcherOffsetForIndex(input: {
+  readonly index: number;
+  readonly length: number;
+  readonly currentIndex: number;
+  readonly initialDirection: CycleSwitcherDirection;
+}): number {
+  const { index, length, currentIndex, initialDirection } = input;
+  if (length <= 0) return 0;
+
+  return index - resolveCycleSwitcherStartIndex(currentIndex, initialDirection);
 }
 
 export function commitModifiersForShortcutEvent(
@@ -71,5 +92,5 @@ export function cycleSwitcherCommitModifiersReleased(
   commitModifiers: ReadonlyArray<CycleSwitcherModifierKey>,
 ): boolean {
   if (commitModifiers.length === 0) return false;
-  return !commitModifiers.some((modifier) => state[modifier]);
+  return commitModifiers.some((modifier) => !state[modifier]);
 }

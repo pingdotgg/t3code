@@ -6,6 +6,7 @@ import {
   cycleSwitcherCommandInfo,
   cycleSwitcherCommitModifiersReleased,
   resolveCycleSwitcherIndex,
+  resolveCycleSwitcherOffsetForIndex,
 } from "./CycleSwitcher.logic";
 
 describe("cycleSwitcherCommandInfo", () => {
@@ -114,6 +115,44 @@ describe("resolveCycleSwitcherIndex", () => {
   });
 });
 
+describe("resolveCycleSwitcherOffsetForIndex", () => {
+  it("maps an entry index past the no-current start point", () => {
+    assert.equal(
+      resolveCycleSwitcherOffsetForIndex({
+        index: 1,
+        length: 3,
+        currentIndex: -1,
+        initialDirection: 1,
+      }),
+      2,
+    );
+  });
+
+  it("maps an entry index relative to the current entry", () => {
+    assert.equal(
+      resolveCycleSwitcherOffsetForIndex({
+        index: 2,
+        length: 4,
+        currentIndex: 1,
+        initialDirection: 1,
+      }),
+      1,
+    );
+  });
+
+  it("stays at zero when there are no entries", () => {
+    assert.equal(
+      resolveCycleSwitcherOffsetForIndex({
+        index: 0,
+        length: 0,
+        currentIndex: -1,
+        initialDirection: 1,
+      }),
+      0,
+    );
+  });
+});
+
 describe("commitModifiersForShortcutEvent", () => {
   it("collects the primary modifiers being held", () => {
     assert.deepEqual(
@@ -176,6 +215,24 @@ describe("cycleSwitcherCommitModifiersReleased", () => {
       cycleSwitcherCommitModifiersReleased(
         { metaKey: false, ctrlKey: false, altKey: false, shiftKey: false },
         ["altKey"],
+      ),
+    );
+  });
+
+  it("waits while every captured modifier is still held", () => {
+    assert.isFalse(
+      cycleSwitcherCommitModifiersReleased(
+        { metaKey: true, ctrlKey: false, altKey: true, shiftKey: false },
+        ["metaKey", "altKey"],
+      ),
+    );
+  });
+
+  it("commits as soon as one captured modifier is released", () => {
+    assert.isTrue(
+      cycleSwitcherCommitModifiersReleased(
+        { metaKey: true, ctrlKey: false, altKey: false, shiftKey: false },
+        ["metaKey", "altKey"],
       ),
     );
   });

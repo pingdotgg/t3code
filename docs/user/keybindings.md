@@ -35,14 +35,13 @@ in Settings.
 Hold the modifier and tap `Tab` to move between projects without leaving the
 keyboard. Keep it held and tap `Tab` to move forward or `Shift+Tab` to move
 back; release to open the highlighted project's most recent thread, or start a
-new thread when it has none. The overlay is a horizontal row with the active
-project first.
+new thread when it has none. The active project is listed first.
 
 The same gesture switches between the **active threads in the current project**
-(settled and snoozed threads are left out), shown as a vertical list with the
-current thread first. The desktop app uses `Ctrl+Tab` / `Ctrl+Shift+Tab`.
+(settled and snoozed threads are left out), with the current thread first.
+The desktop app uses `Ctrl+Tab` / `Ctrl+Shift+Tab`.
 Browsers reserve those for their own tabs, so the web app uses `Alt+Backquote`
-(`Option+`` on macOS) instead. Both are left-hand chords.
+(`Option+Backquote` on macOS) instead. Both are left-hand chords.
 
 Projects default to `Option+Tab` / `Option+Shift+Tab` on macOS. Windows and Linux
 reserve Alt+Tab for the operating system, so they use Ctrl plus the backtick key

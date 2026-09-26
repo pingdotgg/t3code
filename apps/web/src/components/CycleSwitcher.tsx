@@ -1,5 +1,9 @@
 import { cn } from "../lib/utils";
-import { CYCLE_SWITCHER_MODE, type CycleSwitcherMode } from "./CycleSwitcher.logic";
+import {
+  CYCLE_SWITCHER_MODE,
+  resolveCycleSwitcherOffsetForIndex,
+  type CycleSwitcherMode,
+} from "./CycleSwitcher.logic";
 import { useCycleSwitcherController, useCycleSwitcherSession } from "./useCycleSwitcher";
 import { useCycleSwitcherEntries } from "./useCycleSwitcherEntries";
 
@@ -22,7 +26,7 @@ export function CycleSwitcher() {
       key={controller.mode}
       mode={controller.mode}
       initialDirection={controller.initialDirection}
-      selectIndex={controller.selectIndex}
+      selectStepOffset={controller.selectStepOffset}
       stepOffset={controller.stepOffset}
     />
   );
@@ -32,7 +36,7 @@ interface OpenCycleSwitcherProps {
   readonly mode: CycleSwitcherMode;
   readonly initialDirection: 1 | -1;
   readonly stepOffset: number;
-  readonly selectIndex: (index: number) => void;
+  readonly selectStepOffset: (offset: number) => void;
   readonly closeSwitcher: () => void;
   readonly commitModifiersReleased: (event: KeyboardEvent) => boolean;
 }
@@ -42,7 +46,7 @@ function OpenCycleSwitcher({
   mode,
   initialDirection,
   stepOffset,
-  selectIndex,
+  selectStepOffset,
   closeSwitcher,
   commitModifiersReleased,
 }: OpenCycleSwitcherProps) {
@@ -57,6 +61,7 @@ function OpenCycleSwitcher({
 
   const isThreadMode = mode === CYCLE_SWITCHER_MODE.thread;
   const activeEntry = entries[activeIndex];
+  const currentIndex = entries.findIndex((entry) => entry.isCurrent);
 
   return (
     <div
@@ -109,7 +114,16 @@ function OpenCycleSwitcher({
                   closeSwitcher();
                   entry.commit();
                 }}
-                onMouseEnter={() => selectIndex(index)}
+                onMouseEnter={() =>
+                  selectStepOffset(
+                    resolveCycleSwitcherOffsetForIndex({
+                      index,
+                      length: entries.length,
+                      currentIndex,
+                      initialDirection,
+                    }),
+                  )
+                }
                 ref={isActive ? scrollSwitcherOptionIntoView : undefined}
                 role="option"
               >
