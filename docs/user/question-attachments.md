@@ -1,4 +1,6 @@
-# Files in question answers
+---
+title: Files in question answers
+---
 
 When an agent asks a question that accepts a custom answer, use **Attach files** or paste an image into the answer field. On mobile, use the attachment button to choose photos or files. You can send a file by itself, with a selected option, or with a typed answer.
 

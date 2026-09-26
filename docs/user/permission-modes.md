@@ -1,4 +1,6 @@
-# Permission modes
+---
+title: Permission modes
+---
 
 Permission modes control when an agent needs your approval to act. Choose a mode in the message
 composer; it applies to that thread.

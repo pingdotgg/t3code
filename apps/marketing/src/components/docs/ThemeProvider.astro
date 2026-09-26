@@ -1,0 +1,8 @@
+---
+// t3.codes is dark-only, so the docs skip Starlight's light theme and picker.
+---
+
+<script is:inline>
+  document.documentElement.dataset.theme = "dark";
+  window.StarlightThemeProvider = { updatePickers() {} };
+</script>

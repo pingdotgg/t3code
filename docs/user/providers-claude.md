@@ -1,4 +1,6 @@
-# Claude
+---
+title: Claude
+---
 
 T3 Code uses Claude Code's login and configuration. Start with the default provider
 for one account; [provider setup](./install.md#providers) covers installation and

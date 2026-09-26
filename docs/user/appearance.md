@@ -1,4 +1,6 @@
-# Appearance and themes
+---
+title: Appearance and themes
+---
 
 On web and desktop, open **Settings → Appearance** to choose a theme and follow the system
 appearance or stay in light or dark mode. To use different themes for light and dark mode, select

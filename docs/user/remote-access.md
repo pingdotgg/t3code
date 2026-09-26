@@ -1,4 +1,6 @@
-# Remote access
+---
+title: Remote access
+---
 
 Connect a phone, browser, or another desktop app to T3 Code running on a different
 machine. That machine must stay running and reachable while you work.

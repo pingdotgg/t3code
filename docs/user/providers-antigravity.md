@@ -1,4 +1,6 @@
-# Antigravity
+---
+title: Antigravity
+---
 
 T3 Code runs Google's official Antigravity ACP agent on your selected environment.
 It has its own sign-in, separate from the Antigravity IDE or CLI. Google controls

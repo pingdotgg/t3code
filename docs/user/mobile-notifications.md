@@ -1,4 +1,6 @@
-# Mobile notifications
+---
+title: Mobile notifications
+---
 
 Sign in to T3 Connect, link your environments, and enable **Device Notifications** in **Settings → Notifications** to receive alerts when an agent finishes, fails, needs approval, or asks for input. Tap a notification to open its thread. Your environment must have agent activity publishing enabled.
 

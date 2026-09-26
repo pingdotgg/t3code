@@ -1,4 +1,6 @@
-# Source control
+---
+title: Source control
+---
 
 T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, and Azure DevOps to clone and publish
 repositories, create pull requests, and review changes.

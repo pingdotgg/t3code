@@ -1,4 +1,6 @@
-# OpenCode
+---
+title: OpenCode
+---
 
 Install and authenticate OpenCode on the machine running your environment, then
 enable it in **Settings > Providers**. See [provider setup](./install.md#providers).

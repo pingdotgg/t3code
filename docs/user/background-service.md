@@ -1,4 +1,6 @@
-# Running T3 Code in the background
+---
+title: Running T3 Code in the background
+---
 
 On Linux and macOS, T3 Code can run as a service for your user so you do not need
 to keep a terminal open.

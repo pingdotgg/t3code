@@ -1,4 +1,6 @@
-# Terminal history
+---
+title: Terminal history
+---
 
 Each terminal keeps up to 5,000 lines and 8 MiB of scrollback on its environment
 server. T3 Code removes the oldest output when either limit is reached. A long
