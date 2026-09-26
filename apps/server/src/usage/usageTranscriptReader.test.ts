@@ -278,7 +278,7 @@ describe("SQLite usage readers", () => {
         totalUsageEventsCount: 1001,
         usageEventsDisplay: Array.from({ length: body.page === 1 ? 1000 : 1 }, (_, index) => ({
           timestamp: String(1780000000000 + ((body.page - 1) * 1000 + index) * 1000),
-          model: "claude-sonnet-4-5",
+          model: "claude-4.5-sonnet",
           conversationId: `conversation-${body.page}`,
           isHeadless: body.page === 2,
           chargedCents: 0,
@@ -299,6 +299,8 @@ describe("SQLite usage readers", () => {
     assert.notStrictEqual(signals[0], signals[1]);
     assert.strictEqual(result.records.length, 1001);
     assert.strictEqual(result.records.at(-1)?.sessionId, "conversation-2");
+    assert.strictEqual(result.records[0]?.model, "claude-4.5-sonnet");
+    assert.strictEqual(result.records[0]?.rateModel, "claude-sonnet-4-5");
     assert.deepStrictEqual(result.records[0]?.totals, {
       uncachedInputTokens: 10,
       cachedInputTokens: 30,
