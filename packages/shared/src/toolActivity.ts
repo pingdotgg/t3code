@@ -283,11 +283,13 @@ export function projectQuestionToolInput(data: Record<string, unknown>, title: u
     input: {
       questions: questions.map((value) => {
         const question = asRecord(value);
-        return {
-          question: asTrimmedString(
-            question?.question ?? question?.question_text ?? question?.prompt ?? question?.title,
-          ),
-        };
+        const text = asTrimmedString(
+          question?.question ?? question?.question_text ?? question?.prompt ?? question?.title,
+        );
+        // An entry can arrive with header/options (or as `{}` mid-stream) before
+        // any question text. Emitting `{ question: undefined }` is not JSON and
+        // Schema.Unknown rejects the whole thread snapshot.
+        return text === undefined ? {} : { question: text };
       }),
     },
   };

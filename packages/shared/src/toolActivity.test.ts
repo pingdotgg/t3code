@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { deriveToolActivityPresentation } from "./toolActivity.ts";
+import { deriveToolActivityPresentation, projectQuestionToolInput } from "./toolActivity.ts";
 
 describe("toolActivity", () => {
   it("normalizes command tools to a stable ran-command label", () => {
@@ -53,5 +53,27 @@ describe("toolActivity", () => {
     ).toEqual({
       summary: "Read file",
     });
+  });
+
+  it("omits question when an AskUserQuestion entry has header and options but no question text", () => {
+    const projected = projectQuestionToolInput(
+      {
+        toolName: "AskUserQuestion",
+        input: {
+          questions: [
+            {
+              header: "Scope",
+              options: [{ label: "Web", description: "Ship the web app" }],
+            },
+            {},
+            { question: "  " },
+            { question: "Continue?" },
+          ],
+        },
+      },
+      "AskUserQuestion",
+    );
+
+    expect(projected.input?.questions).toStrictEqual([{}, {}, {}, { question: "Continue?" }]);
   });
 });
