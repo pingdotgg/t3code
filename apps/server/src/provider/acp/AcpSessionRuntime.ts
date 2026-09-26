@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - cgroup setup, /proc ownership checks, and executable lookup run synchronously while the agent spawns.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -1365,17 +1365,7 @@ export class AcpSessionRuntime extends Context.Service<
       payload: unknown,
     ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   }
->()("t3/provider/acp/AcpSessionRuntime") {
-  static layer(
-    options: AcpSessionRuntimeOptions,
-  ): Layer.Layer<
-    AcpSessionRuntime,
-    EffectAcpErrors.AcpError,
-    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
-  > {
-    return Layer.effect(AcpSessionRuntime, make(options));
-  }
-}
+>()("t3/provider/acp/AcpSessionRuntime") {}
 
 interface AcpStartedState extends AcpSessionRuntimeStartResult {}
 

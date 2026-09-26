@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - permission containment resolves symlinks synchronously with realpathSync.native.
 import type { ProviderRequestKind, RuntimeMode } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as NodeFS from "node:fs";
