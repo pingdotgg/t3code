@@ -65,6 +65,32 @@ export function latestNativeContextUsage(
   return latest;
 }
 
+/**
+ * Occupancy of the native transcript survives a model or option change.
+ * The previous model's window and compaction threshold do not: a byte-length
+ * stand-in for the missing measurement overstates the transcript and refuses
+ * switches that still fit. A new native thread has no occupancy to carry.
+ */
+export function contextUsageForHandoff(input: {
+  readonly sameNativeThread: boolean;
+  readonly sameSelection: boolean;
+  readonly reuseTelemetry: boolean;
+  readonly previousUsage: ThreadTokenUsageSnapshot | null | undefined;
+  readonly knownModelWindow?: number | undefined;
+}): ThreadTokenUsageSnapshot | null {
+  if (!input.sameNativeThread || input.previousUsage == null) return null;
+  if (input.sameSelection) return input.previousUsage;
+  const reportedMax =
+    input.previousUsage.maxTokens != null && input.previousUsage.maxTokens > 0
+      ? input.previousUsage.maxTokens
+      : undefined;
+  const maxTokens = input.reuseTelemetry ? reportedMax : (input.knownModelWindow ?? reportedMax);
+  return {
+    usedTokens: input.previousUsage.usedTokens,
+    ...(maxTokens === undefined ? {} : { maxTokens }),
+  };
+}
+
 export function attachmentTokenAllowance(attachments: ReadonlyArray<ChatAttachment>): number {
   // Encoded image bytes are not model tokens. Without dimensions/detail metadata,
   // reserve 8k tokens per image, above typical resized Codex/Claude image costs.
