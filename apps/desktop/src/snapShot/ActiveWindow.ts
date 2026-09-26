@@ -31,27 +31,41 @@ export type ActiveWindow = {
 
 const MAC_LOOKUP_TIMEOUT_MS = 5_000;
 
-const MacActiveWindow = Schema.Struct({
-  id: Schema.Number,
-  title: Schema.String,
-  bounds: Schema.Struct({
-    x: Schema.Number,
-    y: Schema.Number,
-    width: Schema.Number,
-    height: Schema.Number,
-  }),
+const MacWindowBounds = Schema.Struct({
+  x: Schema.Number,
+  y: Schema.Number,
+  width: Schema.Number,
+  height: Schema.Number,
+});
+
+const MacActiveWindowLookup = Schema.Struct({
   owner: Schema.Struct({
     name: Schema.String,
     processId: Schema.Number,
     path: Schema.String,
     bundleId: Schema.String,
   }),
+  windows: Schema.Array(
+    Schema.Struct({
+      id: Schema.Number,
+      title: Schema.String,
+      bounds: MacWindowBounds,
+      alpha: Schema.Number,
+    }),
+  ),
 });
-const decodeMacActiveWindow = Schema.decodeUnknownSync(Schema.fromJsonString(MacActiveWindow));
+const decodeMacActiveWindowLookup = Schema.decodeUnknownSync(
+  Schema.fromJsonString(MacActiveWindowLookup),
+);
 
-// The frontmost app's first on-screen, layer-0 window in front-to-back order is
-// the active window. Window titles need Screen Recording, which the snapshot
-// service has already requested by the time this runs.
+const MAC_AUXILIARY_STRIP_LONG_EDGE_RATIO = 0.8;
+const MAC_AUXILIARY_STRIP_SHORT_EDGE_RATIO = 0.1;
+
+// CoreGraphics returns windows in front-to-back order, but some apps put thin
+// or transparent helper windows ahead of their real window. Keep that order
+// while ignoring untitled helpers aligned over an edge of the app's largest window.
+// Window titles need Screen Recording, which the snapshot service has already
+// requested by the time this runs.
 const MAC_LOOKUP_SCRIPT = `
 ObjC.import("CoreGraphics");
 ObjC.import("AppKit");
@@ -59,30 +73,38 @@ function run() {
   const app = $.NSWorkspace.sharedWorkspace.frontmostApplication;
   if (app.isNil()) return "";
   const pid = app.processIdentifier;
+  let ownerName = String(app.localizedName.js || "");
   const list = $.CGWindowListCopyWindowInfo(
     $.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements,
     $.kCGNullWindowID,
   );
   $.CFMakeCollectable(list);
   const count = $.CFArrayGetCount(list);
+  const windows = [];
   for (let i = 0; i < count; i++) {
     const w = ObjC.castRefToObject($.CFArrayGetValueAtIndex(list, i));
     if (w.objectForKey("kCGWindowOwnerPID").js !== pid) continue;
+    if (!ownerName) {
+      ownerName = String(ObjC.unwrap(w.objectForKey("kCGWindowOwnerName")) || "");
+    }
     if (w.objectForKey("kCGWindowLayer").js !== 0) continue;
     const b = ObjC.deepUnwrap(w.objectForKey("kCGWindowBounds"));
-    return JSON.stringify({
+    windows.push({
       id: w.objectForKey("kCGWindowNumber").js,
       title: String(ObjC.unwrap(w.objectForKey("kCGWindowName")) || ""),
       bounds: { x: b.X, y: b.Y, width: b.Width, height: b.Height },
-      owner: {
-        name: String(app.localizedName.js || ObjC.unwrap(w.objectForKey("kCGWindowOwnerName")) || ""),
-        processId: pid,
-        path: String(app.bundleURL.path.js || ""),
-        bundleId: String(app.bundleIdentifier.js || ""),
-      },
+      alpha: w.objectForKey("kCGWindowAlpha").js,
     });
   }
-  return "";
+  return JSON.stringify({
+    owner: {
+      name: ownerName,
+      processId: pid,
+      path: String(app.bundleURL.path.js || ""),
+      bundleId: String(app.bundleIdentifier.js || ""),
+    },
+    windows,
+  });
 }`;
 
 function runMacLookup(): Promise<string> {
@@ -102,17 +124,40 @@ function runMacLookup(): Promise<string> {
 async function macActiveWindow(): Promise<ActiveWindow | undefined> {
   const output = (await runMacLookup()).trim();
   if (!output) return undefined;
-  const window = decodeMacActiveWindow(output);
+  const lookup = decodeMacActiveWindowLookup(output);
+  const visible = lookup.windows.filter(
+    (window) => window.alpha > 0 && window.bounds.width > 0 && window.bounds.height > 0,
+  );
+  const largest = visible.reduce<(typeof visible)[number] | undefined>(
+    (current, window) =>
+      !current ||
+      window.bounds.width * window.bounds.height > current.bounds.width * current.bounds.height
+        ? window
+        : current,
+    undefined,
+  );
+  const isAuxiliaryStrip = (window: (typeof visible)[number]) =>
+    largest !== undefined &&
+    window !== largest &&
+    window.title.trim() === "" &&
+    window.bounds.x === largest.bounds.x &&
+    window.bounds.y === largest.bounds.y &&
+    ((window.bounds.width >= largest.bounds.width * MAC_AUXILIARY_STRIP_LONG_EDGE_RATIO &&
+      window.bounds.height <= largest.bounds.height * MAC_AUXILIARY_STRIP_SHORT_EDGE_RATIO) ||
+      (window.bounds.height >= largest.bounds.height * MAC_AUXILIARY_STRIP_LONG_EDGE_RATIO &&
+        window.bounds.width <= largest.bounds.width * MAC_AUXILIARY_STRIP_SHORT_EDGE_RATIO));
+  const window = visible.find((candidate) => !isAuxiliaryStrip(candidate));
+  if (!window) return undefined;
   return {
     platform: "macos",
     id: window.id,
     title: window.title,
     bounds: window.bounds,
     owner: {
-      name: window.owner.name,
-      processId: window.owner.processId,
-      path: window.owner.path,
-      ...(window.owner.bundleId ? { bundleId: window.owner.bundleId } : {}),
+      name: lookup.owner.name,
+      processId: lookup.owner.processId,
+      path: lookup.owner.path,
+      ...(lookup.owner.bundleId ? { bundleId: lookup.owner.bundleId } : {}),
     },
   };
 }

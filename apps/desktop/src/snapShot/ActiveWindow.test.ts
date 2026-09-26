@@ -28,19 +28,34 @@ function stubMacLookup(stdout: string) {
   );
 }
 
+function macLookup(
+  windows: ReadonlyArray<{
+    id: number;
+    title: string;
+    bounds: { x: number; y: number; width: number; height: number };
+    alpha?: number;
+  }>,
+) {
+  return JSON.stringify({
+    owner: {
+      name: "Editor",
+      processId: 123,
+      path: "/Applications/Editor.app",
+      bundleId: "com.example.editor",
+    },
+    windows: windows.map((window) => ({ ...window, alpha: window.alpha ?? 1 })),
+  });
+}
+
 it("parses the frontmost macOS window from the osascript lookup", async () => {
   stubMacLookup(
-    JSON.stringify({
-      id: 42,
-      title: "main.ts",
-      bounds: { x: 10, y: 20, width: 800, height: 600 },
-      owner: {
-        name: "Editor",
-        processId: 123,
-        path: "/Applications/Editor.app",
-        bundleId: "com.example.editor",
+    macLookup([
+      {
+        id: 42,
+        title: "main.ts",
+        bounds: { x: 10, y: 20, width: 800, height: 600 },
       },
-    }) + "\n",
+    ]) + "\n",
   );
 
   const window = await activeWindow("darwin");
@@ -66,10 +81,15 @@ it("parses the frontmost macOS window from the osascript lookup", async () => {
 it("omits an empty macOS bundle identifier", async () => {
   stubMacLookup(
     JSON.stringify({
-      id: 7,
-      title: "",
-      bounds: { x: 0, y: 0, width: 1, height: 1 },
       owner: { name: "cli", processId: 9, path: "", bundleId: "" },
+      windows: [
+        {
+          id: 7,
+          title: "",
+          bounds: { x: 0, y: 0, width: 1, height: 1 },
+          alpha: 1,
+        },
+      ],
     }),
   );
 
@@ -78,8 +98,118 @@ it("omits an empty macOS bundle identifier", async () => {
   assert.deepEqual(window?.owner, { name: "cli", processId: 9, path: "" });
 });
 
+it("skips transparent and tiny auxiliary windows before the main window", async () => {
+  stubMacLookup(
+    macLookup([
+      {
+        id: 1,
+        title: "",
+        bounds: { x: 0, y: -32, width: 1_680, height: 32 },
+        alpha: 0,
+      },
+      {
+        id: 2,
+        title: "",
+        bounds: { x: 0, y: 0, width: 1_680, height: 68 },
+      },
+      {
+        id: 3,
+        title: "Pull request · Browser",
+        bounds: { x: 0, y: 0, width: 1_680, height: 1_050 },
+      },
+    ]),
+  );
+
+  const window = await activeWindow("darwin");
+
+  assert.strictEqual(window?.id, 3);
+  assert.deepEqual(window?.bounds, { x: 0, y: 0, width: 1_680, height: 1_050 });
+});
+
+it("keeps an untitled frontmost dialog ahead of a titled parent", async () => {
+  stubMacLookup(
+    macLookup([
+      {
+        id: 4,
+        title: "",
+        bounds: { x: 300, y: 200, width: 400, height: 240 },
+      },
+      {
+        id: 5,
+        title: "Document",
+        bounds: { x: 0, y: 0, width: 1_680, height: 1_050 },
+      },
+    ]),
+  );
+
+  assert.strictEqual((await activeWindow("darwin"))?.id, 4);
+});
+
+it("keeps a small frontmost window ahead of a larger window", async () => {
+  stubMacLookup(
+    macLookup([
+      {
+        id: 6,
+        title: "Widget",
+        bounds: { x: 20, y: 20, width: 109, height: 68 },
+      },
+      {
+        id: 7,
+        title: "Document",
+        bounds: { x: 0, y: 0, width: 1_680, height: 1_050 },
+      },
+    ]),
+  );
+
+  assert.strictEqual((await activeWindow("darwin"))?.id, 6);
+});
+
+it("keeps a titled edge-strip window ahead of a larger window", async () => {
+  stubMacLookup(
+    macLookup([
+      {
+        id: 8,
+        title: "Palette",
+        bounds: { x: 0, y: 0, width: 1_000, height: 50 },
+      },
+      {
+        id: 9,
+        title: "Document",
+        bounds: { x: 0, y: 0, width: 1_000, height: 800 },
+      },
+    ]),
+  );
+
+  assert.strictEqual((await activeWindow("darwin"))?.id, 8);
+});
+
+it("keeps an offset untitled edge-strip window ahead of a larger window", async () => {
+  stubMacLookup(
+    macLookup([
+      {
+        id: 10,
+        title: "",
+        bounds: { x: 100, y: 100, width: 1_000, height: 50 },
+      },
+      {
+        id: 11,
+        title: "Document",
+        bounds: { x: 0, y: 0, width: 1_000, height: 800 },
+      },
+    ]),
+  );
+
+  assert.strictEqual((await activeWindow("darwin"))?.id, 10);
+});
+
 it("resolves undefined when macOS has no frontmost window", async () => {
   stubMacLookup("\n");
+
+  assert.isUndefined(await activeWindow("darwin"));
+});
+
+it("resolves undefined when macOS reports no visible windows", async () => {
+  stubMacLookup(macLookup([]));
 
   assert.isUndefined(await activeWindow("darwin"));
 });
