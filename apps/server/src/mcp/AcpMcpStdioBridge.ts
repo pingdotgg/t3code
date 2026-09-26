@@ -5,6 +5,7 @@ import * as NodeReadline from "node:readline";
 
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 
@@ -404,7 +405,9 @@ export async function runAcpMcpCliFastPath(
     process.exitCode = 2;
     return;
   }
-  const result = await Effect.runPromise(
+  // The agent reads this command's output, so a failed call prints one stderr
+  // line with a nonzero exit instead of an unhandled rejection's stack trace.
+  const exit = await Effect.runPromiseExit(
     callAcpMcpTool({
       endpoint,
       authorization,
@@ -412,5 +415,11 @@ export async function runAcpMcpCliFastPath(
       arguments: parsed as Record<string, unknown>,
     }),
   );
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+  if (Exit.isFailure(exit)) {
+    const error = Cause.squash(exit.cause);
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  process.stdout.write(`${JSON.stringify(exit.value ?? null)}\n`);
 }
