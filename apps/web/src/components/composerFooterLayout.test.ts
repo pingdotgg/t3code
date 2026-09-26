@@ -318,6 +318,34 @@ describe("context strip labels and resting composer controls", () => {
       resolveRestingComposerControlsLayout({ ...measurement, hostWidth: hostWidth(false) }),
     ).toEqual({ hiddenCount: 2, visible: true });
   });
+
+  it("only expands labels once the freed room clears the hysteresis margin", () => {
+    const needed = chromeWidth + labelWidth + naturalWidth;
+    // Room to spare is not enough while compact: expansion needs the 16px
+    // margin, or a width that jitters around the boundary flaps the labels.
+    expect(
+      resolveContextStripLabelsCompact({
+        compact: true,
+        neededWidth: needed,
+        availableWidth: needed + 15,
+      }),
+    ).toBe(true);
+    expect(
+      resolveContextStripLabelsCompact({
+        compact: true,
+        neededWidth: needed,
+        availableWidth: needed + 16,
+      }),
+    ).toBe(false);
+    // Without that margin pending, a strip that already shows labels keeps them.
+    expect(
+      resolveContextStripLabelsCompact({
+        compact: false,
+        neededWidth: needed,
+        availableWidth: needed,
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("resolveRestingComposerControlsLayout hysteresis", () => {
