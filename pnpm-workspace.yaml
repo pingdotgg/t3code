@@ -98,6 +98,8 @@ minimumReleaseAgeExclude:
   - cn@0.3.2
 
 overrides:
+  # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
+  "@exodus/bytes>@noble/hashes": "1.8.0"
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
   "@react-navigation/core": 7.21.13
   # The dbus-next patch drops usocket from the package, but pnpm resolves from the
@@ -197,6 +199,8 @@ patchedDependencies:
   react-native-gesture-handler@2.32.0: patches/react-native-gesture-handler@2.32.0.patch
   react-native-keyboard-controller@1.21.13: patches/react-native-keyboard-controller@1.21.13.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
+  # Link http(s) URLs with a port or a single-label host. md4c otherwise requires a dotted host and stops at ':'.
+  react-native-nitro-markdown@0.5.8: patches/react-native-nitro-markdown@0.5.8.patch
   # Preserve the final layout frame. Backport of [#10171](https://github.com/software-mansion/react-native-reanimated/pull/10171).
   react-native-reanimated@4.5.5: patches/react-native-reanimated@4.5.5.patch
   react-native-screens@4.26.2: patches/react-native-screens@4.26.2.patch

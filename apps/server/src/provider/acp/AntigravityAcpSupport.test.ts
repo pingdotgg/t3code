@@ -2,7 +2,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
-  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ChatAttachment,
   type RuntimeMode,
@@ -15,7 +14,6 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
-  ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES,
   antigravityPermissionMode,
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
@@ -324,6 +322,41 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
     }),
   );
 
+  it.effect.each([
+    { name: "archive.zip", mimeType: "application/zip" },
+    { name: "clip.mp4", mimeType: "video/mp4" },
+    { name: "recording.aiff", mimeType: "audio/aiff" },
+    { name: "large.pdf", mimeType: "application/pdf", sizeBytes: 75_000_000 },
+    { name: "large.txt", mimeType: "text/plain", sizeBytes: 1024 * 1024 + 1 },
+    { name: "large.wav", mimeType: "audio/wav", sizeBytes: 20 * 1024 * 1024 + 1 },
+  ])("keeps $name as a file path without reading or spending the native media budget", (file) =>
+    Effect.gen(function* () {
+      const fixture = yield* makeAttachmentFixture();
+      const attachment = { ...textAttachment, sizeBytes: 50 * 1024 * 1024, ...file };
+      const upload = yield* fixture.write(attachment, "");
+      yield* fixture.fs.truncate(upload.filePath, attachment.sizeBytes);
+      const pdf = yield* fixture.write(pdfAttachment, "");
+      yield* fixture.fs.truncate(pdf.filePath, 50 * 1024 * 1024);
+      const input = `Inspect the file at ${upload.filePath}`;
+      const prompt = yield* buildAntigravityPrompt({
+        input,
+        attachments: [attachment, pdfAttachment],
+        attachmentsDir: fixture.attachmentsDir,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fixture.fs,
+          stream: () => {
+            throw new Error("Path attachments must not be read into the prompt");
+          },
+        }),
+      );
+      expect(prompt).toEqual([
+        { type: "text", text: input },
+        { type: "resource_link", uri: pdf.uri, name: "report.pdf", mimeType: "application/pdf" },
+      ]);
+    }),
+  );
+
   it.effect("sends supported audio files as native audio content", () =>
     Effect.gen(function* () {
       const fixture = yield* makeAttachmentFixture();
@@ -378,8 +411,6 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
 
   it.effect.each([
     { ...imageAttachment, name: "animation.gif", mimeType: "image/gif" },
-    { ...textAttachment, name: "archive.zip", mimeType: "application/zip" },
-    { ...textAttachment, name: "recording.aiff", mimeType: "audio/aiff" },
   ] satisfies ReadonlyArray<ChatAttachment>)(
     "rejects $name instead of silently dropping it from a valid prompt",
     (attachment) =>
@@ -400,32 +431,25 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       }),
   );
 
-  it.effect.each([
-    { attachment: textAttachment, bytes: ANTIGRAVITY_MAX_TEXT_ATTACHMENT_BYTES + 1 },
-    { attachment: imageAttachment, bytes: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1 },
-    { attachment: pdfAttachment, bytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1 },
-  ])(
-    "rejects oversized $attachment.name using file size instead of upload metadata",
-    ({ attachment, bytes }) =>
-      Effect.gen(function* () {
-        const fixture = yield* makeAttachmentFixture();
-        const upload = yield* fixture.write(attachment, "");
-        yield* fixture.fs.truncate(upload.filePath, bytes);
-        const error = yield* buildAntigravityPrompt({
-          input: "Read this attachment.",
-          attachments: [attachment],
-          attachmentsDir: fixture.attachmentsDir,
-        }).pipe(Effect.flip);
-
-        expect(error).toMatchObject({
-          _tag: "AcpRequestError",
-          code: -32602,
-          errorMessage: expect.stringContaining(`'${attachment.name}' is too large`),
-        });
-      }),
+  it.effect("rejects oversized images using file size instead of upload metadata", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeAttachmentFixture();
+      const upload = yield* fixture.write(imageAttachment, "");
+      yield* fixture.fs.truncate(upload.filePath, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1);
+      const error = yield* buildAntigravityPrompt({
+        input: "Read this attachment.",
+        attachments: [imageAttachment],
+        attachmentsDir: fixture.attachmentsDir,
+      }).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "AcpRequestError",
+        code: -32602,
+        errorMessage: expect.stringContaining("'screen.png' is too large"),
+      });
+    }),
   );
 
-  it.effect("accepts 50 MiB in total but rejects one byte more across files", () =>
+  it.effect("keeps PDF overflow on the file-path route", () =>
     Effect.gen(function* () {
       const fixture = yield* makeAttachmentFixture();
       const secondAttachment = {
@@ -435,25 +459,57 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       };
       const first = yield* fixture.write(pdfAttachment, "");
       const second = yield* fixture.write(secondAttachment, "");
-      yield* fixture.fs.truncate(first.filePath, PROVIDER_SEND_TURN_MAX_FILE_BYTES / 2);
-      yield* fixture.fs.truncate(second.filePath, PROVIDER_SEND_TURN_MAX_FILE_BYTES / 2);
+      yield* fixture.fs.truncate(first.filePath, (50 * 1024 * 1024) / 2);
+      yield* fixture.fs.truncate(second.filePath, (50 * 1024 * 1024) / 2);
       const input = {
-        input: undefined,
+        input: `Read ${first.filePath} and ${second.filePath}`,
         attachments: [pdfAttachment, secondAttachment],
         attachmentsDir: fixture.attachmentsDir,
       };
       const prompt = yield* buildAntigravityPrompt(input);
       expect(prompt).toEqual([
-        { type: "resource_link", uri: first.uri, name: "report.pdf", mimeType: "application/pdf" },
-        { type: "resource_link", uri: second.uri, name: "second.pdf", mimeType: "application/pdf" },
+        { type: "text", text: input.input },
+        {
+          type: "resource_link",
+          uri: first.uri,
+          name: "report.pdf",
+          mimeType: "application/pdf",
+        },
+        {
+          type: "resource_link",
+          uri: second.uri,
+          name: "second.pdf",
+          mimeType: "application/pdf",
+        },
       ]);
 
-      yield* fixture.fs.truncate(second.filePath, PROVIDER_SEND_TURN_MAX_FILE_BYTES / 2 + 1);
-      const error = yield* buildAntigravityPrompt(input).pipe(Effect.flip);
+      yield* fixture.fs.truncate(second.filePath, (50 * 1024 * 1024) / 2 + 1);
+      expect(yield* buildAntigravityPrompt(input)).toEqual([
+        { type: "text", text: input.input },
+        {
+          type: "resource_link",
+          uri: first.uri,
+          name: "report.pdf",
+          mimeType: "application/pdf",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("still rejects images when the native budget is full", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeAttachmentFixture();
+      const pdf = yield* fixture.write(pdfAttachment, "");
+      yield* fixture.fs.truncate(pdf.filePath, 50 * 1024 * 1024);
+      yield* fixture.write(imageAttachment, new Uint8Array([1]));
+      const error = yield* buildAntigravityPrompt({
+        input: "Inspect both attachments.",
+        attachments: [pdfAttachment, imageAttachment],
+        attachmentsDir: fixture.attachmentsDir,
+      }).pipe(Effect.flip);
       expect(error).toMatchObject({
         _tag: "AcpRequestError",
-        code: -32602,
-        errorMessage: expect.stringContaining("'second.pdf' is too large"),
+        errorMessage: expect.stringContaining("'screen.png' is too large"),
       });
     }),
   );
@@ -463,7 +519,7 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       const fixture = yield* makeAttachmentFixture();
       const pdf = yield* fixture.write(pdfAttachment, "");
       const text = yield* fixture.write(textAttachment, "a");
-      yield* fixture.fs.truncate(pdf.filePath, PROVIDER_SEND_TURN_MAX_FILE_BYTES - 1);
+      yield* fixture.fs.truncate(pdf.filePath, 50 * 1024 * 1024 - 1);
       const error = yield* buildAntigravityPrompt({
         input: undefined,
         attachments: [pdfAttachment, textAttachment],
