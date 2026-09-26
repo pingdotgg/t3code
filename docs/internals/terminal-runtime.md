@@ -42,3 +42,12 @@ device queries can otherwise provoke fresh replies that appear as junk at the
 prompt. The server strips query/response traffic from retained history, and the
 [web renderer](../../apps/web/src/terminal/ghostty/core.ts) detaches its PTY writer
 during replay. Preserve both protections when changing retention or renderer code.
+
+Shell prompts can use relative cursor moves, so history replayed at a different
+width misplaces the input cursor. The web viewport waits for its surface, attaches
+with the measured grid, and reads the grid again on every reconnect; a hidden
+surface attaches without dimensions. The viewport owns its attach subscription and
+ends it on unmount: caching subscriptions by dimensions would keep superseded
+streams alive to reassert stale sizes on reconnect. After a nonempty replay the
+visible viewport resends its grid in case layout changed while attach was in
+flight. Empty resets, including history clears, do not resize.
