@@ -41,6 +41,19 @@ export const setServerExposureMode = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const setPreferredLanInterfaceName = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SET_PREFERRED_LAN_INTERFACE_NAME_CHANNEL,
+  payload: Schema.NullOr(Schema.String),
+  result: DesktopServerExposureStateSchema,
+  handler: Effect.fn("desktop.ipc.serverExposure.setPreferredLanInterfaceName")(function* (name) {
+    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+    const change = yield* serverExposure.setPreferredLanInterfaceName({ name });
+    // The bind host and port are unchanged, so no relaunch: only the
+    // advertised URL and endpoint list move.
+    return change.state;
+  }),
+});
+
 export const setTailscaleServeEnabled = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.SET_TAILSCALE_SERVE_ENABLED_CHANNEL,
   payload: SetTailscaleServeEnabledInput,
