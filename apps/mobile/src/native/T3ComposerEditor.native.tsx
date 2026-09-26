@@ -36,6 +36,7 @@ import {
   resolveComposerControlledEventCount,
   type ComposerNativeEventSnapshot,
 } from "./composerEditorRevision";
+import { useComposerEditorAutoHeight } from "./useComposerEditorAutoHeight";
 import type { ComposerEditorProps, ComposerEditorSelection } from "./T3ComposerEditor.types";
 
 const NATIVE_MODULE_NAME = "T3ComposerEditor";
@@ -87,33 +88,48 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly autoFocus: boolean;
   readonly autoCorrect: boolean;
   readonly spellCheck: boolean;
+  /** Native text-change handler. */
   readonly onComposerChange: (event: NativeEditorEvent) => void;
+  /** Native caret-move handler. */
   readonly onComposerSelectionChange?: (event: NativeSelectionEvent) => void;
+  /** Native image-paste handler. */
   readonly onComposerPasteImages?: (event: NativePasteImagesEvent) => void;
+  /** Native chip-press handler. */
   readonly onComposerContextPress?: (
     event: NativeSyntheticEvent<{ source: string; start: number; end: number }>,
   ) => void;
+  /** Native T3-context clipboard paste handler. */
   readonly onComposerPasteContext?: (
     event: NativePasteTextEvent & NativeSyntheticEvent<{ fragment: string; html: string }>,
   ) => void;
   readonly textPasteThresholdBytes: number;
   readonly maxInputChars: number;
+  /** Native clipboard text paste handler. */
   readonly onComposerPasteText?: (event: NativePasteTextEvent) => void;
+  /** Native focus handler. */
   readonly onComposerFocus?: () => void;
+  /** Native blur handler. */
   readonly onComposerBlur?: () => void;
+  /** Native content-height handler used for auto-height layout. */
+  readonly onComposerContentSizeChange?: (
+    event: NativeSyntheticEvent<{ readonly height: number }>,
+  ) => void;
 }
 
 const NativeView = requireNativeView<NativeComposerEditorProps>(NATIVE_MODULE_NAME);
 
+/** Last path segment for mention chip labels. */
 function basename(path: string): string {
   const separator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return separator >= 0 ? path.slice(separator + 1) : path;
 }
 
+/** Resolve a markdown file icon URI for mention chips. */
 function fileIconUri(path: string): string {
   return Image.resolveAssetSource(markdownFileIconSource(resolveMarkdownFileIcon(path))).uri;
 }
 
+/** Native composer that sizes to content and forwards caret-safe layout to the host view. */
 export function ComposerEditor({
   ref,
   skills = EMPTY_SKILLS,
@@ -264,8 +280,96 @@ export function ComposerEditor({
   });
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};
   const regularFontFamily = useFontFamily("regular");
+  const { onContentHeight, resolvedStyle } = useComposerEditorAutoHeight(style);
+  /** Forward native content-height events into the auto-height hook. */
+  function onNativeContentSizeChange(
+    event: NativeSyntheticEvent<{ readonly height: number }>,
+  ) {
+    onContentHeight(event.nativeEvent.height);
+  }
+  /** Publish native text changes into the controlled React state. */
+  function handleComposerChange(event: NativeEditorEvent) {
+    const acknowledgedEventCount = acceptNativeEvent(
+      event.nativeEvent.eventCount,
+      event.nativeEvent.value,
+      event.nativeEvent.selection,
+    );
+    if (acknowledgedEventCount === false) return;
+    onChangeText(event.nativeEvent.value);
+    onSelectionChange?.(event.nativeEvent.selection);
+    setMostRecentEventCount(acknowledgedEventCount);
+    forceNativeEventRender(incrementRenderSequence);
+  }
+  /** Bump the native-event render token after acknowledging an edit. */
+  function incrementRenderSequence(sequence: number): number {
+    return sequence + 1;
+  }
+  /** Publish native caret moves into the controlled React state. */
+  function handleComposerSelectionChange(event: NativeSelectionEvent) {
+    const acknowledgedEventCount = acceptNativeEvent(
+      event.nativeEvent.eventCount,
+      event.nativeEvent.value,
+      event.nativeEvent.selection,
+    );
+    if (acknowledgedEventCount === false) return;
+    // Android emits the selection change mid-mutation, before the change
+    // event, so the payload can carry post-edit text. It must reach the
+    // parent alongside the acknowledged revision, or the next render
+    // stamps the stale draft at that revision and can re-apply it over
+    // the newer native text.
+    if (event.nativeEvent.value !== props.value) {
+      onChangeText(event.nativeEvent.value);
+    }
+    onSelectionChange?.(event.nativeEvent.selection);
+    setMostRecentEventCount(acknowledgedEventCount);
+    forceNativeEventRender(incrementRenderSequence);
+  }
+  /** Forward native image-paste URIs to the host. */
+  function handleComposerPasteImages(event: NativePasteImagesEvent) {
+    onPasteImages?.(event.nativeEvent.uris);
+  }
+  /** Forward a native chip press to the host. */
+  function handleComposerContextPress(
+    event: NativeSyntheticEvent<{ source: string; start: number; end: number }>,
+  ) {
+    props.onContextPress?.(event.nativeEvent);
+  }
+  /** Apply a native T3-context paste and notify the host. */
+  function handleComposerPasteContext(
+    event: NativePasteTextEvent & NativeSyntheticEvent<{ fragment: string; html: string }>,
+  ) {
+    const paste = event.nativeEvent;
+    const acknowledgedEventCount = acceptNativeEvent(
+      paste.eventCount,
+      paste.value,
+      paste.selection,
+    );
+    if (acknowledgedEventCount === false) return;
+    onChangeText(paste.value);
+    onSelectionChange?.(paste.selection);
+    props.onPasteContext?.(paste);
+    setMostRecentEventCount(acknowledgedEventCount);
+    forceNativeEventRender(incrementRenderSequence);
+  }
+  /** Apply a native clipboard text paste and notify the host. */
+  function handleComposerPasteText(event: NativePasteTextEvent) {
+    const paste = event.nativeEvent;
+    const acknowledgedEventCount = acceptNativeEvent(
+      paste.eventCount,
+      paste.value,
+      paste.selection,
+    );
+    if (acknowledgedEventCount === false) return;
+    // Synchronize the draft before an async paste captures its insertion target.
+    // React props can still precede the last native keystroke.
+    onChangeText(paste.value);
+    onSelectionChange?.(paste.selection);
+    onPasteText?.(paste);
+    setMostRecentEventCount(acknowledgedEventCount);
+    forceNativeEventRender(incrementRenderSequence);
+  }
   return (
-    <TextInputWrapper onPaste={handlePaste} style={[{ minHeight: 0 }, style]}>
+    <TextInputWrapper onPaste={handlePaste} style={[{ minHeight: 0 }, resolvedStyle]}>
       <NativeView
         ref={nativeRef}
         controlledDocumentJson={controlledDocumentJson}
@@ -298,69 +402,13 @@ export function ComposerEditor({
         textPasteThresholdBytes={onPasteText ? PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES : 0}
         maxInputChars={PROVIDER_SEND_TURN_MAX_INPUT_CHARS}
         style={{ flex: 1, minHeight: 0 }}
-        onComposerChange={(event) => {
-          const acknowledgedEventCount = acceptNativeEvent(
-            event.nativeEvent.eventCount,
-            event.nativeEvent.value,
-            event.nativeEvent.selection,
-          );
-          if (acknowledgedEventCount === false) return;
-          onChangeText(event.nativeEvent.value);
-          onSelectionChange?.(event.nativeEvent.selection);
-          setMostRecentEventCount(acknowledgedEventCount);
-          forceNativeEventRender((sequence) => sequence + 1);
-        }}
-        onComposerSelectionChange={(event) => {
-          const acknowledgedEventCount = acceptNativeEvent(
-            event.nativeEvent.eventCount,
-            event.nativeEvent.value,
-            event.nativeEvent.selection,
-          );
-          if (acknowledgedEventCount === false) return;
-          // Android emits the selection change mid-mutation, before the change
-          // event, so the payload can carry post-edit text. It must reach the
-          // parent alongside the acknowledged revision, or the next render
-          // stamps the stale draft at that revision and can re-apply it over
-          // the newer native text.
-          if (event.nativeEvent.value !== props.value) {
-            onChangeText(event.nativeEvent.value);
-          }
-          onSelectionChange?.(event.nativeEvent.selection);
-          setMostRecentEventCount(acknowledgedEventCount);
-          forceNativeEventRender((sequence) => sequence + 1);
-        }}
-        onComposerPasteImages={(event) => onPasteImages?.(event.nativeEvent.uris)}
-        onComposerContextPress={(event) => props.onContextPress?.(event.nativeEvent)}
-        onComposerPasteContext={(event) => {
-          const paste = event.nativeEvent;
-          const acknowledgedEventCount = acceptNativeEvent(
-            paste.eventCount,
-            paste.value,
-            paste.selection,
-          );
-          if (acknowledgedEventCount === false) return;
-          onChangeText(paste.value);
-          onSelectionChange?.(paste.selection);
-          props.onPasteContext?.(paste);
-          setMostRecentEventCount(acknowledgedEventCount);
-          forceNativeEventRender((sequence) => sequence + 1);
-        }}
-        onComposerPasteText={(event) => {
-          const paste = event.nativeEvent;
-          const acknowledgedEventCount = acceptNativeEvent(
-            paste.eventCount,
-            paste.value,
-            paste.selection,
-          );
-          if (acknowledgedEventCount === false) return;
-          // Synchronize the draft before an async paste captures its insertion target.
-          // React props can still precede the last native keystroke.
-          onChangeText(paste.value);
-          onSelectionChange?.(paste.selection);
-          onPasteText?.(paste);
-          setMostRecentEventCount(acknowledgedEventCount);
-          forceNativeEventRender((sequence) => sequence + 1);
-        }}
+        onComposerContentSizeChange={onNativeContentSizeChange}
+        onComposerChange={handleComposerChange}
+        onComposerSelectionChange={handleComposerSelectionChange}
+        onComposerPasteImages={handleComposerPasteImages}
+        onComposerContextPress={handleComposerContextPress}
+        onComposerPasteContext={handleComposerPasteContext}
+        onComposerPasteText={handleComposerPasteText}
         onComposerFocus={onFocus}
         onComposerBlur={onBlur}
       />

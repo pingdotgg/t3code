@@ -20,6 +20,7 @@ import android.view.Gravity
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.KeyEvent
+import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -62,6 +63,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   private var autoCorrect = true
   private var spellCheck = true
   private var nativeEventCount = 0
+  private var caretScrollPosted = false
 
   init {
     editor.setBackgroundColor(Color.TRANSPARENT)
@@ -103,7 +105,9 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
       GestureDetector(
         context,
         object : GestureDetector.SimpleOnGestureListener() {
+          /** Consume the down event so a chip tap can fire. */
           override fun onDown(event: MotionEvent) = true
+          /** Press a context/mention/skill chip under the tap. */
           override fun onSingleTapUp(event: MotionEvent): Boolean {
             val offset = editor.getOffsetForPosition(event.x, event.y)
             val token =
@@ -128,38 +132,27 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
           }
         }
       )
-    editor.setOnTouchListener { _, event ->
+    /** Dispatch chip taps without consuming editor touches. */
+    fun onEditorTouch(_view: View, event: MotionEvent): Boolean {
       contextGestures.onTouchEvent(event)
-      false
+      return false
     }
-    editor.pasteTextListener = { text, start, end ->
-      nativeEventCount += 1
-      onComposerPasteText(
-        mapOf(
-          "value" to editor.text.toString(),
-          "eventCount" to nativeEventCount,
-          "text" to text,
-          "selection" to currentSelectionPayload(start, end),
-        ),
-      )
-    }
-    editor.setOnFocusChangeListener { _, hasFocus ->
-      if (hasFocus) {
-        onComposerFocus(emptyMap<String, Any>())
-      } else {
-        onComposerBlur(emptyMap<String, Any>())
-      }
-    }
+    editor.setOnTouchListener(::onEditorTouch)
+    editor.pasteTextListener = ::onEditorPasteText
+    editor.setOnFocusChangeListener(::onEditorFocusChanged)
     editor.addTextChangedListener(
       object : TextWatcher {
+        /** No-op; text is published after the edit lands. */
         override fun beforeTextChanged(
           text: CharSequence?,
           start: Int,
           count: Int,
           after: Int
         ) = Unit
+        /** No-op; text is published after the edit lands. */
         override fun onTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) = Unit
 
+        /** Publish the typed text and scroll the caret into view. */
         override fun afterTextChanged(editable: Editable?) {
           if (applyingNativeValue) return
           val nextValue = editable.toString()
@@ -173,19 +166,18 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
             ),
           )
           emitContentSizeIfNeeded()
+          scrollCaretIntoView()
         }
       },
     )
-    editor.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
-      if (right - left != oldRight - oldLeft) applyTokenSpans()
-      emitContentSizeIfNeeded()
-    }
+    editor.addOnLayoutChangeListener(::onEditorLayoutChanged)
     addView(
       editor,
       LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
     )
   }
 
+  /** Apply a controlled document and scroll the caret when text or selection changes. */
   @Suppress("ReturnCount")
   fun setControlledDocumentJson(documentJson: String) {
     val document = try {
@@ -206,6 +198,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     val previousSelectionEnd = editor.selectionEnd.coerceAtLeast(0)
     val valueChanged = editor.text.toString() != value
 
+    var selectionChanged = false
     applyingNativeValue = true
     try {
       if (valueChanged) {
@@ -214,20 +207,28 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
       tokensJson = nextTokensJson
       tokens = nextTokens
       applyTokenSpans()
-      if (requestedSelection != null) {
+      selectionChanged = if (requestedSelection != null) {
         applySelection(
           requestedSelection.optInt("start", previousSelectionStart),
           requestedSelection.optInt("end", previousSelectionEnd),
         )
       } else if (valueChanged) {
         applySelection(previousSelectionStart, previousSelectionEnd)
+      } else {
+        false
       }
     } finally {
       applyingNativeValue = false
     }
     emitContentSizeIfNeeded()
+    // Echo re-renders re-apply chip spans without changing text or caret.
+    // Scrolling on those would yank a manual review scroll back to the caret.
+    if (valueChanged || selectionChanged) {
+      scrollCaretIntoView()
+    }
   }
 
+  /** Apply text, placeholder, selection, and chip colors from the theme JSON. */
   fun setThemeJson(themeJson: String) {
     try {
       val theme = JSONObject(themeJson)
@@ -254,14 +255,17 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     }
   }
 
+  /** Set the empty-state placeholder shown in the editor. */
   fun setPlaceholder(placeholder: String) {
     editor.placeholder = placeholder
   }
 
+  /** Store the T3 context clipboard fragment used for copy/paste. */
   fun setClipboardFragment(fragment: String) {
     editor.clipboardFragment = fragment
   }
 
+  /** Apply monospace or default typeface from the host font family name. */
   fun setFontFamily(fontFamily: String) {
     editor.typeface = if (fontFamily.contains("Mono", ignoreCase = true)) {
       Typeface.MONOSPACE
@@ -271,6 +275,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     editor.applyPlaceholder()
   }
 
+  /** Apply text size, then refresh line height, chips, and the placeholder. */
   fun setFontSize(fontSize: Float) {
     editor.textSize = fontSize
     applyLineHeight()
@@ -278,11 +283,13 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     editor.applyPlaceholder()
   }
 
+  /** Convert the host line height to pixels and apply paint spacing. */
   fun setLineHeight(lineHeight: Float) {
     desiredLineHeightPx = (lineHeight * resources.displayMetrics.density).toInt()
     applyLineHeight()
   }
 
+  /** Center a single-line composer vertically, or pin multi-line text to the top. */
   fun setSingleLineCentered(centered: Boolean) {
     editor.gravity = if (centered) {
       Gravity.CENTER_VERTICAL or Gravity.START
@@ -291,6 +298,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     }
   }
 
+  /** Inset the editor vertically and republish content height. */
   fun setContentInsetVertical(contentInsetVertical: Int) {
     this.contentInsetVertical =
       max(0, (contentInsetVertical * resources.displayMetrics.density).toInt())
@@ -298,6 +306,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     emitContentSizeIfNeeded()
   }
 
+  /** Enable or disable typing and caret visibility. */
   fun setEditable(editable: Boolean) {
     editor.isEnabled = editable
     editor.isFocusable = editable
@@ -305,65 +314,101 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     editor.isCursorVisible = editable && !editor.readOnly
   }
 
+  /** Block edits while keeping the current text visible. */
   fun setReadOnly(readOnly: Boolean) {
     editor.readOnly = readOnly
     editor.isCursorVisible = editor.isEnabled && !readOnly
   }
 
+  /** Show or hide the vertical scrollbar without changing caret scrolling. */
   fun setScrollEnabled(scrollEnabled: Boolean) {
     editor.isVerticalScrollBarEnabled = scrollEnabled
   }
 
+  /** Focus the editor after the current layout pass when autoFocus is set. */
   fun setAutoFocus(autoFocus: Boolean) {
     if (autoFocus) {
-      post { focusEditor() }
+      post(::focusEditor)
     }
   }
 
+  /** Apply the autocorrect input flag. */
   fun setAutoCorrect(autoCorrect: Boolean) {
     this.autoCorrect = autoCorrect
     updateInputFlags()
   }
 
+  /** Apply the spell-check input flag. */
   fun setSpellCheck(spellCheck: Boolean) {
     this.spellCheck = spellCheck
     updateInputFlags()
   }
 
+  /** Set the byte threshold that intercepts large clipboard pastes. */
   fun setTextPasteThresholdBytes(threshold: Int) {
     editor.textPasteThresholdBytes = threshold
   }
 
+  /** Cap typed and pasted input length at the host-provided character limit. */
   fun setMaxInputChars(maxInputChars: Int) {
     editor.maxInputChars = maxInputChars
   }
 
+  /** Request focus and show the soft keyboard. */
   fun focusEditor() {
     editor.requestFocus()
     val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
     imm?.showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT)
   }
 
+  /** Clear focus and hide the soft keyboard. */
   fun blurEditor() {
     editor.clearFocus()
     val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
     imm?.hideSoftInputFromWindow(editor.windowToken, 0)
   }
 
+  /** Emit native focus or blur when the editor focus changes. */
+  private fun onEditorFocusChanged(_view: View, hasFocus: Boolean) {
+    if (hasFocus) {
+      onComposerFocus(emptyMap<String, Any>())
+    } else {
+      onComposerBlur(emptyMap<String, Any>())
+    }
+  }
+
+  /** Publish an intercepted clipboard text paste to JS. */
+  private fun onEditorPasteText(text: String, start: Int, end: Int) {
+    nativeEventCount += 1
+    onComposerPasteText(
+      mapOf(
+        "value" to editor.text.toString(),
+        "eventCount" to nativeEventCount,
+        "text" to text,
+        "selection" to currentSelectionPayload(start, end),
+      ),
+    )
+  }
+
+  /** Apply an explicit selection from the JS host. */
   fun setSelection(start: Int, end: Int) {
     applySelection(start, end)
   }
 
-  private fun applySelection(start: Int, end: Int) {
+  /** Set the editor selection and scroll the caret if the normalized range moved. */
+  private fun applySelection(start: Int, end: Int): Boolean {
     val textLength = editor.text?.length ?: 0
     val safeStart = start.coerceIn(0, textLength)
     val safeEnd = end.coerceIn(0, textLength)
     // Re-applying an unchanged selection resets the keyboard's suggestion
     // state, so a no-op assignment must be skipped.
-    if (editor.selectionStart == safeStart && editor.selectionEnd == safeEnd) return
+    if (editor.selectionStart == safeStart && editor.selectionEnd == safeEnd) return false
     editor.setSelection(safeStart, safeEnd)
+    scrollCaretIntoView()
+    return true
   }
 
+  /** Apply autocorrect and spell-check flags to the editor input type. */
   private fun updateInputFlags() {
     var flags =
       InputType.TYPE_CLASS_TEXT or
@@ -377,12 +422,14 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     editor.inputType = flags
   }
 
+  /** Apply the desired line height as extra paint spacing. */
   private fun applyLineHeight() {
     if (desiredLineHeightPx <= 0) return
     val fontHeight = editor.paint.fontMetricsInt.descent - editor.paint.fontMetricsInt.ascent
     editor.setLineSpacing(max(0, desiredLineHeightPx - fontHeight).toFloat(), 1f)
   }
 
+  /** Tint selection handles and highlight to the theme accent. */
   private fun applySelectionTheme(color: Int) {
     editor.highlightColor = color.withAlpha(0x52)
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
@@ -393,11 +440,13 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     editor.textSelectHandleRight?.mutate()?.setTint(color)
   }
 
+  /** Restore the platform default selection colors. */
   private fun resetSelectionTheme() {
     applySelectionTheme(defaultSelectionColor)
     editor.highlightColor = defaultHighlightColor
   }
 
+  /** Start/end offsets for a native selection event payload. */
   private fun currentSelectionPayload(
     start: Int = editor.selectionStart,
     end: Int = editor.selectionEnd
@@ -407,6 +456,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
       "end" to maxOf(start, end).coerceAtLeast(0),
     )
 
+  /** Publish a caret move and scroll it into view. */
   private fun emitSelectionChange(start: Int, end: Int) {
     // Caret moves advance the revision counter like text edits do: a
     // controlled payload computed before this move is stale and must fail the
@@ -419,8 +469,45 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
         "eventCount" to nativeEventCount,
       ),
     )
+    scrollCaretIntoView()
   }
 
+  /** Re-apply chips on width changes and keep the caret on screen after layout. */
+  private fun onEditorLayoutChanged(
+    _view: View,
+    left: Int,
+    _top: Int,
+    right: Int,
+    _bottom: Int,
+    oldLeft: Int,
+    _oldTop: Int,
+    oldRight: Int,
+    _oldBottom: Int,
+  ) {
+    if (right - left != oldRight - oldLeft) applyTokenSpans()
+    emitContentSizeIfNeeded()
+    scrollCaretIntoView()
+  }
+
+  /**
+   * Keep the caret on screen after typing, caret moves, layout changes, and
+   * controlled text resets. setScrollEnabled only toggles the scrollbar.
+   */
+  private fun scrollCaretIntoView() {
+    if (caretScrollPosted) return
+    caretScrollPosted = true
+    editor.post(::bringCaretIntoViewNow)
+  }
+
+  /** Apply bringPointIntoView after the current layout pass. */
+  private fun bringCaretIntoViewNow() {
+    caretScrollPosted = false
+    if (editor.layout == null || editor.height <= 0) return
+    val offset = editor.selectionEnd.coerceIn(0, editor.length())
+    editor.bringPointIntoView(offset)
+  }
+
+  /** Emit native content height when the measured text height changes. */
   private fun emitContentSizeIfNeeded() {
     val height = editor.layout?.height ?: editor.measuredHeight
     val contentHeight = height + contentInsetVertical * 2
