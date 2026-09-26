@@ -1307,12 +1307,14 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       yield* write(
         {
           sessionId: nativeSessionId,
-          path: path.join(cwd, "nested", "new.txt"),
+          path: path.join(cwd, "nested", "deeper", "new.txt"),
           content: "created",
         },
         requestContext,
       );
-      expect(yield* fs.readFileString(path.join(cwd, "nested", "new.txt"))).toBe("created");
+      expect(yield* fs.readFileString(path.join(cwd, "nested", "deeper", "new.txt"))).toBe(
+        "created",
+      );
 
       const escape = yield* write(
         { sessionId: nativeSessionId, path: path.join(outside, "escape.txt"), content: "nope" },
@@ -1340,6 +1342,19 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       ).pipe(Effect.flip);
       expect(linkedWrite._tag).toBe("AcpRequestError");
       expect(yield* fs.readFileString(path.join(outside, "secret.txt"))).toBe("secret");
+
+      // A new path below a linked directory must not create directories through the link.
+      yield* fs.symlink(outside, path.join(cwd, "linked-dir"));
+      const nestedLinkedWrite = yield* write(
+        {
+          sessionId: nativeSessionId,
+          path: path.join(cwd, "linked-dir", "newdir", "file.txt"),
+          content: "nope",
+        },
+        requestContext,
+      ).pipe(Effect.flip);
+      expect(nestedLinkedWrite._tag).toBe("AcpRequestError");
+      expect(yield* fs.exists(path.join(outside, "newdir"))).toBe(false);
     }).pipe(Effect.scoped),
   );
 
