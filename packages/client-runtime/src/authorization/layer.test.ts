@@ -495,7 +495,13 @@ describe("RemoteEnvironmentAuthorization", () => {
         responses: [
           STALLED,
           STALLED,
+          STALLED,
+          STALLED,
+          STALLED,
           websocketTicket("cached-ticket"),
+          STALLED,
+          STALLED,
+          STALLED,
           STALLED,
           STALLED,
           STALLED,
@@ -508,20 +514,25 @@ describe("RemoteEnvironmentAuthorization", () => {
       const [timeouts, replaced] = yield* Effect.gen(function* () {
         const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
         const authorize = () => remote.authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID });
-        // Runs an attempt whose cached ticket request stalls until its 10 s budget runs out.
+        // Runs an attempt whose cached ticket request (3 s) and same-token retry (7 s) both stall.
         const stalled = <A, E>(attempt: Effect.Effect<A, E>) =>
           Effect.gen(function* () {
             const pending = yield* Effect.forkChild(attempt);
             yield* Queue.take(harness.stalls);
-            yield* TestClock.adjust("10 seconds");
+            yield* TestClock.adjust("3 seconds");
+            yield* Queue.take(harness.stalls);
+            yield* TestClock.adjust("7 seconds");
             return yield* Fiber.join(pending);
           });
         const timeouts = [
           yield* stalled(Effect.flip(authorize())),
           yield* stalled(Effect.flip(authorize())),
         ];
-        // A success resets the count, so two more timeouts keep the cached token.
-        yield* authorize();
+        // Only the first request stalls here, so the retry succeeds and resets the count.
+        const pending = yield* Effect.forkChild(authorize());
+        yield* Queue.take(harness.stalls);
+        yield* TestClock.adjust("3 seconds");
+        expect((yield* Fiber.join(pending)).socketUrl).toContain("wsTicket=cached-ticket");
         timeouts.push(
           yield* stalled(Effect.flip(authorize())),
           yield* stalled(Effect.flip(authorize())),

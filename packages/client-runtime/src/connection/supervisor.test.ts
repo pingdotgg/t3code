@@ -6,6 +6,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -289,6 +290,33 @@ function relayEnvironmentResponse(pathname: string): Promise<Response> {
       return Promise.reject(new Error(`Unexpected HTTP request to ${pathname}`));
   }
 }
+
+/**
+ * A relay environment server that never answers its first `stalledRequests` requests. When
+ * `exchangeAnswered` is set, the token exchange answers only after it settles. `stalls` gets
+ * one item per unanswered request so a test can move the clock past its timeout.
+ */
+const makeSlowRelayServer = Effect.fn("TestSlowRelayServer.make")(function* (input: {
+  readonly stalledRequests: number;
+  readonly exchangeAnswered?: Promise<void>;
+}) {
+  const stalls = yield* Queue.unbounded<void>();
+  const paths: Array<string> = [];
+  const fetchFn = ((request, init) => {
+    const pathname = new URL(new Request(request, init).url).pathname;
+    paths.push(pathname);
+    if (paths.length <= input.stalledRequests) {
+      Queue.offerUnsafe(stalls, undefined);
+      return new Promise<Response>(() => {});
+    }
+    if (pathname === "/oauth/token" && input.exchangeAnswered) {
+      Queue.offerUnsafe(stalls, undefined);
+      return input.exchangeAnswered.then(() => relayEnvironmentResponse(pathname));
+    }
+    return relayEnvironmentResponse(pathname);
+  }) satisfies typeof fetch;
+  return { fetchFn, paths, stalls };
+});
 
 /**
  * Builds the real relay authorization service over a test fetch, one stored token, and a
@@ -1382,29 +1410,46 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("reconnects to a stalled relay server with its stored token", () =>
+  it.effect("retries a lost relay ticket request with the stored token in the first attempt", () =>
     Effect.gen(function* () {
-      const stalled = yield* Deferred.make<void>();
-      const httpPaths: Array<string> = [];
-      const fetchFn = ((input, init) => {
-        const pathname = new URL(new Request(input, init).url).pathname;
-        httpPaths.push(pathname);
-        if (httpPaths.length === 1) {
-          // The server never answers the first websocket ticket request.
-          Deferred.doneUnsafe(stalled, Effect.void);
-          return new Promise<Response>(() => {});
-        }
-        return relayEnvironmentResponse(pathname);
-      }) satisfies typeof fetch;
-      const relay = yield* makeRelayAuthorization({ token: relayToken("stored-token"), fetchFn });
+      const server = yield* makeSlowRelayServer({ stalledRequests: 1 });
+      const relay = yield* makeRelayAuthorization({
+        token: relayToken("stored-token"),
+        fetchFn: server.fetchFn,
+      });
       const harness = yield* makeHarness({ prepare: relay.prepare });
       const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
-      yield* Deferred.await(stalled);
-      // The stored token gets the full 10 s ticket budget.
-      yield* TestClock.adjust("9 seconds");
+      yield* Queue.take(server.stalls);
+      yield* TestClock.adjust("3 seconds");
+      const settled = yield* awaitState(supervisor.state, (state) => state.phase !== "connecting");
+      expect(settled).toMatchObject({ phase: "connected", attempt: 1, lastFailure: null });
+      const prepared = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared));
+      expect(prepared.httpAuthorization).toMatchObject({ accessToken: "stored-token" });
+      expect(yield* Ref.get(relay.bootstrapCalls)).toBe(0);
+      expect(server.paths).toEqual(["/api/auth/websocket-ticket", "/api/auth/websocket-ticket"]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("reconnects to a stalled relay server with its stored token", () =>
+    Effect.gen(function* () {
+      const server = yield* makeSlowRelayServer({ stalledRequests: 2 });
+      const relay = yield* makeRelayAuthorization({
+        token: relayToken("stored-token"),
+        fetchFn: server.fetchFn,
+      });
+      const harness = yield* makeHarness({ prepare: relay.prepare });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Queue.take(server.stalls);
+      yield* TestClock.adjust("3 seconds");
+      yield* Queue.take(server.stalls);
+      // The first request and its retry share a 10 s ticket budget.
+      yield* TestClock.adjust("6 seconds");
       expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({ phase: "connecting" });
       yield* TestClock.adjust("1 second");
       const failed = yield* awaitState(supervisor.state, (state) => state.phase !== "connecting");
@@ -1420,7 +1465,70 @@ describe("EnvironmentSupervisor", () => {
       const prepared = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared));
       expect(prepared.httpAuthorization).toMatchObject({ accessToken: "stored-token" });
       expect(yield* Ref.get(relay.bootstrapCalls)).toBe(0);
-      expect(httpPaths).toEqual(["/api/auth/websocket-ticket", "/api/auth/websocket-ticket"]);
+      expect(server.paths).toEqual(Array(3).fill("/api/auth/websocket-ticket"));
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("asks the relay once after three stalled attempts and connects with that token", () =>
+    Effect.gen(function* () {
+      let answerExchange = () => {};
+      const exchangeAnswered = new Promise<void>((resolve) => {
+        answerExchange = resolve;
+      });
+      const server = yield* makeSlowRelayServer({ stalledRequests: 6, exchangeAnswered });
+      const relay = yield* makeRelayAuthorization({
+        token: relayToken("stored-token"),
+        fetchFn: server.fetchFn,
+      });
+      const harness = yield* makeHarness({ prepare: relay.prepare });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      const stallTicketStep = Effect.gen(function* () {
+        yield* Queue.take(server.stalls);
+        yield* TestClock.adjust("3 seconds");
+        yield* Queue.take(server.stalls);
+        yield* TestClock.adjust("7 seconds");
+      });
+
+      for (const [attempt, backoff] of [
+        [1, "3 seconds"],
+        [2, "4 seconds"],
+      ] as const) {
+        yield* stallTicketStep;
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "backoff" && state.attempt === attempt,
+        );
+        expect(yield* Ref.get(relay.bootstrapCalls)).toBe(0);
+        yield* TestClock.adjust(backoff);
+      }
+
+      // The third timeout asks the relay. The slow server holds the token exchange past the
+      // 15 s setup deadline, 10 s of which the ticket step used.
+      yield* stallTicketStep;
+      yield* Queue.take(server.stalls);
+      expect(yield* Ref.get(relay.bootstrapCalls)).toBe(1);
+      yield* TestClock.adjust("4 seconds");
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({ phase: "connecting" });
+      yield* TestClock.adjust("1 second");
+      const failed = yield* awaitState(supervisor.state, (state) => state.phase !== "connecting");
+      expect(failed).toMatchObject({ phase: "backoff", attempt: 3 });
+      expect(failed.lastFailure?.detail).toContain("did not respond during connection setup");
+
+      // The exchange still lands after the attempt ended, so the next attempt reuses it.
+      answerExchange();
+      yield* TestClock.adjust("8 seconds");
+      const settled = yield* awaitState(supervisor.state, (state) => state.phase !== "backoff");
+      expect(settled).toMatchObject({ phase: "connected", attempt: 4 });
+      const prepared = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared));
+      expect(prepared.httpAuthorization).toMatchObject({ accessToken: "access-token-2" });
+      expect(yield* Ref.get(relay.bootstrapCalls)).toBe(1);
+      expect(server.paths.slice(6)).toEqual([
+        "/.well-known/t3/environment",
+        "/oauth/token",
+        "/api/auth/websocket-ticket",
+      ]);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 

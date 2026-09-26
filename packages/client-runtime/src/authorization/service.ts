@@ -79,10 +79,14 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
   }
 >()("@t3tools/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
 
+const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
+// 3 s + 7 s ends the cached ticket step by 10 s, the default request budget. That leaves
+// 5 s of the supervisor's 15 s setup deadline for the descriptor check and websocket open.
+const CACHED_ENDPOINT_SOCKET_RETRY_TIMEOUT_MS = 7_000;
+/** Cached ticket attempts in a row that time out before the client asks the relay again. */
+const CACHED_TICKET_TIMEOUT_LIMIT = 3;
 const BEARER_DESCRIPTOR_CACHE_TTL_MS = 10_000;
 const DPOP_AUTHORIZATION_TIMEOUT_MS = 30_000;
-/** Cached-token ticket timeouts in a row before the client asks the relay again. */
-const CACHED_TICKET_TIMEOUT_LIMIT = 3;
 
 function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemptError) {
   return error._tag === "ConnectionTransientError" || error._tag === "ConnectionBlockedError"
@@ -198,7 +202,7 @@ export const make = Effect.gen(function* () {
   );
 
   const createDpopSocketUrl = Effect.fn("clientRuntime.connection.remote.createDpopSocketUrl")(
-    function* (token: TokenStore.RemoteDpopAccessToken) {
+    function* (token: TokenStore.RemoteDpopAccessToken, timeoutMs?: number) {
       const ticketProof = yield* signer
         .createProof({
           method: "POST",
@@ -221,6 +225,7 @@ export const make = Effect.gen(function* () {
         dpopProof: ticketProof,
         clientMetadata: presentation.metadata,
         connectionMethod: "relay",
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
       }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
     },
   );
@@ -469,22 +474,34 @@ export const make = Effect.gen(function* () {
   ) {
     let selected = yield* getDpopToken(input);
     if (selected.fromCache) {
-      const cachedSocket = yield* createDpopSocketUrl(selected.token).pipe(Effect.result);
+      const cachedToken = selected.token;
+      // A timeout means a lost request or a slow server, not a bad token. Retry the same
+      // token once, so a lost request recovers in about 3 s without a new credential.
+      const cachedSocket = yield* createDpopSocketUrl(
+        cachedToken,
+        CACHED_ENDPOINT_SOCKET_TIMEOUT_MS,
+      ).pipe(
+        Effect.catchTags({
+          RemoteEnvironmentAuthTimeoutError: () =>
+            createDpopSocketUrl(cachedToken, CACHED_ENDPOINT_SOCKET_RETRY_TIMEOUT_MS),
+        }),
+        Effect.result,
+      );
       if (Result.isSuccess(cachedSocket)) {
         cachedTicketTimeouts.delete(input.expectedEnvironmentId);
         yield* assertSession(selected.identity);
-        return { ...httpAuthorization(selected.token), socketUrl: cachedSocket.success };
+        return { ...httpAuthorization(cachedToken), socketUrl: cachedSocket.success };
       }
       if (cachedSocket.failure._tag === "ConnectionBlockedError") {
         return yield* mapDpopSocketError(cachedSocket.failure);
       }
-      // A timeout means a slow server, not a bad token. The relay returns the same hostname
-      // for an environment, so a new credential would only add load to that server. Keep the
-      // token and fail as transient so the supervisor retries it. After several timeouts in a
-      // row, drop the token and ask the relay again in case the endpoint changed. The mint runs
-      // in the service scope, so it still lands if the setup deadline ends this attempt first.
+      // If the retry also times out, keep the token and fail as transient so the supervisor
+      // tries again. The relay returns the same hostname for an environment, so a new
+      // credential would only add an auth session on that slow server. At the timeout limit,
+      // drop the token and ask the relay again in case the endpoint changed. The mint runs in
+      // the service scope, so it still lands if the setup deadline ends this attempt.
       if (cachedSocket.failure._tag === "RemoteEnvironmentAuthTimeoutError") {
-        const accessToken = selected.token.accessToken;
+        const accessToken = cachedToken.accessToken;
         const previous = cachedTicketTimeouts.get(input.expectedEnvironmentId);
         const count = previous?.accessToken === accessToken ? previous.count + 1 : 1;
         if (count < CACHED_TICKET_TIMEOUT_LIMIT) {
@@ -495,7 +512,7 @@ export const make = Effect.gen(function* () {
       }
       selected = yield* getDpopToken({
         ...input,
-        rejectedAccessToken: selected.token.accessToken,
+        rejectedAccessToken: cachedToken.accessToken,
       });
     }
     const socket = yield* createDpopSocketUrl(selected.token).pipe(Effect.result);
