@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { ProviderInstanceId } from "./providerInstance.ts";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
 import { VcsDriverKind } from "./vcs.ts";
@@ -360,11 +361,20 @@ export class TextGenerationError extends Schema.TaggedError<TextGenerationError>
   {
     operation: Schema.String,
     detail: Schema.String,
+    modelSelection: Schema.optional(
+      Schema.Struct({ instanceId: ProviderInstanceId, model: TrimmedNonEmptyString }),
+    ),
+    modelSetting: Schema.optional(
+      Schema.Literals(["textGenerationModelSelection", "sourceControlWriterModelSelection"]),
+    ),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Text generation failed in ${this.operation}: ${this.detail}`;
+    const model = this.modelSelection
+      ? ` using ${this.modelSelection.model} (${this.modelSelection.instanceId})`
+      : "";
+    return `Text generation failed in ${this.operation}${model}: ${this.detail}`;
   }
 }
 
