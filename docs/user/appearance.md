@@ -39,6 +39,24 @@ Changes apply immediately. **Undo** (⌘Z or Ctrl+Z) steps back one change, **Re
 things looked when you started, and **Done** or Escape keeps your changes. The arrangement is saved
 on each device or browser. Mobile does not have this mode.
 
+## Saved looks
+
+Use **Looks** in Customize or **Settings → Appearance** to save the current layout, theme,
+background, and text preferences under a name. Select a saved look and check one or more projects
+under **Apply to projects…**. Checkouts of the same repository share that assignment across
+environments. Looks and assignments stay on this device or browser.
+
+Projects without an assignment use **Default**. While a project has a look, customization edits
+save to that look for every project using it. **Save as new look** makes a separate copy for the
+current project; **Use Default for this project** removes its assignment. Switching projects
+starts a fresh Undo/Revert history. Settings outside a thread edit Default.
+
+Manage looks to rename, duplicate, update from the current customization, or delete them.
+Deleting a look returns its projects to Default. Export with **Download look** or **Copy look JSON**;
+import a JSON file or paste it under **Import a look**. Imports create a new look and do not assign
+it automatically. Share custom themes separately: unavailable theme references fall back to the
+built-in theme.
+
 ## Background scenes
 
 On web and desktop, choose a **Background scene** under **Settings → Appearance** or in **Customize interface** to show a dimmed

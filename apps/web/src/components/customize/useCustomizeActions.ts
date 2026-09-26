@@ -1,3 +1,4 @@
+import { readLookThemeStorage, writeLookThemeStorage } from "../../lookThemeStorage";
 import type { ClientSettingsPatch, InterfaceLayout } from "@t3tools/contracts";
 import { useCallback } from "react";
 
@@ -40,9 +41,9 @@ export function useCustomizeActions() {
       for (const key of THEME_STORAGE_KEYS) {
         const value = snapshot.theme[key];
         try {
-          if (window.localStorage.getItem(key) === value) continue;
-          if (value === null) window.localStorage.removeItem(key);
-          else window.localStorage.setItem(key, value);
+          if (readLookThemeStorage(key) === value) continue;
+          if (value === null) writeLookThemeStorage(key, null);
+          else writeLookThemeStorage(key, value);
           themeChanged = true;
         } catch {
           // Storage is unavailable; the theme stays as it is.

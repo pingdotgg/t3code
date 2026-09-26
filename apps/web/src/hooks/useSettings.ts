@@ -1,3 +1,6 @@
+import { CUSTOMIZE_SETTING_KEYS, type LookTheme } from "@t3tools/contracts/settings";
+import { resolveLookSettings, resolveProjectLook } from "../customizationLooks";
+import { setLookTheme } from "../lookThemeStorage";
 /**
  * Environment-scoped settings hooks.
  *
@@ -60,6 +63,69 @@ let clientSettingsHydrationGeneration = 0;
 let clientSettingsPersistenceQueue: Promise<void> = Promise.resolve();
 let deferredClientSettingsPatchCount = 0;
 
+let activeLookProjectKey: string | null = null;
+let effectiveCache: { raw: ClientSettings; key: string | null; value: ClientSettings } | null =
+  null;
+
+export function getActiveLookProjectKey() {
+  return activeLookProjectKey;
+}
+export function useActiveLookProjectKey() {
+  return useSyncExternalStore(subscribeClientSettings, getActiveLookProjectKey, () => null);
+}
+export function getDefaultClientSettings() {
+  return clientSettingsSnapshot;
+}
+
+function getEffectiveClientSettings(): ClientSettings {
+  if (effectiveCache?.raw === clientSettingsSnapshot && effectiveCache.key === activeLookProjectKey)
+    return effectiveCache.value;
+  const value = resolveLookSettings(clientSettingsSnapshot, activeLookProjectKey);
+  effectiveCache = { raw: clientSettingsSnapshot, key: activeLookProjectKey, value };
+  return value;
+}
+
+function syncLookTheme() {
+  const look = resolveProjectLook(clientSettingsSnapshot, activeLookProjectKey);
+  setLookTheme(look?.theme ?? null, (theme: LookTheme) => {
+    if (!look) return;
+    void persistClientSettingsPatch({
+      savedLooks: clientSettingsSnapshot.savedLooks.map((entry) =>
+        entry.id === look.id ? { ...entry, theme } : entry,
+      ),
+    });
+  });
+}
+
+export function setActiveLookProjectKey(key: string | null) {
+  if (activeLookProjectKey === key) return;
+  activeLookProjectKey = key;
+  syncLookTheme();
+  emitClientSettingsChange();
+}
+
+export function persistEffectiveSettingsPatch(patch: ClientSettingsPatch) {
+  const look = resolveProjectLook(clientSettingsSnapshot, activeLookProjectKey);
+  if (!look) return persistClientSettingsPatch(patch);
+  const appearance = Object.fromEntries(
+    Object.entries(patch).filter(([key]) =>
+      CUSTOMIZE_SETTING_KEYS.some((candidate) => candidate === key),
+    ),
+  );
+  const rest = Object.fromEntries(
+    Object.entries(patch).filter(
+      ([key]) => !CUSTOMIZE_SETTING_KEYS.some((candidate) => candidate === key),
+    ),
+  );
+  if (Object.keys(appearance).length === 0) return persistClientSettingsPatch(patch);
+  return persistClientSettingsPatch({
+    ...rest,
+    savedLooks: clientSettingsSnapshot.savedLooks.map((entry) =>
+      entry.id === look.id ? { ...entry, settings: { ...entry.settings, ...appearance } } : entry,
+    ),
+  });
+}
+
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
     listener();
@@ -78,6 +144,7 @@ function getClientSettingsSnapshot(): ClientSettings {
 
 function replaceClientSettingsSnapshot(settings: ClientSettings): void {
   clientSettingsSnapshot = settings;
+  syncLookTheme();
   emitClientSettingsChange();
 }
 
@@ -260,7 +327,7 @@ function splitPatch(patch: UnifiedSettingsPatch): {
  * settings without subscribing.
  */
 export function getClientSettings(): ClientSettings {
-  return getClientSettingsSnapshot();
+  return getEffectiveClientSettings();
 }
 
 /**
@@ -295,7 +362,7 @@ export function useClientSettingsHydrationStatus(): ClientSettingsHydrationStatu
 function useClientSettingsValue(): ClientSettings {
   return useSyncExternalStore(
     subscribeClientSettings,
-    getClientSettingsSnapshot,
+    getEffectiveClientSettings,
     () => DEFAULT_CLIENT_SETTINGS,
   );
 }
@@ -308,7 +375,7 @@ function useClientSettingsValue(): ClientSettings {
 export function useClientSetting<K extends keyof ClientSettings>(key: K): ClientSettings[K] {
   return useSyncExternalStore(
     subscribeClientSettings,
-    () => getClientSettingsSnapshot()[key],
+    () => getEffectiveClientSettings()[key],
     () => DEFAULT_CLIENT_SETTINGS[key],
   );
 }
@@ -495,7 +562,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
         }
       }
       if (Object.keys(clientPatch).length > 0) {
-        void persistClientSettingsPatch(clientPatch);
+        void persistEffectiveSettingsPatch(clientPatch);
       }
     },
     [environmentId, environments, persistServerSettings],
@@ -514,13 +581,16 @@ export function useUpdatePrimarySettings() {
 
 export function useUpdateClientSettings() {
   return useCallback((patch: ClientSettingsPatch) => {
-    return persistClientSettingsPatch(patch);
+    return persistEffectiveSettingsPatch(patch);
   }, []);
 }
 
 export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationGeneration += 1;
+  activeLookProjectKey = null;
+  effectiveCache = null;
   clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
+  syncLookTheme();
   clientSettingsHydrationStatus = "pending";
   clientSettingsHydrationPromise = null;
   clientSettingsPersistenceQueue = Promise.resolve();

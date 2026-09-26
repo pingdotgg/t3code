@@ -1,3 +1,5 @@
+import { useLayoutEffect } from "react";
+import { ProjectLookSync } from "../components/customize/ProjectLookSync";
 import { getThemeDefinition, resolveThemeHalf } from "../themePalette";
 import { applyThemeBackground, resolveThemeBackgroundUrl } from "../themeBackground";
 import { usePreviewedLayoutSetting } from "../hooks/useInterfaceLayout";
@@ -163,6 +165,7 @@ function RootRouteView() {
   if (pathname === "/pair" || pathname === "/connect") {
     return (
       <>
+        <ProjectLookSync />
         <DocumentTitleSync />
         <Outlet />
       </>
@@ -175,6 +178,7 @@ function RootRouteView() {
     return (
       <ToastProvider>
         <AnchoredToastProvider>
+          <ProjectLookSync />
           <DocumentTitleSync />
           <ContrastAppearanceSync />
           <EnvironmentThemeSync />
@@ -195,6 +199,7 @@ function RootRouteView() {
   if (authGateState.status !== "authenticated" && authGateState.status !== "hosted-static") {
     return (
       <>
+        <ProjectLookSync />
         <DocumentTitleSync />
         <Outlet />
       </>
@@ -216,6 +221,7 @@ function RootRouteView() {
   return (
     <ToastProvider>
       <AnchoredToastProvider>
+        <ProjectLookSync />
         <DocumentTitleSync />
         <ContrastAppearanceSync />
         <EnvironmentThemeSync />
@@ -269,16 +275,16 @@ function ContrastAppearanceSync() {
   const appearanceContrast = useClientSettings((settings) => settings.appearanceContrast);
   const diffColorScheme = useClientSettings((settings) => settings.diffColorScheme);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.dataset.diffColorScheme = diffColorScheme;
   }, [diffColorScheme]);
 
   const chatWidth = usePreviewedLayoutSetting("chatWidth");
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.dataset.chatWidth = chatWidth;
   }, [chatWidth]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     applyAppearanceContrast(document.documentElement, appearanceContrast);
   }, [appearanceContrast]);
 
@@ -288,7 +294,7 @@ function ContrastAppearanceSync() {
 function GlassAppearanceSync() {
   const glassOpacity = useClientSettings((settings) => settings.glassOpacity);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const style = document.documentElement.style;
     style.setProperty("--glass-opacity", `${glassOpacity}%`);
     if (glassOpacity === 100) {
@@ -313,7 +319,7 @@ function ThemeBackgroundSync() {
   );
   const { theme, resolvedTheme, themeHalves } = useTheme();
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const definition = getThemeDefinition(resolveThemeHalf(theme, themeHalves, resolvedTheme));
     applyThemeBackground(
       resolveThemeBackgroundUrl(themeBackground, definition?.id ?? null),
@@ -325,7 +331,7 @@ function ThemeBackgroundSync() {
     syncBrowserChromeTheme();
   }, [themeBackground, theme, resolvedTheme, themeHalves]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.style.setProperty(
       "--backdrop-transparency",
       `${themeBackgroundTransparency}%`,
@@ -344,7 +350,7 @@ function FontAppearanceSync() {
   const fontSizeCode = useClientSettings((settings) => settings.fontSizeCode);
   const fontSmoothing = useClientSettings((settings) => settings.fontSmoothing);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     applyAppearanceFontVariables(document.documentElement, {
       sans: fontFamilySans,
       code: fontFamilyCode,

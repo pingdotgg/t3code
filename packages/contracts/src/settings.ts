@@ -358,7 +358,7 @@ export type InterfaceSurfaceLayout = typeof InterfaceSurfaceLayout.Type;
 export const InterfaceLayout = Schema.Record(Schema.String, InterfaceSurfaceLayout);
 export type InterfaceLayout = typeof InterfaceLayout.Type;
 
-export const ClientSettingsSchema = Schema.Struct({
+const BaseClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
   ),
@@ -564,6 +564,61 @@ export const ClientSettingsSchema = Schema.Struct({
   snapShotAnimations: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
+export const LookSettings = Schema.Struct({
+  interfaceLayout: BaseClientSettingsSchema.fields.interfaceLayout,
+  composerCollapseOnScroll: BaseClientSettingsSchema.fields.composerCollapseOnScroll,
+  contextWindowMeterEnabled: BaseClientSettingsSchema.fields.contextWindowMeterEnabled,
+  timestampFormat: BaseClientSettingsSchema.fields.timestampFormat,
+  chatWidth: BaseClientSettingsSchema.fields.chatWidth,
+  fontSizeInterface: BaseClientSettingsSchema.fields.fontSizeInterface,
+  fontSizePrompt: BaseClientSettingsSchema.fields.fontSizePrompt,
+  fontSizeCode: BaseClientSettingsSchema.fields.fontSizeCode,
+  fontSizeTerminal: BaseClientSettingsSchema.fields.fontSizeTerminal,
+  fontFamilySans: BaseClientSettingsSchema.fields.fontFamilySans,
+  fontFamilyCode: BaseClientSettingsSchema.fields.fontFamilyCode,
+  fontFamilyComposer: BaseClientSettingsSchema.fields.fontFamilyComposer,
+  fontFamilyTerminal: BaseClientSettingsSchema.fields.fontFamilyTerminal,
+  fontSmoothing: BaseClientSettingsSchema.fields.fontSmoothing,
+  wordWrap: BaseClientSettingsSchema.fields.wordWrap,
+  appearanceContrast: BaseClientSettingsSchema.fields.appearanceContrast,
+  glassOpacity: BaseClientSettingsSchema.fields.glassOpacity,
+  themeBackground: BaseClientSettingsSchema.fields.themeBackground,
+  themeBackgroundTransparency: BaseClientSettingsSchema.fields.themeBackgroundTransparency,
+  panelAnimationDurationMs: BaseClientSettingsSchema.fields.panelAnimationDurationMs,
+  diffColorScheme: BaseClientSettingsSchema.fields.diffColorScheme,
+  environmentIdentificationMode: BaseClientSettingsSchema.fields.environmentIdentificationMode,
+});
+export type LookSettings = typeof LookSettings.Type;
+/** Shared by Customize snapshots and look validation so their contents cannot drift. */
+export const CUSTOMIZE_SETTING_KEYS = Object.keys(LookSettings.fields) as Array<keyof LookSettings>;
+export const LookTheme = Schema.Struct({
+  "t3code:theme": Schema.NullOr(Schema.String),
+  "t3code:theme-appearance-mode": Schema.NullOr(Schema.Literals(["system", "light", "dark"])),
+  "t3code:theme-halves:v1": Schema.NullOr(Schema.String),
+  "t3code:theme-follow-system": Schema.NullOr(Schema.Literals(["true", "false"])),
+});
+export type LookTheme = typeof LookTheme.Type;
+export const SavedLook = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  settings: LookSettings,
+  theme: LookTheme,
+});
+export type SavedLook = typeof SavedLook.Type;
+export const SharedLook = Schema.Struct({
+  version: Schema.Literal(1),
+  name: TrimmedNonEmptyString,
+  settings: LookSettings,
+  theme: LookTheme,
+});
+export const ClientSettingsSchema = Schema.Struct({
+  ...BaseClientSettingsSchema.fields,
+  savedLooks: Schema.Array(SavedLook).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  projectLookAssignments: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+});
+
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
 export const DEFAULT_CLIENT_SETTINGS: ClientSettings = Schema.decodeSync(ClientSettingsSchema)({});
@@ -1638,6 +1693,10 @@ export const ServerSettingsPatch = Schema.Struct({
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
+  savedLooks: Schema.optionalKey(Schema.Array(SavedLook)),
+  projectLookAssignments: Schema.optionalKey(
+    Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
+  ),
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),

@@ -1,3 +1,5 @@
+import { getActiveLookProjectKey, useClientSettings } from "./useSettings";
+import { resolveProjectLook } from "../customizationLooks";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect } from "react";
 
@@ -71,6 +73,9 @@ function writeAppliedGeneration(storageKey: string, generation: string): void {
  * resolve yet — the setting and the palette it names arrive independently.
  */
 export function useDefaultThemeAdoption(): void {
+  const projectLook = useClientSettings((client) =>
+    resolveProjectLook(client, getActiveLookProjectKey()),
+  );
   const environmentId = useAtomValue(primaryEnvironmentIdAtom);
   const settings = useAtomValue(primaryServerSettingsAtom);
   const { defaultTheme, defaultThemeSetAt } = settings;
@@ -80,7 +85,7 @@ export function useDefaultThemeAdoption(): void {
   const environmentThemes = useEnvironmentThemeDefinitions();
 
   useEffect(() => {
-    if (typeof window === "undefined" || environmentId === null) return;
+    if (typeof window === "undefined" || environmentId === null || projectLook !== null) return;
     const storageKey = `${APPLIED_DEFAULT_THEME_STORAGE_PREFIX}${environmentId}`;
     const definition = getThemeDefinition(defaultTheme);
     const generation = defaultThemeToApply({
@@ -109,6 +114,7 @@ export function useDefaultThemeAdoption(): void {
     defaultTheme,
     defaultThemeSetAt,
     environmentThemes,
+    projectLook,
     setTheme,
     setAppearanceMode,
   ]);

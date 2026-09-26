@@ -1,3 +1,5 @@
+import { resolveProjectLook } from "../../customizationLooks";
+import { useActiveLookProjectKey } from "../../hooks/useSettings";
 import {
   ArrowLeftIcon,
   ChevronLeftIcon,
@@ -189,6 +191,8 @@ export function CustomizeEditLayer({
   onDone: () => void;
 }) {
   const config = EDIT_SURFACES[surface];
+  const projectKey = useActiveLookProjectKey();
+  const activeLook = useClientSettings((settings) => resolveProjectLook(settings, projectKey));
   const measurement = useLiveMeasure(() => measureSurface(surface), surface);
   const layout = useClientSetting("interfaceLayout");
   const historyLength = useCustomizeInterfaceStore((store) => store.history.length);
@@ -499,6 +503,9 @@ export function CustomizeEditLayer({
         className="dialog-glass pointer-events-auto fixed top-3 left-1/2 z-[132] flex h-11 -translate-x-1/2 items-center gap-1 rounded-full border ps-4 pe-1.5 text-popover-foreground shadow-lg/10"
       >
         <span className="text-sm font-medium">{config.title}</span>
+        <span className="ms-1 max-w-40 truncate text-xs text-muted-foreground">
+          {activeLook ? `${activeLook.name} · this project` : "Default"}
+        </span>
         {config.note ? (
           <span className="ms-1 hidden text-xs text-muted-foreground sm:inline">
             · {config.note}

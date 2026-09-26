@@ -204,3 +204,32 @@ describe("theme failure handling", () => {
     }
   });
 });
+
+describe("project look themes", () => {
+  it("falls back for missing custom themes and keeps navigation and edits out of default storage", async () => {
+    const storage = createStorage();
+    storage.setItem("t3code:theme", "light");
+    const write = vi.spyOn(storage, "setItem");
+    vi.stubGlobal("window", { localStorage: storage });
+    const { readThemePreference, writeThemePreference } = await import("./useTheme");
+    const { setLookTheme } = await import("../lookThemeStorage");
+    const save = vi.fn();
+    setLookTheme(
+      {
+        "t3code:theme": "not-installed",
+        "t3code:theme-appearance-mode": "dark",
+        "t3code:theme-follow-system": null,
+        "t3code:theme-halves:v1": null,
+      },
+      save,
+    );
+    expect(readThemePreference()).toBe("system");
+    expect(write).not.toHaveBeenCalled();
+    writeThemePreference("dark");
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ "t3code:theme": "dark" }));
+    expect(storage.getItem("t3code:theme")).toBe("light");
+    setLookTheme(null, save);
+    expect(readThemePreference()).toBe("light");
+    expect(write).not.toHaveBeenCalled();
+  });
+});

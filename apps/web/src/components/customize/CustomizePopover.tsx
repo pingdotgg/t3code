@@ -1,3 +1,4 @@
+import { LooksSection } from "./LooksSection";
 import { THEME_BACKGROUND_CHOICES, THEME_BACKGROUND_LABELS } from "../../themeBackground";
 import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
 import {
@@ -470,6 +471,7 @@ export function CustomizePopover({
       style={style}
     >
       <div className="min-h-0 flex-1 overflow-y-auto">
+        <LooksSection />
         <div className="px-4 pt-4 pb-3">
           <div className="flex items-baseline gap-2">
             <h2 className="flex-1 text-sm font-semibold">Customize</h2>

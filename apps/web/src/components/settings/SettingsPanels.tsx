@@ -1,3 +1,4 @@
+import { LooksSection } from "../customize/LooksSection";
 import { THEME_BACKGROUND_CHOICES, THEME_BACKGROUND_LABELS } from "../../themeBackground";
 import { SettingsGroup } from "./SettingsGroup";
 import { Spinner } from "~/components/ui/spinner";
@@ -1242,6 +1243,7 @@ export function AppearanceSettingsPanel() {
   return (
     <SettingsPageContainer>
       <CustomizeInPlaceCard />
+      <LooksSection expanded />
       <SettingsSection id="appearance" title="Colors & themes" variant="plain" hideTitle>
         <div id={searchableSetting("theme").id}>
           <ThemeLibrary

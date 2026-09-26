@@ -1,3 +1,5 @@
+import { readLookThemeStorage } from "../../lookThemeStorage";
+import { CUSTOMIZE_SETTING_KEYS } from "@t3tools/contracts/settings";
 import type { ClientSettings } from "@t3tools/contracts";
 import { create } from "zustand";
 
@@ -15,30 +17,6 @@ import type { PresetId } from "./customizePresets";
  * restores exactly these, so a model picked in the composer or anything else
  * written while the mode is open is left alone.
  */
-const CUSTOMIZE_SETTING_KEYS = [
-  "interfaceLayout",
-  "composerCollapseOnScroll",
-  "contextWindowMeterEnabled",
-  "timestampFormat",
-  "chatWidth",
-  "fontSizeInterface",
-  "fontSizePrompt",
-  "fontSizeCode",
-  "fontSizeTerminal",
-  "fontFamilySans",
-  "fontFamilyCode",
-  "fontFamilyComposer",
-  "fontFamilyTerminal",
-  "fontSmoothing",
-  "wordWrap",
-  "appearanceContrast",
-  "glassOpacity",
-  "themeBackground",
-  "themeBackgroundTransparency",
-  "panelAnimationDurationMs",
-  "diffColorScheme",
-  "environmentIdentificationMode",
-] as const satisfies ReadonlyArray<keyof ClientSettings>;
 
 export type CustomizeSettingKey = (typeof CUSTOMIZE_SETTING_KEYS)[number];
 export type CustomizeSettingsSnapshot = Pick<ClientSettings, CustomizeSettingKey>;
@@ -50,7 +28,7 @@ export const THEME_STORAGE_KEYS = [
   THEME_HALVES_STORAGE_KEY,
   THEME_FOLLOW_SYSTEM_STORAGE_KEY,
 ] as const;
-export type ThemeStorageSnapshot = Record<(typeof THEME_STORAGE_KEYS)[number], string | null>;
+export type ThemeStorageSnapshot = import("@t3tools/contracts/settings").LookTheme;
 
 export interface CustomizeSnapshot {
   readonly settings: CustomizeSettingsSnapshot;
@@ -66,7 +44,7 @@ export function pickCustomizeSettings(settings: ClientSettings): CustomizeSettin
 export function readThemeStorageSnapshot(): ThemeStorageSnapshot {
   const read = (key: string) => {
     try {
-      return window.localStorage.getItem(key);
+      return readLookThemeStorage(key);
     } catch {
       return null;
     }

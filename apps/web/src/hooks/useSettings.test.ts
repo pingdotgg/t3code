@@ -1,3 +1,6 @@
+import * as Schema from "effect/Schema";
+import { LookSettings } from "@t3tools/contracts/settings";
+const decodeLookSettings = Schema.decodeSync(LookSettings);
 import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
@@ -449,5 +452,44 @@ describe("onboarding completion persistence", () => {
     );
     expect(getClientSettings()).toEqual(completedSettings);
     expect(persist).toHaveBeenLastCalledWith(completedSettings);
+  });
+});
+
+describe("effective project customization", () => {
+  it("switches looks without persistence and routes appearance edits to the active look", async () => {
+    const { getDefaultClientSettings, setActiveLookProjectKey, persistEffectiveSettingsPatch } =
+      await import("./useSettings");
+    const look = {
+      id: "look",
+      name: "Ocean",
+      settings: { ...decodeLookSettings({}), themeBackground: "ocean" as const },
+      theme: {
+        "t3code:theme": null,
+        "t3code:theme-appearance-mode": null,
+        "t3code:theme-follow-system": null,
+        "t3code:theme-halves:v1": null,
+      },
+    };
+    const raw = {
+      ...DEFAULT_CLIENT_SETTINGS,
+      savedLooks: [look],
+      projectLookAssignments: { project: look.id },
+    };
+    __setClientSettingsForTests(raw);
+    setActiveLookProjectKey("project");
+    expect(getClientSettings().themeBackground).toBe("ocean");
+    expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
+    await persistEffectiveSettingsPatch({ themeBackground: "dune", sendShortcut: "mod-enter" });
+    expect(getDefaultClientSettings().themeBackground).toBe(
+      DEFAULT_CLIENT_SETTINGS.themeBackground,
+    );
+    expect(getDefaultClientSettings().savedLooks[0]?.settings.themeBackground).toBe("dune");
+    expect(getDefaultClientSettings().sendShortcut).toBe("mod-enter");
+    const writes = persistenceMocks.setClientSettings.mock.calls.length;
+    setActiveLookProjectKey(null);
+    expect(getClientSettings().themeBackground).toBe(DEFAULT_CLIENT_SETTINGS.themeBackground);
+    setActiveLookProjectKey("project");
+    expect(getClientSettings().themeBackground).toBe("dune");
+    expect(persistenceMocks.setClientSettings).toHaveBeenCalledTimes(writes);
   });
 });
