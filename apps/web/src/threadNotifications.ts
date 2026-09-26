@@ -19,6 +19,29 @@ export function hasDesktopNotifications(mode: NotificationMode) {
   return mode === "notifications" || mode === "notifications-and-sound";
 }
 
+const FNV_OFFSET_BASIS_32 = 0x811c9dc5;
+const FNV_PRIME_32 = 0x01000193;
+const FNV_SECONDARY_OFFSET = 0x9dc5811c;
+
+/**
+ * Compact, stable `Notification.tag` for one environment+thread.
+ * Chromium on Windows silently drops the toast when the tag (plus origin)
+ * exceeds a ~34-character budget, and the raw `${environmentId}:${threadId}`
+ * pair is 73 characters for production UUIDs.
+ */
+export function threadNotificationTag(environmentId: string, threadId: string) {
+  const value = `${environmentId}:${threadId}`;
+  let forward = FNV_OFFSET_BASIS_32;
+  let reverse = FNV_SECONDARY_OFFSET;
+  for (let index = 0; index < value.length; index += 1) {
+    forward ^= value.charCodeAt(index);
+    forward = Math.imul(forward, FNV_PRIME_32) >>> 0;
+    reverse ^= value.charCodeAt(value.length - 1 - index);
+    reverse = Math.imul(reverse, FNV_PRIME_32) >>> 0;
+  }
+  return `${forward.toString(16).padStart(8, "0")}${reverse.toString(16).padStart(8, "0")}`;
+}
+
 let originalFavicon: HTMLLinkElement | undefined;
 let badgeFavicon: HTMLLinkElement | undefined;
 
