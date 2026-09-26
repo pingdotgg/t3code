@@ -1,7 +1,6 @@
 import * as SchemaAST from "effect/SchemaAST";
-import { isMany, none, type Many } from "stream-chain/defs.js";
+import { none, type Many } from "stream-chain/defs.js";
 import { Assembler } from "stream-json/core/assembler.js";
-import { filter } from "stream-json/core/filters/filter.js";
 import * as StreamJson from "stream-json/core/parser.js";
 import type { ParserOptions, Token } from "stream-json/core/parser.js";
 
@@ -55,6 +54,7 @@ export class TranscriptJsonLimitError extends Error {}
 export function createTranscriptJsonReader(
   reserve: (bytes: number) => void,
   selectPath: (path: JsonPath) => boolean,
+  options?: { readonly maxDepth?: number },
 ) {
   // The synchronous tokenizer is exported at runtime in 3.6.0, but omitted
   // from its bundled types. Unlike parser(), it does not wrap tokens in an
@@ -65,9 +65,6 @@ export function createTranscriptJsonReader(
     ) => (input: string | typeof none) => Many<Token> | typeof none;
   };
   const tokenize = jsonParser({ packValues: false });
-  const select = filter({ filter: selectPath, streamKeys: false }) as (
-    input: Token | typeof none,
-  ) => Token | Many<Token> | typeof none;
   const assembler = new Assembler();
   let key: string | null = null;
   let value = "";
@@ -100,13 +97,62 @@ export function createTranscriptJsonReader(
         assembler.consume(token);
     }
   };
+  // Forward actual selected keys instead of reconstructing them from path
+  // changes: adjacent duplicate keys have the same path but JSON.parse keeps
+  // the last value. Reconstructing paths can silently retain the first value.
+  const stack: Array<{ path: JsonPath; key: string | number | null; selected: boolean }> = [];
+  let selectedValue = false;
+  const startValue = () => {
+    const parent = stack.at(-1);
+    const path = parent?.selected ? [...parent.path, parent.key] : [];
+    const selected = (parent?.selected ?? true) && selectPath(path);
+    if (selected && typeof parent?.key === "string") {
+      assemble({ name: "keyValue", value: parent.key });
+    }
+    return { path, selected };
+  };
+  const endValue = () => {
+    const parent = stack.at(-1);
+    if (parent && typeof parent.key === "number") parent.key++;
+  };
   const selectToken = (token: Token | typeof none) => {
-    const selected = select(token);
-    if (selected === none) return;
-    if (isMany(selected)) {
-      for (const item of selected.values) assemble(item);
-    } else {
-      assemble(selected);
+    if (token === none) return;
+    switch (token.name) {
+      case "keyValue": {
+        const parent = stack.at(-1);
+        if (parent) parent.key = token.value;
+        return;
+      }
+      case "startObject":
+      case "startArray": {
+        const frame = startValue();
+        stack.push({ ...frame, key: token.name === "startArray" ? 0 : null });
+        if (frame.selected) assemble(token);
+        return;
+      }
+      case "endObject":
+      case "endArray":
+        if (stack.pop()?.selected) assemble(token);
+        endValue();
+        return;
+      case "startString":
+      case "startNumber":
+        selectedValue = startValue().selected;
+        if (selectedValue) assemble(token);
+        return;
+      case "endString":
+      case "endNumber":
+        if (selectedValue) assemble(token);
+        endValue();
+        return;
+      case "nullValue":
+      case "trueValue":
+      case "falseValue":
+        if (startValue().selected) assemble(token);
+        endValue();
+        return;
+      default:
+        if (selectedValue) assemble(token);
     }
   };
   const consume = (input: string | typeof none) => {
@@ -116,8 +162,8 @@ export function createTranscriptJsonReader(
       if (tokens === none) return;
       for (const token of tokens.values) {
         if (token.name === "startObject" || token.name === "startArray") {
-          if (++depth > 128)
-            throw new TranscriptJsonLimitError("Transcript JSON nesting exceeds 128 levels");
+          if (++depth > (options?.maxDepth ?? 128))
+            throw new TranscriptJsonLimitError("Transcript JSON nesting exceeds the depth limit");
         } else if (token.name === "endObject" || token.name === "endArray") {
           if (--depth === 0) complete = true;
         }
