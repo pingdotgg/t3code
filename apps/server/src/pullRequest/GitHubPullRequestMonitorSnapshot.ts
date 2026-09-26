@@ -163,10 +163,6 @@ const StatusesSchema = Schema.Struct({
 const MAX_PAGES = 10;
 const PAGE_SIZE = 100;
 
-const CompareSchema = Schema.Struct({
-  behind_by: Schema.optional(Schema.Finite),
-});
-
 const MONITOR_GRAPHQL = `
 query(
   $owner: String!,
@@ -708,52 +704,24 @@ export const fetchGitHubPullRequestMonitorSnapshot = Effect.fn(
     return { statuses: all, sha, complete };
   });
 
-  // Independent host reads — run concurrently so poll latency is max, not sum.
-  const [issueCommentsDecoded, checkRunsDecoded, statusesDecoded, compareDecoded] =
-    yield* Effect.all(
-      [
-        fetchIssueComments({
-          github,
-          cwd: input.cwd,
-          host: input.host,
-          owner: ownerName,
-          repository: repoName,
-          number: input.number,
-          mapCliError,
-        }),
-        fetchCheckRuns,
-        fetchStatuses,
-        github
-          .execute({
-            cwd: input.cwd,
-            args: [
-              "api",
-              "--hostname",
-              input.host,
-              "-H",
-              "Accept: application/vnd.github+json",
-              `repos/${ownerName}/${repoName}/compare/${encodeURIComponent(pullRequest.baseRefName)}...${headSha}`,
-            ],
-          })
-          .pipe(
-            Effect.mapError(mapCliError),
-            Effect.flatMap((raw) =>
-              decodeOrFail(
-                CompareSchema,
-                raw.stdout === "" ? "{}" : raw.stdout,
-                "monitorSnapshot.compare",
-              ),
-            ),
-            Effect.map((compare) => ({
-              behindBy:
-                typeof compare.behind_by === "number" ? Math.max(0, compare.behind_by) : null,
-            })),
-            // A failed or unreadable compare is "unknown", never "up to date".
-            Effect.orElseSucceed(() => ({ behindBy: null as number | null })),
-          ),
-      ],
-      { concurrency: "unbounded" },
-    );
+  // Keep the independent host reads serialized. Poll latency is higher, but each monitor runs
+  // in the background and avoiding request bursts protects GitHub's secondary rate limit.
+  const [issueCommentsDecoded, checkRunsDecoded, statusesDecoded] = yield* Effect.all(
+    [
+      fetchIssueComments({
+        github,
+        cwd: input.cwd,
+        host: input.host,
+        owner: ownerName,
+        repository: repoName,
+        number: input.number,
+        mapCliError,
+      }),
+      fetchCheckRuns,
+      fetchStatuses,
+    ],
+    { concurrency: 1 },
+  );
 
   const normalizedReviews: PullRequestMonitorReview[] = reviews.map((review) => ({
     id: review.id,
@@ -841,7 +809,7 @@ export const fetchGitHubPullRequestMonitorSnapshot = Effect.fn(
     baseBranch: pullRequest.baseRefName,
     headBranch: pullRequest.headRefName,
     mergeability: mergeabilityOf(pullRequest.mergeable),
-    behindBaseBy: compareDecoded.behindBy,
+    behindBaseBy: null,
     titleExcerpt: excerpt(pullRequest.title, 200),
     url: pullRequest.url,
     fetchedAt,
@@ -853,8 +821,8 @@ export const fetchGitHubPullRequestMonitorSnapshot = Effect.fn(
       checksComplete: checkRunsDecoded.complete && statusesDecoded.complete,
       // GitHub check-runs endpoint is observed checks, not branch protection required set.
       requiredChecksKnown: false,
-      // A compare that failed leaves the base distance unknown, not zero.
-      baseComparisonKnown: compareDecoded.behindBy !== null,
+      // Base distance is informational and does not justify a REST request on every poll.
+      baseComparisonKnown: false,
     },
     requiredCheckCoverage: {
       expected: [],

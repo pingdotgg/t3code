@@ -51,7 +51,7 @@ import {
   PullRequestMonitorService,
 } from "./PullRequestMonitorService.ts";
 import { emptyCursor } from "./monitorDiff.ts";
-import { LEASE_TTL_MS } from "./pollSchedule.ts";
+import { LEASE_TTL_MS, POLL_BATCH_LIMIT } from "./pollSchedule.ts";
 import { emptyFeedbackReadiness } from "./readiness.ts";
 import { PullRequestMonitorStore } from "./PullRequestMonitorStore.ts";
 import { handoffToSubmitInput } from "./PullRequestReviewHandoffReactor.ts";
@@ -107,6 +107,8 @@ function sampleSnapshot(
   };
 }
 
+let pullRequestDetailCalls = 0;
+
 const fakePullRequests = PullRequestService.PullRequestService.of({
   list: () => Effect.die("unused"),
   listStats: () => Effect.die("unused"),
@@ -159,7 +161,13 @@ const fakePullRequests = PullRequestService.PullRequestService.of({
       labels: [],
       checks: [],
       mergeCapabilities: { merge: true, squash: true, rebase: true },
-    }),
+    }).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          pullRequestDetailCalls += 1;
+        }),
+      ),
+    ),
   activity: () => Effect.die("unused"),
   diff: () => Effect.die("unused"),
   runAction: () => Effect.die("unused"),
@@ -172,6 +180,7 @@ const fakePullRequests = PullRequestService.PullRequestService.of({
   invalidate: () => Effect.void,
   monitorSnapshot: () =>
     Effect.gen(function* () {
+      monitorSnapshotCalls += 1;
       const snapshot = currentSnapshot;
       // Runs while the poll attempt is in flight: the seam where a slow provider read
       // can outlive the attempt's lease.
@@ -184,6 +193,7 @@ const fakePullRequests = PullRequestService.PullRequestService.of({
 let currentSnapshot: PullRequestMonitorSnapshot = sampleSnapshot();
 /** Injected mid-read behaviour; tests reset it to `Effect.void` after one use. */
 let monitorSnapshotHook: Effect.Effect<void, PullRequestOperationError> = Effect.void;
+let monitorSnapshotCalls = 0;
 
 const knownThreads = new Map<
   string,
@@ -454,6 +464,31 @@ layer("PullRequestMonitorService", (it) => {
     }),
   );
 
+  it.effect("bounds each background sweep to the global poll budget", () =>
+    Effect.gen(function* () {
+      const service = yield* PullRequestMonitorService;
+      const sql = yield* SqlClient.SqlClient;
+
+      for (let number = 100; number < 100 + POLL_BATCH_LIMIT + 2; number += 1) {
+        yield* service.start({
+          projectId,
+          repository: "acme/app",
+          number,
+        });
+      }
+
+      yield* sql`
+        UPDATE pull_request_monitors
+        SET next_poll_at = '1970-01-01T00:00:00.000Z'
+        WHERE enabled = 1
+      `.pipe(Effect.orDie);
+
+      const before = monitorSnapshotCalls;
+      yield* service.pollOnce;
+      assert.strictEqual(monitorSnapshotCalls - before, POLL_BATCH_LIMIT);
+    }),
+  );
+
   it.effect("transfers ownership to a single owner thread", () =>
     Effect.gen(function* () {
       const service = yield* PullRequestMonitorService;
@@ -558,6 +593,47 @@ layer("PullRequestMonitorService", (it) => {
 
       assert.isNull(resumed.monitor.ownerThreadId);
       assert.strictEqual(resumed.monitor.enabled, true);
+    }),
+  );
+
+  it.effect("does not automatically re-enable a terminal monitor", () =>
+    Effect.gen(function* () {
+      const service = yield* PullRequestMonitorService;
+      const owner = ThreadId.make("terminal-monitor-owner");
+      seedThread(owner, "/tmp/terminal-monitor", {
+        number: 1045,
+        url: "https://github.com/acme/app/pull/1045",
+      });
+      const originalSnapshot = currentSnapshot;
+      currentSnapshot = sampleSnapshot({
+        number: 1045,
+        state: "closed",
+      });
+
+      const terminal = yield* service.start({
+        projectId,
+        repository: "acme/app",
+        number: 1045,
+        ownerThreadId: owner,
+      });
+      assert.strictEqual(terminal.monitor.status, "terminal");
+      assert.isFalse(terminal.monitor.enabled);
+
+      const detailCallsBeforeEnsure = pullRequestDetailCalls;
+      const snapshotCallsBeforeEnsure = monitorSnapshotCalls;
+      const ensured = yield* service.start({
+        projectId,
+        repository: " ACME/app ",
+        number: 1045,
+        ownerThreadId: owner,
+        requireAssociatedOwner: true,
+      });
+
+      assert.strictEqual(ensured.monitor.status, "terminal");
+      assert.isFalse(ensured.monitor.enabled);
+      assert.strictEqual(pullRequestDetailCalls, detailCallsBeforeEnsure);
+      assert.strictEqual(monitorSnapshotCalls, snapshotCallsBeforeEnsure);
+      currentSnapshot = originalSnapshot;
     }),
   );
 
@@ -2183,6 +2259,7 @@ layer("PullRequestMonitorService", (it) => {
     () =>
       Effect.gen(function* () {
         const monitors = yield* PullRequestMonitorService;
+        const sql = yield* SqlClient.SqlClient;
         const reviewer = ThreadId.make("thr_parent_review");
         const child = ThreadId.make("thr_child_dispute");
         seedThread(reviewer);
@@ -2282,6 +2359,14 @@ layer("PullRequestMonitorService", (it) => {
         assert.strictEqual(fixed.item.status, "verifying");
         assert.strictEqual(fixed.item.disposition, "resolved");
         assert.isTrue(fixed.awaitingVerification);
+        yield* sql`
+          UPDATE pull_request_monitors
+          SET next_poll_at = CASE
+            WHEN monitor_id = ${submitted.monitor.id} THEN '1970-01-01T00:00:00.000Z'
+            ELSE '2099-01-01T00:00:00.000Z'
+          END
+          WHERE enabled = 1
+        `.pipe(Effect.orDie);
         yield* monitors.pollOnce;
         const verified = yield* monitors.context({
           monitorId: submitted.monitor.id,

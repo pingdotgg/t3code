@@ -47,8 +47,7 @@ export function presentCollaborativeAcceptanceStatus(input: {
       !snapshot.completeness.reviewThreadsComplete ||
       !snapshot.completeness.issueCommentsComplete ||
       !snapshot.completeness.checksComplete ||
-      !snapshot.completeness.requiredChecksKnown ||
-      !snapshot.completeness.baseComparisonKnown);
+      !snapshot.completeness.requiredChecksKnown);
   const headMoved =
     projection !== null &&
     snapshot !== null &&

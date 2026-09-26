@@ -189,6 +189,54 @@ it.effect("pages issue comments and marks our own comments as viewer-authored", 
   }),
 );
 
+it.effect("serializes snapshot reads to avoid secondary-limit bursts", () =>
+  Effect.gen(function* () {
+    let active = 0;
+    let maxActive = 0;
+
+    const responseFor = (args: ReadonlyArray<string>) => {
+      const target = args.at(-1) ?? "";
+      if (args.includes("graphql")) return processResult(graphqlResponse);
+      if (target.includes("/comments?")) {
+        return processResult(includedResponse({ comments: [] }));
+      }
+      if (target.includes("check-runs")) {
+        return processResult(JSON.stringify({ total_count: 0, check_runs: [] }));
+      }
+      if (target.includes("/status?")) {
+        return processResult(JSON.stringify({ statuses: [], sha: "head-sha" }));
+      }
+      return processResult(JSON.stringify({ behind_by: 0 }));
+    };
+
+    yield* fetchGitHubPullRequestMonitorSnapshot({
+      cwd: "/workspace/app",
+      host: "github.com",
+      repository: "acme/app",
+      number: 12,
+    }).pipe(
+      Effect.provide(
+        Layer.mock(GitHubCli)({
+          execute: ({ args }) =>
+            Effect.acquireUseRelease(
+              Effect.sync(() => {
+                active += 1;
+                maxActive = Math.max(maxActive, active);
+              }),
+              () => Effect.yieldNow.pipe(Effect.as(responseFor(args))),
+              () =>
+                Effect.sync(() => {
+                  active -= 1;
+                }),
+            ),
+        }),
+      ),
+    );
+
+    assert.strictEqual(maxActive, 1);
+  }),
+);
+
 it.effect("reports incomplete issue comments when the page budget is exhausted", () =>
   Effect.gen(function* () {
     const requested: Array<string> = [];
@@ -274,25 +322,17 @@ it.effect("keeps the edited version of a comment seen on overlapping pages", () 
   }),
 );
 
-it.effect("treats a failed base comparison as unknown, never as up to date", () =>
+it.effect("does not spend a REST request on informational base distance", () =>
   Effect.gen(function* () {
     const requested: Array<string> = [];
     const snapshot = yield* snapshotWith({
       requested,
       pages: new Map<number, CommentPage>([[1, { comments: [], last: 1 }]]),
-      compare: () => Effect.succeed({ stdout: "not json" }),
     });
 
     assert.isNull(snapshot.behindBaseBy);
     assert.isFalse(snapshot.completeness.baseComparisonKnown);
-
-    const observed = yield* snapshotWith({
-      requested: [],
-      pages: new Map<number, CommentPage>([[1, { comments: [], last: 1 }]]),
-    });
-    assert.strictEqual(observed.behindBaseBy, 0);
-    assert.isTrue(observed.completeness.baseComparisonKnown);
-    assert.strictEqual(observed.sourceRevision, snapshot.sourceRevision);
+    assert.isFalse(requested.some((target) => target.includes("/compare/")));
   }),
 );
 
