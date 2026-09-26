@@ -17,6 +17,18 @@ function tokens(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
 }
 
+/**
+ * Maps Cursor's tiered names (`cursor-grok-4.6-high-fast`,
+ * `claude-fable-5-1-thinking-high`) to the base model's rate-table key.
+ * Grok resolves through xAI's first-party entry, which has no bare alias.
+ */
+export function cursorRateModel(model: string): string {
+  const base = model
+    .replace(/^cursor-/, "")
+    .replace(/(?:-thinking)?(?:-(?:none|minimal|low|medium|high|xhigh|max))?(?:-fast)?$/, "");
+  return base.startsWith("grok-") ? `xai/${base}` : base;
+}
+
 export interface CursorAccountUsageReadResult {
   readonly accountKey: string | null;
   readonly records: readonly UsageRecord[];
@@ -232,6 +244,7 @@ export async function readCursorAccountUsage(
           provider: "cursor",
           timestampMs,
           model: event.model,
+          rateModel: cursorRateModel(event.model),
           sessionId,
           totals,
           reportedCostUsd,
