@@ -4,11 +4,15 @@ import { formatProviderSkillDisplayName } from "@t3tools/client-runtime/provider
 
 import { SKILL_CHIP_ICON_SVG } from "../composerInlineChip";
 import { ContextChip, ContextChipLabel } from "../ContextChip";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const SKILL_TOKEN_REGEX =
   /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 
-type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName">;
+export type InlineSkill = Pick<
+  ServerProviderSkill,
+  "name" | "displayName" | "description" | "shortDescription"
+>;
 
 export function SkillInlineText(props: { text: string; skills: ReadonlyArray<InlineSkill> }) {
   const nodes: ReactNode[] = [];
@@ -68,21 +72,50 @@ export function renderSkillInlineMarkdownChildren(
   });
 }
 
+function resolveInlineSkillDescription(skill: InlineSkill): string | null {
+  const shortDescription = skill.shortDescription?.trim();
+  if (shortDescription) {
+    return shortDescription;
+  }
+  const description = skill.description?.trim();
+  return description || null;
+}
+
 function SkillChip(props: { skill: InlineSkill; rawText: string }) {
-  return (
-    <ContextChip kind="skill" data-markdown-copy={props.rawText}>
+  const description = resolveInlineSkillDescription(props.skill);
+  const chip = (
+    <ContextChip
+      kind="skill"
+      data-markdown-copy={props.rawText}
+      tabIndex={description ? 0 : undefined}
+    >
       <SkillChipIcon />
       <ContextChipLabel>{formatProviderSkillDisplayName(props.skill)}</ContextChipLabel>
     </ContextChip>
   );
+
+  if (!description) {
+    return chip;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={chip} />
+      <TooltipPopup side="top">{description}</TooltipPopup>
+    </Tooltip>
+  );
 }
 
-/** The skill glyph; the surrounding chip sizes its svg. */
+/**
+ * The skill glyph. The package icon fills its viewBox edge-to-edge, unlike the
+ * file-type icons that carry intrinsic padding, so it renders one step smaller
+ * and lighter than the chip's default svg size to match the file chips' optical weight.
+ */
 export function SkillChipIcon() {
   return (
     <span
       aria-hidden="true"
-      className="contents"
+      className="block size-[1em] shrink-0 self-center opacity-85"
       dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
     />
   );
