@@ -386,7 +386,8 @@ function RightPanelEmptyState(props: {
       badgeCount: 0,
     },
     {
-      label: "Linked pull requests",
+      // Fork: the surface also lists linked Issues (toolboxmd/t3code#28).
+      label: "Linked PRs and Issues",
       icon: PullRequestGlyph.link,
       shortcut: "L",
       available: props.pullRequestsAvailable,
@@ -627,7 +628,8 @@ function surfaceTitle(
     case "pull-request":
       return `#${surface.number}`;
     case "pull-requests":
-      return "Pull requests";
+      // Fork: the surface also lists linked Issues (toolboxmd/t3code#28).
+      return "Linked PRs and Issues";
     case "agents":
       return "Agents";
     case "device":
@@ -910,7 +912,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddPullRequest,
     },
     {
-      label: "Linked pull requests",
+      // Fork: the surface also lists linked Issues (toolboxmd/t3code#28).
+      label: "Linked PRs and Issues",
       icon: PullRequestGlyph.link,
       shortcut: "L",
       available: props.pullRequestsAvailable,

@@ -159,6 +159,8 @@ import { Separator } from "~/components/ui/separator";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { IssuesView } from "~/components/issues/IssuesView";
+import { ListModeToggle } from "~/components/issues/ListModeToggle";
 
 function getShortcutContext() {
   return {
@@ -196,6 +198,10 @@ export interface PullRequestsSearch extends PullRequestListPreferences {
    * link without it still opens, resolved by project id alone where that is unambiguous.
    */
   readonly selectedEnvironmentId?: EnvironmentId;
+  /** Fork: the Issues list shares this page (toolboxmd/t3code#27). */
+  readonly view?: "issues";
+  /** Fork: the Issue URL whose side panel is open (toolboxmd/t3code#29). */
+  readonly issue?: string;
 }
 
 /**
@@ -336,9 +342,15 @@ export const Route = createFileRoute("/_chat/pull-requests")({
       ? { author: raw.author.trim().slice(0, 200) }
       : {}),
     ...pullRequestSearchLabels(raw.labels),
+    ...(raw.view === "issues" ? { view: "issues" as const } : {}),
+    ...(typeof raw.issue === "string" && raw.issue.length <= 500 ? { issue: raw.issue } : {}),
   }),
-  component: PullRequestsRouteView,
+  component: PullRequestsOrIssuesView,
 });
+
+function PullRequestsOrIssuesView() {
+  return Route.useSearch().view === "issues" ? <IssuesView /> : <PullRequestsRouteView />;
+}
 
 function PullRequestsRouteView() {
   useEscapeToGoBack();
@@ -2513,6 +2525,11 @@ function PullRequestsColumn({
               <h1 className="truncate">Pull Requests</h1>
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
+        )}
+        {condensed ? null : (
+          <div className="[-webkit-app-region:no-drag]">
+            <ListModeToggle mode="pull-requests" />
+          </div>
         )}
         <div className="min-w-0 flex-1" />
         {condensed ? (

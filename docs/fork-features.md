@@ -287,3 +287,180 @@ for per-match decisions and the absorption PR record.
   "keywords": ["PrismSettings", "prismRoles", "role preferences", "capacity", "usage", "settings"]
 }
 ```
+
+## Sidebar child-thread working state
+
+```json
+{
+  "id": "sidebar-child-working",
+  "purpose": "Show a parent thread as working, and keep it active, while its hidden child threads work.",
+  "issues": ["https://github.com/toolboxmd/t3code/issues/31"],
+  "prs": ["https://github.com/toolboxmd/t3code/pull/33"],
+  "newFiles": [
+    "apps/web/src/components/SidebarChildActivity.logic.test.ts",
+    "apps/web/src/components/SidebarChildActivity.logic.ts",
+    "packages/shared/src/childThreadActivity.test.ts",
+    "packages/shared/src/childThreadActivity.ts"
+  ],
+  "upstreamFiles": [
+    "apps/server/src/orchestration/ThreadSettlementReactor.test.ts",
+    "apps/server/src/orchestration/ThreadSettlementReactor.ts",
+    "packages/shared/package.json"
+  ],
+  "sharedFiles": ["apps/web/src/components/Sidebar.tsx"],
+  "keywords": ["backgroundLiveness", "child thread", "auto-settle", "Working", "agents working"]
+}
+```
+
+## Browse Issues
+
+```json
+{
+  "id": "issues-browse",
+  "purpose": "List GitHub Issues of all project repositories beside PRs, with filters, parent tree and a side panel.",
+  "issues": ["https://github.com/toolboxmd/t3code/issues/27"],
+  "prs": ["https://github.com/toolboxmd/t3code/pull/32"],
+  "newFiles": [
+    "apps/server/src/issues/IssueService.live.test.ts",
+    "apps/server/src/issues/IssueService.ts",
+    "apps/server/src/issues/gitHubIssues.test.ts",
+    "apps/server/src/issues/gitHubIssues.ts",
+    "apps/server/src/issues/issueRpcHandlers.ts",
+    "apps/web/src/components/issues/IssueDetailPanel.tsx",
+    "apps/web/src/components/issues/IssuesView.tsx",
+    "apps/web/src/components/issues/ListModeToggle.tsx",
+    "apps/web/src/components/issues/issueList.logic.test.ts",
+    "apps/web/src/components/issues/issueList.logic.ts",
+    "apps/web/src/components/issues/issuePaletteItems.tsx",
+    "apps/web/src/components/issues/issuePaletteStore.ts",
+    "apps/web/src/components/issues/issuePresentation.tsx",
+    "apps/web/src/state/issues.ts",
+    "packages/contracts/src/issues.ts"
+  ],
+  "upstreamFiles": [
+    "apps/server/src/auth/RpcAuthorization.ts",
+    "apps/server/src/pullRequest/GitHubPullRequestCli.ts",
+    "apps/server/src/server.ts",
+    "apps/server/src/ws.ts",
+    "apps/web/src/components/CommandPalette.tsx",
+    "apps/web/src/routes/_chat.pull-requests.tsx",
+    "apps/web/src/state/pullRequests.ts",
+    "docs/user/source-control.md",
+    "packages/contracts/src/rpc.ts"
+  ],
+  "sharedFiles": [
+    "apps/web/src/components/sidebar/SidebarChrome.tsx",
+    "packages/contracts/src/index.ts"
+  ],
+  "keywords": [
+    "issues",
+    "sub-issue",
+    "subIssues",
+    "is:issue",
+    "WsRpcGroup",
+    "RPC_REQUIRED_SCOPES",
+    "pull-requests route",
+    "command palette"
+  ]
+}
+```
+
+## Issue links
+
+```json
+{
+  "id": "issues-links",
+  "purpose": "Link GitHub Issues to threads, show them beside PRs and start a linked thread from an Issue.",
+  "issues": ["https://github.com/toolboxmd/t3code/issues/28"],
+  "prs": ["https://github.com/toolboxmd/t3code/pull/34"],
+  "newFiles": [
+    "apps/server/src/issueLinks/IssueLinks.live.test.ts",
+    "apps/server/src/issueLinks/IssueLinks.test.ts",
+    "apps/server/src/issueLinks/IssueLinks.testFixtures.ts",
+    "apps/server/src/issueLinks/IssueLinks.ts",
+    "apps/server/src/issueLinks/closingReferences.ts",
+    "apps/server/src/issueLinks/rpcHandlers.ts",
+    "apps/server/src/issueLinks/rpcScopes.ts",
+    "apps/server/src/issueLinks/threadIssueLinks.ts",
+    "apps/server/src/mcp/toolkits/issues/handlers.ts",
+    "apps/server/src/mcp/toolkits/issues/tools.ts",
+    "apps/web/src/components/issues/ThreadIssueLinks.tsx",
+    "apps/web/src/components/issues/ThreadLinksPanel.tsx",
+    "apps/web/src/components/issues/issueLinks.logic.test.ts",
+    "apps/web/src/components/issues/issueLinks.logic.ts",
+    "apps/web/src/components/issues/useStartThreadFromIssue.ts",
+    "apps/web/src/components/issues/useThreadIssueLinks.ts",
+    "apps/web/src/state/issueLinks.ts",
+    "packages/contracts/src/issueLinks.test.ts",
+    "packages/contracts/src/issueLinks.ts"
+  ],
+  "upstreamFiles": [
+    "apps/server/src/environment/ServerEnvironment.ts",
+    "apps/web/src/components/ChatView.tsx",
+    "apps/web/src/components/RightPanelTabs.tsx",
+    "packages/client-runtime/src/rpc/client.ts",
+    "packages/contracts/src/environment.ts"
+  ],
+  "sharedFiles": [
+    "apps/server/src/auth/RpcAuthorization.ts",
+    "apps/server/src/mcp/McpHttpServer.ts",
+    "apps/server/src/server.ts",
+    "apps/server/src/ws.ts",
+    "apps/web/src/components/CommandPalette.tsx",
+    "packages/contracts/src/index.ts",
+    "packages/contracts/src/rpc.ts"
+  ],
+  "keywords": [
+    "issue link",
+    "fork_thread_issue_links",
+    "link_issue",
+    "closingIssuesReferences",
+    "WsRpcGroup",
+    "RPC_REQUIRED_SCOPES",
+    "ThreadPullRequestsPanel",
+    "pullRequestsAvailable",
+    "capabilities",
+    "Linked pull requests"
+  ]
+}
+```
+
+## Issue status
+
+```json
+{
+  "id": "issues-status",
+  "purpose": "Compute each Issue's status from GitHub, links and thread activity; group and filter the Issues view by it and wire linked threads and Start thread.",
+  "issues": ["https://github.com/toolboxmd/t3code/issues/29"],
+  "prs": ["https://github.com/toolboxmd/t3code/pull/36"],
+  "newFiles": [
+    "apps/server/src/issues/issueStatus.live.test.ts",
+    "apps/server/src/issues/reviewMark.test.ts",
+    "packages/contracts/src/issueStatus.test.ts",
+    "packages/contracts/src/issueStatus.ts",
+    "apps/web/src/components/issues/issuePaletteThreads.logic.test.ts",
+    "apps/web/src/components/issues/issuePaletteThreads.logic.ts",
+    "apps/web/src/components/issues/issuePaletteThreads.ts",
+    "apps/web/src/components/issues/issueStatus.logic.test.ts",
+    "apps/web/src/components/issues/issueStatus.logic.ts",
+    "apps/web/src/components/issues/useIssueRowThreads.ts"
+  ],
+  "upstreamFiles": [],
+  "sharedFiles": [
+    "apps/server/src/environment/ServerEnvironment.ts",
+    "apps/web/src/components/CommandPalette.tsx",
+    "apps/web/src/components/sidebar/SidebarChrome.tsx",
+    "apps/web/src/routes/_chat.pull-requests.tsx",
+    "docs/user/source-control.md",
+    "packages/contracts/src/environment.ts"
+  ],
+  "keywords": [
+    "review/independent",
+    "closedByPullRequestsReferences",
+    "issueDependenciesSummary",
+    "blockedBy",
+    "statuses",
+    "pull-requests route"
+  ]
+}
+```

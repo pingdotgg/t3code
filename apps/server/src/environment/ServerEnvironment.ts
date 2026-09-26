@@ -238,6 +238,9 @@ export const make = Effect.gen(function* () {
       threadAutoSettleOptOut: true,
       threadTitleRegeneration: true,
       threadPullRequests: true,
+      // Fork: GitHub Issues (toolboxmd/t3code#27) and their thread links (toolboxmd/t3code#28).
+      issues: true,
+      issueLinks: true,
       pullRequestStackActions: true,
       threadPullRequestLinking: true,
       environmentIcon: true,

@@ -200,7 +200,7 @@ interface MergedEnvironmentQueryView<A> {
  * An environment that fails contributes nothing rather than blanking the page: the pull request
  * list is a union, and one unreachable machine should not hide the others' rows.
  */
-function createMergedEnvironmentQuery<Input, A>(
+export function createMergedEnvironmentQuery<Input, A>(
   label: string,
   atomFor: (
     target: EnvironmentQueryTarget<Input>,

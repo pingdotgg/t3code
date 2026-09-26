@@ -5,6 +5,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { childThreadActivityByParent } from "@t3tools/shared/childThreadActivity";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -24,6 +25,7 @@ import { forkParked } from "../serverActivation.ts";
 import * as OrchestrationEngine from "./Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./Services/ProjectionSnapshotQuery.ts";
 import { pullRequestMatchesProject, readSweepSnapshot } from "./ThreadPullRequestReactor.ts";
+import { parentThreadIdOf } from "../mcp/toolkits/threads/subagentThreadId.ts";
 import {
   isAutoSettlementCandidate,
   resolveAutoSettlementAt,
@@ -98,9 +100,22 @@ export const make = Effect.gen(function* () {
     const snapshot = yield* readSweepSnapshot(snapshots, threadId ?? null);
     const now = DateTime.formatIso(yield* DateTime.now);
     const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
+    // Fork (#31): child threads working, waiting on the user or with background
+    // work keep their parent active, like the thread's own live work. A full
+    // sweep filters with the threads it read; a one-thread read holds none.
+    const loadedChildActivity = childThreadActivityByParent(snapshot.threads, parentThreadIdOf);
     // A merge rechecks all candidates, including branches that discovery has
     // not linked yet. Those lookups can still have cached the PR as open.
-    const candidates = snapshot.threads.filter((thread) => isAutoSettlementCandidate(thread, now));
+    const candidates = snapshot.threads.filter(
+      (thread) => isAutoSettlementCandidate(thread, now) && !loadedChildActivity.has(thread.id),
+    );
+    // Only a thread about to settle reads every thread, once per sweep: the
+    // sweep reads skip settled threads, and a settled child's background work counts.
+    const childActivity = yield* Effect.cached(
+      snapshots
+        .getShellSnapshot()
+        .pipe(Effect.map(({ threads }) => childThreadActivityByParent(threads, parentThreadIdOf))),
+    );
 
     // Return the thread when it still needs a pull request decision. A rejected
     // dispatch skips it for this snapshot instead of retrying through a lookup.
@@ -120,6 +135,9 @@ export const make = Effect.gen(function* () {
         });
         if (settledAt === null) {
           return thread;
+        }
+        if ((yield* childActivity).has(thread.id)) {
+          return null;
         }
         const uuid = yield* crypto.randomUUIDv4;
         yield* engine.dispatch({

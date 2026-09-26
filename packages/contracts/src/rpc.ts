@@ -2,6 +2,8 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IssueRpcs } from "./issues.ts";
+import { IssueLinksRpcGroup } from "./issueLinks.ts";
 import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
@@ -1536,4 +1538,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
-);
+  // Fork: GitHub Issues (toolboxmd/t3code#27).
+  ...IssueRpcs,
+  // Fork: Issue links (toolboxmd/t3code#28).
+).merge(IssueLinksRpcGroup);

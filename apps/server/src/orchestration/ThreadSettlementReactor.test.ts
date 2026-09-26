@@ -268,10 +268,13 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const dependencies = Layer.mergeAll(
     Layer.mock(ProjectionSnapshotQuery)({
       getShellSnapshot: (readOptions) =>
-        Ref.update(snapshotReadCount, (count) => count + 1).pipe(
-          Effect.andThen(Queue.offer(snapshotReads, null)),
-          Effect.andThen(options.getShellSnapshot?.(readOptions) ?? Ref.get(snapshots)),
-        ),
+        // Fork (#31): the child-activity guard reads every thread; it is not a sweep read.
+        readOptions?.unsettledOnly !== true
+          ? Ref.get(snapshots)
+          : Ref.update(snapshotReadCount, (count) => count + 1).pipe(
+              Effect.andThen(Queue.offer(snapshotReads, null)),
+              Effect.andThen(options.getShellSnapshot?.(readOptions) ?? Ref.get(snapshots)),
+            ),
       getSnapshotSequence: () =>
         Ref.get(snapshots).pipe(Effect.map(({ snapshotSequence }) => ({ snapshotSequence }))),
       getThreadShellById: (threadId) =>
@@ -504,6 +507,70 @@ describe("ThreadSettlementReactor", () => {
           }).pipe(Effect.provide(fixture.layer));
         }),
       ),
+  );
+  it.effect("a settled child thread's background work keeps its parent active", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Fork (#31): sweep reads skip settled threads and a one-thread read holds no
+        // children, so the guard reads every thread before settling.
+        yield* TestClock.setTime(Date.parse(NOW));
+        const parentSession = {
+          threadId: ThreadId.make("parent"),
+          status: "ready" as const,
+          providerName: "Codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "full-access" as const,
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-08-20T00:00:00.000Z",
+        };
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("parent", { branch: "parent-feature", session: parentSession }),
+            makeThread("sub.parent.watcher", {
+              branch: "child-feature",
+              settledOverride: "settled",
+              settledAt: "2026-08-21T00:00:00.000Z",
+              backgroundLiveness: "monitoring",
+            }),
+          ]),
+          getShellSnapshot: () =>
+            Effect.succeed(
+              makeSnapshot([
+                makeThread("parent", { branch: "parent-feature", session: parentSession }),
+              ]),
+            ),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: 1,
+            sidebarAutoSettleOnMerge: false,
+          },
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+
+          yield* fixture.publishEvent({
+            sequence: 2,
+            eventId: EventId.make("parent-session"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("parent"),
+            occurredAt: NOW,
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            type: "thread.session-set",
+            payload: { threadId: ThreadId.make("parent"), session: parentSession },
+          });
+          assert.strictEqual(yield* Queue.take(fixture.snapshotReads), ThreadId.make("parent"));
+          yield* reactor.drain;
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
   );
   it.effect("skips the branch recheck when a terminal link would settle nothing", () =>
     Effect.scoped(
@@ -752,6 +819,32 @@ describe("ThreadSettlementReactor", () => {
           makeThread("snoozed", {
             branch: "skip-snoozed",
             snoozedUntil: "2026-08-29T00:00:00.000Z",
+          }),
+          // Fork (#31): a parent stays active while its child thread works.
+          makeThread("parent", { branch: "skip-parent" }),
+          makeThread("sub.parent.coder", {
+            branch: "skip-child",
+            session: {
+              threadId: ThreadId.make("sub.parent.coder"),
+              status: "running",
+              providerName: "Codex",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: "2026-08-20T00:00:00.000Z",
+            },
+          }),
+          // ...or waits on the user, or only monitors.
+          makeThread("input-parent", { branch: "skip-input-parent" }),
+          makeThread("sub.input-parent.coder", {
+            branch: "skip-input-child",
+            hasPendingUserInput: true,
+          }),
+          makeThread("monitor-parent", { branch: "skip-monitor-parent" }),
+          makeThread("sub.monitor-parent.watcher", {
+            branch: "skip-monitor-child",
+            backgroundLiveness: "monitoring",
           }),
         ];
         const fixture = yield* makeHarness({

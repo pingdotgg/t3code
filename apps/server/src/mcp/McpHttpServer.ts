@@ -32,6 +32,8 @@ import {
 } from "./toolkits/preview/tools.ts";
 import { PullRequestsToolkitHandlersLive } from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
+import { IssuesToolkitHandlersLive } from "./toolkits/issues/handlers.ts";
+import { IssuesToolkit } from "./toolkits/issues/tools.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { prismSnapshotRouteLayer } from "../prism/snapshotRoute.ts";
 import { PrismToolkitHandlersLive } from "./toolkits/prism/handlers.ts";
@@ -653,6 +655,11 @@ export const PullRequestsToolkitRegistrationLive = McpServer.toolkit(PullRequest
   Layer.provide(PullRequestsToolkitHandlersLive),
 );
 
+// Fork: Issue links (toolboxmd/t3code#28).
+const IssuesToolkitRegistrationLive = McpServer.toolkit(IssuesToolkit).pipe(
+  Layer.provide(IssuesToolkitHandlersLive),
+);
+
 const ThreadsToolkitRegistrationLive = McpServer.toolkit(ThreadsToolkit).pipe(
   Layer.provide(ThreadsToolkitHandlersLive),
 );
@@ -685,6 +692,7 @@ const McpTransportLive = McpServer.layerHttp({
 export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
+  IssuesToolkitRegistrationLive,
   ThreadsToolkitRegistrationLive,
   PrismToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,
