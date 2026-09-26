@@ -698,8 +698,8 @@ describe("orchestration projector", () => {
 
     const message = afterComplete.threads[0]?.messages[0];
     expect(message?.id).toBe("assistant:msg-1");
-    expect(message?.text).toBe("hello");
-    expect(message?.streaming).toBe(false);
+    expect(message).not.toHaveProperty("text");
+    expect(message).not.toHaveProperty("streaming");
     expect(message?.updatedAt).toBe(completeAt);
   });
 
@@ -905,12 +905,7 @@ describe("orchestration projector", () => {
     );
 
     const thread = afterRevert.threads[0];
-    expect(thread?.messages.map((message) => ({ role: message.role, text: message.text }))).toEqual(
-      [
-        { role: "user", text: "First edit" },
-        { role: "assistant", text: "Updated README to v2.\n" },
-      ],
-    );
+    expect(thread?.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(
       thread?.activities.map((activity) => ({ id: activity.id, turnId: activity.turnId })),
     ).toEqual([{ id: "activity-1", turnId: "turn-1" }]);

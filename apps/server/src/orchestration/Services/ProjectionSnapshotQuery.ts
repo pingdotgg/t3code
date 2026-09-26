@@ -1,3 +1,4 @@
+import type { CommandReadModel } from "../CommandReadModel.ts";
 /**
  * ProjectionSnapshotQuery - Read-model snapshot query service interface.
  *
@@ -102,7 +103,13 @@ export interface ProjectionSnapshotQueryShape {
    * Read the lightweight command snapshot used to bootstrap the in-memory
    * orchestration engine without hydrating message/activity/checkpoint bodies.
    */
-  readonly getCommandReadModel: () => Effect.Effect<
+  readonly getCommandReadModel: () => Effect.Effect<CommandReadModel, ProjectionRepositoryError>;
+
+  /** Legacy metadata response used by the project CLI and startup maintenance.
+   * Message, activity and checkpoint bodies are intentionally omitted. Never
+   * use this response to decide commands; use getCommandReadModel instead.
+   */
+  readonly getMetadataSnapshot: () => Effect.Effect<
     OrchestrationReadModel,
     ProjectionRepositoryError
   >;

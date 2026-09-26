@@ -1,8 +1,7 @@
+import type { CommandReadModel, CommandThread } from "./CommandReadModel.ts";
 import type {
   OrchestrationCommand,
   OrchestrationProject,
-  OrchestrationReadModel,
-  OrchestrationThread,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -19,28 +18,28 @@ function invariantError(commandType: string, detail: string): OrchestrationComma
 }
 
 function findThreadById(
-  readModel: OrchestrationReadModel,
+  readModel: CommandReadModel,
   threadId: ThreadId,
-): OrchestrationThread | undefined {
+): CommandThread | undefined {
   return readModel.threads.find((thread) => thread.id === threadId);
 }
 
 function findProjectById(
-  readModel: OrchestrationReadModel,
+  readModel: CommandReadModel,
   projectId: ProjectId,
 ): OrchestrationProject | undefined {
   return readModel.projects.find((project) => project.id === projectId);
 }
 
 export function listThreadsByProjectId(
-  readModel: OrchestrationReadModel,
+  readModel: CommandReadModel,
   projectId: ProjectId,
-): ReadonlyArray<OrchestrationThread> {
+): ReadonlyArray<CommandThread> {
   return readModel.threads.filter((thread) => thread.projectId === projectId);
 }
 
 export function requireProject(input: {
-  readonly readModel: OrchestrationReadModel;
+  readonly readModel: CommandReadModel;
   readonly command: OrchestrationCommand;
   readonly projectId: ProjectId;
 }): Effect.Effect<OrchestrationProject, OrchestrationCommandInvariantError> {
@@ -57,7 +56,7 @@ export function requireProject(input: {
 }
 
 export function requireProjectAbsent(input: {
-  readonly readModel: OrchestrationReadModel;
+  readonly readModel: CommandReadModel;
   readonly command: OrchestrationCommand;
   readonly projectId: ProjectId;
 }): Effect.Effect<void, OrchestrationCommandInvariantError> {
@@ -73,7 +72,7 @@ export function requireProjectAbsent(input: {
 }
 
 export function requireActiveProjectWorkspaceRootAbsent(input: {
-  readonly readModel: OrchestrationReadModel;
+  readonly readModel: CommandReadModel;
   readonly command: OrchestrationCommand;
   readonly workspaceRoot: string;
   readonly exceptProjectId?: ProjectId;
@@ -97,10 +96,10 @@ export function requireActiveProjectWorkspaceRootAbsent(input: {
 }
 
 export function requireThread(input: {
-  readonly readModel: OrchestrationReadModel;
+  readonly readModel: CommandReadModel;
   readonly command: OrchestrationCommand;
   readonly threadId: ThreadId;
-}): Effect.Effect<OrchestrationThread, OrchestrationCommandInvariantError> {
+}): Effect.Effect<CommandThread, OrchestrationCommandInvariantError> {
   const thread = findThreadById(input.readModel, input.threadId);
   if (thread) {
     return Effect.succeed(thread);
@@ -114,10 +113,10 @@ export function requireThread(input: {
 }
 
 export function requireThreadArchived(input: {
-  readonly readModel: OrchestrationReadModel;
+  readonly readModel: CommandReadModel;
   readonly command: OrchestrationCommand;
   readonly threadId: ThreadId;
-}): Effect.Effect<OrchestrationThread, OrchestrationCommandInvariantError> {
+}): Effect.Effect<CommandThread, OrchestrationCommandInvariantError> {
   return requireThread(input).pipe(
     Effect.filterOrFail(
       (thread) => thread.archivedAt !== null,
@@ -131,10 +130,10 @@ export function requireThreadArchived(input: {
 }
 
 export function requireThreadNotArchived(input: {
-  readonly readModel: OrchestrationReadModel;
+  readonly readModel: CommandReadModel;
   readonly command: OrchestrationCommand;
   readonly threadId: ThreadId;
-}): Effect.Effect<OrchestrationThread, OrchestrationCommandInvariantError> {
+}): Effect.Effect<CommandThread, OrchestrationCommandInvariantError> {
   return requireThread(input).pipe(
     Effect.filterOrFail(
       (thread) => thread.archivedAt === null,
@@ -148,7 +147,7 @@ export function requireThreadNotArchived(input: {
 }
 
 export function requireThreadAbsent(input: {
-  readonly readModel: OrchestrationReadModel;
+  readonly readModel: CommandReadModel;
   readonly command: OrchestrationCommand;
   readonly threadId: ThreadId;
 }): Effect.Effect<void, OrchestrationCommandInvariantError> {

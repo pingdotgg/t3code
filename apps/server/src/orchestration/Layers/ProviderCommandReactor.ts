@@ -1119,7 +1119,7 @@ const make = Effect.gen(function* () {
     });
   });
   const findPendingThreadTitles = Effect.fn("findPendingThreadTitles")(function* () {
-    const readModel = yield* projectionSnapshotQuery.getCommandReadModel();
+    const readModel = yield* projectionSnapshotQuery.getMetadataSnapshot();
     return {
       interruptedRegenerations: readModel.threads.flatMap((thread) => {
         const requestId = thread.titleRegeneration?.requestId;

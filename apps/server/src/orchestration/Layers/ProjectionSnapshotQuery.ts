@@ -48,6 +48,19 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import {
+  CommandActivity,
+  CommandCheckpoint,
+  CommandMessage,
+  type CommandReadModel,
+  MAX_COMMAND_MESSAGES,
+  MAX_COMMAND_ACTIVITIES,
+  MAX_COMMAND_CHECKPOINTS,
+  MAX_COMMAND_PLANS,
+  toCommandActivity,
+} from "../CommandReadModel.ts";
+import { WORKTREE_SETUP_ACTIVITY_KIND } from "@t3tools/contracts";
+
+import {
   isPersistenceError,
   toPersistenceDecodeError,
   toPersistenceSqlError,
@@ -2424,63 +2437,140 @@ pending_approval_requests AS (
         }),
       );
 
-  const getCommandReadModel: ProjectionSnapshotQueryShape["getCommandReadModel"] = () =>
+  // Select metadata in SQLite so startup never materializes conversation bodies.
+  const listCommandMessages = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: Schema.Struct({ ...CommandMessage.fields, threadId: ThreadId }),
+    execute: () => sql`
+      SELECT message_id AS id, thread_id AS "threadId", turn_id AS "turnId",
+        role, created_at AS "createdAt", updated_at AS "updatedAt"
+      FROM (
+        SELECT rowid AS insertion_order, message_id, thread_id, turn_id, role, created_at, updated_at,
+          ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY rowid DESC) AS rank
+        FROM projection_thread_messages
+      )
+      WHERE rank <= ${MAX_COMMAND_MESSAGES}
+      ORDER BY thread_id, insertion_order
+    `,
+  });
+  const listCommandCheckpoints = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: Schema.Struct({ ...CommandCheckpoint.fields, threadId: ThreadId }),
+    execute: () => sql`
+      SELECT thread_id AS "threadId", turn_id AS "turnId", checkpoint_turn_count AS "checkpointTurnCount",
+        checkpoint_ref AS "checkpointRef", checkpoint_status AS status,
+        assistant_message_id AS "assistantMessageId", completed_at AS "completedAt"
+      FROM (
+        SELECT thread_id, turn_id, checkpoint_turn_count, checkpoint_ref, checkpoint_status,
+          assistant_message_id, completed_at,
+          ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY checkpoint_turn_count DESC) AS rank
+        FROM projection_turns WHERE checkpoint_turn_count IS NOT NULL
+      )
+      WHERE rank <= ${MAX_COMMAND_CHECKPOINTS}
+      ORDER BY thread_id, checkpoint_turn_count
+    `,
+  });
+  const listCommandActivities = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: Schema.Struct({
+      ...Struct.pick(CommandActivity.fields, ["id", "kind", "turnId", "createdAt"]),
+      threadId: ThreadId,
+      sequence: Schema.NullOr(NonNegativeInt),
+      payload: Schema.fromJsonString(Schema.Unknown),
+    }),
+    execute: () => sql`
+      WITH recent AS (
+        SELECT rowid AS activity_rowid, thread_id, activity_id, kind, sequence, created_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY thread_id ORDER BY sequence DESC, created_at DESC, activity_id DESC
+          ) AS rank
+        FROM projection_thread_activities
+      ), async_lifecycle AS (
+        SELECT activity_id, kind,
+          ROW_NUMBER() OVER (
+            PARTITION BY thread_id, json_extract(payload_json, '$.requestId')
+            ORDER BY sequence DESC, created_at DESC, activity_id DESC
+          ) AS rank
+        FROM projection_thread_activities
+        WHERE (kind = 'user-input.resolved' OR
+          (kind = 'user-input.requested' AND json_extract(payload_json, '$.responseMode') = 'message'))
+          AND json_type(payload_json, '$.requestId') = 'text'
+      )
+      SELECT a.activity_id AS id, a.thread_id AS "threadId", a.turn_id AS "turnId",
+        a.kind, a.sequence, a.created_at AS "createdAt",
+        CASE WHEN a.kind IN ('approval.requested', 'approval.resolved',
+          'user-input.requested', 'user-input.resolved',
+          'provider.approval.respond.failed', 'provider.user-input.respond.failed')
+        THEN json_object('requestId', json_extract(a.payload_json, '$.requestId'),
+          'responseMode', json_extract(a.payload_json, '$.responseMode'),
+          'detail', json_extract(a.payload_json, '$.detail'))
+        ELSE '{}' END AS payload
+      FROM recent r JOIN projection_thread_activities a ON a.rowid = r.activity_rowid
+      WHERE r.rank <= ${MAX_COMMAND_ACTIVITIES} OR a.kind = ${WORKTREE_SETUP_ACTIVITY_KIND}
+        OR a.activity_id IN (
+          SELECT activity_id FROM async_lifecycle WHERE rank = 1 AND kind = 'user-input.requested'
+        )
+      ORDER BY a.thread_id, a.sequence, a.created_at, a.activity_id
+    `,
+  });
+
+  const getMetadataSnapshot: ProjectionSnapshotQueryShape["getMetadataSnapshot"] = () =>
     sql
       .withTransaction(
         Effect.all([
           listProjectRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getCommandReadModel:listProjects:query",
-                "ProjectionSnapshotQuery.getCommandReadModel:listProjects:decodeRows",
+                "ProjectionSnapshotQuery.getMetadataSnapshot:listProjects:query",
+                "ProjectionSnapshotQuery.getMetadataSnapshot:listProjects:decodeRows",
               ),
             ),
           ),
           listThreadRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getCommandReadModel:listThreads:query",
-                "ProjectionSnapshotQuery.getCommandReadModel:listThreads:decodeRows",
+                "ProjectionSnapshotQuery.getMetadataSnapshot:listThreads:query",
+                "ProjectionSnapshotQuery.getMetadataSnapshot:listThreads:decodeRows",
               ),
             ),
           ),
           listThreadProposedPlanRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getCommandReadModel:listThreadProposedPlans:query",
-                "ProjectionSnapshotQuery.getCommandReadModel:listThreadProposedPlans:decodeRows",
+                "ProjectionSnapshotQuery.getMetadataSnapshot:listThreadProposedPlans:query",
+                "ProjectionSnapshotQuery.getMetadataSnapshot:listThreadProposedPlans:decodeRows",
               ),
             ),
           ),
           listThreadPullRequestRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getCommandReadModel:listThreadPullRequests:query",
-                "ProjectionSnapshotQuery.getCommandReadModel:listThreadPullRequests:decodeRows",
+                "ProjectionSnapshotQuery.getMetadataSnapshot:listThreadPullRequests:query",
+                "ProjectionSnapshotQuery.getMetadataSnapshot:listThreadPullRequests:decodeRows",
               ),
             ),
           ),
           listThreadSessionRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getCommandReadModel:listThreadSessions:query",
-                "ProjectionSnapshotQuery.getCommandReadModel:listThreadSessions:decodeRows",
+                "ProjectionSnapshotQuery.getMetadataSnapshot:listThreadSessions:query",
+                "ProjectionSnapshotQuery.getMetadataSnapshot:listThreadSessions:decodeRows",
               ),
             ),
           ),
           listLatestTurnRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getCommandReadModel:listLatestTurns:query",
-                "ProjectionSnapshotQuery.getCommandReadModel:listLatestTurns:decodeRows",
+                "ProjectionSnapshotQuery.getMetadataSnapshot:listLatestTurns:query",
+                "ProjectionSnapshotQuery.getMetadataSnapshot:listLatestTurns:decodeRows",
               ),
             ),
           ),
           listProjectionStateRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
-                "ProjectionSnapshotQuery.getCommandReadModel:listProjectionState:query",
-                "ProjectionSnapshotQuery.getCommandReadModel:listProjectionState:decodeRows",
+                "ProjectionSnapshotQuery.getMetadataSnapshot:listProjectionState:query",
+                "ProjectionSnapshotQuery.getMetadataSnapshot:listProjectionState:decodeRows",
               ),
             ),
           ),
@@ -2661,8 +2751,68 @@ pending_approval_requests AS (
           if (isPersistenceError(error)) {
             return error;
           }
-          return toPersistenceSqlError("ProjectionSnapshotQuery.getCommandReadModel:query")(error);
+          return toPersistenceSqlError("ProjectionSnapshotQuery.getMetadataSnapshot:query")(error);
         }),
+      );
+
+  const getCommandReadModel: ProjectionSnapshotQueryShape["getCommandReadModel"] = () =>
+    sql
+      .withTransaction(
+        Effect.gen(function* () {
+          const [metadata, messages, activities, checkpoints] = yield* Effect.all([
+            getMetadataSnapshot(),
+            listCommandMessages(undefined),
+            listCommandActivities(undefined),
+            listCommandCheckpoints(undefined),
+          ]);
+          const messagesByThread = new Map<ThreadId, Array<typeof CommandMessage.Type>>();
+          const activitiesByThread = new Map<ThreadId, Array<CommandActivity>>();
+          const checkpointsByThread = new Map<ThreadId, Array<typeof CommandCheckpoint.Type>>();
+          for (const { threadId, ...message } of messages) {
+            const entries = messagesByThread.get(threadId) ?? [];
+            entries.push(message);
+            messagesByThread.set(threadId, entries);
+          }
+          for (const { threadId, sequence, ...activity } of activities) {
+            const entries = activitiesByThread.get(threadId) ?? [];
+            entries.push(
+              toCommandActivity({ ...activity, ...(sequence !== null ? { sequence } : {}) }),
+            );
+            activitiesByThread.set(threadId, entries);
+          }
+          for (const { threadId, ...checkpoint } of checkpoints) {
+            const entries = checkpointsByThread.get(threadId) ?? [];
+            entries.push(checkpoint);
+            checkpointsByThread.set(threadId, entries);
+          }
+          return {
+            ...metadata,
+            threads: metadata.threads.map((thread) => ({
+              ...thread,
+              messages: messagesByThread.get(thread.id) ?? [],
+              activities: activitiesByThread.get(thread.id) ?? [],
+              checkpoints: checkpointsByThread.get(thread.id) ?? [],
+              proposedPlans: thread.proposedPlans
+                .slice(-MAX_COMMAND_PLANS)
+                .map(({ id, turnId, createdAt, updatedAt }) => ({
+                  id,
+                  turnId,
+                  createdAt,
+                  updatedAt,
+                })),
+            })),
+          } satisfies CommandReadModel;
+        }),
+      )
+      .pipe(
+        Effect.mapError((error) =>
+          isPersistenceError(error)
+            ? error
+            : toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:decodeRows",
+              )(error),
+        ),
       );
 
   const getShellSnapshot: ProjectionSnapshotQueryShape["getShellSnapshot"] = (options) => {
@@ -3838,6 +3988,7 @@ pending_approval_requests AS (
 
   return {
     getCommandReadModel,
+    getMetadataSnapshot,
     getUserInputActivity,
     listActivitiesByKind,
     getSnapshot,

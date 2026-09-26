@@ -1,7 +1,6 @@
 import type {
   OrchestrationEvent,
   OrchestrationProject,
-  OrchestrationReadModel,
   ThreadId,
   ThreadLinkedPullRequest,
   ThreadPullRequestKey,
@@ -9,10 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   isImportedAgentSessionMessageId,
-  OrchestrationCheckpointSummary,
-  OrchestrationMessage,
   OrchestrationSession,
-  OrchestrationThread,
   WORKTREE_SETUP_ACTIVITY_KIND,
 } from "@t3tools/contracts";
 import {
@@ -23,7 +19,19 @@ import {
 import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as Predicate from "effect/Predicate";
+
+import {
+  CommandReadModel,
+  CommandThread,
+  CommandMessage,
+  CommandCheckpoint,
+  CommandProposedPlan,
+  MAX_COMMAND_MESSAGES,
+  MAX_COMMAND_ACTIVITIES,
+  MAX_COMMAND_CHECKPOINTS,
+  MAX_COMMAND_PLANS,
+  toCommandActivity,
+} from "./CommandReadModel.ts";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
 import {
@@ -56,21 +64,18 @@ import {
   ThreadTurnDiffCompletedPayload,
 } from "./Schemas.ts";
 
-type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
-const MAX_THREAD_MESSAGES = 2_000;
-const MAX_THREAD_CHECKPOINTS = 500;
+type ThreadPatch = Partial<Omit<CommandThread, "id" | "projectId">>;
 
 // Async questions can stay open while the agent produces more activity.
 // Match the database snapshot's pending-question retention.
-function retainThreadActivities(activities: OrchestrationThread["activities"]) {
-  const recentStart = activities.length - 500;
+function retainThreadActivities(activities: CommandThread["activities"]) {
+  const recentStart = activities.length - MAX_COMMAND_ACTIVITIES;
   if (recentStart <= 0) return activities;
-  const pending = new Map<string, OrchestrationThread["activities"][number]>();
+  const pending = new Map<string, CommandThread["activities"][number]>();
   for (const activity of activities) {
-    if (!Predicate.isObject(activity.payload)) continue;
-    const requestId = activity.payload.requestId;
-    if (typeof requestId !== "string") continue;
-    if (activity.kind === "user-input.requested" && activity.payload.responseMode === "message") {
+    const { requestId } = activity;
+    if (requestId === null) continue;
+    if (activity.kind === "user-input.requested" && activity.responseMode === "message") {
       pending.set(requestId, activity);
     } else if (activity.kind === "user-input.resolved") {
       pending.delete(requestId);
@@ -81,9 +86,8 @@ function retainThreadActivities(activities: OrchestrationThread["activities"]) {
     (activity, index) =>
       index >= recentStart ||
       pendingActivities.has(activity) ||
-      // The worktree setup record is upserted under one id for the thread's
-      // whole life and is the only durable copy of a running setup; an async
-      // setup script can outlast a chatty first turn.
+      // Preserve the existing exception for the thread's setup record.
+      // Its body stays in SQL; only its activity metadata lives here.
       activity.kind === WORKTREE_SETUP_ACTIVITY_KIND,
   );
 }
@@ -120,20 +124,20 @@ function settledTurnStateForSessionStatus(
 // Runs for every thread event (including streaming deltas) against every
 // thread the server has ever seen, so copy the array rather than map it.
 function updateThread(
-  threads: ReadonlyArray<OrchestrationThread>,
+  threads: ReadonlyArray<CommandThread>,
   threadId: ThreadId,
   patch: ThreadPatch,
-): ReadonlyArray<OrchestrationThread> {
+): ReadonlyArray<CommandThread> {
   const index = threads.findIndex((thread) => thread.id === threadId);
   return index === -1 ? threads : patchThreadAt(threads, index, patch);
 }
 
 /** For callers that already located the thread and must not scan again. */
 function patchThreadAt(
-  threads: ReadonlyArray<OrchestrationThread>,
+  threads: ReadonlyArray<CommandThread>,
   index: number,
   patch: ThreadPatch,
-): ReadonlyArray<OrchestrationThread> {
+): ReadonlyArray<CommandThread> {
   const next = threads.slice();
   next[index] = { ...threads[index]!, ...patch };
   return next;
@@ -141,10 +145,10 @@ function patchThreadAt(
 
 /** Patch that swaps a thread's links and re-derives the legacy single-PR field from them. */
 function pullRequestsPatch(
-  thread: Pick<OrchestrationThread, "projectId">,
+  thread: Pick<CommandThread, "projectId">,
   pullRequests: ReadonlyArray<ThreadPullRequestLink>,
-  projects: OrchestrationReadModel["projects"],
-): Pick<OrchestrationThread, "pullRequests" | "linkedPullRequest"> {
+  projects: CommandReadModel["projects"],
+): Pick<CommandThread, "pullRequests" | "linkedPullRequest"> {
   return {
     pullRequests,
     linkedPullRequest: legacyLinkedPullRequestOf(
@@ -191,7 +195,7 @@ function legacyPullRequestHost(
 }
 
 function legacyLinkToPullRequests(
-  thread: Pick<OrchestrationThread, "pullRequests">,
+  thread: Pick<CommandThread, "pullRequests">,
   project: OrchestrationProject | undefined,
   linked: ThreadLinkedPullRequest | null,
   linkedAt: string,
@@ -222,10 +226,10 @@ function decodeForEvent<A>(
 }
 
 function retainThreadMessagesAfterRevert(
-  messages: ReadonlyArray<OrchestrationMessage>,
+  messages: ReadonlyArray<CommandMessage>,
   retainedTurnIds: ReadonlySet<string>,
   turnCount: number,
-): ReadonlyArray<OrchestrationMessage> {
+): ReadonlyArray<CommandMessage> {
   const retainedMessageIds = new Set<string>();
   for (const message of messages) {
     if (message.role === "system" || isImportedAgentSessionMessageId(message.id)) {
@@ -293,26 +297,26 @@ function retainThreadMessagesAfterRevert(
 }
 
 function retainThreadActivitiesAfterRevert(
-  activities: ReadonlyArray<OrchestrationThread["activities"][number]>,
+  activities: ReadonlyArray<CommandThread["activities"][number]>,
   retainedTurnIds: ReadonlySet<string>,
-): ReadonlyArray<OrchestrationThread["activities"][number]> {
+): ReadonlyArray<CommandThread["activities"][number]> {
   return activities.filter(
     (activity) => activity.turnId === null || retainedTurnIds.has(activity.turnId),
   );
 }
 
 function retainThreadProposedPlansAfterRevert(
-  proposedPlans: ReadonlyArray<OrchestrationThread["proposedPlans"][number]>,
+  proposedPlans: ReadonlyArray<CommandThread["proposedPlans"][number]>,
   retainedTurnIds: ReadonlySet<string>,
-): ReadonlyArray<OrchestrationThread["proposedPlans"][number]> {
+): ReadonlyArray<CommandThread["proposedPlans"][number]> {
   return proposedPlans.filter(
     (proposedPlan) => proposedPlan.turnId === null || retainedTurnIds.has(proposedPlan.turnId),
   );
 }
 
 function compareThreadActivities(
-  left: OrchestrationThread["activities"][number],
-  right: OrchestrationThread["activities"][number],
+  left: CommandThread["activities"][number],
+  right: CommandThread["activities"][number],
 ): number {
   if (left.sequence !== undefined && right.sequence !== undefined) {
     if (left.sequence !== right.sequence) {
@@ -327,7 +331,7 @@ function compareThreadActivities(
   return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
 }
 
-export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
+export function createEmptyReadModel(nowIso: string): CommandReadModel {
   return {
     snapshotSequence: 0,
     projects: [],
@@ -337,10 +341,10 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
 }
 
 export function projectEvent(
-  model: OrchestrationReadModel,
+  model: CommandReadModel,
   event: OrchestrationEvent,
-): Effect.Effect<OrchestrationReadModel, OrchestrationProjectorDecodeError> {
-  const nextBase: OrchestrationReadModel = {
+): Effect.Effect<CommandReadModel, OrchestrationProjectorDecodeError> {
+  const nextBase: CommandReadModel = {
     ...model,
     snapshotSequence: event.sequence,
     updatedAt: event.occurredAt,
@@ -434,8 +438,8 @@ export function projectEvent(
           event.type,
           "payload",
         );
-        const thread: OrchestrationThread = yield* decodeForEvent(
-          OrchestrationThread,
+        const thread: CommandThread = yield* decodeForEvent(
+          CommandThread,
           {
             id: payload.threadId,
             projectId: payload.projectId,
@@ -460,6 +464,7 @@ export function projectEvent(
             snoozedAt: null,
             deletedAt: null,
             messages: [],
+            proposedPlans: [],
             activities: [],
             checkpoints: [],
             session: null,
@@ -787,16 +792,12 @@ export function projectEvent(
           return nextBase;
         }
 
-        const message: OrchestrationMessage = yield* decodeForEvent(
-          OrchestrationMessage,
+        const message: CommandMessage = yield* decodeForEvent(
+          CommandMessage,
           {
             id: payload.messageId,
             role: payload.role,
-            text: payload.text,
-            ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
-            ...(payload.context !== undefined ? { context: payload.context } : {}),
             turnId: payload.turnId,
-            streaming: payload.streaming,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
           },
@@ -810,23 +811,13 @@ export function projectEvent(
               entry.id === message.id
                 ? {
                     ...entry,
-                    text: message.streaming
-                      ? `${entry.text}${message.text}`
-                      : message.text.length > 0
-                        ? message.text
-                        : entry.text,
-                    streaming: message.streaming,
                     updatedAt: message.updatedAt,
                     turnId: message.turnId,
-                    ...(message.attachments !== undefined
-                      ? { attachments: message.attachments }
-                      : {}),
-                    ...(message.context !== undefined ? { context: message.context } : {}),
                   }
                 : entry,
             )
           : [...thread.messages, message];
-        const cappedMessages = messages.slice(-MAX_THREAD_MESSAGES);
+        const cappedMessages = messages.slice(-MAX_COMMAND_MESSAGES);
 
         return {
           ...nextBase,
@@ -915,13 +906,18 @@ export function projectEvent(
 
         const proposedPlans = [
           ...thread.proposedPlans.filter((entry) => entry.id !== payload.proposedPlan.id),
-          payload.proposedPlan,
+          yield* decodeForEvent(
+            CommandProposedPlan,
+            payload.proposedPlan,
+            event.type,
+            "proposedPlan",
+          ),
         ]
           .toSorted(
             (left, right) =>
               left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
           )
-          .slice(-200);
+          .slice(-MAX_COMMAND_PLANS);
 
         return {
           ...nextBase,
@@ -946,13 +942,12 @@ export function projectEvent(
         }
 
         const checkpoint = yield* decodeForEvent(
-          OrchestrationCheckpointSummary,
+          CommandCheckpoint,
           {
             turnId: payload.turnId,
             checkpointTurnCount: payload.checkpointTurnCount,
             checkpointRef: payload.checkpointRef,
             status: payload.status,
-            files: payload.files,
             assistantMessageId: payload.assistantMessageId,
             completedAt: payload.completedAt,
           },
@@ -975,7 +970,7 @@ export function projectEvent(
           checkpoint,
         ]
           .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
-          .slice(-MAX_THREAD_CHECKPOINTS);
+          .slice(-MAX_COMMAND_CHECKPOINTS);
 
         // Mid-turn diff updates produce placeholder checkpoints; record the
         // checkpoint, but don't settle a turn its session is still running.
@@ -1022,17 +1017,17 @@ export function projectEvent(
           const checkpoints = thread.checkpoints
             .filter((entry) => entry.checkpointTurnCount <= payload.turnCount)
             .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
-            .slice(-MAX_THREAD_CHECKPOINTS);
+            .slice(-MAX_COMMAND_CHECKPOINTS);
           const retainedTurnIds = new Set(checkpoints.map((checkpoint) => checkpoint.turnId));
           const messages = retainThreadMessagesAfterRevert(
             thread.messages,
             retainedTurnIds,
             payload.turnCount,
-          ).slice(-MAX_THREAD_MESSAGES);
+          ).slice(-MAX_COMMAND_MESSAGES);
           const proposedPlans = retainThreadProposedPlansAfterRevert(
             thread.proposedPlans,
             retainedTurnIds,
-          ).slice(-200);
+          ).slice(-MAX_COMMAND_PLANS);
           const activities = retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds);
 
           const latestCheckpoint = checkpoints.at(-1) ?? null;
@@ -1079,7 +1074,7 @@ export function projectEvent(
           const activities = retainThreadActivities(
             [
               ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
-              payload.activity,
+              toCommandActivity(payload.activity),
             ].toSorted(compareThreadActivities),
           );
 

@@ -1,10 +1,5 @@
-import {
-  CommandId,
-  ProjectId,
-  ProviderInstanceId,
-  ThreadId,
-  type OrchestrationReadModel,
-} from "@t3tools/contracts";
+import type { CommandReadModel } from "./CommandReadModel.ts";
+import { CommandId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -13,7 +8,7 @@ import { decideOrchestrationCommand } from "./decider.ts";
 
 const UPDATED_AT = "2026-01-01T00:00:00.000Z";
 
-const readModel: OrchestrationReadModel = {
+const readModel: CommandReadModel = {
   snapshotSequence: 0,
   projects: [],
   threads: [

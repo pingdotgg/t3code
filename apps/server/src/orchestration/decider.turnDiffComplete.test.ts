@@ -1,3 +1,4 @@
+import type { CommandReadModel } from "./CommandReadModel.ts";
 import {
   CheckpointRef,
   CommandId,
@@ -7,7 +8,6 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationCheckpointSummary,
-  type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -54,7 +54,7 @@ function makeReadModel(checkpoints: ReadonlyArray<OrchestrationCheckpointSummary
       },
     ],
     updatedAt: NOW,
-  } satisfies OrchestrationReadModel;
+  } satisfies CommandReadModel;
 }
 
 function makeCheckpoint(status: OrchestrationCheckpointSummary["status"]) {

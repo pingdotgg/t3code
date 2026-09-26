@@ -1,7 +1,7 @@
+import type { CommandReadModel } from "../CommandReadModel.ts";
 import type {
   OrchestrationClientOrigin,
   OrchestrationEvent,
-  OrchestrationReadModel,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -97,9 +97,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
 
   const projectEventsOntoReadModel = (
-    baseReadModel: OrchestrationReadModel,
+    baseReadModel: CommandReadModel,
     events: ReadonlyArray<OrchestrationEvent>,
-  ): Effect.Effect<OrchestrationReadModel, OrchestrationProjectorDecodeError, never> =>
+  ): Effect.Effect<CommandReadModel, OrchestrationProjectorDecodeError, never> =>
     Effect.gen(function* () {
       let nextReadModel = baseReadModel;
       for (const event of events) {
@@ -235,8 +235,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           }
         }
 
-        // Command snapshots omit activities at startup and cap them while running.
-        // Read this request's durable state before deciding how to send the answer.
+        // The command model only keeps request metadata in a bounded window.
+        // Read the durable question body before deciding how to send the answer.
         const userInputActivity =
           envelope.command.type === "thread.user-input.respond" ||
           envelope.command.type === "thread.user-input.dismiss"

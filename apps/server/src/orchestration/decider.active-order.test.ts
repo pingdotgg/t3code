@@ -1,11 +1,10 @@
+import type { CommandReadModel, CommandThread } from "./CommandReadModel.ts";
 import {
   CommandId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   type OrchestrationCommand,
-  type OrchestrationReadModel,
-  type OrchestrationThread,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -21,7 +20,7 @@ const SNOOZED_AT = "1969-12-31T00:00:00.000Z";
 const FUTURE_WAKE = "1970-01-02T00:00:00.000Z";
 const THREAD_ID = ThreadId.make("thread-1");
 
-function makeReadModel(overrides: Partial<OrchestrationThread> = {}): OrchestrationReadModel {
+function makeReadModel(overrides: Partial<CommandThread> = {}): CommandReadModel {
   return {
     snapshotSequence: 0,
     projects: [],
@@ -104,7 +103,7 @@ it.layer(NodeServices.layer)("active thread ordering", (it) => {
     ["deleted", { deletedAt: NOW }],
     ["pinned", { pinnedAt: NOW }],
     ["settled", { settledOverride: "settled", settledAt: NOW }],
-  ] satisfies ReadonlyArray<readonly [string, Partial<OrchestrationThread>]>) {
+  ] satisfies ReadonlyArray<readonly [string, Partial<CommandThread>]>) {
     it.effect(`rejects reordering a ${label} thread`, () =>
       Effect.gen(function* () {
         const error = yield* decideOrchestrationCommand({

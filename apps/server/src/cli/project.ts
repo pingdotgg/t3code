@@ -337,8 +337,8 @@ const dispatchLiveOrchestrationCommand = (
 const getOfflineSnapshot = Effect.fn("getOfflineSnapshot")(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   // Project commands only read the project list, so use the lightweight
-  // command read model instead of hydrating every thread body in the database.
-  return yield* projectionSnapshotQuery.getCommandReadModel();
+  // metadata snapshot instead of hydrating every thread body in the database.
+  return yield* projectionSnapshotQuery.getMetadataSnapshot();
 });
 
 const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecutionMode")(

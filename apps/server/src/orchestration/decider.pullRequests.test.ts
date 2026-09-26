@@ -1,3 +1,4 @@
+import type { CommandReadModel } from "./CommandReadModel.ts";
 import {
   CommandId,
   ProjectId,
@@ -5,7 +6,6 @@ import {
   ThreadId,
   OrchestrationEvent,
   OrchestrationCommand,
-  type OrchestrationReadModel,
   type ThreadPullRequestLink,
   type ThreadPullRequestSnapshot,
 } from "@t3tools/contracts";
@@ -50,7 +50,7 @@ function makeLink(overrides: Partial<ThreadPullRequestLink> = {}): ThreadPullReq
   };
 }
 
-function makeReadModel(pullRequests: ReadonlyArray<ThreadPullRequestLink>): OrchestrationReadModel {
+function makeReadModel(pullRequests: ReadonlyArray<ThreadPullRequestLink>): CommandReadModel {
   return {
     snapshotSequence: 0,
     projects: [
