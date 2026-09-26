@@ -1,5 +1,6 @@
 import { memo, type PointerEventHandler } from "react";
 import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
+import { DEFAULT_VCS_TERMINOLOGY } from "@t3tools/shared/vcs";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
@@ -27,6 +28,8 @@ interface ComposerPrimaryActionsProps {
   isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
   isPreparingWorktree: boolean;
+  /** The project's VCS noun for a worktree; Git's is the fallback while status is unknown. */
+  workspaceNoun?: string;
   hasSendableContent: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
@@ -72,6 +75,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isConnecting,
   isEnvironmentUnavailable,
   isPreparingWorktree,
+  workspaceNoun = DEFAULT_VCS_TERMINOLOGY.workspaceNoun,
   hasSendableContent,
   preserveComposerFocusOnPointerDown = false,
   onPreviousPendingQuestion,
@@ -236,7 +240,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             : isConnecting
               ? "Connecting"
               : isPreparingWorktree
-                ? "Preparing worktree"
+                ? `Preparing ${workspaceNoun}`
                 : isSendBusy
                   ? "Sending"
                   : isRunning

@@ -47,6 +47,10 @@
       "types": "./src/githubMedia.ts",
       "import": "./src/githubMedia.ts"
     },
+    "./vcs": {
+      "types": "./src/vcs.ts",
+      "import": "./src/vcs.ts"
+    },
     "./sourceControl": {
       "types": "./src/sourceControl.ts",
       "import": "./src/sourceControl.ts"

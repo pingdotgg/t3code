@@ -54,7 +54,7 @@ describe("CheckpointDiffQuery.layer", () => {
       }> = [];
 
       const checkpointStore: CheckpointStore.CheckpointStore["Service"] = {
-        isGitRepository: () => Effect.succeed(true),
+        supportsCheckpoints: () => Effect.succeed(true),
         captureCheckpoint: () => Effect.void,
         hasCheckpointRef: () => Effect.succeed(true),
         restoreCheckpoint: () => Effect.succeed(true),
@@ -172,7 +172,7 @@ describe("CheckpointDiffQuery.layer", () => {
       });
 
       const checkpointStore: CheckpointStore.CheckpointStore["Service"] = {
-        isGitRepository: () => Effect.succeed(true),
+        supportsCheckpoints: () => Effect.succeed(true),
         captureCheckpoint: () => Effect.void,
         hasCheckpointRef: () => Effect.succeed(true),
         restoreCheckpoint: () => Effect.succeed(true),
@@ -270,7 +270,7 @@ describe("CheckpointDiffQuery.layer", () => {
       });
 
       const checkpointStore: CheckpointStore.CheckpointStore["Service"] = {
-        isGitRepository: () => Effect.succeed(true),
+        supportsCheckpoints: () => Effect.succeed(true),
         captureCheckpoint: () => Effect.void,
         hasCheckpointRef: () => Effect.succeed(true),
         restoreCheckpoint: () => Effect.succeed(true),
@@ -348,7 +348,7 @@ describe("CheckpointDiffQuery.layer", () => {
       });
 
       const checkpointStore: CheckpointStore.CheckpointStore["Service"] = {
-        isGitRepository: () => Effect.succeed(true),
+        supportsCheckpoints: () => Effect.succeed(true),
         captureCheckpoint: () => Effect.void,
         hasCheckpointRef: () =>
           Effect.sync(() => {
@@ -415,7 +415,7 @@ describe("CheckpointDiffQuery.layer", () => {
       const threadId = ThreadId.make("thread-missing");
 
       const checkpointStore: CheckpointStore.CheckpointStore["Service"] = {
-        isGitRepository: () => Effect.succeed(true),
+        supportsCheckpoints: () => Effect.succeed(true),
         captureCheckpoint: () => Effect.void,
         hasCheckpointRef: () => Effect.succeed(true),
         restoreCheckpoint: () => Effect.succeed(true),

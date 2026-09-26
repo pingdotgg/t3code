@@ -270,7 +270,7 @@ describe("ProviderRuntimeIngestion", () => {
     serverSettings?: Partial<ServerSettings>;
     threadTitle?: string;
     workspaceSubdirectory?: string;
-    isGitRepository?: CheckpointStore.CheckpointStore["Service"]["isGitRepository"];
+    supportsCheckpoints?: CheckpointStore.CheckpointStore["Service"]["supportsCheckpoints"];
   }) {
     const repositoryRoot = makeTempDir("t3-provider-project-");
     NodeChildProcess.execFileSync("git", ["init", "--initial-branch=main"], {
@@ -336,7 +336,7 @@ describe("ProviderRuntimeIngestion", () => {
           CheckpointStore.CheckpointStore,
           Effect.map(CheckpointStore.CheckpointStore, (store) => ({
             ...store,
-            isGitRepository: options?.isGitRepository ?? store.isGitRepository,
+            supportsCheckpoints: options?.supportsCheckpoints ?? store.supportsCheckpoints,
           })),
         ).pipe(Layer.provide(CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistry.layer)))),
       ),
@@ -4099,7 +4099,7 @@ describe("ProviderRuntimeIngestion", () => {
       const releaseDetection = yield* Deferred.make<boolean>();
       const harness = yield* Effect.promise(() =>
         createHarness({
-          isGitRepository: () =>
+          supportsCheckpoints: () =>
             Deferred.succeed(detectionStarted, undefined).pipe(
               Effect.andThen(Deferred.await(releaseDetection)),
             ),

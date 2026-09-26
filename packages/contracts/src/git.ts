@@ -212,6 +212,18 @@ const VcsStatusChangeRequest = Schema.Struct({
 
 const VcsStatusLocalShape = {
   isRepo: Schema.Boolean,
+  /**
+   * Version control system backing this workspace. Emitted only when it is not Git, so existing
+   * payloads are unchanged; absent means Git. `unsupportedReason` is set when the detected system
+   * is present but unusable (a non-colocated Jujutsu repository, or a `jj` below the supported
+   * minimum). Its presence is the signal and the string is the user-facing reason.
+   */
+  vcs: Schema.optional(
+    Schema.Struct({
+      kind: VcsDriverKind,
+      unsupportedReason: Schema.optional(TrimmedNonEmptyStringSchema),
+    }),
+  ),
   sourceControlProvider: Schema.optional(SourceControlProviderInfo),
   hasPrimaryRemote: Schema.Boolean,
   isDefaultRef: Schema.Boolean,
@@ -288,7 +300,7 @@ export const GitPreparePullRequestThreadResult = Schema.Struct({
   branch: TrimmedNonEmptyStringSchema,
   worktreePath: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
   /**
-   * False when the checkout could not be brought to the pull request head — a reused worktree
+   * False when the checkout could not be brought to the pull request head. A reused worktree
    * holding local commits or uncommitted changes keeps its own state, so the code being handed
    * over is older than the pull request.
    */

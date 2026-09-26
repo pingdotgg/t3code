@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo } from "react";
 import * as DateTime from "effect/DateTime";
 
-import type { EnvironmentId, OrchestrationCheckpointSummary, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationCheckpointSummary,
+  ThreadId,
+  VcsDriverKind,
+} from "@t3tools/contracts";
 
 import { useCheckpointDiff } from "../../state/queries";
 import { useEnvironmentQuery } from "../../state/query";
@@ -28,8 +33,10 @@ export function useReviewSections(input: {
   readonly environmentId?: EnvironmentId;
   readonly threadId?: ThreadId;
   readonly reviewCache: ReviewCacheForThread;
+  readonly vcsKind?: VcsDriverKind | null;
 }) {
   const { environmentId, reviewCache, threadId } = input;
+  const vcsKind = input.vcsKind ?? null;
   const enabled = input.enabled ?? true;
   const selectedThread = useSelectedThreadDetail();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
@@ -71,6 +78,7 @@ export function useReviewSections(input: {
         turnDiffById: reviewCache.turnDiffById,
         loadingTurnIds,
         loadingGitSections: diffPreview.isPending,
+        vcsKind,
       }),
     [
       diffPreview.isPending,
@@ -79,6 +87,7 @@ export function useReviewSections(input: {
       readyCheckpoints,
       reviewCache.gitSections,
       reviewCache.turnDiffById,
+      vcsKind,
     ],
   );
   const selectedSection = useMemo(

@@ -233,7 +233,7 @@ const make = Effect.gen(function* () {
     if (!cwd) {
       return undefined;
     }
-    if (!(yield* checkpointStore.isGitRepository(cwd))) {
+    if (!(yield* checkpointStore.supportsCheckpoints(cwd))) {
       return undefined;
     }
     return cwd;

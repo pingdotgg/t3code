@@ -71,9 +71,12 @@ export function runVcsDriverContractSuite<R, E>(input: VcsDriverContractSuiteInp
           yield* input.fixture.writeFile(cwd, "src/index.ts", "export const value = 1;\n");
           const identity = yield* driver.detectRepository(cwd);
           assert.equal(identity?.kind, input.kind);
+          // `jj root` reports the realpath, so macOS `/var` -> `/private/var` breaks a raw compare.
+          const fileSystem = yield* FileSystem.FileSystem;
+          const resolvedCwd = yield* fileSystem.realPath(cwd);
           assert.isTrue(
             normalizePathForComparison(identity?.rootPath ?? "").endsWith(
-              normalizePathForComparison(cwd),
+              normalizePathForComparison(resolvedCwd),
             ),
           );
           assert.equal(identity?.freshness.source, "live-local");

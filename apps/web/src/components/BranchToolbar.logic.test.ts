@@ -1,3 +1,4 @@
+import { GIT_VCS_TERMINOLOGY, JJ_VCS_TERMINOLOGY } from "@t3tools/shared/vcs";
 import { EnvironmentId, type VcsRef } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -101,12 +102,15 @@ describe("resolvePreviousWorktreeSeed", () => {
 
 describe("resolvePreviousWorktreeLabel", () => {
   it("includes the branch when known", () => {
-    expect(resolvePreviousWorktreeLabel({ branch: "t3/fix-thing", worktreePath: "/wt" })).toBe(
-      "Previous worktree (t3/fix-thing)",
-    );
-    expect(resolvePreviousWorktreeLabel({ branch: null, worktreePath: "/wt" })).toBe(
-      "Previous worktree",
-    );
+    expect(
+      resolvePreviousWorktreeLabel(
+        { branch: "t3/fix-thing", worktreePath: "/wt" },
+        GIT_VCS_TERMINOLOGY,
+      ),
+    ).toBe("Previous worktree (t3/fix-thing)");
+    expect(
+      resolvePreviousWorktreeLabel({ branch: null, worktreePath: "/wt" }, GIT_VCS_TERMINOLOGY),
+    ).toBe("Previous worktree");
   });
 });
 
@@ -178,6 +182,22 @@ describe("resolveBranchToolbarValue", () => {
 });
 
 describe("resolveBranchTriggerLabel", () => {
+  it("names the empty state with the project's ref noun", () => {
+    const input = {
+      activeWorktreePath: null,
+      effectiveEnvMode: "worktree" as const,
+      resolvedActiveBranch: null,
+      resolvedActiveBranchIsRemote: null,
+      startFromOrigin: true,
+    };
+    expect(resolveBranchTriggerLabel({ ...input, terminology: GIT_VCS_TERMINOLOGY })).toBe(
+      "Select branch",
+    );
+    expect(resolveBranchTriggerLabel({ ...input, terminology: JJ_VCS_TERMINOLOGY })).toBe(
+      "Select bookmark",
+    );
+  });
+
   it("shows the origin ref when a new worktree will start from origin", () => {
     expect(
       resolveBranchTriggerLabel({
@@ -186,6 +206,7 @@ describe("resolveBranchTriggerLabel", () => {
         resolvedActiveBranch: "main",
         resolvedActiveBranchIsRemote: false,
         startFromOrigin: true,
+        terminology: GIT_VCS_TERMINOLOGY,
       }),
     ).toBe("From origin/main");
   });
@@ -198,6 +219,7 @@ describe("resolveBranchTriggerLabel", () => {
         resolvedActiveBranch: "feature/demo",
         resolvedActiveBranchIsRemote: false,
         startFromOrigin: true,
+        terminology: GIT_VCS_TERMINOLOGY,
       }),
     ).toBe("From origin/feature/demo");
   });
@@ -210,6 +232,7 @@ describe("resolveBranchTriggerLabel", () => {
         resolvedActiveBranch: "main",
         resolvedActiveBranchIsRemote: false,
         startFromOrigin: false,
+        terminology: GIT_VCS_TERMINOLOGY,
       }),
     ).toBe("From main");
   });
@@ -222,6 +245,7 @@ describe("resolveBranchTriggerLabel", () => {
         resolvedActiveBranch: "origin/feature/demo",
         resolvedActiveBranchIsRemote: true,
         startFromOrigin: true,
+        terminology: GIT_VCS_TERMINOLOGY,
       }),
     ).toBe("From origin/feature/demo");
   });
@@ -234,6 +258,7 @@ describe("resolveBranchTriggerLabel", () => {
         resolvedActiveBranch: "upstream/feature/demo",
         resolvedActiveBranchIsRemote: true,
         startFromOrigin: true,
+        terminology: GIT_VCS_TERMINOLOGY,
       }),
     ).toBe("From upstream/feature/demo");
   });
@@ -246,6 +271,7 @@ describe("resolveBranchTriggerLabel", () => {
         resolvedActiveBranch: "main",
         resolvedActiveBranchIsRemote: false,
         startFromOrigin: true,
+        terminology: GIT_VCS_TERMINOLOGY,
       }),
     ).toBe("main");
     expect(
@@ -255,8 +281,9 @@ describe("resolveBranchTriggerLabel", () => {
         resolvedActiveBranch: null,
         resolvedActiveBranchIsRemote: null,
         startFromOrigin: true,
+        terminology: GIT_VCS_TERMINOLOGY,
       }),
-    ).toBe("Select ref");
+    ).toBe("Select branch");
   });
 
   it("does not fabricate an origin ref while branch metadata is loading", () => {
@@ -267,6 +294,7 @@ describe("resolveBranchTriggerLabel", () => {
         resolvedActiveBranch: "upstream/feature/demo",
         resolvedActiveBranchIsRemote: null,
         startFromOrigin: true,
+        terminology: GIT_VCS_TERMINOLOGY,
       }),
     ).toBe("From upstream/feature/demo");
   });
@@ -511,18 +539,20 @@ describe("resolveEffectiveEnvMode", () => {
 
 describe("resolveEnvModeLabel", () => {
   it("uses explicit workspace labels", () => {
-    expect(resolveEnvModeLabel("local")).toBe("Current checkout");
-    expect(resolveEnvModeLabel("worktree")).toBe("New worktree");
+    expect(resolveEnvModeLabel("local", GIT_VCS_TERMINOLOGY)).toBe("Current checkout");
+    expect(resolveEnvModeLabel("worktree", GIT_VCS_TERMINOLOGY)).toBe("New worktree");
   });
 });
 
 describe("resolveCurrentWorkspaceLabel", () => {
   it("describes the main repo checkout when no worktree path is active", () => {
-    expect(resolveCurrentWorkspaceLabel(null)).toBe("Current checkout");
+    expect(resolveCurrentWorkspaceLabel(null, GIT_VCS_TERMINOLOGY)).toBe("Current checkout");
   });
 
   it("describes the active checkout as a worktree when one is attached", () => {
-    expect(resolveCurrentWorkspaceLabel("/repo/.t3/worktrees/feature-a")).toBe("Current worktree");
+    expect(resolveCurrentWorkspaceLabel("/repo/.t3/worktrees/feature-a", GIT_VCS_TERMINOLOGY)).toBe(
+      "Current worktree",
+    );
   });
 });
 

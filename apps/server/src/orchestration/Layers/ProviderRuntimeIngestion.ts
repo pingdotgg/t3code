@@ -2698,7 +2698,7 @@ const make = Effect.gen(function* () {
       .getThreadCheckpointContext(event.threadId)
       .pipe(Effect.map(Option.getOrUndefined));
     const workspaceCwd = checkpointContext?.worktreePath ?? checkpointContext?.workspaceRoot;
-    if (!workspaceCwd || !(yield* checkpointStore.isGitRepository(workspaceCwd))) return;
+    if (!workspaceCwd || !(yield* checkpointStore.supportsCheckpoints(workspaceCwd))) return;
     yield* worker.enqueue({ source: "diff", event });
   });
   const diffWorker = yield* makeDrainableWorker((event: ProviderDiffEvent) =>
