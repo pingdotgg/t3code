@@ -81,7 +81,7 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
 
 const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
 // 3 s + 7 s matches the default 10 s ticket budget. That leaves at least 5 s of the
-// supervisor's 15 s setup deadline for the descriptor check, websocket open, and initial config.
+// supervisor's 15 s setup deadline for the descriptor check and websocket open.
 const CACHED_ENDPOINT_SOCKET_RETRY_TIMEOUT_MS = 7_000;
 const BEARER_DESCRIPTOR_CACHE_TTL_MS = 10_000;
 const DPOP_AUTHORIZATION_TIMEOUT_MS = 30_000;
@@ -470,7 +470,8 @@ export const make = Effect.gen(function* () {
     if (selected.fromCache) {
       const cachedToken = selected.token;
       // A slow server does not mean the token is bad. Retry the same token once with a
-      // longer budget so a stall does not mint a new credential and auth session.
+      // longer budget so a stall does not mint a new credential and auth session. The cost:
+      // a moved endpoint whose old address never answers is only replaced when the token expires.
       const cachedSocket = yield* createDpopSocketUrl(
         cachedToken,
         CACHED_ENDPOINT_SOCKET_TIMEOUT_MS,
@@ -498,7 +499,7 @@ export const make = Effect.gen(function* () {
     }
     const socket = yield* createDpopSocketUrl(selected.token).pipe(Effect.result);
     if (Result.isFailure(socket)) {
-      // A timeout does not mean the new token is bad. Keep it so the next attempt does not mint again.
+      // A timeout does not mean the new token is bad. Keep it so the next attempt reuses it.
       if (socket.failure._tag !== "RemoteEnvironmentAuthTimeoutError") {
         yield* tokenLock.withPermits(1)(
           removeRejectedToken(input.expectedEnvironmentId, selected.token.accessToken),
