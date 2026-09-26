@@ -62,6 +62,11 @@ it.effect("exports schema error fields as span attributes", () =>
 
     const request = yield* Deferred.await(exportedRequest).pipe(Effect.timeout("1 second"));
     const payload = (yield* decodeJson(request.body)) as OtlpTracer.TraceData;
+    const resourceAttributes = Object.fromEntries(
+      payload.resourceSpans
+        .flatMap((resourceSpan) => resourceSpan.resource.attributes)
+        .map((attribute) => [attribute.key, otlpAttributeValue(attribute.value)]),
+    );
     const span = payload.resourceSpans
       .flatMap((resourceSpan) => resourceSpan.scopeSpans)
       .flatMap((scopeSpan) => scopeSpan.spans)
@@ -75,6 +80,10 @@ it.effect("exports schema error fields as span attributes", () =>
 
     expect(request.authorization).toBe("Bearer test-token");
     expect(request.dataset).toBe("relay-test-traces");
+    expect(resourceAttributes).toMatchObject({
+      "service.name": "t3code-relay",
+      "service.namespace": "t3code",
+    });
     expect(attributes).toMatchObject({
       "error.type": "EnvironmentConnectNotAuthorized",
       "error.environmentId": "environment-1",
