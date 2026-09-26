@@ -110,6 +110,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
   const processEnvelope = (envelope: CommandEnvelope): Effect.Effect<void> => {
     const dispatchStartSequence = commandReadModel.snapshotSequence;
+    const appendedEventIds = new Set<OrchestrationEvent["eventId"]>();
     let processingStartedAtMs = 0;
     const aggregateRef = commandToAggregateRef(envelope.command);
     const baseMetricAttributes = {
@@ -126,8 +127,14 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
       commandReadModel = yield* projectEventsOntoReadModel(commandReadModel, persistedEvents);
 
+      // Another server sharing this database may have written the other
+      // events, even for a retry with the same command id. Republishing them
+      // would make local reactors redo that work, such as sending a turn a
+      // second time.
       for (const persistedEvent of persistedEvents) {
-        yield* PubSub.publish(eventPubSub, persistedEvent);
+        if (appendedEventIds.has(persistedEvent.eventId)) {
+          yield* PubSub.publish(eventPubSub, persistedEvent);
+        }
       }
     });
 
@@ -279,6 +286,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
               for (const nextEvent of eventBases) {
                 const savedEvent = yield* eventStore.append(nextEvent);
+                appendedEventIds.add(savedEvent.eventId);
                 nextCommandReadModel = yield* projectEvent(nextCommandReadModel, savedEvent);
                 const cleanup = yield* projectionPipeline.projectEventDeferred(savedEvent);
                 attachmentCleanups.push(cleanup);
