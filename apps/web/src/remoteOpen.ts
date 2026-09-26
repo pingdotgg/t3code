@@ -27,6 +27,8 @@ import { useEnvironmentPresentation } from "~/state/presentation";
 export interface RemoteOpenHost {
   readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
   readonly host: string;
+  /** Login the link names; only Tailscale SSH targets carry one. */
+  readonly user?: string;
 }
 
 export type RemoteOpenState =

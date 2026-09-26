@@ -234,6 +234,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         const url = buildRemoteOpenUrl({
           editor,
           host: remote.host.host,
+          user: remote.host.user,
           absolutePath: openInCwd,
         });
         if (url === undefined) return;
@@ -314,7 +315,9 @@ export const OpenInPicker = memo(function OpenInPicker({
           ))}
           {remote.mode === "remote-links" && !remoteHintSeen && (
             <MenuItem density={presentation === "menu" ? "touch" : "default"} disabled>
-              Opens over SSH. Needs your key on {environmentLabel}
+              {remote.host.kind === "tailscale-ssh"
+                ? `Opens over Tailscale SSH. Needs tailnet access to ${environmentLabel}`
+                : `Opens over SSH. Needs your key on ${environmentLabel}`}
             </MenuItem>
           )}
         </>

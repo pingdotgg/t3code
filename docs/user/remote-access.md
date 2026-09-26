@@ -143,6 +143,23 @@ running is left alone.
 For Antigravity's Google callback on a remote host, see
 [remote sign-in](./providers-antigravity.md#sign-in-from-a-remote-device).
 
+## Open remote projects in your editor
+
+For a remote environment, **Open** in the chat header opens the project in VS
+Code, Cursor, VSCodium, or Zed on the device you are using. The editor connects
+to the host over SSH on its own, so the host must run an SSH server: OpenSSH,
+or [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh) with Tailscale
+1.102 or later. VS Code, Cursor, and VSCodium also need their remote SSH
+extension. When the host has neither server, the menu shows **No SSH route**.
+
+With OpenSSH, the host must accept your SSH key. With Tailscale SSH, the device
+running the editor must reach the host over your tailnet, and the editor signs
+in as the account that runs T3 Code there. If your tailnet policy asks for a
+check, editors wait without showing the sign-in link. Sign in once from a
+terminal as that same account, for example
+`ssh <account>@<machine>.<tailnet>.ts.net`, approve the check, then choose
+**Open** again.
+
 ## Manage or revoke access
 
 On the host, **Settings → Connections** lets authorized administrators create

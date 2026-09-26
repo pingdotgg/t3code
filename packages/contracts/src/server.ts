@@ -580,8 +580,8 @@ export const ServerConfig = Schema.Struct({
   availableEditors: ForwardCompatibleArray(EditorId),
   /**
    * SSH hosts this environment advertises for remote open-in-editor links.
-   * Absent on servers that predate the feature; empty when the machine has no
-   * sshd or no advertisable name.
+   * Absent on servers that predate the feature; empty when the machine runs
+   * neither sshd nor Tailscale SSH, or has no advertisable name.
    */
   remoteOpenTargets: Schema.optionalKey(ForwardCompatibleArray(RemoteOpenTarget)),
   observability: ServerObservability,

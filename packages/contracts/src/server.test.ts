@@ -17,6 +17,9 @@ const decodeServerProviders = Schema.decodeUnknownSync(ServerProviders);
 const decodeServerObservability = Schema.decodeUnknownSync(ServerObservability);
 const decodeUpsertKeybindingResult = Schema.decodeUnknownSync(ServerUpsertKeybindingResult);
 const decodeAvailableEditors = Schema.decodeUnknownSync(ServerConfig.fields.availableEditors);
+const decodeRemoteOpenTargets = Schema.decodeUnknownSync(
+  ServerConfig.fields.remoteOpenTargets.schema,
+);
 
 const baseProviderSnapshot = {
   instanceId: "codex",
@@ -141,6 +144,25 @@ describe("server config forward compatibility", () => {
     const parsed = decodeAvailableEditors(["zed", "some-future-editor", "vscode"]);
 
     expect(parsed).toEqual(["zed", "vscode"]);
+  });
+
+  // Builds that predate `tailscale-ssh` read such a target as an unknown kind
+  // and drop it, keeping their "no SSH route" state instead of failing the
+  // config. A login that could reach `ssh` as an option drops the same way.
+  it("drops remote open targets this build cannot use", () => {
+    const parsed = decodeRemoteOpenTargets([
+      { kind: "tailscale", host: "sol.tail1234.ts.net" },
+      { kind: "some-future-kind", host: "sol.example" },
+      { kind: "tailscale-ssh", host: "sol.tail1234.ts.net", user: "theo" },
+      { kind: "tailscale-ssh", host: "sol.tail1234.ts.net", user: "-oProxyCommand=calc" },
+      { kind: "tailscale-ssh", host: "sol.tail1234.ts.net", user: "theo:secret" },
+      { kind: "tailscale-ssh", host: "sol.tail1234.ts.net", user: "DOMAIN\\theo" },
+    ]);
+
+    expect(parsed).toEqual([
+      { kind: "tailscale", host: "sol.tail1234.ts.net" },
+      { kind: "tailscale-ssh", host: "sol.tail1234.ts.net", user: "theo" },
+    ]);
   });
 
   // A provider status this build has never seen (a new ServerProviderState,
