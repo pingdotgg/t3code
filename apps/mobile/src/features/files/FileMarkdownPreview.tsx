@@ -1,6 +1,7 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { getBrowseDirectoryPath } from "@t3tools/client-runtime/state/projects";
+import { nativeMarkdownWithStandaloneMediaLinks } from "@t3tools/mobile-markdown-text/markdown";
 import { useCallback, useMemo, useState } from "react";
 import {
   Markdown,
@@ -269,11 +270,15 @@ export function FileMarkdownPreview(props: {
             markdown={props.markdown}
             onLinkPress={onLinkPress}
             renderImage={renderImage}
+            workspaceRoot={markdownDirectory}
             textStyle={styles.nativeTextStyle}
           />
         ) : (
           <Markdown
             options={{ gfm: true }}
+            astTransform={(node) =>
+              nativeMarkdownWithStandaloneMediaLinks(node, { workspaceRoot: markdownDirectory })
+            }
             renderers={styles.renderers}
             styles={styles.styles}
             theme={styles.theme}

@@ -10,6 +10,7 @@ import { MediaActions, type MediaActionSource } from "./MediaActions";
 interface MediaVideoPlayerProps {
   readonly src: string | null;
   readonly label: string;
+  readonly title?: string | undefined;
   readonly sourceFailed?: boolean | undefined;
   readonly originalUrl?: string | undefined;
   readonly revision?: string | null | undefined;
@@ -31,6 +32,7 @@ interface MediaVideoPlayerProps {
 export function MediaVideoPlayer({
   src: latestSrc,
   label,
+  title,
   sourceFailed = false,
   originalUrl,
   revision = null,
@@ -212,5 +214,11 @@ export function MediaVideoPlayer({
       ) : null}
     </span>
   );
-  return actionsSource ? <MediaActions source={actionsSource}>{player}</MediaActions> : player;
+  return actionsSource ? (
+    <MediaActions source={actionsSource} tooltipContent={title || undefined}>
+      {player}
+    </MediaActions>
+  ) : (
+    player
+  );
 }
