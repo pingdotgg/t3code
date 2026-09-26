@@ -34,10 +34,13 @@ if [[ ! -f docs/fork.md ]]; then
 fi
 
 if [[ -z "$BASE" ]]; then
+  BASE_REMOTE=origin
   if git rev-parse --verify --quiet "$UPSTREAM/main" >/dev/null; then
-    BASE="$(git merge-base HEAD "$UPSTREAM/main")"
-  else
-    BASE="$(git merge-base HEAD origin/main)"
+    BASE_REMOTE="$UPSTREAM"
+  fi
+  if ! BASE="$(git merge-base HEAD "$BASE_REMOTE/main")"; then
+    echo "fork-check: FAIL: cannot find the merge base with $BASE_REMOTE/main (fetch more history?)" >&2
+    exit 1
   fi
 fi
 

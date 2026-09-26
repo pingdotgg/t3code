@@ -27,7 +27,7 @@ jobs:
       - name: Fetch upstream base
         run: |
           git remote add upstream https://github.com/pingdotgg/t3code.git 2>/dev/null || true
-          git fetch upstream main --depth 100
+          git fetch --filter=blob:none upstream main
 
       - name: Check fork stack
         run: bash scripts/fork-check.sh --upstream upstream
