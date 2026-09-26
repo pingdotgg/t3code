@@ -224,7 +224,26 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
       headers,
     });
   }
-  return yield* HttpServerResponse.file(asset.path, { status, offset, bytesToRead, headers });
+  const response = yield* HttpServerResponse.file(asset.path, {
+    status,
+    offset,
+    bytesToRead,
+    headers,
+  });
+  if (response.body._tag !== "Raw") return response;
+
+  // Node file responses infer their MIME type in the response headers, but the
+  // compression middleware rebuilds those headers from the body metadata.
+  // Carry the inferred type on the body so compressed previews keep it.
+  const contentLength = response.headers["content-length"];
+  return HttpServerResponse.setBody(
+    response,
+    HttpBody.raw(response.body.body, {
+      contentType:
+        headers["Content-Type"] ?? Mime.getType(asset.path) ?? "application/octet-stream",
+      ...(contentLength !== undefined ? { contentLength: Number(contentLength) } : {}),
+    }),
+  );
 });
 
 export const httpCompressionLayer = HttpRouter.middleware(HttpMiddleware.compression(), {
