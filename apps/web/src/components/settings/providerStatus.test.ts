@@ -1,7 +1,11 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { getProviderSummary, getProviderVersionAdvisoryPresentation } from "./providerStatus";
+import {
+  getProviderSummary,
+  getProviderVersionAdvisoryPresentation,
+  isAntigravityUncheckedAuth,
+} from "./providerStatus";
 
 const provider: ServerProvider = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -48,6 +52,100 @@ describe("getProviderSummary", () => {
     ).toEqual({
       headline: "Needs attention",
       detail: "The provider version is unsupported.",
+    });
+  });
+
+  it("treats healthy Antigravity with unchecked Google auth as sign-in required", () => {
+    const message = "Antigravity is installed. Google account access is not checked yet.";
+    const antigravity = {
+      ...provider,
+      instanceId: ProviderInstanceId.make("antigravity"),
+      driver: ProviderDriverKind.make("antigravity"),
+      status: "warning" as const,
+      auth: { status: "unknown" as const, type: "oauth-personal" },
+      message,
+    };
+
+    expect(isAntigravityUncheckedAuth(antigravity)).toBe(true);
+    expect(getProviderSummary(antigravity)).toEqual({
+      headline: "Installed · Sign-in required",
+      detail: message,
+    });
+    expect(
+      isAntigravityUncheckedAuth({
+        ...antigravity,
+        auth: { status: "unknown", type: "oauth-business" },
+      }),
+    ).toBe(true);
+    expect(
+      isAntigravityUncheckedAuth({
+        ...antigravity,
+        auth: { status: "unknown" },
+      }),
+    ).toBe(true);
+    expect(
+      isAntigravityUncheckedAuth({
+        ...antigravity,
+        status: "error",
+        message: "Antigravity could not complete its local health check.",
+      }),
+    ).toBe(false);
+    expect(
+      getProviderSummary({
+        ...antigravity,
+        status: "error",
+        message: "Antigravity could not complete its local health check.",
+      }),
+    ).toEqual({
+      headline: "Unavailable",
+      detail: "Antigravity could not complete its local health check.",
+    });
+    expect(
+      getProviderSummary({
+        ...provider,
+        status: "warning",
+        auth: { status: "unknown" },
+        message: "The provider version is unsupported.",
+      }),
+    ).toEqual({
+      headline: "Needs attention",
+      detail: "The provider version is unsupported.",
+    });
+  });
+
+  it("does not treat credential Antigravity methods as Google sign-in required", () => {
+    const message = "The provider is installed, but the server could not fully verify it.";
+    for (const type of ["gemini-api-key", "agent-platform"] as const) {
+      const antigravity = {
+        ...provider,
+        instanceId: ProviderInstanceId.make("antigravity"),
+        driver: ProviderDriverKind.make("antigravity"),
+        status: "warning" as const,
+        auth: { status: "unknown" as const, type },
+        message,
+      };
+
+      expect(isAntigravityUncheckedAuth(antigravity)).toBe(false);
+      expect(getProviderSummary(antigravity)).toEqual({
+        headline: "Needs attention",
+        detail: message,
+      });
+    }
+  });
+
+  it("keeps a confirmed Antigravity sign-out as not authenticated", () => {
+    const signedOut = {
+      ...provider,
+      instanceId: ProviderInstanceId.make("antigravity"),
+      driver: ProviderDriverKind.make("antigravity"),
+      status: "warning" as const,
+      auth: { status: "unauthenticated" as const },
+      message: "Sign in with Google to use Antigravity.",
+    };
+    expect(isAntigravityUncheckedAuth(signedOut)).toBe(false);
+    expect(getProviderSummary(signedOut)).toEqual({
+      headline: "Not authenticated",
+      detail: "Sign in with Google to use Antigravity.",
     });
   });
 

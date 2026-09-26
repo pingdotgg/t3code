@@ -121,6 +121,91 @@ describe("deriveProviderModelsForDisplay", () => {
     expect(markup).toContain("blur-xs");
     expect(markup).not.toContain("developer@example.com");
   });
+
+  it("shows sign-in required copy instead of amber attention for unchecked Google auth", () => {
+    const instanceId = ProviderInstanceId.make("antigravity");
+    const driver = ProviderDriverKind.make("antigravity");
+    const liveProvider: ServerProvider = {
+      instanceId,
+      driver,
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "warning",
+      auth: { status: "unknown", type: "oauth-personal" },
+      checkedAt: "2026-08-27T12:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+      message: "Antigravity is installed. Google account access is not checked yet.",
+    };
+    const props = {
+      instanceId,
+      instance: { driver, enabled: true },
+      driverOption: undefined,
+      liveProvider,
+      onUpdate: () => undefined,
+      hiddenModels: [],
+      favoriteModels: [],
+      modelOrder: [],
+      onHiddenModelsChange: () => undefined,
+      onFavoriteModelsChange: () => undefined,
+      onModelOrderChange: () => undefined,
+    } as const;
+
+    for (const mode of ["list", "editor"] as const) {
+      const markup = renderToStaticMarkup(createElement(ProviderInstanceCard, { ...props, mode }));
+      expect(markup).toContain("Installed · Sign-in required");
+      expect(markup).not.toContain("Needs attention");
+      expect(markup).not.toContain("bg-warning");
+    }
+  });
+
+  it("keeps amber attention for unchecked Antigravity credential methods", () => {
+    const instanceId = ProviderInstanceId.make("antigravity");
+    const driver = ProviderDriverKind.make("antigravity");
+    const message = "The provider is installed, but the server could not fully verify it.";
+
+    for (const type of ["gemini-api-key", "agent-platform"] as const) {
+      const liveProvider: ServerProvider = {
+        instanceId,
+        driver,
+        enabled: true,
+        installed: true,
+        version: "1.0.0",
+        status: "warning",
+        auth: { status: "unknown", type },
+        checkedAt: "2026-08-27T12:00:00.000Z",
+        models: [],
+        slashCommands: [],
+        skills: [],
+        message,
+      };
+      const props = {
+        instanceId,
+        instance: { driver, enabled: true },
+        driverOption: undefined,
+        liveProvider,
+        onUpdate: () => undefined,
+        hiddenModels: [],
+        favoriteModels: [],
+        modelOrder: [],
+        onHiddenModelsChange: () => undefined,
+        onFavoriteModelsChange: () => undefined,
+        onModelOrderChange: () => undefined,
+      } as const;
+
+      for (const mode of ["list", "editor"] as const) {
+        const markup = renderToStaticMarkup(
+          createElement(ProviderInstanceCard, { ...props, mode }),
+        );
+        expect(markup).toContain("Needs attention");
+        expect(markup).toContain("bg-warning");
+        expect(markup).not.toContain("Installed · Sign-in required");
+      }
+    }
+  });
+
   it("surfaces a failed probe message in both the list row and the editor", () => {
     const instanceId = ProviderInstanceId.make("codex_work");
     const driver = ProviderDriverKind.make("codex");
