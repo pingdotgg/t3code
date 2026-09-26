@@ -4292,10 +4292,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 payload.item.text.length > 0
                   ? payload.item.text
                   : (deltas.get(payload.item.id) ?? "");
+              // A finished proposal stays active until Implement consumes it.
               const artifacts = yield* buildProposedPlanArtifacts({
                 context,
                 nativeItemId: payload.item.id,
-                status: "completed",
+                status: "active",
                 markdown,
                 completed: true,
               });
