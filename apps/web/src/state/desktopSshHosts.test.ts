@@ -91,6 +91,10 @@ describe("filterDiscoveredSshHosts", () => {
     expect(filterDiscoveredSshHosts(suggestions, "PINOT")).toEqual([suggestions[1]]);
   });
 
+  it("finds a configured alias by its target hostname", () => {
+    expect(filterDiscoveredSshHosts(hosts, "DEVBOX.LOCAL")).toEqual(hosts);
+  });
+
   it("returns an empty array when no hosts match", () => {
     expect(filterDiscoveredSshHosts(suggestions, "merlot")).toEqual([]);
   });

@@ -19,7 +19,10 @@ export function filterDiscoveredSshHosts(
     const alias = host.alias.toLowerCase();
     if (alias.startsWith(normalizedQuery)) {
       prefixMatches.push(host);
-    } else if (alias.includes(normalizedQuery)) {
+    } else if (
+      alias.includes(normalizedQuery) ||
+      host.hostname.toLowerCase().includes(normalizedQuery)
+    ) {
       substringMatches.push(host);
     }
   }
