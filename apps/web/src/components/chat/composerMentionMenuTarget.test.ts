@@ -1,6 +1,11 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { Schema } from "effect";
+import { EnvironmentId, ProjectSearchEntriesInput } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { composerMentionMenuTarget, isResolvedComposerMention } from "./composerMentionMenuTarget";
+import {
+  composerMentionMenuTarget,
+  composerMentionSearchQuery,
+  isResolvedComposerMention,
+} from "./composerMentionMenuTarget";
 import { resolveFileContextMenuAbsolutePath } from "../../fileContextMenu";
 
 describe("composer mention file identity", () => {
@@ -53,3 +58,20 @@ it.each(["./src/app.ts", "src\\app.ts", "src/./app.ts"])(
     ).toBe(true);
   },
 );
+
+it("keeps long file identity while using a contract-valid search suffix", () => {
+  const path = `${"nested/".repeat(50)}app.ts`;
+  const target = composerMentionMenuTarget(EnvironmentId.make("remote"), "/task", path)!;
+  const input = Schema.decodeUnknownSync(ProjectSearchEntriesInput)({
+    cwd: "/task",
+    query: composerMentionSearchQuery(target.filePath),
+    kind: "file",
+    limit: 100,
+  });
+  expect(input.query.length).toBeLessThanOrEqual(256);
+  expect(target.filePath).toBe(path);
+  expect(isResolvedComposerMention(target.filePath, [{ path, kind: "file" }])).toBe(true);
+  expect(isResolvedComposerMention(target.filePath, [{ path: input.query, kind: "file" }])).toBe(
+    false,
+  );
+});

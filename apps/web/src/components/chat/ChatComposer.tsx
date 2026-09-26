@@ -1,6 +1,10 @@
 import { projectEnvironment } from "../../state/projects";
 import { useFileContextMenu } from "../../fileContextMenu";
-import { composerMentionMenuTarget, isResolvedComposerMention } from "./composerMentionMenuTarget";
+import {
+  composerMentionMenuTarget,
+  composerMentionSearchQuery,
+  isResolvedComposerMention,
+} from "./composerMentionMenuTarget";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { readLocalApi } from "../../localApi";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
@@ -1657,11 +1661,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         )
           return false;
         const attempt = ++mentionMenuAttempt.current;
+        const targetKey = composerDraftTargetKeyRef.current;
         void searchMention({
           environmentId,
-          input: { cwd: gitCwd, query: target.filePath, kind: "file", limit: 100 },
+          input: {
+            cwd: gitCwd,
+            query: composerMentionSearchQuery(target.filePath),
+            kind: "file",
+            limit: 100,
+          },
         }).then((result) => {
-          if (attempt !== mentionMenuAttempt.current) return;
+          if (
+            attempt !== mentionMenuAttempt.current ||
+            targetKey !== composerDraftTargetKeyRef.current
+          )
+            return;
           if (result._tag === "Failure") {
             toastManager.add({ type: "error", title: "Could not verify file", description: path });
             return;

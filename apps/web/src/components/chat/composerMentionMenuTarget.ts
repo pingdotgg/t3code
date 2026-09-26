@@ -30,3 +30,8 @@ export function isResolvedComposerMention(
 ): boolean {
   return entries.some((entry) => entry.path === path && entry.kind === "file");
 }
+
+/** Keep search input within the wire limit; matching still uses the full file identity. */
+export function composerMentionSearchQuery(path: string): string {
+  return path.slice(-256);
+}
