@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
@@ -23,7 +24,7 @@ const mockRun = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
 
 const supportLayer = Layer.mergeAll(
   Layer.mock(VcsProcess.VcsProcess)({
-    run: mockRun,
+    run: (input) => (input.command === "git" ? Effect.succeed(processOutput("")) : mockRun(input)),
   }),
   NodeServices.layer,
 );
@@ -34,6 +35,169 @@ afterEach(() => {
 });
 
 describe("AzureDevOpsCli.layer", () => {
+  it.effect("resolves cwd's remotes despite inherited Git repository bindings", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const process = yield* VcsProcess.VcsProcess;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-azure-scope-" });
+      const target = path.join(root, "target");
+      const unrelated = path.join(root, "unrelated");
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
+      for (const name of [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+      ]) {
+        vi.stubEnv(name, undefined);
+      }
+      for (const [cwd, org] of [
+        [target, "target"],
+        [unrelated, "unrelated"],
+      ] as const) {
+        yield* process.run({
+          operation: "test",
+          command: "git",
+          cwd: root,
+          args: ["init", "--quiet", cwd],
+        });
+        yield* process.run({
+          operation: "test",
+          command: "git",
+          cwd,
+          args: ["remote", "add", "origin", `https://dev.azure.com/${org}/Project/_git/Repo`],
+        });
+      }
+      vi.stubEnv("GIT_DIR", path.join(unrelated, ".git"));
+      vi.stubEnv("GIT_WORK_TREE", unrelated);
+      const azArgs: string[][] = [];
+      const scopedLayer = AzureDevOpsCli.layer.pipe(
+        Layer.provide(
+          Layer.mock(VcsProcess.VcsProcess)({
+            run: (input) => {
+              if (input.command === "git") return process.run(input);
+              return Effect.sync(() => {
+                azArgs.push([...input.args]);
+                return processOutput("[]");
+              });
+            },
+          }),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+        yield* az.execute({ cwd: target, args: ["repos", "pr", "list", "--detect", "true"] });
+      }).pipe(Effect.provide(scopedLayer));
+      expect(azArgs[0]).toContain("https://dev.azure.com/target");
+      expect(azArgs[0]).not.toContain("https://dev.azure.com/unrelated");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(VcsProcess.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+    ),
+  );
+
+  it.effect("does not inspect Git for account queries or explicitly scoped commands", () =>
+    Effect.gen(function* () {
+      const calls: Array<Parameters<VcsProcess.VcsProcess["Service"]["run"]>[0]> = [];
+      const scopedLayer = AzureDevOpsCli.layer.pipe(
+        Layer.provide(
+          Layer.mock(VcsProcess.VcsProcess)({
+            run: (input) => {
+              calls.push(input);
+              return Effect.succeed(processOutput("{}"));
+            },
+          }),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+        for (const args of [
+          ["account", "show"],
+          [
+            "repos",
+            "pr",
+            "show",
+            "--detect",
+            "true",
+            "--organization",
+            "https://dev.azure.com/explicit",
+            "--id",
+            "42",
+          ],
+          ["repos", "pr", "show", "--detect", "false", "--id", "42"],
+        ]) {
+          yield* az.execute({ cwd: "/repo", args });
+          expect(calls.at(-1)?.args).toEqual(args);
+        }
+      }).pipe(Effect.provide(scopedLayer));
+      expect(calls).toHaveLength(3);
+      expect(calls.every((call) => call.command === "az")).toBe(true);
+    }),
+  );
+
+  it.effect(
+    "uses server-side Git scope for PR detail, listing, and REST reads across checkouts",
+    () =>
+      Effect.gen(function* () {
+        const calls: Array<Parameters<VcsProcess.VcsProcess["Service"]["run"]>[0]> = [];
+        const scopedLayer = AzureDevOpsCli.layer.pipe(
+          Layer.provide(
+            Layer.mock(VcsProcess.VcsProcess)({
+              run: (input) => {
+                calls.push(input);
+                if (input.command === "git")
+                  return Effect.succeed(
+                    processOutput(
+                      `remote.origin.url https://${input.cwd === "/one" ? "acme" : "other"}.visualstudio.com/DefaultCollection/Project/_git/Repo\n`,
+                    ),
+                  );
+                // Simulate the Windows CLI: local repository detection never works.
+                if (input.args?.includes("true"))
+                  return Effect.fail(
+                    new VcsProcessExitError({
+                      operation: "test",
+                      command: "az",
+                      cwd: input.cwd ?? "/one",
+                      exitCode: 1,
+                      detail: "--organization must be specified",
+                    }),
+                  );
+                return Effect.succeed(processOutput("[]"));
+              },
+            }),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+          for (const [cwd, command] of [
+            ["/one", ["repos", "pr", "show", "--id", "42"]],
+            ["/two", ["repos", "pr", "list"]],
+            ["/one", ["devops", "invoke", "--area", "git"]],
+          ] as const) {
+            yield* az.execute({ cwd, args: [...command, "--detect", "true"] });
+          }
+        }).pipe(Effect.provide(scopedLayer));
+        const commands = calls.filter((call) => call.command === "az");
+        expect(
+          commands.map((call) => call.args?.slice(call.args.indexOf("--organization"))),
+        ).toEqual([
+          ["--organization", "https://dev.azure.com/acme"],
+          [
+            "--organization",
+            "https://dev.azure.com/other",
+            "--project",
+            "Project",
+            "--repository",
+            "Repo",
+          ],
+          ["--organization", "https://dev.azure.com/acme"],
+        ]);
+      }),
+  );
+
   it.effect("parses pull request view output", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(
