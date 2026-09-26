@@ -31,6 +31,9 @@ export function ControlPillMenu(props: ControlPillMenuProps) {
   }
   return (
     <AndroidAnchoredMenu
+      accessible={props.accessible}
+      accessibilityLabel={props.accessibilityLabel}
+      accessibilityRole={props.accessibilityRole}
       actions={props.actions}
       className={props.className}
       title={props.title}
