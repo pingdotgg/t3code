@@ -14,7 +14,7 @@ import {
  * restores exactly these, so a model picked in the composer or anything else
  * written while the mode is open is left alone.
  */
-export const CUSTOMIZE_SETTING_KEYS = [
+const CUSTOMIZE_SETTING_KEYS = [
   "interfaceLayout",
   "composerCollapseOnScroll",
   "contextWindowMeterEnabled",
