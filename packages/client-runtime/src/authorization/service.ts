@@ -80,6 +80,11 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
 >()("@t3tools/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
 
 const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
+// 3 s + 7 s ends the cached ticket step by 10 s, the default request budget. That leaves
+// 5 s of the supervisor's 15 s setup deadline for the descriptor check and websocket open.
+const CACHED_ENDPOINT_SOCKET_RETRY_TIMEOUT_MS = 7_000;
+/** Cached ticket attempts in a row that time out before the client asks the relay again. */
+const CACHED_TICKET_TIMEOUT_LIMIT = 3;
 const BEARER_DESCRIPTOR_CACHE_TTL_MS = 10_000;
 const DPOP_AUTHORIZATION_TIMEOUT_MS = 30_000;
 
@@ -111,6 +116,12 @@ export const make = Effect.gen(function* () {
   const tokenOwners = new Map<
     EnvironmentId,
     { readonly accessToken: string; readonly identity: ClientCapabilities.CloudSessionIdentity }
+  >();
+  // Timed-out cached ticket steps in a row, per environment and token. It lives as long as
+  // the service, so supervisor retries and a mobile foreground resume do not reset it.
+  const cachedTicketTimeouts = new Map<
+    EnvironmentId,
+    { readonly accessToken: string; readonly count: number }
   >();
   const pendingTokens = new Map<
     EnvironmentId,
@@ -465,27 +476,59 @@ export const make = Effect.gen(function* () {
   ) {
     let selected = yield* getDpopToken(input);
     if (selected.fromCache) {
+      const cachedToken = selected.token;
+      // A timeout means a lost request or a slow server, not a bad token. Retry the same
+      // token once, so a lost request recovers in about 3 s without a new credential.
       const cachedSocket = yield* createDpopSocketUrl(
-        selected.token,
+        cachedToken,
         CACHED_ENDPOINT_SOCKET_TIMEOUT_MS,
-      ).pipe(Effect.result);
+      ).pipe(
+        Effect.catchTags({
+          RemoteEnvironmentAuthTimeoutError: () =>
+            createDpopSocketUrl(cachedToken, CACHED_ENDPOINT_SOCKET_RETRY_TIMEOUT_MS),
+        }),
+        Effect.result,
+      );
       if (Result.isSuccess(cachedSocket)) {
+        cachedTicketTimeouts.delete(input.expectedEnvironmentId);
         yield* assertSession(selected.identity);
-        return { ...httpAuthorization(selected.token), socketUrl: cachedSocket.success };
+        return { ...httpAuthorization(cachedToken), socketUrl: cachedSocket.success };
       }
       if (cachedSocket.failure._tag === "ConnectionBlockedError") {
         return yield* mapDpopSocketError(cachedSocket.failure);
       }
+      // When the retry also times out, keep the token and fail as transient. The relay returns
+      // the same hostname for an environment, so a new credential would only add an auth
+      // session on that slow server. Leave out the network hint: the relay and tunnel answered
+      // for this token before. At the limit, drop the token and ask the relay again in case
+      // the endpoint moved. That mint runs in the service scope, so it lands even if this
+      // attempt times out.
+      if (cachedSocket.failure._tag === "RemoteEnvironmentAuthTimeoutError") {
+        const accessToken = cachedToken.accessToken;
+        const previous = cachedTicketTimeouts.get(input.expectedEnvironmentId);
+        const count = previous?.accessToken === accessToken ? previous.count + 1 : 1;
+        if (count < CACHED_TICKET_TIMEOUT_LIMIT) {
+          cachedTicketTimeouts.set(input.expectedEnvironmentId, { accessToken, count });
+          return yield* new ConnectionTransientError({
+            reason: "timeout",
+            detail: `${cachedToken.label} did not respond during connection setup.`,
+          });
+        }
+        cachedTicketTimeouts.delete(input.expectedEnvironmentId);
+      }
       selected = yield* getDpopToken({
         ...input,
-        rejectedAccessToken: selected.token.accessToken,
+        rejectedAccessToken: cachedToken.accessToken,
       });
     }
     const socket = yield* createDpopSocketUrl(selected.token).pipe(Effect.result);
     if (Result.isFailure(socket)) {
-      yield* tokenLock.withPermits(1)(
-        removeRejectedToken(input.expectedEnvironmentId, selected.token.accessToken),
-      );
+      // A timeout does not mean the new token is bad. Keep it so the next attempt reuses it.
+      if (socket.failure._tag !== "RemoteEnvironmentAuthTimeoutError") {
+        yield* tokenLock.withPermits(1)(
+          removeRejectedToken(input.expectedEnvironmentId, selected.token.accessToken),
+        );
+      }
       return yield* mapDpopSocketError(socket.failure);
     }
     yield* assertSession(selected.identity);

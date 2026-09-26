@@ -46,12 +46,19 @@ const BOOTSTRAP: RelayEnvironmentConnectResponse = {
   expiresAt: "2026-06-06T01:00:00.000Z",
 };
 
-function recordedFetch(responses: ReadonlyArray<Response>) {
+/** A response slot for a request that a stalled server never answers. */
+const STALLED = "stalled";
+
+function recordedFetch(responses: ReadonlyArray<Response | typeof STALLED>, onStall: () => void) {
   const calls: Array<readonly [RequestInfo | URL, RequestInit]> = [];
   let responseIndex = 0;
   const fetchFn = ((input, init) => {
     calls.push([input, init ?? {}]);
     const response = responses[responseIndex++];
+    if (response === STALLED) {
+      onStall();
+      return new Promise<Response>(() => {});
+    }
     return response === undefined
       ? Promise.reject(new Error(`Unexpected fetch call to ${String(input)}`))
       : Promise.resolve(response);
@@ -105,7 +112,7 @@ const persistedToken = (
 
 const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (input: {
   readonly initialToken?: TokenStore.RemoteDpopAccessToken;
-  readonly responses: ReadonlyArray<Response>;
+  readonly responses: ReadonlyArray<Response | typeof STALLED>;
   readonly bootstrap?: RelayEnvironmentConnectResponse;
   readonly beforeBootstrap?: Effect.Effect<void, ManagedRelay.ManagedRelayClientError>;
   readonly beforePut?: Effect.Effect<void>;
@@ -134,7 +141,8 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
       readonly accessToken?: string;
     }>
   >([]);
-  const fetch = recordedFetch(input.responses);
+  const stalls = yield* Queue.unbounded<void>();
+  const fetch = recordedFetch(input.responses, () => Queue.offerUnsafe(stalls, undefined));
 
   const tokenStore = TokenStore.RemoteDpopAccessTokenStore.of({
     get: (environmentId) =>
@@ -224,6 +232,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
     fetch,
     relayInputs,
     session,
+    stalls,
     thumbprint,
     tokenReads,
   };
@@ -440,7 +449,7 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
-  it.effect("refreshes a cached endpoint after its first transient failure", () =>
+  it.effect("refreshes a cached endpoint after a server error", () =>
     Effect.gen(function* () {
       const cached = new TokenStore.RemoteDpopAccessToken({
         environmentId: ENVIRONMENT_ID,
@@ -476,6 +485,84 @@ describe("RemoteEnvironmentAuthorization", () => {
         }),
       );
       expect(harness.fetch.calls).toHaveLength(4);
+    }),
+  );
+
+  // connection/supervisor.test.ts covers the limit: the third timeout in a row asks the relay.
+  it.effect("resets the cached ticket timeout count when a retry succeeds", () =>
+    Effect.gen(function* () {
+      // An attempt sends the cached ticket request and, after it times out, one retry.
+      const timedOutAttempt = [STALLED, STALLED] as const;
+      const recoveredAttempt = [STALLED, websocketTicket("cached-ticket")] as const;
+      const harness = yield* makeHarness({
+        initialToken: persistedToken(),
+        responses: [
+          ...timedOutAttempt,
+          ...timedOutAttempt,
+          ...recoveredAttempt,
+          ...timedOutAttempt,
+        ],
+      });
+
+      const [timeouts, recovered] = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const timeOut = Effect.gen(function* () {
+          const pending = yield* remote
+            .authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID })
+            .pipe(Effect.flip, Effect.forkChild);
+          yield* Queue.take(harness.stalls);
+          yield* TestClock.adjust("3 seconds");
+          yield* Queue.take(harness.stalls);
+          yield* TestClock.adjust("7 seconds");
+          return yield* Fiber.join(pending);
+        });
+        const recover = Effect.gen(function* () {
+          const pending = yield* remote
+            .authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID })
+            .pipe(Effect.forkChild);
+          yield* Queue.take(harness.stalls);
+          yield* TestClock.adjust("3 seconds");
+          return yield* Fiber.join(pending);
+        });
+        const timeouts = [yield* timeOut, yield* timeOut];
+        const recovered = yield* recover;
+        // Without the reset, this would be the third timeout in a row and ask the relay.
+        timeouts.push(yield* timeOut);
+        return [timeouts, recovered] as const;
+      }).pipe(Effect.provide(harness.layer));
+
+      for (const failure of timeouts) {
+        expect(failure).toMatchObject({ _tag: "ConnectionTransientError", reason: "timeout" });
+      }
+      expect(recovered.socketUrl).toContain("wsTicket=cached-ticket");
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+    }),
+  );
+
+  it.effect("keeps a newly refreshed token when its websocket ticket request times out", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        responses: [
+          Response.json(DESCRIPTOR),
+          accessToken("fresh-access-token"),
+          STALLED,
+          websocketTicket("second-ticket"),
+        ],
+      });
+
+      const [failure, authorized] = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorize = () => remote.authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID });
+        const pending = yield* authorize().pipe(Effect.flip, Effect.forkChild);
+        yield* Queue.take(harness.stalls);
+        yield* TestClock.adjust("10 seconds");
+        return [yield* Fiber.join(pending), yield* authorize()] as const;
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(failure).toMatchObject({ _tag: "ConnectionTransientError", reason: "timeout" });
+      expect(authorized.socketUrl).toContain("wsTicket=second-ticket");
+      expect(authorized.httpAuthorization).toMatchObject({ accessToken: "fresh-access-token" });
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
     }),
   );
 
