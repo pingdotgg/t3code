@@ -13,6 +13,11 @@ const {
   setDesktopNameMock,
   mkdirSyncMock,
   writeFileSyncMock,
+  existsSyncMock,
+  copyFileSyncMock,
+  spawnMock,
+  statSyncMock,
+  unlinkSyncMock,
 } = vi.hoisted(() => ({
   appendSwitchMock: vi.fn(),
   getSwitchValueMock: vi.fn(),
@@ -21,6 +26,15 @@ const {
   setDesktopNameMock: vi.fn(),
   mkdirSyncMock: vi.fn(),
   writeFileSyncMock: vi.fn(),
+  existsSyncMock: vi.fn(),
+  copyFileSyncMock: vi.fn(),
+  spawnMock: vi.fn(() => ({
+    unref: vi.fn(),
+    on: vi.fn(),
+    kill: vi.fn(),
+  })),
+  statSyncMock: vi.fn(),
+  unlinkSyncMock: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -38,10 +52,18 @@ vi.mock("electron", () => ({
   },
 }));
 
+vi.mock("node:child_process", () => ({
+  spawn: spawnMock,
+}));
+
 vi.mock("node:fs", () => ({
   readFileSync: () => "{}",
   mkdirSync: mkdirSyncMock,
   writeFileSync: writeFileSyncMock,
+  existsSync: existsSyncMock,
+  copyFileSync: copyFileSyncMock,
+  statSync: statSyncMock,
+  unlinkSync: unlinkSyncMock,
 }));
 
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
@@ -55,6 +77,12 @@ describe("DesktopPreReadyPlatform", () => {
     setDesktopNameMock.mockReset();
     mkdirSyncMock.mockReset();
     writeFileSyncMock.mockReset();
+    existsSyncMock.mockReset();
+    existsSyncMock.mockReturnValue(false);
+    copyFileSyncMock.mockReset();
+    spawnMock.mockClear();
+    statSyncMock.mockReset();
+    unlinkSyncMock.mockReset();
   });
 
   it.effect("preserves an explicit Linux password-store switch", () => {
@@ -104,12 +132,78 @@ describe("DesktopPreReadyPlatform", () => {
             assert.equal(identity.desktopName, "com.t3tools.T3Code.desktop");
             assert.include(identity.desktopEntry ?? "", 'Exec="/Applications/current.AppImage" %U');
             assert.include(identity.desktopEntry ?? "", "Name=T3 Code (Alpha)");
+            assert.include(identity.desktopEntry ?? "", "Icon=t3code");
             assert.include(identity.desktopEntry ?? "", "MimeType=x-scheme-handler/t3code;");
           }),
         ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
       },
     );
   }
+
+  it.effect("copies packaged Linux icons into the user hicolor theme before startup yields", () => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "");
+    vi.stubEnv("XDG_DATA_HOME", "/xdg");
+    vi.stubEnv("APPDIR", "/mnt/app");
+    getSwitchValueMock.mockReturnValue("");
+    existsSyncMock.mockImplementation(
+      (path: string) => path === "/mnt/app/usr/share/icons/hicolor/256x256/apps/t3code.png",
+    );
+    statSyncMock.mockReturnValue({ size: 42841 });
+    const copied: Array<readonly [string, string]> = [];
+    copyFileSyncMock.mockImplementation((source: string, target: string) => {
+      copied.push([source, target]);
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        yield* Layer.build(
+          DesktopPreReadyPlatform.layer.pipe(
+            Layer.provide(Layer.succeed(HostProcessPlatform, "linux")),
+          ),
+        );
+        assert.deepEqual(copied, [
+          [
+            "/mnt/app/usr/share/icons/hicolor/256x256/apps/t3code.png",
+            "/xdg/icons/hicolor/256x256/apps/t3code.png",
+          ],
+          [
+            "/mnt/app/usr/share/icons/hicolor/256x256/apps/t3code.png",
+            "/xdg/icons/hicolor/256x256/apps/com.t3tools.t3code.png",
+          ],
+        ]);
+        assert.equal(
+          mkdirSyncMock.mock.calls.filter(([path]) => String(path).includes("/icons/hicolor"))
+            .length,
+          1,
+        );
+        assert.equal(spawnMock.mock.calls.length, 1);
+        const spawnCall = spawnMock.mock.calls.at(0) as unknown as [string, string[]];
+        assert.equal(spawnCall[0], "gtk-update-icon-cache");
+        assert.deepEqual(spawnCall[1], ["-f", "-t", "/xdg/icons/hicolor"]);
+      }),
+    ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
+  });
+
+  it.effect("skips Linux icon copies and cache refresh when dest sizes already match", () => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "");
+    vi.stubEnv("XDG_DATA_HOME", "/xdg");
+    vi.stubEnv("APPDIR", "/mnt/app");
+    getSwitchValueMock.mockReturnValue("");
+    existsSyncMock.mockReturnValue(true);
+    statSyncMock.mockReturnValue({ size: 42841 });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        yield* Layer.build(
+          DesktopPreReadyPlatform.layer.pipe(
+            Layer.provide(Layer.succeed(HostProcessPlatform, "linux")),
+          ),
+        );
+        assert.equal(copyFileSyncMock.mock.calls.length, 0);
+        assert.equal(spawnMock.mock.calls.length, 0);
+      }),
+    ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
+  });
 
   it.effect("keeps startup available when the early desktop entry cannot be written", () => {
     getSwitchValueMock.mockReturnValue("");
@@ -121,6 +215,47 @@ describe("DesktopPreReadyPlatform", () => {
       Effect.provideService(HostProcessPlatform, "linux"),
       Effect.asVoid,
     );
+  });
+
+  it.effect("copies Linux icons before Clerk-shaped async work can run", () => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "");
+    vi.stubEnv("XDG_DATA_HOME", "/xdg");
+    vi.stubEnv("APPDIR", "/mnt/app");
+    getSwitchValueMock.mockReturnValue("");
+    existsSyncMock.mockImplementation(
+      (path: string) => path === "/mnt/app/usr/share/icons/hicolor/256x256/apps/t3code.png",
+    );
+    statSyncMock.mockReturnValue({ size: 42841 });
+    const events: Array<string> = [];
+    copyFileSyncMock.mockImplementation(() => {
+      events.push("icon-copy");
+    });
+
+    class LinuxClerkShaped extends Context.Service<LinuxClerkShaped, { readonly ready: true }>()(
+      "@t3tools/desktop/app/DesktopPreReadyPlatform.test/LinuxClerkShaped",
+    ) {}
+
+    const preReadyLayer = DesktopPreReadyPlatform.layer.pipe(
+      Layer.provide(Layer.succeed(HostProcessPlatform, "linux")),
+    );
+    const clerkShapedLayer = Layer.effect(
+      LinuxClerkShaped,
+      Effect.promise(() => Promise.resolve()).pipe(
+        Effect.map(() => {
+          events.push("clerk");
+          return { ready: true as const };
+        }),
+      ),
+    );
+    const runtimeLayer = clerkShapedLayer.pipe(
+      Layer.flatMap((clerkContext) => Layer.succeedContext(clerkContext)),
+      Layer.provideMerge(preReadyLayer),
+    );
+
+    return Effect.gen(function* () {
+      yield* LinuxClerkShaped.pipe(Effect.provide(runtimeLayer));
+      assert.deepEqual(events, ["icon-copy", "icon-copy", "clerk"]);
+    }).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
   });
 
   it.effect(

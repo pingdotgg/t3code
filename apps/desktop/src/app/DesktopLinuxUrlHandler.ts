@@ -63,8 +63,50 @@ export function escapeDesktopEntryExecArgument(value: string): string {
   return escapeDesktopEntryString(`"${quoted}"`);
 }
 
-// The AppImage integration entry owns the window identity and icon. This
-// hidden URL-only entry must not compete with it for StartupWMClass matching.
+const LINUX_DESKTOP_ICON_NAME = "t3code";
+
+// One 256px raster. Qt, GTK, and the common Quickshell shells scale it.
+const LINUX_DESKTOP_ICON_SIZES = [256] as const;
+
+function posixJoin(root: string, ...segments: ReadonlyArray<string>): string {
+  return [root.replace(/\/+$/u, ""), ...segments].join("/");
+}
+
+export function linuxDesktopIconNames(desktopEntryName: string): readonly string[] {
+  const appId = desktopEntryName.replace(/\.desktop$/u, "").toLowerCase();
+  const names = [LINUX_DESKTOP_ICON_NAME];
+  if (!names.includes(appId)) names.push(appId);
+  return names;
+}
+
+export function linuxDesktopIconInstallOperations(input: {
+  readonly packagedHicolorRoot: string;
+  readonly dataHome: string;
+  readonly desktopEntryName: string;
+}): ReadonlyArray<{ readonly sourcePath: string; readonly targetPath: string }> {
+  const names = linuxDesktopIconNames(input.desktopEntryName);
+  const operations: Array<{ readonly sourcePath: string; readonly targetPath: string }> = [];
+  for (const size of LINUX_DESKTOP_ICON_SIZES) {
+    const sizeDir = `${size}x${size}`;
+    const sourcePath = posixJoin(
+      input.packagedHicolorRoot,
+      sizeDir,
+      "apps",
+      `${LINUX_DESKTOP_ICON_NAME}.png`,
+    );
+    for (const name of names) {
+      operations.push({
+        sourcePath,
+        targetPath: posixJoin(input.dataHome, "icons/hicolor", sizeDir, "apps", `${name}.png`),
+      });
+    }
+  }
+  return operations;
+}
+
+// The visible launcher owns StartupWMClass matching on X11 and GNOME Wayland.
+// Keep it off this hidden entry so GNOME does not prefer it over the launcher.
+// Icon= still serves shells that look up the Wayland app_id by desktop filename.
 export function renderUrlHandlerDesktopEntry(input: {
   readonly displayName: string;
   readonly execTarget: string;
@@ -78,6 +120,7 @@ export function renderUrlHandlerDesktopEntry(input: {
     "Terminal=false",
     "NoDisplay=true",
     "StartupNotify=false",
+    `Icon=${LINUX_DESKTOP_ICON_NAME}`,
     `MimeType=x-scheme-handler/${input.scheme};`,
     "",
   ].join("\n");
@@ -116,9 +159,10 @@ export const make = Effect.gen(function* () {
     const existing = yield* fileSystem
       .readFileString(desktopEntryPath)
       .pipe(Effect.orElseSucceed(() => null));
-    if (existing === content) return;
-    yield* fileSystem.makeDirectory(environment.linuxApplicationsDir, { recursive: true });
-    yield* fileSystem.writeFileString(desktopEntryPath, content);
+    if (existing !== content) {
+      yield* fileSystem.makeDirectory(environment.linuxApplicationsDir, { recursive: true });
+      yield* fileSystem.writeFileString(desktopEntryPath, content);
+    }
   }).pipe(
     Effect.mapError(
       (cause) =>
