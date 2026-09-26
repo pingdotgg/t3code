@@ -41,6 +41,7 @@ interface SettingsScopeMenuProps {
   readonly groups: readonly SidebarProjectSnapshot[];
   readonly environments: readonly EnvironmentPresentation[];
   readonly onChange: (next: SettingsScopeSearch) => void;
+  readonly singleEnvironmentId?: string | undefined;
 }
 
 /**
@@ -54,11 +55,14 @@ export function SettingsScopeSentence() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const { environments } = useEnvironments();
   if (scope === null || SETTINGS_DEVICE_ONLY_PATHS.has(pathname)) return null;
+  const singleEnvironmentId =
+    pathname === "/settings/providers" ? scope.environment?.environmentId : undefined;
   const props: SettingsScopeMenuProps = {
     value: scope.search,
     groups: scope.groups,
     environments,
     onChange: scope.selectScope,
+    singleEnvironmentId,
   };
   return (
     <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-base text-muted-foreground sm:px-4">
@@ -70,7 +74,9 @@ export function SettingsScopeSentence() {
       <span className="flex min-w-0 items-center gap-1.5">
         <span className="shrink-0">
           {/* A legacy checkout link names one environment without `machine`. */}
-          {scope.search.machine || scope.scope.kind === "checkout" ? "on" : "across"}
+          {scope.search.machine || scope.scope.kind === "checkout" || singleEnvironmentId
+            ? "on"
+            : "across"}
         </span>
         <EnvironmentScopeMenu {...props} />
       </span>
@@ -105,11 +111,17 @@ function ScopeMenu({
   );
 }
 
-function EnvironmentScopeMenu({ value, groups, environments, onChange }: SettingsScopeMenuProps) {
+function EnvironmentScopeMenu({
+  value,
+  groups,
+  environments,
+  onChange,
+  singleEnvironmentId,
+}: SettingsScopeMenuProps) {
   const resolved = resolveSettingsScope(value, groups, environments);
   const environmentValue = environmentAxisValue(
     value,
-    resolved.kind === "checkout" ? resolved.environmentId : null,
+    resolved.kind === "checkout" ? resolved.environmentId : singleEnvironmentId,
   );
   const selected = environments.find(
     (environment) => environment.environmentId === environmentValue,
@@ -140,14 +152,18 @@ function EnvironmentScopeMenu({ value, groups, environments, onChange }: Setting
           if (typeof next === "string") onChange(selectEnvironmentAxis(value, next));
         }}
       >
-        <MenuRadioItem value={ALL_ENVIRONMENTS_VALUE}>
-          <span className="flex min-w-0 items-center gap-2">
-            <LayersIcon aria-hidden className="size-3.5" />
-            <span className="min-w-0 flex-1 truncate">All environments</span>
-            <MenuRadioItemIndicator />
-          </span>
-        </MenuRadioItem>
-        <MenuSeparator />
+        {singleEnvironmentId ? null : (
+          <>
+            <MenuRadioItem value={ALL_ENVIRONMENTS_VALUE}>
+              <span className="flex min-w-0 items-center gap-2">
+                <LayersIcon aria-hidden className="size-3.5" />
+                <span className="min-w-0 flex-1 truncate">All environments</span>
+                <MenuRadioItemIndicator />
+              </span>
+            </MenuRadioItem>
+            <MenuSeparator />
+          </>
+        )}
         {environments.map((environment) => (
           <MenuRadioItem key={environment.environmentId} value={environment.environmentId}>
             <span className="flex min-w-0 items-center gap-2">
