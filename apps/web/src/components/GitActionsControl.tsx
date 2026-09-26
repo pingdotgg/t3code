@@ -53,6 +53,7 @@ import { cn } from "~/lib/utils";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
+  hasActivatableGitMenuEntry,
   type GitActionIconName,
   type GitActionMenuItem,
   type GitQuickAction,
@@ -1631,6 +1632,11 @@ export default function GitActionsControl({
   );
 
   const canPublishRepository = isRepo && gitStatusForActions !== null && !hasPrimaryRemote;
+  const menuLeadsAnywhere = hasActivatableGitMenuEntry({
+    items: gitActionMenuItems,
+    canPublishRepository,
+    hasStatusError: Boolean(gitStatusError),
+  });
 
   const initializeGit = () => {
     void (async () => {
@@ -1777,7 +1783,7 @@ export default function GitActionsControl({
                 if (open) requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
               }}
             >
-              <MenuSubTrigger density="touch" disabled={isGitActionRunning}>
+              <MenuSubTrigger density="touch" disabled={isGitActionRunning || !menuLeadsAnywhere}>
                 <SourceControlIcon className="size-4" />
                 <MenuItemLabel>Git actions</MenuItemLabel>
               </MenuSubTrigger>
@@ -1835,7 +1841,7 @@ export default function GitActionsControl({
           >
             <MenuTrigger
               render={<Button aria-label="Git action options" size="icon-xs" variant="outline" />}
-              disabled={isGitActionRunning}
+              disabled={isGitActionRunning || !menuLeadsAnywhere}
             >
               <ChevronDownIcon aria-hidden="true" className="size-4" />
             </MenuTrigger>

@@ -3,6 +3,7 @@ import { assert, describe, it } from "vite-plus/test";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
+  hasActivatableGitMenuEntry,
   requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
@@ -31,6 +32,33 @@ function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
     ...overrides,
   };
 }
+
+describe("hasActivatableGitMenuEntry", () => {
+  it("is false for a clean, up-to-date branch whose actions are all disabled", () => {
+    const items = buildMenuItems(status(), false);
+    assert.isTrue(items.length > 0 && items.every((item) => item.disabled));
+    assert.isFalse(
+      hasActivatableGitMenuEntry({ items, canPublishRepository: false, hasStatusError: false }),
+    );
+  });
+
+  it("is true once an action can run", () => {
+    const items = buildMenuItems(status({ hasWorkingTreeChanges: true }), false);
+    assert.isTrue(
+      hasActivatableGitMenuEntry({ items, canPublishRepository: false, hasStatusError: false }),
+    );
+  });
+
+  it("stays true while the menu still offers publishing or an error to read", () => {
+    const items = buildMenuItems(status(), false);
+    assert.isTrue(
+      hasActivatableGitMenuEntry({ items, canPublishRepository: true, hasStatusError: false }),
+    );
+    assert.isTrue(
+      hasActivatableGitMenuEntry({ items: [], canPublishRepository: false, hasStatusError: true }),
+    );
+  });
+});
 
 describe("when: ref is clean and has an open PR", () => {
   it("resolveQuickAction opens the existing PR", () => {

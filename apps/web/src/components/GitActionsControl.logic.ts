@@ -23,6 +23,21 @@ export interface GitActionMenuItem {
   dialogAction?: GitDialogAction;
 }
 
+/**
+ * Whether opening the git actions menu leads anywhere: an action that can run, a repository to
+ * publish, or a status error to read. A menu of nothing but disabled rows is not worth opening;
+ * the primary button already carries the hint for that state.
+ */
+export function hasActivatableGitMenuEntry(input: {
+  readonly items: ReadonlyArray<Pick<GitActionMenuItem, "disabled">>;
+  readonly canPublishRepository: boolean;
+  readonly hasStatusError: boolean;
+}): boolean {
+  return (
+    input.items.some((item) => !item.disabled) || input.canPublishRepository || input.hasStatusError
+  );
+}
+
 export interface GitQuickAction {
   label: string;
   disabled: boolean;
