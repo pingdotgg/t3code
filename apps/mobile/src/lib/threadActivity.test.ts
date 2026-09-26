@@ -291,6 +291,50 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("orders messages and activities by absolute time and preserves equal-time order", () => {
+    const messages = [
+      ["last", "2026-04-01T02:00:03.000+02:00"],
+      ["first-tie", "2026-03-31T19:00:01.000-05:00"],
+      ["second-tie", "2026-04-01T00:00:01Z"],
+      ["first", "2026-04-01T00:00:00.000Z"],
+    ].map(([id, createdAt]) => ({
+      id: MessageId.make(id!),
+      role: "user" as const,
+      text: id!,
+      turnId: null,
+      streaming: false,
+      createdAt: createdAt!,
+      updatedAt: createdAt!,
+    }));
+    const activities = [
+      makeActivity({
+        id: EventId.make("activity-tie"),
+        kind: "runtime.warning",
+        summary: "Synthetic warning",
+        createdAt: "2026-04-01T01:00:01.000+01:00",
+      }),
+      makeActivity({
+        id: EventId.make("activity-middle"),
+        kind: "runtime.warning",
+        summary: "Another synthetic warning",
+        createdAt: "2026-04-01T00:00:02.000Z",
+      }),
+    ];
+    const originalMessages = [...messages];
+    const originalActivities = [...activities];
+    const feed = buildThreadFeed({ messages, activities });
+
+    expect(
+      feed.flatMap((entry) =>
+        entry.type === "activity-group"
+          ? entry.activities.map((activity) => activity.id)
+          : [entry.id],
+      ),
+    ).toEqual(["first", "first-tie", "second-tie", "activity-tie", "activity-middle", "last"]);
+    expect(messages).toEqual(originalMessages);
+    expect(activities).toEqual(originalActivities);
+  });
+
   it("reuses unchanged feed and presentation rows during an assistant text update", () => {
     const completedTurnId = TurnId.make("completed-turn");
     const activeTurnId = TurnId.make("active-turn");
