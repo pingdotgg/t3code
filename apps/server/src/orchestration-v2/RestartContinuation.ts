@@ -67,11 +67,12 @@ export function restartContinuationRun(
   return run;
 }
 
+/** Returns whether a continuation run was dispatched; false means it was skipped. */
 export const continueRestartedRun = Effect.fn("RestartContinuation.continueRestartedRun")(
   function* (input: { readonly threadId: ThreadId; readonly sourceRunId: RunId }) {
     const settings = yield* ServerSettingsService;
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
-    if (!enabled) return;
+    if (!enabled) return false;
     const threads = yield* ThreadManagementService;
     const messageId = MessageId.make(`message:restart-continuation:${input.sourceRunId}`);
     const projection = yield* threads.getThreadRecords(input.threadId, ["messages", "runs"], {
@@ -81,15 +82,16 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       !resolveProjectSettings(enabled, projection.thread.projectId).settings
         .continueThreadsAfterServerUpdate
     )
-      return;
-    if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return;
+      return false;
+    if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return false;
 
-    if (projection.messages.some((message) => message.id === messageId)) return;
+    // Already dispatched by an earlier attempt of this effect.
+    if (projection.messages.some((message) => message.id === messageId)) return true;
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
-    if (!source || source.status !== "cancelled") return;
+    if (!source || source.status !== "cancelled") return false;
     // A user submission after reconciliation takes precedence over an automatic prompt.
-    if (projection.runs.some((run) => run.ordinal > source.ordinal)) return;
-    if (projection.thread.providerInstanceId !== source.providerInstanceId) return;
+    if (projection.runs.some((run) => run.ordinal > source.ordinal)) return false;
+    if (projection.thread.providerInstanceId !== source.providerInstanceId) return false;
     yield* threads.dispatch({
       type: "message.dispatch",
       commandId: CommandId.make(`command:restart-continuation:${input.sourceRunId}`),
@@ -103,5 +105,6 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       creationSource: "server",
       restartContinuationOfRunId: input.sourceRunId,
     });
+    return true;
   },
 );

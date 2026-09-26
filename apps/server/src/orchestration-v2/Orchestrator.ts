@@ -228,6 +228,17 @@ export interface OrchestratorV2DispatchResult {
 
 export interface OrchestratorV2Shape {
   readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
+  /**
+   * Recovers delegated-task reports after startup runtime recovery: publishes
+   * results of app-owned children whose last run is terminal but unreported,
+   * then settles parent completion wakes that recovery terminalized.
+   * `deferChild` skips a child whose work may still resume.
+   */
+  readonly recoverDelegatedTaskReports: (
+    deferChild?: (run: OrchestrationV2Run) => Effect.Effect<boolean>,
+  ) => Effect.Effect<void>;
+  /** Publishes one app-owned child's terminal result to its parent, if still owed. */
+  readonly reconcileAppOwnedSubagentResult: (childThreadId: ThreadId) => Effect.Effect<void>;
   readonly dispatch: (
     command: OrchestrationV2Command,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
@@ -9123,97 +9134,130 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.forkDetach,
     );
 
-  // Recover child results from projections. Queue recovery instead holds
-  // unstarted runs until an explicit queue.resume command arrives.
-  yield* projectionStore.getRecoveryThreadIds("subagent-results").pipe(
-    Effect.flatMap((threadIds) =>
-      Effect.forEach(
-        threadIds,
-        (threadId) =>
-          Effect.gen(function* () {
-            const thread = yield* projectionStore.getThreadShell(threadId);
-            const parentThreadId = thread?.lineage.parentThreadId;
-            if (parentThreadId === undefined || parentThreadId === null) return;
-            yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(threadId));
-          }).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Failed to recover terminal app-owned subagent", {
-                childThreadId: threadId,
-                cause,
-              }),
-            ),
-          ),
-        { concurrency: 8, discard: true },
+  const reconcileAppOwnedSubagentResult = (childThreadId: ThreadId) =>
+    Effect.gen(function* () {
+      const parentThreadId = yield* appOwnedSubagentParentThreadId(childThreadId);
+      if (parentThreadId === undefined) return;
+      yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(childThreadId));
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to recover terminal app-owned subagent", {
+          childThreadId,
+          cause,
+        }),
       ),
-    ),
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Failed to inspect app-owned subagents during recovery", {
-        cause,
-      }),
-    ),
-  );
-  yield* projectionStore.getRecoveryThreadIds("delegated-completions").pipe(
-    Effect.flatMap((threadIds) =>
-      Effect.forEach(
-        threadIds,
-        (threadId) =>
-          threadDispatch
-            .withLock(
-              threadId,
-              Effect.gen(function* () {
-                const projection = yield* projectionStore.getThreadRecords(threadId, [
-                  "runs",
-                  "messages",
-                ]);
-                const terminalDeliveryRunIds = projection.runs
-                  .filter((run) => delegatedTaskTerminalStatus(run.status) !== null)
-                  .filter((run) =>
-                    projection.messages.some(
-                      (message) =>
-                        message.id === run.userMessageId &&
-                        message.delegatedCompletion !== undefined,
-                    ),
-                  )
-                  .map((run) => run.id);
-                for (const runId of terminalDeliveryRunIds) {
-                  yield* finalizeDelegatedCompletionDelivery(threadId, runId);
-                }
-                const refreshed =
-                  terminalDeliveryRunIds.length === 0
-                    ? projection
-                    : yield* projectionStore.getThreadRecords(threadId, ["runs", "messages"], {
-                        messageRoles: ["user"],
-                      });
-                for (const run of refreshed.runs) {
-                  if (
-                    run.delegatedCompletion?.delivery !== null &&
-                    run.delegatedCompletion !== undefined
-                  ) {
-                    yield* offerDelegatedCompletionDelivery(threadId, run.id);
-                  }
-                }
-              }),
-            )
-            .pipe(
+    );
+
+  const recoverAppOwnedSubagentResults = (
+    deferChild?: (run: OrchestrationV2Run) => Effect.Effect<boolean>,
+  ) =>
+    projectionStore.getRecoveryThreadIds("subagent-results").pipe(
+      Effect.flatMap((threadIds) =>
+        Effect.forEach(
+          threadIds,
+          (threadId) =>
+            Effect.gen(function* () {
+              if (deferChild !== undefined) {
+                const { runs } = yield* projectionStore.getThreadRecords(threadId, ["runs"]);
+                const latest = runs.at(-1);
+                if (latest !== undefined && (yield* deferChild(latest))) return;
+              }
+              yield* reconcileAppOwnedSubagentResult(threadId);
+            }).pipe(
               Effect.catchCause((cause) =>
-                Effect.logWarning("Failed to recover delegated completion delivery", {
-                  threadId,
+                Effect.logWarning("Failed to recover terminal app-owned subagent", {
+                  childThreadId: threadId,
                   cause,
                 }),
               ),
             ),
-        { concurrency: 8, discard: true },
+          { concurrency: 8, discard: true },
+        ),
       ),
-    ),
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Failed to inspect delegated completion delivery during recovery", {
-        cause,
-      }),
-    ),
-  );
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to inspect app-owned subagents during recovery", {
+          cause,
+        }),
+      ),
+    );
 
+  // Runs once startup runtime recovery has terminalized interrupted work, so
+  // nothing is reported before a pending restart continuation is known.
+  // Queue recovery instead holds unstarted runs until queue.resume arrives.
+  const recoverDelegatedTaskReports = (
+    deferChild?: (run: OrchestrationV2Run) => Effect.Effect<boolean>,
+  ) =>
+    recoverAppOwnedSubagentResults(deferChild).pipe(
+      Effect.andThen(
+        projectionStore.getRecoveryThreadIds("delegated-completions").pipe(
+          Effect.flatMap((threadIds) =>
+            Effect.forEach(
+              threadIds,
+              (threadId) =>
+                threadDispatch
+                  .withLock(
+                    threadId,
+                    Effect.gen(function* () {
+                      const projection = yield* projectionStore.getThreadRecords(threadId, [
+                        "runs",
+                        "messages",
+                      ]);
+                      const terminalDeliveryRunIds = projection.runs
+                        .filter((run) => delegatedTaskTerminalStatus(run.status) !== null)
+                        .filter((run) =>
+                          projection.messages.some(
+                            (message) =>
+                              message.id === run.userMessageId &&
+                              message.delegatedCompletion !== undefined,
+                          ),
+                        )
+                        .map((run) => run.id);
+                      for (const runId of terminalDeliveryRunIds) {
+                        yield* finalizeDelegatedCompletionDelivery(threadId, runId);
+                      }
+                      const refreshed =
+                        terminalDeliveryRunIds.length === 0
+                          ? projection
+                          : yield* projectionStore.getThreadRecords(
+                              threadId,
+                              ["runs", "messages"],
+                              {
+                                messageRoles: ["user"],
+                              },
+                            );
+                      for (const run of refreshed.runs) {
+                        if (
+                          run.delegatedCompletion?.delivery !== null &&
+                          run.delegatedCompletion !== undefined
+                        ) {
+                          yield* offerDelegatedCompletionDelivery(threadId, run.id);
+                        }
+                      }
+                    }),
+                  )
+                  .pipe(
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning("Failed to recover delegated completion delivery", {
+                        threadId,
+                        cause,
+                      }),
+                    ),
+                  ),
+              { concurrency: 8, discard: true },
+            ),
+          ),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Failed to inspect delegated completion delivery during recovery", {
+              cause,
+            }),
+          ),
+        ),
+      ),
+    );
   return OrchestratorV2.of({
     resumeQueuedRuns,
+    recoverDelegatedTaskReports,
+    reconcileAppOwnedSubagentResult,
     dispatch: dispatchWithReceipt,
     getTimelinePage: (threadId, options) =>
       projectionStore
@@ -9322,6 +9366,8 @@ export const layer: Layer.Layer<
 const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
   OrchestratorV2,
   OrchestratorV2.of({
+    recoverDelegatedTaskReports: () => Effect.void,
+    reconcileAppOwnedSubagentResult: () => Effect.void,
     resumeQueuedRuns: Effect.fail(
       new OrchestratorDispatchError({
         commandId: CommandId.make("command:system:resume-queued-runs"),
