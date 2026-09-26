@@ -29,7 +29,8 @@ and worktree while you stay in the new thread composer. This requires a Git proj
 
 On web and desktop, right-click a thread in the sidebar to open its menu, or use
 the title above the conversation. On a touch screen, press and hold the thread in
-the sidebar. The menu holds rename, pin, settle, snooze, copy, and delete actions.
+the default sidebar. The menu holds rename, pin, settle, snooze, copy, and delete
+actions.
 
 ## Pin and reorder threads
 
