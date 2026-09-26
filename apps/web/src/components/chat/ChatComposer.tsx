@@ -1875,6 +1875,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     requestedDriverKind,
     lockedContinuationGroupKey,
     unavailableProviderInstanceId,
+    blockedByContinuationGroup,
   } = useMemo(
     () =>
       resolveComposerProviderSelection({
@@ -1908,6 +1909,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // back once the catalog lands.
   const providerCatalogPending = noProviderAvailable && !providerCatalogKnown;
   const showProviderUnavailable = noProviderAvailable && !providerCatalogPending;
+  // An enabled account that cannot continue the thread makes the generic hint misleading.
+  const providerUnavailableHint = blockedByContinuationGroup
+    ? "Enable this thread's account in Settings"
+    : "Enable a provider in Settings";
+  const providerUnavailablePlaceholder = blockedByContinuationGroup
+    ? "Other accounts can't continue this thread. Enable this thread's account in Settings to send a message"
+    : "Enable a provider in Settings to send a message";
   const providerSetupInstanceId = noProviderAvailable
     ? (unavailableProviderInstanceId ??
       (lockedProvider === null
@@ -6395,9 +6403,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       : activePendingProgress.customAnswer ||
                         "Type your own answer, or leave this blank to use the selected option"
                     : prompt.trim() ||
-                      (showProviderUnavailable
-                        ? "Enable a provider in Settings"
-                        : "Ask anything...")}
+                      (showProviderUnavailable ? providerUnavailableHint : "Ask anything...")}
                 </button>
                 {collapsedComposerImagePreviews}
                 <button
@@ -6890,7 +6896,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             : projectSelectionRequired
                               ? "Choose a project above to start a thread"
                               : showProviderUnavailable
-                                ? "Enable a provider in Settings to send a message"
+                                ? providerUnavailablePlaceholder
                                 : phase === "disconnected"
                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
                                   : "Ask anything, @tag files/folders, $use skills, or / for commands"

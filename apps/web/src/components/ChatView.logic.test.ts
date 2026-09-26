@@ -1391,6 +1391,91 @@ describe("resolveComposerProviderSelection", () => {
 
     expect(selection.selectedProviderEntry).toBeUndefined();
   });
+
+  describe("blockedByContinuationGroup", () => {
+    const codex = ProviderDriverKind.make("codex");
+    const threadAccount = entry("codex", "codex_work", {
+      enabled: false,
+      continuation: { groupKey: "codex:home:/work" },
+    });
+
+    function resolveThreadSelection(otherAccount: ReturnType<typeof entry>) {
+      return resolveComposerProviderSelection({
+        entries: [threadAccount, otherAccount],
+        candidateInstanceIds: [threadAccount.instanceId],
+        lockedProvider: codex,
+        lockedInstanceId: threadAccount.instanceId,
+      });
+    }
+
+    it("is set when only an account with separate sessions is enabled", () => {
+      const selection = resolveThreadSelection(
+        entry("codex", "codex_personal", {
+          continuation: { groupKey: "codex:home:/personal" },
+        }),
+      );
+
+      expect(selection.selectedProviderEntry).toBeUndefined();
+      expect(selection.blockedByContinuationGroup).toBe(true);
+      expect(selection.unavailableProviderInstanceId).toBe(threadAccount.instanceId);
+    });
+
+    it("stays unset when an account sharing the sessions can continue", () => {
+      const selection = resolveThreadSelection(
+        entry("codex", "codex_personal", {
+          continuation: { groupKey: "codex:home:/work" },
+        }),
+      );
+
+      expect(selection.selectedProviderEntry?.instanceId).toBe("codex_personal");
+      expect(selection.blockedByContinuationGroup).toBe(false);
+    });
+
+    it("stays unset when the other account cannot start either", () => {
+      const disabled = resolveThreadSelection(
+        entry("codex", "codex_personal", {
+          enabled: false,
+          continuation: { groupKey: "codex:home:/personal" },
+        }),
+      );
+      const failing = resolveThreadSelection(
+        entry("codex", "codex_personal", {
+          status: "error",
+          continuation: { groupKey: "codex:home:/personal" },
+        }),
+      );
+
+      expect(disabled.blockedByContinuationGroup).toBe(false);
+      expect(failing.blockedByContinuationGroup).toBe(false);
+    });
+
+    it("stays unset when the thread's account has no continuation group", () => {
+      const selection = resolveComposerProviderSelection({
+        entries: [
+          entry("codex", "codex_work", { enabled: false }),
+          entry("codex", "codex_personal", {
+            continuation: { groupKey: "codex:home:/personal" },
+          }),
+        ],
+        candidateInstanceIds: [threadAccount.instanceId],
+        lockedProvider: codex,
+        lockedInstanceId: threadAccount.instanceId,
+      });
+
+      expect(selection.blockedByContinuationGroup).toBe(false);
+    });
+
+    it("stays unset when only another provider is enabled", () => {
+      const selection = resolveThreadSelection(
+        entry("claudeAgent", "claudeAgent", {
+          continuation: { groupKey: "claude:home:/work" },
+        }),
+      );
+
+      expect(selection.selectedProviderEntry).toBeUndefined();
+      expect(selection.blockedByContinuationGroup).toBe(false);
+    });
+  });
 });
 
 describe("resolveComposerInteractionMode", () => {

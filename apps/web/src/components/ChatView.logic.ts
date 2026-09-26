@@ -586,11 +586,21 @@ export function resolveComposerProviderSelection(input: {
     : input.lockedProvider
       ? (input.lockedInstanceId ?? requestedInstanceId)
       : requestedInstanceId;
+  // True when another instance of the thread's driver could start now but
+  // keeps its sessions elsewhere, so only the continuation group blocks it.
+  const blockedByContinuationGroup =
+    selectedProviderEntry === undefined &&
+    lockedContinuationGroupKey !== null &&
+    resolveSelectableProviderInstanceEntry(
+      input.entries.filter((entry) => entry.driverKind === input.lockedProvider),
+      undefined,
+    ) !== undefined;
   return {
     selectedProviderEntry,
     requestedDriverKind,
     lockedContinuationGroupKey,
     unavailableProviderInstanceId,
+    blockedByContinuationGroup,
   };
 }
 
