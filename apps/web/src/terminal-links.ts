@@ -35,9 +35,14 @@ const URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
 const FILE_PATH_PATTERN =
   /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
+// Paths also drop a trailing colon: compilers end `file:line:col:` with one.
+const TRAILING_PATH_PUNCTUATION_PATTERN = /[.,;:!?]+$/;
 
-function trimClosingDelimiters(value: string): string {
-  let output = value.replace(TRAILING_PUNCTUATION_PATTERN, "");
+function trimClosingDelimiters(value: string, kind: TerminalLinkKind): string {
+  let output = value.replace(
+    kind === "path" ? TRAILING_PATH_PUNCTUATION_PATTERN : TRAILING_PUNCTUATION_PATTERN,
+    "",
+  );
   if (output.length === 0) return output;
 
   const trimUnbalanced = (open: string, close: string) => {
@@ -73,7 +78,7 @@ function collectMatches(
     const start = rawMatch.index ?? -1;
     if (start < 0 || raw.length === 0) continue;
 
-    const trimmed = trimClosingDelimiters(raw);
+    const trimmed = trimClosingDelimiters(raw, kind);
     if (trimmed.length === 0) continue;
     if (kind === "path" && isTerminalUrl(trimmed)) continue;
 

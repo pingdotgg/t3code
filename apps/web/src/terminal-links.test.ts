@@ -97,6 +97,24 @@ describe("extractTerminalLinks", () => {
       },
     ]);
   });
+
+  it("keeps a trailing colon on URLs", () => {
+    expect(extractTerminalLinks("GET https://example.test/items/foo:")).toEqual([
+      { kind: "url", text: "https://example.test/items/foo:", start: 4, end: 35 },
+    ]);
+  });
+
+  it.each([
+    ["./main.go:10:5: undefined: x", "./main.go:10:5"],
+    ["/home/dev/app/src/main.c:10:5: error: expected ';'", "/home/dev/app/src/main.c:10:5"],
+    ["C:\\dev\\app\\src\\main.c:10:5: error: expected ';'", "C:\\dev\\app\\src\\main.c:10:5"],
+    ["wrote ./out/report.txt:", "./out/report.txt"],
+  ])("drops the colon that ends a compiler diagnostic location in %s", (line, text) => {
+    const start = line.indexOf(text);
+    expect(extractTerminalLinks(line)).toEqual([
+      { kind: "path", text, start, end: start + text.length },
+    ]);
+  });
 });
 
 describe("collectWrappedTerminalLinkLine", () => {
@@ -172,6 +190,13 @@ describe("resolvePathLinkTarget", () => {
     expect(
       resolvePathLinkTarget("C:/Users/julius/project/src/main.ts:12", "C:\\Users\\julius\\project"),
     ).toBe("C:/Users/julius/project/src/main.ts:12");
+  });
+
+  it("keeps the line and column of a compiler diagnostic", () => {
+    const [link] = extractTerminalLinks("/Users/julius/project/main.c:10:5: error: expected ';'");
+    expect(resolvePathLinkTarget(link?.text ?? "", "/Users/julius/project")).toBe(
+      "/Users/julius/project/main.c:10:5",
+    );
   });
 });
 
