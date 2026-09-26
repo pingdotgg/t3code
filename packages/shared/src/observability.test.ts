@@ -491,6 +491,11 @@ describe("observability", () => {
           message: [expect.any(String), { filePath: tracePath, droppedCount: 1_029 }],
         });
 
+        // Healthy flushes after the recovery log nothing.
+        sink.push(makeRecord("healthy"));
+        yield* TestClock.adjust("1 second");
+        expect(logs).toHaveLength(2);
+
         // A new failure episode warns again.
         yield* fileSystem.remove(tracePath);
         yield* fileSystem.makeDirectory(tracePath);
