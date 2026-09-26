@@ -22,6 +22,7 @@ import { encodeComposerContextFragment } from "@t3tools/shared/composerContextCl
 import {
   collectComposerContextReferences,
   sanitizeComposerContextLabel,
+  selfConsistentPastedPullRequestNumber,
 } from "@t3tools/shared/composerContextReferences";
 
 import {
@@ -45,6 +46,8 @@ import type { ReviewCommentContext } from "~/reviewCommentContext";
  */
 
 const PREVIEW_LABEL_MAX_CHARS = 48;
+
+const PASTED_PR_CONTEXT_ID_PATTERN = /(?:^|_)pr-reference-(\d+)-[0-9a-f]+$/i;
 
 /**
  * A review selection can be arbitrarily large, but the wire schema bounds `text` and `diff`.
@@ -105,6 +108,78 @@ export function pullRequestContextKindLabel(comment: ReviewCommentPresentation):
   const state = pullRequestContextDisplayState(comment);
   if (state === null) return "Pull request";
   return `${state[0]!.toUpperCase()}${state.slice(1)} pull request`;
+}
+
+/** A pasted `pr-reference:<number>` chip before its summary loads. */
+export function buildPendingPullRequestReferenceContext(number: number): ReviewCommentContext {
+  return {
+    id: `pr-reference:${number}`,
+    sectionId: `pull-request:${number}`,
+    sectionTitle: `PR #${number}`,
+    filePath: `PR #${number}`,
+    startIndex: 0,
+    endIndex: 0,
+    rangeLabel: "",
+    text: "",
+    diff: "",
+  };
+}
+
+/** Whether this is a pasted PR reference still waiting for its summary. */
+export function isPendingPullRequestReferenceContext(comment: ReviewCommentPresentation): boolean {
+  const commentId = "id" in comment ? comment.id : comment.contextId;
+  return (
+    comment.pullRequest === undefined &&
+    (commentId.startsWith("pr-reference:") || PASTED_PR_CONTEXT_ID_PATTERN.test(commentId)) &&
+    isPullRequestSummaryContext(comment)
+  );
+}
+
+/** PR number behind a pending reference (parsed from its `PR #N` file path). */
+export function pendingPullRequestReferenceNumber(comment: ReviewCommentPresentation): number {
+  const match = /^PR #(\d+)$/u.exec(comment.filePath);
+  const number = match ? Number(match[1]) : NaN;
+  return Number.isSafeInteger(number) && number > 0 ? number : 0;
+}
+
+export function unresolvedPastedPullRequestReferences(
+  prompt: string,
+  comments: ReadonlyArray<ReviewCommentContext>,
+) {
+  const commentsByContextId = new Map(
+    comments.map((comment) => [reviewCommentContextId(comment.id), comment]),
+  );
+  const references = new Map<
+    string,
+    { contextId: string; number: number; comment: ReviewCommentContext | undefined }
+  >();
+  for (const occurrence of collectComposerContextReferences(prompt)) {
+    if (occurrence.kind !== "review-comment") continue;
+    const number = selfConsistentPastedPullRequestNumber(occurrence.label, occurrence.contextId);
+    if (number === null) continue;
+    const comment = commentsByContextId.get(occurrence.contextId);
+    if (comment !== undefined && !isPendingPullRequestReferenceContext(comment)) continue;
+    references.set(occurrence.contextId, {
+      contextId: occurrence.contextId,
+      number,
+      comment,
+    });
+  }
+  return [...references.values()];
+}
+
+export function pastedPullRequestReferenceScope(input: {
+  environmentId: string;
+  target: string;
+  projectId: string;
+  repository: string;
+}): string {
+  return JSON.stringify([
+    input.environmentId,
+    input.target,
+    input.projectId,
+    input.repository.trim().toLowerCase(),
+  ]);
 }
 
 export function previewAnnotationContextLabel(annotation: PreviewAnnotationPayload): string {

@@ -289,3 +289,62 @@ export function projectComposerContextForProvider(input: {
   if (entries.length === 0) return body;
   return `${body}\n\n<${CONTEXT_ENVELOPE_TAG} version="1">\n${entries.join("\n")}\n</${CONTEXT_ENVELOPE_TAG}>`;
 }
+
+// ---------------------------------------------------------------------------
+// Pasted pull-request references
+// ---------------------------------------------------------------------------
+
+/**
+ * A `pr-reference:<number>` producer id folds into
+ * `review-comment_pr-reference-<number>-<hash>`. The number stays in plaintext,
+ * so a pasted provider marker can be resolved without its original record.
+ */
+const PASTED_PR_REFERENCE_ID_PATTERN = /^review-comment_pr-reference-(\d+)-[0-9a-f]+$/i;
+const PASTED_PR_PROVIDER_MARKER_PATTERN =
+  /\[([^\]\n]{0,512}?);\s*ref=(review-comment_pr-reference-\d+-[0-9a-f]+)\]/gi;
+
+/** Pull request number behind a pasted `pr-reference` context id, if any. */
+export function pullRequestNumberFromPastedContextId(contextId: string): number | null {
+  const match = PASTED_PR_REFERENCE_ID_PATTERN.exec(contextId);
+  if (!match) return null;
+  const number = Number(match[1]);
+  return Number.isSafeInteger(number) && number > 0 ? number : null;
+}
+
+const PASTED_PR_LABEL_NUMBER_PATTERN = /#(\d+)\b/;
+
+/**
+ * The number a pasted `pr-reference` chip stands for, but only when the
+ * pasted label and the context id agree. A marker like
+ * `[Review comment: #11410; ref=...pr-reference-11430-...]` is malformed and
+ * must stay plain text rather than enter the resolving flow.
+ */
+export function selfConsistentPastedPullRequestNumber(
+  label: string,
+  contextId: string,
+): number | null {
+  const refNumber = pullRequestNumberFromPastedContextId(contextId);
+  if (refNumber === null) return null;
+  const labelNumber = Number(PASTED_PR_LABEL_NUMBER_PATTERN.exec(label)?.[1]);
+  if (!Number.isSafeInteger(labelNumber) || labelNumber <= 0 || labelNumber !== refNumber) {
+    return null;
+  }
+  return refNumber;
+}
+
+/**
+ * Plain-text provider markers (`[Review comment: ...; ref=...]`) never parse
+ * back as chips. Rewrite pasted `pr-reference` markers into canonical links so
+ * the existing `collectComposerContextReferences` path picks them up.
+ */
+export function rewritePastedPullRequestMarkers(text: string): string {
+  if (!text.includes("; ref=review-comment_pr-reference-")) return text;
+  return text.replace(
+    PASTED_PR_PROVIDER_MARKER_PATTERN,
+    (match, label: string, contextId: string) => {
+      const number = selfConsistentPastedPullRequestNumber(label, contextId);
+      if (number === null) return match;
+      return `[#${number}](${COMPOSER_CONTEXT_HREF_PREFIX}review-comment/${contextId})`;
+    },
+  );
+}
