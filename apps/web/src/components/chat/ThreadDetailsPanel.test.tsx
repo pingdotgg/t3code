@@ -237,3 +237,21 @@ it("keeps a recovery button and version warning when all sections are hidden", (
   click("Customize");
   expect(text()).toContain("Hide workspace");
 });
+
+it("hides an empty Auto workspace when its branch has no project", () => {
+  testState.density = "full";
+  testState.sections = {
+    sections: {
+      "version-control": { visibility: "hidden" },
+      automations: { visibility: "hidden" },
+      relationships: { visibility: "hidden" },
+    },
+  };
+  const props = { ...baseProps, activeProjectScripts: undefined };
+  renderPanel(props);
+  expect(text()).not.toContain("Workspace");
+  expect(text()).toContain("No details to show.");
+  act(() => renderer.update(<ThreadDetailsPanel {...props} activeProjectName="Project" />));
+  expect(text()).toContain("Workspace");
+  expect(text()).not.toContain("No details to show.");
+});

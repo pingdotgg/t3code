@@ -162,7 +162,9 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
       (workspaceDensity === "full" &&
         props.availableEnvironments.length > 1 &&
         workspaceItems.environment) ||
-      (workspaceDensity === "full" && workspaceItems.branch) ||
+      (workspaceDensity === "full" &&
+        props.activeProjectName !== undefined &&
+        workspaceItems.branch) ||
       (workspaceDensity !== "essential" && props.showOpenInPicker && workspaceItems.openIn) ||
       (props.activeProjectScripts !== undefined && workspaceItems.scripts);
     const workspaceRender = resolveThreadDetailsSectionRender({
