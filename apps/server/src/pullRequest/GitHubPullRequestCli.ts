@@ -15,8 +15,6 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import {
   resolvePullRequestAuthorFilter,
-  PositiveInt,
-  TrimmedNonEmptyString,
   type PullRequestAction,
   type PullRequestStackHead,
   type PullRequestActor,
@@ -87,6 +85,7 @@ import {
   PULL_REQUEST_LIST_JSON_FIELDS,
   PULL_REQUEST_FILES_VIEWED_GRAPHQL_QUERY,
   PULL_REQUEST_NODE_ID_GRAPHQL_QUERY,
+  VIEWER_IDENTITY_GRAPHQL_QUERY,
   REACTION_SUBJECT_PULL_REQUEST_GRAPHQL_QUERY,
   REMOVE_REACTION_GRAPHQL_MUTATION,
   REVERT_PULL_REQUEST_GRAPHQL_MUTATION,
@@ -103,6 +102,7 @@ import {
   UPDATE_PULL_REQUEST_GRAPHQL_MUTATION,
   UPDATE_REVIEW_COMMENT_GRAPHQL_MUTATION,
   VIEWER_PERMISSIONS_GRAPHQL_QUERY,
+  decodeViewerIdentityJson,
   decodeViewerPermissionsJson,
   decodeWorkflowRunApprovalsJson,
   type GitHubBaseComparison,
@@ -1098,14 +1098,6 @@ export const make = Effect.gen(function* () {
     }
   >();
   const identityLocks = new Map<string, { gate: Semaphore.Semaphore; users: number }>();
-  const decodeRoutingIdentity = Schema.decodeUnknownEffect(
-    Schema.fromJsonString(
-      Schema.Struct({
-        id: PositiveInt,
-        login: TrimmedNonEmptyString,
-      }),
-    ),
-  );
   const captureVerifiedCredential = Effect.fn("GitHubPullRequestCli.captureVerifiedCredential")(
     function* (input: { readonly cwd: string; readonly host: string }) {
       const unavailable = () =>
@@ -1143,25 +1135,36 @@ export const make = Effect.gen(function* () {
               const cached = routingIdentities.get(key);
               if (cached !== undefined && now - cached.at < 10 * 60_000)
                 return { ...credential, ...cached.value };
-              // Pin this read so an auth switch cannot poison its cache entry.
-              const response = yield* github
-                .execute({
-                  cwd: input.cwd,
-                  args: ["api", "user", "--hostname", host],
-                  env: {
-                    GH_HOST: host,
-                    GH_TOKEN: token,
-                    GITHUB_TOKEN: token,
-                    GH_ENTERPRISE_TOKEN: token,
-                    GITHUB_ENTERPRISE_TOKEN: token,
-                    GH_DEBUG: "",
-                  },
-                })
-                .pipe(Effect.mapError(unavailable));
-              const identity = yield* decodeRoutingIdentity(response.stdout).pipe(
-                Effect.mapError(unavailable),
-              );
-              const value = { accountId: String(identity.id), viewer: identity.login };
+              // Pin this read so an auth switch cannot poison its cache entry. Ask GraphQL for
+              // the identity: App installation tokens cannot answer REST `/user`, and the budget
+              // also needs this read's rate-limit answer. Let a paused budget propagate rather
+              // than disguising it as an unavailable viewer.
+              const value = yield* Effect.gen(function* () {
+                const query = yield* graphQlBudget.query(host, VIEWER_IDENTITY_GRAPHQL_QUERY);
+                const response = yield* github
+                  .execute({
+                    cwd: input.cwd,
+                    args: ["api", "graphql", "--hostname", host, "-f", `query=${query}`],
+                    env: {
+                      GH_HOST: host,
+                      GH_TOKEN: token,
+                      GITHUB_TOKEN: token,
+                      GH_ENTERPRISE_TOKEN: token,
+                      GITHUB_ENTERPRISE_TOKEN: token,
+                      GH_DEBUG: "",
+                    },
+                  })
+                  .pipe(Effect.mapError(unavailable));
+                yield* graphQlBudget.observe(host, response.stdout);
+                const decoded = decodeViewerIdentityJson(response.stdout.trim());
+                if (!Result.isSuccess(decoded)) {
+                  return yield* unavailable();
+                }
+                return {
+                  accountId: decoded.success.data.viewer.id,
+                  viewer: decoded.success.data.viewer.login,
+                };
+              }).pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, key));
               if (routingIdentities.size >= 128)
                 routingIdentities.delete(routingIdentities.keys().next().value!);
               routingIdentities.set(key, { at: now, value });

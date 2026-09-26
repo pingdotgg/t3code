@@ -4,6 +4,7 @@ import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as NodeCrypto from "node:crypto";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -240,7 +241,8 @@ it.effect(
             Effect.sync(() => {
               commands.push(input);
               if (input.args[0] === "auth") return output(activeToken);
-              if (input.args[0] === "api") return output('{"id":123,"login":"same-account"}');
+              if (input.args[0] === "api")
+                return output('{"data":{"viewer":{"id":"identity-123","login":"same-account"}}}');
               return output("");
             }),
         }),
@@ -279,7 +281,7 @@ it.effect(
           .map((command) => command.env?.GH_TOKEN),
       ).toEqual(["broad-credential", "restricted-credential"]);
       expect(yield* cli.getRoutingIdentity(input)).toEqual({
-        accountId: "123",
+        accountId: "identity-123",
         viewer: "same-account",
       });
     }),
@@ -403,7 +405,9 @@ layer("GitHubPullRequestCli.layer", (it) => {
       mockedExecute.mockImplementation((input) =>
         input.args[0] === "auth"
           ? Effect.succeed(output("shared-credential"))
-          : Effect.yieldNow.pipe(Effect.as(output('{"id":123,"login":"viewer"}'))),
+          : Effect.yieldNow.pipe(
+              Effect.as(output('{"data":{"viewer":{"id":"identity-123","login":"viewer"}}}')),
+            ),
       );
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
       const results = yield* Effect.all(
@@ -413,7 +417,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
         { concurrency: 4 },
       );
       expect(results).toEqual(
-        Array.from({ length: 4 }, () => ({ accountId: "123", viewer: "viewer" })),
+        Array.from({ length: 4 }, () => ({ accountId: "identity-123", viewer: "viewer" })),
       );
       expect(mockedExecute.mock.calls.filter(([input]) => input.args[0] === "api")).toHaveLength(1);
     }),
@@ -437,7 +441,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
               yield* Deferred.succeed(firstStarted, undefined);
               return yield* Effect.never;
             }
-            return output('{"id":123,"login":"viewer"}');
+            return output('{"data":{"viewer":{"id":"identity-123","login":"viewer"}}}');
           }),
         );
         const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
@@ -447,7 +451,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
         const second = yield* cli.getRoutingIdentity(input).pipe(Effect.forkChild);
         yield* Deferred.await(secondStarted);
         yield* Fiber.interrupt(first);
-        expect(yield* Fiber.join(second)).toEqual({ accountId: "123", viewer: "viewer" });
+        expect(yield* Fiber.join(second)).toEqual({ accountId: "identity-123", viewer: "viewer" });
         expect(verifications).toBe(2);
       }),
   );
@@ -2828,14 +2832,86 @@ layer("GitHubPullRequestCli.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute
         .mockReturnValueOnce(Effect.succeed(output("enterprise-test-credential")))
-        .mockReturnValueOnce(Effect.succeed(output('{"id":456,"login":"enterprise-user"}')));
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output('{"data":{"viewer":{"id":"identity-456","login":"enterprise-user"}}}'),
+          ),
+        );
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
       const login = yield* cli.getViewerLogin({ cwd: "/w", host: "github.acme.com" });
 
       expect(login).toBe("enterprise-user");
       expect(callAt(0).args).toEqual(["auth", "token", "--hostname", "github.acme.com"]);
-      expect(callAt(1).args).toEqual(["api", "user", "--hostname", "github.acme.com"]);
+      expect(callAt(1).args).toEqual([
+        "api",
+        "graphql",
+        "--hostname",
+        "github.acme.com",
+        "-f",
+        expect.stringContaining("viewer { id login }"),
+      ]);
+    }),
+  );
+
+  it.effect("identifies an App installation credential through GraphQL", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output("ghs_test-installation-credential")))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output('{"data":{"viewer":{"id":"BOT_kgDOExLJXQ","login":"example-bot[bot]"}}}'),
+          ),
+        );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      expect(yield* cli.getRoutingIdentity({ cwd: "/w", host: "github.com" })).toEqual({
+        accountId: "BOT_kgDOExLJXQ",
+        viewer: "example-bot[bot]",
+      });
+      expect(callAt(1).args).toEqual([
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "-f",
+        expect.stringContaining("viewer { id login }"),
+      ]);
+    }),
+  );
+
+  it.effect("preserves a paused GraphQL budget while verifying a credential", () =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const budget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
+      const token = "ghs_paused-credential";
+      const scope = `github.com:${NodeCrypto.createHash("sha256").update(token).digest("hex")}`;
+      yield* budget
+        .observe(
+          "github.com",
+          encodeJson({
+            data: {
+              rateLimit: {
+                cost: 1,
+                limit: 5_000,
+                remaining: 500,
+                resetAt: "2099-08-13T14:00:00Z",
+              },
+            },
+          }),
+        )
+        .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, scope));
+      mockedExecute.mockImplementation((input) => {
+        expect(input.args[0]).toBe("auth");
+        return Effect.succeed(output(token));
+      });
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const error = yield* Effect.flip(cli.getRoutingIdentity({ cwd: "/w", host: "github.com" }));
+
+      expect(error._tag).toBe("SourceControlRateLimitPausedError");
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+      yield* TestClock.setTime(now);
     }),
   );
 
@@ -2845,9 +2921,11 @@ layer("GitHubPullRequestCli.layer", (it) => {
       const input = { cwd: "/w", host: "github.identity-cache.test" };
       mockedExecute
         .mockReturnValueOnce(Effect.succeed(output("test-credential-a")))
-        .mockReturnValueOnce(Effect.succeed(output('{"id":123,"login":"maria-rcks"}')));
+        .mockReturnValueOnce(
+          Effect.succeed(output('{"data":{"viewer":{"id":"identity-123","login":"maria-rcks"}}}')),
+        );
       expect(yield* cli.getRoutingIdentity(input)).toEqual({
-        accountId: "123",
+        accountId: "identity-123",
         viewer: "maria-rcks",
       });
       expect(callAt(1).env).toMatchObject({
@@ -2857,7 +2935,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
 
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("test-credential-a")));
       expect(yield* cli.getRoutingIdentity(input)).toEqual({
-        accountId: "123",
+        accountId: "identity-123",
         viewer: "maria-rcks",
       });
       expect(mockedExecute).toHaveBeenCalledTimes(3);
@@ -2883,9 +2961,11 @@ layer("GitHubPullRequestCli.layer", (it) => {
 
       mockedExecute
         .mockReturnValueOnce(Effect.succeed(output("test-credential-b")))
-        .mockReturnValueOnce(Effect.succeed(output('{"id":456,"login":"maria-rcks"}')));
+        .mockReturnValueOnce(
+          Effect.succeed(output('{"data":{"viewer":{"id":"identity-456","login":"maria-rcks"}}}')),
+        );
       expect(yield* cli.getRoutingIdentity(input)).toEqual({
-        accountId: "456",
+        accountId: "identity-456",
         viewer: "maria-rcks",
       });
     }),

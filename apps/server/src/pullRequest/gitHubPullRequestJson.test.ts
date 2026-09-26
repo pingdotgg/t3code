@@ -23,6 +23,7 @@ import {
   decodeReviewThreadCommentsJson,
   decodeReviewThreadsJson,
   decodeViewerPermissionsJson,
+  decodeViewerIdentityJson,
   decodeWorkflowRunApprovalsJson,
   reviewThreadConversation,
   REVIEW_THREADS_GRAPHQL_QUERY,
@@ -49,6 +50,19 @@ function expectSuccess<A>(result: Result.Result<A, unknown>): A {
   if (!Result.isSuccess(result)) throw new Error("expected a successful decode");
   return result.success;
 }
+
+describe("viewer identity decoding", () => {
+  it("rejects GraphQL errors even when a viewer identity was partially answered", () => {
+    const result = decodeViewerIdentityJson(
+      JSON.stringify({
+        data: { viewer: { id: "BOT_kgDOExLJXQ", login: "example-bot[bot]" } },
+        errors: [{ message: "permission denied" }],
+      }),
+    );
+
+    expect(Result.isFailure(result)).toBe(true);
+  });
+});
 
 describe("pull request list decoding", () => {
   it("treats a merge timestamp as merged even when the state still says closed", () => {
