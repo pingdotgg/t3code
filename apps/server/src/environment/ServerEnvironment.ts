@@ -277,7 +277,9 @@ export const make = Effect.gen(function* () {
         capabilities: {
           ...descriptor.capabilities,
           agentActivityPublishing,
-          ...(Option.isSome(openAiKey) ? { voiceLive: true } : {}),
+          ...(Option.isSome(openAiKey) && new TextDecoder().decode(openAiKey.value).trim()
+            ? { voiceLive: true }
+            : {}),
         },
       };
     }),

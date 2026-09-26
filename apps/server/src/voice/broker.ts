@@ -51,7 +51,7 @@ import {
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
   failEnvironmentAuthInvalid,
   failEnvironmentInternal,
@@ -241,7 +241,7 @@ const encodeBrokerConfig = Schema.encodeEffect(Schema.fromJsonString(VoiceBroker
 
 export interface VoiceBrokerRuntimeConfig extends VoiceBrokerSessionConfig {}
 
-const loadBrokerConfig = (secrets: ServerSecretStore["Service"]) =>
+const loadBrokerConfig = (secrets: ServerSecretStore.ServerSecretStore["Service"]) =>
   Effect.gen(function* () {
     const overridesJson = yield* secrets
       .get(VOICE_BROKER_CONFIG_SECRET_NAME)
@@ -395,7 +395,7 @@ const makeBroker = Effect.gen(function* () {
   const httpClient = resolvedHttpClient.pipe(
     HttpClient.transform((effect) => Effect.timeout(effect, "30 seconds")),
   );
-  const secrets = yield* ServerSecretStore;
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
   const sessions = yield* Ref.make(new Map<string, RetainedVoiceSession>());
 
   const settingsFailure = () => brokerInvalidRequest("Could not access voice settings.", 500);
@@ -713,15 +713,55 @@ const authenticateVoiceBrokerRequest = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const session = yield* serverAuth.authenticateHttpRequest(request).pipe(
-    Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-      failEnvironmentAuthInvalid(
-        EnvironmentAuth.serverAuthCredentialReason(error),
-        EnvironmentAuth.serverAuthDpopFailureReason(error),
-      ),
-    ),
-    Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-      failEnvironmentInternal("internal_error", error),
-    ),
+    Effect.catchTags({
+      ServerAuthMissingCredentialError: (error) =>
+        failEnvironmentAuthInvalid(EnvironmentAuth.serverAuthCredentialReason(error)),
+      ServerAuthInvalidCredentialError: (error) =>
+        failEnvironmentAuthInvalid(
+          EnvironmentAuth.serverAuthCredentialReason(error),
+          EnvironmentAuth.serverAuthDpopFailureReason(error),
+        ),
+      ServerAuthBootstrapCredentialValidationError: (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ServerAuthSessionCredentialValidationError: (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ServerAuthAuthenticatedSessionIssueError: (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ServerAuthAuthenticatedAccessTokenIssueError: (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ServerAuthPairingLinkCreationError: (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ServerAuthPairingLinksListError: (error) => failEnvironmentInternal("internal_error", error),
+      ServerAuthPairingLinkRevocationError: (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ServerAuthSessionTokenIssueError: (error) => failEnvironmentInternal("internal_error", error),
+      ServerAuthSessionsListError: (error) => failEnvironmentInternal("internal_error", error),
+      ServerAuthSessionRevocationError: (error) => failEnvironmentInternal("internal_error", error),
+      ServerAuthOtherSessionsRevocationError: (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ServerAuthWebSocketTokenIssueError: (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ServerAuthDpopReplayStateRecordError: (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ServerAuthDpopReplayKeyCalculationError: (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ServerAuthLinkedCloudAccountVerificationError: (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ServerAuthLinkedCloudAccountReadError: (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ServerAuthLinkedCloudAccountMissingError: (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ServerAuthCloudLinkJwtSigningError: (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ServerAuthCloudMintPublicKeyMissingError: (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ServerAuthCloudRelayIssuerMissingError: (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ServerAuthCloudHealthJwtSigningError: (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ServerAuthCloudMintJwtSigningError: (error) =>
+        failEnvironmentInternal("internal_error", error),
+    }),
   );
   if (!session.scopes.includes(AuthOrchestrationOperateScope)) {
     return yield* failEnvironmentScopeRequired(AuthOrchestrationOperateScope);

@@ -253,6 +253,12 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         const withoutKey = yield* serverEnvironment.getDescriptor;
         expect(withoutKey.capabilities.voiceLive).toBeUndefined();
 
+        for (const emptyKey of ["", "   \n\t"]) {
+          yield* secrets.set(OPENAI_API_KEY_SECRET_NAME, encode(emptyKey));
+          const empty = yield* serverEnvironment.getDescriptor;
+          expect(empty.capabilities.voiceLive).toBeUndefined();
+        }
+
         // Configuring the key secret publishes the capability...
         yield* secrets.set(OPENAI_API_KEY_SECRET_NAME, encode("test-key"));
         const withKey = yield* serverEnvironment.getDescriptor;
