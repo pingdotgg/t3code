@@ -2,8 +2,7 @@
  * One server-wide cache for the Claude capabilities probe. Claude instances
  * with the same probe input read the same account, so they share one cached
  * result, and concurrent reads of one input join one SDK probe. Each entry
- * keeps 5 minutes, a failed probe (`undefined`) included, like the old
- * per-instance cache.
+ * keeps 5 minutes, a failed probe (`undefined`) included.
  *
  * @module provider/Drivers/ClaudeProbeCache
  */
