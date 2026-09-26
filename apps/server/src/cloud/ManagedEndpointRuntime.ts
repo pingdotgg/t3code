@@ -106,12 +106,15 @@ export function isRetryableManagedEndpointRuntimeStatus(status: unknown): boolea
   return status.failure === "not-installed" || status.failure === "spawn-failed";
 }
 
+/** Connector identity including origin host/port so a port hop respawns cloudflared. */
 function runtimeConfigKey(config: RelayManagedEndpointRuntimeConfig): string {
   return JSON.stringify({
     providerKind: config.providerKind,
     connectorToken: config.connectorToken,
     tunnelId: config.tunnelId ?? null,
     tunnelName: config.tunnelName ?? null,
+    originHost: config.origin?.localHttpHost ?? null,
+    originPort: config.origin?.localHttpPort ?? null,
   });
 }
 

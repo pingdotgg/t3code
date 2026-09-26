@@ -17,7 +17,9 @@ import {
 } from "@t3tools/contracts";
 import {
   type RelayEnvironmentLinkResponse,
+  type RelayManagedEndpointOrigin,
   type RelayManagedEndpointProviderKind,
+  type RelayManagedEndpointRuntimeConfig,
 } from "@t3tools/contracts/relay";
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import { request, runStream } from "@t3tools/client-runtime/rpc";
@@ -48,8 +50,10 @@ const relayClientRpcError = (message: string) => (cause: unknown) =>
     cause,
   });
 
+/** Checks that the relay client is installed, skipping the install prompt when requested. */
 function ensureRelayClientAvailable(
   environmentId: EnvironmentId,
+  options?: { readonly installIfMissing?: boolean },
 ): Effect.Effect<void, CloudEnvironmentLinkError, EnvironmentRegistry> {
   return Effect.gen(function* () {
     const registry = yield* EnvironmentRegistry;
@@ -57,6 +61,14 @@ function ensureRelayClientAvailable(
       .run(environmentId, request(WS_METHODS.cloudGetRelayClientStatus, {}))
       .pipe(Effect.mapError(relayClientRpcError("Could not check relay client availability.")));
     if (status.status === "available") return;
+    if (options?.installIfMissing === false) {
+      return yield* new CloudEnvironmentLinkError({
+        message:
+          status.status === "unsupported"
+            ? `T3 Code cannot install the relay client automatically on ${status.platform}-${status.arch}.`
+            : "The relay client is still unavailable.",
+      });
+    }
     if (status.status === "unsupported") {
       return yield* new CloudEnvironmentLinkError({
         message: `T3 Code cannot install the relay client automatically on ${status.platform}-${status.arch}.`,
@@ -147,12 +159,38 @@ const environmentApiError = (message: string) => (cause: unknown) => {
   });
 };
 
-function endpointOrigin(httpBaseUrl: string) {
+const LOOPBACK_HTTP_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+
+/** Builds a loopback HTTP origin from the environment base URL. */
+function endpointOrigin(httpBaseUrl: string): RelayManagedEndpointOrigin {
   const url = new URL(httpBaseUrl);
   return {
     localHttpHost: "127.0.0.1",
     localHttpPort: Number(url.port || (url.protocol === "https:" ? 443 : 80)),
   };
+}
+
+/** Returns a loopback origin for local HTTP targets, otherwise null. */
+function loopbackOriginFromHttpBaseUrl(httpBaseUrl: string): RelayManagedEndpointOrigin | null {
+  try {
+    const url = new URL(httpBaseUrl);
+    if (!LOOPBACK_HTTP_HOSTS.has(url.hostname)) {
+      return null;
+    }
+    return endpointOrigin(httpBaseUrl);
+  } catch {
+    return null;
+  }
+}
+
+/** Attaches the current loopback origin to a managed tunnel runtime config. */
+export function withManagedTunnelRuntimeOrigin(
+  runtime: RelayManagedEndpointRuntimeConfig | null,
+  httpBaseUrl: string,
+): RelayManagedEndpointRuntimeConfig | null {
+  if (runtime === null) return null;
+  const origin = loopbackOriginFromHttpBaseUrl(httpBaseUrl);
+  return origin === null ? runtime : { ...runtime, origin };
 }
 
 const MANAGED_ENDPOINT_PROVIDER_KIND =
@@ -253,10 +291,12 @@ export type CloudLinkMode = "managed" | "publish_only";
 
 const PUBLISH_ONLY_PROVIDER_KIND = "manual" satisfies RelayManagedEndpointProviderKind;
 
+/** Links the primary environment to T3 Connect, optionally without installing the relay client. */
 export function linkPrimaryEnvironmentToCloud(input: {
   readonly target: CloudLinkTarget;
   readonly clerkToken: string;
   readonly mode?: CloudLinkMode;
+  readonly installRelayClient?: boolean;
 }): Effect.Effect<
   void,
   CloudEnvironmentLinkError,
@@ -276,7 +316,9 @@ export function linkPrimaryEnvironmentToCloud(input: {
     const relayClient = yield* ManagedRelay.ManagedRelayClient;
     const environmentClient = yield* makeEnvironmentHttpApiClient(input.target.httpBaseUrl);
     if (managedTunnelsEnabled) {
-      yield* ensureRelayClientAvailable(EnvironmentId.make(input.target.environmentId));
+      yield* ensureRelayClientAvailable(EnvironmentId.make(input.target.environmentId), {
+        installIfMissing: input.installRelayClient !== false,
+      });
     }
 
     const challenge = yield* relayClient
@@ -340,7 +382,10 @@ export function linkPrimaryEnvironmentToCloud(input: {
           cloudUserId: link.cloudUserId,
           environmentCredential: link.environmentCredential,
           cloudMintPublicKey: link.cloudMintPublicKey,
-          endpointRuntime: link.endpointRuntime,
+          endpointRuntime: withManagedTunnelRuntimeOrigin(
+            link.endpointRuntime,
+            input.target.httpBaseUrl,
+          ),
         },
       })
       .pipe(Effect.mapError(environmentApiError("Could not configure environment relay access.")));

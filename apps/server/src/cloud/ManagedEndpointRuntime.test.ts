@@ -351,6 +351,52 @@ describe("CloudManagedEndpointRuntime", () => {
     }),
   );
 
+  it.effect("restarts the connector when the managed origin port changes", () =>
+    Effect.gen(function* () {
+      const spawned: Array<number> = [];
+      const killed: Array<number> = [];
+      let nextPid = 200;
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const pid = nextPid;
+          nextPid += 1;
+          spawned.push(pid);
+          const handle = makeHandle({
+            pid,
+            onKill: () => {
+              killed.push(pid);
+            },
+          });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      const baseConfig = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "token-1",
+        tunnelId: "tunnel-1",
+        tunnelName: "t3-code-env-1",
+      };
+
+      yield* runtime.applyConfig({
+        ...baseConfig,
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      });
+      yield* runtime.applyConfig({
+        ...baseConfig,
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      });
+      yield* runtime.applyConfig({
+        ...baseConfig,
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3774 },
+      });
+
+      expect(spawned).toEqual([200, 201]);
+      expect(killed).toEqual([200]);
+    }),
+  );
+
   it.effect("stops an active connector when a non-Cloudflare runtime config is applied", () =>
     Effect.gen(function* () {
       const killed: Array<number> = [];

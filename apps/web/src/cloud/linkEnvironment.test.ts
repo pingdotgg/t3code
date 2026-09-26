@@ -31,6 +31,7 @@ import {
   type CloudLinkTarget,
   unlinkPrimaryEnvironmentFromCloud,
   updatePrimaryCloudPreferences,
+  withManagedTunnelRuntimeOrigin,
 } from "./linkEnvironment";
 
 const TARGET: CloudLinkTarget = {
@@ -72,8 +73,9 @@ function relayLayer() {
   );
 }
 
+/** Test EnvironmentRegistry with a stub relay-client status. */
 function registryLayer(options?: {
-  readonly status?: { readonly status: "available"; readonly version: string };
+  readonly status?: { readonly status: "available" | "missing"; readonly version: string };
   readonly installEvents?: ReadonlyArray<RelayClientInstallProgressEvent>;
 }) {
   return Layer.effect(
@@ -152,6 +154,39 @@ afterEach(() => {
 });
 
 describe("web cloud link environment client", () => {
+  it("attaches a loopback origin to a managed tunnel runtime config", () => {
+    expect(
+      withManagedTunnelRuntimeOrigin(
+        {
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "connector-token",
+          tunnelId: "tunnel-1",
+        },
+        "http://127.0.0.1:3774",
+      ),
+    ).toEqual({
+      providerKind: "cloudflare_tunnel",
+      connectorToken: "connector-token",
+      tunnelId: "tunnel-1",
+      origin: { localHttpHost: "127.0.0.1", localHttpPort: 3774 },
+    });
+  });
+
+  it("leaves a non-loopback runtime config origin unchanged", () => {
+    expect(
+      withManagedTunnelRuntimeOrigin(
+        {
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "connector-token",
+        },
+        "https://prod-example.t3coderelay.com/",
+      ),
+    ).toEqual({
+      providerKind: "cloudflare_tunnel",
+      connectorToken: "connector-token",
+    });
+  });
+
   it.effect("reads primary cloud link state from the explicit target", () =>
     Effect.gen(function* () {
       const fetchMock = vi.fn().mockResolvedValue(
@@ -296,6 +331,81 @@ describe("web cloud link environment client", () => {
           wsBaseUrl: TARGET.wsBaseUrl,
         },
       });
+    }),
+  );
+
+  it.effect("stores the current loopback origin on the managed tunnel runtime config", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json({
+            challenge: "challenge",
+            expiresAt: "2026-06-06T00:05:00.000Z",
+          }),
+        )
+        .mockResolvedValueOnce(Response.json("signed-proof"))
+        .mockResolvedValueOnce(
+          Response.json({
+            ok: true,
+            environmentId: TARGET.environmentId,
+            endpoint: {
+              httpBaseUrl: "https://desktop.example.test",
+              wsBaseUrl: "wss://desktop.example.test",
+              providerKind: "cloudflare_tunnel",
+            },
+            endpointRuntime: {
+              providerKind: "cloudflare_tunnel",
+              connectorToken: "connector-token",
+              tunnelId: "tunnel-1",
+              tunnelName: "t3-code-env-1",
+            },
+            relayIssuer: "https://relay.example.test",
+            cloudUserId: "user-1",
+            environmentCredential: "environment-credential",
+            cloudMintPublicKey: "public-key",
+          }),
+        )
+        .mockResolvedValueOnce(
+          Response.json({ ok: true, endpointRuntimeStatus: { status: "running" } }),
+        );
+      vi.stubGlobal("fetch", fetchMock);
+
+      yield* withServices(
+        linkPrimaryEnvironmentToCloud({
+          target: TARGET,
+          clerkToken: "clerk-token",
+        }),
+      );
+
+      expect(String(fetchMock.mock.calls[3]?.[0])).toBe(
+        "http://127.0.0.1:3000/api/connect/relay-config",
+      );
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.parse(bodyText(fetchMock.mock.calls[3]?.[1]?.body))).toMatchObject({
+        endpointRuntime: {
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "connector-token",
+          tunnelId: "tunnel-1",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3000 },
+        },
+      });
+    }),
+  );
+
+  it.effect("does not prompt to install the relay client during origin re-registration", () =>
+    Effect.gen(function* () {
+      const error = yield* withServices(
+        linkPrimaryEnvironmentToCloud({
+          target: TARGET,
+          clerkToken: "clerk-token",
+          installRelayClient: false,
+        }),
+        { status: { status: "missing", version: "2026.6.0" } },
+      ).pipe(Effect.flip);
+
+      expect(relayClientInstallDialog.requestConfirmation).not.toHaveBeenCalled();
+      expect(error.message).toBe("The relay client is still unavailable.");
     }),
   );
 

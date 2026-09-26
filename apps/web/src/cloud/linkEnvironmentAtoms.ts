@@ -18,6 +18,7 @@ const cloudLinkConcurrency = {
   key: (input: { readonly target: CloudLinkTarget }) => input.target.environmentId,
 };
 
+/** Runtime command that links the primary environment to cloud. */
 export const linkPrimaryEnvironment = createRuntimeCommand(connectionAtomRuntime, {
   label: "web:cloud:link-primary-environment",
   scheduler: cloudLinkScheduler,
@@ -26,6 +27,7 @@ export const linkPrimaryEnvironment = createRuntimeCommand(connectionAtomRuntime
     readonly target: CloudLinkTarget;
     readonly clerkToken: string;
     readonly mode?: CloudLinkMode;
+    readonly installRelayClient?: boolean;
   }) => linkPrimaryEnvironmentToCloud(input),
 });
 

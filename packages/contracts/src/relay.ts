@@ -178,11 +178,16 @@ export const RelayManagedEndpointOrigin = Schema.Struct({
 });
 export type RelayManagedEndpointOrigin = typeof RelayManagedEndpointOrigin.Type;
 
+/** Managed connector config, including optional loopback origin for port-hop restarts. */
 export const RelayManagedEndpointRuntimeConfig = Schema.Struct({
   providerKind: RelayManagedEndpointProviderKind,
   connectorToken: TrimmedNonEmptyString,
   tunnelId: Schema.optional(TrimmedNonEmptyString),
   tunnelName: Schema.optional(TrimmedNonEmptyString),
+  // Carried by the environment when it applies relay config so a later origin
+  // change (desktop backend port hop) restarts the local connector. Optional
+  // for configs stored before this field existed.
+  origin: Schema.optional(RelayManagedEndpointOrigin),
 });
 export type RelayManagedEndpointRuntimeConfig = typeof RelayManagedEndpointRuntimeConfig.Type;
 
