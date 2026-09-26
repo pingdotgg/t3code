@@ -231,6 +231,9 @@ interface ChatMarkdownProps {
       text nests under the heading that introduces it, such as a chat message's
       author. Rendered tags and their styling are unchanged. */
   headingLevelOffset?: number | undefined;
+  /** Gives this text's workspace images their own signed URLs, such as per chat message. An agent
+      that rewrites a file and shows it again then shows the new file, not the cached one. */
+  assetScope?: string | undefined;
 }
 
 export interface ChatMarkdownContextReference {
@@ -1654,9 +1657,11 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly fallbackSrc?: string | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
+  /** See `ChatMarkdownProps.assetScope`. */
+  readonly assetScope?: string | undefined;
 }) {
-  const assetUrl = useAssetUrlState(props.environmentId, props.resource);
-  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
+  const assetUrl = useAssetUrlState(props.environmentId, props.resource, props.assetScope);
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource, props.assetScope);
   const resource = props.resource;
   const path =
     resource._tag === "media-file"
@@ -1694,7 +1699,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     name: props.alt || (props.kind ?? "image"),
     src,
     ...(fallbackSrc === undefined
-      ? { asset: { environmentId: props.environmentId, resource } }
+      ? { asset: { environmentId: props.environmentId, resource, scope: props.assetScope } }
       : {}),
     ...(reference ? { reference } : {}),
     ...(relativePath && (resource._tag === "media-file" || resource._tag === "workspace-file")
@@ -2302,6 +2307,7 @@ function useChatMarkdownState({
   renderContextReference,
   headingLevelOffset = 0,
   githubMedia = false,
+  assetScope,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
@@ -2688,6 +2694,7 @@ function useChatMarkdownState({
 
   const componentState = useMemo(
     () => ({
+      assetScope,
       cwd,
       diffThemeName,
       environmentId,
@@ -2719,6 +2726,7 @@ function useChatMarkdownState({
       updateThreadPullRequestLink,
     }),
     [
+      assetScope,
       cwd,
       diffThemeName,
       environmentId,
@@ -3132,6 +3140,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
   img: function MarkdownImage({ node, title, src, alt, ...props }) {
     const {
+      assetScope,
       expandMedia,
       cwd,
       environmentId,
@@ -3246,6 +3255,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             threadId: threadRef.threadId,
             path: imageSource.path,
           }}
+          assetScope={assetScope}
           alt={altText}
           kind={kind}
           copyMarkdown={copyMarkdown}

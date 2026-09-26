@@ -22,7 +22,12 @@ export interface MediaActionSource {
   readonly name: string;
   readonly src: string | null;
   readonly reference?: MediaReference;
-  readonly asset?: { readonly environmentId: EnvironmentId; readonly resource: AssetResource };
+  /** `scope` is the signed URL scope of the rendering that opened the media; see `AssetUrlQuery`. */
+  readonly asset?: {
+    readonly environmentId: EnvironmentId;
+    readonly resource: AssetResource;
+    readonly scope?: string | undefined;
+  };
   readonly onOpenFile?: () => void;
 }
 

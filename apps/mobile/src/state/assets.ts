@@ -45,16 +45,18 @@ function useConnectionPhase(environmentId: EnvironmentId | null): EnvironmentCon
   return value === null ? "available" : presentConnectionState(value).phase;
 }
 
+/** `scope` gives the caller its own signed URL; see `AssetUrlQuery`. */
 export function useAssetUrlState(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
+  scope?: string,
 ): AssetUrlState {
   const preparedConnection = usePreparedConnection(environmentId);
   const connectionPhase = useConnectionPhase(environmentId);
   const result = useAtomValue(
     environmentId === null || resource === null
       ? EMPTY_ASSET_URL_ATOM
-      : assetEnvironment.createUrl({ environmentId, input: { resource } }),
+      : assetEnvironment.createUrl({ environmentId, input: { resource, scope } }),
   );
   const shared = assetUrlStateFromResult(
     result,

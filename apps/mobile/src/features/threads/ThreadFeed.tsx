@@ -194,6 +194,7 @@ import {
 import { fileChipMenu, resolveFileChipTarget, type FileChipAction } from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
 import {
+  MarkdownImageAssetScopeContext,
   MarkdownImageAvailableWidthContext,
   ThreadMarkdownImage,
   ThreadMarkdownImageUnavailable,
@@ -1500,14 +1501,18 @@ function renderFeedEntry(
           >
             <View className="gap-3">
               {messages.map((reasoningMessage) => (
-                <AssistantMarkdownContent
+                <MarkdownImageAssetScopeContext
                   key={reasoningMessage.id}
-                  markdown={reasoningMessage.text}
-                  markdownStyles={markdownStyles.assistant}
-                  linkHandlers={props.markdownLinkHandlers}
-                  renderImage={props.renderMarkdownImage}
-                  skills={props.skills}
-                />
+                  value={reasoningMessage.id}
+                >
+                  <AssistantMarkdownContent
+                    markdown={reasoningMessage.text}
+                    markdownStyles={markdownStyles.assistant}
+                    linkHandlers={props.markdownLinkHandlers}
+                    renderImage={props.renderMarkdownImage}
+                    skills={props.skills}
+                  />
+                </MarkdownImageAssetScopeContext>
               ))}
             </View>
           </MarkdownImageAvailableWidthContext>
@@ -1697,14 +1702,16 @@ function renderFeedEntry(
       >
         {renderedText.trim().length > 0 ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
-            <AssistantMarkdownContent
-              markdown={renderedText}
-              markdownStyles={styles}
-              linkHandlers={props.markdownLinkHandlers}
-              onUseArtifactTemplate={props.onUseArtifactTemplate}
-              renderImage={props.renderMarkdownImage}
-              skills={props.skills}
-            />
+            <MarkdownImageAssetScopeContext value={message.id}>
+              <AssistantMarkdownContent
+                markdown={renderedText}
+                markdownStyles={styles}
+                linkHandlers={props.markdownLinkHandlers}
+                onUseArtifactTemplate={props.onUseArtifactTemplate}
+                renderImage={props.renderMarkdownImage}
+                skills={props.skills}
+              />
+            </MarkdownImageAssetScopeContext>
           </MarkdownImageAvailableWidthContext>
         ) : null}
         {attachments.map((attachment) => {

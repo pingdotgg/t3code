@@ -71,6 +71,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useAssetUrl } from "../../state/assets";
+import { MarkdownImageAssetScopeContext } from "./ThreadMarkdownImage";
 
 const SHIMMER_WIDTH = 72;
 const SHIMMER_SWEEP_MS = 1_350;
@@ -894,7 +895,9 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
           ) : null}
           {viewedImagePath ? (
             <View className="pb-1.5">
-              {props.renderImage({ href: viewedImagePath, alt: null, title: null })}
+              <MarkdownImageAssetScopeContext value={row.workEntry.id}>
+                {props.renderImage({ href: viewedImagePath, alt: null, title: null })}
+              </MarkdownImageAssetScopeContext>
             </View>
           ) : null}
           <ScrollView

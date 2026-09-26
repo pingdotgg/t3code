@@ -2396,6 +2396,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             text={messageText}
             cwd={ctx.markdownCwd}
             threadRef={ctx.threadRef ?? undefined}
+            assetScope={row.message.id}
             isStreaming={Boolean(row.message.streaming)}
             lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
             skills={ctx.skills}
@@ -2814,6 +2815,7 @@ function ReasoningTraceBlock({
               text={reasoningMessage.text}
               cwd={ctx.markdownCwd}
               threadRef={ctx.threadRef ?? undefined}
+              assetScope={reasoningMessage.id}
               isStreaming={streaming && reasoningMessage.streaming}
               lineBreaks
               skills={ctx.skills}
@@ -2882,6 +2884,7 @@ const ReasoningTimelineRow = memo(function ReasoningTimelineRow({
             text={message.text}
             cwd={ctx.markdownCwd}
             threadRef={ctx.threadRef ?? undefined}
+            assetScope={message.id}
             lineBreaks
             skills={ctx.skills}
             headingLevelOffset={MESSAGE_HEADING_LEVEL}
@@ -4916,6 +4919,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           <ChatMarkdownAssetImage
             environmentId={threadRef.environmentId}
             resource={viewedImage.resource}
+            assetScope={workEntry.id}
             alt={viewedImage.alt}
             srcFragment={viewedImage.srcFragment}
             workspaceRoot={workspaceRoot}

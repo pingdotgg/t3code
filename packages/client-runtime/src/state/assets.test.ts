@@ -168,6 +168,70 @@ describe("createAssetEnvironmentAtoms", () => {
     );
   }
 
+  it.effect("signs a scoped query on its own and keeps the scope off the wire", () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("remote");
+      const payloads: unknown[] = [];
+      const client = {
+        [WS_METHODS.assetsCreateUrl]: (payload: unknown) => {
+          payloads.push(payload);
+          return Effect.succeed({
+            relativeUrl: `/api/assets/token-${payloads.length}/shot.png`,
+            expiresAt: 999999,
+          });
+        },
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.of({
+        target: new PrimaryConnectionTarget({
+          environmentId,
+          label: "remote",
+          httpBaseUrl: "https://remote.test",
+          wsBaseUrl: "wss://remote.test",
+        }),
+        state: yield* SubscriptionRef.make<SupervisorConnectionState>({
+          ...AVAILABLE_CONNECTION_STATE,
+          phase: "connected" as const,
+        }),
+        session: yield* SubscriptionRef.make(Option.some({ client } as RpcSession)),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      });
+      const environments = EnvironmentRegistry.of({
+        run: (_id, effect) => Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+        followStream: (_id, stream) =>
+          Stream.provideService(stream, EnvironmentSupervisor, supervisor),
+      } as EnvironmentRegistry["Service"]);
+      const registry = AtomRegistry.make();
+      yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+      const assets = createAssetEnvironmentAtoms(
+        Atom.runtime(Layer.succeed(EnvironmentRegistry, environments)),
+      );
+      const resource = {
+        _tag: "media-file" as const,
+        threadId: ThreadId.make("thread-1"),
+        path: "shot.png",
+      };
+      const signedUrl = (scope?: string) =>
+        AtomRegistry.getResult(
+          registry,
+          assets.createUrl({ environmentId, input: { resource, scope } }),
+          { suspendOnWaiting: true },
+        ).pipe(Effect.map((result) => result.relativeUrl));
+
+      // Two messages that show one path each sign their own URL.
+      expect(yield* signedUrl("message-1")).toBe("/api/assets/token-1/shot.png");
+      expect(yield* signedUrl("message-2")).toBe("/api/assets/token-2/shot.png");
+      expect(yield* signedUrl("message-1")).toBe("/api/assets/token-1/shot.png");
+      expect(payloads).toEqual([{ resource }, { resource }]);
+      // An absent scope shares the unscoped query.
+      expect(assets.createUrl({ environmentId, input: { resource, scope: undefined } })).toBe(
+        assets.createUrl({ environmentId, input: { resource } }),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it("keys asset URL queries by environment and resource", () => {
     const runtime = Atom.runtime(Layer.empty) as unknown as Atom.AtomRuntime<
       EnvironmentRegistry,
