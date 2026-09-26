@@ -2,12 +2,35 @@ import { assert, expect, it } from "@effect/vitest";
 
 import {
   buildPairingUrl,
+  isLoopbackHost,
   formatHeadlessServeOutput,
   renderTerminalQrCode,
   resolveHeadlessConnectionHost,
   resolveHeadlessConnectionString,
   resolveListeningPort,
 } from "./startupAccess.ts";
+
+it.each([
+  "::ffff:127.0.0.1",
+  "[::ffff:127.0.0.1]",
+  "[::ffff:7f00:1]",
+  "0:0:0:0:0:FFFF:7FFF:FFFF",
+  "::ffff:127.0.0.0",
+  "::1",
+  "[0:0:0:0:0:0:0:1]",
+])("recognizes loopback host %s", (host) => {
+  expect(isLoopbackHost(host)).toBe(true);
+});
+
+it.each([
+  "::ffff:126.255.255.255",
+  "::ffff:128.0.0.0",
+  "::ffff:192.168.1.42",
+  "::",
+  "invalid:host",
+])("does not classify %s as loopback", (host) => {
+  expect(isLoopbackHost(host)).toBe(false);
+});
 
 it("prefers localhost when no explicit host is configured", () => {
   expect(resolveHeadlessConnectionHost(undefined)).toBe("localhost");

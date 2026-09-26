@@ -170,6 +170,18 @@ describe("t3 pair", () => {
       loopback: false,
       variant: "dev",
     },
+    {
+      baseUrl: "http://[::ffff:127.0.0.1]:3773",
+      publicOrigin: "http://[::ffff:7f00:1]:3773",
+      loopback: true,
+      variant: "userdata",
+    },
+    {
+      baseUrl: "http://[::ffff:192.168.1.42]:3773",
+      publicOrigin: "http://[::ffff:c0a8:12a]:3773",
+      loopback: false,
+      variant: "userdata",
+    },
   ] as const) {
     it.effect(`advertises ${baseUrl} while minting against the local ${variant} server`, () =>
       withDescriptorServer((origin) =>
