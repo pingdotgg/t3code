@@ -48,6 +48,7 @@ describe("encodeShellSnapshotForCache", () => {
       };
 
       expect(threads.length).toBeGreaterThan(0);
+      expect(projects.length).toBeGreaterThan(0);
       expect(yield* encodeShellSnapshotForCache(snapshot)).toEqual(yield* encodeSnapshot(snapshot));
     }),
   );
