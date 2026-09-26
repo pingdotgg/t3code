@@ -288,6 +288,21 @@ export function resolveBranchSelectionTarget(input: {
   };
 }
 
+// Switching a draft from "New worktree" to the current workspace should land
+// where picking the same ref from the branch menu would: a base ref that is
+// already checked out in another worktree moves the draft into that worktree
+// instead of falling back to the project checkout.
+export function resolveExistingWorktreeForBaseRef(input: {
+  activeProjectCwd: string | null;
+  refName: Pick<VcsRef, "worktreePath"> | null;
+}): string | null {
+  const worktreePath = input.refName?.worktreePath ?? null;
+  if (!worktreePath || worktreePath === input.activeProjectCwd) {
+    return null;
+  }
+  return worktreePath;
+}
+
 export function shouldIncludeBranchPickerItem(input: {
   itemValue: string;
   normalizedQuery: string;

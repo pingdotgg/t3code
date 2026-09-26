@@ -584,6 +584,39 @@ export const BranchToolbar = memo(function BranchToolbar({
     });
   }, [activeProjectRef, draftId, previousWorktreeSeed, setDraftThreadContext, threadRef]);
 
+  // Leaving "New worktree" for the current workspace keeps the chosen base ref
+  // when it already lives in a worktree, so the draft moves into that worktree
+  // just as picking the ref from the branch menu would have done.
+  const handleEnvModeChange = useCallback(
+    (mode: EnvMode) => {
+      const baseRefWorktree =
+        mode === "local" && canUsePreviousWorktree && effectiveEnvMode === "worktree"
+          ? (branchSelectorRef.current?.getBaseRefWorktree() ?? null)
+          : null;
+      if (!baseRefWorktree || !activeProjectRef) {
+        onEnvModeChange(mode);
+        return;
+      }
+      setDraftThreadContext(draftId ?? threadRef, {
+        branch: baseRefWorktree.branch,
+        worktreePath: baseRefWorktree.worktreePath,
+        envMode: "worktree",
+        projectRef: activeProjectRef,
+      });
+      onComposerFocusRequest?.();
+    },
+    [
+      activeProjectRef,
+      canUsePreviousWorktree,
+      draftId,
+      effectiveEnvMode,
+      onComposerFocusRequest,
+      onEnvModeChange,
+      setDraftThreadContext,
+      threadRef,
+    ],
+  );
+
   useImperativeHandle(
     ref,
     () => ({
@@ -644,7 +677,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             onEnvironmentChange={onEnvironmentChange}
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
-            onEnvModeChange={onEnvModeChange}
+            onEnvModeChange={handleEnvModeChange}
             previousWorktreeLabel={previousWorktreeLabel}
             previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
             onUsePreviousWorktree={onUsePreviousWorktree}
@@ -684,7 +717,7 @@ export const BranchToolbar = memo(function BranchToolbar({
               envLocked={envModeLocked}
               effectiveEnvMode={effectiveEnvMode}
               activeWorktreePath={activeWorktreePath}
-              onEnvModeChange={onEnvModeChange}
+              onEnvModeChange={handleEnvModeChange}
               previousWorktreeLabel={previousWorktreeLabel}
               previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
               onUsePreviousWorktree={onUsePreviousWorktree}
