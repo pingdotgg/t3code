@@ -18,6 +18,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { GitManager } from "../git/GitManager.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -164,13 +165,15 @@ describe("ThreadPullRequestServiceV2 reads", () => {
         const other = threadShell("other-thread");
         const activation = yield* Deferred.make<void>();
         const events = yield* PubSub.unbounded<OrchestrationV2DomainEvent>();
-        // Each read: the thread id for a one-thread read, null for a full read.
-        const reads = yield* Queue.unbounded<ThreadId | null>();
+        // Each read: the thread id for a one-thread read, or the full read's options.
+        const reads = yield* Queue.unbounded<
+          ThreadId | { readonly location?: string; readonly unsettledOnly?: boolean }
+        >();
         const dependencies = Layer.mergeAll(
           Layer.mock(OrchestratorV2)({
             streamDomainEvents: Stream.fromPubSub(events),
-            getShellSnapshot: () =>
-              Queue.offer(reads, null).pipe(
+            getShellSnapshot: (options) =>
+              Queue.offer(reads, options ?? {}).pipe(
                 Effect.as({
                   schemaVersion: 2,
                   snapshotSequence: 1,
@@ -205,8 +208,8 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           const service = yield* make;
           yield* service.start();
           yield* Deferred.succeed(activation, undefined);
-          // Startup backfill is a full read.
-          expect(yield* Queue.take(reads)).toBeNull();
+          // Startup backfill reads every active thread.
+          expect(yield* Queue.take(reads)).toEqual({ location: "active", unsettledOnly: false });
           yield* service.drain;
           yield* PubSub.publish(events, {
             type: "thread.metadata-updated",
@@ -240,6 +243,67 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           expect(yield* Queue.take(reads)).toBe(thread.id);
           yield* service.drain;
           expect(yield* Queue.size(reads)).toBe(0);
+        }).pipe(Effect.provide(dependencies));
+      }),
+    ),
+  );
+
+  it.effect("periodic sweeps read only unsettled threads once backfill is done", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const settled = {
+          ...threadShell("settled-thread"),
+          branch: "feature/settled",
+          settledOverride: "settled" as const,
+          settledAt: NOW,
+        };
+        const activation = yield* Deferred.make<void>();
+        const reads = yield* Queue.unbounded<{
+          readonly location?: string;
+          readonly unsettledOnly?: boolean;
+        }>();
+        const dependencies = Layer.mergeAll(
+          Layer.mock(OrchestratorV2)({
+            streamDomainEvents: Stream.never,
+            getShellSnapshot: (options) =>
+              Queue.offer(reads, options ?? {}).pipe(
+                Effect.as({
+                  schemaVersion: 2,
+                  snapshotSequence: 1,
+                  // The fake honors unsettledOnly like the store does.
+                  threads: options?.unsettledOnly ? [] : [settled],
+                  archivedThreads: [],
+                }),
+              ),
+          }),
+          Layer.mock(ProjectionSnapshotQuery)({
+            getProjectShellsWithoutEnrichment: () => Effect.succeed([]),
+          }),
+          Layer.mock(GitManager)({}),
+          Layer.mock(PullRequestService)({}),
+          Layer.mock(RepositoryIdentityResolver)({}),
+          Layer.succeed(ServerActivation, Deferred.await(activation)),
+          Layer.succeed(
+            Crypto.Crypto,
+            Crypto.make({
+              randomBytes: (size) => new Uint8Array(size).fill(1),
+              digest: (_algorithm, data) => Effect.succeed(data),
+            }),
+          ),
+          FileSystem.layerNoop({}),
+        );
+
+        yield* Effect.gen(function* () {
+          const service = yield* make;
+          yield* service.start();
+          yield* Deferred.succeed(activation, undefined);
+          // Backfill finds the settled branch thread and must read it again.
+          expect(yield* Queue.take(reads)).toEqual({ location: "active", unsettledOnly: false });
+          yield* service.drain;
+          // Its project is gone, so backfill finishes it on the first pass.
+          yield* TestClock.adjust("1 minute");
+          expect(yield* Queue.take(reads)).toEqual({ location: "active", unsettledOnly: true });
+          yield* service.drain;
         }).pipe(Effect.provide(dependencies));
       }),
     ),

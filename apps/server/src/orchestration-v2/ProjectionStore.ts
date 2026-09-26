@@ -319,8 +319,13 @@ export interface ProjectionStoreV2Shape {
   readonly apply: (
     event: OrchestrationV2DomainEvent,
   ) => Effect.Effect<void, ProjectionStoreV2Error>;
+  /**
+   * `unsettledOnly` is for background sweeps, not clients: it skips settled
+   * threads before any of their run, item or session rows are read.
+   */
   readonly getShellSnapshot: (options?: {
     readonly location?: "active" | "archive";
+    readonly unsettledOnly?: boolean;
   }) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, ProjectionStoreV2Error>;
   readonly getThreadShell: (
     threadId: ThreadId,
@@ -4677,7 +4682,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
         );
 
-    const selectShellThreadRows = (threadId?: ThreadId, location?: "active" | "archive") =>
+    const selectShellThreadRows = (
+      threadId?: ThreadId,
+      location?: "active" | "archive",
+      unsettledOnly = false,
+    ) =>
       sql<ShellThreadRow>`
             SELECT
               t.thread_id,
@@ -4815,6 +4824,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 : location === "archive"
                   ? sql` AND json_extract(t.payload_json, '$.archivedAt') IS NOT NULL`
                   : sql``
+            }${
+              unsettledOnly
+                ? sql` AND json_extract(t.payload_json, '$.settledAt') IS NULL AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'`
+                : sql``
             }
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
@@ -5169,7 +5182,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sql
         .withTransaction(
           Effect.gen(function* () {
-            const targetThreadRows = yield* selectShellThreadRows(undefined, options?.location);
+            const targetThreadRows = yield* selectShellThreadRows(
+              undefined,
+              options?.location,
+              options?.unsettledOnly ?? false,
+            );
             const targetThreadIds = new Set(
               targetThreadRows.map((row) => ThreadId.make(row.thread_id)),
             );
@@ -5393,6 +5410,13 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           const existing = (yield* Ref.get(replayState)).projections;
           const selectedThreadIds = [...existing.entries()]
             .filter(([, projection]) => {
+              if (
+                options?.unsettledOnly &&
+                (projection.thread.settledAt !== null ||
+                  projection.thread.settledOverride === "settled")
+              ) {
+                return false;
+              }
               if (options?.location === "active") return projection.thread.archivedAt === null;
               if (options?.location === "archive") return projection.thread.archivedAt !== null;
               return true;

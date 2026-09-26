@@ -344,6 +344,31 @@ for (const [name, testLayer] of [
   );
 }
 
+for (const [name, testLayer] of [
+  ["sql", SqlLayer],
+  ["memory", layerMemory],
+] as const) {
+  it.effect(`${name}: an unsettled-only shell read skips settled threads`, () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStoreV2;
+      const open = yield* createThread("unsettled-open");
+      const reopened = yield* createThread("unsettled-reopened", { settledOverride: "active" });
+      yield* createThread("unsettled-manual", { settledOverride: "settled", settledAt: old });
+      yield* createThread("unsettled-auto", { settledAt: old });
+      yield* createThread("unsettled-archived", { archivedAt: old });
+
+      const shell = yield* store.getShellSnapshot({ location: "active", unsettledOnly: true });
+      assert.deepEqual(
+        new Set(shell.threads.map((thread) => thread.id)),
+        new Set([open, reopened]),
+      );
+      assert.equal(shell.archivedThreads.length, 0);
+      const all = yield* store.getShellSnapshot({ location: "active" });
+      assert.equal(all.threads.length, 4);
+    }).pipe(Effect.provide(testLayer)),
+  );
+}
+
 it.effect(
   "reads settlement candidates and thread metadata without loading historical or archived payloads",
   () =>

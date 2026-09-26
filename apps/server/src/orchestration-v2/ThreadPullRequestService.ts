@@ -121,11 +121,16 @@ export const make = Effect.gen(function* () {
 
   /**
    * A sweep for one thread reads only that thread's shell, not every thread's.
-   * Finished runs and checkpoints queue one of these each.
+   * Finished runs and checkpoints queue one of these each. A sweep over all
+   * threads reads only active, unsettled ones, since discovery skips the rest;
+   * backfill looks up settled threads, so its passes read every active thread.
    */
-  const readThreadSnapshot = (threadId: ThreadId | null) =>
+  const readThreadSnapshot = ({ threadId, backfill }: RefreshRequest) =>
     threadId === null
-      ? orchestrator.getShellSnapshot()
+      ? orchestrator.getShellSnapshot({
+          location: "active",
+          unsettledOnly: !(backfill || pendingBackfill.size > 0),
+        })
       : Effect.gen(function* () {
           // Read the sequence first. The thread is then at least this new, so a
           // sync guarded by the sequence is rejected rather than missing a change.
@@ -138,7 +143,7 @@ export const make = Effect.gen(function* () {
     request: RefreshRequest,
   ) {
     const [threadSnapshot, projectShells] = yield* Effect.all([
-      readThreadSnapshot(request.threadId),
+      readThreadSnapshot(request),
       snapshots.getProjectShellsWithoutEnrichment(),
     ]);
     const projects = new Map(projectShells.map((project) => [project.id, project]));
@@ -152,8 +157,12 @@ export const make = Effect.gen(function* () {
         }
       }
     }
-    // A single-thread read only shows whether its own thread is gone.
-    const visibleThreadIds = new Set(threadSnapshot.threads.map((thread) => thread.id));
+    // A single-thread read only shows whether its own thread is gone. A thread
+    // with no branch has nothing to look up, and its entry would keep every
+    // periodic pass on the full read.
+    const visibleThreadIds = new Set(
+      threadSnapshot.threads.filter((thread) => thread.branch !== null).map((thread) => thread.id),
+    );
     const checkedIds = request.threadId === null ? [...pendingBackfill.keys()] : [request.threadId];
     for (const threadId of checkedIds) {
       if (!visibleThreadIds.has(threadId)) pendingBackfill.delete(threadId);

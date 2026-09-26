@@ -268,6 +268,8 @@ export interface OrchestratorV2Shape {
   >;
   readonly getShellSnapshot: (options?: {
     readonly location?: "active" | "archive";
+    /** Background sweeps only: skips settled threads. */
+    readonly unsettledOnly?: boolean;
   }) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, OrchestratorV2Error>;
   readonly getThreadShell: (
     threadId: ThreadId,
