@@ -122,9 +122,9 @@ export interface ProjectionSnapshotQueryShape {
    * lightweight navigation state without hydrating every thread body.
    *
    * `unsettledOnly` is for background sweeps, not clients. It skips settled
-   * threads, and it returns and resolves only the projects the remaining
-   * threads name: their own and their saved branch pull request's. Its
-   * `updatedAt` covers only those rows.
+   * threads and their sessions, PR links, and turns, and its `updatedAt`
+   * ignores those rows. It still resolves every project, which keeps
+   * repository identities cached for client connects.
    */
   readonly getShellSnapshot: (options?: {
     readonly unsettledOnly?: boolean;

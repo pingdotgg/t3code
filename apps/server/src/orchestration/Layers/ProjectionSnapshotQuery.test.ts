@@ -3643,7 +3643,7 @@ it.effect("reads one sweep thread and its projects like the shell snapshot", () 
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("reads a full sweep from unsettled threads and only the projects they name", () => {
+it.effect("reads a full sweep from unsettled threads and every project", () => {
   const resolved: string[] = [];
   const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
     Layer.provide(ThreadBackgroundLiveness.layer),
@@ -3708,19 +3708,17 @@ it.effect("reads a full sweep from unsettled threads and only the projects they 
       sweep.threads.map((thread) => thread.id),
       ["t-branch", "t-open", "t-resumed"],
     );
-    // Settlement also checks the project that a saved branch PR names.
-    assert.deepStrictEqual(
-      sweep.projects,
-      full.projects.filter((project) => project.id === "p1" || project.id === "p2"),
-    );
-    assert.deepStrictEqual(resolved.toSorted(), ["/one", "/two"]);
+    // Like the full read, the sweep resolves every project, so it keeps the
+    // repository identity cache warm for client connects.
+    assert.deepStrictEqual(sweep.projects, full.projects);
+    assert.deepStrictEqual(resolved.toSorted(), ["/four", "/one", "/three", "/two"]);
     // A settled thread's link that no longer decodes breaks the full read, but
     // not the sweep, which never reads it.
     yield* sql`UPDATE projection_thread_pull_requests SET snapshot_json = 'invalid-json' WHERE thread_id = 't-settled'`;
     assert.strictEqual((yield* Effect.exit(query.getShellSnapshot()))._tag, "Failure");
     const unsettled = yield* query.getShellSnapshot({ unsettledOnly: true });
     assert.deepStrictEqual(unsettled.threads, sweep.threads);
-    assert.strictEqual(unsettled.updatedAt, "2026-09-02T00:00:00Z");
+    assert.strictEqual(unsettled.updatedAt, "2026-09-04T00:00:00Z");
   }).pipe(Effect.provide(layer));
 });
 

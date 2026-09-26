@@ -8,24 +8,17 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Semaphore from "effect/Semaphore";
 
 import * as ProcessRunner from "../processRunner.ts";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
-// After a TTL ends, a plain lookup still answers at once with the last value
-// and refreshes it in the background, so a client connect never waits on git
-// for a folder it has seen. Clone, publish, and PR discovery (after a turn and
-// before it saves links) resolve with `refresh: true`, which waits for git.
+// Background sweeps resolve every project each minute. A long TTL keeps them
+// from spawning git each time. Clone, publish, and PR discovery (after a turn
+// and before it saves links) resolve with `refresh: true`.
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(15);
-// Short, so a folder that gains a repository or a remote shows up soon.
+// Short, so a folder that gains a repository or a remote shows up quickly.
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
-// Background refreshes run a few at a time, so the first connect after a quiet
-// period does not start git for every project at once.
-const BACKGROUND_REFRESH_CONCURRENCY = 4;
 
 export interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
@@ -106,14 +99,7 @@ function buildRepositoryIdentity(input: {
 
 const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(
   function* (cwd: string) {
-    const fileSystem = yield* FileSystem.FileSystem;
     const processRunner = yield* ProcessRunner.ProcessRunner;
-
-    // A deleted folder has no repository, so skip git. If the check fails,
-    // let git decide.
-    if (!(yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true)))) {
-      return null;
-    }
 
     // git is a real executable on every platform — no cmd.exe shell mode, which
     // would split paths containing spaces during cmd's re-tokenization.
@@ -157,9 +143,7 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
 export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   options: RepositoryIdentityResolverOptions = {},
 ) {
-  const fileSystem = yield* FileSystem.FileSystem;
   const processRunner = yield* ProcessRunner.ProcessRunner;
-  const scope = yield* Effect.scope;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
   const refine = options.refine ?? Effect.succeed;
   // Git errors and timeouts resolve to null, so they use the negative TTL like
@@ -176,7 +160,6 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const repositoryRootCache = yield* Cache.makeWith<string, string | null>(
     (cwd) =>
       resolveRepositoryIdentityCacheKey(cwd).pipe(
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
       ),
     { capacity: cacheCapacity, timeToLive },
@@ -194,59 +177,15 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     { capacity: cacheCapacity, timeToLive },
   );
 
-  // The last answer for each cwd, least recently used first and capped like
-  // the caches. A plain lookup whose cache entry expired answers with it.
-  const lastIdentities = new Map<string, RepositoryIdentity | null>();
-  const remember = (cwd: string, identity: RepositoryIdentity | null) => {
-    lastIdentities.delete(cwd);
-    lastIdentities.set(cwd, identity);
-    if (lastIdentities.size > cacheCapacity) {
-      const [oldest] = lastIdentities.keys();
-      if (oldest !== undefined) lastIdentities.delete(oldest);
-    }
-    return identity;
-  };
-  const backgroundRefreshes = yield* Semaphore.make(BACKGROUND_REFRESH_CONCURRENCY);
-  const refreshing = new Set<string>();
-
-  // Reads both caches without a lookup. Expired and pending entries read as none.
-  const cachedIdentity = Effect.fnUntraced(function* (cwd: string) {
-    const cacheKey = yield* Cache.getSuccess(repositoryRootCache, cwd);
-    if (Option.isNone(cacheKey)) return Option.none();
-    if (cacheKey.value === null) return Option.some(null);
-    return yield* Cache.getSuccess(repositoryIdentityCache, cacheKey.value);
-  });
-
-  const lookup = Effect.fnUntraced(function* (cwd: string, refresh: boolean) {
-    if (refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
-    const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
-    if (refresh && cacheKey !== null) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
-    const identity = cacheKey === null ? null : yield* Cache.get(repositoryIdentityCache, cacheKey);
-    // A forced refresh may have replaced these entries while this lookup ran.
-    // Remember the cache's answer, so an older lookup cannot undo a newer one.
-    const current = yield* cachedIdentity(cwd);
-    return remember(cwd, Option.isSome(current) ? current.value : identity);
-  });
-
   // Untraced because almost every call is a cache hit. The lookups that spawn
   // git keep their own spans.
   const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fnUntraced(
     function* (cwd, options) {
-      if (options?.refresh) return yield* lookup(cwd, true);
-      const cached = yield* cachedIdentity(cwd);
-      if (Option.isSome(cached)) return remember(cwd, cached.value);
-      const last = lastIdentities.get(cwd);
-      if (last === undefined) return yield* lookup(cwd, false);
-      // One queued refresh per cwd. Reads while it waits also get the last value.
-      if (!refreshing.has(cwd)) {
-        refreshing.add(cwd);
-        yield* lookup(cwd, false).pipe(
-          backgroundRefreshes.withPermits(1),
-          Effect.ensuring(Effect.sync(() => refreshing.delete(cwd))),
-          Effect.forkIn(scope),
-        );
-      }
-      return last;
+      if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
+      const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
+      if (cacheKey === null) return null;
+      if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
+      return yield* Cache.get(repositoryIdentityCache, cacheKey);
     },
   );
 

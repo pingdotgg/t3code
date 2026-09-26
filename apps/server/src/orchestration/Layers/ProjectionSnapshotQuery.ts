@@ -2722,23 +2722,8 @@ pending_approval_requests AS (
       )
       .pipe(
         Effect.flatMap(
-          ([allProjectRows, threadRows, sessionRows, pullRequestRows, latestTurnRows, stateRows]) =>
+          ([projectRows, threadRows, sessionRows, pullRequestRows, latestTurnRows, stateRows]) =>
             Effect.gen(function* () {
-              // A sweep resolves only the projects its threads name. The legacy
-              // linked pull request always names the thread's own project.
-              const namedProjectIds = unsettledOnly
-                ? new Set(
-                    threadRows.flatMap((row) =>
-                      row.branchPullRequest === null
-                        ? [row.projectId]
-                        : [row.projectId, row.branchPullRequest.projectId],
-                    ),
-                  )
-                : null;
-              const projectRows =
-                namedProjectIds === null
-                  ? allProjectRows
-                  : allProjectRows.filter((row) => namedProjectIds.has(row.projectId));
               let updatedAt: string | null = null;
               for (const row of projectRows) {
                 updatedAt = maxIso(updatedAt, row.updatedAt);
