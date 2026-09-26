@@ -2,7 +2,9 @@ import { isMacPlatform } from "../../lib/utils";
 import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "../../lib/selectionActions";
 import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../terminal-links";
 import {
+  GHOSTTY_CELL_WIDE,
   GhosttyTerminalCore,
+  type GhosttyCell,
   type GhosttyScrollbar,
   type GhosttySnapshot,
   type GhosttyTheme,
@@ -231,15 +233,29 @@ export function terminalGridCellAt(options: {
   };
 }
 
+function terminalCellText(cell: GhosttyCell): string {
+  const isSpacer =
+    cell.wide === GHOSTTY_CELL_WIDE.spacerTail || cell.wide === GHOSTTY_CELL_WIDE.spacerHead;
+  return cell.text || (isSpacer ? "" : " ");
+}
+
+function terminalCellTextLength(cell: GhosttyCell | undefined): number {
+  return cell ? terminalCellText(cell).length : 1;
+}
+
 function terminalRowText(row: GhosttySnapshot["rowData"][number], trimRight: boolean): string {
-  const text = row.cells.map((cell) => cell.text || " ").join("");
+  const text = row.cells.map(terminalCellText).join("");
   return trimRight ? text.trimEnd() : text;
 }
 
 function terminalColumnOffset(row: GhosttySnapshot["rowData"][number], column: number): number {
   let offset = 0;
   for (let cellIndex = 0; cellIndex < column; cellIndex += 1) {
-    offset += row.cells[cellIndex]?.text.length || 1;
+    offset += terminalCellTextLength(row.cells[cellIndex]);
+  }
+  if (row.cells[column]?.wide === GHOSTTY_CELL_WIDE.spacerTail) {
+    const previousCell = row.cells[column - 1];
+    if (previousCell?.text.length) offset -= previousCell.text.length;
   }
   return offset;
 }
@@ -262,10 +278,22 @@ function isSameTerminalLink(
   );
 }
 
-function terminalColumnAtOffset(row: GhosttySnapshot["rowData"][number], offset: number): number {
+function terminalColumnAtOffset(
+  row: GhosttySnapshot["rowData"][number],
+  offset: number,
+  includeSpacerTail: boolean,
+): number {
+  let textOffset = 0;
   for (let column = 0; column < row.cells.length; column += 1) {
-    const nextOffset = terminalColumnOffset(row, column + 1);
-    if (offset < nextOffset) return column;
+    const cell = row.cells[column];
+    const cellLength = terminalCellTextLength(cell);
+    if (cellLength > 0 && offset < textOffset + cellLength) {
+      if (includeSpacerTail && row.cells[column + 1]?.wide === GHOSTTY_CELL_WIDE.spacerTail) {
+        return column + 1;
+      }
+      return column;
+    }
+    textOffset += cellLength;
   }
   return Math.max(0, row.cells.length - 1);
 }
@@ -316,11 +344,11 @@ export function terminalLinkAtPositionWithRange(
         text: match.text,
         range: {
           start: {
-            x: terminalColumnAtOffset(startRow, match.start - startSegment.startIndex),
+            x: terminalColumnAtOffset(startRow, match.start - startSegment.startIndex, false),
             y: startSegment.bufferLineNumber - 1,
           },
           end: {
-            x: terminalColumnAtOffset(endRow, match.end - 1 - endSegment.startIndex),
+            x: terminalColumnAtOffset(endRow, match.end - 1 - endSegment.startIndex, true),
             y: endSegment.bufferLineNumber - 1,
           },
         },
