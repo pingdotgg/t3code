@@ -291,6 +291,100 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("keeps completed tool rows stable when another activity arrives", () => {
+    const turnId = TurnId.make("tool-history");
+    const started = makeActivity({
+      id: EventId.make("tool-start"),
+      kind: "tool.updated",
+      summary: "Run checks",
+      createdAt: "2026-04-01T00:00:01.000Z",
+      turnId,
+      payload: {
+        toolCallId: "checks",
+        itemType: "command_execution",
+        data: { command: "vp test" },
+        status: "inProgress",
+      },
+    });
+    const completed = makeActivity({
+      ...started,
+      id: EventId.make("tool-complete"),
+      kind: "tool.completed",
+      createdAt: "2026-04-01T00:00:02.000Z",
+      payload: { toolCallId: "checks", status: "completed", detail: "All checks passed" },
+    });
+    const thread = { messages: [], activities: [started, completed] };
+    const rows = (activities: ReadonlyArray<OrchestrationThreadActivity>) =>
+      buildThreadFeed({ ...thread, activities }).flatMap((entry) =>
+        entry.type === "activity-group" ? entry.activities : [],
+      );
+    const previous = rows(thread.activities)[0]!;
+    const appended = makeActivity({
+      id: EventId.make("next-tool"),
+      kind: "tool.completed",
+      summary: "Read file",
+      createdAt: "2026-04-01T00:00:03.000Z",
+      turnId,
+      payload: { toolCallId: "read", itemType: "file_read", status: "completed" },
+    });
+    const next = rows([...thread.activities, appended]);
+    expect(next).toHaveLength(2);
+    expect(next[0]).toBe(previous);
+    expect(next[0]?.getCopyText()).toContain("All checks passed");
+    expect(next[0]?.status).toBe("success");
+
+    const failed = {
+      ...completed,
+      payload: { toolCallId: "checks", status: "failed", detail: "Checks failed" },
+    };
+    const updated = rows([started, failed, appended]);
+    expect(updated[0]).not.toBe(previous);
+    expect(updated[0]?.status).toBe("failure");
+    expect(updated[0]?.getCopyText()).toContain("Checks failed");
+    expect(updated[1]).toBe(next[1]);
+  });
+
+  it("recomputes a tool merge when pagination changes its earlier activity", () => {
+    const completed = makeActivity({
+      id: EventId.make("completion"),
+      kind: "tool.completed",
+      summary: "Command completed",
+      createdAt: "2026-04-01T00:00:02.000Z",
+      payload: { toolCallId: "call", status: "completed", detail: "Done" },
+    });
+    const started = makeActivity({
+      ...completed,
+      id: EventId.make("start"),
+      kind: "tool.updated",
+      createdAt: "2026-04-01T00:00:01.000Z",
+      payload: {
+        toolCallId: "call",
+        data: { command: "original command" },
+        status: "inProgress",
+      },
+    });
+    const row = (activities: ReadonlyArray<OrchestrationThreadActivity>) =>
+      buildThreadFeed({ messages: [], activities }).flatMap((entry) =>
+        entry.type === "activity-group" ? entry.activities : [],
+      )[0]!;
+    const original = row([started, completed]);
+    expect(original.workEntry.command).toBe("original command");
+    const replaced = row([
+      {
+        ...started,
+        payload: {
+          toolCallId: "call",
+          data: { command: "replacement command" },
+          status: "inProgress",
+        },
+      },
+      completed,
+    ]);
+    expect(replaced.workEntry.command).toBe("replacement command");
+    expect(row([completed]).workEntry.command).toBeUndefined();
+    expect(row([started, completed]).workEntry.command).toBe("original command");
+  });
+
   it("reuses unchanged feed and presentation rows during an assistant text update", () => {
     const completedTurnId = TurnId.make("completed-turn");
     const activeTurnId = TurnId.make("active-turn");
