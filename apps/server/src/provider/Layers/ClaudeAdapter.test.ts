@@ -25,10 +25,12 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Random from "effect/Random";
@@ -47,7 +49,11 @@ import {
   SYNTHETIC_CLAUDE_STANDARD_MODEL,
   SYNTHETIC_CLAUDE_THINKING_MODEL,
 } from "../ClaudeModelCatalog.testFixtures.ts";
-import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
+import {
+  ProviderAdapterProcessError,
+  ProviderAdapterSessionClosedError,
+  ProviderAdapterValidationError,
+} from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import type { ClaudeScopedLimitNames } from "./claudeUsageLimits.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
@@ -112,8 +118,12 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
     this.setModelCalls.push(model);
   };
 
+  /** When set, setPermissionMode awaits it, holding the caller mid-send. */
+  public permissionModeGate: (() => Promise<void>) | undefined;
+
   readonly setPermissionMode = async (mode: PermissionMode): Promise<void> => {
     this.setPermissionModeCalls.push(mode);
+    await this.permissionModeGate?.();
   };
 
   readonly setMaxThinkingTokens = async (maxThinkingTokens: number | null): Promise<void> => {
@@ -1679,6 +1689,54 @@ describe("ClaudeAdapterLive", () => {
         turnCompletedEvents.map((event) => String(event.turnId)),
         [String(first.turnId)],
       );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("fails a send that waited while the session stopped", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const firstSendEntered = yield* Deferred.make<void>();
+      let releaseFirstSend = () => {};
+      const firstSendGate = new Promise<void>((resolve) => {
+        releaseFirstSend = resolve;
+      });
+      harness.query.permissionModeGate = () => {
+        Deferred.doneUnsafe(firstSendEntered, Effect.void);
+        return firstSendGate;
+      };
+      const send = (input: string) =>
+        adapter.sendTurn({
+          threadId: session.threadId,
+          input,
+          attachments: [],
+          interactionMode: "default",
+        });
+
+      const first = yield* send("fix the sign-up list").pipe(Effect.exit, Effect.forkChild);
+      yield* Deferred.await(firstSendEntered);
+      const second = yield* send("also condense the payment rows").pipe(
+        Effect.exit,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+
+      yield* adapter.stopSession(session.threadId);
+      releaseFirstSend();
+      yield* Fiber.join(first);
+
+      const secondExit = yield* Fiber.join(second);
+      const secondError = Exit.isFailure(secondExit) ? Cause.squash(secondExit.cause) : undefined;
+      assert.instanceOf(secondError, ProviderAdapterSessionClosedError);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

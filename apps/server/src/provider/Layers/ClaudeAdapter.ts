@@ -5286,7 +5286,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   const sendTurn: ClaudeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
     const context = yield* requireSession(input.threadId);
-    return yield* context.sendTurnLock.withPermit(sendTurnToSession(context, input));
+    return yield* context.sendTurnLock.withPermit(
+      Effect.suspend(() =>
+        // The session may have stopped while this send waited for the lock.
+        context.stopped
+          ? Effect.fail(
+              new ProviderAdapterSessionClosedError({
+                provider: PROVIDER,
+                threadId: input.threadId,
+              }),
+            )
+          : sendTurnToSession(context, input),
+      ),
+    );
   });
 
   const interruptTurn: ClaudeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
