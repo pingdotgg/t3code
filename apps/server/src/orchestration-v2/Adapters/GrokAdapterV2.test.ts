@@ -70,7 +70,7 @@ function permissionRequest(
 }
 
 function runtimePolicy(input: {
-  readonly runtimeMode: "approval-required" | "auto-accept-edits" | "full-access";
+  readonly runtimeMode: RuntimeMode;
   readonly approvalPolicy?: unknown;
   readonly sandboxPolicy?: unknown;
 }) {
@@ -284,6 +284,31 @@ describe("ACP permission policy", () => {
         permissionRequest("read"),
       ),
       "allow",
+    );
+  });
+});
+
+describe("Grok permission prompts", () => {
+  const disposition = makeGrokAcpAdapterFlavor({
+    makeRuntime: () => Effect.never,
+  } as unknown as GrokAdapterV2Options).permissionDisposition;
+
+  // grok_auto_blocked_command replays Auto end to end. When an explicit policy
+  // launches Grok asking instead, T3's policy still answers its prompts.
+  it("leaves Auto prompts to the user unless an explicit policy launched Grok asking", () => {
+    assert.equal(
+      disposition?.(runtimePolicy({ runtimeMode: "auto" }), permissionRequest("read")),
+      "ask",
+    );
+    const readOnly = runtimePolicy({
+      runtimeMode: "auto",
+      approvalPolicy: "never",
+      sandboxPolicy: { type: "readOnly" },
+    });
+    assert.equal(disposition?.(readOnly, permissionRequest("execute")), "deny");
+    assert.equal(
+      disposition?.(runtimePolicy({ runtimeMode: "approval-required" }), permissionRequest("edit")),
+      "ask",
     );
   });
 });

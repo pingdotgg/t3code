@@ -18,6 +18,7 @@ import {
   type ProviderDriverKind,
   type ProviderReplayTranscript,
   type ProviderUserInputAnswers,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -259,6 +260,8 @@ export type OrchestratorFixtureInputStep =
 
 export interface OrchestratorFixtureInput {
   readonly interactionMode?: ProviderInteractionMode;
+  /** The thread's permission mode; fixtures default to full access. */
+  readonly runtimeMode?: RuntimeMode;
   /**
    * Files committed into the replay workspace before the scenario runs, keyed
    * by workspace-relative path. A recorder must seed the same files so adapter
@@ -398,6 +401,7 @@ function createThreadCommand(input: {
   readonly scenario: string;
   readonly modelSelection: ModelSelection;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly runtimeMode?: RuntimeMode;
 }): OrchestrationV2Command {
   return {
     type: "thread.create",
@@ -408,7 +412,7 @@ function createThreadCommand(input: {
     projectId: input.ids.projectId,
     title: `Replay fixture: ${input.scenario}`,
     modelSelection: input.modelSelection,
-    runtimeMode: "full-access",
+    runtimeMode: input.runtimeMode ?? "full-access",
     interactionMode: input.interactionMode ?? "default",
     branch: null,
     worktreePath: null,
@@ -504,6 +508,9 @@ export function materializeFixtureInput(input: {
         ...(input.fixtureInput.interactionMode === undefined
           ? {}
           : { interactionMode: input.fixtureInput.interactionMode }),
+        ...(input.fixtureInput.runtimeMode === undefined
+          ? {}
+          : { runtimeMode: input.fixtureInput.runtimeMode }),
       }),
     );
 

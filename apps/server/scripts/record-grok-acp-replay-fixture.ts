@@ -236,13 +236,16 @@ function normalizeOutboundFrame(frame: Record<string, unknown>, runtimeInstructi
   switch (frame.method) {
     case "initialize":
       // Pin what T3 advertises (fs and terminal capabilities decide whether
-      // Grok routes file and shell work through T3); the rest is <any>.
+      // Grok routes file and shell work through T3, the client type whether
+      // Auto mode asks); the rest is <any>.
       return {
         ...frame,
         params: Object.fromEntries(
           Object.keys(params).map((key) => [
             key,
-            key === "protocolVersion" || key === "clientCapabilities" ? params[key] : "<any>",
+            key === "protocolVersion" || key === "clientCapabilities" || key === "_meta"
+              ? params[key]
+              : "<any>",
           ]),
         ),
       };
@@ -565,7 +568,7 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
       generatedBy: "live-grok-recorder",
       grokVersion: initializeMeta.agentVersion ?? "unknown",
       normalization:
-        "Session ids are fixed UUIDs, the workspace is <workspace>, HOME is /home/grok-replay and the recording user is grok-replay. T3-owned prompt text, MCP servers and initialize params other than clientCapabilities are <any>. Personal skills, machine identity, account settings and announcement broadcasts are removed, as are responses to Grok-internal request ids that T3's protocol drops. Timestamps are kept as recorded.",
+        "Session ids are fixed UUIDs, the workspace is <workspace>, HOME is /home/grok-replay and the recording user is grok-replay. T3-owned prompt text, MCP servers and initialize params other than clientCapabilities and _meta are <any>. Personal skills, machine identity, account settings and announcement broadcasts are removed, as are responses to Grok-internal request ids that T3's protocol drops. Timestamps are kept as recorded.",
       droppedFrames,
     },
     entries: [

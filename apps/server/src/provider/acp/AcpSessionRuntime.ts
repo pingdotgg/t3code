@@ -98,6 +98,8 @@ export interface AcpSessionRuntimeOptions {
   readonly interruptPromptOnCancel?: boolean;
   /** Optional provider metadata forwarded on `session/cancel`. */
   readonly cancelMeta?: EffectAcpSchema.CancelNotification["_meta"];
+  /** Optional provider metadata forwarded on `initialize`. */
+  readonly initializeMeta?: EffectAcpSchema.InitializeRequest["_meta"];
   readonly ownDetachedProcessGroup?: boolean;
   readonly ownDescendantProcessGroups?: boolean;
   readonly processGroupPlatform?: NodeJS.Platform;
@@ -2156,6 +2158,7 @@ export const make = (
         protocolVersion: 2,
         clientCapabilities: initializeClientCapabilities,
         clientInfo: options.clientInfo,
+        ...(options.initializeMeta === undefined ? {} : { _meta: options.initializeMeta }),
       } satisfies EffectAcpSchema.InitializeRequest;
 
       const initializeResult = yield* runLoggedRequest(

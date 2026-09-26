@@ -49,6 +49,7 @@ import {
   XAiExitPlanModeRequest,
 } from "../../provider/acp/XAiAcpExtension.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
+import { acpPermissionDisposition } from "../../provider/acp/AcpClientPolicy.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
 import { IdAllocatorV2 } from "../IdAllocator.ts";
@@ -275,6 +276,10 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
           childProcessSpawner: options.childProcessSpawner,
           runtimeMode: grokLaunchRuntimeMode(runtimePolicy),
         })),
+    // In its Auto mode Grok decides routine actions itself and only asks about
+    // what its classifier blocked, so every prompt it sends goes to the user.
+    permissionDisposition: (policy, request) =>
+      grokLaunchRuntimeMode(policy) === "auto" ? "ask" : acpPermissionDisposition(policy, request),
     promptFailure: (cause) =>
       makeProviderFailure({
         cause,

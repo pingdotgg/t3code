@@ -20,6 +20,8 @@ import { claudeLocalBashTaskInput } from "./claude_local_bash_task/input.ts";
 import { assertClaudeLocalBashTaskOutput } from "./claude_local_bash_task/output.ts";
 import { claudeResultIsErrorInput } from "./claude_result_is_error/input.ts";
 import { assertClaudeResultIsErrorOutput } from "./claude_result_is_error/output.ts";
+import { grokAutoBlockedCommandInput } from "./grok_auto_blocked_command/input.ts";
+import { assertGrokAutoBlockedCommandOutput } from "./grok_auto_blocked_command/output.ts";
 import { grokBackgroundSubagentInput } from "./grok_background_subagent/input.ts";
 import { assertGrokBackgroundSubagentOutput } from "./grok_background_subagent/output.ts";
 import { grokMonitorInput } from "./grok_monitor/input.ts";
@@ -284,6 +286,21 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         ),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertClaudeResultIsErrorOutput,
+      },
+    ],
+  },
+  {
+    name: "grok_auto_blocked_command",
+    buildInput: grokAutoBlockedCommandInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("grok"),
+        transcriptFile: new URL(
+          "./grok_auto_blocked_command/grok_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: { ...GROK_MODEL_SELECTION, model: "grok-4.7-build-fast" },
+        assertOutput: assertGrokAutoBlockedCommandOutput,
       },
     ],
   },
