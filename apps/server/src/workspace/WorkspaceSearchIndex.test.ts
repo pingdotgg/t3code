@@ -1,9 +1,11 @@
 import {
   FileFinder,
+  type DirItem,
   type FileItem,
   type GrepCursor,
   type GrepOptions,
   type GrepResult,
+  type MixedItem,
 } from "@ff-labs/fff-node";
 import { afterEach, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -29,6 +31,79 @@ function fileItem(relativePath: string): FileItem {
     gitStatus: "clean",
   };
 }
+
+function mixedFileItem(relativePath: string): MixedItem {
+  return { type: "file", item: fileItem(relativePath) };
+}
+
+function mixedDirectoryItem(relativePath: string): MixedItem {
+  const item: DirItem = {
+    relativePath,
+    dirName: relativePath.slice(relativePath.lastIndexOf("/") + 1),
+    maxAccessFrecency: 0,
+  };
+  return { type: "directory", item };
+}
+
+it.effect("deduplicates paths using their wire-normalized value", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const items = [mixedFileItem("pkg/notes.txt"), mixedFileItem("pkg/notes.txt\n")];
+      const finder = {
+        destroy: vi.fn(),
+        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+        mixedSearch: vi.fn(() => ({
+          ok: true as const,
+          value: {
+            items,
+            scores: [],
+            totalMatched: items.length,
+            totalFiles: items.length,
+          },
+        })),
+      } as unknown as FileFinder;
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
+      const listResult = yield* searchIndex.list();
+      const searchResult = yield* searchIndex.search("", 10);
+
+      expect(listResult.entries.filter((entry) => entry.path === "pkg/notes.txt")).toEqual([
+        { kind: "file", path: "pkg/notes.txt" },
+      ]);
+      expect(searchResult.entries).toEqual([{ kind: "file", path: "pkg/notes.txt" }]);
+    }),
+  ),
+);
+
+it.effect("trims wire whitespace before removing directory separators", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      // The file ranks first to prove that a later directory upgrades the
+      // collision instead of leaving the file kind attached to a real folder.
+      const items = [mixedFileItem("pkg/ "), mixedDirectoryItem("pkg/")];
+      const finder = {
+        destroy: vi.fn(),
+        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+        mixedSearch: vi.fn(() => ({
+          ok: true as const,
+          value: {
+            items,
+            scores: [],
+            totalMatched: items.length,
+            totalFiles: 1,
+          },
+        })),
+      } as unknown as FileFinder;
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
+      const result = yield* searchIndex.search("", 10);
+
+      expect(result.entries).toEqual([{ kind: "directory", path: "pkg" }]);
+    }),
+  ),
+);
 
 it.effect("filters image searches before applying the result limit", () =>
   Effect.scoped(

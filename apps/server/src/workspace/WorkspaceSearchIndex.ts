@@ -135,13 +135,19 @@ function trimDirectorySeparator(input: string): string {
   return input.endsWith("/") ? input.slice(0, -1) : input;
 }
 
+function normalizeProjectEntryPath(input: string): string {
+  // ProjectEntry.path trims at the wire boundary. Trim first so a legal
+  // whitespace-only final segment cannot leave a separator-only collision.
+  return trimDirectorySeparator(toPosixPath(input).trim());
+}
+
 function parentPathOf(input: string): string | undefined {
   const separatorIndex = input.lastIndexOf("/");
   return separatorIndex === -1 ? undefined : input.slice(0, separatorIndex);
 }
 
 function toProjectEntry(item: MixedItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.item.relativePath));
+  const normalizedPath = normalizeProjectEntryPath(item.item.relativePath);
   if (!normalizedPath) {
     return null;
   }
@@ -153,13 +159,31 @@ function toProjectEntry(item: MixedItem): ProjectEntry | null {
 }
 
 function toFileEntry(item: FileItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
+  const normalizedPath = normalizeProjectEntryPath(item.relativePath);
   return normalizedPath ? { path: normalizedPath, kind: "file" } : null;
 }
 
 function toDirectoryEntry(item: DirItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
+  const normalizedPath = normalizeProjectEntryPath(item.relativePath);
   return normalizedPath ? { path: normalizedPath, kind: "directory" } : null;
+}
+
+function uniqueProjectEntries(entries: Iterable<ProjectEntry | null>): ProjectEntry[] {
+  const uniqueEntries: ProjectEntry[] = [];
+  const indexByPath = new Map<string, number>();
+  for (const entry of entries) {
+    if (entry === null) continue;
+    const existingIndex = indexByPath.get(entry.path);
+    if (existingIndex === undefined) {
+      indexByPath.set(entry.path, uniqueEntries.length);
+      uniqueEntries.push(entry);
+      continue;
+    }
+    if (entry.kind === "directory" && uniqueEntries[existingIndex]?.kind === "file") {
+      uniqueEntries[existingIndex] = entry;
+    }
+  }
+  return uniqueEntries;
 }
 
 function mapFileSearchResult(
@@ -167,10 +191,12 @@ function mapFileSearchResult(
   limit: number,
   imageOnly = false,
 ): ProjectSearchEntriesResult {
-  const entries = result.items.flatMap((item) => {
-    const entry = toFileEntry(item);
-    return entry && (!imageOnly || isWorkspaceImagePreviewPath(entry.path)) ? [entry] : [];
-  });
+  const entries = uniqueProjectEntries(
+    result.items.map((item) => {
+      const entry = toFileEntry(item);
+      return entry && (!imageOnly || isWorkspaceImagePreviewPath(entry.path)) ? entry : null;
+    }),
+  );
   return {
     entries: entries.slice(0, limit),
     truncated: entries.length > limit || result.totalMatched > result.items.length,
@@ -181,10 +207,7 @@ function mapDirectorySearchResult(
   result: DirSearchResult,
   limit: number,
 ): ProjectSearchEntriesResult {
-  const entries = result.items.flatMap((item) => {
-    const entry = toDirectoryEntry(item);
-    return entry ? [entry] : [];
-  });
+  const entries = uniqueProjectEntries(result.items.map(toDirectoryEntry));
   const rootDirectoryCount = result.items.some((item) => item.relativePath.length === 0) ? 1 : 0;
   return {
     entries: entries.slice(0, limit),
@@ -196,16 +219,7 @@ function mapMixedSearchResult(
   result: MixedSearchResult,
   limit: number,
 ): { readonly entries: ProjectEntry[]; readonly truncated: boolean } {
-  const entries: ProjectEntry[] = [];
-  for (const item of result.items) {
-    const entry = toProjectEntry(item);
-    if (entry) {
-      entries.push(entry);
-    }
-    if (entries.length >= limit) {
-      break;
-    }
-  }
+  const entries = uniqueProjectEntries(result.items.map(toProjectEntry));
 
   const rootDirectoryCount = result.items.some(
     (item) => item.type === "directory" && item.item.relativePath.length === 0,
@@ -213,8 +227,8 @@ function mapMixedSearchResult(
     ? 1
     : 0;
   return {
-    entries,
-    truncated: result.totalMatched - rootDirectoryCount > limit,
+    entries: entries.slice(0, limit),
+    truncated: entries.length > limit || result.totalMatched - rootDirectoryCount > limit,
   };
 }
 
