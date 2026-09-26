@@ -1,0 +1,164 @@
+diff --git a/dist/ImageViewing.js b/dist/ImageViewing.js
+index 3d7641a9a94864415d207c678b71f8c592c90aa1..9666461b9395646e782cb55b13bc566951f7da23 100644
+--- a/dist/ImageViewing.js
++++ b/dist/ImageViewing.js
+@@ -6,7 +6,7 @@
+  *
+  */
+ import React, { useCallback, useRef, useEffect } from "react";
+-import { Animated, Dimensions, StyleSheet, View, VirtualizedList, Modal, } from "react-native";
++import { Animated, Dimensions, StyleSheet, View, VirtualizedList, Modal, Platform, useWindowDimensions, } from "react-native";
+ import ImageItem from "./components/ImageItem/ImageItem";
+ import ImageDefaultHeader from "./components/ImageDefaultHeader";
+ import StatusBarManager from "./components/StatusBarManager";
+@@ -17,11 +17,13 @@ const DEFAULT_ANIMATION_TYPE = "fade";
+ const DEFAULT_BG_COLOR = "#000";
+ const DEFAULT_DELAY_LONG_PRESS = 800;
+ const SCREEN = Dimensions.get("screen");
+-const SCREEN_WIDTH = SCREEN.width;
++const useViewingDimensions = Platform.OS === "android" ? useWindowDimensions : () => SCREEN;
+ function ImageViewing({ images, keyExtractor, imageIndex, visible, onRequestClose, onLongPress = () => { }, onImageIndexChange, animationType = DEFAULT_ANIMATION_TYPE, backgroundColor = DEFAULT_BG_COLOR, presentationStyle, swipeToCloseEnabled, doubleTapToZoomEnabled, delayLongPress = DEFAULT_DELAY_LONG_PRESS, HeaderComponent, FooterComponent, }) {
++    const viewport = useViewingDimensions();
++    const SCREEN_WIDTH = viewport.width;
+     const imageList = useRef(null);
+     const [opacity, onRequestCloseEnhanced] = useRequestClose(onRequestClose);
+-    const [currentImageIndex, onScroll] = useImageIndexChange(imageIndex, SCREEN);
++    const [currentImageIndex, onScroll] = useImageIndexChange(imageIndex, viewport);
+     const [headerTransform, footerTransform, toggleBarsVisible] = useAnimatedComponents();
+     useEffect(() => {
+         if (onImageIndexChange) {
+@@ -33,7 +35,7 @@ function ImageViewing({ images, keyExtractor, imageIndex, visible, onRequestClos
+         // @ts-ignore
+         (_b = (_a = imageList) === null || _a === void 0 ? void 0 : _a.current) === null || _b === void 0 ? void 0 : _b.setNativeProps({ scrollEnabled: !isScaled });
+         toggleBarsVisible(!isScaled);
+-    }, [imageList]);
++    }, [imageList, toggleBarsVisible]);
+     if (!visible) {
+         return null;
+     }
+@@ -45,7 +47,8 @@ function ImageViewing({ images, keyExtractor, imageIndex, visible, onRequestClos
+         imageIndex: currentImageIndex,
+     })) : (<ImageDefaultHeader onRequestClose={onRequestCloseEnhanced}/>)}
+         </Animated.View>
+-        <VirtualizedList ref={imageList} data={images} horizontal pagingEnabled windowSize={2} initialNumToRender={1} maxToRenderPerBatch={1} showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false} initialScrollIndex={imageIndex} getItem={(_, index) => images[index]} getItemCount={() => images.length} getItemLayout={(_, index) => ({
++        {/* Reset Android zoom and scroll state when the available window changes. */}
++        <VirtualizedList key={Platform.OS === "android" ? `${viewport.width}:${viewport.height}` : undefined} ref={imageList} data={images} horizontal pagingEnabled windowSize={2} initialNumToRender={1} maxToRenderPerBatch={1} showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false} initialScrollIndex={currentImageIndex} getItem={(_, index) => images[index]} getItemCount={() => images.length} getItemLayout={(_, index) => ({
+         length: SCREEN_WIDTH,
+         offset: SCREEN_WIDTH * index,
+         index,
+diff --git a/dist/components/ImageItem/ImageItem.android.js b/dist/components/ImageItem/ImageItem.android.js
+index 5fcaa9f9a7d893817fee89b85186ee3936118e69..3effe838fa54495d165b81cc7501e72d51fbee1b 100644
+--- a/dist/components/ImageItem/ImageItem.android.js
++++ b/dist/components/ImageItem/ImageItem.android.js
+@@ -6,17 +6,17 @@
+  *
+  */
+ import React, { useCallback, useRef, useState } from "react";
+-import { Animated, ScrollView, Dimensions, StyleSheet, } from "react-native";
++import { Animated, ScrollView, Dimensions, } from "react-native";
+ import useImageDimensions from "../../hooks/useImageDimensions";
+ import usePanResponder from "../../hooks/usePanResponder";
+ import { getImageStyles, getImageTransform } from "../../utils";
+ import { ImageLoading } from "./ImageLoading";
+ const SWIPE_CLOSE_OFFSET = 75;
+ const SWIPE_CLOSE_VELOCITY = 1.75;
+-const SCREEN = Dimensions.get("window");
+-const SCREEN_WIDTH = SCREEN.width;
+-const SCREEN_HEIGHT = SCREEN.height;
+ const ImageItem = ({ imageSrc, onZoom, onRequestClose, onLongPress, delayLongPress, swipeToCloseEnabled = true, doubleTapToZoomEnabled = true, }) => {
++    const SCREEN = Dimensions.get("window");
++    const SCREEN_WIDTH = SCREEN.width;
++    const SCREEN_HEIGHT = SCREEN.height;
+     const imageContainer = useRef(null);
+     const imageDimensions = useImageDimensions(imageSrc);
+     const [translate, scale] = getImageTransform(imageDimensions, SCREEN);
+@@ -31,7 +31,7 @@ const ImageItem = ({ imageSrc, onZoom, onRequestClose, onLongPress, delayLongPre
+                 scrollEnabled: !isZoomed,
+             });
+         }
+-    }, [imageContainer]);
++    }, [imageContainer, onZoom]);
+     const onLongPressHandler = useCallback(() => {
+         onLongPress(imageSrc);
+     }, [imageSrc, onLongPress]);
+@@ -64,7 +64,7 @@ const ImageItem = ({ imageSrc, onZoom, onRequestClose, onLongPress, delayLongPre
+         const offsetY = (_c = (_b = (_a = nativeEvent) === null || _a === void 0 ? void 0 : _a.contentOffset) === null || _b === void 0 ? void 0 : _b.y, (_c !== null && _c !== void 0 ? _c : 0));
+         scrollValueY.setValue(offsetY);
+     };
+-    return (<ScrollView ref={imageContainer} style={styles.listItem} pagingEnabled nestedScrollEnabled showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false} contentContainerStyle={styles.imageScrollContainer} scrollEnabled={swipeToCloseEnabled} {...(swipeToCloseEnabled && {
++    return (<ScrollView ref={imageContainer} style={{ width: SCREEN_WIDTH, height: SCREEN_HEIGHT }} pagingEnabled nestedScrollEnabled showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false} contentContainerStyle={{ height: SCREEN_HEIGHT * 2 }} scrollEnabled={swipeToCloseEnabled} {...(swipeToCloseEnabled && {
+         onScroll,
+         onScrollEndDrag,
+     })}>
+@@ -72,13 +72,4 @@ const ImageItem = ({ imageSrc, onZoom, onRequestClose, onLongPress, delayLongPre
+       {(!isLoaded || !imageDimensions) && <ImageLoading />}
+     </ScrollView>);
+ };
+-const styles = StyleSheet.create({
+-    listItem: {
+-        width: SCREEN_WIDTH,
+-        height: SCREEN_HEIGHT,
+-    },
+-    imageScrollContainer: {
+-        height: SCREEN_HEIGHT * 2,
+-    },
+-});
+ export default React.memo(ImageItem);
+diff --git a/dist/components/ImageItem/ImageLoading.js b/dist/components/ImageItem/ImageLoading.js
+index 9770f7db158a2fb2b1c69a49e5fcbc89d8624603..995fab7524bb8673258d44e5eda361c62dae0324 100644
+--- a/dist/components/ImageItem/ImageLoading.js
++++ b/dist/components/ImageItem/ImageLoading.js
+@@ -6,25 +6,17 @@
+  *
+  */
+ import React from "react";
+-import { ActivityIndicator, Dimensions, StyleSheet, View } from "react-native";
++import { ActivityIndicator, Dimensions, Platform, StyleSheet, View } from "react-native";
+ const SCREEN = Dimensions.get("screen");
+-const SCREEN_WIDTH = SCREEN.width;
+-const SCREEN_HEIGHT = SCREEN.height;
+-export const ImageLoading = () => (<View style={styles.loading}>
++export const ImageLoading = () => {
++    const { width, height } = Platform.OS === "android" ? Dimensions.get("window") : SCREEN;
++    return (<View style={[styles.loading, { width, height }]}>
+     <ActivityIndicator size="small" color="#FFF"/>
+   </View>);
++};
+ const styles = StyleSheet.create({
+-    listItem: {
+-        width: SCREEN_WIDTH,
+-        height: SCREEN_HEIGHT,
+-    },
+     loading: {
+-        width: SCREEN_WIDTH,
+-        height: SCREEN_HEIGHT,
+         alignItems: "center",
+         justifyContent: "center",
+     },
+-    imageScrollContainer: {
+-        height: SCREEN_HEIGHT,
+-    },
+ });
+diff --git a/dist/hooks/usePanResponder.js b/dist/hooks/usePanResponder.js
+index 99dcbc7efea4eba86a8bc2bad71dde73c8ebf1b4..3a374c0923879548ec3826a78be16f79c6e01432 100644
+--- a/dist/hooks/usePanResponder.js
++++ b/dist/hooks/usePanResponder.js
+@@ -8,14 +8,14 @@
+ import { useMemo, useEffect } from "react";
+ import { Animated, Dimensions, } from "react-native";
+ import { createPanResponder, getDistanceBetweenTouches, getImageTranslate, getImageDimensionsByTranslate, } from "../utils";
+-const SCREEN = Dimensions.get("window");
+-const SCREEN_WIDTH = SCREEN.width;
+-const SCREEN_HEIGHT = SCREEN.height;
+-const MIN_DIMENSION = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT);
+ const SCALE_MAX = 2;
+ const DOUBLE_TAP_DELAY = 300;
+ const OUT_BOUND_MULTIPLIER = 0.75;
+ const usePanResponder = ({ initialScale, initialTranslate, onZoom, doubleTapToZoomEnabled, onLongPress, delayLongPress, }) => {
++    const SCREEN = Dimensions.get("window");
++    const SCREEN_WIDTH = SCREEN.width;
++    const SCREEN_HEIGHT = SCREEN.height;
++    const MIN_DIMENSION = Math.min(SCREEN_WIDTH, SCREEN_HEIGHT);
+     let numberInitialTouches = 1;
+     let initialTouches = [];
+     let currentScale = initialScale;
