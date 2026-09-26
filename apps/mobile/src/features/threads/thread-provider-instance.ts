@@ -13,6 +13,8 @@ export interface ThreadRowProviderInstance {
   readonly driverKind: ProviderDriverKind;
   readonly displayName: string;
   readonly accentColor?: string | undefined;
+  /** ACP Registry agent icon; other drivers draw their built-in glyph. */
+  readonly iconUrl?: string | undefined;
   readonly showBadge: boolean;
 }
 
@@ -36,6 +38,7 @@ export function resolveThreadProviderInstance(
   };
   return {
     ...entry,
+    ...(snapshot.iconUrl ? { iconUrl: snapshot.iconUrl } : {}),
     showBadge: shouldShowInstanceBadge(
       entry,
       providers.map((provider) => ({ driverKind: provider.driver })),

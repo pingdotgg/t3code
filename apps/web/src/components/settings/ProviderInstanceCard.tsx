@@ -7,6 +7,7 @@ import {
   ArrowUpCircleIcon,
   CopyIcon,
   DownloadIcon,
+  ExternalLinkIcon,
   LockIcon,
   LockOpenIcon,
   PlusIcon,
@@ -19,6 +20,7 @@ import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "
 import {
   isProviderDriverKind,
   resolveProviderInstanceEnabled,
+  type AcpRegistryUrlAuthAction,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
@@ -126,6 +128,12 @@ function providerEnvironmentsEqual(
 function readConfigCustomModels(config: unknown): ReadonlyArray<CustomModelDefinition> {
   if (config === null || typeof config !== "object") return [];
   return readCustomModelEntries((config as Record<string, unknown>).customModels);
+}
+
+function readConfigString(config: unknown, key: string): string | undefined {
+  if (config === null || typeof config !== "object") return undefined;
+  const value = (config as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 /**
@@ -396,6 +404,8 @@ interface ProviderInstanceCardProps {
   readonly onRunUpdate?: (() => void) | undefined;
   readonly onInstallRecommended?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
+  /** Opens an ACP agent's sign-in page after the user consents to it. */
+  readonly onAcceptUrlAuth?: ((action: AcpRegistryUrlAuthAction) => void) | undefined;
 }
 
 /**
@@ -439,6 +449,7 @@ export function ProviderInstanceCard({
   onRunUpdate,
   onInstallRecommended,
   isUpdating = false,
+  onAcceptUrlAuth,
 }: ProviderInstanceCardProps) {
   const enabled = resolveProviderInstanceEnabled(instance);
   const compatibility = enabled ? liveProvider?.compatibilityAdvisory : undefined;
@@ -471,6 +482,7 @@ export function ProviderInstanceCard({
   const VersionAdvisoryIcon = hasCompatibilityWarning ? AlertTriangleIcon : ArrowUpCircleIcon;
   const onRunVersionAction = versionAdvisory?.targetVersion ? onInstallRecommended : onRunUpdate;
   const FallbackIconComponent = driverOption?.icon;
+  const urlAuthAction = liveProvider?.auth.action;
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
@@ -567,6 +579,10 @@ export function ProviderInstanceCard({
       driverKind={driverKind}
       displayName={displayName}
       accentColor={accentColor}
+      acpRegistryAgentId={readConfigString(instance.config, "agentId")}
+      acpRegistryIconUrl={
+        liveProvider?.iconUrl ?? readConfigString(instance.config, "registryIconUrl")
+      }
       showBadge={Boolean(accentColor)}
       className="size-5"
       iconClassName="size-4 text-foreground/80"
@@ -866,14 +882,43 @@ export function ProviderInstanceCard({
         <SettingsRow
           title="Display name"
           status={
-            <ProviderStatusDiagnostic detail={statusDiagnostic}>
-              <div
-                tabIndex={statusDiagnostic ? 0 : undefined}
-                className="flex min-w-0 flex-wrap items-baseline gap-x-1.5"
-              >
-                {editorStatusNode}
-              </div>
-            </ProviderStatusDiagnostic>
+            <>
+              <ProviderStatusDiagnostic detail={statusDiagnostic}>
+                <div
+                  tabIndex={statusDiagnostic ? 0 : undefined}
+                  className="flex min-w-0 flex-wrap items-baseline gap-x-1.5"
+                >
+                  {editorStatusNode}
+                </div>
+              </ProviderStatusDiagnostic>
+              {urlAuthAction && onAcceptUrlAuth ? (
+                <div className="grid max-w-xl gap-1.5 pt-1 text-xs">
+                  <p>{urlAuthAction.message}</p>
+                  <code className="break-all text-2xs">{urlAuthAction.url}</code>
+                  <Button
+                    render={
+                      <a
+                        href={urlAuthAction.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() => onAcceptUrlAuth(urlAuthAction)}
+                        // A middle click opens the link without a click event.
+                        onAuxClick={(event) => {
+                          if (event.button === 1) onAcceptUrlAuth(urlAuthAction);
+                        }}
+                      />
+                    }
+                    size="xs"
+                    variant="outline"
+                    className="w-fit"
+                    disabled={readOnly}
+                  >
+                    <ExternalLinkIcon />
+                    Continue authentication
+                  </Button>
+                </div>
+              ) : null}
+            </>
           }
           control={
             <div

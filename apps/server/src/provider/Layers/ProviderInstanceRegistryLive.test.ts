@@ -59,6 +59,7 @@ import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
+import { AcpRegistryCatalogLive } from "./AcpRegistryCatalog.ts";
 
 const TestHttpClientLive = Layer.succeed(
   HttpClient.HttpClient,
@@ -596,6 +597,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
   // `FileSystem` dep while keeping everything else surfaced to the test.
   const infraLayer = OpenCodeRuntimeLive.pipe(Layer.provideMerge(NodeServices.layer));
   const testLayer = AntigravityInstallation.layer.pipe(
+    Layer.provideMerge(AcpRegistryCatalogLive),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), {
         prefix: "provider-instance-registry-all-drivers-test",

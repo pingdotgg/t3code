@@ -69,6 +69,7 @@ import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
+import { AcpRegistryCatalogLive } from "./provider/Layers/AcpRegistryCatalog.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
@@ -532,6 +533,11 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
 ).pipe(
   Layer.provideMerge(AntigravityInstallation.layer),
+  // Search, prepare, status inspection, and turn launch share one registry
+  // cache so every client and provider instance sees the same prepared agents.
+  Layer.provideMerge(AcpRegistryCatalogLive),
+  // ACP Registry sign-in runs an agent's terminal login in a PTY.
+  Layer.provideMerge(PtyAdapterLive),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // drivers (native stream, written from inside each `<X>Adapter`) and
   // `ProviderService` (canonical stream, written after event normalization).

@@ -197,6 +197,32 @@ describe("mobile model options", () => {
     expect(resolveSelectableModelSelection(null, disabled)).toBe(disabled);
   });
 
+  it("keeps an ACP Registry agent's icon on a selection outside its model list", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "acp_kimi",
+          driver: "acpRegistry",
+          displayName: "Kimi",
+          iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/kimi.svg",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [],
+        },
+      ],
+    } as unknown as ServerConfig;
+    const selection = { instanceId: ProviderInstanceId.make("acp_kimi"), model: "removed-model" };
+
+    expect(buildModelOptions(config, selection)).toMatchObject([
+      {
+        providerDriver: "acpRegistry",
+        providerIconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/kimi.svg",
+        selection,
+      },
+    ]);
+  });
+
   describe("Antigravity selections", () => {
     const selection = {
       instanceId: ProviderInstanceId.make("google_work"),

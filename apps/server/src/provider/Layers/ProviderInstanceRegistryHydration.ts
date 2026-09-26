@@ -56,6 +56,12 @@ import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "../builtInDrivers.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import { ProviderInstanceRegistryMutator } from "../Services/ProviderInstanceRegistryMutator.ts";
 import { ProviderInstanceRegistryMutableLayer } from "./ProviderInstanceRegistryLive.ts";
+import { AcpRegistryCatalog } from "../acp/AcpRegistrySupport.ts";
+import { AcpRegistryCatalogLive } from "./AcpRegistryCatalog.ts";
+
+type ProviderInstanceRegistryHydrationEnv =
+  | Exclude<BuiltInDriversEnv, AcpRegistryCatalog>
+  | ServerSettingsService;
 
 /**
  * Synthesize a `ProviderInstanceConfigMap` from a `ServerSettings` snapshot.
@@ -153,7 +159,7 @@ const SettingsWatcherLive = Layer.effectDiscard(
 export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
   ProviderInstanceRegistry,
   never,
-  BuiltInDriversEnv | ServerSettingsService
+  ProviderInstanceRegistryHydrationEnv
 > = Layer.unwrap(
   Effect.gen(function* () {
     const serverSettings = yield* ServerSettingsService;
@@ -168,8 +174,8 @@ export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
     const mutableLayer = ProviderInstanceRegistryMutableLayer({
       drivers: BUILT_IN_DRIVERS,
       configMap: initialConfigMap,
-    });
+    }).pipe(Layer.provide(AcpRegistryCatalogLive));
 
     return SettingsWatcherLive.pipe(Layer.provideMerge(mutableLayer));
   }),
-) as Layer.Layer<ProviderInstanceRegistry, never, BuiltInDriversEnv | ServerSettingsService>;
+) as Layer.Layer<ProviderInstanceRegistry, never, ProviderInstanceRegistryHydrationEnv>;

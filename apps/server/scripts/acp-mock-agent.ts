@@ -1718,6 +1718,9 @@ const program = Effect.gen(function* () {
             type: "object",
             properties: {
               approved: { type: "boolean", title: "Approved" },
+              color: { type: "string", title: "Color", enum: ["red", "blue"] },
+              tags: { type: "array", title: "Tags", items: { type: "string", enum: ["a", "b"] } },
+              count: { type: "integer", title: "Count" },
             },
           },
           ...(emitMcpToolApprovalElicitation
