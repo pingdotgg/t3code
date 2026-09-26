@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 
 import * as Electron from "electron";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { normalizeLinuxDeviceScaleFactor } from "../linuxDeviceScaleFactor.ts";
 
 import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
@@ -45,6 +46,7 @@ export class DesktopPreReadyElectronOptions extends Context.Service<
   {
     readonly linux: DesktopEarlyElectronStartup.EarlyLinuxElectronOptions | null;
     readonly linuxPasswordStoreCommandLine: string | null;
+    readonly linuxDeviceScaleFactorCommandLine: number | null;
   }
 >()("@t3tools/desktop/app/DesktopPreReadyPlatform/DesktopPreReadyElectronOptions") {}
 
@@ -57,6 +59,15 @@ export const make = Effect.gen(function* () {
         ? readCommandLineSwitchValue(Electron.app.commandLine, "password-store")
         : null;
     const linux = platform === "linux" ? resolveEarlyLinuxElectronOptionsFromProcess() : null;
+    const hasDeviceScaleFactor = Electron.app.commandLine.hasSwitch("force-device-scale-factor");
+    const linuxDeviceScaleFactorCommandLine =
+      platform === "linux" && hasDeviceScaleFactor
+        ? normalizeLinuxDeviceScaleFactor(
+            Number(
+              readCommandLineSwitchValue(Electron.app.commandLine, "force-device-scale-factor"),
+            ),
+          )
+        : null;
 
     if (linux !== null) {
       // The portal also requires a valid desktop entry. An AppImage update may
@@ -90,9 +101,18 @@ export const make = Effect.gen(function* () {
       if (linux.passwordStore !== null && linuxPasswordStoreCommandLine === null) {
         Electron.app.commandLine.appendSwitch("password-store", linux.passwordStore);
       }
+      if (hasDeviceScaleFactor && linuxDeviceScaleFactorCommandLine === null) {
+        Electron.app.commandLine.removeSwitch("force-device-scale-factor");
+      }
+      if (linux.deviceScaleFactor !== null && linuxDeviceScaleFactorCommandLine === null) {
+        Electron.app.commandLine.appendSwitch(
+          "force-device-scale-factor",
+          String(linux.deviceScaleFactor),
+        );
+      }
     }
 
-    return { linux, linuxPasswordStoreCommandLine };
+    return { linux, linuxPasswordStoreCommandLine, linuxDeviceScaleFactorCommandLine };
   });
 }).pipe(Effect.withSpan("desktop.electron.configureBeforeReady"));
 
