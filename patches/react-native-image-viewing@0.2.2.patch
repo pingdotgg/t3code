@@ -47,7 +47,7 @@ index 3d7641a9a94864415d207c678b71f8c592c90aa1..b7733f9667ff12cdbf0d69b79d75de78
          offset: SCREEN_WIDTH * index,
          index,
 diff --git a/dist/components/ImageItem/ImageItem.android.js b/dist/components/ImageItem/ImageItem.android.js
-index 5fcaa9f9a7d893817fee89b85186ee3936118e69..adf8f20f1226290156613e78ba59aaf30e476f33 100644
+index 5fcaa9f9a7d893817fee89b85186ee3936118e69..3effe838fa54495d165b81cc7501e72d51fbee1b 100644
 --- a/dist/components/ImageItem/ImageItem.android.js
 +++ b/dist/components/ImageItem/ImageItem.android.js
 @@ -6,17 +6,17 @@
@@ -72,6 +72,15 @@ index 5fcaa9f9a7d893817fee89b85186ee3936118e69..adf8f20f1226290156613e78ba59aaf3
      const imageContainer = useRef(null);
      const imageDimensions = useImageDimensions(imageSrc);
      const [translate, scale] = getImageTransform(imageDimensions, SCREEN);
+@@ -31,7 +31,7 @@ const ImageItem = ({ imageSrc, onZoom, onRequestClose, onLongPress, delayLongPre
+                 scrollEnabled: !isZoomed,
+             });
+         }
+-    }, [imageContainer]);
++    }, [imageContainer, onZoom]);
+     const onLongPressHandler = useCallback(() => {
+         onLongPress(imageSrc);
+     }, [imageSrc, onLongPress]);
 @@ -64,7 +64,7 @@ const ImageItem = ({ imageSrc, onZoom, onRequestClose, onLongPress, delayLongPre
          const offsetY = (_c = (_b = (_a = nativeEvent) === null || _a === void 0 ? void 0 : _a.contentOffset) === null || _b === void 0 ? void 0 : _b.y, (_c !== null && _c !== void 0 ? _c : 0));
          scrollValueY.setValue(offsetY);
