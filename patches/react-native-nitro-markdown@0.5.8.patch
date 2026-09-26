@@ -1,16 +1,36 @@
 diff --git a/cpp/md4c/md4c.c b/cpp/md4c/md4c.c
 --- a/cpp/md4c/md4c.c
 +++ b/cpp/md4c/md4c.c
-@@ -3909,7 +3909,7 @@ md_analyze_permissive_autolink(MD_CTX* ctx, int mark_index)
+@@ -3908,10 +3908,10 @@
+         int min_components;
          const MD_CHAR optional_end_char;
      } URL_MAP[] = {
-         { _T('\0'), _T('.'),  _T(".-_"),      2, _T('\0') },    /* host, mandatory */
+-        { _T('\0'), _T('.'),  _T(".-_"),      2, _T('\0') },    /* host, mandatory */
 -        { _T('/'),  _T('/'),  _T("/.-_"),     0, _T('/') },     /* path */
-+        { _T('/'),  _T('/'),  _T("/.-_()"),   0, _T('/') },     /* path */
-         { _T('?'),  _T('&'),  _T("&.-+_=()"), 1, _T('\0') },    /* query */
-         { _T('#'),  _T('\0'), _T(".-+_") ,    1, _T('\0') }     /* fragment */
+-        { _T('?'),  _T('&'),  _T("&.-+_=()"), 1, _T('\0') },    /* query */
+-        { _T('#'),  _T('\0'), _T(".-+_") ,    1, _T('\0') }     /* fragment */
++        { _T('\0'), _T('.'),  _T(".-_"),           2, _T('\0') },    /* host, mandatory */
++        { _T('/'),  _T('/'),  _T("/.-_():~%+@&!,;"), 0, _T('/') }, /* path */
++        { _T('?'),  _T('&'),  _T("&.-+_=().:!~%,;@"), 1, _T('\0') }, /* query */
++        { _T('#'),  _T('\0'), _T(".-+_:%~") ,    1, _T('\0') }     /* fragment */
      };
-@@ -4006,9 +4006,20 @@ md_analyze_permissive_autolink(MD_CTX* ctx, int mark_index)
+ 
+     MD_MARK* opener = &ctx->marks[mark_index];
+@@ -3981,8 +3981,11 @@
+             } else if(end < line_end  &&
+                         ISANYOF(end, URL_MAP[i].allowed_nonalnum_chars)  &&
+                         md_scan_right_for_resolved_mark(ctx, right_cursor, end, &right_cursor) == NULL  &&
+-                        ((end > line_beg && (ISALNUM(end-1) || CH(end-1) == _T(')')))  ||  CH(end) == _T('('))  &&
+-                        ((end+1 < line_end && (ISALNUM(end+1) || CH(end+1) == _T('(')))  ||  CH(end) == _T(')')))
++                        /* Scheme URLs keep '...' and ':' in the path and query.
++                         * Host, e-mail, and www labels stay flanked by alphanumerics. */
++                        ((opener->ch == _T(':') && i > 0)  ||
++                         (((end > line_beg && (ISALNUM(end-1) || CH(end-1) == _T(')')))  ||  CH(end) == _T('('))  &&
++                          ((end+1 < line_end && (ISALNUM(end+1) || CH(end+1) == _T('(')))  ||  CH(end) == _T(')')))))
+             {
+                 if(CH(end) == URL_MAP[i].delim_char)
+                     n_components++;
+@@ -4006,16 +4009,35 @@
                  CH(end) == URL_MAP[i].optional_end_char)
              end++;
  
@@ -31,4 +51,20 @@ diff --git a/cpp/md4c/md4c.c b/cpp/md4c/md4c.c
 +
          if(opener->ch == '@')   /* E-mail autolinks wants only the host. */
              break;
++    }
++
++    /* GFM leaves a trailing run of punctuation outside the link, including
++     * the sentence dots in "https://example.com/a...". */
++    if(opener->ch == _T(':')) {
++        while(end > opener->end && ISANYOF(end - 1, _T("?!.,:*_~")))
++            end--;
      }
+ 
+     /* Verify there's line boundary, whitespace, allowed punctuation or
+      * resolved emphasis mark just after the suspected autolink. */
+-    if(end == line_end  ||  ISUNICODEWHITESPACE(end)  ||  ISANYOF(end, _T(")}].!?,;"))) {
++    if(end == line_end  ||  ISUNICODEWHITESPACE(end)  ||
++            ISANYOF(end, opener->ch == _T(':') ? _T(")}].!?,;:*_~'\"`<>") : _T(")}].!?,;"))) {
+         right_boundary_ok = TRUE;
+     } else {
+         MD_MARK* right_mark;
