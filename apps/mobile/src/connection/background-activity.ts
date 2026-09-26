@@ -53,6 +53,16 @@ export const mobileBackgroundActivityReporterLayer = Layer.effectDiscard(
     const requestReport = () => Queue.offerUnsafe(reportRequests, undefined);
     let appState = AppState.currentState;
 
+    const connectedGenerations = (environmentId: EnvironmentId) =>
+      registry.stateChanges(environmentId).pipe(
+        Stream.filter((state) => state.phase === "connected"),
+        Stream.map((state) => state.generation),
+        Stream.changes,
+        // A removed environment ends its own stream; the entries change that
+        // removed it resubscribes the rest.
+        Stream.ignore({ log: false }),
+      );
+
     const report = Effect.gen(function* () {
       const observedAtMs = yield* Clock.currentTimeMillis;
       const active = appState === "active";
@@ -100,6 +110,17 @@ export const mobileBackgroundActivityReporterLayer = Layer.effectDiscard(
         }),
     );
     yield* SubscriptionRef.changes(registry.entries).pipe(
+      Stream.runForEach(() => Effect.sync(requestReport)),
+      Effect.forkScoped,
+    );
+    // Every reconnect leaves the server without this client's activity lease.
+    // Reporting per newly connected generation restores it right away instead of
+    // leaving the environment without provider-status or VCS updates for 25s.
+    yield* SubscriptionRef.changes(registry.entries).pipe(
+      Stream.map((entries) => [...entries.keys()]),
+      Stream.switchMap((ids) =>
+        Stream.mergeAll(ids.map(connectedGenerations), { concurrency: "unbounded" }),
+      ),
       Stream.runForEach(() => Effect.sync(requestReport)),
       Effect.forkScoped,
     );

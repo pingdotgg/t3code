@@ -118,6 +118,14 @@ For a plain HTTP LAN endpoint, use the direct pairing URL in a browser that can
 open it, or pair from the desktop app. On mobile, an IP address entered without a
 scheme uses HTTP, so include `https://` when your server uses HTTPS.
 
+### Mobile network changes
+
+When you switch between Wi-Fi and cellular, the app reconnects the environment
+over the new network, usually within a few seconds. You do not need to reconnect
+by hand. A LAN address still only works while the phone is on that network: to
+keep working after you leave it, connect through T3 Connect, Tailscale, or
+another reachable endpoint.
+
 ## Desktop-managed SSH
 
 In the desktop app, open **Settings → Connections → Add environment**, choose
