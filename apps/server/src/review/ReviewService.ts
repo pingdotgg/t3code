@@ -13,6 +13,8 @@ import {
   type ReviewDiffPreviewError,
   type ReviewDiffPreviewInput,
   type ReviewDiffPreviewResult,
+  type ReviewListCommitsInput,
+  type ReviewListCommitsResult,
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
@@ -28,6 +30,9 @@ export class ReviewService extends Context.Service<
     readonly getDiffFileContents: (
       input: ReviewDiffFileContentsInput,
     ) => Effect.Effect<ReviewDiffFileContentsResult, ReviewDiffPreviewError>;
+    readonly listCommits: (
+      input: ReviewListCommitsInput,
+    ) => Effect.Effect<ReviewListCommitsResult, ReviewDiffPreviewError>;
   }
 >()("t3/review/ReviewService") {}
 
@@ -64,7 +69,10 @@ export const make = Effect.gen(function* () {
   };
 
   const assertWorkspaceBoundCwd = Effect.fn("ReviewService.assertWorkspaceBoundCwd")(function* (
-    operation: "ReviewService.getDiffPreview" | "ReviewService.getDiffFileContents",
+    operation:
+      | "ReviewService.getDiffPreview"
+      | "ReviewService.getDiffFileContents"
+      | "ReviewService.listCommits",
     cwd: string,
   ) {
     const [candidate, workspaceRoot, worktreesRoot] = yield* Effect.all([
@@ -81,9 +89,9 @@ export const make = Effect.gen(function* () {
       operation,
       cwd,
       detail:
-        operation === "ReviewService.getDiffPreview"
-          ? "Review diff preview cwd must stay within the configured workspace root."
-          : "Review diff file contents cwd must stay within the configured workspace root.",
+        operation === "ReviewService.getDiffFileContents"
+          ? "Review diff file contents cwd must stay within the configured workspace root."
+          : "Review diff preview cwd must stay within the configured workspace root.",
     });
   });
 
@@ -133,9 +141,20 @@ export const make = Effect.gen(function* () {
     return yield* git.getReviewDiffFileContents(input);
   });
 
+  const listCommits: ReviewService["Service"]["listCommits"] = Effect.fn(
+    "ReviewService.listCommits",
+  )(function* (input) {
+    yield* assertWorkspaceBoundCwd("ReviewService.listCommits", input.cwd);
+    const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });
+    // Only Git has commits to scope a review to; other drivers offer none.
+    if (handle?.kind !== "git") return { commits: [] };
+    return yield* git.listReviewCommits(input);
+  });
+
   return ReviewService.of({
     getDiffPreview,
     getDiffFileContents,
+    listCommits,
   });
 });
 

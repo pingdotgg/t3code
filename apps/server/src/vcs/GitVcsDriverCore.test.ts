@@ -1770,6 +1770,132 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
     );
   });
 
+  describe("review diff scopes", () => {
+    it.effect("combines committed, uncommitted and untracked work against the merge base", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/all"]);
+        yield* writeTextFile(cwd, "committed.ts", "committed\n");
+        yield* git(cwd, ["add", "committed.ts"]);
+        yield* git(cwd, ["commit", "-m", "add committed"]);
+        yield* writeTextFile(cwd, "README.md", "# dirty\n");
+        yield* writeTextFile(cwd, "untracked.ts", "untracked\n");
+
+        const preview = yield* driver.getReviewDiffPreview({
+          cwd,
+          baseRef: initialBranch,
+          source: "all",
+        });
+
+        assert.deepStrictEqual(
+          preview.sources.map((source) => [source.kind, source.baseRef]),
+          [["all", initialBranch]],
+        );
+        const diff = preview.sources[0]?.diff;
+        assert.include(diff, "+++ b/committed.ts");
+        assert.include(diff, "+++ b/README.md");
+        assert.include(diff, "+++ b/untracked.ts");
+
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, { sourceKind: "all", baseRef: initialBranch }),
+        );
+        assert.deepStrictEqual(contents, { oldContents: "# test\n", newContents: "# dirty\n" });
+      }),
+    );
+
+    it.effect("lists branch commits newest first and diffs one against its parent", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/commits"]);
+        yield* writeTextFile(cwd, "first.ts", "first\n");
+        yield* git(cwd, ["add", "first.ts"]);
+        yield* git(cwd, ["commit", "-m", "add first"]);
+        yield* writeTextFile(cwd, "second.ts", "second\n");
+        yield* git(cwd, ["add", "second.ts"]);
+        yield* git(cwd, ["commit", "-m", "add second"]);
+
+        const { commits } = yield* driver.listReviewCommits({ cwd, baseRef: initialBranch });
+        assert.deepStrictEqual(
+          commits.map((commit) => commit.subject),
+          ["add second", "add first"],
+        );
+        const first = commits[1]!;
+
+        const preview = yield* driver.getReviewDiffPreview({
+          cwd,
+          source: { commit: first.sha.slice(0, 7) },
+        });
+        const [commit] = preview.sources;
+        assert.strictEqual(commit?.kind, "commit");
+        assert.strictEqual(commit?.headRef, first.sha);
+        assert.include(commit?.diff, "+++ b/first.ts");
+        assert.notInclude(commit?.diff, "second.ts");
+
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, {
+            sourceKind: "commit",
+            changeType: "new",
+            baseRef: commit!.baseRef,
+            headRef: first.sha,
+            oldPath: "first.ts",
+            newPath: "first.ts",
+          }),
+        );
+        assert.deepStrictEqual(contents, { oldContents: "", newContents: "first\n" });
+      }),
+    );
+
+    it.effect("keeps separator characters inside commit subjects", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/odd-subject"]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "odd\x1fsub\x1eject"]);
+
+        const { commits } = yield* driver.listReviewCommits({ cwd, baseRef: initialBranch });
+        assert.deepStrictEqual(
+          commits.map((commit) => commit.subject),
+          ["odd\x1fsub\x1eject"],
+        );
+        assert.match(commits[0]!.authoredAt, /^\d{4}-\d{2}-\d{2}T/);
+      }),
+    );
+
+    it.effect("treats an option-like base ref as a revision", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const target = `${cwd}/injected`;
+
+        const { commits } = yield* driver.listReviewCommits({
+          cwd,
+          baseRef: `--output=${target}`,
+        });
+        assert.deepStrictEqual(commits, []);
+        assert.isFalse(NodeFS.existsSync(`${target}..HEAD`));
+      }),
+    );
+
+    it.effect("diffs a root commit against the empty tree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const root = yield* git(cwd, ["rev-parse", "HEAD"]);
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, source: { commit: root } });
+
+        assert.include(preview.sources[0]?.diff, "+++ b/README.md");
+      }),
+    );
+  });
+
   describe("repository status", () => {
     it.effect("reports non-repository directories without failing", () =>
       Effect.gen(function* () {

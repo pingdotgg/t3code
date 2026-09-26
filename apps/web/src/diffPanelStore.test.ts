@@ -94,6 +94,19 @@ describe("diffPanelStore", () => {
     ).toEqual({ kind: "branch", baseRef: "origin/main" });
   });
 
+  it("keeps the branch base while a single commit is selected", () => {
+    useDiffPanelStore.getState().selectBranchBaseRef(THREAD_REF, "origin/main");
+    useDiffPanelStore.getState().selectCommit(THREAD_REF, "abc1234");
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "commit", sha: "abc1234" });
+
+    useDiffPanelStore.getState().selectGitScope(THREAD_REF, "branch");
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "branch", baseRef: "origin/main" });
+  });
+
   it("reconciles a missing turn selection to the latest available turn", () => {
     const missingTurnId = TurnId.make("turn-missing");
     const latestTurnId = TurnId.make("turn-latest");
