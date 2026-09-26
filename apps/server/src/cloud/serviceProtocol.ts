@@ -14,6 +14,8 @@ export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
     it when it starts (whoever restarted the service), so while it exists the
     service is known to be behind its unit and status reports it that way. */
 export const SERVICE_RESTART_PENDING_FILE = ".restart-pending";
+/** Optional KEY=VALUE file under T3 home. The service launcher merges it at start. */
+export const SERVICE_ENV_FILE = "service.env";
 
 export interface PendingServiceUpdate {
   readonly id: string;

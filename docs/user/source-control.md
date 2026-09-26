@@ -62,7 +62,9 @@ export T3CODE_BITBUCKET_API_TOKEN="your-token"
 ```
 
 The access token takes precedence if both are configured. Restart the server after changing these
-variables.
+variables. If T3 Code runs as a background service, put them in `service.env` under T3 home
+(`~/.t3/service.env` by default) instead of a shell export or the service unit. See
+[Running T3 Code in the background](./background-service.md).
 
 ### Azure DevOps
 
@@ -138,7 +140,8 @@ does not show its diff, so marks are made and read on web and desktop.
 ## Troubleshooting
 
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
-  confirm the running server received the environment variables.
+  confirm the running server received the environment variables, or `service.env` under T3 home if
+  it runs as a background service.
 - **GitHub sign-in cannot be verified:** update GitHub CLI to at least 2.81.0.
 - **Push fails despite a connected account:** check the Git remote's credentials. SSH and HTTPS
   remotes can require separate setup from the hosting provider's API access.

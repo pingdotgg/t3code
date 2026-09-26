@@ -9,6 +9,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeUtil from "node:util";
 
 import type {
   PendingServiceUpdate,
@@ -23,6 +24,7 @@ import {
   decodeServiceLauncherChildMessage,
   isExactServiceVersion,
   parseServiceState,
+  SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
@@ -33,6 +35,13 @@ import {
 const HANDOFF_DELAY_MS = 2_000;
 const PREPARED_TIMEOUT_MS = 120_000;
 const TERMINATE_GRACE_MS = 5_000;
+
+const SERVICE_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const MANAGED_SERVICE_ENV_NAMES = new Set(
+  ["PATH", "T3CODE_HOME", "T3_BOOT_SERVICE_UNIT", SERVICE_LAUNCHER_CONTEXT_ENV].map((name) =>
+    name.toUpperCase(),
+  ),
+);
 
 type TerminalStatus = "committed" | "rolled-back" | "failed";
 type ChildRole = "active" | "trial";
@@ -80,6 +89,48 @@ async function pathExists(target: string): Promise<boolean> {
     if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return false;
     throw cause;
   }
+}
+
+/**
+ * Reads KEY=VALUE assignments from the documented T3 home env file. Managed
+ * names the unit already owns are ignored, regardless of key case, so a
+ * user cannot redirect the service by writing PATH or T3CODE_HOME here.
+ */
+export function parseServiceEnvFile(contents: string): Record<string, string> {
+  const parsed = NodeUtil.parseEnv(contents);
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (
+      value === undefined ||
+      !SERVICE_ENV_NAME.test(key) ||
+      MANAGED_SERVICE_ENV_NAMES.has(key.toUpperCase())
+    ) {
+      continue;
+    }
+    env[key] = value;
+  }
+  return env;
+}
+
+export async function readServiceEnvFile(baseDir: string): Promise<Record<string, string>> {
+  try {
+    return parseServiceEnvFile(
+      await NodeFSP.readFile(NodePath.join(baseDir, SERVICE_ENV_FILE), "utf8"),
+    );
+  } catch (cause) {
+    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return {};
+    throw cause;
+  }
+}
+
+/** Merge `service.env` into a process environment. Missing file is a no-op. */
+export async function applyServiceEnvFile(
+  baseDir: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<Record<string, string>> {
+  const serviceEnv = await readServiceEnvFile(baseDir);
+  Object.assign(env, serviceEnv);
+  return serviceEnv;
 }
 
 // Opened read-write: Windows refuses to flush a handle without write access.
@@ -280,6 +331,8 @@ const restartPendingPath = (baseDir: string) =>
 export class Launcher {
   readonly #baseDir: string;
   readonly #statePath: string;
+  // Startup snapshot from service.env. Later file edits wait for a service restart.
+  readonly #serviceEnv: Record<string, string>;
   #state: ServiceState;
   #child: ManagedChild | null = null;
   #timer: NodeJS.Timeout | undefined;
@@ -289,10 +342,11 @@ export class Launcher {
   #done = false;
   readonly #completion = Promise.withResolvers<void>();
 
-  constructor(baseDir: string, state: ServiceState) {
+  constructor(baseDir: string, state: ServiceState, serviceEnv: Record<string, string> = {}) {
     this.#baseDir = baseDir;
     this.#statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
     this.#state = state;
+    this.#serviceEnv = serviceEnv;
   }
 
   async run(): Promise<void> {
@@ -427,7 +481,11 @@ export class Launcher {
     };
     const spawnArguments = runtimeSpawnArguments(paths);
     const child = NodeChildProcess.spawn(spawnArguments.command, spawnArguments.args, {
-      env: { ...process.env, [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) },
+      env: {
+        ...process.env,
+        ...this.#serviceEnv,
+        [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context),
+      },
       stdio: ["inherit", "inherit", "inherit", "ipc"],
     });
     await new Promise<void>((resolve, reject) => {
@@ -631,7 +689,8 @@ export async function main(): Promise<void> {
   if (baseDir === undefined || baseDir === "") {
     throw new Error("T3CODE_HOME is required by the T3 Code service launcher.");
   }
+  const serviceEnv = await applyServiceEnvFile(baseDir);
   const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
   const state = await readServiceState(statePath);
-  await new Launcher(baseDir, state).run();
+  await new Launcher(baseDir, state, serviceEnv).run();
 }

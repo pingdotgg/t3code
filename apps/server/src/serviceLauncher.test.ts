@@ -4,11 +4,19 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { Launcher, readServiceState, writeServiceState } from "./serviceLauncher.ts";
+import {
+  applyServiceEnvFile,
+  Launcher,
+  parseServiceEnvFile,
+  readServiceEnvFile,
+  readServiceState,
+  writeServiceState,
+} from "./serviceLauncher.ts";
 import {
   compareExactServiceVersions,
   decodeServiceState,
   isExactServiceVersion,
+  SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
@@ -31,6 +39,41 @@ it("orders exact semantic versions without treating build metadata as precedence
   assert.equal(compareExactServiceVersions("2.0.0-alpha-beta", "2.0.0-alpha-alpha"), 1);
   assert.equal(compareExactServiceVersions("2.0.0", "2.0.0-rc.1"), 1);
   assert.equal(compareExactServiceVersions("2.0.0+one", "2.0.0+two"), 0);
+});
+
+it("parses KEY=VALUE assignments from the T3 home service env file", () => {
+  assert.deepEqual(
+    parseServiceEnvFile(
+      [
+        "# Bitbucket credentials",
+        "export T3CODE_BITBUCKET_EMAIL=you@example.com",
+        'T3CODE_BITBUCKET_API_TOKEN="token with spaces"',
+        "T3CODE_PORT=1234",
+        "T3CODE_HOST=0.0.0.0",
+        "NOTE=A & <B>",
+        "EMPTY=",
+        "PATH=/should-not-override",
+        "T3CODE_HOME=/should-not-override",
+        "T3_BOOT_SERVICE_UNIT=should-not-override",
+        "T3_SERVICE_LAUNCHER_CONTEXT=should-not-override",
+        "Path=/should-not-override-case",
+        "t3code_home=/should-not-override-case",
+        "T3_boot_service_unit=should-not-override-case",
+        "t3_service_launcher_context=should-not-override-case",
+        "123BAD=x",
+        "INVALID NAME=x",
+        "",
+      ].join("\n"),
+    ),
+    {
+      T3CODE_BITBUCKET_EMAIL: "you@example.com",
+      T3CODE_BITBUCKET_API_TOKEN: "token with spaces",
+      T3CODE_PORT: "1234",
+      T3CODE_HOST: "0.0.0.0",
+      NOTE: "A & <B>",
+      EMPTY: "",
+    },
+  );
 });
 
 it("rejects contradictory service state", () => {
@@ -98,6 +141,101 @@ const writeFakeRuntime = (
   });
 
 it.layer(NodeServices.layer)("service state persistence", (it) => {
+  it.effect("merges T3 home service.env into a provided environment and into the child", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-env-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const seenPath = path.join(root, "seen-env.json");
+      yield* fs.writeFileString(
+        path.join(root, SERVICE_ENV_FILE),
+        [
+          "T3CODE_BITBUCKET_EMAIL=you@example.com",
+          'T3CODE_BITBUCKET_API_TOKEN="token with spaces"',
+          "T3CODE_PORT=1234",
+          "T3CODE_HOME=/should-not-override",
+          "PATH=/should-not-override",
+          "Path=/should-not-override-case",
+          "t3code_home=/should-not-override-case",
+          "",
+        ].join("\n"),
+      );
+
+      assert.deepEqual(
+        yield* Effect.promise(() => readServiceEnvFile(path.join(root, "missing"))),
+        {},
+      );
+      const env: NodeJS.ProcessEnv = {
+        PATH: "/bin",
+        T3CODE_HOME: root,
+        T3CODE_PORT: "old",
+      };
+      const serviceEnv = yield* Effect.promise(() => applyServiceEnvFile(root, env));
+      assert.equal(env.T3CODE_BITBUCKET_EMAIL, "you@example.com");
+      assert.equal(env.T3CODE_BITBUCKET_API_TOKEN, "token with spaces");
+      assert.equal(env.T3CODE_PORT, "1234");
+      assert.equal(env.T3CODE_HOME, root);
+      assert.equal(env.PATH, "/bin");
+      assert.isUndefined(serviceEnv.Path);
+      assert.isUndefined(serviceEnv.t3code_home);
+      assert.isUndefined(env.Path);
+      assert.isUndefined(env.t3code_home);
+      // Later file edits wait for a service restart; children reuse the startup map.
+      yield* fs.writeFileString(path.join(root, SERVICE_ENV_FILE), "T3CODE_PORT=9999\n");
+
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - embeds a path in fake child source.
+      const encodedSeenPath = JSON.stringify(seenPath);
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", "1.0.0"),
+        `import { writeFileSync } from "node:fs";
+writeFileSync(${encodedSeenPath}, JSON.stringify({
+  email: process.env.T3CODE_BITBUCKET_EMAIL,
+  token: process.env.T3CODE_BITBUCKET_API_TOKEN,
+  port: process.env.T3CODE_PORT,
+  home: process.env.T3CODE_HOME,
+  path: process.env.PATH,
+}));
+process.exit(0);
+`,
+      );
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        serviceEnv,
+      );
+      yield* Effect.promise(() =>
+        launcher.run().then(
+          () => Promise.reject(new Error("launcher unexpectedly completed")),
+          () => Promise.resolve(),
+        ),
+      );
+
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - child dump of selected env keys.
+      const seen = JSON.parse(yield* fs.readFileString(seenPath)) as {
+        email: string;
+        token: string;
+        port: string;
+        home: string | undefined;
+        path: string | undefined;
+      };
+      assert.equal(seen.email, "you@example.com");
+      assert.equal(seen.token, "token with spaces");
+      assert.equal(seen.port, "1234");
+      assert.notEqual(seen.home, "/should-not-override");
+      assert.notEqual(seen.path, "/should-not-override");
+    }),
+  );
+
   it.effect("durably replaces and strictly reads one state document", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
