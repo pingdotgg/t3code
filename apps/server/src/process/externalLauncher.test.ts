@@ -150,11 +150,15 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
     );
 
     assert.ok(spawned);
-    assert.equal(spawned.command, '^"C:\\Program^ Files\\Microsoft^ VS^ Code\\bin\\code.CMD^"');
-    assert.deepEqual(spawned.args, [
-      '^"--goto^"',
-      '^"C:\\workspace^ with^ spaces\\src\\index.ts:12:4^"',
-    ]);
+    assert.equal(
+      spawned.command,
+      [
+        '^"C:\\Program^ Files\\Microsoft^ VS^ Code\\bin\\code.CMD^"',
+        '^"--goto^"',
+        '^"C:\\workspace^ with^ spaces\\src\\index.ts:12:4^"',
+      ].join(" "),
+    );
+    assert.deepEqual(spawned.args, []);
     assert.equal(spawned.options.shell, true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
@@ -238,12 +242,16 @@ it.effect("launches Cursor in classic IDE mode through the Windows command shim"
     );
 
     assert.ok(spawned);
-    assert.equal(spawned.command, '^"C:\\Program^ Files\\Cursor\\bin\\cursor.CMD^"');
-    assert.deepEqual(spawned.args, [
-      '^"--classic^"',
-      '^"--goto^"',
-      '^"C:\\workspace^ with^ spaces\\src\\index.ts:12:4^"',
-    ]);
+    assert.equal(
+      spawned.command,
+      [
+        '^"C:\\Program^ Files\\Cursor\\bin\\cursor.CMD^"',
+        '^"--classic^"',
+        '^"--goto^"',
+        '^"C:\\workspace^ with^ spaces\\src\\index.ts:12:4^"',
+      ].join(" "),
+    );
+    assert.deepEqual(spawned.args, []);
     assert.equal(spawned.options.shell, true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
@@ -1030,11 +1038,14 @@ for (const { platform, installPath, editor, args } of [
           ),
         );
         assert.ok(spawned);
-        assert.equal(
-          spawned.command,
-          executable.endsWith(".cmd") ? `^"${executable.replaceAll(" ", "^ ")}^"` : executable,
-        );
-        assert.deepEqual(spawned.args, args);
+        if (executable.endsWith(".cmd")) {
+          const escapedExecutable = `^"${executable.replaceAll(" ", "^ ")}^"`;
+          assert.equal(spawned.command, [escapedExecutable, ...args].join(" "));
+          assert.deepEqual(spawned.args, []);
+        } else {
+          assert.equal(spawned.command, executable);
+          assert.deepEqual(spawned.args, args);
+        }
         assert.equal(spawned.options.shell, executable.endsWith(".cmd"));
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

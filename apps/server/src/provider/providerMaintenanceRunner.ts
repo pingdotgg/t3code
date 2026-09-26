@@ -89,8 +89,10 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
         // Resolve the executable for the host platform before spawning. On
         // Windows the update tools are batch shims (e.g. `npm` -> `npm.cmd`),
         // which a bare ChildProcess.spawn cannot launch (spawn npm ENOENT);
-        // resolveSpawnCommand finds the real `.cmd` and routes it through the
-        // shell. On Linux/macOS (incl. the WSL backend) this is a no-op.
+        // resolveSpawnCommand finds the real `.cmd` and folds the escaped
+        // command line into `command` with `shell: true` and empty `args`
+        // (Node 24 DEP0190 forbids passing args alongside shell: true).
+        // On Linux/macOS (incl. the WSL backend) this is a no-op.
         const resolved = yield* resolveSpawnCommand(input.command, input.args);
         const child = yield* input.spawner
           .spawn(
