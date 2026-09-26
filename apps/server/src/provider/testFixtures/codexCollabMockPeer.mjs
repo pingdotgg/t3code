@@ -18,6 +18,8 @@ const script = JSON.parse(NodeFS.readFileSync(process.env.T3_CODEX_COLLAB_SCRIPT
 const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 let turnStartCount = 0;
 let activeTurn;
+let mcpReady = false;
+let mcpStartupRequestId;
 // Server->client requests the runtime must answer (approval prompts), keyed
 // by the numeric JSON-RPC id this peer allocated for them.
 const openServerRequests = new Map();
@@ -30,6 +32,15 @@ rl.on("line", (line) => {
     return;
   }
   const { id, method } = message;
+  if (script.mcpStartup && method === undefined && id === mcpStartupRequestId) {
+    mcpStartupRequestId = undefined;
+    mcpReady = true;
+    write({
+      method: "mcpServer/startupStatus/updated",
+      params: { threadId: script.rootThreadId, name: "slow", status: "ready" },
+    });
+    return;
+  }
   if (openServerRequests.has(id)) {
     // The runtime answered an approval request. Record the response so tests
     // can assert settlement behavior, then emit serverRequest/resolved as a
@@ -162,13 +173,80 @@ rl.on("line", (line) => {
     write({ id, result: fixture.responses.threadStart });
     return;
   }
+  if (script.mcpStartup && method === "config/mcpServer/reload") {
+    mcpReady = false;
+    // A completion from the preceding startup must not release the new wait.
+    for (const name of ["fast", "slow"]) {
+      write({
+        method: "mcpServer/startupStatus/updated",
+        params: { threadId: script.rootThreadId, name, status: "ready" },
+      });
+    }
+    for (const name of ["fast", "slow"]) {
+      write({
+        method: "mcpServer/startupStatus/updated",
+        params: { threadId: script.rootThreadId, name, status: "starting" },
+      });
+    }
+    write({ id, result: {} });
+    return;
+  }
+  if (script.mcpStartup && method === "mcpServerStatus/list") {
+    write({
+      method: "mcpServer/startupStatus/updated",
+      params: { threadId: script.rootThreadId, name: "fast", status: "ready" },
+    });
+    write({
+      id,
+      result: {
+        data: ["fast", "slow"].map((name) => ({
+          name,
+          authStatus: "unsupported",
+          runtimeStatus: "starting",
+          tools: {},
+          resources: [],
+          resourceTemplates: [],
+        })),
+      },
+    });
+    write({
+      method: "mcpServer/startupStatus/updated",
+      params: { threadId: script.rootThreadId, name: "slow", status: "cancelled" },
+    });
+    // Hold readiness until the test answers this request: no timer or sleep.
+    mcpStartupRequestId = 8000 + turnStartCount;
+    write({
+      id: mcpStartupRequestId,
+      method: "mcpServer/elicitation/request",
+      params: {
+        mode: "form",
+        message: "Allow MCP startup?",
+        serverName: "slow",
+        threadId: script.rootThreadId,
+        requestedSchema: {
+          type: "object",
+          properties: { approval: { type: "string", enum: ["once"] } },
+          required: ["approval"],
+        },
+      },
+    });
+    return;
+  }
   if (method === "turn/start") {
+    if (script.mcpStartup && !mcpReady) {
+      write({
+        id,
+        error: { code: -32603, message: "Turn started before MCP startup was observed" },
+      });
+      return;
+    }
     const turnId = script.turnIds?.[turnStartCount];
     const turn = turnId
       ? { ...fixture.responses.turnStart.turn, id: turnId }
       : fixture.responses.turnStart.turn;
     activeTurn = turn;
     turnStartCount += 1;
+    mcpReady = false;
     write({ id, result: { ...fixture.responses.turnStart, turn } });
     const rootThreadId = script.rootThreadId;
     if (script.onlyFirstTurnStarts !== true || turnStartCount === 1) {
