@@ -145,38 +145,65 @@ describe("resolveThreadFeedSubmissionAnchor", () => {
 });
 
 describe("resolveThreadFeedLiveFollow", () => {
-  it("pauses immediately when the user starts scrolling", () => {
-    expect(resolveThreadFeedLiveFollow(true, { type: "user-scroll-begin" })).toBe(false);
+  // A drag that took hold of a following feed at offset 3_100.
+  const scroll = (
+    overrides: Partial<{
+      isAtEnd: boolean;
+      userScrollSessionActive: boolean;
+      scroll: number;
+      heldEndScroll: number | null;
+    }>,
+  ) => ({
+    type: "scroll" as const,
+    isAtEnd: true,
+    userScrollSessionActive: true,
+    scroll: 3_100,
+    heldEndScroll: 3_100,
+    ...overrides,
+  });
+
+  it("pauses once a drag moves the feed off its end", () => {
+    expect(resolveThreadFeedLiveFollow(true, scroll({ isAtEnd: false, scroll: 3_060 }))).toBe(
+      false,
+    );
+  });
+
+  // Android stretches without moving the offset and iOS bounces past the end;
+  // either way the list still reports the end, and the reader never left it.
+  it("keeps following while a drag holds the feed at or past its end", () => {
+    expect(resolveThreadFeedLiveFollow(true, scroll({}))).toBe(true);
+    expect(resolveThreadFeedLiveFollow(true, scroll({ scroll: 3_160 }))).toBe(true);
+  });
+
+  // Streamed rows move the end away from a held drag while end maintenance
+  // is off; the reader's offset has not moved, so they have not left.
+  it("keeps following when the feed grew under a drag that holds its place", () => {
+    expect(resolveThreadFeedLiveFollow(true, scroll({ isAtEnd: false }))).toBe(true);
+    expect(resolveThreadFeedLiveFollow(true, scroll({ isAtEnd: false, scroll: 3_099.5 }))).toBe(
+      true,
+    );
+    expect(resolveThreadFeedLiveFollow(true, scroll({ isAtEnd: false, scroll: 3_090 }))).toBe(
+      false,
+    );
   });
 
   it("stays paused away from the actual end", () => {
     expect(
-      resolveThreadFeedLiveFollow(false, {
-        type: "scroll",
-        isAtEnd: false,
-        userScrollSessionActive: true,
-      }),
+      resolveThreadFeedLiveFollow(false, scroll({ isAtEnd: false, heldEndScroll: null })),
     ).toBe(false);
   });
 
   it("does not mistake programmatic layout compensation for a user scroll", () => {
     expect(
-      resolveThreadFeedLiveFollow(true, {
-        type: "scroll",
-        isAtEnd: false,
-        userScrollSessionActive: false,
-      }),
+      resolveThreadFeedLiveFollow(
+        true,
+        scroll({ isAtEnd: false, userScrollSessionActive: false, heldEndScroll: null }),
+      ),
     ).toBe(true);
   });
 
   it("does not re-arm at the end while a user scroll session is active", () => {
-    expect(
-      resolveThreadFeedLiveFollow(false, {
-        type: "scroll",
-        isAtEnd: true,
-        userScrollSessionActive: true,
-      }),
-    ).toBe(false);
+    expect(resolveThreadFeedLiveFollow(false, scroll({ heldEndScroll: null }))).toBe(false);
   });
 
   it.each([
@@ -205,6 +232,16 @@ describe("resolveThreadFeedLiveFollow", () => {
         userScrollSessionActive: true,
       }),
     ).toBe(false);
+  });
+
+  it("keeps following after a drag that never left the end, even if the feed grew", () => {
+    expect(
+      resolveThreadFeedLiveFollow(true, {
+        type: "user-scroll-end",
+        isAtEnd: false,
+        userScrollSessionActive: true,
+      }),
+    ).toBe(true);
   });
 
   it("ignores momentum-end events from programmatic scrolling", () => {

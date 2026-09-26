@@ -1989,6 +1989,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // momentum; scroll events only break follow inside that session, so MVCP
   // compensations and programmatic scrolls never strand a follower.
   const userScrollSessionRef = useRef(false);
+  // Set while a user scroll session started from a following feed. End
+  // maintenance pauses for the session so a stream update cannot pull the
+  // reader back between touch-down and their drag leaving the end.
+  const [userScrollHoldsEnd, setUserScrollHoldsEnd] = useState(false);
+  const heldEndScrollRef = useRef<number | null>(null);
   const setEndFollow = useCallback(
     (enabled: boolean) => {
       if (endFollowEnabledRef.current === enabled) {
@@ -2338,14 +2343,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       // this handler, so getState() is current. Only the actual end re-arms
       // follow: its broader maintain-scroll threshold is large enough for a
       // streaming chunk to pull a user back before their upward drag escapes.
-      // A live user-scroll session still wins even if the first scroll event
-      // remains inside LegendList's at-end tolerance.
+      // Inside a user-scroll session the end can only keep follow, never
+      // re-arm it; end maintenance stays held until the session is over.
       const listState = props.listRef.current?.getState();
       if (listState) {
         transitionEndFollow({
           type: "scroll",
           isAtEnd: listState.isAtEnd,
           userScrollSessionActive: userScrollSessionRef.current,
+          scroll: listState.scroll,
+          heldEndScroll: heldEndScrollRef.current,
         });
       }
     },
@@ -2360,10 +2367,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const handleScrollBeginDrag = useCallback(() => {
     clearUserScrollSettle();
     userScrollSessionRef.current = true;
-    // Pause before the first scroll event. Otherwise a stream update can run
-    // maintainScrollAtEnd between touch-down and the drag leaving its threshold.
-    transitionEndFollow({ type: "user-scroll-begin" });
-  }, [clearUserScrollSettle, transitionEndFollow]);
+    // Hold end maintenance before the first scroll event. Follow itself pauses
+    // only if the drag leaves the end, so the scroll-to-end control does not
+    // appear under a reader who is holding the feed at its end.
+    heldEndScrollRef.current = endFollowEnabledRef.current
+      ? (props.listRef.current?.getState().scroll ?? null)
+      : null;
+    if (endFollowEnabledRef.current) {
+      setUserScrollHoldsEnd(true);
+    }
+  }, [clearUserScrollSettle, props.listRef]);
   const finishUserScroll = useCallback(
     (releaseIsAtEnd?: boolean) => {
       clearUserScrollSettle();
@@ -2377,6 +2390,17 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         isAtEnd: releaseIsAtEnd ?? props.listRef.current?.getState().isAtEnd ?? false,
         userScrollSessionActive,
       });
+      setUserScrollHoldsEnd(false);
+      heldEndScrollRef.current = null;
+      // A drag that held the end while the stream grew below it releases short
+      // of the new end, possibly beyond the threshold end maintenance re-pins.
+      if (
+        userScrollSessionActive &&
+        endFollowEnabledRef.current &&
+        props.listRef.current?.getState().isAtEnd === false
+      ) {
+        void props.listRef.current.scrollToEnd({ animated: true });
+      }
     },
     [clearUserScrollSettle, props.listRef, transitionEndFollow],
   );
@@ -2429,12 +2453,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   useEffect(() => {
     clearUserScrollSettle();
     userScrollSessionRef.current = false;
+    setUserScrollHoldsEnd(false);
     transitionEndFollow({ type: "reset" });
   }, [clearUserScrollSettle, feedThreadKey, transitionEndFollow]);
   useEffect(() => {
     if (props.submittedMessageId !== null) {
       clearUserScrollSettle();
       userScrollSessionRef.current = false;
+      setUserScrollHoldsEnd(false);
       transitionEndFollow({ type: "reset" });
     }
   }, [clearUserScrollSettle, props.submittedMessageId, transitionEndFollow]);
@@ -2912,7 +2938,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             // Follow the measured end immediately. Animating toward an estimated
             // end races row measurement when a pending message is acknowledged.
             maintainScrollAtEnd={
-              disclosureToggleSettling || !endFollowEnabled
+              disclosureToggleSettling || userScrollHoldsEnd || !endFollowEnabled
                 ? false
                 : {
                     animated: false,
@@ -2924,7 +2950,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                   }
             }
             maintainVisibleContentPosition={
-              endFollowEnabled && !disclosureToggleSettling ? false : maintainVisibleContentPosition
+              endFollowEnabled && !disclosureToggleSettling && !userScrollHoldsEnd
+                ? false
+                : maintainVisibleContentPosition
             }
             data={presentedFeed}
             extraData={listAppearanceData}
