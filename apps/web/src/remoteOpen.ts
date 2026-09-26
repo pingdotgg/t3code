@@ -9,8 +9,10 @@
  * name beats mDNS `<hostname>.local` (server sends them in that order).
  */
 import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
+import { connectionCatalogDisplayUrl } from "@t3tools/client-runtime/connection";
 import {
   REMOTE_CAPABLE_EDITOR_IDS,
+  type DesktopEnvironmentBootstrap,
   type EditorId,
   type EnvironmentId,
   type RemoteOpenTarget,
@@ -19,13 +21,18 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { useEffect, useMemo, useState } from "react";
 
-import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
+import { desktopLocalBackendId, isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
+import {
+  useDesktopLocalBootstraps,
+  useDesktopPrimaryWslDistro,
+} from "~/connection/useDesktopLocalBootstraps";
 import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useEnvironmentPresentation } from "~/state/presentation";
 
 export interface RemoteOpenHost {
-  readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
+  readonly kind: "ssh-alias" | "wsl" | RemoteOpenTarget["kind"];
+  /** SSH host name, or the WSL distro name for `kind: "wsl"`. */
   readonly host: string;
 }
 
@@ -48,6 +55,22 @@ const UNRESOLVED_REMOTE_OPEN: RemoteOpenResolution = {
   isResolved: false,
 };
 
+const wslLinks = (distro: string): RemoteOpenState => ({
+  mode: "remote-links",
+  host: { kind: "wsl", host: distro },
+});
+
+/**
+ * Whether the environment's server can run shell actions (open in editor, reveal in file
+ * manager) on the user's machine. True for local exec and for WSL, where the server runs inside
+ * the distro on the same machine and only editor links are routed through the Windows host.
+ */
+export function canExecOnServer(state: RemoteOpenState): boolean {
+  return (
+    state.mode === "local-exec" || (state.mode === "remote-links" && state.host.kind === "wsl")
+  );
+}
+
 function parseHostname(url: string): string | null {
   try {
     return new URL(url).hostname;
@@ -64,6 +87,12 @@ export function resolveRemoteOpenState(input: {
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   /** True when running inside the desktop app's renderer. */
   readonly isDesktopRenderer: boolean;
+  /**
+   * Running distro when the environment's server lives inside WSL on this
+   * machine: a desktop-local WSL backend, or the primary in wsl-only mode.
+   * Null when unknown or not WSL.
+   */
+  readonly wslDistro?: string | null;
 }): RemoteOpenState {
   const { target } = input;
   // No catalog entry: keep today's exec behavior rather than guessing.
@@ -76,13 +105,20 @@ export function resolveRemoteOpenState(input: {
     // the WSL2 NAT address). In a browser, a loopback primary means the
     // browser runs on the serving machine; a tailnet/LAN URL means remote.
     if (input.isDesktopRenderer) {
-      return LOCAL_EXEC;
+      return input.wslDistro ? wslLinks(input.wslDistro) : LOCAL_EXEC;
     }
     const hostname = parseHostname(target.httpBaseUrl);
     if (hostname !== null && isLoopbackHostname(hostname)) {
       return LOCAL_EXEC;
     }
   } else if (isDesktopLocalConnectionTarget(target)) {
+    // A WSL backend runs on this machine, but its Linux PATH rarely carries
+    // the Windows editors. The desktop app opens them from the host through
+    // the editor's own `wsl+<distro>` deep link instead; without a known
+    // distro, fall back to exec inside the distro.
+    if (input.isDesktopRenderer && input.wslDistro) {
+      return wslLinks(input.wslDistro);
+    }
     return LOCAL_EXEC;
   }
 
@@ -96,8 +132,33 @@ export function resolveRemoteOpenState(input: {
   return REMOTE_UNAVAILABLE;
 }
 
+/**
+ * Running distro of a desktop-local WSL backend. The catalog only knows the
+ * backend id ("wsl:ubuntu" or the default-tracking "wsl:default"), so the
+ * concrete distro comes from the desktop bootstrap serving the same URL.
+ */
+export function resolveDesktopWslDistro(input: {
+  readonly target: ConnectionTarget;
+  readonly httpBaseUrl: string | null;
+  readonly bootstraps: ReadonlyArray<DesktopEnvironmentBootstrap>;
+  /** Primary backend's distro in wsl-only mode; null in dual mode. */
+  readonly primaryWslDistro?: string | null;
+}): string | null {
+  if (input.target._tag === "PrimaryConnectionTarget") {
+    return input.primaryWslDistro ?? null;
+  }
+  const backendId = desktopLocalBackendId(input.target);
+  if (backendId === null || !backendId.startsWith("wsl:") || input.httpBaseUrl === null) {
+    return null;
+  }
+  const bootstrap = input.bootstraps.find((entry) => entry.httpBaseUrl === input.httpBaseUrl);
+  return bootstrap?.runningDistro?.trim() || null;
+}
+
 export function useRemoteOpenResolution(environmentId: EnvironmentId | null): RemoteOpenResolution {
   const { presentation } = useEnvironmentPresentation(environmentId);
+  const bootstraps = useDesktopLocalBootstraps();
+  const primaryWslDistro = useDesktopPrimaryWslDistro();
 
   return useMemo(() => {
     if (presentation === null) {
@@ -112,14 +173,30 @@ export function useRemoteOpenResolution(environmentId: EnvironmentId | null): Re
         sshAlias,
         remoteOpenTargets: presentation.serverConfig?.remoteOpenTargets,
         isDesktopRenderer: window.desktopBridge !== undefined,
+        wslDistro: resolveDesktopWslDistro({
+          target: presentation.entry.target,
+          httpBaseUrl: connectionCatalogDisplayUrl(presentation.entry),
+          bootstraps,
+          primaryWslDistro,
+        }),
       }),
       isResolved: true,
     };
-  }, [presentation]);
+  }, [bootstraps, presentation, primaryWslDistro]);
 }
 
 export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteOpenState {
   return useRemoteOpenResolution(environmentId).state;
+}
+
+/**
+ * True for host-managed local backends the desktop app runs next to its
+ * primary (today: the WSL backend). Their server execs editors on this
+ * machine, so they get the same "Open" affordance as the primary.
+ */
+export function useIsDesktopLocalEnvironment(environmentId: EnvironmentId | null): boolean {
+  const { presentation } = useEnvironmentPresentation(environmentId);
+  return presentation !== null && isDesktopLocalConnectionTarget(presentation.entry.target);
 }
 
 /**

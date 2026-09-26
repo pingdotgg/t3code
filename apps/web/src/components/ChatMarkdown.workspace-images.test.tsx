@@ -34,7 +34,8 @@ vi.mock("../state/entities", () => ({
   useProjects: () => [],
   useServerConfigs: () => new Map(),
 }));
-vi.mock("../remoteOpen", () => ({
+vi.mock("../remoteOpen", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../remoteOpen")>()),
   useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
 }));
 vi.mock("../editorPreferences", () => ({

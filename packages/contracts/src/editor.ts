@@ -110,19 +110,32 @@ export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
   return editor === undefined ? undefined : remoteSchemeOf(editor);
 };
 
+/** vscode-remote authority prefix: SSH host or a local WSL distro. */
+export type RemoteOpenAuthority = "ssh-remote" | "wsl";
+
+export const supportsRemoteOpenAuthority = (
+  id: EditorId,
+  authority: RemoteOpenAuthority,
+): boolean =>
+  remoteSchemeForEditor(id) !== undefined && (authority === "ssh-remote" || id !== "zed");
+
 /**
- * Builds a `<scheme>://vscode-remote/ssh-remote+<host><path>` deep link (Zed
- * takes `zed://ssh/<host><path>`) that opens `absolutePath` on `host` in the
- * local editor over SSH. Returns undefined for editors without remote
- * deep-link support.
+ * Builds a `<scheme>://vscode-remote/<authority>+<host><path>` deep link that
+ * opens `absolutePath` on `host` in the local editor. `ssh-remote` (the
+ * default) connects over SSH; `wsl` opens a distro on this machine through
+ * the editor's Remote WSL integration. Zed takes `zed://ssh/<host><path>`
+ * and has no WSL form. Returns undefined for editors without deep-link support
+ * for the authority.
  */
 export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
   readonly host: string;
   readonly absolutePath: string;
+  readonly authority?: RemoteOpenAuthority;
 }): string | undefined => {
+  const authority = input.authority ?? "ssh-remote";
   const scheme = remoteSchemeForEditor(input.editor);
-  if (scheme === undefined) {
+  if (scheme === undefined || !supportsRemoteOpenAuthority(input.editor, authority)) {
     return undefined;
   }
   // Windows server paths (`C:\...`) appear as `/C:/...` in vscode-remote URIs.
@@ -139,7 +152,7 @@ export const buildRemoteOpenUrl = (input: {
     return `${scheme}://ssh/${encodedHost}${encodedZedPath}`;
   }
   const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");
-  return `${scheme}://vscode-remote/ssh-remote+${encodedHost}${encodedPath}`;
+  return `${scheme}://vscode-remote/${authority}+${encodedHost}${encodedPath}`;
 };
 
 /**

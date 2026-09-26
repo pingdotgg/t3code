@@ -161,7 +161,7 @@ import {
 import { readLocalApi } from "../localApi";
 import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
 import { cn } from "../lib/utils";
-import { useRemoteOpenResolution, type RemoteOpenMode } from "../remoteOpen";
+import { canExecOnServer, useRemoteOpenResolution, type RemoteOpenState } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
@@ -241,10 +241,10 @@ export interface ChatMarkdownContextReference {
 
 export function canUseMarkdownFileShellActions(
   environmentId: EnvironmentId | null,
-  remoteOpenMode: RemoteOpenMode,
+  remoteOpenState: RemoteOpenState,
   isRemoteOpenResolved: boolean,
 ): boolean {
-  return environmentId !== null && isRemoteOpenResolved && remoteOpenMode === "local-exec";
+  return environmentId !== null && isRemoteOpenResolved && canExecOnServer(remoteOpenState);
 }
 
 export function hasMarkdownFilePrimaryAction(input: {
@@ -2329,7 +2329,7 @@ function useChatMarkdownState({
   const remoteOpen = useRemoteOpenResolution(environmentId);
   const canUseShellActions = canUseMarkdownFileShellActions(
     environmentId,
-    remoteOpen.state.mode,
+    remoteOpen.state,
     remoteOpen.isResolved,
   );
   const preparedConnection = usePreparedConnection(environmentId);
