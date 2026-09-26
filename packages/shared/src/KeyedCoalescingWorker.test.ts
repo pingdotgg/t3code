@@ -2,10 +2,54 @@ import { it } from "@effect/vitest";
 import { describe, expect } from "vite-plus/test";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 
 import { makeKeyedCoalescingWorker } from "./KeyedCoalescingWorker.ts";
 
 describe("makeKeyedCoalescingWorker", () => {
+  it.live("coalesces a burst while draining all active and queued keys", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const otherStarted = yield* Deferred.make<void>();
+        const releaseOther = yield* Deferred.make<void>();
+        const processed: string[] = [];
+        const worker = yield* makeKeyedCoalescingWorker({
+          merge: (_current: number, next: number) => next,
+          process: (key: string, value: number) =>
+            Effect.gen(function* () {
+              processed.push(`${key}:${value}`);
+              if (value === 0) {
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
+              }
+              if (key === "other-turn") {
+                yield* Deferred.succeed(otherStarted, undefined);
+                yield* Deferred.await(releaseOther);
+              }
+            }),
+        });
+        yield* worker.enqueue("turn", 0);
+        yield* Deferred.await(started);
+        for (let index = 1; index <= 200; index++) yield* worker.enqueue("turn", index);
+        yield* worker.enqueue("other-turn", 1);
+        const drained = yield* Deferred.make<void>();
+        const waiter = yield* worker.drain.pipe(
+          Effect.andThen(Deferred.succeed(drained, undefined)),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        expect(yield* Deferred.isDone(drained)).toBe(false);
+        yield* Deferred.succeed(release, undefined);
+        yield* Deferred.await(otherStarted);
+        expect(yield* Deferred.isDone(drained)).toBe(false);
+        yield* Deferred.succeed(releaseOther, undefined);
+        yield* Fiber.join(waiter);
+        expect(processed).toEqual(["turn:0", "turn:200", "other-turn:1"]);
+      }),
+    ),
+  );
+
   it.live("waits for latest work enqueued during active processing before draining the key", () =>
     Effect.scoped(
       Effect.gen(function* () {
