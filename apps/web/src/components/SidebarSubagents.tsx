@@ -63,7 +63,7 @@ function SubagentToggle({
       }}
       tone="muted"
     >
-      <span className="inline-flex items-center gap-1 text-[11px] tabular-nums">
+      <span className="inline-flex items-center gap-1 text-2xs tabular-nums">
         {disclosureOnly ? null : (
           <>
             <BotIcon aria-hidden className="size-3" />
@@ -168,7 +168,7 @@ export function useSidebarSubagents(thread: EnvironmentThreadShell, compact = fa
                       </TooltipTrigger>
                       <TooltipPopup>{agent.title}</TooltipPopup>
                     </Tooltip>
-                    <span className={cn("shrink-0 text-[10px]", statusClass(status))}>
+                    <span className={cn("shrink-0 text-3xs", statusClass(status))}>
                       {THREAD_SUBAGENT_STATUS_LABELS[status]}
                     </span>
                   </div>
