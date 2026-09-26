@@ -560,6 +560,65 @@ it.layer(layer)("AntigravityAdapter", (it) => {
     }),
   );
 
+  it.effect("closes native requests the agent drops so a late answer is reported as stale", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      // The harness times out or cancels the request, which interrupts the
+      // JSON-RPC handler without a response from T3.
+      const question = yield* h
+        .invokePermission({
+          sessionId: nativeSessionId,
+          toolCall: { toolCallId: "interaction_dropped", title: "Continue?" },
+          options: [{ optionId: "yes", name: "Yes", kind: "allow_once" }],
+        })
+        .pipe(Effect.forkChild);
+      const asked = yield* h.waitForEvent((event) => event.type === "user-input.requested");
+      const approval = yield* h
+        .invokePermission({
+          sessionId: nativeSessionId,
+          toolCall: { toolCallId: "write-dropped", kind: "edit", title: "Write probe.txt" },
+          options: [
+            { optionId: "native:allow", name: "Allow", kind: "allow_once" },
+            { optionId: "native:deny", name: "Deny", kind: "reject_once" },
+          ],
+        })
+        .pipe(Effect.forkChild);
+      const opened = yield* h.waitForEvent((event) => event.type === "request.opened");
+
+      yield* Fiber.interrupt(question);
+      yield* Fiber.interrupt(approval);
+      const answered = yield* h.waitForEvent((event) => event.type === "user-input.resolved");
+      expect(answered.requestId).toBe(asked.requestId);
+      expect(answered.payload.answers).toEqual({});
+      const resolved = yield* h.waitForEvent((event) => event.type === "request.resolved");
+      expect(resolved.requestId).toBe(opened.requestId);
+      expect(resolved.payload.decision).toBe("cancel");
+
+      // The orchestrator closes a request when the adapter reports it unknown.
+      const lateAnswer = yield* h.adapter
+        .respondToUserInput(threadId, ApprovalRequestId.make(asked.requestId!), {
+          interaction_dropped: "yes",
+        })
+        .pipe(Effect.flip);
+      expect(lateAnswer).toMatchObject({
+        _tag: "ProviderAdapterRequestError",
+        detail: `Unknown pending user-input request: ${asked.requestId}`,
+      });
+      const lateDecision = yield* h.adapter
+        .respondToRequest(threadId, ApprovalRequestId.make(opened.requestId!), "accept")
+        .pipe(Effect.flip);
+      expect(lateDecision).toMatchObject({
+        _tag: "ProviderAdapterRequestError",
+        detail: `Unknown pending approval request: ${opened.requestId}`,
+      });
+    }),
+  );
+
   it.effect("cancels native questions before waiting for the prompt to end", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
