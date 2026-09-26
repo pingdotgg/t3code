@@ -111,14 +111,15 @@ export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
 };
 
 /**
- * Builds a `<scheme>://vscode-remote/ssh-remote+<host><path>` deep link (Zed
- * takes `zed://ssh/<host><path>`) that opens `absolutePath` on `host` in the
- * local editor over SSH. Returns undefined for editors without remote
+ * Builds a `<scheme>://vscode-remote/ssh-remote+[<user>@]<host><path>` deep
+ * link (Zed takes `zed://ssh/[<user>@]<host><path>`) that opens `absolutePath`
+ * on `host` in the local editor over SSH. Returns undefined for editors without remote
  * deep-link support.
  */
 export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
   readonly host: string;
+  readonly username?: string;
   readonly absolutePath: string;
 }): string | undefined => {
   const scheme = remoteSchemeForEditor(input.editor);
@@ -136,10 +137,16 @@ export const buildRemoteOpenUrl = (input: {
     // POSIX path that happens to start with `/C:` is left alone.
     const zedPath = /^[Cc]:[\\/]/.test(input.absolutePath) ? rootedPath.slice(3) : rootedPath;
     const encodedZedPath = zedPath.split("/").map(encodeURIComponent).join("/");
-    return `${scheme}://ssh/${encodedHost}${encodedZedPath}`;
+    // Zed reads this segment as ssh URL userinfo, so the `@` stays literal.
+    const zedDestination =
+      input.username === undefined
+        ? encodedHost
+        : `${encodeURIComponent(input.username)}@${encodedHost}`;
+    return `${scheme}://ssh/${zedDestination}${encodedZedPath}`;
   }
   const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");
-  return `${scheme}://vscode-remote/ssh-remote+${encodedHost}${encodedPath}`;
+  const destination = input.username === undefined ? input.host : `${input.username}@${input.host}`;
+  return `${scheme}://vscode-remote/ssh-remote+${encodeURIComponent(destination)}${encodedPath}`;
 };
 
 /**
@@ -154,6 +161,9 @@ export type RemoteOpenTargetKind = typeof RemoteOpenTargetKind.Type;
 export const RemoteOpenTarget = Schema.Struct({
   kind: RemoteOpenTargetKind,
   host: TrimmedNonEmptyString,
+  /** Login account on the environment host. Optional for compatibility with
+      servers that advertised only a hostname. */
+  username: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type RemoteOpenTarget = typeof RemoteOpenTarget.Type;
 
