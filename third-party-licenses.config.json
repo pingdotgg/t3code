@@ -57,6 +57,20 @@
       ]
     },
     {
+      "bundles": ["assets", "desktop", "web"],
+      "license": "CC0-1.0",
+      "name": "Whip Crack.m4a by SciFiSounds",
+      "sourceUrl": "https://freesound.org/people/SciFiSounds/sounds/529925/",
+      "generatedNotices": [
+        {
+          "licenseId": "CC0-1.0",
+          "preamble": [
+            "The bundled whip-crack.mp3 is derived from Whip Crack.m4a by SciFiSounds:\nhttps://freesound.org/people/SciFiSounds/sounds/529925/\n\nThe original sound is dedicated to the public domain under CC0 1.0 Universal."
+          ]
+        }
+      ]
+    },
+    {
       "bundles": ["device-tools"],
       "includeInBundles": ["mobile", "web"],
       "license": "MIT",
