@@ -412,3 +412,11 @@ describe("isWindowsCommandNotFound", () => {
     }),
   );
 });
+
+describe("commandName", () => {
+  it("drops the directory from POSIX and Windows paths", () => {
+    expect(ProcessRunner.commandName("/Users/me/.local/bin/claude")).toBe("claude");
+    expect(ProcessRunner.commandName("C:\\Program Files\\nodejs\\npx.cmd")).toBe("npx.cmd");
+    expect(ProcessRunner.commandName("git")).toBe("git");
+  });
+});
