@@ -2,7 +2,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { DiscoveryListRow } from "../ui/discovery-list";
 
 import { PreviewFaviconIcon } from "./PreviewFaviconIcon";
-import type { PreviewableServer } from "./useDiscoveredLocalServers";
+import { formatDiscoveredServerHost, type PreviewableServer } from "./useDiscoveredLocalServers";
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -17,7 +17,7 @@ export function PreviewLocalServerCard({ threadRef, server, onOpen }: Props) {
       onClick={onOpen}
       icon={<PreviewFaviconIcon threadRef={threadRef} url={server.requestedUrl} />}
       title={subtitle}
-      description={`${server.host}:${server.port}`}
+      description={formatDiscoveredServerHost({ ...server, url: server.requestedUrl })}
     />
   );
 }
