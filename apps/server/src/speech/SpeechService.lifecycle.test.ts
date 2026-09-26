@@ -376,7 +376,7 @@ it.effect("disposes a stream when resetting it fails", () =>
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("stops an unresponsive stream reset and releases the busy slot", () =>
+it.live("stops an unresponsive stream reset and releases the busy slot", () =>
   Effect.gen(function* () {
     native.reset.mockImplementationOnce(() => new Promise(() => {}));
     const speech = yield* SpeechService.SpeechService;
@@ -762,7 +762,7 @@ it.effect("does not mark a deleted model active when no models remain installed"
     expect((yield* speech.models).models.every((model) => !model.active)).toBe(true);
   }).pipe(Effect.provide(layer)),
 );
-it.effect("frees a cancelled batch transcription and preempts it on retry", () =>
+it.live("frees a cancelled batch transcription and preempts it on retry", () =>
   Effect.gen(function* () {
     const started = Promise.withResolvers<void>();
     native.transcribe.mockImplementationOnce(() => {

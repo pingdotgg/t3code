@@ -129,9 +129,11 @@ const isSpeechError = Schema.is(
 
 type LoadedModel = Awaited<ReturnType<typeof loadNativeSpeechModel>>;
 
-function resetStreamOrThrow(model: LoadedModel): Promise<void> {
-  return Effect.runPromise(Effect.promise(() => model.reset()).pipe(Effect.timeout("2500 millis")));
-}
+const resetStreamOrThrow = (model: LoadedModel) =>
+  Effect.tryPromise({
+    try: () => model.reset(),
+    catch: (cause) => new SpeechOperationError({ operation: "stream reset", cause }),
+  }).pipe(Effect.timeout("2500 millis"), Effect.interruptible);
 
 export type SpeechStream = {
   readonly feed: (
@@ -318,9 +320,6 @@ export const make = Effect.gen(function* () {
     signal = lifetime.signal,
     acceleration = "auto",
   ) => {
-    // A cancelled batch transcription may still run on the cached model.
-    // Give it a grace period to finish warm, else stop it and reload below.
-    await preemptOrphaned();
     if (model && loadedModelId === definition.id && loadedAcceleration === acceleration) {
       lastUse = performance.now();
       scheduleUnload();
@@ -387,7 +386,9 @@ export const make = Effect.gen(function* () {
             Effect.sync(() => {
               if (activeOperation === gate.promise) activeOperation = undefined;
               lastUse = performance.now();
-              scheduleUnload();
+              scheduleUnload(
+                operation === "model preparation" ? MAX_SPEECH_DURATION_SECONDS * 1000 : 0,
+              );
               gate.resolve();
             }),
           ),
@@ -468,26 +469,27 @@ export const make = Effect.gen(function* () {
 
   // Runs before any model use: if cancelled batch inference is still running
   // on the cached model, wait briefly for it, else stop it and reload below.
-  const preemptOrphaned = async () => {
+  const preemptOrphaned = Effect.gen(function* () {
     const orphan = orphaned;
     if (!orphan || orphan.target !== model) {
       if (orphaned === orphan) orphaned = undefined;
       return;
     }
-    const settled = await Effect.runPromise(
-      Effect.promise(() => orphan.done).pipe(
-        Effect.as(true),
-        Effect.timeoutOrElse({
-          duration: ORPHANED_TRANSCRIPTION_GRACE_MS,
-          orElse: () => Effect.succeed(false),
-        }),
-      ),
+    const settled = yield* Effect.tryPromise({
+      try: () => orphan.done,
+      catch: (cause) => speechError("abandoned transcription", cause),
+    }).pipe(
+      Effect.as(true),
+      Effect.timeoutOrElse({
+        duration: ORPHANED_TRANSCRIPTION_GRACE_MS,
+        orElse: () => Effect.succeed(false),
+      }),
     );
     if (orphaned !== orphan) return;
     orphaned = undefined;
     if (settled || orphan.target !== model) return;
     dropCachedModel(orphan.target);
-  };
+  });
 
   const readSettings = (operation: string) =>
     serverSettings.getSettings.pipe(
@@ -600,11 +602,22 @@ export const make = Effect.gen(function* () {
   return SpeechService.of({
     prepareModel: readSettings("model preparation").pipe(
       Effect.flatMap((settings) =>
-        exclusive("model preparation", async () => {
-          if (unsupportedReason)
-            throw new SpeechUnsupportedPlatformError({ platform, architecture });
-          await loadModel(selectedModel(settings), lifetime.signal, settings.speechAcceleration);
-        }),
+        exclusiveEffect(
+          "model preparation",
+          preemptOrphaned.pipe(
+            Effect.andThen(
+              attemptSpeech("model preparation", async () => {
+                if (unsupportedReason)
+                  throw new SpeechUnsupportedPlatformError({ platform, architecture });
+                await loadModel(
+                  selectedModel(settings),
+                  lifetime.signal,
+                  settings.speechAcceleration,
+                );
+              }),
+            ),
+          ),
+        ),
       ),
     ),
     startStream: Effect.gen(function* () {
@@ -621,23 +634,31 @@ export const make = Effect.gen(function* () {
       let started = false;
       let loaded: LoadedModel | undefined;
       yield* Effect.addFinalizer(() =>
-        Effect.promise(async () => {
+        Effect.gen(function* () {
           if (!finished) {
-            try {
-              // Reset after the current feed settles so the loaded model can be reused.
-              // A stalled feed or reset falls back to stopping the isolated process.
-              if (!loaded || !started) throw new Error("Speech stream is not initialized.");
-              await resetStreamOrThrow(loaded);
-            } catch {
-              controller.abort();
-              if (loaded ?? loading) {
-                await loading?.catch(() => undefined);
-                await (loaded ?? model)?.dispose();
-                model = undefined;
-                loadedModelId = undefined;
-                loadedAcceleration = undefined;
-              }
-            }
+            yield* Effect.suspend(() =>
+              loaded && started
+                ? resetStreamOrThrow(loaded)
+                : Effect.fail(
+                    new SpeechOperationError({
+                      operation: "stream initialization",
+                      cause: undefined,
+                    }),
+                  ),
+            ).pipe(
+              Effect.catch(() =>
+                Effect.promise(async () => {
+                  controller.abort();
+                  if (loaded ?? loading) {
+                    await loading?.catch(() => undefined);
+                    await (loaded ?? model)?.dispose();
+                    model = undefined;
+                    loadedModelId = undefined;
+                    loadedAcceleration = undefined;
+                  }
+                }),
+              ),
+            );
           }
           activeTranscriptions -= 1;
           if (activeOperation === released.promise) activeOperation = undefined;
@@ -656,6 +677,7 @@ export const make = Effect.gen(function* () {
         getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
       const language = effectiveSpeechLanguage(definition, settings.speechLanguage);
       const fillerWordLanguage = language === "auto" ? undefined : language;
+      yield* preemptOrphaned;
       const preparation = yield* attemptSpeech(operation, async () => {
         const startedAt = performance.now();
         const prepared = await loadModel(definition, signal, settings.speechAcceleration);
@@ -834,6 +856,7 @@ export const make = Effect.gen(function* () {
                 const definition = selectedModel(settings);
                 const language = effectiveSpeechLanguage(definition, settings.speechLanguage);
                 const prepareStartedAt = performance.now();
+                yield* preemptOrphaned;
                 const loaded = yield* Effect.tryPromise({
                   try: (signal) =>
                     loadModel(
