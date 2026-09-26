@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from "vite-plus/test";
-import { DEFAULT_BROWSER_PROFILE_ID, INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import {
+  DEFAULT_BROWSER_PROFILE_ID,
+  INCOGNITO_BROWSER_PROFILE_ID,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 
 import { ensureClientSettingsHydrated } from "~/hooks/useSettings";
 
@@ -11,16 +15,52 @@ vi.mock("~/hooks/useSettings", () => ({
   ensureClientSettingsHydrated: vi.fn(async () => undefined),
 }));
 
-const { getBrowserDefaults, resolveBrowserDefaults } = await import("./browserDefaults");
+const entities = vi.hoisted(() => ({
+  threadProjectId: null as string | null,
+  draftProjectId: null as string | null,
+}));
 
-const withDefaultProfile = (browserDefaultProfileId: string) => {
+vi.mock("~/state/entities", () => ({
+  readThreadShell: () =>
+    entities.threadProjectId === null ? null : { projectId: entities.threadProjectId },
+  readProject: ({ projectId }: { projectId: string }) => ({
+    environmentId: "local",
+    workspaceRoot: `/work/${projectId}`,
+  }),
+}));
+
+vi.mock("~/composerDraftStore", () => ({
+  useComposerDraftStore: {
+    getState: () => ({
+      getDraftThreadByRef: () =>
+        entities.draftProjectId === null ? null : { projectId: entities.draftProjectId },
+    }),
+  },
+}));
+
+const { browserDefaultOpenProfileId, getBrowserDefaults, resolveBrowserDefaults } =
+  await import("./browserDefaults");
+
+const threadRef = {
+  environmentId: "local" as ScopedThreadRef["environmentId"],
+  threadId: "thread-1" as ScopedThreadRef["threadId"],
+};
+
+const withDefaultProfile = (
+  browserDefaultProfileId: string,
+  browserProjectProfileIds: Record<string, string> = {},
+) => {
   settings.current = {
     browserDefaultViewport: { _tag: "fill" },
     browserDefaultZoomFactor: 1,
     browserDefaultAppearance: "system",
     browserAutoShowFloatingPreview: true,
-    browserProfiles: [{ id: "work", name: "Work", kind: "persistent" }],
+    browserProfiles: [
+      { id: "work", name: "Work", kind: "persistent" },
+      { id: "personal", name: "Personal", kind: "persistent" },
+    ],
     browserDefaultProfileId,
+    browserProjectProfileIds,
   };
   return getBrowserDefaults();
 };
@@ -41,6 +81,45 @@ describe("getBrowserDefaults profile resolution", () => {
     expect(withDefaultProfile(INCOGNITO_BROWSER_PROFILE_ID).profileId).toBe(
       DEFAULT_BROWSER_PROFILE_ID,
     );
+  });
+});
+
+describe("browserDefaultOpenProfileId", () => {
+  beforeEach(() => {
+    entities.threadProjectId = null;
+    entities.draftProjectId = null;
+  });
+
+  it("uses the thread's project profile over the global default", () => {
+    entities.threadProjectId = "client";
+    const defaults = withDefaultProfile("personal", { "local:/work/client": "work" });
+    expect(browserDefaultOpenProfileId(threadRef, defaults)).toBe("work");
+  });
+
+  it("uses the project profile for a draft thread", () => {
+    entities.draftProjectId = "client";
+    const defaults = withDefaultProfile("personal", { "local:/work/client": "work" });
+    expect(browserDefaultOpenProfileId(threadRef, defaults)).toBe("work");
+  });
+
+  it("falls back to the global default for other projects and unusable profiles", () => {
+    entities.threadProjectId = "other";
+    expect(
+      browserDefaultOpenProfileId(
+        threadRef,
+        withDefaultProfile("personal", { "local:/work/client": "work" }),
+      ),
+    ).toBe("personal");
+
+    entities.threadProjectId = "client";
+    for (const profileId of ["deleted", INCOGNITO_BROWSER_PROFILE_ID]) {
+      expect(
+        browserDefaultOpenProfileId(
+          threadRef,
+          withDefaultProfile("personal", { "local:/work/client": profileId }),
+        ),
+      ).toBe("personal");
+    }
   });
 });
 

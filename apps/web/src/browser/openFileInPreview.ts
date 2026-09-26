@@ -71,7 +71,7 @@ export async function openUrlInPreview<E>(input: {
       // maps the result differently, so the configured defaults have to be
       // applied explicitly or file/link opens would ignore them.
       viewport: browserDefaultOpenViewport(defaults),
-      profileId: browserDefaultOpenProfileId(defaults),
+      profileId: browserDefaultOpenProfileId(input.threadRef, defaults),
     },
   });
   return mapAtomCommandResult(result, (snapshot) => {

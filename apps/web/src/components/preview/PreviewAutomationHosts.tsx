@@ -460,7 +460,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                   // An agent that didn't state a size gets the user's
                   // configured default, same as a hand-opened tab.
                   viewport: browserDefaultOpenViewport(defaults),
-                  profileId: browserDefaultOpenProfileId(defaults),
+                  profileId: browserDefaultOpenProfileId(threadRef, defaults),
                 },
               });
               if (result._tag === "Failure") {

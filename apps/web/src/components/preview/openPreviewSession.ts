@@ -47,7 +47,7 @@ export async function openPreviewSession<E>(
       threadId: input.threadRef.threadId,
       ...(input.url === undefined ? {} : { url: input.url }),
       viewport: input.viewport ?? browserDefaultOpenViewport(defaults),
-      profileId: input.profileId ?? browserDefaultOpenProfileId(defaults),
+      profileId: input.profileId ?? browserDefaultOpenProfileId(input.threadRef, defaults),
     },
   });
   if (result._tag === "Failure") {

@@ -616,6 +616,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "browser-profiles",
   },
   {
+    id: "project-browser-profile",
+    title: "Browser profile",
+    to: "/settings/integrations",
+    scope: "project",
+    desktopOnly: true,
+    searchTerms: ["project default cookies logins work personal agent tabs"],
+  },
+  {
     id: "browser-default-viewport",
     title: "Default browser viewport",
     to: "/settings/integrations",
