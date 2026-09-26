@@ -162,7 +162,12 @@ export const makeCliproxyApi = Effect.gen(function* () {
               ? { "Chatgpt-Account-Id": account.id_token.chatgpt_account_id }
               : {}),
           }
-        : { Authorization: "Bearer $TOKEN$", "anthropic-beta": "oauth-2025-04-20" };
+        : {
+            Authorization: "Bearer $TOKEN$",
+            "anthropic-beta": "oauth-2025-04-20",
+            // The OAuth usage endpoint can return 429 without a Claude Code user agent.
+            "User-Agent": "claude-code/2.1.273",
+          };
     const raw = yield* management(config, "api-call", {
       auth_index: account.auth_index,
       method: data === undefined ? "GET" : "POST",
