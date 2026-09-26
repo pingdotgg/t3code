@@ -15,6 +15,7 @@ import {
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
   reduceSidebarProjectScopeMenuState,
+  resolveSidebarProjectScopeKeys,
   getFallbackThreadIdAfterDelete,
   getProjectSortTimestamp,
   hasUnseenCompletion,
@@ -925,6 +926,29 @@ describe("reduceSidebarProjectScopeMenuState", () => {
         { type: "query-changed", query: "beta" },
       ),
     ).toEqual({ open: true, query: "beta" });
+  });
+});
+
+describe("resolveSidebarProjectScopeKeys", () => {
+  it("scopes to only the pressed project on a plain press", () => {
+    expect(
+      resolveSidebarProjectScopeKeys({ scopeKeys: ["a", "b"], pressedKey: "b", additive: false }),
+    ).toEqual(["b"]);
+  });
+
+  it("toggles the pressed project on a modifier press", () => {
+    expect(
+      resolveSidebarProjectScopeKeys({ scopeKeys: ["a"], pressedKey: "b", additive: true }),
+    ).toEqual(["a", "b"]);
+    expect(
+      resolveSidebarProjectScopeKeys({ scopeKeys: ["a", "b"], pressedKey: "a", additive: true }),
+    ).toEqual(["b"]);
+  });
+
+  it("clears the scope when all projects is pressed", () => {
+    expect(
+      resolveSidebarProjectScopeKeys({ scopeKeys: ["a", "b"], pressedKey: "all", additive: true }),
+    ).toEqual([]);
   });
 });
 

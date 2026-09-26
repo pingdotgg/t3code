@@ -937,6 +937,38 @@ export function reduceSidebarProjectScopeMenuState(
   }
 }
 
+/**
+ * Whether a selection event asks to add to the current selection rather than replace it.
+ *
+ * @example isAdditiveSelectionEvent(new MouseEvent("click", { metaKey: true })); // true
+ */
+export function isAdditiveSelectionEvent(event: Event): boolean {
+  if (!(event instanceof MouseEvent || event instanceof KeyboardEvent)) return false;
+  return event.metaKey || event.ctrlKey || event.shiftKey;
+}
+
+/**
+ * Resolves the project scope after pressing a row in the project scope menu.
+ *
+ * A plain press scopes to that project alone. An additive press (a modifier held) toggles it
+ * within the current scope. "all" always clears the scope.
+ *
+ * @example resolveSidebarProjectScopeKeys({ scopeKeys: ["a"], pressedKey: "b", additive: true }); // ["a", "b"]
+ * @example resolveSidebarProjectScopeKeys({ scopeKeys: ["a"], pressedKey: "b", additive: false }); // ["b"]
+ */
+export function resolveSidebarProjectScopeKeys(input: {
+  scopeKeys: readonly string[];
+  pressedKey: string;
+  additive: boolean;
+}): string[] {
+  if (input.pressedKey === "all") return [];
+  if (!input.additive) return [input.pressedKey];
+
+  return input.scopeKeys.includes(input.pressedKey)
+    ? input.scopeKeys.filter((key) => key !== input.pressedKey)
+    : [...input.scopeKeys, input.pressedKey];
+}
+
 // Settled rows are history, so they order by when the work ENDED, not when
 // the thread was created or last touched.
 export function sortSettledThreadsForSidebar<
