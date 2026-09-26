@@ -57,7 +57,9 @@ import { projectEnvironment } from "../../state/projects";
 import { serverEnvironment } from "../../state/server";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { environmentCatalog } from "../../connection/catalog";
 import { connectPairing } from "../../connection/onboarding";
+import { resolveWizardEnvironmentStatus } from "./WelcomeWizard.logic";
 import { getProviderSummary } from "../settings/providerStatus";
 import { getDriverOption } from "../settings/providerDriverMeta";
 import { TerminalViewport } from "../ThreadTerminalDrawer";
@@ -278,6 +280,23 @@ function ConnectionStep({
   );
   const [pairingOpen, setPairingOpen] = useState(expandPairingInitially);
   const [isPairing, setIsPairing] = useState(false);
+  const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled, {
+    reportFailure: false,
+  });
+  const [turnOnError, setTurnOnError] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly message: string;
+  } | null>(null);
+  const turnOn = async (environmentId: EnvironmentId) => {
+    setTurnOnError(null);
+    const result = await setEnvironmentEnabled({ environmentId, enabled: true });
+    if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
+    const cause = squashAtomCommandFailure(result);
+    setTurnOnError({
+      environmentId,
+      message: cause instanceof Error ? cause.message : "Could not turn this computer on.",
+    });
+  };
   const ready =
     selectedIds.size > 0 &&
     [...selectedIds].every((id) =>
@@ -307,38 +326,66 @@ function ConnectionStep({
       {directEnvironments.length > 0 ? (
         <fieldset className="mt-5 space-y-2">
           <legend className="sr-only">Computers to set up</legend>
-          {directEnvironments.map((environment) => (
-            <label
-              key={environment.environmentId}
-              className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-background px-3 py-3"
-            >
-              <Checkbox
-                checked={selectedIds.has(environment.environmentId)}
-                onCheckedChange={(checked) => {
-                  const next = new Set(selectedIds);
-                  if (checked) next.add(environment.environmentId);
-                  else next.delete(environment.environmentId);
-                  onSelectionChange(next);
-                }}
-              />
-              <MonitorIcon className="size-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1">
-                <span className="flex items-baseline justify-between gap-3">
-                  <span className="min-w-0 text-sm font-medium break-words">
-                    {environment.label}
+          {directEnvironments.map((environment) => {
+            const status = resolveWizardEnvironmentStatus({
+              enabled: environment.entry.enabled,
+              unsupportedReason: environment.entry.unsupportedReason,
+              phase: environment.connection.phase,
+              error: environment.connection.error,
+            });
+            return (
+              <label
+                key={environment.environmentId}
+                className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-background px-3 py-3"
+              >
+                <Checkbox
+                  checked={selectedIds.has(environment.environmentId)}
+                  onCheckedChange={(checked) => {
+                    const next = new Set(selectedIds);
+                    if (checked) next.add(environment.environmentId);
+                    else next.delete(environment.environmentId);
+                    onSelectionChange(next);
+                  }}
+                />
+                <MonitorIcon className="size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-baseline justify-between gap-3">
+                    <span className="min-w-0 text-sm font-medium break-words">
+                      {environment.label}
+                    </span>
+                    <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                      {status.text}
+                      {status.kind === "off" ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="xs"
+                          onClick={(event) => {
+                            // Inside the row's label: keep the click from toggling the checkbox.
+                            event.preventDefault();
+                            void turnOn(environment.environmentId);
+                          }}
+                        >
+                          Turn on
+                        </Button>
+                      ) : null}
+                    </span>
                   </span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {environment.connection.phase === "connected" ? "Connected" : "Connecting…"}
-                  </span>
+                  {environment.displayUrl ? (
+                    <span className="mt-0.5 block text-xs break-all text-muted-foreground">
+                      {environment.displayUrl}
+                    </span>
+                  ) : null}
+                  {status.kind === "off" &&
+                  turnOnError?.environmentId === environment.environmentId ? (
+                    <span role="alert" className="mt-1 block text-xs text-destructive">
+                      {turnOnError.message}
+                    </span>
+                  ) : null}
                 </span>
-                {environment.displayUrl ? (
-                  <span className="mt-0.5 block text-xs break-all text-muted-foreground">
-                    {environment.displayUrl}
-                  </span>
-                ) : null}
-              </span>
-            </label>
-          ))}
+              </label>
+            );
+          })}
         </fieldset>
       ) : null}
       <div className="mt-4 space-y-2">

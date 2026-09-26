@@ -11,12 +11,16 @@ import * as Option from "effect/Option";
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import { ClientPresentation, SshEnvironmentGateway } from "../platform/capabilities.ts";
 import { BearerConnectionCredential, BearerConnectionProfile } from "./catalog.ts";
+import * as ConnectionCredentialStore from "./credentialStore.ts";
 import { BearerConnectionTarget } from "./model.ts";
 import {
+  ConnectionOnboarding,
+  layer as onboardingLayer,
   prepareBearerConnectionUpdate,
   preparePairingRegistration,
   prepareSshRegistration,
 } from "./onboarding.ts";
+import * as EnvironmentRegistry from "./registry.ts";
 
 const CLIENT_PRESENTATION_LAYER = Layer.succeed(
   ClientPresentation,
@@ -122,6 +126,58 @@ describe("connection onboarding", () => {
       expect(tokenParams.get("client_label")).toBe("T3 Code Test");
     }),
   );
+
+  it.effect("turns a switched-off environment back on when it is paired again", () => {
+    const events: Array<string> = [];
+    type Registry = EnvironmentRegistry.EnvironmentRegistry["Service"];
+    // Only the two members the pairing path touches; the rest is never reached.
+    const registry = {
+      register: (registration: Parameters<Registry["register"]>[0]) =>
+        Effect.sync(() => {
+          events.push(`register:${registration.target.environmentId}`);
+        }),
+      setCompatibility: (environmentId: EnvironmentId, error: unknown) =>
+        Effect.sync(() => {
+          events.push(`setCompatibility:${environmentId}:${error === null ? "clear" : "set"}`);
+        }),
+      setEnabled: (environmentId: EnvironmentId, enabled: boolean) =>
+        Effect.sync(() => {
+          events.push(`setEnabled:${environmentId}:${enabled}`);
+        }),
+    } as unknown as Registry;
+    const registryLayer = Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, registry);
+
+    return Effect.gen(function* () {
+      const onboarding = yield* ConnectionOnboarding;
+      const environmentId = yield* onboarding.registerPairing({
+        host: "remote.example.test",
+        pairingCode: "pairing-token",
+      });
+
+      expect(environmentId).toBe(EnvironmentId.make("environment-paired"));
+      // Registering keeps a previous entry's off flag and unsupported reason;
+      // the pair, having just checked the server, clears the reason and turns it on.
+      expect(events).toEqual([
+        "register:environment-paired",
+        "setCompatibility:environment-paired:clear",
+        "setEnabled:environment-paired:true",
+      ]);
+    }).pipe(
+      Effect.provide(
+        onboardingLayer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              registryLayer,
+              CLIENT_PRESENTATION_LAYER,
+              pairingHttpLayer([]),
+              Layer.mock(SshEnvironmentGateway)({}),
+              Layer.mock(ConnectionCredentialStore.ConnectionCredentialStore)({}),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
 
   it.effect("rejects an incompatible server without consuming the pairing credential", () =>
     Effect.gen(function* () {

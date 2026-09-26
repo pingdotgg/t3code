@@ -127,6 +127,15 @@ const registerPairingConnection = Effect.fn(
   const registration = yield* preparePairingRegistration(input);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   yield* registry.register(registration);
+  // Registering keeps a previous entry's switched-off flag and unsupported
+  // reason, which is right for label or URL edits. A pairing is an explicit
+  // request to connect and has just checked the server's compatibility, so
+  // the stale reason is cleared and the environment turned on, after the
+  // pair succeeded.
+  yield* registry.setCompatibility(registration.target.environmentId, null);
+  yield* registry
+    .setEnabled(registration.target.environmentId, true)
+    .pipe(Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }));
   return registration.target.environmentId;
 });
 
