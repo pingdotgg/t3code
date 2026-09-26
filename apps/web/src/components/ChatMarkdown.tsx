@@ -1648,6 +1648,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         : undefined);
   const actionsSource: MediaActionSource = {
     kind: props.kind ?? "image",
+    environmentId: props.environmentId,
     name: props.alt || (props.kind ?? "image"),
     src,
     ...(fallbackSrc === undefined

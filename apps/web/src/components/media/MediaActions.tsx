@@ -27,6 +27,7 @@ export interface MediaActionSource {
   readonly name: string;
   readonly src: string | null;
   readonly reference?: MediaReference;
+  readonly environmentId?: EnvironmentId;
   readonly asset?: { readonly environmentId: EnvironmentId; readonly resource: AssetResource };
   readonly onOpenFile?: () => void;
 }
@@ -83,7 +84,9 @@ export function MediaActions({
   children: ReactElement;
 }) {
   const { save, copyImage } = useMediaActions(source);
-  const remoteOpen = useRemoteOpenResolution(source.asset?.environmentId ?? null);
+  const remoteOpen = useRemoteOpenResolution(
+    source.asset?.environmentId ?? source.environmentId ?? null,
+  );
   const [tooltipOpen, setTooltipOpen] = useState(false);
   const menuOpen = useRef(false);
   const reference = source.reference;
