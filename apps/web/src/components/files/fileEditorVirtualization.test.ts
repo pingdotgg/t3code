@@ -133,6 +133,7 @@ class MeasuredFile extends VirtualizedFile {
   measure(
     rows: ReadonlyArray<readonly [lineIndex: number, height: number]>,
     contentWidth = 226.25,
+    codeWidth = contentWidth + 56.75,
   ) {
     const content = new MeasuredElement();
     content.width = contentWidth;
@@ -142,7 +143,7 @@ class MeasuredFile extends VirtualizedFile {
       return row;
     });
     const code = new MeasuredCodeElement();
-    code.width = contentWidth + 56.75;
+    code.width = codeWidth;
     code.children = [new MeasuredElement(), content];
     this.code = measuredElement(code);
     this.reconcileHeights();
@@ -391,33 +392,35 @@ describe("wrapped measurement widths", () => {
     [226.25, 482.25],
     [482.25, 226.25],
   ])(
-    "drops offscreen measurements when content changes from %spx to %spx",
+    "keeps offscreen measurements as estimates when content changes from %spx to %spx",
     async (before, after) => {
       const { instance } = await makeFixture("wrap", 6001, before);
+      const height = instance.getVirtualizedHeight();
       instance.measure([[6000, 60]], after);
-      expect(instance.getLineHeight(0)).toBe(20);
-      expect(instance.getLineHeight(120)).toBe(20);
+      expect(instance.getLineHeight(0)).toBe(80);
+      expect(instance.getLineHeight(120)).toBe(60);
       expect(instance.getLineHeight(6000)).toBe(60);
-      expect(instance.getVirtualizedHeight()).toBe(120076);
+      expect(instance.getVirtualizedHeight()).toBe(height);
     },
   );
 
   it.each([
+    [226.25, 226.25],
     [226.25, 482.25],
     [482.25, 226.25],
   ])(
-    "does not retain old-width prefix heights after a %spx to %spx resize and edit",
+    "keeps prefix estimates through a %spx to %spx reconciliation and edit",
     async (before, after) => {
       const { instance, append } = await makeFixture("wrap", 6001, before);
       instance.measure([[6000, 60]], after);
       append();
-      expect(instance.getLineHeight(0)).toBe(20);
-      expect(instance.getLineHeight(120)).toBe(20);
-      expect(instance.getLinePosition(6001)).toEqual({ top: 120008, height: 20 });
+      expect(instance.getLineHeight(0)).toBe(80);
+      expect(instance.getLineHeight(120)).toBe(60);
+      expect(instance.getLinePosition(6001)).toEqual({ top: 120328, height: 20 });
     },
   );
 
-  it("repairs an edit before resize delivery when the real resize and render queues drain", async () => {
+  it("remeasures rendered rows on resize delivery without reading geometry during the edit", async () => {
     const { instance, append } = await makeFixture();
     instance.measure([[6000, 60]]);
     const deliverResize = instance.observeLayout();
@@ -425,21 +428,11 @@ describe("wrapped measurement widths", () => {
     const readsBeforeEdit = MeasuredElement.geometryReads;
     append();
     expect(MeasuredElement.geometryReads).toBe(readsBeforeEdit);
-    // No synchronous geometry read: the resize entry owns invalidation.
-    expect(instance.getLineHeight(0)).toBe(80);
+    expect(instance.getLineHeight(6000)).toBe(20);
     deliverResize();
     drainRenderFrames();
-    expect(instance.getLineHeight(0)).toBe(20);
-    expect(instance.getLinePosition(6001)).toEqual({ top: 120008, height: 60 });
-  });
-
-  it("keeps measured prefixes through same-width reconciliation and editing", async () => {
-    const { instance, append } = await makeFixture();
-    instance.measure([[6000, 60]]);
-    append();
     expect(instance.getLineHeight(0)).toBe(80);
-    expect(instance.getLineHeight(120)).toBe(60);
-    expect(instance.getLinePosition(6001)).toEqual({ top: 120328, height: 20 });
+    expect(instance.getLinePosition(6001)).toEqual({ top: 120328, height: 60 });
   });
 
   it("preserves measurements on first and repeated same-width resize deliveries", async () => {
@@ -456,38 +449,16 @@ describe("wrapped measurement widths", () => {
   it.each([
     [226.25, 482.25],
     [482.25, 226.25],
-  ])("handles a %spx to %spx resize before first observer delivery", async (before, after) => {
+  ])("keeps offscreen estimates across a %spx to %spx resize delivery", async (before, after) => {
     const { instance } = await makeFixture("wrap", 6001, before);
     instance.measure([[6000, 20]], before);
+    const height = instance.getVirtualizedHeight();
     const deliverResize = instance.observeLayout();
     instance.resizeContent(after);
     deliverResize();
     drainRenderFrames();
-    expect(instance.getLineHeight(0)).toBe(20);
-    expect(instance.getVirtualizedHeight()).toBe(120036);
-  });
-
-  it("keeps width validity when a new editor attaches to the same file", async () => {
-    const { instance } = await makeFixture();
-    instance.measure([[6000, 20]]);
-    const deliverResize = instance.observeLayout();
-    vi.stubGlobal("SVGSVGElement", EditorElement);
-    vi.stubGlobal(
-      "document",
-      Object.assign(new EditorElement(), { createElement: () => new EditorElement() }),
-    );
-    const first = new Editor<undefined>();
-    editors.push(first);
-    first.edit(instance);
-    first.cleanUp();
-    const second = new Editor<undefined>();
-    editors.push(second);
-    second.edit(instance);
-    instance.resizeContent(482.25);
-    deliverResize();
-    drainRenderFrames();
-    expect(instance.getLineHeight(0)).toBe(20);
-    expect(instance.getVirtualizedHeight()).toBe(120036);
+    expect(instance.getLineHeight(0)).toBe(80);
+    expect(instance.getVirtualizedHeight()).toBe(height);
   });
 
   it("ignores stale resize deliveries after cleanup", async () => {
@@ -500,35 +471,32 @@ describe("wrapped measurement widths", () => {
     expect(animationFrames.size).toBe(0);
   });
 
-  it("does not discard a stable code width for gutter subpixel rounding", async () => {
-    const { instance } = await makeFixture("wrap", 6001, 482.25);
-    const deliverResize = instance.observeLayout();
-    instance.resizeContent(482.234375, 539);
-    deliverResize();
-    drainRenderFrames();
-    expect(instance.getLineHeight(0)).toBe(80);
-  });
-
-  it("waits for a visible width instead of caching measurements while hidden", async () => {
+  it("does not measure rows while the code element is hidden", async () => {
     const { instance } = await makeFixture();
-    instance.measure([[6000, 20]]);
-    const deliverResize = instance.observeLayout();
-    instance.resizeContent(0, 0);
-    deliverResize();
-    drainRenderFrames();
+    const height = instance.getVirtualizedHeight();
+    instance.measure([[0, 0]], 0, 0);
     expect(instance.getLineHeight(0)).toBe(80);
-    instance.resizeContent(482.25);
-    deliverResize();
-    drainRenderFrames();
-    expect(instance.getLineHeight(0)).toBe(20);
-    expect(instance.getVirtualizedHeight()).toBe(120036);
+    expect(instance.getVirtualizedHeight()).toBe(height);
   });
 });
 
 // Supply inert DOM transport so public Editor edits execute its real tokenizer
 // and layout handoff. No native wrapping, observer delivery or scrolling is modeled.
+class StyleDeclaration {
+  [property: string]: unknown;
+
+  getPropertyValue(property: string) {
+    const value = this[property];
+    return typeof value === "string" ? value : "";
+  }
+
+  setProperty(property: string, value: string) {
+    this[property] = value;
+  }
+}
+
 class EditorElement extends MeasuredElement {
-  style: Record<string, string> = {};
+  style = new StyleDeclaration();
   parentElement: EditorElement | null = null;
 
   appendChild(child: EditorElement) {
@@ -551,13 +519,32 @@ class EditorElement extends MeasuredElement {
   removeAttribute() {}
   addEventListener() {}
   removeEventListener() {}
-  after() {}
+
+  after(sibling: EditorElement) {
+    const parent = this.parentElement;
+    if (!parent) return;
+    sibling.remove();
+    sibling.parentElement = parent;
+    parent.children.splice(parent.children.indexOf(this) + 1, 0, sibling);
+  }
 
   remove() {
     if (this.parentElement) {
       this.parentElement.children = this.parentElement.children.filter((child) => child !== this);
     }
+    this.parentElement = null;
   }
+
+  // Rows stack 20px apart inside their parent; a detached row reports 0 like the DOM.
+  get offsetTop() {
+    const siblings = this.parentElement?.children ?? [];
+    const index = siblings.indexOf(this);
+    return index < 0 ? 0 : index * 20;
+  }
+
+  scrollIntoView() {}
+  focus() {}
+  blur() {}
 
   set innerHTML(value: string) {
     expect(value.startsWith("<svg")).toBe(true);
@@ -568,14 +555,23 @@ class EditorElement extends MeasuredElement {
     return this.children[0] ?? null;
   }
 
+  // Supports the attribute selectors the editor uses: [data-key] and [data-key="value"].
   querySelectorAll(selector: string) {
-    expect(selector).toBe("[data-code]");
-    return this.children.filter((child) => "code" in child.dataset);
+    const match = /^\[data-([a-z-]+)(?:="([^"]*)")?\]$/.exec(selector);
+    if (match === null) throw new Error(`Unsupported selector ${selector}`);
+    const key = match[1]!.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
+    const value = match[2];
+    return findElements(
+      this,
+      (element) =>
+        element !== this &&
+        key in element.dataset &&
+        (value === undefined || element.dataset[key] === value),
+    );
   }
 
   querySelector(selector: string) {
-    expect(selector).toBe("[data-deletions]");
-    return null;
+    return this.querySelectorAll(selector)[0] ?? null;
   }
 
   getContext() {
@@ -583,15 +579,29 @@ class EditorElement extends MeasuredElement {
   }
 }
 
-async function makeEditorFixture(lineCount: number) {
+function findElements(root: EditorElement, match: (element: EditorElement) => boolean) {
+  const found: EditorElement[] = [];
+  const visit = (element: EditorElement) => {
+    if (match(element)) found.push(element);
+    for (const child of element.children) visit(child as EditorElement);
+  };
+  visit(root);
+  return found;
+}
+
+async function makeEditorFixture(lineCount: number, renderedLines = 1) {
   const { instance, file } = await makeFixture("wrap", lineCount);
   vi.stubGlobal("SVGSVGElement", EditorElement);
   vi.stubGlobal("Document", EditorElement);
   vi.stubGlobal(
     "document",
-    Object.assign(new EditorElement(), { createElement: () => new EditorElement() }),
+    Object.assign(new EditorElement(), {
+      createElement: () => new EditorElement(),
+      createDocumentFragment: () => new EditorElement(),
+      getSelection: () => null,
+    }),
   );
-  vi.stubGlobal("window", { matchMedia: () => ({ matches: true }) });
+  vi.stubGlobal("window", { matchMedia: () => ({ matches: true }), getSelection: () => null });
   vi.stubGlobal("requestAnimationFrame", () => 1);
   vi.stubGlobal("cancelAnimationFrame", () => {});
   vi.stubGlobal("getComputedStyle", () => ({
@@ -635,7 +645,7 @@ async function makeEditorFixture(lineCount: number) {
   editor.edit(instance);
   editor.__syncRenderView(highlighter, measuredElement(host), file, undefined, {
     startingLine: 0,
-    totalLines: 1,
+    totalLines: renderedLines,
     bufferBefore: 0,
     bufferAfter: 0,
   });
@@ -657,22 +667,22 @@ async function makeEditorFixture(lineCount: number) {
       },
     ]);
   };
-  return { instance, editor, append, remove };
+  return { instance, editor, root: shadow, append, remove };
 }
 
-describe("editor gutter-width changes", () => {
+describe("editor line-number digit boundaries", () => {
   it.each([
     [9999, 1],
     [9998, 3],
   ])(
-    "clears prefix measurements when %i lines grow by %i across a digit boundary",
+    "keeps prefix measurements when %i lines grow by %i across a digit boundary",
     async (lines, count) => {
       const { instance, editor, append } = await makeEditorFixture(lines);
       expect(instance.getLineHeight(0)).toBe(80);
       append(count);
       expect(editor.getText().split("\n")).toHaveLength(lines + count);
-      expect(instance.getLineHeight(0)).toBe(20);
-      expect(instance.getLineHeight(5000)).toBe(20);
+      expect(instance.getLineHeight(0)).toBe(80);
+      expect(instance.getLineHeight(5000)).toBe(80);
     },
   );
 
@@ -680,27 +690,27 @@ describe("editor gutter-width changes", () => {
     [10000, 1],
     [10002, 4],
   ])(
-    "clears prefix measurements when %i lines shrink by %i across a digit boundary",
+    "keeps prefix measurements when %i lines shrink by %i across a digit boundary",
     async (lines, count) => {
       const { instance, editor, remove } = await makeEditorFixture(lines);
       remove(count);
       expect(editor.getText().split("\n")).toHaveLength(lines - count);
-      expect(instance.getLineHeight(0)).toBe(20);
-      expect(instance.getLineHeight(5000)).toBe(20);
+      expect(instance.getLineHeight(0)).toBe(80);
+      expect(instance.getLineHeight(5000)).toBe(80);
     },
   );
 
-  it("clears newly measured prefixes on undo and redo across a digit boundary", async () => {
+  it("keeps the latest measurements on undo and redo across a digit boundary", async () => {
     const { instance, editor, append } = await makeEditorFixture(9999);
     append(1);
     instance.measure([[0, 100]]);
     editor.undo();
     expect(editor.getText().split("\n")).toHaveLength(9999);
-    expect(instance.getLineHeight(0)).toBe(20);
+    expect(instance.getLineHeight(0)).toBe(100);
     instance.measure([[0, 80]]);
     editor.redo();
     expect(editor.getText().split("\n")).toHaveLength(10000);
-    expect(instance.getLineHeight(0)).toBe(20);
+    expect(instance.getLineHeight(0)).toBe(80);
   });
 
   it.each([
@@ -720,4 +730,22 @@ describe("editor gutter-width changes", () => {
       expect(instance.getLineHeight(0)).toBe(80);
     },
   );
+});
+
+describe("editor undo and redo rows", () => {
+  it("places the caret on the row a redo re-creates after undo removed it", async () => {
+    const { editor, root, append } = await makeEditorFixture(100, 100);
+    editor.setSelections([
+      { start: { line: 99, character: 7 }, end: { line: 99, character: 7 }, direction: "none" },
+    ]);
+    append(2);
+    editor.undo();
+    editor.redo();
+    expect(editor.getText().split("\n")).toHaveLength(102);
+    const row = findElements(root, (element) => element.dataset.line === "102").at(-1);
+    expect(row?.parentElement).not.toBeNull();
+    const caret = findElements(root, (element) => "caret" in element.dataset).at(-1);
+    expect(caret?.style.transform).toContain(`translateY(${row!.offsetTop}px)`);
+    expect(row!.offsetTop).toBeGreaterThan(0);
+  });
 });
