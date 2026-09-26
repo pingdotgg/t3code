@@ -6,12 +6,45 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 
 import {
+  HostProcessArguments,
   HostProcessExecutablePath,
   HostProcessIsExecutable,
   HostProcessPlatform,
 } from "./hostProcess.ts";
-import { resolveNodeExecutable } from "./nodeRuntime.ts";
+import { resolveNodeExecutable, resolveSelfInvocation, selfInvocationArgs } from "./nodeRuntime.ts";
 import { symlinksSupported } from "./testing/symlinks.ts";
+
+describe("Self invocation", () => {
+  it.effect("runs the entrypoint script with the current runtime", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const invocation = yield* resolveSelfInvocation().pipe(
+        Effect.provideService(HostProcessExecutablePath, "/runtime/node"),
+        Effect.provideService(HostProcessIsExecutable, false),
+        Effect.provideService(HostProcessArguments, ["/runtime/node", "dist/bin.mjs", "serve"]),
+      );
+      expect(invocation.command).toBe("/runtime/node");
+      expect(invocation.entrypoint).toBe(path.resolve("dist/bin.mjs"));
+      expect(selfInvocationArgs(invocation, ["acp-mcp-bridge"])).toEqual([
+        path.resolve("dist/bin.mjs"),
+        "acp-mcp-bridge",
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("passes subcommands straight to the standalone executable", () =>
+    Effect.gen(function* () {
+      // Node repeats the binary at argv[1] for a single-executable; it is not a script.
+      const invocation = yield* resolveSelfInvocation().pipe(
+        Effect.provideService(HostProcessExecutablePath, "/packaged/t3"),
+        Effect.provideService(HostProcessIsExecutable, true),
+        Effect.provideService(HostProcessArguments, ["/packaged/t3", "/packaged/t3", "serve"]),
+      );
+      expect(invocation).toEqual({ command: "/packaged/t3", entrypoint: undefined });
+      expect(selfInvocationArgs(invocation, ["acp-mcp-bridge"])).toEqual(["acp-mcp-bridge"]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
 
 describe("Node runtime selection", () => {
   it.effect("keeps the current Node or Electron runtime without requiring Node on PATH", () =>

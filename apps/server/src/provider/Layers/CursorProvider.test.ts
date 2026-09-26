@@ -9,7 +9,7 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { describe, expect, it } from "vite-plus/test";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 import { ProviderDriverKind, ProviderInstanceId, type CursorSettings } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 
@@ -526,7 +526,11 @@ describe("Cursor command catalog", () => {
         yield* catalog.snapshotForCwd("/probed", probedSkills);
         yield* catalog.onAvailableCommands(
           [
-            { name: "review", description: "Review changes", input: { hint: "target" } },
+            {
+              name: "review",
+              description: "Review changes",
+              input: { type: "text", hint: "target" },
+            },
             { name: "compact", description: "Native duplicate" },
             { name: "review", description: "Duplicate" },
           ],

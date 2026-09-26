@@ -13,6 +13,7 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as Clock from "effect/Clock";
@@ -36,7 +37,7 @@ import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -58,12 +59,19 @@ import {
   makeAcpRequestResolvedEvent,
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
-import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
+import {
+  parsePermissionRequest,
+  type AcpPlanUpdate,
+  type AcpToolCallState,
+} from "../acp/AcpRuntimeModel.ts";
+import { acpAutoApprovalOptionId } from "../acp/AcpClientPolicy.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
+import { acpT3McpServers, serveAcpMcpOverAcp } from "../acp/AcpT3Mcp.ts";
 import {
   applyGrokAcpModelSelection,
-  currentGrokModelIdFromSessionSetup,
   currentGrokReasoningEffortFromSessionSetup,
+  grokAcpModelControl,
+  type GrokModelRuntime,
   makeGrokAcpRuntime,
   normalizeGrokReasoningEffort,
   resolveGrokAcpBaseModelId,
@@ -138,6 +146,8 @@ interface GrokSessionContext {
   session: ProviderSession;
   readonly scope: Scope.Closeable;
   readonly acp: AcpSessionRuntime.AcpSessionRuntime["Service"];
+  /** Selects models: `session/set_model` on ACP v1, the model config option on v2. */
+  readonly modelRuntime: GrokModelRuntime;
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
@@ -253,11 +263,7 @@ export function isGrokEnterPlanModeToolCall(toolCall: {
 /** Failed enter_plan_mode must not leave planModeActive stuck on. */
 export function nextGrokPlanModeActive(
   currentlyActive: boolean,
-  toolCall: {
-    readonly title?: string;
-    readonly status?: "pending" | "inProgress" | "completed" | "failed";
-    readonly data: Record<string, unknown>;
-  },
+  toolCall: Pick<AcpToolCallState, "title" | "status" | "data">,
 ): boolean {
   if (!isGrokEnterPlanModeToolCall(toolCall)) {
     return currentlyActive;
@@ -312,15 +318,6 @@ export function selectGrokPermissionOptionId(
   return undefined;
 }
 
-function selectAutoApprovedPermissionOption(
-  request: EffectAcpSchema.RequestPermissionRequest,
-): string | undefined {
-  return (
-    selectGrokPermissionOptionId(request, "acceptForSession") ??
-    selectGrokPermissionOptionId(request, "accept")
-  );
-}
-
 function completedStopReasonFromPromptResponse(
   response: EffectAcpSchema.PromptResponse | undefined,
 ): EffectAcpSchema.StopReason | null {
@@ -361,6 +358,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
     const makeAcpNativeLoggers = yield* makeAcpNativeLoggerFactory();
     const hostPlatform = yield* HostProcessPlatform;
     const hostEnvironment = yield* HostProcessEnvironment;
+    const selfInvocation = yield* resolveSelfInvocation();
     const grokPlanPathHost = {
       platform: hostPlatform,
       environment: options?.environment ?? hostEnvironment,
@@ -849,13 +847,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       ctx: GrokSessionContext,
       turnId: TurnId | undefined,
       stamp: { readonly eventId: EventId; readonly createdAt: string },
-      payload: {
-        readonly explanation?: string | null;
-        readonly plan: ReadonlyArray<{
-          readonly step: string;
-          readonly status: "pending" | "inProgress" | "completed";
-        }>;
-      },
+      payload: AcpPlanUpdate,
       rawPayload: unknown,
       method: string,
     ) =>
@@ -939,6 +931,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         if (ctx.notificationFiber) {
           yield* Fiber.interrupt(ctx.notificationFiber);
         }
+        // Closing the scope kills Grok's process group at once. Stop it with
+        // SIGTERM first so Grok can save its session for a later resume.
+        if (ctx.acp.terminateProcessGroup) {
+          yield* Effect.ignore(ctx.acp.terminateProcessGroup);
+        }
         yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
         sessions.delete(ctx.threadId);
         yield* offerRuntimeEvent({
@@ -1009,23 +1006,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             runtimeMode: input.runtimeMode,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
-            ...(mcpSession
-              ? {
-                  mcpServers: [
-                    {
-                      type: "http" as const,
-                      name: "t3-code",
-                      url: mcpSession.endpoint,
-                      headers: [
-                        {
-                          name: "Authorization",
-                          value: mcpSession.authorizationHeader,
-                        },
-                      ],
-                    },
-                  ],
-                }
-              : {}),
+            ...(mcpSession ? acpT3McpServers(mcpSession, selfInvocation) : {}),
             ...acpNativeLoggers,
           }).pipe(
             Effect.provideService(Crypto.Crypto, crypto),
@@ -1166,7 +1147,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   if (input.runtimeMode === "full-access" || alreadyApproved) {
                     const autoApprovedOptionId =
                       input.runtimeMode === "full-access"
-                        ? selectAutoApprovedPermissionOption(params)
+                        ? acpAutoApprovalOptionId(params)
                         : selectGrokPermissionOptionId(params, "accept");
                     if (autoApprovedOptionId !== undefined) {
                       return {
@@ -1237,6 +1218,12 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 }),
               ),
             );
+            if (mcpSession) {
+              yield* serveAcpMcpOverAcp(acp, mcpSession).pipe(
+                Effect.provideService(Crypto.Crypto, crypto),
+                Effect.provideService(Scope.Scope, sessionScope),
+              );
+            }
             return yield* acp.start();
           }).pipe(
             Effect.mapError((error) =>
@@ -1247,9 +1234,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           const requestedStartModelId = grokModelSelection?.model
             ? resolveGrokAcpBaseModelId(grokModelSelection.model)
             : undefined;
-          const currentStartModelId = currentGrokModelIdFromSessionSetup(
-            started.sessionSetupResult,
-          );
+          const { runtime: modelRuntime, currentModelId: currentStartModelId } =
+            yield* grokAcpModelControl(acp, started);
           const currentStartReasoningEffort = currentGrokReasoningEffortFromSessionSetup(
             started.sessionSetupResult,
           );
@@ -1258,7 +1244,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             "reasoningEffort",
           );
           const boundModelId = yield* applyGrokAcpModelSelection({
-            runtime: acp,
+            runtime: modelRuntime,
             currentModelId: currentStartModelId,
             currentReasoningEffort: currentStartReasoningEffort,
             requestedModelId: requestedStartModelId,
@@ -1290,6 +1276,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             session,
             scope: sessionScope,
             acp,
+            modelRuntime,
             notificationFiber: undefined,
             pendingApprovals,
             pendingUserInputs,
@@ -1621,7 +1608,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               }
 
               const currentModelId = yield* applyGrokAcpModelSelection({
-                runtime: ctx.acp,
+                runtime: ctx.modelRuntime,
                 currentModelId: ctx.currentModelId,
                 currentReasoningEffort: ctx.currentReasoningEffort,
                 requestedModelId: requestedTurnModelId,

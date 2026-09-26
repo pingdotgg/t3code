@@ -16,6 +16,7 @@ import {
   type ThreadId,
   type TurnCompletedPayload,
 } from "@t3tools/contracts";
+import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -33,7 +34,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { ServerConfig } from "../../config.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
@@ -60,6 +61,11 @@ import {
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
+import { acpT3McpServers, serveAcpMcpOverAcp } from "../acp/AcpT3Mcp.ts";
+import {
+  readAntigravityClientTextFile,
+  writeAntigravityClientTextFile,
+} from "../acp/AntigravityClientFiles.ts";
 import { parsePermissionRequest, type AcpToolCallState } from "../acp/AcpRuntimeModel.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import {
@@ -100,6 +106,10 @@ type Runtime = Pick<
   | "handleRequestPermission"
   | "handleReadTextFile"
   | "handleWriteTextFile"
+  | "handleMcpConnect"
+  | "handleMcpMessage"
+  | "handleMcpNotification"
+  | "handleMcpDisconnect"
   | "start"
   | "setMode"
   | "setModel"
@@ -213,94 +223,6 @@ interface SessionContext {
   disconnected: boolean;
 }
 
-const CLIENT_FILE_MAX_BYTES = 8 * 1024 * 1024;
-
-function isInsideRoot(path: Path.Path, root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
-
-/** Resolves an agent-supplied path and rejects anything outside the session roots. */
-const resolveClientFilePath = Effect.fn("AntigravityAdapter.resolveClientFilePath")(
-  function* (input: {
-    readonly fileSystem: FileSystem.FileSystem;
-    readonly path: Path.Path;
-    readonly allowedRoots: ReadonlyArray<string>;
-    readonly requestPath: string;
-  }) {
-    const { path } = input;
-    const resolved = path.resolve(input.requestPath);
-    // Follow symlinks on the parent so a link out of the workspace cannot escape it.
-    const parent = yield* input.fileSystem
-      .realPath(path.dirname(resolved))
-      .pipe(Effect.orElseSucceed(() => path.dirname(resolved)));
-    const real = path.join(parent, path.basename(resolved));
-    const roots = yield* Effect.forEach(input.allowedRoots, (root) =>
-      input.fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root)),
-    );
-    if (!roots.some((root) => isInsideRoot(path, root, real))) {
-      return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-        `Path '${input.requestPath}' is outside the session workspace.`,
-      );
-    }
-    return real;
-  },
-);
-
-const readClientTextFile = Effect.fn("AntigravityAdapter.readClientTextFile")(function* (input: {
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly path: Path.Path;
-  readonly allowedRoots: ReadonlyArray<string>;
-  readonly request: EffectAcpSchema.ReadTextFileRequest;
-}): Effect.fn.Return<EffectAcpSchema.ReadTextFileResponse, EffectAcpErrors.AcpError> {
-  const filePath = yield* resolveClientFilePath({ ...input, requestPath: input.request.path });
-  const info = yield* input.fileSystem
-    .stat(filePath)
-    .pipe(
-      Effect.mapError(() =>
-        EffectAcpErrors.AcpRequestError.resourceNotFound(`File '${input.request.path}' not found.`),
-      ),
-    );
-  if (info.type !== "File" || Number(info.size) > CLIENT_FILE_MAX_BYTES) {
-    return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-      `File '${input.request.path}' is not a readable text file under ${CLIENT_FILE_MAX_BYTES} bytes.`,
-    );
-  }
-  const text = yield* input.fileSystem
-    .readFileString(filePath)
-    .pipe(
-      Effect.mapError(() =>
-        EffectAcpErrors.AcpRequestError.internalError(`Could not read '${input.request.path}'.`),
-      ),
-    );
-  const line = input.request.line ?? undefined;
-  const limit = input.request.limit ?? undefined;
-  if (line === undefined && limit === undefined) {
-    return { content: text };
-  }
-  // ACP lines are 1-indexed. `limit` is a line count.
-  const lines = text.split("\n");
-  const start = Math.max(0, (line ?? 1) - 1);
-  const end = limit === undefined ? lines.length : Math.min(lines.length, start + limit);
-  return { content: lines.slice(start, end).join("\n") };
-});
-
-const writeClientTextFile = Effect.fn("AntigravityAdapter.writeClientTextFile")(function* (input: {
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly path: Path.Path;
-  readonly allowedRoots: ReadonlyArray<string>;
-  readonly request: EffectAcpSchema.WriteTextFileRequest;
-}): Effect.fn.Return<EffectAcpSchema.WriteTextFileResponse, EffectAcpErrors.AcpError> {
-  const filePath = yield* resolveClientFilePath({ ...input, requestPath: input.request.path });
-  yield* input.fileSystem.makeDirectory(input.path.dirname(filePath), { recursive: true }).pipe(
-    Effect.andThen(input.fileSystem.writeFileString(filePath, input.request.content)),
-    Effect.mapError(() =>
-      EffectAcpErrors.AcpRequestError.internalError(`Could not write '${input.request.path}'.`),
-    ),
-  );
-  return {};
-});
-
 /** Keeps one official ACP process per thread and drains a cancelled prompt before steering. */
 export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(function* (
   settings: AntigravitySettings,
@@ -312,6 +234,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
   const serverConfig = yield* ServerConfig;
   const ownerScope = yield* Effect.scope;
   const makeNativeLoggers = yield* makeAcpNativeLoggerFactory();
+  const selfInvocation = yield* resolveSelfInvocation();
   const sessions = new Map<ThreadId, SessionContext>();
   const locks = yield* SynchronizedRef.make(new Map<ThreadId, Semaphore.Semaphore>());
   const events = yield* PubSub.unbounded<ProviderRuntimeEvent>();
@@ -798,16 +721,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                   : {}),
                 additionalDirectories: [serverConfig.attachmentsDir],
                 ...(Option.isSome(cursor) ? { resumeSessionId: cursor.value.sessionId } : {}),
-                mcpServers: mcp
-                  ? [
-                      {
-                        type: "http",
-                        name: "t3-code",
-                        url: mcp.endpoint,
-                        headers: [{ name: "Authorization", value: mcp.authorizationHeader }],
-                      },
-                    ]
-                  : [],
+                ...(mcp ? acpT3McpServers(mcp, selfInvocation) : {}),
                 ...makeNativeLoggers({
                   nativeEventLogger: options.nativeEventLogger,
                   provider: PROVIDER,
@@ -820,10 +734,10 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
               // checked here.
               const allowedRoots = [cwd, serverConfig.attachmentsDir];
               yield* runtime.handleReadTextFile((request) =>
-                readClientTextFile({ fileSystem, path, allowedRoots, request }),
+                readAntigravityClientTextFile({ fileSystem, path, allowedRoots, request }),
               );
               yield* runtime.handleWriteTextFile((request) =>
-                writeClientTextFile({ fileSystem, path, allowedRoots, request }),
+                writeAntigravityClientTextFile({ fileSystem, path, allowedRoots, request }),
               );
               yield* runtime.handleRequestPermission((request) =>
                 context
@@ -840,6 +754,11 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                       outcome: { outcome: "cancelled" },
                     } satisfies NativePermissionResponse),
               );
+              if (mcp) {
+                yield* serveAcpMcpOverAcp(runtime, mcp).pipe(
+                  Effect.provideService(Crypto.Crypto, crypto),
+                );
+              }
               const started = yield* runtime.start();
               const model = yield* applyAntigravityAcpModelSelection({
                 runtime,

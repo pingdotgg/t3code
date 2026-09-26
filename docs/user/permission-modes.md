@@ -21,11 +21,13 @@ not prevent the agent from asking questions about the task.
 ## Provider differences
 
 Providers enforce permissions differently. Some read-only actions can proceed in **Supervised**.
-**Auto** uses automatic review on Codex, Claude, and Cursor; providers without an equivalent,
-including OpenCode and Antigravity, fall back to asking.
+**Auto** uses automatic review on Codex, Claude, Cursor, and Grok; providers without an equivalent,
+including OpenCode and Antigravity, fall back to asking. On Grok, commands its review blocks come
+to you for approval.
 
-For Grok, **Always allow this session** remembers the matching command or tool input. Other
-actions still require approval.
+Grok has no **Auto-accept edits** mode. A Grok thread set to it runs in **Supervised**. For
+Grok, **Always allow this session** remembers the matching command or tool input. Other actions
+still require approval.
 
 Antigravity can still send native approval requests in **Full access**. It only offers remembered
 approvals for actions that support them.

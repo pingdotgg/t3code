@@ -8,7 +8,8 @@ import type {
   ServerProviderModel,
   ServerProviderState,
 } from "@t3tools/contracts";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
+import type * as AcpWireSchema from "effect-acp/schema-v1";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
@@ -472,6 +473,17 @@ function buildCursorDiscoveredModels(
   });
 }
 
+/** Cursor's extension reports ACP v1 options. Capabilities read choices flat, so flatten groups. */
+function cursorWireConfigOption(
+  option: AcpWireSchema.SessionConfigOption,
+): EffectAcpSchema.SessionConfigOption {
+  if (option.type !== "select") return option;
+  const options = [...option.options].flatMap((entry) =>
+    "options" in entry ? entry.options : [entry],
+  );
+  return { ...option, options };
+}
+
 function buildCursorDiscoveredModelsFromAvailableModelsResponse(
   response: typeof CursorListAvailableModelsResponse.Type,
 ): ReadonlyArray<ServerProviderModel> {
@@ -487,7 +499,9 @@ function buildCursorDiscoveredModelsFromAvailableModelsResponse(
         {
           slug,
           name,
-          capabilities: buildCursorCapabilitiesFromConfigOptions(model.configOptions),
+          capabilities: buildCursorCapabilitiesFromConfigOptions(
+            model.configOptions?.map(cursorWireConfigOption),
+          ),
         },
       ];
     }),

@@ -20,19 +20,21 @@ import { execScriptSource, writeFakeCli } from "../testUtils/fakeCli.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-const mockAgentPath = NodePath.join(__dirname, "../../scripts/acp-mock-agent.ts");
+const mockAgentPath = NodePath.join(__dirname, "../provider/testFixtures/grok-text-mock-agent.mjs");
+// Speaks ACP v2; `T3_ACP_GROK=1` gives it Grok's models.
+const acpV2MockAgentPath = NodePath.join(__dirname, "../../scripts/acp-mock-agent.ts");
 
 const GrokTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-grok-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
-function makeAcpGrokWrapper(dir: string, env: Record<string, string>): string {
+function makeAcpGrokWrapper(dir: string, env: Record<string, string>, scriptPath: string): string {
   return writeFakeCli({
     directory: NodePath.join(dir, "bin"),
     name: "grok",
     env,
     source: execScriptSource({
-      scriptPath: mockAgentPath,
+      scriptPath,
       expectedArgs: ["agent", "stdio"],
     }),
   });
@@ -41,6 +43,7 @@ function makeAcpGrokWrapper(dir: string, env: Record<string, string>): string {
 function withFakeAcpGrok<A, E, R>(
   env: Record<string, string>,
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
+  scriptPath = mockAgentPath,
 ) {
   return Effect.gen(function* () {
     const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-grok-text-acp-"));
@@ -49,7 +52,7 @@ function withFakeAcpGrok<A, E, R>(
         NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }),
     );
-    const binaryPath = makeAcpGrokWrapper(tempDir, env);
+    const binaryPath = makeAcpGrokWrapper(tempDir, env, scriptPath);
     const config = decodeGrokSettings({ binaryPath });
     const textGeneration = yield* makeGrokTextGeneration(config);
     return yield* effectFn(textGeneration);
@@ -109,6 +112,40 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
             ),
           ).toBe(true);
         }),
+    );
+  });
+
+  it.effect("selects the model through its config option on an ACP v2 Grok", () => {
+    const requestLogDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-grok-text-log-"),
+    );
+    const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
+
+    return withFakeAcpGrok(
+      {
+        T3_ACP_GROK: "1",
+        T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({ title: "Investigate failing CI" }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "the lint job is red",
+            modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-mock-alt"),
+          });
+          expect(generated.title).toBe("Investigate failing CI");
+
+          const setModel = readJsonRpcRequests(requestLogPath).find(
+            (request) => request.method === "session/set_config_option",
+          );
+          expect(setModel?.params).toMatchObject({ configId: "model", value: "grok-mock-alt" });
+        }),
+      acpV2MockAgentPath,
+    ).pipe(
+      Effect.ensuring(
+        Effect.sync(() => NodeFS.rmSync(requestLogDir, { recursive: true, force: true })),
+      ),
     );
   });
 

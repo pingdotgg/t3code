@@ -5,7 +5,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -17,6 +17,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import {
   ApprovalRequestId,
+  EnvironmentId,
   GrokSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -27,6 +28,7 @@ import {
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
 import {
   grokPromptSettlementBelongsToContext,
@@ -44,12 +46,14 @@ const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.
 // process instead, so the mock never sees a signal to log.
 const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 
-async function makeMockGrokWrapper(extraEnv?: Record<string, string>) {
+type AcpMockWire = "v1" | "v2";
+
+async function makeMockGrokWrapperOn(wire: AcpMockWire, extraEnv?: Record<string, string>) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-mock-"));
   return writeFakeCli({
     directory: dir,
     name: "fake-grok",
-    env: extraEnv ?? {},
+    env: { T3_ACP_GROK: "1", T3_ACP_WIRE: wire, ...extraEnv },
     source: execScriptSource({ scriptPath: mockAgentPath }),
   });
 }
@@ -212,7 +216,20 @@ it("requires a settlement to match the live Grok turn", () => {
   );
 });
 
-it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
+const grokAdapterLive = it.layer(grokAdapterTestLayer);
+
+// Released Grok speaks the ACP v1 message shape; v2 covers the upgrade path.
+for (const wire of ["v1", "v2"] as const) {
+  grokAdapterLive(`GrokAdapterLive (ACP ${wire})`, (it) => grokAdapterLiveTests(it, wire));
+}
+
+function grokAdapterLiveTests(
+  it: Parameters<Parameters<typeof grokAdapterLive>[1]>[0],
+  wire: AcpMockWire,
+) {
+  const makeMockGrokWrapper = (extraEnv?: Record<string, string>) =>
+    makeMockGrokWrapperOn(wire, extraEnv);
+
   it.effect("rejects rollback without discarding the provider conversation", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-unsupported-rollback");
@@ -292,6 +309,52 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     );
   }
 
+  it.effect("offers T3 MCP to Grok through the stdio bridge", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-t3-mcp");
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-test"),
+        threadId,
+        providerSessionId: "provider-session",
+        providerInstanceId: ProviderInstanceId.make("grok"),
+        endpoint: "http://127.0.0.1:9/mcp",
+        authorizationHeader: "Bearer mcp-secret",
+        capabilities: new Set(),
+      });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+      );
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-t3-mcp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+      yield* adapter.stopSession(threadId);
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const created = requests.find((request) => request.method === "session/new");
+      expect(created?.params).toMatchObject({
+        mcpServers: [
+          {
+            name: "t3-code",
+            args: expect.arrayContaining(["acp-mcp-bridge"]),
+            env: expect.arrayContaining([
+              { name: "T3_ACP_MCP_AUTHORIZATION", value: "Bearer mcp-secret" },
+            ]),
+          },
+        ],
+      });
+      // The credential rides in the bridge environment, never on its command line.
+      expect(created?.params).not.toMatchObject({
+        mcpServers: [{ args: expect.arrayContaining([expect.stringContaining("mcp-secret")]) }],
+      });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("keeps runtime context out of native command arguments", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-runtime-context");
@@ -353,6 +416,11 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
           (request) => (request.params as { prompt: Array<{ type: string; text: string }> }).prompt,
         );
       assert.equal(prompts.length, 3);
+      // ACP v2 removed session/set_model; Grok switches models through the config option.
+      assert.equal(
+        requests.some((request) => request.method === "session/set_model"),
+        wire === "v1",
+      );
       assert.deepEqual(prompts[2], [{ type: "text", text: "/goal status" }]);
       assert.deepEqual(prompts[0]?.[0], { type: "text", text: "First prompt" });
       assert.include(prompts[0]?.[1]?.text, "Grok harness, as grok-mock-alt");
@@ -2595,4 +2663,4 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       // hang until the suite timeout instead of failing here.
     }).pipe(TestClock.withLive),
   );
-});
+}

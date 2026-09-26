@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import {
   AntigravitySettings,
   ApprovalRequestId,
+  EnvironmentId,
   ProviderInstanceId,
   ThreadId,
   type ProviderRuntimeEvent,
@@ -20,9 +21,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as AcpErrors from "effect-acp/errors";
-import type * as AcpSchema from "effect-acp/schema";
+import type * as AcpSchema from "effect-acp/compat";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../antigravityAuthSupport.ts";
 import type { AcpSessionRuntimeEvent } from "../acp/AcpSessionRuntime.ts";
 import { makeAntigravityAcpRuntime } from "../acp/AntigravityAcpSupport.ts";
@@ -69,6 +71,8 @@ function nativeToolUpdate(
   return { ...event, toolCall: mergeToolCallState(previous, event.toolCall) };
 }
 
+const requestContext = { requestId: "test-request", method: "test" };
+
 const makeHarness = Effect.fn("makeAntigravityAdapterHarness")(function* (options?: {
   readonly enabled?: boolean;
   readonly holdCancel?: boolean;
@@ -96,11 +100,8 @@ const makeHarness = Effect.fn("makeAntigravityAdapterHarness")(function* (option
     read?: Parameters<Runtime["handleReadTextFile"]>[0];
     write?: Parameters<Runtime["handleWriteTextFile"]>[0];
   } = {};
-  let permissionHandler:
-    | ((
-        request: AcpSchema.RequestPermissionRequest,
-      ) => Effect.Effect<AcpSchema.RequestPermissionResponse, AcpErrors.AcpError>)
-    | undefined;
+  const mcpHandlers: { connect?: Parameters<Runtime["handleMcpConnect"]>[0] } = {};
+  let permissionHandler: Parameters<Runtime["handleRequestPermission"]>[0] | undefined;
 
   const configOptions = (): ReadonlyArray<AcpSchema.SessionConfigOption> => [
     {
@@ -135,6 +136,13 @@ const makeHarness = Effect.fn("makeAntigravityAdapterHarness")(function* (option
       Effect.sync(() => {
         fileHandlers.write = handler;
       }),
+    handleMcpConnect: (handler) =>
+      Effect.sync(() => {
+        mcpHandlers.connect = handler;
+      }),
+    handleMcpMessage: () => Effect.void,
+    handleMcpNotification: () => Effect.void,
+    handleMcpDisconnect: () => Effect.void,
     start: () =>
       Effect.gen(function* () {
         if (controls.failAuth) {
@@ -270,11 +278,12 @@ const makeHarness = Effect.fn("makeAntigravityAdapterHarness")(function* (option
   const invokePermission = (request: AcpSchema.RequestPermissionRequest) =>
     Effect.suspend(() =>
       permissionHandler
-        ? permissionHandler(request)
+        ? permissionHandler(request, requestContext)
         : Effect.die("Missing native permission handler"),
     );
   return {
     fileHandlers,
+    mcpHandlers,
     adapter,
     calls,
     launches,
@@ -302,9 +311,10 @@ const layer = ServerConfig.layerTest(process.cwd(), {
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
 it.layer(layer)("AntigravityAdapter", (it) => {
-  it.effect(
-    "runs native auth, resume, models, commands, and streaming through the ACP transport",
-    () =>
+  // Released Antigravity reports protocol version 2 but answers in the v1 shape.
+  it.effect.each(["v1", "v2"] as const)(
+    "runs native auth, resume, models, commands, and streaming through the ACP %s transport",
+    (wire) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -336,6 +346,7 @@ it.layer(layer)("AntigravityAdapter", (it) => {
                   ...process.env,
                   T3_ACP_ANTIGRAVITY: "1",
                   T3_ACP_REQUEST_LOG_PATH: requestLog,
+                  T3_ACP_WIRE: wire,
                 },
                 extendEnv: false,
               },
@@ -389,7 +400,7 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         const requests = yield* decodeRequestLog(lines);
         expect(
           requests
-            .filter((request) => request.method === "authenticate")
+            .filter((request) => request.method === (wire === "v1" ? "authenticate" : "auth/login"))
             .map((request) => request.params),
         ).toEqual([{ methodId: "oauth-personal" }, { methodId: "oauth-personal" }]);
         expect(requests.some((request) => request.method === "session/resume")).toBe(true);
@@ -398,7 +409,12 @@ it.layer(layer)("AntigravityAdapter", (it) => {
           requests
             .filter((request) => request.method === "session/set_config_option")
             .map((request) => request.params),
-        ).toContainEqual({ sessionId: "mock-session-1", configId: "mode", value: "auto_edit" });
+        ).toContainEqual({
+          sessionId: "mock-session-1",
+          configId: "mode",
+          ...(wire === "v2" ? { type: "id" } : {}),
+          value: "auto_edit",
+        });
       }),
   );
 
@@ -1277,35 +1293,111 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       const write = h.fileHandlers.write;
       if (!read || !write) return yield* Effect.die("File handlers were not registered.");
 
-      const full = yield* read({ sessionId: nativeSessionId, path: path.join(cwd, "notes.txt") });
+      const full = yield* read(
+        { sessionId: nativeSessionId, path: path.join(cwd, "notes.txt") },
+        requestContext,
+      );
       expect(full.content).toBe("one\ntwo\nthree\n");
-      const window = yield* read({
-        sessionId: nativeSessionId,
-        path: path.join(cwd, "notes.txt"),
-        line: 2,
-        limit: 1,
-      });
+      const window = yield* read(
+        { sessionId: nativeSessionId, path: path.join(cwd, "notes.txt"), line: 2, limit: 1 },
+        requestContext,
+      );
       expect(window.content).toBe("two");
 
-      yield* write({
-        sessionId: nativeSessionId,
-        path: path.join(cwd, "nested", "new.txt"),
-        content: "created",
-      });
-      expect(yield* fs.readFileString(path.join(cwd, "nested", "new.txt"))).toBe("created");
+      yield* write(
+        {
+          sessionId: nativeSessionId,
+          path: path.join(cwd, "nested", "deeper", "new.txt"),
+          content: "created",
+        },
+        requestContext,
+      );
+      expect(yield* fs.readFileString(path.join(cwd, "nested", "deeper", "new.txt"))).toBe(
+        "created",
+      );
 
-      const escape = yield* write({
-        sessionId: nativeSessionId,
-        path: path.join(outside, "escape.txt"),
-        content: "nope",
-      }).pipe(Effect.flip);
+      const escape = yield* write(
+        { sessionId: nativeSessionId, path: path.join(outside, "escape.txt"), content: "nope" },
+        requestContext,
+      ).pipe(Effect.flip);
       expect(escape._tag).toBe("AcpRequestError");
       expect(yield* fs.exists(path.join(outside, "escape.txt"))).toBe(false);
-      const missing = yield* read({
-        sessionId: nativeSessionId,
-        path: path.join(cwd, "missing.txt"),
-      }).pipe(Effect.flip);
+      const missing = yield* read(
+        { sessionId: nativeSessionId, path: path.join(cwd, "missing.txt") },
+        requestContext,
+      ).pipe(Effect.flip);
       expect(missing._tag).toBe("AcpRequestError");
+
+      // A link inside the workspace must not read or write through to a file outside it.
+      yield* fs.writeFileString(path.join(outside, "secret.txt"), "secret");
+      yield* fs.symlink(path.join(outside, "secret.txt"), path.join(cwd, "link.txt"));
+      const linkedRead = yield* read(
+        { sessionId: nativeSessionId, path: path.join(cwd, "link.txt") },
+        requestContext,
+      ).pipe(Effect.flip);
+      expect(linkedRead._tag).toBe("AcpRequestError");
+      const linkedWrite = yield* write(
+        { sessionId: nativeSessionId, path: path.join(cwd, "link.txt"), content: "nope" },
+        requestContext,
+      ).pipe(Effect.flip);
+      expect(linkedWrite._tag).toBe("AcpRequestError");
+      expect(yield* fs.readFileString(path.join(outside, "secret.txt"))).toBe("secret");
+
+      // A new path below a linked directory must not create directories through the link.
+      yield* fs.symlink(outside, path.join(cwd, "linked-dir"));
+      const nestedLinkedWrite = yield* write(
+        {
+          sessionId: nativeSessionId,
+          path: path.join(cwd, "linked-dir", "newdir", "file.txt"),
+          content: "nope",
+        },
+        requestContext,
+      ).pipe(Effect.flip);
+      expect(nestedLinkedWrite._tag).toBe("AcpRequestError");
+      expect(yield* fs.exists(path.join(outside, "newdir"))).toBe(false);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("offers T3 MCP through the stdio bridge and MCP-over-ACP", () =>
+    Effect.gen(function* () {
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-test"),
+        threadId,
+        providerSessionId: "provider-session",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:9/mcp",
+        authorizationHeader: "Bearer mcp-secret",
+        capabilities: new Set(),
+      });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+      );
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+
+      const bridge = h.launches[0]?.mcpServers?.[0];
+      expect(bridge).toMatchObject({
+        name: "t3-code",
+        args: expect.arrayContaining(["acp-mcp-bridge"]),
+        env: expect.arrayContaining([
+          { name: "T3_ACP_MCP_ENDPOINT", value: "http://127.0.0.1:9/mcp" },
+          { name: "T3_ACP_MCP_AUTHORIZATION", value: "Bearer mcp-secret" },
+        ]),
+      });
+      // The credential rides in the bridge environment, never on its command line.
+      expect(bridge).not.toMatchObject({
+        args: expect.arrayContaining([expect.stringContaining("mcp-secret")]),
+      });
+      expect(h.launches[0]?.acpMcpServers).toEqual([
+        { type: "acp", name: "t3-code", serverId: "t3-code" },
+      ]);
+
+      const connect = h.mcpHandlers.connect;
+      if (!connect) return yield* Effect.die("MCP-over-ACP handlers were not registered.");
+      const connected = yield* connect({ serverId: "t3-code" }, requestContext);
+      expect(connected.connectionId).toEqual(expect.any(String));
+      const foreign = yield* connect({ serverId: "other" }, requestContext).pipe(Effect.flip);
+      expect(foreign._tag).toBe("AcpRequestError");
     }).pipe(Effect.scoped),
   );
 

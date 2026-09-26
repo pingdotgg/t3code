@@ -7,7 +7,7 @@ import { it } from "@effect/vitest";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import { describe, expect } from "vite-plus/test";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
