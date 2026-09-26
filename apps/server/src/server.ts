@@ -509,8 +509,6 @@ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
 const REPLAY_MARKER_MAX_AGE = Duration.minutes(15);
 
 // Sweeps expired replay markers after activation, then every 10 minutes.
-// Keep this layer out of any span: the forked loop would hold its parent span
-// for the whole uptime.
 const ReplayMarkerPruneLive = Layer.effectDiscard(
   forkParked(
     ServerSecretStore.pruneExpiredReplayMarkers(

@@ -137,9 +137,6 @@ const isPlatformError = (value: unknown): value is PlatformError.PlatformError =
 export const isSecretAlreadyExistsError = (error: SecretStoreError): boolean =>
   "cause" in error && isPlatformError(error.cause) && error.cause.reason._tag === "AlreadyExists";
 
-// Every secret `name` is stored as `<secretsDir>/<name>.bin`.
-const SECRET_FILE_EXTENSION = ".bin";
-
 export class ServerSecretStore extends Context.Service<
   ServerSecretStore,
   {
@@ -172,8 +169,7 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  const resolveSecretPath = (name: string) =>
-    path.join(serverConfig.secretsDir, `${name}${SECRET_FILE_EXTENSION}`);
+  const resolveSecretPath = (name: string) => path.join(serverConfig.secretsDir, `${name}.bin`);
 
   const get: ServerSecretStore["Service"]["get"] = (name) =>
     fileSystem.readFile(resolveSecretPath(name)).pipe(
@@ -332,26 +328,20 @@ export const pruneExpiredReplayMarkers = Effect.fn("ServerSecretStore.pruneExpir
     const { secretsDir } = yield* ServerConfig.ServerConfig;
     const cutoff = (yield* Clock.currentTimeMillis) - Duration.toMillis(maxAge);
     const markers = (yield* fileSystem.readDirectory(secretsDir)).filter(
-      (name) =>
-        name.endsWith(SECRET_FILE_EXTENSION) && prefixes.some((prefix) => name.startsWith(prefix)),
+      (name) => name.endsWith(".bin") && prefixes.some((prefix) => name.startsWith(prefix)),
     );
     // `partition` visits every marker, so one locked file does not stop the sweep.
-    const [failures, removed] = yield* Effect.partition(
-      markers,
-      (name) => {
-        const markerPath = path.join(secretsDir, name);
-        return fileSystem.stat(markerPath).pipe(
-          Effect.flatMap((info) =>
-            Option.exists(info.mtime, (mtime) => mtime.getTime() < cutoff)
-              ? fileSystem.remove(markerPath).pipe(Effect.as(true))
-              : Effect.succeed(false),
-          ),
-          Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
-        );
-      },
-      // A large backlog must not take all 4 threads of libuv's fs pool.
-      { concurrency: 2 },
-    );
+    const [failures, removed] = yield* Effect.partition(markers, (name) => {
+      const markerPath = path.join(secretsDir, name);
+      return fileSystem.stat(markerPath).pipe(
+        Effect.flatMap((info) =>
+          Option.exists(info.mtime, (mtime) => mtime.getTime() < cutoff)
+            ? fileSystem.remove(markerPath).pipe(Effect.as(true))
+            : Effect.succeed(false),
+        ),
+        Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
+      );
+    });
     yield* Effect.annotateCurrentSpan({
       "secret_store.replay_markers.matched": markers.length,
       "secret_store.replay_markers.removed": removed.filter(Boolean).length,
