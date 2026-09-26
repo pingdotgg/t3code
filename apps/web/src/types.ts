@@ -18,6 +18,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import { videoMimeType } from "@t3tools/shared/video";
+import type { TerminalPaneLayout } from "./terminalPaneLayout";
 
 export { videoMimeType } from "@t3tools/shared/video";
 
@@ -32,8 +33,9 @@ export type ProjectScript = ContractProjectScript;
 
 export interface ThreadTerminalGroup {
   id: string;
+  /** Flat membership, always `layoutTerminalIds(layout)` — kept for cheap reads. */
   terminalIds: string[];
-  splitDirection?: "horizontal" | "vertical";
+  layout: TerminalPaneLayout;
 }
 
 export interface ChatImageAttachment extends ContractChatImageAttachment {

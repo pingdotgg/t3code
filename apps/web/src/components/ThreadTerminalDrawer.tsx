@@ -11,6 +11,7 @@ import {
   type TerminalSessionState,
 } from "@t3tools/client-runtime/state/terminal";
 import {
+  LayoutGrid,
   Plus,
   Square,
   SquareSplitHorizontal,
@@ -68,6 +69,13 @@ import {
   terminalDeleteShortcutData,
   terminalNavigationShortcutData,
 } from "../keybindings";
+import {
+  layoutDirection,
+  layoutHasMixedDirections,
+  layoutTerminalIds,
+  resolveTerminalPaneLayout,
+  type TerminalPaneLayout,
+} from "../terminalPaneLayout";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   MAX_TERMINALS_PER_GROUP,
@@ -1047,6 +1055,49 @@ function TerminalActionButton({ label, className, onClick, children }: TerminalA
   );
 }
 
+interface TerminalPaneTreeProps {
+  layout: TerminalPaneLayout;
+  activeTerminalId: string;
+  renderPane: (terminalId: string) => ReactNode;
+}
+
+/** Renders a split-pane tree: a leaf is one terminal, a split lays out its children in a grid. */
+function TerminalPaneTree({ layout, activeTerminalId, renderPane }: TerminalPaneTreeProps) {
+  if (layout.kind === "pane") {
+    return <>{renderPane(layout.terminalId)}</>;
+  }
+  return (
+    <div
+      className="grid h-full w-full min-w-0 gap-0 overflow-hidden"
+      style={
+        layout.direction === "vertical"
+          ? { gridTemplateRows: `repeat(${layout.children.length}, minmax(0, 1fr))` }
+          : { gridTemplateColumns: `repeat(${layout.children.length}, minmax(0, 1fr))` }
+      }
+    >
+      {layout.children.map((child, index) => {
+        const isActiveBranch = layoutTerminalIds(child).includes(activeTerminalId);
+        return (
+          <div
+            key={child.kind === "pane" ? child.terminalId : `split-${index}`}
+            className={`min-h-0 min-w-0 ${
+              layout.direction === "vertical"
+                ? "border-t first:border-t-0"
+                : "border-l first:border-l-0"
+            } ${isActiveBranch ? "border-border" : "border-border/70"}`}
+          >
+            <TerminalPaneTree
+              layout={child}
+              activeTerminalId={activeTerminalId}
+              renderPane={renderPane}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function ThreadTerminalDrawer({
   mode = "drawer",
   threadRef,
@@ -1180,12 +1231,19 @@ export default function ThreadTerminalDrawer({
         terminalGroup.id.trim().length > 0
           ? terminalGroup.id.trim()
           : `group-${nextTerminalIds[0] ?? normalizedTerminalIds[0] ?? ""}`;
+      const legacyDirection =
+        (terminalGroup as { splitDirection?: unknown }).splitDirection === "vertical"
+          ? "vertical"
+          : "horizontal";
+      const layout = resolveTerminalPaneLayout(
+        terminalGroup.layout,
+        nextTerminalIds,
+        legacyDirection,
+      );
       nextGroups.push({
         id: assignUniqueGroupId(baseGroupId),
-        terminalIds: nextTerminalIds,
-        ...(terminalGroup.splitDirection === "vertical"
-          ? { splitDirection: "vertical" as const }
-          : {}),
+        terminalIds: layoutTerminalIds(layout),
+        layout,
       });
     }
 
@@ -1194,6 +1252,7 @@ export default function ThreadTerminalDrawer({
       nextGroups.push({
         id: assignUniqueGroupId(`group-${terminalId}`),
         terminalIds: [terminalId],
+        layout: { kind: "pane", terminalId },
       });
     }
 
@@ -1220,11 +1279,12 @@ export default function ThreadTerminalDrawer({
     return indexByTerminal >= 0 ? indexByTerminal : 0;
   }, [activeTerminalGroupId, resolvedActiveTerminalId, resolvedTerminalGroups]);
 
-  const visibleTerminalIds =
-    resolvedTerminalGroups[resolvedActiveGroupIndex]?.terminalIds ??
-    (normalizedTerminalIds.length > 0 ? [resolvedActiveTerminalId] : []);
-  const splitDirection =
-    resolvedTerminalGroups[resolvedActiveGroupIndex]?.splitDirection ?? "horizontal";
+  const visibleLayout =
+    resolvedTerminalGroups[resolvedActiveGroupIndex]?.layout ??
+    (resolvedActiveTerminalId.length > 0
+      ? { kind: "pane" as const, terminalId: resolvedActiveTerminalId }
+      : null);
+  const visibleTerminalIds = visibleLayout ? layoutTerminalIds(visibleLayout) : [];
   const hasTerminalSidebar = normalizedTerminalIds.length > 1;
   const isSplitView = visibleTerminalIds.length > 1;
   const showGroupHeaders =
@@ -1495,67 +1555,47 @@ export default function ThreadTerminalDrawer({
           )}
         >
           <div className="min-w-0 flex-1">
-            {isSplitView ? (
-              <div
-                className="grid h-full w-full min-w-0 gap-0 overflow-hidden"
-                style={
-                  splitDirection === "vertical"
-                    ? {
-                        gridTemplateRows: `repeat(${visibleTerminalIds.length}, minmax(0, 1fr))`,
-                      }
-                    : {
-                        gridTemplateColumns: `repeat(${visibleTerminalIds.length}, minmax(0, 1fr))`,
-                      }
-                }
-              >
-                {visibleTerminalIds.map((terminalId) => {
+            {isSplitView && visibleLayout ? (
+              <TerminalPaneTree
+                layout={visibleLayout}
+                activeTerminalId={resolvedActiveTerminalId}
+                renderPane={(terminalId) => {
                   const terminalLaunchLocation = resolveTerminalLaunchLocation(terminalId);
                   return (
                     <div
-                      key={terminalId}
-                      className={`min-h-0 min-w-0 ${
-                        splitDirection === "vertical"
-                          ? "border-t first:border-t-0"
-                          : "border-l first:border-l-0"
-                      } ${
-                        terminalId === resolvedActiveTerminalId
-                          ? "border-border"
-                          : "border-border/70"
-                      }`}
+                      className="h-full"
                       onMouseDown={() => {
                         if (terminalId !== resolvedActiveTerminalId) {
                           onActiveTerminalChange(terminalId);
                         }
                       }}
                     >
-                      <div className="h-full">
-                        <TerminalViewport
-                          advancedTypography={advancedTypography}
-                          threadRef={threadRef}
-                          threadId={threadId}
-                          terminalId={terminalId}
-                          terminalLabel={terminalLabelById.get(terminalId) ?? "Terminal"}
-                          cwd={terminalLaunchLocation.cwd}
-                          {...(terminalLaunchLocation.worktreePath !== undefined
-                            ? { worktreePath: terminalLaunchLocation.worktreePath }
-                            : {})}
-                          {...(terminalLaunchLocation.runtimeEnv
-                            ? { runtimeEnv: terminalLaunchLocation.runtimeEnv }
-                            : {})}
-                          onSessionExited={() => onCloseTerminal(terminalId)}
-                          onAddTerminalContext={onAddTerminalContext}
-                          focusRequestId={focusRequestId}
-                          autoFocus={terminalId === resolvedActiveTerminalId}
-                          visible={visible}
-                          resizeEpoch={resizeEpoch}
-                          drawerHeight={drawerHeight}
-                          keybindings={keybindings}
-                        />
-                      </div>
+                      <TerminalViewport
+                        advancedTypography={advancedTypography}
+                        threadRef={threadRef}
+                        threadId={threadId}
+                        terminalId={terminalId}
+                        terminalLabel={terminalLabelById.get(terminalId) ?? "Terminal"}
+                        cwd={terminalLaunchLocation.cwd}
+                        {...(terminalLaunchLocation.worktreePath !== undefined
+                          ? { worktreePath: terminalLaunchLocation.worktreePath }
+                          : {})}
+                        {...(terminalLaunchLocation.runtimeEnv
+                          ? { runtimeEnv: terminalLaunchLocation.runtimeEnv }
+                          : {})}
+                        onSessionExited={() => onCloseTerminal(terminalId)}
+                        onAddTerminalContext={onAddTerminalContext}
+                        focusRequestId={focusRequestId}
+                        autoFocus={terminalId === resolvedActiveTerminalId}
+                        visible={visible}
+                        resizeEpoch={resizeEpoch}
+                        drawerHeight={drawerHeight}
+                        keybindings={keybindings}
+                      />
                     </div>
                   );
-                })}
-              </div>
+                }}
+              />
             ) : (
               <div className="h-full">
                 <TerminalViewport
@@ -1637,16 +1677,23 @@ export default function ThreadTerminalDrawer({
                     : (terminalGroup.terminalIds[0] ?? resolvedActiveTerminalId);
                   const terminalCount = terminalGroup.terminalIds.length;
                   const isSplitGroup = terminalCount > 1;
+                  const rootDirection = layoutDirection(terminalGroup.layout);
+                  const isMixedGroup =
+                    isSplitGroup && layoutHasMixedDirections(terminalGroup.layout);
                   const groupLabel = !isSplitGroup
                     ? "Single"
-                    : terminalGroup.splitDirection === "vertical"
-                      ? "Stacked"
-                      : "Side by side";
+                    : isMixedGroup
+                      ? "Mixed"
+                      : rootDirection === "vertical"
+                        ? "Stacked"
+                        : "Side by side";
                   const GroupIcon = !isSplitGroup
                     ? Square
-                    : terminalGroup.splitDirection === "vertical"
-                      ? SquareSplitVertical
-                      : SquareSplitHorizontal;
+                    : isMixedGroup
+                      ? LayoutGrid
+                      : rootDirection === "vertical"
+                        ? SquareSplitVertical
+                        : SquareSplitHorizontal;
 
                   return (
                     <div key={terminalGroup.id} className="pb-0.5">

@@ -1415,11 +1415,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       terminalIds={surface.terminalIds}
       activeTerminalId={surface.activeTerminalId}
       terminalGroups={[
-        {
-          id: surface.id,
-          terminalIds: surface.terminalIds,
-          ...(surface.splitDirection === "vertical" ? { splitDirection: "vertical" as const } : {}),
-        },
+        { id: surface.id, terminalIds: surface.terminalIds, layout: surface.layout },
       ]}
       activeTerminalGroupId={surface.id}
       focusRequestId={focusRequestId}
