@@ -2,6 +2,7 @@ import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
@@ -55,6 +56,20 @@ const mockSdk = () =>
     yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
     return query;
   });
+
+// Keeps the next probe in flight until `release`, then fails it.
+const holdNextProbe = (query: Effect.Success<ReturnType<typeof mockSdk>>) => {
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  query.mockImplementationOnce(() => {
+    started.resolve();
+    return {
+      initializationResult: () =>
+        release.promise.then(() => Promise.reject(new Error("probe timed out"))),
+    } as ReturnType<typeof ClaudeSdk.query>;
+  });
+  return { started: started.promise, release: () => release.resolve() };
+};
 
 it.effect("instances with the same probe input share one probe", () =>
   Effect.gen(function* () {
@@ -140,6 +155,55 @@ it.effect("retries a first failure after 30 seconds and a repeat failure after 5
     yield* TestClock.adjust("30 seconds");
     assert.isDefined(yield* read);
     assert.equal(query.mock.calls.length, 5);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+// `invalidate` can replace a probe that is still running. When that old probe
+// fails after the new one succeeded, the next failure is still a first one.
+it.effect("a replaced probe that fails late does not start a failure streak", () =>
+  Effect.gen(function* () {
+    const query = yield* mockSdk();
+    const held = holdNextProbe(query);
+    const cache = yield* ClaudeProbeCache.ClaudeProbeCache;
+    const read = cache.capabilities(input("/homes/work"));
+
+    const replaced = yield* Effect.forkChild(read);
+    yield* Effect.promise(() => held.started);
+    yield* cache.invalidate(input("/homes/work"));
+    assert.isDefined((yield* read)?.usage);
+    held.release();
+    assert.equal(yield* Fiber.join(replaced), undefined);
+
+    query.mockImplementationOnce(failedQuery);
+    yield* TestClock.adjust("5 minutes");
+    assert.equal(yield* read, undefined);
+    yield* TestClock.adjust("30 seconds");
+    assert.isDefined(yield* read);
+    assert.equal(query.mock.calls.length, 4);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect("dropFinished re-probes a finished input but joins a probe in flight", () =>
+  Effect.gen(function* () {
+    const query = yield* mockSdk();
+    const cache = yield* ClaudeProbeCache.ClaudeProbeCache;
+    const read = cache.capabilities(input("/homes/work"));
+
+    yield* read;
+    yield* cache.dropFinished(input("/homes/work"));
+    yield* read;
+    assert.equal(query.mock.calls.length, 2);
+
+    const held = holdNextProbe(query);
+    yield* cache.invalidate(input("/homes/work"));
+    const first = yield* Effect.forkChild(read);
+    yield* Effect.promise(() => held.started);
+    yield* cache.dropFinished(input("/homes/work"));
+    const second = yield* Effect.forkChild(read);
+    held.release();
+    yield* Fiber.join(first);
+    yield* Fiber.join(second);
+    assert.equal(query.mock.calls.length, 3);
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 

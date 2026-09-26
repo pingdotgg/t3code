@@ -22,6 +22,7 @@
  * binaries. That keeps the assertions focused on registry routing
  * behaviour rather than the runtime details of each provider.
  */
+import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -32,6 +33,7 @@ import {
   type OpenCodeSettings,
   ProviderDriverKind,
   type ProviderInstanceConfigMap,
+  type ProviderInstanceEnvironment,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { HostProcessPlatform, isHostWindows } from "@t3tools/shared/hostProcess";
@@ -42,6 +44,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { vi } from "vite-plus/test";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import type { BuiltInDriversEnv } from "../builtInDrivers.ts";
@@ -60,6 +63,8 @@ import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
+
+vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
 const TestHttpClientLive = Layer.succeed(
   HttpClient.HttpClient,
@@ -540,6 +545,76 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       });
       expect(outcome).toMatchObject({ _tag: "Success", success: "alreadyRedeemed" });
     }),
+  );
+
+  // Instances with the same binary, home, cwd and env vars read the same
+  // account, so they share one SDK probe. A new or edited instance probes again.
+  it.live("shares one Claude probe between instances with the same probe input", () =>
+    Effect.gen(function* () {
+      if (yield* isHostWindows) return;
+      const fixtures = yield* makeTildeProviderFixtures();
+      const probesMayFinish = Promise.withResolvers<void>();
+      const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            initializationResult: async () => {
+              await probesMayFinish.promise;
+              return {};
+            },
+            usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+              rate_limits_available: false,
+              rate_limits: null,
+            }),
+          }) as ReturnType<typeof ClaudeSdk.query>,
+      );
+      // The module mock records every earlier test's real probes too.
+      query.mockClear();
+      yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+      const probedAccounts = () =>
+        query.mock.calls
+          .map(([params]) => params.options?.env?.T3_TEST_ACCOUNT ?? "default")
+          .toSorted();
+      const claude = (displayName: string, environment: ProviderInstanceEnvironment = []) => ({
+        driver: ProviderDriverKind.make("claudeAgent"),
+        displayName,
+        enabled: true,
+        environment,
+        config: makeClaudeConfig({
+          enabled: true,
+          binaryPath: fixtures.claudeBinaryPath,
+          homePath: fixtures.claudeHomePath,
+        }),
+      });
+      const configMap: ProviderInstanceConfigMap = {
+        [ProviderInstanceId.make("claude_a")]: claude("A"),
+        [ProviderInstanceId.make("claude_b")]: claude("B"),
+        [ProviderInstanceId.make("claude_other")]: claude("Other", [
+          { name: "T3_TEST_ACCOUNT", value: "other", sensitive: false },
+        ]),
+      };
+      const { registry, mutator } = yield* makeProviderInstanceRegistry({
+        drivers: [ClaudeDriver],
+        configMap,
+      });
+      const refreshAll = registry.listInstances.pipe(
+        Effect.flatMap((instances) =>
+          Effect.forEach(instances, (instance) => instance.snapshot.refresh, {
+            concurrency: "unbounded",
+          }),
+        ),
+      );
+      // Like boot: every instance exists while the first probes are in flight.
+      probesMayFinish.resolve();
+      yield* refreshAll;
+      expect(probedAccounts()).toEqual(["default", "other"]);
+
+      yield* mutator.reconcile({
+        ...configMap,
+        [ProviderInstanceId.make("claude_a")]: claude("A renamed"),
+      });
+      yield* refreshAll;
+      expect(probedAccounts()).toEqual(["default", "default", "other"]);
+    }).pipe(Effect.provide(testLayer)),
   );
 
   it.live(

@@ -16,7 +16,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as MutableHashSet from "effect/MutableHashSet";
+import * as MutableHashMap from "effect/MutableHashMap";
+import * as Option from "effect/Option";
 
 import { type ClaudeCapabilitiesProbe, probeClaudeCapabilities } from "../Layers/ClaudeProvider.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
@@ -49,34 +50,43 @@ export class ClaudeProbeCache extends Context.Service<
     readonly capabilities: (
       input: ClaudeProbeInput,
     ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined>;
-    /** Drop the result for `input`, so the next read probes again. */
+    /**
+     * Drop the result for `input`, even one still in flight, so the next read
+     * starts a new probe.
+     */
     readonly invalidate: (input: ClaudeProbeInput) => Effect.Effect<void>;
+    /**
+     * Drop a finished result for `input`, but keep an in-flight probe to join.
+     * A new instance calls this, so creating or editing an instance still
+     * probes fresh, while instances created together at boot share one probe.
+     */
+    readonly dropFinished: (input: ClaudeProbeInput) => Effect.Effect<void>;
   }
 >()("t3/provider/Drivers/ClaudeProbeCache") {}
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  // Inputs whose last probe failed. Compares keys like the cache does.
-  const failing = MutableHashSet.empty<ClaudeProbeInput>();
+  // The latest probe started for each input, and whether it failed. A probe
+  // that `invalidate` replaced can finish after a newer one, so each probe
+  // writes only its own record and cannot start a failure streak late.
+  const latestRuns = MutableHashMap.empty<ClaudeProbeInput, { failed: boolean }>();
   const cache = yield* Cache.makeWith(
     (input: ClaudeProbeInput) =>
-      probeClaudeCapabilities(
-        input,
-        mergeProviderInstanceEnvironment(input.environment),
-        input.cwd,
-      ).pipe(
-        Effect.map((probe) => {
-          if (probe?.usage !== undefined) {
-            MutableHashSet.remove(failing, input);
-            return { probe, timeToLive: PROBE_TTL };
-          }
-          const repeat = MutableHashSet.has(failing, input);
-          // Bounded like the cache. A clear costs each input one early retry.
-          if (MutableHashSet.size(failing) >= MAX_CACHED_PROBES) MutableHashSet.clear(failing);
-          MutableHashSet.add(failing, input);
-          return { probe, timeToLive: repeat ? PROBE_TTL : FIRST_FAILURE_TTL };
-        }),
-      ),
+      Effect.gen(function* () {
+        const previous = MutableHashMap.get(latestRuns, input);
+        const repeat = Option.isSome(previous) && previous.value.failed;
+        // Bounded like the cache. A clear costs each input one early retry.
+        if (MutableHashMap.size(latestRuns) >= MAX_CACHED_PROBES) MutableHashMap.clear(latestRuns);
+        const run = { failed: false };
+        MutableHashMap.set(latestRuns, input, run);
+        const probe = yield* probeClaudeCapabilities(
+          input,
+          mergeProviderInstanceEnvironment(input.environment),
+          input.cwd,
+        );
+        run.failed = probe?.usage === undefined;
+        return { probe, timeToLive: run.failed && !repeat ? FIRST_FAILURE_TTL : PROBE_TTL };
+      }),
     {
       capacity: MAX_CACHED_PROBES,
       timeToLive: (exit) => (Exit.isSuccess(exit) ? exit.value.timeToLive : FIRST_FAILURE_TTL),
@@ -85,6 +95,12 @@ export const make = Effect.gen(function* () {
   return {
     capabilities: (input) => Cache.get(cache, input).pipe(Effect.map(({ probe }) => probe)),
     invalidate: (input) => Cache.invalidate(cache, input),
+    dropFinished: (input) =>
+      Cache.getSuccess(cache, input).pipe(
+        Effect.flatMap((finished) =>
+          Option.isSome(finished) ? Cache.invalidate(cache, input) : Effect.void,
+        ),
+      ),
   } satisfies ClaudeProbeCache["Service"];
 });
 
