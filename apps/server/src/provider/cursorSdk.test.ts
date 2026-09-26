@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- The probe is a plain Node child; this deadline kills it if it hangs.
 import * as NodeChildProcess from "node:child_process";
 import { describe, expect, it } from "vite-plus/test";
 
