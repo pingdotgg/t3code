@@ -40,6 +40,7 @@ import {
   normalizeRelayIssuer,
   RELAY_HEALTH_REQUEST_TYP,
   RELAY_HEALTH_RESPONSE_TYP,
+  RELAY_JWT_CLOCK_TOLERANCE_SECONDS,
   RELAY_LINK_PROOF_TYP,
   RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
   RELAY_MINT_REQUEST_TYP,
@@ -111,9 +112,17 @@ export const CLOUD_REPLAY_MARKER_PREFIXES = [
   CLOUD_HEALTH_NONCE_PREFIX,
   CLOUD_HEALTH_JTI_PREFIX,
 ] as const;
-// Keep the proof window well under REPLAY_MARKER_MAX_AGE in server.ts, or pruned markers allow replays.
 const CLOUD_PROOF_MAX_LIFETIME_SECONDS = 5 * 60;
 const CLOUD_PROOF_CLOCK_SKEW_SECONDS = 60;
+/**
+ * Longest time a cloud proof can pass again after its markers are written. `iat`
+ * may be up to the skew ahead, and `verifyRelayJwt` accepts the proof until `exp`
+ * plus its clock tolerance.
+ */
+export const CLOUD_REPLAY_WINDOW_SECONDS =
+  CLOUD_PROOF_MAX_LIFETIME_SECONDS +
+  CLOUD_PROOF_CLOCK_SKEW_SECONDS +
+  RELAY_JWT_CLOCK_TOLERANCE_SECONDS;
 // The desktop app stops its backends within seconds of writing the marker.
 const DESKTOP_UPDATE_RESTART_MARKER_TTL = Duration.minutes(1);
 const MANAGED_ENDPOINT_PROVISION_REQUEST_TIMEOUT = Duration.minutes(2);

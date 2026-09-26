@@ -11,8 +11,13 @@ import { stableStringify } from "./relaySigning.ts";
 
 const DPOP_TYP = "dpop+jwt";
 const DPOP_ALG = "ES256";
-// apps/server prunes DPoP replay markers after REPLAY_MARKER_MAX_AGE (server.ts). Keep this well under it.
 const DEFAULT_MAX_AGE_SECONDS = 300;
+const MAX_FUTURE_SKEW_SECONDS = 5;
+/**
+ * Longest time a proof checked with the default max age can pass again after it
+ * is first accepted. Replay protection must remember its jti at least this long.
+ */
+export const DPOP_REPLAY_WINDOW_SECONDS = DEFAULT_MAX_AGE_SECONDS + MAX_FUTURE_SKEW_SECONDS;
 
 export const DpopPublicJwk = DpopPublicJwkSchema;
 export type DpopPublicJwk = DpopPublicJwkType;
@@ -178,7 +183,7 @@ export function verifyDpopProof(input: {
 
     const maxAgeSeconds = input.maxAgeSeconds ?? DEFAULT_MAX_AGE_SECONDS;
     if (
-      payload.value.iat > input.nowEpochSeconds + 5 ||
+      payload.value.iat > input.nowEpochSeconds + MAX_FUTURE_SKEW_SECONDS ||
       input.nowEpochSeconds - payload.value.iat > maxAgeSeconds
     ) {
       return {

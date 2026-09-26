@@ -129,6 +129,7 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import {
   CLOUD_REPLAY_MARKER_PREFIXES,
+  CLOUD_REPLAY_WINDOW_SECONDS,
   connectHttpApiLayer,
   pendingServiceUpdateExists,
   reconcileDesiredCloudLinkIfStillDesired,
@@ -169,6 +170,7 @@ import {
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
+import { DPOP_REPLAY_WINDOW_SECONDS } from "@t3tools/shared/dpop";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
@@ -502,11 +504,13 @@ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
   }),
 );
 
-// A replay marker only matters while its proof can still be accepted: about
-// 305 s for DPoP (5 min max age, 5 s future skew) and about 420 s for cloud
-// proofs (5 min lifetime, 60 s skew each way). 15 minutes is a 2x margin.
-// Markers stay on disk, so a restart inside the window still blocks replays.
-const REPLAY_MARKER_MAX_AGE = Duration.minutes(15);
+// A replay marker only matters while its proof can still be accepted. Keep each
+// marker for twice the longest proof window, so a change to either window moves
+// this too. Markers stay on disk, so a restart inside the window still blocks
+// replays.
+const REPLAY_MARKER_MAX_AGE = Duration.seconds(
+  2 * Math.max(DPOP_REPLAY_WINDOW_SECONDS, CLOUD_REPLAY_WINDOW_SECONDS),
+);
 
 // Sweeps expired replay markers after activation, then every 10 minutes.
 const ReplayMarkerPruneLive = Layer.effectDiscard(
