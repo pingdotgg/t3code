@@ -1049,12 +1049,17 @@ function selectPermissionOptionId(
   return request.options.find((option) => option.kind === kind)?.optionId.trim() || undefined;
 }
 
+/**
+ * The runtime policy approves one request, so answer with the agent's
+ * allow-once option. Its allow-always option can outlive the session (Grok
+ * saves it for the whole project); use it only when no allow-once exists.
+ */
 function selectAutoApprovedPermissionOption(
   request: EffectAcpSchema.RequestPermissionRequest,
 ): string | undefined {
   return (
-    selectPermissionOptionId(request, "acceptForSession") ??
-    selectPermissionOptionId(request, "accept")
+    selectPermissionOptionId(request, "accept") ??
+    selectPermissionOptionId(request, "acceptForSession")
   );
 }
 
