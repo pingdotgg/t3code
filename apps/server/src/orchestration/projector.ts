@@ -13,7 +13,6 @@ import {
   OrchestrationMessage,
   OrchestrationSession,
   OrchestrationThread,
-  WORKTREE_SETUP_ACTIVITY_KIND,
 } from "@t3tools/contracts";
 import {
   legacyLinkedPullRequestOf,
@@ -59,6 +58,65 @@ import {
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
+// Every activity kind openRequests reads, and what it does to its request.
+// The command model keeps these kinds in full. It keeps other kinds only as
+// payload-free placeholders, and only while a request is open.
+const REQUEST_ACTIVITY_ROLES: ReadonlyMap<string, "open" | "resolve" | "fail"> = new Map([
+  ["approval.requested", "open"],
+  ["user-input.requested", "open"],
+  ["approval.resolved", "resolve"],
+  ["user-input.resolved", "resolve"],
+  ["provider.approval.respond.failed", "fail"],
+  ["provider.user-input.respond.failed", "fail"],
+]);
+
+function isStaleRequestFailureDetail(payload: Record<string, unknown>): boolean {
+  const detail = typeof payload.detail === "string" ? payload.detail.toLowerCase() : null;
+  if (detail === null) return false;
+  return (
+    detail.includes("stale pending approval request") ||
+    detail.includes("unknown pending approval request") ||
+    detail.includes("unknown pending permission request") ||
+    detail.includes("stale pending user-input request") ||
+    detail.includes("unknown pending user-input request") ||
+    detail.includes("unknown pending user input request") ||
+    detail.includes("unknown pending codex user input request")
+  );
+}
+
+/**
+ * Open approval and user-input requests in a thread's retained activities,
+ * keyed by requestId. The decider uses it to block settle, snooze, and history
+ * import. The clearing rules MUST match ProjectionPipeline's pending
+ * accounting behind the shell's hasPendingApprovals and hasPendingUserInput,
+ * or settle is rejected on threads that show nothing pending: a resolution
+ * always clears, and a respond failure clears only when its detail marks the
+ * request stale or unknown. Add a new request kind to REQUEST_ACTIVITY_ROLES.
+ */
+export function openRequests(thread: Pick<OrchestrationThread, "activities">) {
+  const requests = new Map<string, OrchestrationThread["activities"][number]>();
+  for (const activity of thread.activities) {
+    const role = REQUEST_ACTIVITY_ROLES.get(activity.kind);
+    if (role === undefined || !Predicate.isObject(activity.payload)) continue;
+    const requestId = activity.payload.requestId;
+    if (typeof requestId !== "string") continue;
+    if (role === "open") {
+      requests.set(requestId, activity);
+    } else if (role === "resolve" || isStaleRequestFailureDetail(activity.payload)) {
+      requests.delete(requestId);
+    }
+  }
+  return requests;
+}
+
+// Other activity kinds only matter because they count toward the 500 cap,
+// which can push an open request out of the decider's view. Once no request
+// is open, their placeholders can go.
+function dropIdlePlaceholders(activities: OrchestrationThread["activities"]) {
+  return openRequests({ activities }).size > 0
+    ? activities
+    : activities.filter((activity) => REQUEST_ACTIVITY_ROLES.has(activity.kind));
+}
 
 // Async questions can stay open while the agent produces more activity.
 // Match the database snapshot's pending-question retention.
@@ -78,13 +136,7 @@ function retainThreadActivities(activities: OrchestrationThread["activities"]) {
   }
   const pendingActivities = new Set(pending.values());
   return activities.filter(
-    (activity, index) =>
-      index >= recentStart ||
-      pendingActivities.has(activity) ||
-      // The worktree setup record is upserted under one id for the thread's
-      // whole life and is the only durable copy of a running setup; an async
-      // setup script can outlast a chatty first turn.
-      activity.kind === WORKTREE_SETUP_ACTIVITY_KIND,
+    (activity, index) => index >= recentStart || pendingActivities.has(activity),
   );
 }
 
@@ -263,32 +315,6 @@ function retainThreadMessagesAfterRevert(
     }
   }
 
-  const retainedAssistantCount = messages.filter(
-    (message) =>
-      message.role === "assistant" &&
-      !isImportedAgentSessionMessageId(message.id) &&
-      retainedMessageIds.has(message.id),
-  ).length;
-  const missingAssistantCount = Math.max(0, turnCount - retainedAssistantCount);
-  if (missingAssistantCount > 0) {
-    const fallbackAssistantMessages = messages
-      .filter(
-        (message) =>
-          message.role === "assistant" &&
-          !retainedMessageIds.has(message.id) &&
-          (message.turnId === null || retainedTurnIds.has(message.turnId)),
-      )
-      .toSorted(
-        (left, right) =>
-          compareDateTimeStrings(left.createdAt, right.createdAt) ||
-          left.id.localeCompare(right.id),
-      )
-      .slice(0, missingAssistantCount);
-    for (const message of fallbackAssistantMessages) {
-      retainedMessageIds.add(message.id);
-    }
-  }
-
   return messages.filter((message) => retainedMessageIds.has(message.id));
 }
 
@@ -336,6 +362,15 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
   };
 }
 
+/**
+ * Projects one event onto the engine's private command read model. Only the
+ * decider and the engine's command checks read it; clients read the SQL
+ * projections. It lives for the whole server process, so it keeps only what
+ * the decider reads: user messages, the first non-user message (without its
+ * text) for the history-import guard, request activities, and checkpoints
+ * without their file lists. While a request is open, other activities stay as
+ * payload-free placeholders so the activity cap counts them as before.
+ */
 export function projectEvent(
   model: OrchestrationReadModel,
   event: OrchestrationEvent,
@@ -786,13 +821,24 @@ export function projectEvent(
         if (!thread) {
           return nextBase;
         }
+        // The decider reads user messages. The history-import guard only needs
+        // to know that a message exists, so a thread with no message keeps
+        // its first non-user message, without the text.
+        if (payload.role !== "user" && thread.messages.length > 0) {
+          return {
+            ...nextBase,
+            threads: patchThreadAt(nextBase.threads, threadIndex, {
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }
 
         const message: OrchestrationMessage = yield* decodeForEvent(
           OrchestrationMessage,
           {
             id: payload.messageId,
             role: payload.role,
-            text: payload.text,
+            text: payload.role === "user" ? payload.text : "",
             ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
             ...(payload.context !== undefined ? { context: payload.context } : {}),
             turnId: payload.turnId,
@@ -952,7 +998,8 @@ export function projectEvent(
             checkpointTurnCount: payload.checkpointTurnCount,
             checkpointRef: payload.checkpointRef,
             status: payload.status,
-            files: payload.files,
+            // The decider never reads file lists; they stay in SQL.
+            files: [],
             assistantMessageId: payload.assistantMessageId,
             completedAt: payload.completedAt,
           },
@@ -1033,7 +1080,9 @@ export function projectEvent(
             thread.proposedPlans,
             retainedTurnIds,
           ).slice(-200);
-          const activities = retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds);
+          const activities = dropIdlePlaceholders(
+            retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds),
+          );
 
           const latestCheckpoint = checkpoints.at(-1) ?? null;
           const latestTurn =
@@ -1075,12 +1124,25 @@ export function projectEvent(
           if (!thread) {
             return nextBase;
           }
+          // Other kinds are kept without their payload, and only while a
+          // request is open (see dropIdlePlaceholders).
+          const isRequest = REQUEST_ACTIVITY_ROLES.has(payload.activity.kind);
+          if (!isRequest && openRequests(thread).size === 0) {
+            return {
+              ...nextBase,
+              threads: patchThreadAt(nextBase.threads, threadIndex, {
+                updatedAt: event.occurredAt,
+              }),
+            };
+          }
 
-          const activities = retainThreadActivities(
-            [
-              ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
-              payload.activity,
-            ].toSorted(compareThreadActivities),
+          const activities = dropIdlePlaceholders(
+            retainThreadActivities(
+              [
+                ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
+                isRequest ? payload.activity : { ...payload.activity, payload: null },
+              ].toSorted(compareThreadActivities),
+            ),
           );
 
           return {
