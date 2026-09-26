@@ -75,6 +75,7 @@ import {
   ProviderValidationError,
   ProviderWorkspaceMissingError,
 } from "../Errors.ts";
+import * as DirenvEnvironment from "../DirenvEnvironment.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
@@ -911,6 +912,159 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     ),
   );
 
+  const direnv = yield* Effect.serviceOption(DirenvEnvironment.DirenvEnvironment);
+  const direnvEnabled = Effect.fn("ProviderService.direnvEnabled")(
+    function* (threadId: ThreadId) {
+      const settings = yield* serverSettings.getSettings;
+      const overridden = Object.values(settings.projectSettingsOverrides).some(
+        (entry) => entry.enableDirenvEnvironment !== undefined,
+      );
+      if (!overridden || Option.isNone(projectionQuery)) return settings.enableDirenvEnvironment;
+      const thread = yield* projectionQuery.value.getThreadShellById(threadId);
+      if (Option.isNone(thread)) return settings.enableDirenvEnvironment;
+      return resolveProjectSettings(settings, thread.value.projectId).settings
+        .enableDirenvEnvironment;
+    },
+    Effect.catch((cause) =>
+      Effect.logWarning(
+        "Could not read server settings; skipping the direnv environment for this session.",
+        { cause },
+      ).pipe(Effect.as(false)),
+    ),
+  );
+
+  /**
+   * What the thread's session was started with. `fresh` marks a reload done
+   * by `refreshProjectEnvironment`, which the restart it triggers consumes
+   * instead of evaluating the `.envrc` a second time.
+   */
+  type DirenvThreadState =
+    | { readonly status: "none"; readonly cwd: string }
+    | {
+        readonly status: "loaded";
+        readonly cwd: string;
+        readonly diff: DirenvEnvironment.DirenvEnvironmentDiff;
+        readonly fresh: boolean;
+      }
+    | { readonly status: "failed"; readonly cwd: string; readonly message: string };
+  const direnvStates = new Map<ThreadId, DirenvThreadState>();
+  const clearDirenvState = (threadId: ThreadId) => {
+    direnvStates.delete(threadId);
+    DirenvEnvironment.setThreadDirenvEnvironment(threadId, undefined);
+  };
+  const recordDirenvResult = (
+    threadId: ThreadId,
+    cwd: string,
+    result: DirenvEnvironment.DirenvLoadResult,
+    fresh: boolean,
+  ) => {
+    switch (result._tag) {
+      case "None":
+        clearDirenvState(threadId);
+        direnvStates.set(threadId, { status: "none", cwd });
+        return;
+      case "Loaded":
+        direnvStates.set(threadId, { status: "loaded", cwd, diff: result.diff, fresh });
+        DirenvEnvironment.setThreadDirenvEnvironment(threadId, result.diff);
+        return;
+      case "Failed":
+        // A running session keeps whatever it was started with.
+        direnvStates.set(threadId, { status: "failed", cwd, message: result.message });
+        return;
+    }
+  };
+
+  type DirenvFailure = Extract<DirenvEnvironment.DirenvLoadResult, { _tag: "Failed" }>;
+  const DIRENV_WARNING_MESSAGES: Record<DirenvEnvironment.DirenvFailureReason, string> = {
+    blocked: "The project's .envrc is blocked, so its direnv environment was not loaded.",
+    timeout: "Loading the project's direnv environment timed out.",
+    failed: "The project's direnv environment failed to load.",
+  };
+  const publishDirenvWarning = (
+    target: {
+      readonly threadId: ThreadId;
+      readonly provider: ProviderDriverKind;
+      readonly providerInstanceId?: ProviderInstanceId | undefined;
+    },
+    failure: DirenvFailure | undefined,
+  ) =>
+    failure === undefined
+      ? Effect.void
+      : Effect.gen(function* () {
+          const createdAt = yield* nowIso;
+          yield* publishRuntimeEvent({
+            eventId: EventId.make(`direnv:${target.threadId}:${createdAt}`),
+            provider: target.provider,
+            ...(target.providerInstanceId ? { providerInstanceId: target.providerInstanceId } : {}),
+            threadId: target.threadId,
+            createdAt,
+            type: "runtime.warning",
+            payload: {
+              message: DIRENV_WARNING_MESSAGES[failure.reason],
+              detail: failure.message,
+              ...(failure.reason === "blocked"
+                ? { action: { type: "direnv.allow" as const } }
+                : {}),
+            },
+          });
+        });
+
+  /**
+   * Load the project's direnv environment for the adapter about to start a
+   * session in `cwd`. Returns a failure to publish once the session exists.
+   */
+  const prepareDirenvEnvironment = Effect.fn("ProviderService.prepareDirenvEnvironment")(function* (
+    threadId: ThreadId,
+    cwd: string | undefined,
+  ) {
+    const current = direnvStates.get(threadId);
+    if (current?.status === "loaded" && current.fresh && current.cwd === cwd) {
+      direnvStates.set(threadId, { ...current, fresh: false });
+      return undefined;
+    }
+    clearDirenvState(threadId);
+    if (Option.isNone(direnv) || cwd === undefined) return undefined;
+    if (!(yield* direnvEnabled(threadId))) return undefined;
+    const result = yield* direnv.value.load(cwd);
+    yield* Effect.annotateCurrentSpan({ "provider.direnv.result": result._tag });
+    recordDirenvResult(threadId, cwd, result, false);
+    return result._tag === "Failed" ? result : undefined;
+  });
+
+  const refreshProjectEnvironment: ProviderServiceMethod<"refreshProjectEnvironment"> = Effect.fn(
+    "ProviderService.refreshProjectEnvironment",
+  )(function* (input) {
+    const { threadId, cwd } = input;
+    const current = direnvStates.get(threadId);
+    if (Option.isNone(direnv)) return false;
+    if (!(yield* direnvEnabled(threadId))) {
+      // Turned off mid-thread: restart without what the session loaded.
+      const hadEnvironment = current?.status === "loaded";
+      clearDirenvState(threadId);
+      return hadEnvironment;
+    }
+    const previous = current?.status === "loaded" && current.cwd === cwd ? current.diff : undefined;
+    const result = yield* direnv.value.load(cwd, previous);
+    yield* Effect.annotateCurrentSpan({ "provider.direnv.refresh": result._tag });
+    if (result._tag === "Failed") {
+      const repeated = current?.status === "failed" && current.message === result.message;
+      recordDirenvResult(threadId, cwd, result, false);
+      if (repeated) return false;
+      const binding = Option.getOrUndefined(
+        yield* directory.getBinding(threadId).pipe(Effect.orElseSucceed(() => Option.none())),
+      );
+      if (binding) yield* publishDirenvWarning(binding, result);
+      return false;
+    }
+    if (result._tag === "None") {
+      recordDirenvResult(threadId, cwd, result, false);
+      return current?.status === "loaded";
+    }
+    if (!result.changed) return false;
+    recordDirenvResult(threadId, cwd, result, true);
+    return true;
+  });
+
   const agentAccessCapabilities = Effect.fn("ProviderService.agentAccessCapabilities")(function* (
     threadId: ThreadId,
   ) {
@@ -1278,6 +1432,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
 
       yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
+      const direnvFailure = yield* prepareDirenvEnvironment(input.binding.threadId, persistedCwd);
       const resumed = yield* adapter
         .startSession({
           threadId: input.binding.threadId,
@@ -1301,6 +1456,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         { ...resumed, providerInstanceId: bindingInstanceId },
         input.binding.threadId,
       );
+      yield* publishDirenvWarning(resumed, direnvFailure);
       yield* analytics.record("provider.session.recovered", {
         provider: resumed.provider,
         strategy: "resume-thread",
@@ -1509,6 +1665,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
         yield* clearTurnAnalyticsSession(resolvedInstanceId, threadId);
         yield* prepareMcpSession(threadId, resolvedInstanceId);
+        const direnvFailure = yield* prepareDirenvEnvironment(threadId, effectiveCwd);
         const session = yield* adapter
           .startSession({
             ...input,
@@ -1537,6 +1694,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         yield* upsertSessionBinding(sessionWithInstance, threadId, {
           modelSelection: input.modelSelection,
         });
+        yield* publishDirenvWarning(sessionWithInstance, direnvFailure);
         yield* analytics.record("provider.session.started", {
           provider: sessionWithInstance.provider,
           runtimeMode: input.runtimeMode,
@@ -2076,6 +2234,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         timedOutNativeCompactions.delete(input.threadId);
         yield* clearTurnAnalyticsSession(routed.instanceId, input.threadId);
         yield* clearMcpSession(input.threadId);
+        clearDirenvState(input.threadId);
         yield* directory.upsert({
           threadId: input.threadId,
           provider: routed.adapter.provider,
@@ -2369,6 +2528,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     yield* Effect.forEach(currentAdapters, ([, adapter]) => adapter.stopAll()).pipe(Effect.asVoid);
     yield* McpSessionRegistry.revokeAllActiveMcpCredentials();
     McpProviderSession.clearAllMcpProviderSessions();
+    direnvStates.clear();
+    DirenvEnvironment.clearAllThreadDirenvEnvironments();
     // Stopped rows stay for their resume cursors, so long-lived installs hold
     // thousands. Only rewrite the ones this shutdown actually stops.
     const bindings = yield* directory.listBindings().pipe(
@@ -2426,6 +2587,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     assertConversationRollbackSupported,
     rollbackConversation,
     uploadFeedback,
+    refreshProjectEnvironment,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
     // independently receive all runtime events.

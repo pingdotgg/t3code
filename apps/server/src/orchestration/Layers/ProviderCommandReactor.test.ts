@@ -357,6 +357,9 @@ describe("ProviderCommandReactor", () => {
     ];
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
+    const refreshProjectEnvironment = vi.fn<ProviderServiceShape["refreshProjectEnvironment"]>(() =>
+      Effect.succeed(false),
+    );
     const service: ProviderServiceShape = {
       startSession: startSession as ProviderServiceShape["startSession"],
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
@@ -398,6 +401,7 @@ describe("ProviderCommandReactor", () => {
       },
       rollbackConversation: () => unsupported(),
       uploadFeedback: () => unsupported(),
+      refreshProjectEnvironment,
       get streamEvents() {
         return Stream.fromPubSub(runtimeEventPubSub);
       },
@@ -615,6 +619,7 @@ describe("ProviderCommandReactor", () => {
         ),
       tryHandlePromptCommand,
       startSession,
+      refreshProjectEnvironment,
       sendTurn,
       compactThread,
       interruptTurn,
@@ -3050,6 +3055,45 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(() => harness.sendTurn.mock.calls.length === 2);
     expect(harness.startSession.mock.calls.length).toBe(1);
+    expect(harness.stopSession.mock.calls.length).toBe(0);
+  });
+
+  it("resumes the provider session when the project environment changed", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnStart = (id: string, text: string) =>
+      Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-turn-start-direnv-${id}`),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId(`user-message-direnv-${id}`),
+            role: "user",
+            text,
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
+
+    await turnStart("1", "first");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    // For example, the user ran `direnv allow` after the first turn.
+    harness.refreshProjectEnvironment.mockReturnValueOnce(Effect.succeed(true));
+    await turnStart("2", "second");
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(harness.refreshProjectEnvironment).toHaveBeenCalledWith({
+      threadId: ThreadId.make("thread-1"),
+      cwd: expect.any(String),
+    });
+    expect(harness.startSession.mock.calls.length).toBe(2);
+    expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+      resumeCursor: { opaque: "resume-1" },
+    });
     expect(harness.stopSession.mock.calls.length).toBe(0);
   });
 

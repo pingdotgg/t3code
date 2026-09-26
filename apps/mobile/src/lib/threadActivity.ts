@@ -10,6 +10,7 @@ import type {
   OrchestrationLatestTurn,
   OrchestrationThread,
   OrchestrationThreadActivity,
+  RuntimeWarningAction,
   ToolLifecycleItemType,
   TurnId,
   UserInputQuestion,
@@ -30,6 +31,7 @@ import {
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
   workLogEntryIsToolLike,
+  readRuntimeWarningAction,
   type ToolGroupSummaryKind,
   type WorkLogToolLifecycleStatus,
 } from "@t3tools/client-runtime/work-log/presentation";
@@ -101,6 +103,8 @@ export interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   sourceActivityKind?: OrchestrationThreadActivity["kind"];
+  /** Button a runtime warning offers, such as allowing a blocked `.envrc`. */
+  warningAction?: RuntimeWarningAction;
   toolCallId?: string;
   /**
    * One row per workflow run or per-turn batch of direct spawns, like web's
@@ -574,6 +578,8 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     const message = asTrimmedString(payload?.message);
     if (message) entry.detail = message;
   }
+  const warningAction = readRuntimeWarningAction(activity.kind, payload);
+  if (warningAction) entry.warningAction = warningAction;
   if (viewedImagePath) {
     entry.viewedImagePath = viewedImagePath;
   }

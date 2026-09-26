@@ -140,6 +140,7 @@ function createProviderServiceHarness(
       }),
     rollbackConversation,
     uploadFeedback: () => unsupported(),
+    refreshProjectEnvironment: () => Effect.succeed(false),
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
     },

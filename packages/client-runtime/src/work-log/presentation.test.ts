@@ -4,6 +4,7 @@ import { ThreadId } from "@t3tools/contracts";
 
 import {
   commandDetailRepeatsCommand,
+  readRuntimeWarningAction,
   extractCommandOutputText,
   resolveViewedImageAsset,
   resolveWorkEntryToolPresentation,
@@ -708,5 +709,25 @@ describe("device group summaries", () => {
         },
       ]),
     ).toBe("Used 1 tool");
+  });
+});
+
+describe("readRuntimeWarningAction", () => {
+  it("reads the action a runtime warning offers", () => {
+    expect(
+      readRuntimeWarningAction("runtime.warning", {
+        message: "The project's .envrc is blocked.",
+        action: { type: "direnv.allow" },
+      }),
+    ).toEqual({ type: "direnv.allow" });
+  });
+
+  it("ignores unknown actions and other activity kinds", () => {
+    expect(
+      readRuntimeWarningAction("runtime.warning", { action: { type: "rm.rf" } }),
+    ).toBeUndefined();
+    expect(
+      readRuntimeWarningAction("runtime.error", { action: { type: "direnv.allow" } }),
+    ).toBeUndefined();
   });
 });

@@ -64,6 +64,7 @@ import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
+import * as DirenvEnvironment from "../DirenvEnvironment.ts";
 import { makeProviderServiceLive } from "./ProviderService.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
@@ -5218,6 +5219,204 @@ describe("agent browser access", () => {
         { withoutOrchestration: true },
       );
       assert.deepEqual(issued, [{ threadId, capabilities: ["preview", "pull-requests"] }]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("ProviderService direnv environment", () => {
+  const cwd = NodeOS.tmpdir();
+  const envrcPath = `${cwd}/.envrc`;
+  const nixDiff = { PATH: "/nix/store/x/bin:/usr/bin", DIRENV_DIFF: "v1" };
+  const blocked: DirenvEnvironment.DirenvLoadResult = {
+    _tag: "Failed",
+    envrcPath,
+    reason: "blocked",
+    message: `${envrcPath} is blocked. Run \`direnv allow\` to approve its content`,
+  };
+
+  /**
+   * Runs `body` against a live ProviderService whose direnv loader answers
+   * from `results` in order and records each call.
+   */
+  const withProviderService = <A, E>(
+    results: ReadonlyArray<DirenvEnvironment.DirenvLoadResult>,
+    body: (provider: ProviderService.ProviderService["Service"]) => Effect.Effect<A, E, never>,
+    enableDirenvEnvironment = true,
+  ) =>
+    Effect.gen(function* () {
+      const loads: Array<{ cwd: string; previous: unknown }> = [];
+      const remaining = [...results];
+      const codex = makeFakeCodexAdapter();
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(
+          Layer.succeed(
+            ProviderAdapterRegistry.ProviderAdapterRegistry,
+            makeAdapterRegistryMock({ [CODEX_DRIVER]: codex.adapter }),
+          ),
+        ),
+        Layer.provide(
+          ProviderSessionDirectoryLive.pipe(
+            Layer.provide(
+              ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistenceMemory)),
+            ),
+          ),
+        ),
+        Layer.provide(
+          Layer.succeed(DirenvEnvironment.DirenvEnvironment, {
+            load: (loadCwd, previous) =>
+              Effect.sync(() => {
+                loads.push({ cwd: loadCwd, previous });
+                return remaining.shift() ?? { _tag: "None" };
+              }),
+            allow: () => Effect.die("unused"),
+          }),
+        ),
+        Layer.provide(ServerSettings.ServerSettingsService.layerTest({ enableDirenvEnvironment })),
+        Layer.provide(serverConfigTestLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      );
+      const value = yield* Effect.gen(function* () {
+        return yield* body(yield* ProviderService.ProviderService);
+      }).pipe(Effect.provide(providerLayer));
+      return { value, loads };
+    });
+
+  const start = (provider: ProviderService.ProviderService["Service"], threadId: ThreadId) =>
+    provider.startSession(threadId, {
+      provider: CODEX_DRIVER,
+      providerInstanceId: codexInstanceId,
+      threadId,
+      cwd,
+      runtimeMode: "full-access",
+    });
+
+  const nextWarning = (provider: ProviderService.ProviderService["Service"], threadId: ThreadId) =>
+    provider.streamEvents.pipe(
+      Stream.filter((event) => event.threadId === threadId && event.type === "runtime.warning"),
+      Stream.runHead,
+      Effect.forkChild({ startImmediately: true }),
+    );
+
+  it.effect("hands the session cwd's direnv environment to the adapter", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-direnv-loaded");
+
+      const { value: diff, loads } = yield* withProviderService(
+        [{ _tag: "Loaded", diff: nixDiff, changed: true }],
+        (provider) =>
+          start(provider, threadId).pipe(
+            // Read while the service is alive; shutting it down clears every thread.
+            Effect.map(() => DirenvEnvironment.readThreadDirenvEnvironment(threadId)),
+          ),
+      );
+
+      assert.deepEqual(loads, [{ cwd, previous: undefined }]);
+      assert.deepEqual(diff, nixDiff);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("skips direnv when the setting is off", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-direnv-disabled");
+
+      const { loads } = yield* withProviderService(
+        [{ _tag: "Loaded", diff: nixDiff, changed: true }],
+        (provider) => start(provider, threadId),
+        false,
+      );
+
+      assert.deepEqual(loads, []);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("warns with an allow action when the .envrc is blocked", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-direnv-blocked");
+
+      const { value } = yield* withProviderService([blocked], (provider) =>
+        Effect.gen(function* () {
+          const warning = yield* nextWarning(provider, threadId);
+          yield* start(provider, threadId);
+          return {
+            warning: Option.getOrThrow(yield* Fiber.join(warning)),
+            diff: DirenvEnvironment.readThreadDirenvEnvironment(threadId),
+          };
+        }),
+      );
+
+      assert.equal(value.diff, undefined);
+      assert.equal(value.warning.type, "runtime.warning");
+      if (value.warning.type === "runtime.warning") {
+        assert.equal(value.warning.payload.detail, blocked._tag === "Failed" && blocked.message);
+        assert.deepEqual(value.warning.payload.action, { type: "direnv.allow" });
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("picks up a later direnv allow without evaluating the .envrc twice", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-direnv-allowed-later");
+
+      const { value, loads } = yield* withProviderService(
+        [blocked, { _tag: "Loaded", diff: nixDiff, changed: true }],
+        (provider) =>
+          Effect.gen(function* () {
+            yield* start(provider, threadId);
+            const changed = yield* provider.refreshProjectEnvironment({ threadId, cwd });
+            // The reactor restarts the session when the environment changed.
+            yield* start(provider, threadId);
+            return { changed, diff: DirenvEnvironment.readThreadDirenvEnvironment(threadId) };
+          }),
+      );
+
+      assert.equal(value.changed, true);
+      assert.deepEqual(value.diff, nixDiff);
+      assert.equal(loads.length, 2);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("checks a loaded environment against what the session started with", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-direnv-unchanged");
+
+      const { value: changed, loads } = yield* withProviderService(
+        [
+          { _tag: "Loaded", diff: nixDiff, changed: true },
+          { _tag: "Loaded", diff: nixDiff, changed: false },
+        ],
+        (provider) =>
+          start(provider, threadId).pipe(
+            Effect.andThen(provider.refreshProjectEnvironment({ threadId, cwd })),
+          ),
+      );
+
+      assert.equal(changed, false);
+      assert.deepEqual(loads[1], { cwd, previous: nixDiff });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not repeat the warning while the .envrc stays blocked", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-direnv-still-blocked");
+
+      const { value } = yield* withProviderService([blocked, blocked], (provider) =>
+        Effect.gen(function* () {
+          yield* start(provider, threadId);
+          const warning = yield* nextWarning(provider, threadId);
+          const changed = yield* provider.refreshProjectEnvironment({ threadId, cwd });
+          yield* Fiber.interrupt(warning);
+          return { changed, warning: warning.pollUnsafe() };
+        }),
+      );
+
+      assert.equal(value.changed, false);
+      assert.equal(value.warning?._tag === "Success" && Option.isSome(value.warning.value), false);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

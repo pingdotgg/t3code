@@ -35,6 +35,7 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as DirenvEnvironment from "../DirenvEnvironment.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
   ProviderAdapterProcessError,
@@ -2858,7 +2859,10 @@ export function makeOpenCodeAdapter(
                 serverUrl,
                 ...(serverPassword ? { serverPassword } : {}),
                 environment: McpProviderSession.withAgentDeviceEnvironment(
-                  options?.environment ?? process.env,
+                  DirenvEnvironment.withThreadDirenvEnvironment(
+                    options?.environment ?? process.env,
+                    input.threadId,
+                  ),
                   mcpSession,
                 ),
               });

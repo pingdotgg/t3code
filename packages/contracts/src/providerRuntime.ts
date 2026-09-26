@@ -801,9 +801,17 @@ const ToolDeniedPayload = Schema.Struct({
 });
 export type ToolDeniedPayload = typeof ToolDeniedPayload.Type;
 
+/** Something the user can do about a warning, rendered as a button on its row. */
+export const RuntimeWarningAction = Schema.Struct({
+  /** `direnv allow` the thread's `.envrc` (`projectEnvironment.allowDirenv`). */
+  type: Schema.Literal("direnv.allow"),
+});
+export type RuntimeWarningAction = typeof RuntimeWarningAction.Type;
+
 const RuntimeWarningPayload = Schema.Struct({
   message: TrimmedNonEmptyStringSchema,
   detail: Schema.optional(Schema.Unknown),
+  action: Schema.optional(RuntimeWarningAction),
 });
 export type RuntimeWarningPayload = typeof RuntimeWarningPayload.Type;
 

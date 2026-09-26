@@ -14,6 +14,7 @@ import {
   extractCommandOutputText,
   extractWorkLogToolLifecycleStatus,
   isWorktreeSetupActivity,
+  readRuntimeWarningAction,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
   workLogEntryIsToolLike,
@@ -26,6 +27,7 @@ import {
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
+  type RuntimeWarningAction,
   type ToolLifecycleItemType,
   type ThreadId,
   type TurnId,
@@ -78,6 +80,8 @@ export interface WorkLogEntry {
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   /** Originating orchestration activity kind (e.g. `user-input.requested`) for row chrome. */
   sourceActivityKind?: OrchestrationThreadActivity["kind"];
+  /** Button a runtime warning offers, such as allowing a blocked `.envrc`. */
+  warningAction?: RuntimeWarningAction;
   /** Grouping key for subagent lifecycle rows (one row per agent). */
   taskId?: string;
   /** Agent role (subagent_type) for labeled timeline rows. */
@@ -607,6 +611,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     ) {
       entry.detail = message;
     }
+  }
+  const warningAction = readRuntimeWarningAction(activity.kind, payload);
+  if (warningAction) {
+    entry.warningAction = warningAction;
   }
   if (viewedImagePath) {
     entry.viewedImagePath = viewedImagePath;

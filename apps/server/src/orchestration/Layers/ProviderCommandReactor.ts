@@ -779,13 +779,20 @@ const make = Effect.gen(function* () {
         requestedModelSelection !== undefined &&
         !Equal.equals(previousModelSelection, requestedModelSelection);
 
-      if (
-        !runtimeModeChanged &&
-        !cwdChanged &&
-        !instanceChanged &&
-        !shouldRestartForModelChange &&
-        !shouldRestartForModelSelectionChange
-      ) {
+      const otherRestartReason =
+        runtimeModeChanged ||
+        cwdChanged ||
+        instanceChanged ||
+        shouldRestartForModelChange ||
+        shouldRestartForModelSelectionChange;
+      // A restart re-evaluates direnv anyway; only a reused session needs the
+      // shell-hook style check for an allowed, edited or newly added `.envrc`.
+      const projectEnvironmentChanged =
+        !otherRestartReason && effectiveCwd !== undefined
+          ? yield* providerService.refreshProjectEnvironment({ threadId, cwd: effectiveCwd })
+          : false;
+
+      if (!otherRestartReason && !projectEnvironmentChanged) {
         yield* refreshWorkspaceSnapshot;
         return existingSessionThreadId;
       }
@@ -810,6 +817,7 @@ const make = Effect.gen(function* () {
         instanceChanged,
         shouldRestartForModelChange,
         shouldRestartForModelSelectionChange,
+        projectEnvironmentChanged,
         hasResumeCursor: resumeCursor !== undefined,
       });
       const restartedSession = yield* startProviderSession(

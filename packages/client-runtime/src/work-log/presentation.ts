@@ -1,5 +1,6 @@
 import {
   isToolLifecycleItemType,
+  RuntimeWarningAction,
   type AssetResource,
   type RuntimeItemStatus,
   type ThreadId,
@@ -10,6 +11,7 @@ import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-im
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import * as Schema from "effect/Schema";
 
 /**
  * Activities the worktree setup card already represents. The settled record
@@ -22,6 +24,20 @@ export function isWorktreeSetupActivity(kind: string): boolean {
     kind === "setup-script.started" ||
     kind === "worktree-setup"
   );
+}
+
+const isRuntimeWarningAction = Schema.is(RuntimeWarningAction);
+
+/** The button a `runtime.warning` activity offers, if any. */
+export function readRuntimeWarningAction(
+  kind: string,
+  payload: unknown,
+): RuntimeWarningAction | undefined {
+  if (kind !== "runtime.warning" || typeof payload !== "object" || payload === null) {
+    return undefined;
+  }
+  const action = (payload as { readonly action?: unknown }).action;
+  return isRuntimeWarningAction(action) ? action : undefined;
 }
 
 export type WorkLogToolLifecycleStatus = RuntimeItemStatus | "stopped";

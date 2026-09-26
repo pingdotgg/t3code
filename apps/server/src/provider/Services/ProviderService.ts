@@ -129,6 +129,16 @@ export interface ProviderServiceShape {
   ) => Effect.Effect<ProviderUploadFeedbackResult, ProviderServiceError>;
 
   /**
+   * Re-check the thread's direnv environment before a turn, as a shell hook
+   * would on each prompt. True when it changed (for example the `.envrc` was
+   * edited or allowed) and the session should restart to pick it up.
+   */
+  readonly refreshProjectEnvironment: (input: {
+    readonly threadId: ThreadId;
+    readonly cwd: string;
+  }) => Effect.Effect<boolean>;
+
+  /**
    * Canonical provider runtime event stream.
    *
    * Fan-out is owned by ProviderService (not by a standalone event-bus service).
