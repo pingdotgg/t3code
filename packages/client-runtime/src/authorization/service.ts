@@ -117,6 +117,8 @@ export const make = Effect.gen(function* () {
     EnvironmentId,
     { readonly accessToken: string; readonly identity: ClientCapabilities.CloudSessionIdentity }
   >();
+  // Timed-out cached ticket steps in a row, per environment and token. It lives as long as
+  // the service, so supervisor retries and a mobile foreground resume do not reset it.
   const cachedTicketTimeouts = new Map<
     EnvironmentId,
     { readonly accessToken: string; readonly count: number }

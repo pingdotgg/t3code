@@ -1372,9 +1372,15 @@ describe("EnvironmentSupervisor", () => {
       const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
-      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      // A healthy server connects in the first attempt with the stored token, one ticket
+      // request, no relay call, and no clock time.
+      const connected = yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(connected).toMatchObject({ attempt: 1, lastFailure: null });
+      expect(yield* Ref.get(relay.bootstrapCalls)).toBe(0);
+      expect(httpPaths).toEqual(["/api/auth/websocket-ticket"]);
       const session = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
       const prepared = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared));
+      expect(prepared.httpAuthorization).toMatchObject({ accessToken: "access-token-1" });
       const readSession = fetchEnvironmentSessionState({
         prepared,
         signer: Option.some(relay.signer),
