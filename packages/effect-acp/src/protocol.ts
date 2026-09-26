@@ -381,7 +381,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       Effect.flatMap((pending) => {
         const pendingRequest = pending.get(String(message.requestId));
         if (!pendingRequest) {
-          return Queue.offer(clientQueue, message).pipe(Effect.asVoid);
+          return Queue.offer(clientQueue, repairJsonRpcErrorExit(message)).pipe(Effect.asVoid);
         }
         if (message.exit._tag === "Success") {
           return completeExtPendingSuccess(message.requestId, message.exit.value);
@@ -629,4 +629,31 @@ function isProtocolError(
     "message" in value &&
     typeof value.message === "string"
   );
+}
+
+/**
+ * effect/rpc's ndjson codec only recognizes its own `_tag: "Cause"` marker on a
+ * JSON-RPC `error` as a typed failure; any other JSON-RPC error (i.e. one from a
+ * standards-compliant, non-Effect ACP agent) gets boxed as an opaque `Die`
+ * (see effect/unstable/rpc/RpcSerialization.js). Native Agent RPC responses
+ * (no `pendingRequest` tracked in `extPending`) skip this module's own
+ * request/response handling entirely, so that Die reaches `@effect/rpc`'s
+ * generic `Schema.Defect()` decoder and crashes instead of surfacing as the
+ * RPC's typed `error` schema. Rewriting the Die into a `Fail` here, while the
+ * defect is still the untouched raw object, lets it decode against the RPC's
+ * error schema like any other typed failure.
+ */
+function repairJsonRpcErrorExit(
+  message: RpcMessage.ResponseExitEncoded,
+): RpcMessage.ResponseExitEncoded {
+  if (message.exit._tag !== "Failure") return message;
+  let changed = false;
+  const cause = message.exit.cause.map((entry) => {
+    if (entry._tag === "Die" && isProtocolError(entry.defect)) {
+      changed = true;
+      return { _tag: "Fail" as const, error: entry.defect };
+    }
+    return entry;
+  });
+  return changed ? { ...message, exit: { ...message.exit, cause } } : message;
 }
