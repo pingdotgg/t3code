@@ -42,15 +42,19 @@ import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
+  BRANCH_MENU_RAPID_TOGGLE_SUPPRESS_MS,
   deriveLocalBranchNameFromRemoteRef,
+  nativePressDetail,
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
+  resolveNextBranchMenuToggleAt,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
+  shouldSuppressRapidBranchMenuToggle,
 } from "./BranchToolbar.logic";
 import {
   ThreadPullRequestBadgeControl,
@@ -542,14 +546,48 @@ export function BranchToolbarBranchSelector({
   // ---------------------------------------------------------------------------
   const branchListScrollElementRef = useRef<HTMLElement | null>(null);
   const previousBranchListScrollTopRef = useRef<number | null>(null);
-  const handleOpenChange = useCallback((open: boolean) => {
-    previousBranchListScrollTopRef.current = null;
-    setIsBranchMenuOpen(open);
-    if (!open) {
-      setBranchQuery("");
-      highlightedBranchValueRef.current = null;
-    }
-  }, []);
+  const branchListRef = useRef<LegendListRef | null>(null);
+  // Tracks the highlighted picker value so Enter can activate it even when the
+  // virtualized row is not mounted (Base UI Enter clicks the mounted element).
+  const highlightedBranchValueRef = useRef<string | null>(null);
+  // Last accepted trigger toggle, so the trailing press of a double-click
+  // can be told apart from a real close. A timestamp too for picks: a rapid
+  // second click on the same row would otherwise run the action twice, since
+  // the pending transition only flips next render.
+  const lastBranchMenuToggleAtRef = useRef(0);
+  const lastBranchSelectionRef = useRef<{ value: string; at: number } | null>(null);
+  const handleOpenChange = useCallback(
+    (open: boolean, eventDetails?: { reason?: string; event?: unknown; cancel?: () => void }) => {
+      if (
+        eventDetails?.reason === "trigger-press" &&
+        shouldSuppressRapidBranchMenuToggle({
+          reason: eventDetails.reason,
+          nativeDetail: nativePressDetail(eventDetails.event),
+          lastToggleAt: lastBranchMenuToggleAtRef.current,
+          now: Date.now(),
+        })
+      ) {
+        eventDetails.cancel?.();
+        return;
+      }
+      // Only trigger presses arm the suppress window. A close from any
+      // other reason disarms it, so picking an item (or pressing outside)
+      // never eats a deliberate reopen right after.
+      lastBranchMenuToggleAtRef.current = resolveNextBranchMenuToggleAt({
+        reason: eventDetails?.reason,
+        open,
+        lastToggleAt: lastBranchMenuToggleAtRef.current,
+        now: Date.now(),
+      });
+      previousBranchListScrollTopRef.current = null;
+      setIsBranchMenuOpen(open);
+      if (!open) {
+        setBranchQuery("");
+        highlightedBranchValueRef.current = null;
+      }
+    },
+    [],
+  );
 
   useImperativeHandle(
     ref,
@@ -596,10 +634,6 @@ export function BranchToolbarBranchSelector({
     fetchNextBranchPage();
   }, [fetchNextBranchPage, hasNextPage, isBranchMenuOpen, isFetchingNextPage]);
 
-  const branchListRef = useRef<LegendListRef | null>(null);
-  // Tracks the highlighted picker value so Enter can activate it even when the
-  // virtualized row is not mounted (Base UI Enter clicks the mounted element).
-  const highlightedBranchValueRef = useRef<string | null>(null);
   const updateBranchListScrollFades = useCallback(() => {
     const scrollElement = branchListRef.current?.getScrollableNode?.();
     if (!(scrollElement instanceof HTMLElement)) {
@@ -684,6 +718,20 @@ export function BranchToolbarBranchSelector({
 
   function selectPickerItem(itemValue: string) {
     highlightedBranchValueRef.current = null;
+    // The second click of a double-click on a row re-fires this with the
+    // same value: the pending transition only flips next render, so echo
+    // the same pick inside the double-click window. A different row is a
+    // new pick and always runs.
+    const now = Date.now();
+    const lastSelection = lastBranchSelectionRef.current;
+    if (
+      lastSelection !== null &&
+      lastSelection.value === itemValue &&
+      now - lastSelection.at < BRANCH_MENU_RAPID_TOGGLE_SUPPRESS_MS
+    ) {
+      return;
+    }
+    lastBranchSelectionRef.current = { value: itemValue, at: now };
     if (itemValue === checkoutPullRequestItemValue && prReference && onCheckoutPullRequestRequest) {
       handleOpenChange(false);
       onComposerFocusRequest?.();
