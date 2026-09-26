@@ -698,23 +698,14 @@ export const CursorSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
-    binaryPath: makeBinaryPathSetting("cursor-agent").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description: "Path to the Cursor agent binary.",
-        providerSettingsForm: { placeholder: "cursor-agent", clearWhenEmpty: "omit" },
-      }),
+    // Settings from the Cursor CLI (ACP) runtime. They still decode and
+    // round-trip so older settings files keep working. The Cursor SDK does not
+    // use them.
+    binaryPath: Schema.optionalKey(TrimmedString).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
-    apiEndpoint: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "API endpoint",
-        description: "Override the Cursor API endpoint for this instance.",
-        providerSettingsForm: {
-          placeholder: "https://...",
-          clearWhenEmpty: "omit",
-        },
-      }),
+    apiEndpoint: Schema.optionalKey(TrimmedString).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
@@ -722,7 +713,7 @@ export const CursorSettings = makeProviderSettingsSchema(
     ),
   },
   {
-    order: ["binaryPath", "apiEndpoint"],
+    order: [],
   },
 );
 export type CursorSettings = typeof CursorSettings.Type;
@@ -1415,8 +1406,6 @@ const ClaudeSettingsPatch = Schema.Struct({
 
 const CursorSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  apiEndpoint: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
 });
 

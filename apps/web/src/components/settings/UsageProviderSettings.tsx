@@ -80,7 +80,7 @@ export function UsageProviderSettings({
           <SettingsRow
             id="cursor-keychain-usage"
             title="Cursor account usage"
-            description="Read your existing Cursor CLI login from macOS Keychain to show account history and monthly limits. macOS may ask you to allow access."
+            description="Read your existing Cursor CLI login from macOS Keychain to show account history. macOS may ask you to allow access."
             control={
               <Switch
                 aria-label="Cursor account usage"

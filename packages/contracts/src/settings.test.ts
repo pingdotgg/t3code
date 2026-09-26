@@ -6,6 +6,7 @@ import {
   ClientSettingsSchema,
   ClientSettingsPatch,
   ClaudeSettings,
+  CursorSettings,
   DEFAULT_SERVER_SETTINGS,
   resolveProviderInstanceEnabled,
   ServerSettings,
@@ -19,6 +20,7 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+const decodeCursorSettings = Schema.decodeUnknownSync(CursorSettings);
 
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
@@ -852,6 +854,58 @@ describe("ServerSettings worktree defaults", () => {
     );
     expect(decodeServerSettings({ worktreeSubmodules: "shallow" }).worktreeSubmodules).toBeNull();
     expect(decodeServerSettingsPatch({ worktreeSubmodules: null }).worktreeSubmodules).toBeNull();
+  });
+});
+
+describe("ServerSettings Cursor legacy settings", () => {
+  it("preserves legacy Cursor CLI settings when reading and writing shared settings", () => {
+    const decoded = decodeServerSettings({
+      providers: {
+        cursor: {
+          enabled: true,
+          binaryPath: "cursor-agent",
+          apiEndpoint: "http://127.0.0.1:3774",
+        },
+      },
+    });
+
+    expect(decoded.providers.cursor.enabled).toBe(true);
+    expect(encodeServerSettings(decoded).providers?.cursor).toMatchObject({
+      binaryPath: "cursor-agent",
+      apiEndpoint: "http://127.0.0.1:3774",
+    });
+  });
+
+  it("decodes a legacy Cursor provider instance config", () => {
+    expect(
+      decodeCursorSettings({
+        enabled: true,
+        binaryPath: "/opt/cursor/cursor-agent",
+        apiEndpoint: "",
+        customModels: ["composer-2"],
+      }),
+    ).toEqual({
+      enabled: true,
+      binaryPath: "/opt/cursor/cursor-agent",
+      apiEndpoint: "",
+      customModels: ["composer-2"],
+    });
+  });
+
+  it("ignores obsolete Cursor CLI settings in patches", () => {
+    const patch = decodeServerSettingsPatch({
+      providers: {
+        cursor: {
+          enabled: true,
+          binaryPath: "cursor-agent",
+          apiEndpoint: "http://127.0.0.1:3774",
+        },
+      },
+    });
+
+    expect(patch.providers?.cursor?.enabled).toBe(true);
+    expect(patch.providers?.cursor).not.toHaveProperty("binaryPath");
+    expect(patch.providers?.cursor).not.toHaveProperty("apiEndpoint");
   });
 });
 

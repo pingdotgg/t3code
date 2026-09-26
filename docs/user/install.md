@@ -115,15 +115,15 @@ computer.
 | ----------- | -------------------------------------------------------------------------------------------- |
 | Codex       | Install [Codex CLI](https://developers.openai.com/codex/cli), then run `codex login`.        |
 | Claude      | Install [Claude Code](https://claude.com/product/claude-code), then run `claude auth login`. |
-| Cursor      | Install [Cursor CLI](https://cursor.com/cli), then run `agent login`.                        |
+| Cursor      | Sign in with Cursor from T3 Code's provider settings.                                        |
 | Grok Build  | Install [Grok Build CLI](https://x.ai/cli), then run `grok login`.                           |
 | OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                     |
 | Antigravity | Install and sign in with Google from T3 Code's provider settings.                            |
 
 Provider CLIs must be on the server's `PATH`. If T3 Code cannot find one, set its
 **Binary path** in provider settings, especially when using a version manager.
-Cursor's executable is `cursor-agent`, although its login command is
-`agent login`. Antigravity can use its managed runtime without a `PATH` entry.
+Cursor runs on an SDK that ships with T3 Code, so it needs no CLI. Antigravity can
+use its managed runtime without a `PATH` entry.
 
 T3 Code warns when a provider version has known compatibility problems with your
 release. Check **Settings → Providers** on that environment for the recommended
@@ -144,8 +144,8 @@ base URL. Mark secret values as sensitive; after saving, T3 Code does not displa
 their original values.
 
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
-[Claude](./providers-claude.md), [OpenCode](./providers-opencode.md), and
-[Antigravity](./providers-antigravity.md).
+[Claude](./providers-claude.md), [Cursor](./providers-cursor.md),
+[OpenCode](./providers-opencode.md), and [Antigravity](./providers-antigravity.md).
 
 ## Next steps
 
