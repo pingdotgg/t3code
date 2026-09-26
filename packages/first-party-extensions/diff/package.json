@@ -1,0 +1,25 @@
+{
+  "name": "@t3tools/extension-diff",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "t3-extension build .",
+    "check": "t3-extension check .t3-extension",
+    "test": "node --test --experimental-strip-types *.test.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "audit": "node ../scripts/audit-imports.mjs . --allow @pierre/diffs --allow-relative ../scripts/check-bundles.mjs --allow react-test-renderer"
+  },
+  "dependencies": {
+    "@pierre/diffs": "catalog:",
+    "@t3tools/extension-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "^19.2.14",
+    "@types/react-test-renderer": "19.1.0",
+    "react": "^19.0.0",
+    "react-test-renderer": "19.2.6",
+    "typescript": "catalog:"
+  }
+}
