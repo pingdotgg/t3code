@@ -770,6 +770,34 @@ describe("buildThreadFeed", () => {
     expect(row.getCopyText()).toBe(`${input.summary}\n${input.detail}`);
   });
 
+  it("uses a lifecycle tool title instead of raw output for the collapsed label", () => {
+    const thread = makeThread({
+      id: ThreadId.make("lifecycle-title-label"),
+      projectId: ProjectId.make("project-1"),
+      title: "Lifecycle title",
+      activities: [
+        makeActivity({
+          id: EventId.make("lifecycle-title-label"),
+          createdAt: "2026-09-01T00:00:00.000Z",
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Web search",
+          payload: {
+            itemType: "web_search",
+            title: "Search workflow runs",
+            detail: '{"total_count":95,"workflow_runs":[]}',
+          },
+        }),
+      ],
+    });
+    const [group] = buildThreadFeed(thread);
+    expect(group?.type).toBe("activity-group");
+    if (group?.type !== "activity-group") return;
+    const row = group.activities[0]!;
+    expect(workEntryRowLabel(row.workEntry)).toBe("Search workflow runs");
+    expect(workEntryRowLabel(row.workEntry, true)).toBe('{"total_count":95,"workflow_runs":[]}');
+  });
+
   it("drops a truncated Claude echo of a long command", () => {
     const command = `git add -A && git commit -m "${"x".repeat(200)}"`;
     const thread = makeThread({
