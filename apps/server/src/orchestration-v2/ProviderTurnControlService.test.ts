@@ -270,6 +270,7 @@ it.effect(
           closeInstance: () => Effect.void,
           release: () => Effect.void,
           detach: () => Effect.void,
+          takeProjectEnvironmentFailure: () => Effect.succeed(undefined),
         }),
       );
       const controlLayer = ProviderTurnControlService.layer.pipe(

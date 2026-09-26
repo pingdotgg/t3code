@@ -23,6 +23,7 @@ import * as Schema from "effect/Schema";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/Services/ProviderAuthService.ts";
+import * as DirenvEnvironment from "../provider/DirenvEnvironment.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
@@ -585,6 +586,49 @@ export const layer: Layer.Layer<
         return;
       }
       const session = sessionResult.success;
+      const direnvFailure = yield* providerSessions.takeProjectEnvironmentFailure(
+        projection.thread.id,
+      );
+      if (direnvFailure !== undefined) {
+        const now = yield* DateTime.now;
+        const notice = DirenvEnvironment.direnvFailureNotice(direnvFailure);
+        const item: OrchestrationV2TurnItem = {
+          id: idAllocator.derive.runSignalTurnItem({ runId, signal: "direnv-failure" }),
+          threadId: projection.thread.id,
+          runId,
+          nodeId: rootNode.id,
+          providerThreadId: providerThread.id,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: yield* projectionStore.getNextTurnItemOrdinal(projection.thread.id),
+          type: "system_notice",
+          status: "completed",
+          title: notice.message,
+          ...notice,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+        };
+        yield* eventSink.writeIfRunCurrent({
+          threadId: projection.thread.id,
+          runId,
+          activeAttemptId: attempt.id,
+          expectedStatus: "starting",
+          events: [
+            {
+              type: "turn-item.updated",
+              payload: item,
+              id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+              threadId: projection.thread.id,
+              runId,
+              nodeId: rootNode.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: now,
+            },
+          ],
+        });
+      }
       // Only the provider's own thread load fails the run on the last attempt;
       // store, id and handoff failures around it keep their typed errors.
       const loadFromProvider = (

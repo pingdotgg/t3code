@@ -389,6 +389,16 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
                     />
                   </SettingsSection>
+                  <SettingsSection title="Project environment">
+                    <SettingsSwitchRow
+                      icon="hammer"
+                      label="Load direnv environment"
+                      subtitle="Start agents with the project's allowed .envrc, such as a Nix dev shell."
+                      value={uniform("enableDirenvEnvironment")}
+                      disabled={disabledFor("enableDirenvEnvironment")}
+                      onValueChange={(value) => write({ enableDirenvEnvironment: value })}
+                    />
+                  </SettingsSection>
                 </>
               ) : null}
 

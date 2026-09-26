@@ -487,7 +487,10 @@ function makeLocalCommandHarness(input: {
               }),
             ),
         }),
-        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ open }),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+          open,
+          takeProjectEnvironmentFailure: () => Effect.succeed(undefined),
+        }),
         Layer.mock(ProviderAuthService.ProviderAuthService)({ tryHandlePromptCommand }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({

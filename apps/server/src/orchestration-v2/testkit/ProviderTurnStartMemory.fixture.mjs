@@ -64,7 +64,10 @@ const dependencies = Layer.mergeAll(
     getTurnStartHistory: () => Effect.sync(() => current.turnItems),
     getRuntimeRecoveryProjection: () => Effect.sync(() => current),
   }),
-  Layer.mock(Sessions.ProviderSessionManagerV2)({ open: () => Effect.succeed(session) }),
+  Layer.mock(Sessions.ProviderSessionManagerV2)({
+    open: () => Effect.succeed(session),
+    takeProjectEnvironmentFailure: () => Effect.succeed(undefined),
+  }),
   Layer.mock(Policy.RuntimePolicyV2)({
     resolve: () =>
       Effect.succeed({ cwd: "/synthetic", interactionMode: "default", runtimeMode: "full-access" }),

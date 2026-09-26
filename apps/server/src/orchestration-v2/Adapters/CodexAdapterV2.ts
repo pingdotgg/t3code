@@ -108,6 +108,7 @@ import {
 } from "../../provider/Layers/codexLaunchArgs.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as DirenvEnvironment from "../../provider/DirenvEnvironment.ts";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
@@ -1576,7 +1577,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           providerSessionId: input.providerSessionId,
           runtimePolicy: input.runtimePolicy,
           settings: resolvedRuntime?.config ?? adapterOptions.settings,
-          environment: resolvedRuntime?.environment ?? adapterOptions.environment,
+          environment: DirenvEnvironment.withThreadDirenvEnvironment(
+            resolvedRuntime?.environment ?? adapterOptions.environment,
+            input.threadId,
+          ),
         });
         const additionalContextByThread = yield* Ref.make(
           new Map<
