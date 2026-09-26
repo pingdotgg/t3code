@@ -109,12 +109,10 @@ export interface AcpRegistryAdapterOptions {
   readonly nativeEventLogger?: EventNdjsonLogger | undefined;
 }
 
+/** An approval shown in the thread. The user may answer only with an offered choice. */
 interface PendingApproval {
-  readonly request: NativePermission;
-  readonly response: Deferred.Deferred<{
-    readonly decision: ProviderApprovalDecision;
-    readonly result: NativePermissionResponse;
-  }>;
+  readonly options: ReadonlyArray<ProviderApprovalOption>;
+  readonly response: Deferred.Deferred<ProviderApprovalDecision>;
 }
 
 interface PendingQuestion {
@@ -200,6 +198,25 @@ function optionIdForDecision(request: NativePermission, decision: ProviderApprov
       return selectOptionId(request, ["reject_once", "reject_always"]);
     case "cancel":
       return undefined;
+  }
+}
+
+/** An MCP tool approval answers one elicitation, so it has no per-session choice. */
+const MCP_TOOL_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
+  { decision: "accept", label: "Allow once" },
+  { decision: "decline", label: "Deny" },
+  { decision: "cancel", label: "Cancel" },
+];
+
+function mcpToolApprovalResponse(decision: ProviderApprovalDecision): NativeElicitationResponse {
+  switch (decision) {
+    case "accept":
+    case "acceptForSession":
+      return { action: "accept", content: {} };
+    case "decline":
+      return { action: "decline" };
+    case "cancel":
+      return { action: "cancel" };
   }
 }
 
@@ -379,7 +396,7 @@ export const makeAcpRegistryAdapter = Effect.fn("makeAcpRegistryAdapter")(functi
     context: SessionContext,
   ) {
     for (const pending of context.approvals.values()) {
-      yield* Deferred.succeed(pending.response, { decision: "cancel", result: CANCELLED });
+      yield* Deferred.succeed(pending.response, "cancel");
     }
     for (const pending of context.questions.values()) {
       yield* Deferred.succeed(pending.response, undefined);
@@ -429,11 +446,9 @@ export const makeAcpRegistryAdapter = Effect.fn("makeAcpRegistryAdapter")(functi
     const requestId = ApprovalRequestId.make(yield* randomId);
     const runtimeRequestId = RuntimeRequestId.make(requestId);
     const turnId = context.activeTurnId;
-    const response = yield* Deferred.make<{
-      decision: ProviderApprovalDecision;
-      result: NativePermissionResponse;
-    }>();
-    context.approvals.set(requestId, { request, response });
+    const approvalOptions = acpRegistryApprovalOptions(request);
+    const response = yield* Deferred.make<ProviderApprovalDecision>();
+    context.approvals.set(requestId, { options: approvalOptions, response });
     const parsed = parsePermissionRequest(request);
     const toolCall =
       parsed.toolCall && isDevin ? normalizeDevinToolCall(parsed.toolCall) : parsed.toolCall;
@@ -455,7 +470,7 @@ export const makeAcpRegistryAdapter = Effect.fn("makeAcpRegistryAdapter")(functi
           turnId,
           requestId: runtimeRequestId,
           permissionRequest,
-          approvalOptions: acpRegistryApprovalOptions(request),
+          approvalOptions,
           detail: permissionRequest.detail,
           args: request,
           source: "acp.jsonrpc",
@@ -463,11 +478,11 @@ export const makeAcpRegistryAdapter = Effect.fn("makeAcpRegistryAdapter")(functi
           rawPayload: request,
         }),
       );
-      const answer = yield* Deferred.await(response);
-      if (answer.decision === "accept" || answer.decision === "acceptForSession") {
+      const decision = yield* Deferred.await(response);
+      if (decision === "accept" || decision === "acceptForSession") {
         context.grants.recordApproval({
           kind: permissionRequest.kind === "execute" ? "command" : "file-change",
-          scope: answer.decision === "acceptForSession" ? "session" : "turn",
+          scope: decision === "acceptForSession" ? "session" : "turn",
           turnKey: String(turnId),
         });
       }
@@ -479,10 +494,10 @@ export const makeAcpRegistryAdapter = Effect.fn("makeAcpRegistryAdapter")(functi
           turnId,
           requestId: runtimeRequestId,
           permissionRequest,
-          decision: answer.decision,
+          decision,
         }),
       );
-      return answer.result;
+      return permissionResponse(optionIdForDecision(request, decision));
     }).pipe(Effect.ensuring(Effect.sync(() => context.approvals.delete(requestId))));
   });
 
@@ -499,6 +514,42 @@ export const makeAcpRegistryAdapter = Effect.fn("makeAcpRegistryAdapter")(functi
     );
     if (mcpDisposition === "allow") return { action: "accept", content: {} };
     if (mcpDisposition === "deny") return { action: "decline" };
+    if (mcpDisposition === "ask") {
+      // A tool approval is a yes or no, whatever form fields the agent attaches.
+      const requestId = ApprovalRequestId.make(yield* randomId);
+      const runtimeRequestId = RuntimeRequestId.make(requestId);
+      const turnId = context.activeTurnId;
+      const response = yield* Deferred.make<ProviderApprovalDecision>();
+      context.approvals.set(requestId, { options: MCP_TOOL_APPROVAL_OPTIONS, response });
+      return yield* Effect.gen(function* () {
+        yield* emit({
+          type: "request.opened",
+          ...(yield* stamp),
+          provider: PROVIDER,
+          threadId: context.threadId,
+          turnId,
+          requestId: runtimeRequestId,
+          payload: {
+            requestType: "mcp_elicitation_approval",
+            detail: nonEmptyText(request.message, "The agent asks to run an MCP tool."),
+            options: MCP_TOOL_APPROVAL_OPTIONS,
+            args: request,
+          },
+          raw: { source: "acp.jsonrpc", method: "elicitation/create", payload: request },
+        });
+        const decision = yield* Deferred.await(response);
+        yield* emit({
+          type: "request.resolved",
+          ...(yield* stamp),
+          provider: PROVIDER,
+          threadId: context.threadId,
+          turnId,
+          requestId: runtimeRequestId,
+          payload: { requestType: "mcp_elicitation_approval", decision },
+        });
+        return mcpToolApprovalResponse(decision);
+      }).pipe(Effect.ensuring(Effect.sync(() => context.approvals.delete(requestId))));
+    }
     if (
       request.mode === "url" &&
       "url" in request &&
@@ -543,7 +594,7 @@ export const makeAcpRegistryAdapter = Effect.fn("makeAcpRegistryAdapter")(functi
         raw: { source: "acp.jsonrpc", method: "elicitation/create", payload: request },
       });
       const answers = yield* Deferred.await(response);
-      if (answers === undefined) return { action: "cancel" } as const;
+      // A cancelled question still resolves, so the thread stops offering it.
       yield* emit({
         type: "user-input.resolved",
         ...(yield* stamp),
@@ -551,8 +602,9 @@ export const makeAcpRegistryAdapter = Effect.fn("makeAcpRegistryAdapter")(functi
         threadId: context.threadId,
         turnId,
         requestId: runtimeRequestId,
-        payload: { answers },
+        payload: { answers: answers ?? {} },
       });
+      if (answers === undefined) return { action: "cancel" } as const;
       return { action: "accept", content: elicitationContent(answers, fieldTypes) } as const;
     }).pipe(Effect.ensuring(Effect.sync(() => context.questions.delete(requestId))));
   });
@@ -1286,14 +1338,14 @@ export const makeAcpRegistryAdapter = Effect.fn("makeAcpRegistryAdapter")(functi
       const context = yield* requireSession(threadId);
       const pending = context.approvals.get(requestId);
       if (!pending) {
+        // The reactor closes the approval when the detail names it as unknown.
         return yield* new ProviderAdapterRequestError({
           provider: PROVIDER,
           method: "session/request_permission",
-          detail: "This approval request is no longer pending.",
+          detail: `Unknown pending approval request: ${requestId}`,
         });
       }
-      const optionId = optionIdForDecision(pending.request, decision);
-      if (decision !== "cancel" && optionId === undefined) {
+      if (!pending.options.some((option) => option.decision === decision)) {
         return yield* new ProviderAdapterValidationError({
           provider: PROVIDER,
           operation: "respondToRequest",
@@ -1301,10 +1353,7 @@ export const makeAcpRegistryAdapter = Effect.fn("makeAcpRegistryAdapter")(functi
             "The agent did not offer this permission choice. Select one of the offered choices.",
         });
       }
-      yield* Deferred.succeed(pending.response, {
-        decision,
-        result: permissionResponse(optionId),
-      });
+      yield* Deferred.succeed(pending.response, decision);
     });
 
   const respondToUserInput: AcpRegistryAdapterShape["respondToUserInput"] = (
@@ -1316,10 +1365,11 @@ export const makeAcpRegistryAdapter = Effect.fn("makeAcpRegistryAdapter")(functi
       const context = yield* requireSession(threadId);
       const pending = context.questions.get(requestId);
       if (!pending) {
+        // The reactor closes the question when the detail names it as unknown.
         return yield* new ProviderAdapterRequestError({
           provider: PROVIDER,
           method: "elicitation/create",
-          detail: "This question is no longer pending.",
+          detail: `Unknown pending user-input request: ${requestId}`,
         });
       }
       yield* Deferred.succeed(pending.response, answers);

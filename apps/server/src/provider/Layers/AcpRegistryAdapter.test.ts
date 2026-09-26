@@ -214,12 +214,13 @@ function acpRegistryAdapterTests(
           "decline",
           "cancel",
         ]);
-        yield* adapter.respondToRequest(
-          threadId,
-          ApprovalRequestId.make(opened.requestId),
-          "accept",
-        );
+        const requestId = ApprovalRequestId.make(opened.requestId);
+        yield* adapter.respondToRequest(threadId, requestId, "accept");
         yield* Fiber.join(turn);
+        // A second answer is stale. The reactor closes the approval only
+        // when the error names it as an unknown pending request.
+        const stale = yield* Effect.flip(adapter.respondToRequest(threadId, requestId, "accept"));
+        expect(stale.message).toMatch(/unknown pending approval request/i);
         yield* adapter.stopSession(threadId);
 
         const requests = yield* readRequestLog(requestLogPath);
@@ -227,6 +228,93 @@ function acpRegistryAdapterTests(
           outcome: { outcome: "selected", optionId: "allow-once" },
         });
       }).pipe(Effect.scoped, TestClock.withLive),
+  );
+
+  it.effect("asks before an MCP tool call in approval-required mode", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("acp-registry-mcp-approval");
+      const { adapter, events, interaction, requestLogPath } = yield* makeHarness({
+        wire,
+        env: { T3_ACP_EMIT_MCP_TOOL_APPROVAL_ELICITATION: "1" },
+      });
+      yield* adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const turn = yield* adapter
+        .sendTurn({ threadId, input: "Use an MCP tool" })
+        .pipe(Effect.forkScoped);
+      const opened = yield* Deferred.await(interaction);
+      if (opened.type !== "request.opened" || opened.requestId === undefined) {
+        return assert.fail(`Expected an approval, got ${opened.type}`);
+      }
+      expect(opened.payload).toMatchObject({
+        requestType: "mcp_elicitation_approval",
+        detail: "Approve this request?",
+      });
+      expect(opened.payload.options?.map((option) => option.decision)).toEqual([
+        "accept",
+        "decline",
+        "cancel",
+      ]);
+      yield* adapter.respondToRequest(
+        threadId,
+        ApprovalRequestId.make(opened.requestId),
+        "decline",
+      );
+      yield* Fiber.join(turn);
+      yield* adapter.stopSession(threadId);
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "request.resolved",
+          requestId: opened.requestId,
+          payload: { requestType: "mcp_elicitation_approval", decision: "decline" },
+        }),
+      );
+      const requests = yield* readRequestLog(requestLogPath);
+      expect(requests.map((request) => request.result)).toContainEqual({ action: "decline" });
+    }).pipe(Effect.scoped, TestClock.withLive),
+  );
+
+  it.effect("closes a question the user can no longer answer", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("acp-registry-question-cancel");
+      const { adapter, events, interaction } = yield* makeHarness({
+        wire,
+        env: { T3_ACP_EMIT_ELICITATION: "1" },
+      });
+      yield* adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const turn = yield* adapter
+        .sendTurn({ threadId, input: "Ask me first" })
+        .pipe(Effect.forkScoped);
+      const requested = yield* Deferred.await(interaction);
+      if (requested.type !== "user-input.requested" || requested.requestId === undefined) {
+        return assert.fail(`Expected a question, got ${requested.type}`);
+      }
+      yield* adapter.interruptTurn(threadId);
+      yield* Fiber.join(turn);
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "user-input.resolved",
+          requestId: requested.requestId,
+          payload: { answers: {} },
+        }),
+      );
+      const stale = yield* Effect.flip(
+        adapter.respondToUserInput(threadId, ApprovalRequestId.make(requested.requestId), {
+          approved: "true",
+        }),
+      );
+      expect(stale.message).toMatch(/unknown pending user-input request/i);
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped, TestClock.withLive),
   );
 
   it.effect("turns a form elicitation into questions and answers with typed values", () =>
