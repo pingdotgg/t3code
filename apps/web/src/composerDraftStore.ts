@@ -569,7 +569,10 @@ interface ComposerDraftStoreState {
   /** Removes draft-session metadata after promotion is complete. */
   finalizePromotedDraftThread: (threadRef: ComposerThreadTarget) => void;
   clearDraftThread: (threadRef: ComposerThreadTarget) => void;
-  setStickyModelSelection: (modelSelection: ModelSelection | null | undefined) => void;
+  setStickyModelSelection: (
+    modelSelection: ModelSelection | null | undefined,
+    opts?: { replaceOptions?: boolean },
+  ) => void;
   setPrompt: (threadRef: ComposerThreadTarget, prompt: string) => void;
   setTerminalContexts: (threadRef: ComposerThreadTarget, contexts: TerminalContextDraft[]) => void;
   setModelSelection: (
@@ -2918,7 +2921,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return removeDraftThreadReferences(state, threadKey);
           });
         },
-        setStickyModelSelection: (modelSelection) => {
+        setStickyModelSelection: (modelSelection, opts) => {
           const normalized = normalizeModelSelection(modelSelection);
           set((state) => {
             if (!normalized) {
@@ -2927,9 +2930,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const current = state.stickyModelSelectionByProvider[normalized.instanceId];
             // Model-only picker updates omit options (same contract as
             // setModelSelection). Keep the last sticky traits so Fast/Normal
-            // survives Composer 2 → 2.5 and new chats.
+            // survives Composer 2 → 2.5 and new chats, unless the caller
+            // supplies a complete replacement after resetting traits.
             const nextSelection =
-              normalized.options !== undefined
+              normalized.options !== undefined || opts?.replaceOptions === true
                 ? normalized
                 : createModelSelection(normalized.instanceId, normalized.model, current?.options);
             const nextMap: Partial<Record<ProviderInstanceId, ModelSelection>> = {

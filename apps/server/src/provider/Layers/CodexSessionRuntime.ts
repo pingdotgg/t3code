@@ -150,6 +150,9 @@ const CodexTurnStartParamsWithCollaborationMode = EffectCodexSchema.V2TurnStartP
     additionalContext: Schema.optionalKey(
       Schema.Record(Schema.String, EffectCodexSchema.V2TurnStartParams__AdditionalContextEntry),
     ),
+    cyberAccessProgram: Schema.optionalKey(
+      Schema.Literals(["standard", "daybreakBlue", "daybreakRed"]),
+    ),
   }),
 );
 const decodeCodexTurnStartParamsWithCollaborationMode = Schema.decodeUnknownEffect(
@@ -198,6 +201,7 @@ export interface CodexSessionRuntimeSendTurnInput {
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort | undefined;
+  readonly cyberAccessProgram?: "standard" | "daybreakBlue" | "daybreakRed";
   readonly interactionMode?: ProviderInteractionMode;
 }
 
@@ -631,6 +635,7 @@ export function buildTurnStartParams(input: {
   readonly modelName?: string;
   readonly serviceTier?: CodexServiceTier;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
+  readonly cyberAccessProgram?: "standard" | "daybreakBlue" | "daybreakRed";
   readonly interactionMode?: ProviderInteractionMode;
   /** Defaults to true so callers that predate the agent-access gate are unchanged. */
   readonly browserToolsAvailable?: boolean | T3CodeToolAvailability;
@@ -667,6 +672,7 @@ export function buildTurnStartParams(input: {
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
+    ...(input.cyberAccessProgram ? { cyberAccessProgram: input.cyberAccessProgram } : {}),
     ...turnInstructions,
   }).pipe(
     Effect.mapError((cause) =>
@@ -2573,6 +2579,7 @@ export const makeCodexSessionRuntime = (
             ...(modelName ? { modelName } : {}),
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(input.effort ? { effort: input.effort } : {}),
+            ...(input.cyberAccessProgram ? { cyberAccessProgram: input.cyberAccessProgram } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
             // Derived from the session's own credential rather than the
             // setting, so the prompt describes the tools this turn actually

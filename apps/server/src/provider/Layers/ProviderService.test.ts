@@ -25,6 +25,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionStartInput,
+  ServerProvider,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -64,7 +65,7 @@ import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
-import { makeProviderServiceLive } from "./ProviderService.ts";
+import { makeProviderServiceLive as makeProviderServiceLiveWithCatalog } from "./ProviderService.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -77,6 +78,7 @@ import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
+import { makeProviderRegistryLayer } from "../testUtils/providerRegistryMock.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -84,6 +86,14 @@ const defaultServerSettingsLayer = ServerSettings.ServerSettingsService.layerTes
 const serverConfigTestLayer = ServerConfig.layerTest(process.cwd(), process.cwd()).pipe(
   Layer.provide(NodeServices.layer),
 );
+const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
+const makeProviderServiceLive = (
+  options?: Parameters<typeof makeProviderServiceLiveWithCatalog>[0],
+  providers: ReadonlyArray<ServerProvider> = [],
+) =>
+  makeProviderServiceLiveWithCatalog(options).pipe(
+    Layer.provide(makeProviderRegistryLayer(providers)),
+  );
 
 // startSession verifies the workspace folder exists before dispatching to an
 // adapter, so session cwd fixtures must be real directories.
@@ -419,6 +429,7 @@ function makeProviderServiceLayer(
     readonly supportsConversationRollback?: boolean;
     readonly analyticsLayer?: Layer.Layer<AnalyticsService.AnalyticsService>;
     readonly registry?: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"];
+    readonly providerSnapshots?: ReadonlyArray<ServerProvider>;
   } = {},
 ) {
   const codex = makeFakeCodexAdapter(CODEX_DRIVER, input.supportsConversationRollback);
@@ -446,7 +457,7 @@ function makeProviderServiceLayer(
 
   const layer = it.layer(
     Layer.mergeAll(
-      makeProviderServiceLive().pipe(
+      makeProviderServiceLive(undefined, input.providerSnapshots).pipe(
         Layer.provide(NodeServices.layer),
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
@@ -1059,6 +1070,96 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
 );
 
 const routing = makeProviderServiceLayer();
+const daybreakRouting = makeProviderServiceLayer({
+  providerSnapshots: [
+    decodeServerProvider({
+      instanceId: "codex",
+      driver: "codex",
+      enabled: true,
+      installed: true,
+      version: "0.156.1",
+      status: "ready",
+      auth: { status: "authenticated", type: "chatgpt" },
+      checkedAt: "2026-09-23T00:00:00.000Z",
+      models: [
+        {
+          slug: "daybreak-model",
+          name: "Daybreak model",
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "cyberAccessProgram",
+                label: "Daybreak",
+                type: "select",
+                options: [
+                  { id: "standard", label: "Off", isDefault: true },
+                  { id: "daybreakBlue", label: "On" },
+                ],
+              },
+            ],
+          },
+        },
+        { slug: "other-model", name: "Other model", isCustom: false, capabilities: null },
+      ],
+      slashCommands: [],
+      skills: [],
+    }),
+  ],
+});
+
+daybreakRouting.layer("Codex Daybreak default", (it) => {
+  it.effect("sends explicit Off only for an eligible model without a saved choice", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("daybreak-default");
+      yield* provider.startSession(threadId, {
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+        cwd: fixtureCwd("daybreak-default"),
+      });
+      for (const model of ["daybreak-model", "other-model"]) {
+        yield* provider.sendTurn({
+          threadId,
+          input: "hello",
+          modelSelection: createModelSelection(codexInstanceId, model),
+        });
+      }
+      yield* provider.sendTurn({
+        threadId,
+        input: "hello",
+        modelSelection: createModelSelection(codexInstanceId, "daybreak-model", [
+          { id: "cyberAccessProgram", value: "daybreakBlue" },
+        ]),
+      });
+      yield* provider.sendTurn({
+        threadId,
+        input: "hello",
+        modelSelection: createModelSelection(codexInstanceId, "other-model", [
+          { id: "cyberAccessProgram", value: "daybreakBlue" },
+        ]),
+      });
+      yield* provider.sendTurn({
+        threadId,
+        input: "hello",
+        modelSelection: createModelSelection(codexInstanceId, "daybreak-model", [
+          { id: "cyberAccessProgram", value: "daybreakRed" },
+        ]),
+      });
+      assert.deepEqual(
+        daybreakRouting.codex.sendTurn.mock.calls.map(([input]) => input.modelSelection?.options),
+        [
+          [{ id: "cyberAccessProgram", value: "standard" }],
+          undefined,
+          [{ id: "cyberAccessProgram", value: "daybreakBlue" }],
+          [],
+          [{ id: "cyberAccessProgram", value: "standard" }],
+        ],
+      );
+    }),
+  );
+});
 
 const customCompactionDriver = ProviderDriverKind.make("custom-compaction-provider");
 const nativeCompactionInstanceId = ProviderInstanceId.make("native-compaction");

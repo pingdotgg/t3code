@@ -434,6 +434,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
           modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
             { id: "reasoningEffort", value: "high" },
             { id: "serviceTier", value: "priority" },
+            { id: "cyberAccessProgram", value: "daybreakRed" },
           ]),
           attachments: [],
         }),
@@ -444,6 +445,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         model: "gpt-5.3-codex",
         effort: "high",
         serviceTier: "priority",
+        cyberAccessProgram: "daybreakRed",
       });
     }),
   );

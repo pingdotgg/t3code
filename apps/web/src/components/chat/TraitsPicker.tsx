@@ -16,7 +16,7 @@ import {
   normalizeModelSlug,
 } from "@t3tools/shared/model";
 import { memo, useCallback } from "react";
-import { BrainIcon, ZapIcon } from "lucide-react";
+import { BrainIcon, createLucideIcon, ZapIcon } from "lucide-react";
 import {
   Menu,
   MenuGroup,
@@ -41,6 +41,12 @@ import { useComposerMenuProps } from "./composerEventScope";
 import { useComposerMenuState } from "./useComposerMenuState";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
+
+const DaybreakIcon = createLucideIcon("daybreak", [
+  ["path", { d: "M2 17h20", key: "horizon" }],
+  ["path", { d: "M7 17a5 5 0 0 1 10 0", key: "sun" }],
+  ["path", { d: "M12 4v2M5 7l2 2M19 7l-2 2M2 12h2M20 12h2", key: "rays" }],
+]);
 
 const SAVED_OPTION_LABELS: Readonly<Record<string, string>> = {
   agent: "Agent",
@@ -230,26 +236,9 @@ function getTraitsSectionVisibility(input: {
     input.planModeEnabled,
   );
 
-  const showEffort = selected.primarySelectDescriptor !== null;
-  const showThinking = selected.thinkingDescriptor !== null;
-  const showFastMode = selected.fastModeDescriptor !== null;
-  const showContextWindow = selected.contextWindowDescriptor !== null;
-  const showAgent = selected.agentDescriptor !== null;
-
   return {
     ...selected,
-    showEffort,
-    showThinking,
-    showFastMode,
-    showContextWindow,
-    showAgent,
-    hasAnyControls:
-      showEffort ||
-      showThinking ||
-      showFastMode ||
-      showContextWindow ||
-      showAgent ||
-      (selected.modelIsUnavailable && selected.descriptors.length > 0),
+    hasAnyControls: selected.descriptors.length > 0,
   };
 }
 
@@ -488,9 +477,23 @@ export function buildTraitsTriggerDisplay(input: {
   ultrathinkPromptControlled: boolean;
 }): { label: string; showFastModeIcon: boolean } {
   let fastModeFallbackLabel: string | null = null;
+  let daybreakFallbackLabel: string | null = null;
   let fastModeEnabled = false;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
+    if (
+      input.provider === "codex" &&
+      descriptor.id === "cyberAccessProgram" &&
+      descriptor.type === "select"
+    ) {
+      const daybreakLabel =
+        getProviderOptionCurrentLabel(descriptor) ??
+        getDaybreakTriggerSelection(input.provider, [descriptor])?.label ??
+        getDescriptorStringValue(descriptor) ??
+        "Off";
+      daybreakFallbackLabel = `Daybreak ${daybreakLabel}`;
+      continue;
+    }
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
       fastModeEnabled = descriptor.currentValue === true;
       fastModeFallbackLabel = fastModeEnabled ? "Fast" : "Normal";
@@ -522,6 +525,9 @@ export function buildTraitsTriggerDisplay(input: {
     }
   }
 
+  if (labels.length === 0 && daybreakFallbackLabel !== null) {
+    return { label: daybreakFallbackLabel, showFastModeIcon: fastModeEnabled };
+  }
   // Only fall back to text when fast mode is genuinely the sole trait. Keying
   // off an empty label list alone would also catch descriptors that resolved to
   // no label at all, printing a bogus "Normal" for a model without fast mode.
@@ -529,6 +535,54 @@ export function buildTraitsTriggerDisplay(input: {
     return { label: fastModeFallbackLabel, showFastModeIcon: false };
   }
   return { label: labels.join(" · "), showFastModeIcon: fastModeEnabled };
+}
+
+type DaybreakTriggerProgram = "standard" | "daybreakBlue" | "daybreakRed";
+type DaybreakTriggerSelection = {
+  program: DaybreakTriggerProgram | null;
+  label: string;
+  hasBothPrograms: boolean;
+};
+
+export function getDaybreakTriggerSelection(
+  provider: ProviderDriverKind,
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+): DaybreakTriggerSelection | null {
+  if (provider !== "codex") return null;
+  const descriptor = descriptors.find(
+    (option) => option.id === "cyberAccessProgram" && option.type === "select",
+  );
+  if (descriptor?.type !== "select") return null;
+  const value = getProviderOptionCurrentValue(descriptor);
+  if (typeof value !== "string") return null;
+  return {
+    program:
+      value === "standard" || value === "daybreakBlue" || value === "daybreakRed" ? value : null,
+    hasBothPrograms:
+      descriptor.options.some((option) => option.id === "daybreakBlue") &&
+      descriptor.options.some((option) => option.id === "daybreakRed"),
+    label:
+      getProviderOptionCurrentLabel(descriptor) ??
+      (value === "standard"
+        ? "Off"
+        : value === "daybreakBlue"
+          ? "Blue"
+          : value === "daybreakRed"
+            ? "Red"
+            : value),
+  };
+}
+
+export function buildTraitsTriggerAccessibleLabel(
+  display: { label: string; showFastModeIcon: boolean },
+  daybreakSelection: DaybreakTriggerSelection | null,
+): string {
+  const parts = [display.label];
+  if (display.showFastModeIcon) parts.push("Fast mode on");
+  if (daybreakSelection !== null && display.label !== `Daybreak ${daybreakSelection.label}`) {
+    parts.push(`Daybreak ${daybreakSelection.label}`);
+  }
+  return parts.filter(Boolean).join(", ");
 }
 
 export const TraitsPicker = memo(function TraitsPicker({
@@ -577,13 +631,15 @@ export const TraitsPicker = memo(function TraitsPicker({
     return null;
   }
 
-  const { label: triggerLabel, showFastModeIcon } = buildTraitsTriggerDisplay({
+  const triggerDisplay = buildTraitsTriggerDisplay({
     provider,
     descriptors,
     primarySelectDescriptorId: primarySelectDescriptor?.id ?? null,
     ultrathinkPromptControlled,
   });
-  const accessibleLabel = showFastModeIcon ? `${triggerLabel}, Fast mode on` : triggerLabel;
+  const { label: triggerLabel, showFastModeIcon } = triggerDisplay;
+  const daybreakSelection = getDaybreakTriggerSelection(provider, descriptors);
+  const accessibleLabel = buildTraitsTriggerAccessibleLabel(triggerDisplay, daybreakSelection);
   const fastModeIcon = showFastModeIcon ? (
     <>
       <ComposerControlIcon
@@ -647,6 +703,20 @@ export const TraitsPicker = memo(function TraitsPicker({
                 >
                   <ComposerControlIcon icon={BrainIcon} size={size} />
                 </span>
+              )}
+              {(daybreakSelection?.program === "daybreakBlue" ||
+                daybreakSelection?.program === "daybreakRed") && (
+                <ComposerControlIcon
+                  icon={DaybreakIcon}
+                  size={size}
+                  className={
+                    !daybreakSelection.hasBothPrograms
+                      ? "text-foreground"
+                      : daybreakSelection.program === "daybreakBlue"
+                        ? "text-daybreak-blue"
+                        : "text-daybreak-red"
+                  }
+                />
               )}
               <span data-composer-control-label className="min-w-0 truncate">
                 {triggerLabel}

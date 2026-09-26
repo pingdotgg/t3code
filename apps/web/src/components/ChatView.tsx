@@ -67,6 +67,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import {
   applyClaudePromptEffortPrefix,
+  carryCodexCyberAccessProgram,
   createModelSelection,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
@@ -1762,6 +1763,11 @@ export default function ChatView(props: ChatViewProps) {
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
+  const [pendingDaybreakModelSwitch, setPendingDaybreakModelSwitch] = useState<{
+    threadKey: string;
+    selection: ModelSelection;
+    focusComposer: boolean;
+  } | null>(null);
   const [terminalUiLaunchContext, setTerminalUiLaunchContext] =
     useState<TerminalLaunchContext | null>(null);
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
@@ -5751,6 +5757,7 @@ export default function ChatView(props: ChatViewProps) {
 
   useEffect(() => {
     setPullRequestDialogState(null);
+    setPendingDaybreakModelSwitch(null);
     const followEnd = readTimelinePosition(routeThreadKey)?.atEnd !== false;
     isAtEndRef.current = followEnd;
     timelineScrollIntentRef.current = null;
@@ -9286,10 +9293,25 @@ export default function ChatView(props: ChatViewProps) {
         if (options?.focusComposer !== false) scheduleComposerFocus();
         return;
       }
-      const nextModelSelection: ModelSelection = {
+      const composerDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      const requestedModelSelection = createModelSelection(
         instanceId,
-        model: resolvedModel,
-      };
+        resolvedModel,
+        composerDraft?.modelSelectionByProvider[instanceId]?.options,
+      );
+      const nextModel = entry?.models.find((candidate) => candidate.slug === resolvedModel);
+      const currentModelSelection =
+        composerRef.current?.getSendContext().selectedModelSelection ?? activeThread.modelSelection;
+      const savedSelection =
+        composerDraft?.modelSelectionByProvider[currentModelSelection.instanceId];
+      const { selection: nextModelSelection, didReset } = carryCodexCyberAccessProgram({
+        current:
+          savedSelection?.model === currentModelSelection.model
+            ? savedSelection
+            : currentModelSelection,
+        next: requestedModelSelection,
+        nextCapabilities: nextModel?.capabilities,
+      });
       const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
         hasStartedSession: activeThread.session !== null,
@@ -9306,21 +9328,32 @@ export default function ChatView(props: ChatViewProps) {
         if (options?.focusComposer !== false) scheduleComposerFocus();
         return;
       }
+      if (didReset) {
+        setPendingDaybreakModelSwitch({
+          threadKey: routeThreadKey,
+          selection: nextModelSelection,
+          focusComposer: options?.focusComposer !== false,
+        });
+        return;
+      }
       setComposerDraftModelSelection(
         scopeThreadRef(activeThread.environmentId, activeThread.id),
         nextModelSelection,
-        { explicit: true },
+        { explicit: true, replaceOptions: true },
       );
-      setStickyComposerModelSelection(nextModelSelection);
+      setStickyComposerModelSelection(nextModelSelection, { replaceOptions: true });
       if (options?.focusComposer !== false) scheduleComposerFocus();
     },
     [
       activeThread,
+      composerDraftTarget,
+      composerRef,
       lockedProvider,
       scheduleComposerFocus,
       setComposerDraftModelSelection,
       setStickyComposerModelSelection,
       providerStatuses,
+      routeThreadKey,
       settings,
     ],
   );
@@ -10425,6 +10458,45 @@ export default function ChatView(props: ChatViewProps) {
               }}
             >
               Revert and keep changes
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
+      <AlertDialog
+        open={
+          pendingDaybreakModelSwitch !== null &&
+          pendingDaybreakModelSwitch.threadKey === routeThreadKey
+        }
+        onOpenChange={(open) => {
+          if (!open) setPendingDaybreakModelSwitch(null);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Switch models and reset Daybreak?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The selected model does not support your current Daybreak setting.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button
+              onClick={() => {
+                if (!pendingDaybreakModelSwitch || !activeThread) return;
+                if (pendingDaybreakModelSwitch.threadKey !== routeThreadKey) return;
+                setComposerDraftModelSelection(
+                  scopeThreadRef(activeThread.environmentId, activeThread.id),
+                  pendingDaybreakModelSwitch.selection,
+                  { explicit: true, replaceOptions: true },
+                );
+                setStickyComposerModelSelection(pendingDaybreakModelSwitch.selection, {
+                  replaceOptions: true,
+                });
+                if (pendingDaybreakModelSwitch.focusComposer) scheduleComposerFocus();
+                setPendingDaybreakModelSwitch(null);
+              }}
+            >
+              OK
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

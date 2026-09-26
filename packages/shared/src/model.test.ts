@@ -5,6 +5,7 @@ import {
   applyClaudePromptEffortPrefix,
   buildExplicitProviderOptionSelectionsFromDescriptors,
   buildProviderOptionSelectionsFromDescriptors,
+  carryCodexCyberAccessProgram,
   createModelCapabilities,
   createModelSelection,
   getModelSelectionBooleanOptionValue,
@@ -34,6 +35,146 @@ const codexCaps: ModelCapabilities = createModelCapabilities({
       type: "boolean",
     },
   ],
+});
+
+const daybreakCaps = createModelCapabilities({
+  optionDescriptors: [
+    {
+      id: "cyberAccessProgram",
+      label: "Daybreak",
+      type: "select",
+      options: [
+        { id: "standard", label: "Off", isDefault: true },
+        { id: "daybreakBlue", label: "Blue" },
+      ],
+    },
+  ],
+});
+
+describe("Daybreak model switching", () => {
+  const instanceId = ProviderInstanceId.make("codex");
+  const selected = createModelSelection(instanceId, "gpt-6-sol", [
+    { id: "cyberAccessProgram", value: "daybreakBlue" },
+  ]);
+
+  it("keeps an active choice when the next model advertises it", () => {
+    expect(
+      carryCodexCyberAccessProgram({
+        current: selected,
+        next: createModelSelection(instanceId, "gpt-6-luna"),
+        nextCapabilities: daybreakCaps,
+      }),
+    ).toEqual({
+      selection: createModelSelection(instanceId, "gpt-6-luna", [
+        { id: "cyberAccessProgram", value: "daybreakBlue" },
+      ]),
+      didReset: false,
+    });
+  });
+
+  it("carries a supported program to another Codex instance without warning", () => {
+    const workInstanceId = ProviderInstanceId.make("codex_work");
+    expect(
+      carryCodexCyberAccessProgram({
+        current: selected,
+        next: createModelSelection(workInstanceId, "gpt-6-sol"),
+        nextCapabilities: daybreakCaps,
+      }),
+    ).toEqual({
+      selection: createModelSelection(workInstanceId, "gpt-6-sol", [
+        { id: "cyberAccessProgram", value: "daybreakBlue" },
+      ]),
+      didReset: false,
+    });
+  });
+
+  it("warns and clears Daybreak when the next model has no advertised standard program", () => {
+    const switched = carryCodexCyberAccessProgram({
+      current: selected,
+      next: createModelSelection(instanceId, "gpt-6-astra", [
+        { id: "reasoningEffort", value: "high" },
+      ]),
+      nextCapabilities: codexCaps,
+    });
+    expect(switched).toEqual({
+      selection: createModelSelection(instanceId, "gpt-6-astra", [
+        { id: "reasoningEffort", value: "high" },
+      ]),
+      didReset: true,
+    });
+    expect(
+      carryCodexCyberAccessProgram({
+        current: switched.selection,
+        next: createModelSelection(instanceId, "gpt-6-sol"),
+        nextCapabilities: daybreakCaps,
+      }).selection.options,
+    ).toBeUndefined();
+  });
+
+  it("clears a previous Off choice when the next catalog does not advertise standard", () => {
+    expect(
+      carryCodexCyberAccessProgram({
+        current: createModelSelection(instanceId, "gpt-6-sol", [
+          { id: "cyberAccessProgram", value: "standard" },
+        ]),
+        next: createModelSelection(instanceId, "unlisted-model", [
+          { id: "cyberAccessProgram", value: "standard" },
+        ]),
+        nextCapabilities: null,
+      }),
+    ).toEqual({
+      selection: { instanceId, model: "unlisted-model", options: [] },
+      didReset: false,
+    });
+  });
+
+  it("resets Red when the next model only offers Blue", () => {
+    expect(
+      carryCodexCyberAccessProgram({
+        current: createModelSelection(instanceId, "gpt-red", [
+          { id: "cyberAccessProgram", value: "daybreakRed" },
+        ]),
+        next: createModelSelection(instanceId, "gpt-blue"),
+        nextCapabilities: daybreakCaps,
+      }),
+    ).toEqual({
+      selection: createModelSelection(instanceId, "gpt-blue", [
+        { id: "cyberAccessProgram", value: "standard" },
+      ]),
+      didReset: true,
+    });
+  });
+
+  it("drops a saved program that the next model does not advertise", () => {
+    const staleNext = createModelSelection(instanceId, "gpt-6-astra", [
+      { id: "reasoningEffort", value: "high" },
+      { id: "cyberAccessProgram", value: "daybreakBlue" },
+    ]);
+    expect(
+      carryCodexCyberAccessProgram({
+        current: createModelSelection(instanceId, "gpt-6-astra"),
+        next: staleNext,
+        nextCapabilities: codexCaps,
+      }),
+    ).toEqual({
+      selection: createModelSelection(instanceId, "gpt-6-astra", [
+        { id: "reasoningEffort", value: "high" },
+      ]),
+      didReset: false,
+    });
+    expect(
+      carryCodexCyberAccessProgram({
+        current: selected,
+        next: { ...staleNext, instanceId: ProviderInstanceId.make("codex_work") },
+        nextCapabilities: codexCaps,
+      }),
+    ).toEqual({
+      selection: createModelSelection(ProviderInstanceId.make("codex_work"), "gpt-6-astra", [
+        { id: "reasoningEffort", value: "high" },
+      ]),
+      didReset: true,
+    });
+  });
 });
 
 const claudeCaps: ModelCapabilities = createModelCapabilities({
