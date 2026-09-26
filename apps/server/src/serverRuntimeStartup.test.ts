@@ -211,6 +211,8 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
           ),
         streamDomainEvents: Stream.empty,
         subscribeDomainEvents: Effect.succeed(Stream.empty),
+        withWorktreeCleanup: <A, E>(_paths: ReadonlyArray<string>, effect: Effect.Effect<A, E>) =>
+          effect,
         latestSequence: Effect.succeed(0),
       } satisfies OrchestrationEngine.OrchestrationEngineService["Service"]),
       Effect.provide(NodeServices.layer),
@@ -342,6 +344,8 @@ it.effect.each([
           ),
         streamDomainEvents: Stream.empty,
         subscribeDomainEvents: Effect.succeed(Stream.empty),
+        withWorktreeCleanup: <A, E>(_paths: ReadonlyArray<string>, effect: Effect.Effect<A, E>) =>
+          effect,
         latestSequence: Effect.succeed(0),
       } satisfies OrchestrationEngine.OrchestrationEngineService["Service"]),
       Effect.provide(NodeServices.layer),
@@ -416,6 +420,8 @@ it.effect(
             ),
           streamDomainEvents: Stream.empty,
           subscribeDomainEvents: Effect.succeed(Stream.empty),
+          withWorktreeCleanup: <A, E>(_paths: ReadonlyArray<string>, effect: Effect.Effect<A, E>) =>
+            effect,
           latestSequence: Effect.succeed(0),
         } satisfies OrchestrationEngine.OrchestrationEngineService["Service"]),
         Effect.provide(NodeServices.layer),
@@ -482,6 +488,8 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
           ),
         streamDomainEvents: Stream.empty,
         subscribeDomainEvents: Effect.succeed(Stream.empty),
+        withWorktreeCleanup: <A, E>(_paths: ReadonlyArray<string>, effect: Effect.Effect<A, E>) =>
+          effect,
         latestSequence: Effect.succeed(0),
       } satisfies OrchestrationEngine.OrchestrationEngineService["Service"]),
       Effect.provideService(Crypto.Crypto, {

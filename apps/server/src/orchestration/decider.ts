@@ -21,6 +21,7 @@ import {
   threadPullRequestKeysEqual,
 } from "@t3tools/shared/threadPullRequests";
 import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -411,11 +412,30 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.delete": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      if (command.deleteWorktreePath) {
+        const worktreePath = normalizeProjectPathForComparison(command.deleteWorktreePath);
+        if (
+          thread.worktreePath === null ||
+          normalizeProjectPathForComparison(thread.worktreePath) !== worktreePath ||
+          readModel.threads.some(
+            (entry) =>
+              entry.id !== thread.id &&
+              entry.deletedAt === null &&
+              entry.worktreePath !== null &&
+              normalizeProjectPathForComparison(entry.worktreePath) === worktreePath,
+          )
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: "Worktree references changed during deletion. Try deleting the thread again.",
+          });
+        }
+      }
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({

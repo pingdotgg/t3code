@@ -227,6 +227,8 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           getThreadReplayStats: () => Effect.die("unused"),
           streamDomainEvents: Stream.empty,
           subscribeDomainEvents: Effect.succeed(Stream.empty),
+          withWorktreeCleanup: <A, E>(_paths: ReadonlyArray<string>, effect: Effect.Effect<A, E>) =>
+            effect,
           latestSequence: Effect.succeed(0),
         });
         const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
@@ -332,6 +334,8 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           getThreadReplayStats: () => Effect.die("unused"),
           streamDomainEvents: Stream.empty,
           subscribeDomainEvents: Effect.succeed(Stream.empty),
+          withWorktreeCleanup: <A, E>(_paths: ReadonlyArray<string>, effect: Effect.Effect<A, E>) =>
+            effect,
           latestSequence: Effect.succeed(0),
         });
         const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
@@ -397,6 +401,8 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           getThreadReplayStats: () => Effect.die("unused"),
           streamDomainEvents: Stream.empty,
           subscribeDomainEvents: Effect.succeed(Stream.empty),
+          withWorktreeCleanup: <A, E>(_paths: ReadonlyArray<string>, effect: Effect.Effect<A, E>) =>
+            effect,
           latestSequence: Effect.succeed(0),
         });
         const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
@@ -468,6 +474,8 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           getThreadReplayStats: () => Effect.die("unused"),
           streamDomainEvents: Stream.empty,
           subscribeDomainEvents: Effect.succeed(Stream.empty),
+          withWorktreeCleanup: <A, E>(_paths: ReadonlyArray<string>, effect: Effect.Effect<A, E>) =>
+            effect,
           latestSequence: Effect.succeed(0),
         });
 
@@ -506,6 +514,8 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           getThreadReplayStats: () => Effect.die("unused"),
           streamDomainEvents: Stream.empty,
           subscribeDomainEvents: Effect.succeed(Stream.empty),
+          withWorktreeCleanup: <A, E>(_paths: ReadonlyArray<string>, effect: Effect.Effect<A, E>) =>
+            effect,
           latestSequence: Effect.succeed(0),
         });
         const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({

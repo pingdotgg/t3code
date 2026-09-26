@@ -104,6 +104,10 @@ import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngi
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
 import {
+  removeUnusedWorktree,
+  withThreadWorktreeDeletion,
+} from "./orchestration/threadWorktreeDeletion.ts";
+import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
   observeRpcStreamEffect as instrumentRpcStreamEffect,
@@ -553,6 +557,9 @@ const makeWsRpcLayer = (
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+      const worktreeDeletionContext = yield* Effect.context<
+        GitVcsDriver.GitVcsDriver | FileSystem.FileSystem | Path.Path
+      >();
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -1905,7 +1912,31 @@ const makeWsRpcLayer = (
                     ),
                   )
                 : false;
-              const result = yield* dispatchNormalizedCommand(normalizedCommand).pipe(
+              const dispatch = dispatchNormalizedCommand(normalizedCommand);
+              const result = yield* (
+                normalizedCommand.type === "thread.delete" && normalizedCommand.deleteWorktreePath
+                  ? withThreadWorktreeDeletion(normalizedCommand, (staged) =>
+                      dispatchNormalizedCommand(
+                        staged
+                          ? normalizedCommand
+                          : { ...normalizedCommand, deleteWorktreePath: undefined },
+                      ),
+                    ).pipe(
+                      Effect.provide(worktreeDeletionContext),
+                      Effect.provideService(
+                        OrchestrationEngine.OrchestrationEngineService,
+                        orchestrationEngine,
+                      ),
+                      Effect.provideService(
+                        ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+                        projectionSnapshotQuery,
+                      ),
+                      Effect.mapError((cause) =>
+                        toDispatchCommandError(cause, "Failed to delete thread and worktree"),
+                      ),
+                    )
+                  : dispatch
+              ).pipe(
                 Effect.tapError(() => cleanupFailedUploadedAttachments(command, normalizedCommand)),
               );
               yield* recordClientCommandAnalytics(normalizedCommand);
@@ -3382,7 +3413,18 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRemoveWorktree,
-            gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            removeUnusedWorktree(input, gitWorkflow.removeWorktree(input)).pipe(
+              Effect.provide(worktreeDeletionContext),
+              Effect.provideService(
+                OrchestrationEngine.OrchestrationEngineService,
+                orchestrationEngine,
+              ),
+              Effect.provideService(
+                ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+                projectionSnapshotQuery,
+              ),
+              Effect.tap(() => refreshGitStatus(input.cwd)),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsCreateRef]: (input) =>

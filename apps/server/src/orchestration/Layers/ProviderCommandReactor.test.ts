@@ -425,6 +425,7 @@ describe("ProviderCommandReactor", () => {
       Effect.gen(function* () {
         const engine = yield* OrchestrationEngineService;
         return {
+          withWorktreeCleanup: engine.withWorktreeCleanup,
           readEvents: engine.readEvents,
           readThreadEvents: engine.readThreadEvents,
           getThreadReplayStats: engine.getThreadReplayStats,

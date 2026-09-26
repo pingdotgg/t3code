@@ -75,6 +75,12 @@ export interface OrchestrationEngineShape {
     options?: { readonly origin?: OrchestrationClientOrigin },
   ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never>;
 
+  /** Reserve paths on the command queue, preventing adoption while filesystem cleanup runs outside it. */
+  readonly withWorktreeCleanup: <A, E>(
+    paths: ReadonlyArray<string>,
+    cleanup: Effect.Effect<A, E>,
+  ) => Effect.Effect<A, E>;
+
   /**
    * Stream persisted domain events in dispatch order.
    *
