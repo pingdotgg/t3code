@@ -1,4 +1,4 @@
-import { type FilesystemBrowseEntry, WS_METHODS } from "@t3tools/contracts";
+import { type FilesystemBrowseEntry, type FilesystemDrive, WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
@@ -11,7 +11,10 @@ import {
   hasTrailingPathSeparator,
   isFilesystemBrowseQuery,
 } from "./projects.ts";
-import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import {
+  createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentRpcSubscriptionAtomFamily,
+} from "./runtime.ts";
 
 export function getFilesystemBrowsePath(query: string, platform = "", enabled = true) {
   const isBrowsing = enabled && isFilesystemBrowseQuery(query, platform);
@@ -71,6 +74,34 @@ export function canPreloadBrowsePath(
   return connectionPhase === "connected";
 }
 
+const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB", "PB"] as const;
+
+export function formatDriveBytes(bytes: number): string {
+  let value = Math.max(0, bytes);
+  let unit = 0;
+  while (value >= 1000 && unit < BYTE_UNITS.length - 1) {
+    value /= 1000;
+    unit += 1;
+  }
+  const digits = unit === 0 ? 0 : value < 10 ? 1 : 0;
+  return `${value.toFixed(digits)} ${BYTE_UNITS[unit]}`;
+}
+
+export function shouldSkipDrivePicker(drives: ReadonlyArray<FilesystemDrive>): boolean {
+  return drives.length === 0 || (drives.length === 1 && drives[0]?.kind === "system");
+}
+
+export function describeDrive(drive: FilesystemDrive): string {
+  const base =
+    drive.totalBytes === null || drive.freeBytes === null || drive.totalBytes <= 0
+      ? drive.path
+      : `${formatDriveBytes(drive.freeBytes)} free of ${formatDriveBytes(drive.totalBytes)} · ${drive.path}`;
+  if (drive.kind !== "system" && drive.writable === false) {
+    return `${base} · not writable`;
+  }
+  return base;
+}
+
 export function createFilesystemEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
@@ -78,6 +109,11 @@ export function createFilesystemEnvironmentAtoms<R, E>(
     browse: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:filesystem:browse",
       tag: WS_METHODS.filesystemBrowse,
+    }),
+    drives: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:filesystem:drives",
+      tag: WS_METHODS.subscribeFilesystemDrives,
+      idleTtlMs: 0,
     }),
   };
 }

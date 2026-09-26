@@ -37,7 +37,10 @@ export class WorkspaceRootCreateFailedError extends Schema.TaggedError<Workspace
   },
 ) {
   override get message(): string {
-    return `Failed to create workspace root: ${this.normalizedWorkspaceRoot}`;
+    const detail = describeWorkspaceRootCreateCause(this.cause);
+    return detail === undefined
+      ? `Failed to create workspace root: ${this.normalizedWorkspaceRoot}`
+      : `Failed to create workspace root: ${this.normalizedWorkspaceRoot} (${detail})`;
   }
 }
 
@@ -120,6 +123,25 @@ export class WorkspacePaths extends Context.Service<
 
 function toPosixRelativePath(input: string): string {
   return input.replaceAll("\\", "/");
+}
+
+function describeWorkspaceRootCreateCause(cause: unknown): string | undefined {
+  if (typeof cause !== "object" || cause === null) return undefined;
+  const reason =
+    "reason" in cause && typeof cause.reason === "object" && cause.reason !== null
+      ? cause.reason
+      : cause;
+  if (!("_tag" in reason) || typeof reason._tag !== "string") return undefined;
+  switch (reason._tag) {
+    case "PermissionDenied":
+      return "permission denied";
+    case "AlreadyExists":
+      return "already exists";
+    case "NotFound":
+      return "parent path not found";
+    default:
+      return undefined;
+  }
 }
 
 export const make = Effect.gen(function* () {

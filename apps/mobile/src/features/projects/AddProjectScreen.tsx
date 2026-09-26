@@ -27,11 +27,14 @@ import {
 import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
+  describeDrive,
   filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
+  shouldSkipDrivePicker,
 } from "@t3tools/client-runtime/state/filesystem";
 import {
   appendBrowsePathSegment,
+  ensureBrowseDirectoryPath,
   inferProjectTitleFromPath,
   isWindowsPlatform,
 } from "@t3tools/client-runtime/state/projects";
@@ -39,6 +42,7 @@ import {
   CommandId,
   type EnvironmentId,
   type EnvironmentMachineKind,
+  type FilesystemDrive,
   ProjectId,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
@@ -895,6 +899,88 @@ function FolderBrowser(props: {
   );
 }
 
+function driveSymbolName(drive: FilesystemDrive) {
+  switch (drive.kind) {
+    case "removable":
+      return "externaldrive" as const;
+    case "network":
+      return "externaldrive.connected.to.line.below" as const;
+    case "system":
+    case "fixed":
+      return "internaldrive" as const;
+  }
+}
+
+function DrivePicker(props: {
+  readonly environment: EnvironmentOption;
+  readonly disabled?: boolean;
+  readonly navigateToBrowsePath: (input: {
+    readonly browseDirectoryPath: string;
+  }) => Promise<boolean>;
+}) {
+  const drivesState = useEnvironmentQuery(
+    filesystemEnvironment.drives({
+      environmentId: props.environment.environmentId,
+      input: {},
+    }),
+  );
+  const homePath = getAddProjectInitialQuery(props.environment.baseDirectory);
+  const drives = drivesState.data?.drives ?? [];
+  if (shouldSkipDrivePicker(drives)) {
+    return null;
+  }
+
+  return (
+    <>
+      <SectionTitle>Drives</SectionTitle>
+      <ListSection>
+        <ListRow
+          title="Home"
+          subtitle={homePath}
+          icon={
+            <SymbolView
+              name="house"
+              size={Platform.OS === "android" ? 24 : 17}
+              tintColorClassName="accent-icon"
+              type="monochrome"
+            />
+          }
+          isFirst
+          right={null}
+          disabled={props.disabled}
+          onPress={() => {
+            if (props.disabled) return;
+            void props.navigateToBrowsePath({ browseDirectoryPath: homePath });
+          }}
+        />
+        {drives.map((drive) => (
+          <ListRow
+            key={drive.path}
+            title={drive.label}
+            subtitle={describeDrive(drive)}
+            icon={
+              <SymbolView
+                name={driveSymbolName(drive)}
+                size={Platform.OS === "android" ? 24 : 17}
+                tintColorClassName="accent-icon"
+                type="monochrome"
+              />
+            }
+            right={null}
+            disabled={props.disabled}
+            onPress={() => {
+              if (props.disabled) return;
+              void props.navigateToBrowsePath({
+                browseDirectoryPath: ensureBrowseDirectoryPath(drive.path),
+              });
+            }}
+          />
+        ))}
+      </ListSection>
+    </>
+  );
+}
+
 export function AddProjectLocalFolderScreen(props: { readonly environmentId?: string | string[] }) {
   const environment = useEnvironmentFromParam(props.environmentId);
   const createProject = useCreateProject(environment);
@@ -939,6 +1025,11 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
             disabled={isBrowseNavigating || isSubmitting}
             onPress={() => void submitPath()}
             loading={isSubmitting}
+          />
+          <DrivePicker
+            environment={environment}
+            disabled={isSubmitting}
+            navigateToBrowsePath={navigateToBrowsePath}
           />
           <FolderBrowser
             environment={environment}
