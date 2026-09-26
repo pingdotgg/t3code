@@ -259,6 +259,7 @@ describe("KeybindingsSettings.logic", () => {
     expect(options).toEqual(
       expect.arrayContaining([
         "chat.new",
+        "composer.focus",
         "rightPanel.toggleMaximized",
         "thread.stop",
         "usage.open",
