@@ -1873,9 +1873,15 @@ const makeWsRpcLayer = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
       // Publish and init add a remote or a repository the cached identity has not
       // seen. Re-emitting the project shell carries the new identity to clients.
+      // A null identity (a failed lookup, or init without a remote) changes
+      // nothing clients can use, so it is not re-emitted.
       const refreshRepositoryIdentity = (cwd: string) =>
         repositoryIdentityResolver.resolve(cwd, { refresh: true }).pipe(
-          Effect.andThen(projectionSnapshotQuery.getActiveProjectByWorkspaceRoot(cwd)),
+          Effect.flatMap((identity) =>
+            identity === null
+              ? Effect.succeedNone
+              : projectionSnapshotQuery.getActiveProjectByWorkspaceRoot(cwd),
+          ),
           Effect.flatMap((project) =>
             Option.isNone(project)
               ? Effect.void

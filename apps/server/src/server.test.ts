@@ -7685,7 +7685,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               resolve: (cwd, options) =>
                 Effect.sync(() => {
                   if (options?.refresh) refreshedRoots.push(cwd);
-                  return null;
+                  return {
+                    canonicalKey: "github.com/t3tools/t3code",
+                    locator: {
+                      source: "git-remote",
+                      remoteName: "origin",
+                      remoteUrl: "git@github.com:t3tools/t3code.git",
+                    },
+                  } as const;
                 }),
             },
             sourceControlRepositoryService: {
@@ -7727,6 +7734,41 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.deepEqual(refreshedRoots, [project.workspaceRoot]);
         assert.deepEqual(dispatched, ["project.meta.update"]);
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("does not re-emit the project when the identity refresh finds nothing", () =>
+    Effect.gen(function* () {
+      const dispatched: Array<string> = [];
+      const project = makeDefaultOrchestrationReadModel().projects[0]!;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command.type);
+                return { sequence: dispatched.length };
+              }),
+          },
+          projectionSnapshotQuery: {
+            getActiveProjectByWorkspaceRoot: () =>
+              Effect.succeed(Option.some({ ...project, repositoryIdentity: null })),
+          },
+          repositoryIdentityResolver: {
+            resolve: () => Effect.succeed(null),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      // The refresh runs before the RPC returns, so any dispatch has landed.
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsInit]({ cwd: project.workspaceRoot }),
+        ),
+      );
+      assert.deepEqual(dispatched, []);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("records thread analytics only after a client command succeeds", () =>
