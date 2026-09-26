@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Platform, Modal, Pressable, TextInput, View } from "react-native";
+import { FullWindowOverlay } from "react-native-screens";
 
 import { cn } from "../lib/cn";
 import { AppText } from "./AppText";
@@ -15,15 +16,17 @@ type DialogRequest =
 let presentRequest: ((request: DialogRequest) => void) | null = null;
 
 /**
- * Imperative confirm dialog, Alert.alert-shaped. Native iOS alerts already
- * match the app (and support per-button destructive red), so this is for
- * Android, where the native dialog can only theme all confirm buttons at
- * once. Requires ConfirmDialogHost to be mounted at the app root.
+ * Imperative confirm dialog, Alert.alert-shaped. Android uses a themed
+ * in-tree dialog because the native one cannot color a single destructive
+ * button. iOS uses a FullWindowOverlay so the confirm stays visible above
+ * nested form sheets — UIAlertController from the key window does not.
+ * Requires ConfirmDialogHost to be mounted at the app root.
  */
 export function showConfirmDialog(request: ConfirmDialogRequest): void {
   presentRequest?.({ kind: "confirm", request });
 }
 
+/** Imperative text-input dialog, Alert.prompt-shaped. Requires ConfirmDialogHost. */
 export function showTextInputDialog(request: TextInputDialogRequest): void {
   presentRequest?.({ kind: "text-input", request });
 }
@@ -47,11 +50,13 @@ export function ConfirmDialogHost() {
     };
   }, []);
 
+  /** Dismiss the presented dialog without confirming. */
   const handleCancel = useCallback(() => {
     presented?.request.onCancel?.();
     setPresented(null);
   }, [presented]);
 
+  /** Confirm the presented dialog, passing text-input value when present. */
   const handleConfirm = useCallback(
     (nativeInputValue?: string) => {
       if (presented?.kind === "confirm") {
@@ -81,6 +86,77 @@ export function ConfirmDialogHost() {
       />
     ) : null;
 
+  const dialog =
+    presented === null ? null : (
+      <View
+        accessibilityViewIsModal
+        onAccessibilityEscape={handleCancel}
+        className="flex-1 items-center justify-center bg-backdrop px-8"
+      >
+        <View className="w-full rounded-[24px] bg-card px-6 pb-4 pt-5">
+          <AppText className="text-lg font-t3-medium">{presented.request.title}</AppText>
+          {presented.kind === "confirm" && presented.request.message !== undefined ? (
+            <AppText className="mt-2 text-sm text-foreground-secondary">
+              {presented.request.message}
+            </AppText>
+          ) : null}
+          {presented.kind === "text-input" ? (
+            <TextInput
+              accessibilityLabel={presented.request.title}
+              autoFocus
+              className="mt-4 rounded-xl border border-border bg-screen px-3 py-2.5 text-base text-foreground"
+              onChangeText={setInputValue}
+              onSubmitEditing={confirmDisabled ? undefined : () => handleConfirm()}
+              returnKeyType="done"
+              selectTextOnFocus
+              value={inputValue}
+            />
+          ) : null}
+          <View className="mt-5 flex-row justify-end gap-1">
+            <View className="overflow-hidden rounded-full">
+              <Pressable
+                accessibilityRole="button"
+                className="min-h-10 items-center justify-center px-4 active:bg-subtle"
+                onPress={handleCancel}
+              >
+                <AppText className="text-base font-t3-medium">
+                  {presented.request.cancelText ?? "Cancel"}
+                </AppText>
+              </Pressable>
+            </View>
+            <View className="overflow-hidden rounded-full">
+              <Pressable
+                accessibilityRole="button"
+                disabled={confirmDisabled}
+                className="min-h-10 items-center justify-center px-4 active:bg-subtle"
+                onPress={() => handleConfirm()}
+              >
+                <AppText
+                  className={cn(
+                    "text-base font-t3-medium",
+                    presented.kind === "confirm" &&
+                      presented.request.destructive &&
+                      "text-danger-foreground",
+                    confirmDisabled && "text-foreground-tertiary",
+                  )}
+                >
+                  {presented.request.confirmText}
+                </AppText>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </View>
+    );
+
+  // FullWindowOverlay's container is a sibling of the React root. Inner
+  // accessibilityViewIsModal cannot hide that sibling; the container flag can.
+  if (Platform.OS === "ios") {
+    return dialog === null ? null : (
+      <FullWindowOverlay unstable_accessibilityContainerViewIsModal>{dialog}</FullWindowOverlay>
+    );
+  }
+
   return (
     <Modal
       visible={presented !== null}
@@ -90,63 +166,7 @@ export function ConfirmDialogHost() {
       navigationBarTranslucent
       onRequestClose={handleCancel}
     >
-      {presented === null ? null : (
-        <View className="flex-1 items-center justify-center bg-backdrop px-8">
-          <View className="w-full rounded-[24px] bg-card px-6 pb-4 pt-5">
-            <AppText className="text-lg font-t3-medium">{presented.request.title}</AppText>
-            {presented.kind === "confirm" && presented.request.message !== undefined ? (
-              <AppText className="mt-2 text-sm text-foreground-secondary">
-                {presented.request.message}
-              </AppText>
-            ) : null}
-            {presented.kind === "text-input" ? (
-              <TextInput
-                accessibilityLabel={presented.request.title}
-                autoFocus
-                className="mt-4 rounded-xl border border-border bg-screen px-3 py-2.5 text-base text-foreground"
-                onChangeText={setInputValue}
-                onSubmitEditing={confirmDisabled ? undefined : () => handleConfirm()}
-                returnKeyType="done"
-                selectTextOnFocus
-                value={inputValue}
-              />
-            ) : null}
-            <View className="mt-5 flex-row justify-end gap-1">
-              <View className="overflow-hidden rounded-full">
-                <Pressable
-                  accessibilityRole="button"
-                  className="min-h-10 items-center justify-center px-4 active:bg-subtle"
-                  onPress={handleCancel}
-                >
-                  <AppText className="text-base font-t3-medium">
-                    {presented.request.cancelText ?? "Cancel"}
-                  </AppText>
-                </Pressable>
-              </View>
-              <View className="overflow-hidden rounded-full">
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={confirmDisabled}
-                  className="min-h-10 items-center justify-center px-4 active:bg-subtle"
-                  onPress={() => handleConfirm()}
-                >
-                  <AppText
-                    className={cn(
-                      "text-base font-t3-medium",
-                      presented.kind === "confirm" &&
-                        presented.request.destructive &&
-                        "text-danger-foreground",
-                      confirmDisabled && "text-foreground-tertiary",
-                    )}
-                  >
-                    {presented.request.confirmText}
-                  </AppText>
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </View>
-      )}
+      {dialog}
     </Modal>
   );
 }
