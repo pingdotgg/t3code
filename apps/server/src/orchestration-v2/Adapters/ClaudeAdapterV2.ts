@@ -6553,10 +6553,15 @@ export function makeClaudeAdapterV2(
               // Stop after the turn settled: the background shells belong to
               // the CLI process, so closing its query is what stops them.
               yield* closeLiveQueryForNativeThread(nativeThreadId);
-              yield* clearWakeStateForNativeThread(nativeThreadId);
-              yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
-                status: "idle",
-              });
+              // A turn started while the close was pending may have opened a
+              // replacement process. Its Waiting and wake state are its own.
+              const current = yield* Ref.get(queryContext);
+              if (current === null || current.query === existing.query) {
+                yield* clearWakeStateForNativeThread(nativeThreadId);
+                yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
+                  status: "idle",
+                });
+              }
               return;
             }
             if (currentTurn?.providerTurnId !== turnInput.providerTurnId) {
