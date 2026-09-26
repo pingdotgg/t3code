@@ -523,31 +523,26 @@ describe("ModelManifest service", () => {
     ),
   );
 
-  it.live("does not fetch when provider update checks are disabled", () =>
-    Effect.gen(function* () {
-      let fetchCount = 0;
-      const service = yield* make.pipe(
-        Effect.provide(
-          httpClientLayer(() => {
-            fetchCount += 1;
-            return Response.json(REMOTE_MANIFEST);
-          }),
-        ),
-      );
-      assert.deepStrictEqual(yield* service.refresh, BUNDLED_MODEL_MANIFEST);
-      assert.deepStrictEqual(yield* service.forceRefresh, BUNDLED_MODEL_MANIFEST);
-      assert.strictEqual(fetchCount, 0);
+  it.live("still fetches when provider update checks are disabled", () => {
+    let fetchCount = 0;
+    return Effect.gen(function* () {
+      const service = yield* make;
+      assert.deepStrictEqual(yield* service.refresh, REMOTE_MANIFEST);
+      assert.strictEqual(fetchCount, 1);
     }).pipe(
       Effect.scoped,
       Effect.provide(
         serviceLayers({
           prefix: "model-manifest-optout-test",
-          response: () => Response.json(REMOTE_MANIFEST),
+          response: () => {
+            fetchCount += 1;
+            return Response.json(REMOTE_MANIFEST);
+          },
           settings: { enableProviderUpdateChecks: false },
         }),
       ),
-    ),
-  );
+    );
+  });
 });
 
 it.effect("caches valid compatibility policies and keeps them after a malformed refresh", () => {
