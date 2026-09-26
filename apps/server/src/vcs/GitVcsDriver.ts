@@ -983,9 +983,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                   maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
                 });
                 if (untracked.stdoutTruncated) return yield* error;
-                const candidates = splitNullSeparatedGitStdoutPaths(untracked).filter((entry) =>
-                  entry.endsWith("/"),
-                );
+                const untrackedPaths = splitNullSeparatedGitStdoutPaths(untracked);
+                const candidates = untrackedPaths.filter((entry) => entry.endsWith("/"));
                 // Refuse excessive recovery work before probing any nested repositories.
                 if (candidates.length > CHECKPOINT_RECOVERY_MAX_CANDIDATES) return yield* error;
                 // Discover each child's repository instead of inheriting the server's Git bindings.
@@ -1014,9 +1013,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                   // The directory itself is not ignored (see the probe above), but
                   // `git add -A` still refuses a project directory that was ignored
                   // after its files were tracked. `git add -u` stages those tracked
-                  // edits while leaving ignored files alone. Anything it cannot
-                  // stage fails the same way, so surface the original error then.
-                  if (error.retryable !== true) {
+                  // edits while leaving ignored files alone — but it also drops
+                  // every untracked file, so it may only run when there is nothing
+                  // untracked left to drop. Any other `add -A` failure (unreadable
+                  // or unfiltrable untracked files, ...) keeps failing loudly
+                  // instead of publishing a partial checkpoint.
+                  if (untrackedPaths.length === 0 && error.retryable !== true) {
                     const updated = yield* stageFiles([], true).pipe(
                       Effect.as(true),
                       Effect.orElseSucceed(() => false),

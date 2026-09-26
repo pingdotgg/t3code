@@ -1002,16 +1002,23 @@ const make = Effect.gen(function* () {
       yield* captureCheckpointFromTurnCompletion(event).pipe(
         Effect.catch((error) =>
           Effect.flatMap(nowIso, (createdAt) => {
-            if (error._tag === "VcsUnsupportedOperationError") {
-              if (checkpointUnsupportedNoticed.has(event.threadId)) return Effect.void;
-              checkpointUnsupportedNoticed.add(event.threadId);
-            }
+            const unsupported = error._tag === "VcsUnsupportedOperationError";
+            if (unsupported && checkpointUnsupportedNoticed.has(event.threadId)) return Effect.void;
             return appendCaptureFailureActivity({
               threadId: event.threadId,
               turnId,
               detail: error.message,
               createdAt,
-            }).pipe(Effect.catch(() => Effect.void));
+            }).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  // Only treat the thread as notified once the notice is recorded;
+                  // a failed dispatch stays eligible for a notice on a later turn.
+                  if (unsupported) checkpointUnsupportedNoticed.add(event.threadId);
+                }),
+              ),
+              Effect.catch(() => Effect.void),
+            );
           }),
         ),
       );

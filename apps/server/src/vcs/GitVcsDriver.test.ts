@@ -333,6 +333,49 @@ it.effect("checkpoint capture stages tracked edits when the directory was ignore
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
+it.effect(
+  "checkpoint keeps failing when untracked files would be dropped by the update fallback",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const liveProcess = yield* VcsProcess.VcsProcess;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-checkpoint-update-guard-",
+      });
+      const { checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      yield* fileSystem.writeFileString(path.join(cwd, "untracked.txt"), "new\n");
+      const stageError = new VcsProcessExitError({
+        operation: "GitVcsDriver.checkpoints.captureCheckpoint",
+        command: "git",
+        cwd,
+        exitCode: 1,
+        detail: "mock add failure",
+      });
+      let updateAttempts = 0;
+      const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) => {
+            if (input.args.includes("add") && input.args.includes("-A"))
+              return Effect.fail(stageError);
+            if (input.args.includes("-u")) updateAttempts++;
+            return liveProcess.run(input);
+          },
+        }),
+      );
+
+      const result = yield* Effect.result(
+        captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef }),
+      );
+
+      assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure") assert.strictEqual(result.failure, stageError);
+      assert.strictEqual(updateAttempts, 0);
+      assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+    }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
 it.effect("checkpoint capture from a subdirectory snapshots only that subdirectory", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
