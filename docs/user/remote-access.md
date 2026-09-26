@@ -20,6 +20,12 @@ Follow the sign-in instructions. Setup offers a
 server with `t3 serve`. Saving your sign-in alone does not make the machine
 reachable.
 
+When you open a self-hosted T3 server in a browser, set up T3 Connect from the
+host's terminal. Sign-in happens on the authorization page provided by the CLI,
+not at the server's local or private-network address. Use
+`npx t3@latest connect link --headless` to link an existing setup, then restart the
+server. Local use does not require T3 Connect.
+
 On your other device, sign in to the same T3 Connect account and choose the
 environment. Over SSH, the CLI prints a browser link and a short code. Open the
 link on any device, confirm the code matches, and approve. The CLI continues on
@@ -125,7 +131,8 @@ In the desktop app, open **Settings → Connections → Add environment**, choos
 or reuses a server there and opens the port forward for you. Projects, provider
 credentials, and agent work stay on the remote machine.
 
-The remote host must be Linux or an Apple Silicon Mac with `curl` or `wget`,
+The remote host must be Linux (x64 or arm64) or an Apple Silicon Mac (arm64) with
+`curl` or `wget`,
 `tar`, `sha256sum` or `shasum`, and [provider setup](./install.md#providers).
 The first launch downloads T3 Code's server to `~/.t3/runtime` on the host, so
 it takes longer than later ones.
