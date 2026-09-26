@@ -557,26 +557,23 @@ describe("observability", () => {
           const path = yield* Path.Path;
           const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-local-tracer-" });
           const tracePath = path.join(tempDir, "shared.trace.ndjson");
-          const { delegate, spans } = makeRecordingDelegate();
 
           const span = yield* Effect.scoped(
-            Effect.logInfo("during").pipe(
-              Effect.andThen(Effect.currentSpan),
+            Effect.currentSpan.pipe(
+              Effect.tap((span) => Effect.sync(() => span.event("during", 1n))),
               Effect.withSpan("ended-span"),
-              Effect.provide(makeTestLayer(tracePath, delegate)),
+              Effect.provide(makeTestLayer(tracePath)),
             ),
           );
-          span.event("after end", 0n);
+          span.event("after end", 2n);
 
-          assert.deepEqual(
-            spans[0]?.events.map(([name]) => name),
-            ["during"],
-          );
+          // A fiber that outlives its span would grow this list.
+          assert.deepPropertyVal(span, "events", [["during", 1n, {}]]);
         }),
       ),
     );
 
-    it.effect("caps the events kept per span and records how many were dropped", () =>
+    it.effect("keeps the newest events per span and records how many were dropped", () =>
       Effect.scoped(
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
@@ -595,10 +592,16 @@ describe("observability", () => {
           );
 
           const records = yield* readTraceRecords(tracePath);
-          assert.equal(records[0]?.events.length, 128);
-          assert.equal(records[0]?.events.at(-1)?.name, "event 128");
+          const names = records[0]?.events.map((event) => event.name);
+          assert.deepEqual(
+            names,
+            Arr.range(73, 200).map((index) => `event ${index}`),
+          );
           assert.equal(records[0]?.attributes["span.dropped_events_count"], 72);
-          assert.equal(spans[0]?.events.length, 128);
+          assert.deepEqual(
+            spans[0]?.events.map(([name]) => name),
+            names,
+          );
         }),
       ),
     );

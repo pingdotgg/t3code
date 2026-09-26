@@ -468,8 +468,8 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
 });
 
 // Long-lived spans (a whole RPC stream, for example) would otherwise keep
-// every log event in memory until they end. 128 is the OpenTelemetry SDK
-// default event count limit.
+// every log event in memory until they end. Like the OpenTelemetry SDK, a
+// span keeps its newest 128 events and drops the oldest.
 const TRACE_SPAN_MAX_EVENTS = 128;
 
 class LocalFileSpan implements Tracer.Span {
@@ -523,6 +523,11 @@ class LocalFileSpan implements Tracer.Span {
       endTime,
       exit,
     };
+    // The delegate gets the kept events only now, so it holds the same bounded
+    // set. The OTLP delegate reads a span's events only at end.
+    for (const [name, startTime, attributes] of this.events) {
+      this.delegate.event(name, startTime, attributes);
+    }
     this.delegate.end(endTime, exit);
 
     if (this.sampled) {
@@ -539,12 +544,10 @@ class LocalFileSpan implements Tracer.Span {
   event(name: string, startTime: bigint, attributes?: Record<string, unknown>): void {
     if (this.status._tag === "Ended") return;
     if (this.events.length >= TRACE_SPAN_MAX_EVENTS) {
+      this.events.shift();
       this.droppedEventCount += 1;
-      return;
     }
-    const nextAttributes = attributes ?? {};
-    this.events.push([name, startTime, nextAttributes]);
-    this.delegate.event(name, startTime, nextAttributes);
+    this.events.push([name, startTime, attributes ?? {}]);
   }
 
   addLinks(links: ReadonlyArray<Tracer.SpanLink>): void {

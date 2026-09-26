@@ -536,8 +536,8 @@ yield * Effect.logDebug("waiting for approval response");
 ```
 
 Those messages show up as span events because `Logger.tracerLogger` is installed. A span keeps
-its first 128 events and counts the rest in its `span.dropped_events_count` attribute. Logs from a
-fiber that outlives its span are not written.
+its newest 128 events and counts the older ones it drops in its `span.dropped_events_count`
+attribute. Logs from a fiber that outlives its span are not written.
 
 ### Use The Pipeable Metrics API
 
