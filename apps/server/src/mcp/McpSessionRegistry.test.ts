@@ -163,3 +163,23 @@ it.effect("does not keep credentials of other threads alive", () =>
     expect(yield* registry.resolve(token)).toBeUndefined();
   }),
 );
+
+it.effect("reads the bound port when issuing credentials, after registry construction", () =>
+  Effect.gen(function* () {
+    let port = 0;
+    const server = HttpServer.HttpServer.of({
+      get address() {
+        return NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", port);
+      },
+      serve: fakeHttpServer.serve,
+    });
+    const registry = yield* makeRegistry(() => 1_000, server);
+    port = 43124;
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("thread-bound-port"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(),
+    });
+    expect(issued.config.endpoint).toBe("http://127.0.0.1:43124/mcp");
+  }),
+);

@@ -1,7 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodeHttp from "node:http";
-
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentHttpApi,
@@ -35,7 +31,7 @@ import {
   httpCompressionLayer,
   untracedRequestsLayer,
 } from "./http.ts";
-import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
+import * as DeferredHttpServer from "./deferredHttpServer.ts";
 import { fixPath } from "./os-jank.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -180,11 +176,6 @@ export const HTTP_ROUTER_CONFIG = {
   maxParamLength: 512,
 } as const;
 
-// Effect's default preemptive shutdown waits 20s before finalizing request scopes.
-// T3's primary transport is long-lived WebSocket RPC, whose Effect scope finalizer
-// already closes the websocket gracefully. Do not add an artificial drain before
-// those finalizers get a chance to run.
-const HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS = 0;
 const ResourceAttributionLayerLive = ResourceAttribution.layer;
 const ApplicationObservabilityLive = EventLoopMonitor.layer.pipe(
   Layer.provideMerge(ObservabilityLive),
@@ -244,10 +235,9 @@ const RelayClientLive = Layer.unwrap(
 const HttpServerLive = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    return NodeHttpServer.layer(() => guardHttpResponseWriteErrors(NodeHttp.createServer()), {
+    return DeferredHttpServer.layer({
       host: config.host ?? "127.0.0.1",
       port: config.port,
-      gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
       // Negotiate permessage-deflate with clients that offer it; clients
       // that don't still get uncompressed frames on their connection.
       // Context takeover stays enabled (ws default) so the compression
@@ -635,7 +625,8 @@ const makeServerLayer = Layer.unwrap(
 
     const httpListeningLayer = Layer.effectDiscard(
       Effect.gen(function* () {
-        yield* HttpServer.HttpServer;
+        const listener = yield* DeferredHttpServer.HttpListener;
+        yield* listener.start;
         const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
         yield* startup.markHttpListening;
       }),

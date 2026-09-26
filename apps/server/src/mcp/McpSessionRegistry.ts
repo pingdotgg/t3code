@@ -96,9 +96,6 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const state = yield* SynchronizedRef.make<RegistryState>({ records: new Map() });
   const currentTimeMillis = options.now ? Effect.sync(options.now) : Clock.currentTimeMillis;
   const livenessWindowMs = options.livenessWindowMs ?? DEFAULT_LIVENESS_WINDOW_MS;
-  const endpoint = NetAddress.isInetAddress(httpServer.address)
-    ? `http://${getHttpMcpEndpointHost(httpServer.address.address)}:${httpServer.address.port}/mcp`
-    : "http://127.0.0.1/mcp";
 
   const hashToken = (token: string) =>
     crypto
@@ -116,6 +113,10 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
 
   const issue: McpSessionRegistryShape["issue"] = Effect.fn("McpSessionRegistry.issue")(
     function* (request) {
+      // The listener may bind an ephemeral port after this registry is constructed.
+      const endpoint = NetAddress.isInetAddress(httpServer.address)
+        ? `http://${getHttpMcpEndpointHost(httpServer.address.address)}:${httpServer.address.port}/mcp`
+        : "http://127.0.0.1/mcp";
       const issuedAt = yield* currentTimeMillis;
       const providerSessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
