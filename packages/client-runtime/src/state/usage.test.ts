@@ -13,7 +13,12 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { EnvironmentPresentation } from "../connection/presentation.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
-import { needsCursorKeychainAccess, refreshUsage, refreshUsageLimits } from "./usage.ts";
+import {
+  cursorKeychainAccessEnvironments,
+  needsCursorKeychainAccess,
+  refreshUsage,
+  refreshUsageLimits,
+} from "./usage.ts";
 
 const input = {
   sinceDay: UsageDay.make("2026-09-05"),
@@ -284,5 +289,35 @@ describe("needsCursorKeychainAccess", () => {
     expect(needsCursorKeychainAccess(cursorPrompt, [])).toBe(false);
     expect(needsCursorKeychainAccess(cursorPrompt, null)).toBe(false);
     expect(needsCursorKeychainAccess(summary, [cursor("ready")])).toBe(false);
+  });
+
+  it("stops offering access once any environment reads the Cursor account", () => {
+    const off = { summary: cursorPrompt, needsCursorKeychainAccess: true };
+    const account: UsageSummary = {
+      ...summary,
+      sources: [
+        {
+          fingerprint: {
+            hostId: "cursor.com",
+            provider: "cursor",
+            resolvedHomePath: "cursor-account:abc",
+            volumeId: "abc",
+          },
+          status: "ok",
+          scannedFiles: 1,
+          skippedFiles: 0,
+          malformedRecords: 0,
+          distinctSessions: 1,
+          message: null,
+        },
+      ],
+    };
+    expect(cursorKeychainAccessEnvironments([off, off])).toEqual([off, off]);
+    expect(
+      cursorKeychainAccessEnvironments([
+        off,
+        { summary: account, needsCursorKeychainAccess: false },
+      ]),
+    ).toEqual([]);
   });
 });
