@@ -65,6 +65,23 @@ export function assertGrokBackgroundSubagentOutput(
   assert.isAbove(rootCompletedAt, subagentCompletedAt, "run 1 completed before the subagent");
   assert.include(runAssistantTexts(projection, rootRun?.id), "ROOT_DONE");
 
+  // Grok ends ROOT_DONE with its prompt; the subagent running on must not keep
+  // the reply streaming.
+  const rootDoneCompletedAt = result.domainEvents.findIndex(
+    (event) =>
+      event.type === "turn-item.updated" &&
+      event.payload.runId === rootRun?.id &&
+      event.payload.type === "assistant_message" &&
+      event.payload.text.trim() === "ROOT_DONE" &&
+      event.payload.status === "completed",
+  );
+  assert.isAtLeast(rootDoneCompletedAt, 0);
+  assert.isBelow(
+    rootDoneCompletedAt,
+    subagentCompletedAt,
+    "ROOT_DONE streamed until the subagent finished",
+  );
+
   // The subagent's own reply stays in its child thread.
   if (subagent?.childThreadId == null) {
     throw new Error("The background subagent is missing its child thread.");

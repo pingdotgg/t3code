@@ -6938,6 +6938,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                     ) {
                       context.promptSettled = true;
                       context.promptSettledStatus = status;
+                      // The agent finished this prompt's reply. Background work
+                      // holds the run open, not the text it already sent.
+                      yield* closeTextStreams(context);
                       return;
                     }
                     yield* finalizeTurn(context, status);
