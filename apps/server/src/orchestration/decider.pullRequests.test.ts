@@ -361,6 +361,29 @@ it.layer(NodeServices.layer)("pull request link decider", (it) => {
     }),
   );
 
+  it.effect("rejects linking a pull request to a deleted thread", () =>
+    Effect.gen(function* () {
+      const model = makeReadModel([]);
+      const error = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.pull-request.link",
+          commandId: CommandId.make("cmd-link-deleted"),
+          threadId: THREAD_ID,
+          host: "github.com",
+          repository: "t3tools/t3code",
+          number: 42,
+          url: "https://github.com/t3tools/t3code/pull/42",
+          source: "manual",
+        },
+        readModel: {
+          ...model,
+          threads: [{ ...model.threads[0]!, deletedAt: NOW }],
+        },
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+    }),
+  );
+
   it.effect("re-linking a dismissed stack member un-dismisses it", () =>
     Effect.gen(function* () {
       const dismissed = makeLink({
