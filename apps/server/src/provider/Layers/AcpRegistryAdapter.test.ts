@@ -394,8 +394,11 @@ function acpRegistryAdapterTests(
       yield* adapter.stopSession(threadId);
 
       expect(events.map((event) => event.type)).not.toContain("request.opened");
-      const requests = yield* readRequestLog(requestLogPath);
-      expect(requests.map((request) => request.result)).toContainEqual({
+      // A policy approval covers one call, so the agent cannot remember it
+      // after the thread switches to Supervised.
+      const results = (yield* readRequestLog(requestLogPath)).map((request) => request.result);
+      expect(results).toContainEqual({ outcome: { outcome: "selected", optionId: "allow-once" } });
+      expect(results).not.toContainEqual({
         outcome: { outcome: "selected", optionId: "allow-always" },
       });
     }).pipe(Effect.scoped, TestClock.withLive),
