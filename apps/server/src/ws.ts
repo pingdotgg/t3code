@@ -1962,6 +1962,16 @@ const makeWsRpcLayer = (
             createdAt: yield* nowIso,
           });
           yield* dispatchNormalizedCommand(command);
+          // A dashed chat bubble in neutral gray marks Scratch. Set once at
+          // create, so a user's own icon choice is never overwritten.
+          yield* dispatchNormalizedCommand(
+            yield* normalizeDispatchCommand({
+              type: "project.meta.update",
+              commandId: yield* serverCommandId("scratch-project-icon"),
+              projectId,
+              projectIcon: { kind: "lucide", name: "message-square-dashed", color: "gray" },
+            }),
+          );
           return { projectId };
         }).pipe(
           Effect.catch((error) =>

@@ -1,4 +1,4 @@
-import { NotepadTextDashedIcon, PlusIcon } from "lucide-react";
+import { MessageSquareDashedIcon, PlusIcon } from "lucide-react";
 import { useCallback } from "react";
 
 import { openCommandPalette } from "../commandPaletteBus";
@@ -41,7 +41,7 @@ export function NoProjectsHero() {
                     variant="outline"
                     onClick={() => void startScratchThread(scratchTargetEnvironmentId)}
                   >
-                    <NotepadTextDashedIcon className="size-4" />
+                    <MessageSquareDashedIcon className="size-4" />
                     Start in Scratch
                   </Button>
                 )}

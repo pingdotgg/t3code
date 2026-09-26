@@ -5167,6 +5167,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const created: Array<{ readonly projectId: ProjectId; readonly workspaceRoot: string }> = [];
+      const iconUpdates: Array<unknown> = [];
       yield* buildAppUnderTest({
         layers: {
           orchestrationEngine: {
@@ -5178,7 +5179,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                     workspaceRoot: command.workspaceRoot,
                   });
                 }
-                return { sequence: created.length };
+                if (command.type === "project.meta.update") iconUpdates.push(command.projectIcon);
+                return { sequence: created.length + iconUpdates.length };
               }),
           },
           projectionSnapshotQuery: {
@@ -5213,6 +5215,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             assert.equal(created[0]?.workspaceRoot, scratchRoot);
             assert.equal(first.projectId, created[0]?.projectId);
             assert.equal(second.projectId, first.projectId);
+            // The icon is set once, at create.
+            assert.deepEqual(iconUpdates, [
+              { kind: "lucide", name: "message-square-dashed", color: "gray" },
+            ]);
             assert.isTrue(yield* fileSystem.exists(scratchRoot));
           }),
         ),

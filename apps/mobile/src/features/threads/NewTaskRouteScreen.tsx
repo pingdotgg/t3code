@@ -482,7 +482,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                   onPress={() => void startScratch()}
                   leading={
                     <SymbolView
-                      name="pencil"
+                      name="text.bubble"
                       size={22}
                       tintColorClassName="accent-icon-muted"
                       type="monochrome"
@@ -500,7 +500,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                 >
                   <View className="h-7 w-7 items-center justify-center">
                     <SymbolView
-                      name="pencil"
+                      name="text.bubble"
                       size={18}
                       tintColorClassName="accent-icon-muted"
                       type="monochrome"

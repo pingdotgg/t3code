@@ -47,7 +47,7 @@ import {
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
-  NotepadTextDashedIcon,
+  MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
   MonitorIcon,
@@ -1797,7 +1797,7 @@ function OpenCommandPaletteDialog(props: {
       value: "action:new-scratch-thread",
       searchTerms: ["new thread", "scratch", "no project", "without project", "chat"],
       title: "New thread in Scratch",
-      icon: <NotepadTextDashedIcon className={ITEM_ICON_CLASS} />,
+      icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "chat.newScratch",
       run: () => startScratchThread(scratchTargetEnvironmentId),
     });
