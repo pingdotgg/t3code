@@ -31,6 +31,7 @@ import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { toastManager } from "../components/ui/toast";
 
 const INITIAL_STATE: VoiceInputState<true> = { phase: "idle", error: null, errorAction: null };
+const WAITING_STATE: VoiceInputState<true> = { phase: "preparing", error: null, errorAction: null };
 
 type DraftInput = {
   readonly text: string;
@@ -69,11 +70,19 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     readonly value: EnvironmentSpeechStatus;
   } | null>(null);
   const [controllerState, setControllerState] = useState({ prepared, value: INITIAL_STATE });
+  const [queuedStart, setQueuedStart] = useState<{
+    readonly prepared: NonNullable<typeof prepared>;
+    readonly request: number;
+  } | null>(null);
   if (controllerState.prepared !== prepared) {
     setControllerState({ prepared, value: INITIAL_STATE });
   }
   const state: VoiceInputState<true> =
-    controllerState.prepared === prepared ? controllerState.value : INITIAL_STATE;
+    queuedStart?.prepared === prepared
+      ? WAITING_STATE
+      : controllerState.prepared === prepared
+        ? controllerState.value
+        : INITIAL_STATE;
   const [level, setLevel] = useState(0);
   const [preview, setPreview] = useState<SpeechStreamText | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
@@ -84,6 +93,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const setupCancelledRef = useRef(false);
   const controllerRef = useRef<VoiceInputController<true> | null>(null);
   const startRequestRef = useRef(0);
+  const cancelledControllerRef = useRef<VoiceInputController<true> | null>(null);
   const latestInputRef = useRef(input);
   const microphoneIdRef = useRef(microphoneId);
   const draftRevisionRef = useRef({ ownerKey: input.ownerKey, text: input.draftText, revision: 0 });
@@ -176,6 +186,9 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     controllerRef.current = controller;
     return () => {
       disposed = true;
+      startRequestRef.current += 1;
+      cancelledControllerRef.current = null;
+      setQueuedStart(null);
       controller.dispose();
       if (controllerRef.current === controller) controllerRef.current = null;
     };
@@ -229,6 +242,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   useEffect(() => {
     if (previousOwnerRef.current === input.ownerKey) return;
     previousOwnerRef.current = input.ownerKey;
+    startRequestRef.current += 1;
+    setQueuedStart(null);
     controllerRef.current?.ownerChanged();
   }, [input.ownerKey]);
 
@@ -237,33 +252,55 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     const expectedController = controllerRef.current;
     const expectedOwner = latestInputRef.current.ownerKey;
     if (!expectedController || !prepared || !currentStatus?.supported) return;
-    const latestStatus = await runtime
-      .runPromise(getEnvironmentSpeechStatus(prepared))
-      .catch((error: unknown) => {
-        toastManager.add({
-          type: "error",
-          title: "Could not start voice input",
-          description: error instanceof Error ? error.message : String(error),
-        });
-        return null;
+    const stillCurrent = () =>
+      request === startRequestRef.current &&
+      controllerRef.current === expectedController &&
+      latestInputRef.current.ownerKey === expectedOwner;
+    let latestStatus: EnvironmentSpeechStatus;
+    try {
+      latestStatus = await runtime.runPromise(getEnvironmentSpeechStatus(prepared));
+      if (!stillCurrent()) return;
+      if (latestStatus.supported && latestStatus.state === "transcribing") {
+        if (cancelledControllerRef.current !== expectedController) return;
+        setQueuedStart({ prepared, request });
+        // Only a start after our own cancellation waits for the previous stream.
+        // Bound the wait so an unresponsive environment cannot leave Preparing forever.
+        for (
+          let attempt = 0;
+          attempt < 20 && latestStatus.supported && latestStatus.state === "transcribing";
+          attempt++
+        ) {
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
+          if (!stillCurrent()) return;
+          latestStatus = await runtime.runPromise(getEnvironmentSpeechStatus(prepared));
+          if (!stillCurrent()) return;
+        }
+        if (latestStatus.supported && latestStatus.state === "transcribing") {
+          throw new Error("Voice transcription is still finishing. Try again shortly.");
+        }
+      }
+    } catch (error) {
+      if (!stillCurrent()) return;
+      toastManager.add({
+        type: "error",
+        title: "Could not start voice input",
+        description: error instanceof Error ? error.message : String(error),
       });
-    if (!latestStatus?.supported) return;
+      setQueuedStart(null);
+      return;
+    }
+    setQueuedStart(null);
+    if (!latestStatus.supported) return;
     setStatus({ prepared, value: latestStatus });
-    if (latestStatus.state === "transcribing") return;
     if (latestStatus.state === "missing-model") {
       setSetupStep(0);
       setSetupOpen(true);
       return;
     }
-    const controller = controllerRef.current;
-    if (
-      request !== startRequestRef.current ||
-      controller !== expectedController ||
-      latestInputRef.current.ownerKey !== expectedOwner
-    )
-      return;
+    if (!stillCurrent()) return;
+    cancelledControllerRef.current = null;
     setLevel(0);
-    await controller.start();
+    await expectedController.start();
   }, [currentStatus, prepared]);
 
   const downloadSetupModel = useCallback(async () => {
@@ -337,7 +374,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     stop: useCallback(() => controllerRef.current?.stop() ?? Promise.resolve(), []),
     cancel: useCallback(() => {
       startRequestRef.current += 1;
-      controllerRef.current?.cancel();
+      setQueuedStart(null);
+      const controller = controllerRef.current;
+      cancelledControllerRef.current =
+        controller && controller.currentState.phase !== "idle" ? controller : null;
+      controller?.cancel();
     }, []),
     skipPostProcessing: useCallback(() => controllerRef.current?.skipPostProcessing(), []),
   };

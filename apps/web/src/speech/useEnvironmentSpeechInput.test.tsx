@@ -10,8 +10,10 @@ import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
 
 const mocks = vi.hoisted(() => ({
   busy: false,
+  microphoneFailure: true,
   missingModel: false,
   microphoneRequests: 0,
+  ownerKey: "draft",
   prepared: {} as PreparedConnection,
   preparedEnvironmentId: null as EnvironmentId | null,
   preparedEnvironmentIds: [] as Array<EnvironmentId | null>,
@@ -60,7 +62,7 @@ vi.mock("./browserVoiceInput", () => ({
       uri: null,
       prepareToRecordAsync: async () => {
         mocks.microphoneRequests += 1;
-        throw new Error("no microphone");
+        if (mocks.microphoneFailure) throw new Error("no microphone");
       },
       record() {},
       stop: async () => {},
@@ -76,7 +78,7 @@ let voice: ReturnType<typeof useEnvironmentSpeechInput>;
 function Probe() {
   const value = useEnvironmentSpeechInput({
     environmentId: "project-environment" as EnvironmentId,
-    ownerKey: "draft",
+    ownerKey: mocks.ownerKey,
     draftText: "",
     readDraft: () => ({ text: "", selection: { start: 0, end: 0 } }),
     commitDraft() {},
@@ -98,7 +100,11 @@ async function mountProbe() {
     removeEventListener() {},
   };
   vi.stubGlobal("document", document);
-  vi.stubGlobal("window", { document, HTMLIFrameElement: EventTarget });
+  vi.stubGlobal("window", {
+    document,
+    HTMLIFrameElement: EventTarget,
+    setTimeout: globalThis.setTimeout,
+  });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("navigator", { mediaDevices: { getUserMedia() {} } });
   vi.stubGlobal("MediaRecorder", function MediaRecorder() {});
@@ -110,8 +116,10 @@ afterEach(async () => {
   await act(() => root?.unmount());
   root = undefined;
   mocks.busy = false;
+  mocks.microphoneFailure = true;
   mocks.missingModel = false;
   mocks.microphoneRequests = 0;
+  mocks.ownerKey = "draft";
   mocks.transcriptionEnvironmentId = null;
   mocks.preparedEnvironmentId = null;
   mocks.preparedEnvironmentIds = [];
@@ -122,6 +130,85 @@ it("does not capture audio while the environment is transcribing", async () => {
   await mountProbe();
   await act(() => voice.start());
   expect(voice.state.phase).toBe("idle");
+});
+it("starts a recording requested while a cancelled stream is finishing", async () => {
+  vi.useFakeTimers();
+  try {
+    mocks.microphoneFailure = false;
+    await mountProbe();
+    await act(() => voice.start());
+    expect(voice.state.phase).toBe("recording");
+    await act(() => voice.cancel());
+    mocks.busy = true;
+    let starting!: Promise<void>;
+    await act(async () => {
+      starting = voice.start();
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    });
+    expect(voice.state.phase).toBe("preparing");
+    expect(mocks.microphoneRequests).toBe(1);
+    mocks.busy = false;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+      await starting;
+    });
+    expect(voice.state.phase).toBe("recording");
+    expect(mocks.microphoneRequests).toBe(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("discards a queued recording when cancelled again", async () => {
+  vi.useFakeTimers();
+  try {
+    mocks.microphoneFailure = false;
+    await mountProbe();
+    await act(() => voice.start());
+    await act(() => voice.cancel());
+    mocks.busy = true;
+    let starting!: Promise<void>;
+    await act(async () => {
+      starting = voice.start();
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    });
+    expect(voice.state.phase).toBe("preparing");
+    await act(() => voice.cancel());
+    mocks.busy = false;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+      await starting;
+    });
+    expect(voice.state.phase).toBe("idle");
+    expect(mocks.microphoneRequests).toBe(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("discards a queued recording when the draft owner changes", async () => {
+  vi.useFakeTimers();
+  try {
+    mocks.microphoneFailure = false;
+    await mountProbe();
+    await act(() => voice.start());
+    await act(() => voice.cancel());
+    mocks.busy = true;
+    let starting!: Promise<void>;
+    await act(async () => {
+      starting = voice.start();
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    });
+    mocks.ownerKey = "another-draft";
+    await act(() => root!.render(<Probe />));
+    mocks.busy = false;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+      await starting;
+    });
+    expect(voice.state.phase).toBe("idle");
+    expect(mocks.microphoneRequests).toBe(1);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 it("opens setup before requesting microphone access for a missing model", async () => {
   mocks.missingModel = true;
