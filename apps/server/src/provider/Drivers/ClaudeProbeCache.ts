@@ -30,7 +30,8 @@ export type ClaudeProbeInput = Pick<ClaudeSettings, "binaryPath" | "homePath"> &
 };
 
 const PROBE_TTL = Duration.minutes(5);
-// A failed probe marks every instance on that home as unverified, so retry soon.
+// A failed probe or usage read leaves every instance with that input unverified
+// or without limits, so retry soon.
 const FAILED_PROBE_TTL = Duration.seconds(30);
 const MAX_CONCURRENT_PROBES = 3;
 // Keep this far above any real instance count. The cache evicts the least
@@ -68,7 +69,7 @@ export const make = Effect.gen(function* () {
     {
       capacity: MAX_CACHED_PROBES,
       timeToLive: (exit) =>
-        Exit.isSuccess(exit) && exit.value !== undefined ? PROBE_TTL : FAILED_PROBE_TTL,
+        Exit.isSuccess(exit) && exit.value?.usage !== undefined ? PROBE_TTL : FAILED_PROBE_TTL,
     },
   );
   return {

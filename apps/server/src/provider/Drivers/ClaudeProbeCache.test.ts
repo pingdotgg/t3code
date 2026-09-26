@@ -29,6 +29,13 @@ const failedQuery = () =>
     initializationResult: () => Promise.reject(new Error("not logged in")),
   }) as ReturnType<typeof ClaudeSdk.query>;
 
+const failedUsageQuery = () =>
+  ({
+    initializationResult: async () => ({}),
+    usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () =>
+      Promise.reject(new Error("usage unavailable")),
+  }) as ReturnType<typeof ClaudeSdk.query>;
+
 // Stands in for the SDK. Each probe reports the Claude home it was started
 // with as the account email. Probes finish once `ready` resolves.
 const mockSdk = (ready: Promise<void> = Promise.resolve()) =>
@@ -43,8 +50,10 @@ const mockSdk = (ready: Promise<void> = Promise.resolve()) =>
               commands: [{ name: "review", description: "Review changes", argumentHint: "" }],
             };
           },
-          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () =>
-            Promise.reject(new Error("usage unavailable")),
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+            rate_limits_available: false,
+            rate_limits: null,
+          }),
         }) as ReturnType<typeof ClaudeSdk.query>,
     );
     yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
@@ -86,10 +95,10 @@ it.effect("different homes or instance env vars run separate probes", () =>
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
-it.effect("retries a failed probe after a short TTL and keeps a success longer", () =>
+it.effect("retries a failed probe or usage read after a short TTL and keeps a success longer", () =>
   Effect.gen(function* () {
     const query = yield* mockSdk();
-    query.mockImplementationOnce(failedQuery);
+    query.mockImplementationOnce(failedQuery).mockImplementationOnce(failedUsageQuery);
     const cache = yield* ClaudeProbeCache.ClaudeProbeCache;
 
     assert.equal(yield* cache.capabilities(input("/homes/work")), undefined);
@@ -97,12 +106,18 @@ it.effect("retries a failed probe after a short TTL and keeps a success longer",
     assert.equal(query.mock.calls.length, 1);
 
     yield* TestClock.adjust("30 seconds");
-    assert.match((yield* cache.capabilities(input("/homes/work")))?.email ?? "", /work$/);
+    const withoutUsage = yield* cache.capabilities(input("/homes/work"));
+    assert.isDefined(withoutUsage);
+    assert.isUndefined(withoutUsage?.usage);
     assert.equal(query.mock.calls.length, 2);
+
+    yield* TestClock.adjust("30 seconds");
+    assert.isDefined((yield* cache.capabilities(input("/homes/work")))?.usage);
+    assert.equal(query.mock.calls.length, 3);
 
     yield* TestClock.adjust("1 minute");
     yield* cache.capabilities(input("/homes/work"));
-    assert.equal(query.mock.calls.length, 2);
+    assert.equal(query.mock.calls.length, 3);
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
