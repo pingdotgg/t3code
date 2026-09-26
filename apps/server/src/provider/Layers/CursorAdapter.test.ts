@@ -475,6 +475,45 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
+  it.effect("retires the session when the agent process dies", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-agent-died");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_CRASH_PROMPT: "1" }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const exited =
+        yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "session.exited" }>>();
+      const events = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "session.exited" && event.threadId === threadId
+          ? Deferred.succeed(exited, event).pipe(Effect.asVoid)
+          : Effect.void,
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+      // The mock agent exits while answering this prompt.
+      yield* Effect.exit(adapter.sendTurn({ threadId, input: "crash now", attachments: [] }));
+
+      assert.equal((yield* Deferred.await(exited)).payload.exitKind, "error");
+      assert.isFalse(yield* adapter.hasSession(threadId));
+      assert.isFalse((yield* adapter.listSessions()).some((s) => s.threadId === threadId));
+      const retry = yield* Effect.flip(
+        adapter.sendTurn({ threadId, input: "retry", attachments: [] }),
+      );
+      assert.equal(retry._tag, "ProviderAdapterSessionNotFoundError");
+      yield* Fiber.interrupt(events);
+    }),
+  );
+
   it.effect.skipIf(windowsHost)(
     "serializes concurrent startSession calls for the same thread and closes the replaced ACP session",
     () =>

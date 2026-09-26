@@ -151,6 +151,8 @@ interface CursorSessionContext {
   promptsInFlight: number;
   assistantReply: CursorTransportFailure;
   stopped: boolean;
+  /** The agent process or its transport died; the session is unusable. */
+  terminated: boolean;
 }
 
 function settlePendingApprovalsAsCancelled(
@@ -328,6 +330,7 @@ export function makeCursorAdapter(
   options?: CursorAdapterLiveOptions,
 ) {
   return Effect.gen(function* () {
+    const ownerScope = yield* Effect.scope;
     const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("cursor");
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -461,7 +464,7 @@ export function makeCursorAdapter(
       threadId: ThreadId,
     ): Effect.Effect<CursorSessionContext, ProviderAdapterSessionNotFoundError> => {
       const ctx = sessions.get(threadId);
-      if (!ctx || ctx.stopped) {
+      if (!ctx || ctx.stopped || ctx.terminated) {
         return Effect.fail(
           new ProviderAdapterSessionNotFoundError({ provider: PROVIDER, threadId }),
         );
@@ -485,7 +488,7 @@ export function makeCursorAdapter(
           ...(yield* makeEventStamp()),
           provider: PROVIDER,
           threadId: ctx.threadId,
-          payload: { exitKind: "graceful" },
+          payload: { exitKind: ctx.terminated ? "error" : "graceful" },
         });
       });
 
@@ -803,6 +806,7 @@ export function makeCursorAdapter(
             promptsInFlight: 0,
             assistantReply: new CursorTransportFailure(),
             stopped: false,
+            terminated: false,
           };
 
           const nf = yield* Stream.runDrain(
@@ -811,6 +815,20 @@ export function makeCursorAdapter(
                 switch (event._tag) {
                   case "EventStreamBarrier":
                     yield* Deferred.succeed(event.acknowledge, undefined);
+                    return;
+                  case "ConnectionTerminated":
+                    // The agent exited. Retire the session so the next turn
+                    // starts a fresh process instead of reusing a dead one.
+                    // Teardown interrupts this fiber, so it runs outside it.
+                    if (ctx.stopped) return;
+                    ctx.terminated = true;
+                    yield* withThreadLock(
+                      ctx.threadId,
+                      Effect.gen(function* () {
+                        if (sessions.get(ctx.threadId) !== ctx) return;
+                        yield* stopSessionInternal(ctx);
+                      }),
+                    ).pipe(Effect.forkIn(ownerScope));
                     return;
                   case "ModeChanged":
                     return;
@@ -1245,12 +1263,16 @@ export function makeCursorAdapter(
       );
 
     const listSessions: CursorAdapterShape["listSessions"] = () =>
-      Effect.sync(() => Array.from(sessions.values(), (c) => ({ ...c.session })));
+      Effect.sync(() =>
+        Array.from(sessions.values())
+          .filter((c) => !c.terminated)
+          .map((c) => ({ ...c.session })),
+      );
 
     const hasSession: CursorAdapterShape["hasSession"] = (threadId) =>
       Effect.sync(() => {
         const c = sessions.get(threadId);
-        return c !== undefined && !c.stopped;
+        return c !== undefined && !c.stopped && !c.terminated;
       });
 
     const stopAll: CursorAdapterShape["stopAll"] = () =>
