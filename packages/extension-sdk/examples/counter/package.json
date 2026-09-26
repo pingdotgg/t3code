@@ -1,0 +1,11 @@
+{
+  "name": "external-counter-consumer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test consumer.test.mjs"
+  },
+  "dependencies": {
+    "@t3tools/extension-sdk": "file:../.."
+  }
+}

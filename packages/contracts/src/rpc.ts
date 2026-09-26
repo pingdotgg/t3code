@@ -1,4 +1,10 @@
 import * as Schema from "effect/Schema";
+import {
+  ExtensionApiSubscribeInput,
+  ExtensionApiStreamFrame,
+  ExtensionOperationError,
+  ExtensionCatalogueChange,
+} from "./extensions.ts";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -87,6 +93,13 @@ import {
   ReviewDiffPreviewResult,
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
+import {
+  ClientProviderServerFrame,
+  ClientProvidersConnectInput,
+  ClientProvidersEmitInput,
+  ClientProvidersError,
+  ClientProvidersRespondInput,
+} from "./clientProviders.ts";
 import {
   ClientOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
@@ -217,6 +230,12 @@ import {
   PreviewAutomationResponse,
   PreviewAutomationStreamEvent,
 } from "./previewAutomation.ts";
+import {
+  BrowserFramesCloseInput,
+  BrowserFramesError,
+  BrowserFramesOpenInput,
+  BrowserFramesOpenInputResult,
+} from "./browserFrames.ts";
 import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
@@ -349,6 +368,8 @@ export const WS_METHODS = {
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
+  browserFramesOpenInput: "browserFrames.openInput",
+  browserFramesCloseInput: "browserFrames.closeInput",
 
   // Device methods
   deviceConfigure: "device.configure",
@@ -359,6 +380,11 @@ export const WS_METHODS = {
   deviceShutdown: "device.shutdown",
   deviceDetail: "device.detail",
   deviceAction: "device.action",
+
+  // Extension client-provider seam (t3.client/* host-owned providers)
+  extensionsClientProvidersConnect: "extensions.clientProviders.connect",
+  extensionsClientProvidersRespond: "extensions.clientProviders.respond",
+  extensionsClientProvidersEmit: "extensions.clientProviders.emit",
 
   // Server meta
   serverProbe: "server.probe",
@@ -440,6 +466,8 @@ export const WS_METHODS = {
   subscribeDeviceState: "subscribeDeviceState",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
+  subscribeExtensionCatalogue: "subscribeExtensionCatalogue",
+  subscribeExtensionApi: "subscribeExtensionApi",
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
@@ -1203,6 +1231,40 @@ const WsPreviewAutomationFocusHostRpc = Rpc.make(WS_METHODS.previewAutomationFoc
   error: EnvironmentAuthorizationError,
 });
 
+const WsBrowserFramesOpenInputRpc = Rpc.make(WS_METHODS.browserFramesOpenInput, {
+  payload: BrowserFramesOpenInput,
+  success: BrowserFramesOpenInputResult,
+  error: Schema.Union([BrowserFramesError, EnvironmentAuthorizationError]),
+});
+
+const WsBrowserFramesCloseInputRpc = Rpc.make(WS_METHODS.browserFramesCloseInput, {
+  payload: BrowserFramesCloseInput,
+  error: Schema.Union([BrowserFramesError, EnvironmentAuthorizationError]),
+});
+
+const WsExtensionsClientProvidersConnectRpc = Rpc.make(
+  WS_METHODS.extensionsClientProvidersConnect,
+  {
+    payload: ClientProvidersConnectInput,
+    success: ClientProviderServerFrame,
+    error: Schema.Union([ClientProvidersError, EnvironmentAuthorizationError]),
+    stream: true,
+  },
+);
+
+const WsExtensionsClientProvidersRespondRpc = Rpc.make(
+  WS_METHODS.extensionsClientProvidersRespond,
+  {
+    payload: ClientProvidersRespondInput,
+    error: Schema.Union([ClientProvidersError, EnvironmentAuthorizationError]),
+  },
+);
+
+const WsExtensionsClientProvidersEmitRpc = Rpc.make(WS_METHODS.extensionsClientProvidersEmit, {
+  payload: ClientProvidersEmitInput,
+  error: Schema.Union([ClientProvidersError, EnvironmentAuthorizationError]),
+});
+
 const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, {
   payload: Schema.Struct({}),
   success: PreviewEvent,
@@ -1391,7 +1453,23 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
   stream: true,
 });
 
+const WsSubscribeExtensionCatalogueRpc = Rpc.make(WS_METHODS.subscribeExtensionCatalogue, {
+  payload: Schema.Struct({}),
+  success: ExtensionCatalogueChange,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+export const WsSubscribeExtensionApiRpc = Rpc.make(WS_METHODS.subscribeExtensionApi, {
+  payload: ExtensionApiSubscribeInput,
+  success: ExtensionApiStreamFrame,
+  error: Schema.Union([EnvironmentAuthorizationError, ExtensionOperationError]),
+  stream: true,
+});
+
 export const WsRpcGroup = RpcGroup.make(
+  WsSubscribeExtensionApiRpc,
+  WsSubscribeExtensionCatalogueRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -1512,6 +1590,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,
+  WsBrowserFramesOpenInputRpc,
+  WsBrowserFramesCloseInputRpc,
+  WsExtensionsClientProvidersConnectRpc,
+  WsExtensionsClientProvidersRespondRpc,
+  WsExtensionsClientProvidersEmitRpc,
   WsSubscribePreviewEventsRpc,
   WsSubscribeDiscoveredLocalServersRpc,
   WsDeviceConfigureRpc,

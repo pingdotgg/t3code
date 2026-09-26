@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { REVIEW_COMMENT_BODY_ENCODING } from "./composerContextLegacySend.ts";
 import { formatComposerContextReference } from "./composerContextReferences.ts";
 
 /**
@@ -228,6 +229,26 @@ function unescapeAttribute(value: string): string {
     .replace(/&amp;/g, "&");
 }
 
+/**
+ * Reverses the serializer's body encoding, and only that encoding: the exact lowercase
+ * `&lt;` the writer emits before a `review_comment` delimiter becomes `<` (the tag name
+ * still matches case-insensitively), then `&amp;` becomes `&`. Ampersands decode last so a
+ * literal `&lt;` the writer shielded as `&amp;lt;` is restored rather than reinterpreted,
+ * and entity prefixes the writer never emits (`&LT;`, `&Lt;`, `&lT;`) stay literal. Callers
+ * apply this only to bodies carrying the writer's `bodyEncoding` marker, after the record
+ * boundary is fixed, so a restored `<` can never split a record and historical unencoded
+ * bodies keep byte-identical semantics.
+ */
+export function unescapeReviewCommentTags(text: string): string {
+  return text
+    .replace(/&lt;(\/?\w+)/g, (entity, tail: string, offset: number, source: string) =>
+      // The ASCII `\w` capture can stop mid-tag (`ſ` or the Kelvin sign U+212A is not `\w`),
+      // so the boundary check runs on the real remaining tail with the writer's Unicode `\b`.
+      /^\/?review_comment\b/iu.test(source.slice(offset + "&lt;".length)) ? `<${tail}` : entity,
+    )
+    .replace(/&amp;/g, "&");
+}
+
 function reviewRecord(
   rawAttributes: string,
   rawBody: string,
@@ -248,6 +269,12 @@ function reviewRecord(
   const fence = fences.at(-1);
   const rangeLabel = attributes.rangeLabel?.trim() || "line";
   const basename = filePath.split(/[\\/]/).at(-1) ?? filePath;
+  // Only bodies the escaping writer marked get decoded; anything else is a historical
+  // unencoded payload whose literal entities must survive untouched.
+  const decode =
+    attributes.bodyEncoding === REVIEW_COMMENT_BODY_ENCODING
+      ? unescapeReviewCommentTags
+      : (body: string) => body;
   return {
     version: 1,
     contextId: legacyId("review-comment", index),
@@ -259,8 +286,8 @@ function reviewRecord(
     startIndex: Math.min(Number(startIndex), Number(endIndex)),
     endIndex: Math.max(Number(startIndex), Number(endIndex)),
     rangeLabel,
-    text: rawBody.slice(0, fence?.index ?? rawBody.length).trim(),
-    diff: fence?.[3] ?? "",
+    text: decode(rawBody.slice(0, fence?.index ?? rawBody.length).trim()),
+    diff: decode(fence?.[3] ?? ""),
     fenceLanguage: fence?.[2]?.trim() || "diff",
   };
 }

@@ -186,7 +186,7 @@ function tokenizeWhenExpression(expression: string): WhenToken[] | null {
       continue;
     }
 
-    const identifier = /^[A-Za-z_][A-Za-z0-9_.-]*/.exec(expression.slice(index));
+    const identifier = /^[A-Za-z_][A-Za-z0-9_./-]*/.exec(expression.slice(index));
     if (!identifier) {
       return null;
     }

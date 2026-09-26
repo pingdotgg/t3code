@@ -97,6 +97,9 @@ export default defineConfig({
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
       "*.icon/**",
+      // Generated extension bundles embed a content hash in their receipt —
+      // reformatting them on commit breaks hash integrity.
+      "**/.t3-extension/**",
     ],
     sortPackageJson: {},
     overrides: [

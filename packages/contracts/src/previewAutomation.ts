@@ -583,6 +583,19 @@ export const PreviewAutomationHost = Schema.Struct({
    * a newer server safely coexist with an older desktop during rollout.
    */
   supportedOperations: Schema.optional(Schema.Array(PreviewAutomationOperation)),
+  /**
+   * Loopback origin of the engine's browser-frame hub (`t3.browser/frames`),
+   * for example `http://127.0.0.1:49152`, plus the hub's shared secret. The
+   * secret is server-held: it authorizes the proxy-to-hub hop and is never
+   * forwarded to viewers or echoed in responses. Absent means this engine
+   * does not serve remote frames.
+   */
+  frameHub: Schema.optional(
+    Schema.Struct({
+      origin: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+      secret: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+    }),
+  ),
 });
 export type PreviewAutomationHost = typeof PreviewAutomationHost.Type;
 
