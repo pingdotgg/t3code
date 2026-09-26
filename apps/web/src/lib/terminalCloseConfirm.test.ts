@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const { confirmMock, readLocalApiMock, clientSettingsMock, persistClientSettingsPatchMock } =
+const { confirmMock, readLocalApiMock, clientSettingsMock, persistClientSettingsUpdateMock } =
   vi.hoisted(() => {
     const confirmMock = vi.fn<(message: string, options?: unknown) => Promise<boolean>>();
     const readLocalApiMock = vi.fn<
@@ -11,12 +11,12 @@ const { confirmMock, readLocalApiMock, clientSettingsMock, persistClientSettings
         | undefined
     >();
     const clientSettingsMock = { confirmTerminalClose: true };
-    const persistClientSettingsPatchMock = vi.fn<(patch: unknown) => Promise<void>>();
+    const persistClientSettingsUpdateMock = vi.fn<(patch: unknown) => Promise<void>>();
     return {
       confirmMock,
       readLocalApiMock,
       clientSettingsMock,
-      persistClientSettingsPatchMock,
+      persistClientSettingsUpdateMock,
     };
   });
 
@@ -26,7 +26,7 @@ vi.mock("~/localApi", () => ({
 
 vi.mock("~/hooks/useSettings", () => ({
   getClientSettings: () => clientSettingsMock,
-  persistClientSettingsPatch: (patch: unknown) => persistClientSettingsPatchMock(patch),
+  persistClientSettingsUpdate: (update: (s: any) => any) => persistClientSettingsUpdateMock(update),
 }));
 
 import { confirmTerminalClose, isTerminalCloseConfirmPending } from "./terminalCloseConfirm";
@@ -37,7 +37,7 @@ describe("terminal close confirmation", () => {
     readLocalApiMock.mockReset();
     readLocalApiMock.mockReturnValue({ dialogs: { confirm: confirmMock } });
     clientSettingsMock.confirmTerminalClose = true;
-    persistClientSettingsPatchMock.mockReset();
+    persistClientSettingsUpdateMock.mockReset();
   });
 
   it("tracks pending state until the confirmation settles", async () => {
@@ -111,8 +111,11 @@ describe("terminal close confirmation", () => {
     });
 
     await expect(confirmTerminalClose(["Terminal 1"])).resolves.toBe(true);
-    expect(persistClientSettingsPatchMock).toHaveBeenCalledWith({
+    expect(persistClientSettingsUpdateMock).toHaveBeenCalled();
+    const updateFn = persistClientSettingsUpdateMock.mock.calls[0]?.[0];
+    expect(updateFn({ confirmTerminalClose: true, other: "keep" })).toEqual({
       confirmTerminalClose: false,
+      other: "keep",
     });
   });
 
@@ -123,6 +126,6 @@ describe("terminal close confirmation", () => {
     });
 
     await expect(confirmTerminalClose(["Terminal 1"])).resolves.toBe(false);
-    expect(persistClientSettingsPatchMock).not.toHaveBeenCalled();
+    expect(persistClientSettingsUpdateMock).not.toHaveBeenCalled();
   });
 });

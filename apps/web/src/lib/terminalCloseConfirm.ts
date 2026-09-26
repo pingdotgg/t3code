@@ -1,4 +1,4 @@
-import { getClientSettings, persistClientSettingsPatch } from "~/hooks/useSettings";
+import { getClientSettings, persistClientSettingsUpdate } from "~/hooks/useSettings";
 import { readLocalApi } from "~/localApi";
 
 let pendingConfirmations = 0;
@@ -48,7 +48,10 @@ export async function confirmTerminalClose(
       },
     );
     if (confirmed && dontAskAgain) {
-      await persistClientSettingsPatch({ confirmTerminalClose: false });
+      await persistClientSettingsUpdate((settings) => ({
+        ...settings,
+        confirmTerminalClose: false,
+      }));
     }
     return confirmed;
   } catch {
