@@ -489,6 +489,21 @@ const wallClock = Clock.Clock.defaultValue();
 const withWallClock = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   Effect.provideService(effect, Clock.Clock, wallClock);
 
+/**
+ * Waits up to `grace` after SIGTERM, returning early once `exited` holds, so a
+ * provider that exits promptly does not hold every stop for the full grace.
+ */
+const awaitTerminationGrace = (grace: Duration.Input, exited: () => boolean) =>
+  Effect.gen(function* () {
+    const deadline =
+      (yield* Clock.currentTimeMillis) + Duration.toMillis(Duration.fromInputUnsafe(grace));
+    while (!exited()) {
+      const remaining = deadline - (yield* Clock.currentTimeMillis);
+      if (remaining <= 0) return;
+      yield* Effect.sleep(Duration.millis(Math.min(25, remaining)));
+    }
+  });
+
 export function terminateLinuxCgroupLease(
   lease: AcpLinuxCgroupLease,
 ): Effect.Effect<void, AcpProcessGroupTerminationError> {
@@ -1580,7 +1595,11 @@ export const make = (
           ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
           ...(spawnEnvironment ? { env: spawnEnvironment } : {}),
           extendEnv: options.spawn.extendEnv ?? true,
-          ...(options.ownDetachedProcessGroup === undefined
+          // Windows needs no detached leader: taskkill /T walks the tree by
+          // pid, and a detached child leaves libuv's kill-on-close job and
+          // loses its hidden console, so its console tools open windows.
+          ...(options.ownDetachedProcessGroup === undefined ||
+          options.processGroupPlatform === "win32"
             ? {}
             : { detached: options.ownDetachedProcessGroup }),
           shell: containedSpawnCommand.shell,
@@ -1634,14 +1653,19 @@ export const make = (
         catch: (cause) =>
           new EffectAcpErrors.AcpSpawnError({ command: options.spawn.command, cause }),
       });
-      yield* observePosixOwnershipLedgerContinuously({
-        childQueues: posixOwnershipChildQueues,
-        controller: posixController,
-        frontier: posixOwnershipFrontier,
-        ledger: posixOwnershipLedger,
-        root: posixOwnershipRoot,
-        rootPid: Number(child.pid),
-      }).pipe(Effect.forkIn(runtimeScope));
+      // A cgroup contains every descendant and needs only the root captured
+      // above. The /proc watcher serves the portable fallback, where it has to
+      // poll for the whole session.
+      if (linuxCgroupLease === undefined) {
+        yield* observePosixOwnershipLedgerContinuously({
+          childQueues: posixOwnershipChildQueues,
+          controller: posixController,
+          frontier: posixOwnershipFrontier,
+          ledger: posixOwnershipLedger,
+          root: posixOwnershipRoot,
+          rootPid: Number(child.pid),
+        }).pipe(Effect.forkIn(runtimeScope));
+      }
     }
 
     const signalOwnedProcessGroup = (signal: NodeJS.Signals) =>
@@ -1711,7 +1735,19 @@ export const make = (
           );
         }
         const grace = options.processGroupTerminationGrace ?? "1 second";
-        if (grace !== 0) yield* Effect.sleep(grace);
+        // Only the root gets SIGTERM; cgroup.kill below takes the rest.
+        if (grace !== 0) {
+          yield* awaitTerminationGrace(grace, () => {
+            const root = posixOwnershipRoot.value;
+            if (root === undefined || posixController === undefined) return true;
+            const observed = posixController.identity(root.pid);
+            return (
+              observed === undefined ||
+              !samePosixProcessIdentity(root, observed) ||
+              posixProcessIsZombie(observed)
+            );
+          });
+        }
         return yield* terminateLinuxCgroupLease(linuxCgroupLease);
       }
       if (options.ownDescendantProcessGroups === true) {
@@ -1721,7 +1757,14 @@ export const make = (
       if (!groupExisted) return;
       const grace = options.processGroupTerminationGrace ?? "1 second";
       if (grace !== 0) {
-        yield* Effect.sleep(grace);
+        yield* awaitTerminationGrace(grace, () => {
+          try {
+            process.kill(-Number(child.pid), 0);
+            return false;
+          } catch (cause) {
+            return (cause as NodeJS.ErrnoException | undefined)?.code === "ESRCH";
+          }
+        });
       }
       yield* signalOwnedProcessGroup("SIGKILL");
     }).pipe(withWallClock);

@@ -6,6 +6,8 @@ import * as NodeFS from "node:fs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -1781,4 +1783,46 @@ describe("AcpSessionRuntime", () => {
       Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
     );
   });
+});
+
+describe("AcpSessionRuntime process-group stop", () => {
+  const stopWithLongGrace = (
+    ownership: Pick<AcpSessionRuntime.AcpSessionRuntimeOptions, "ownDescendantProcessGroups">,
+    expectedContainment: string,
+  ) => {
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "acp-runtime-stop-"));
+    const exitLogPath = NodePath.join(tempDir, "exit.log");
+    return Effect.gen(function* () {
+      const platform = yield* HostProcessPlatform;
+      if (platform === "win32") return;
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: { ...mockRuntimeOptions.spawn, env: { T3_ACP_EXIT_LOG_PATH: exitLogPath } },
+        ...ownership,
+        ownDetachedProcessGroup: true,
+        processGroupPlatform: platform,
+        processGroupTerminationGrace: "30 seconds",
+      });
+      // Hosts without a delegated cgroup fall back to other containment.
+      if (runtime.processContainment !== expectedContainment) return;
+      yield* runtime.start();
+      const startedAt = yield* Clock.currentTimeMillis;
+      yield* runtime.terminateProcessGroup ?? Effect.die("missing terminateProcessGroup");
+      // The agent exits on SIGTERM, so stop must not sit out the rest of the grace.
+      expect((yield* Clock.currentTimeMillis) - startedAt).toBeLessThan(10_000);
+      expect(NodeFS.readFileSync(exitLogPath, "utf8")).toContain("SIGTERM");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+    );
+  };
+
+  it.live("returns once the process group exits on SIGTERM", () =>
+    stopWithLongGrace({}, "process-group"),
+  );
+
+  it.live("returns once the cgroup root exits on SIGTERM", () =>
+    stopWithLongGrace({ ownDescendantProcessGroups: true }, "cgroup-v2"),
+  );
 });
