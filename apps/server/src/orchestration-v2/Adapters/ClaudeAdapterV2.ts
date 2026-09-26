@@ -8,6 +8,7 @@ import {
   forkSession as forkClaudeSession,
   type ForkSessionOptions,
   type ForkSessionResult,
+  getSubagentMessages,
   query,
   type Options as ClaudeQueryOptions,
   type PermissionMode,
@@ -371,6 +372,10 @@ export interface ClaudeAgentSdkQueryRunnerShape {
   readonly forkSession: (
     input: ClaudeAgentSdkSessionForkInput,
   ) => Effect.Effect<ForkSessionResult, ClaudeAgentSdkQueryRunnerError>;
+  /** The tool call that launched a subagent, read from the CLI's session storage. */
+  readonly subagentLaunchToolUseId: (
+    input: ClaudeAgentSdkSubagentLookupInput,
+  ) => Effect.Effect<string | null, ClaudeAgentSdkQueryRunnerError>;
   readonly assertComplete: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
 
@@ -382,6 +387,14 @@ export class ClaudeAgentSdkQueryRunner extends Context.Service<
 export interface ClaudeAgentSdkSessionForkInput {
   readonly sessionId: string;
   readonly options: ForkSessionOptions;
+  readonly threadId: ThreadId;
+  readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+}
+
+export interface ClaudeAgentSdkSubagentLookupInput {
+  readonly sessionId: string;
+  readonly agentId: string;
+  readonly dir: string | null;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
 }
@@ -490,6 +503,23 @@ export type ClaudeAgentSdkProtocolLogEvent =
       readonly payload: {
         readonly type: "session.forked";
         readonly sessionId: string;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "subagent.lookup";
+        readonly sessionId: string;
+        readonly agentId: string;
+      };
+    }
+  | {
+      readonly direction: "incoming";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "subagent.found";
+        readonly toolUseId: string | null;
       };
     }
   | {
@@ -709,6 +739,43 @@ export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
         });
         return result;
       }),
+      subagentLaunchToolUseId: Effect.fn("ClaudeAgentSdkQueryRunner.subagentLaunchToolUseId")(
+        function* (input: ClaudeAgentSdkSubagentLookupInput) {
+          const protocolLogger = makeClaudeAgentSdkProtocolLogger({
+            nativeEventLogger,
+            threadId: input.threadId,
+            providerSessionId: input.providerSessionId,
+          });
+          const logProtocolEvent = (event: ClaudeAgentSdkProtocolLogEvent) =>
+            protocolLogger === undefined ? Effect.void : protocolLogger(event);
+          yield* logProtocolEvent({
+            direction: "outgoing",
+            stage: "decoded",
+            payload: {
+              type: "subagent.lookup",
+              sessionId: input.sessionId,
+              agentId: input.agentId,
+            },
+          });
+          // The CLI stamps every message of a subagent's transcript with the
+          // tool call that launched it; one message is enough.
+          const messages = yield* Effect.tryPromise({
+            try: () =>
+              getSubagentMessages(input.sessionId, input.agentId, {
+                ...(input.dir === null ? {} : { dir: input.dir }),
+                limit: 1,
+              }),
+            catch: (cause) => queryRunnerError(cause, "getSubagentMessages"),
+          });
+          const toolUseId = messages[0]?.parent_tool_use_id ?? null;
+          yield* logProtocolEvent({
+            direction: "incoming",
+            stage: "decoded",
+            payload: { type: "subagent.found", toolUseId },
+          });
+          return toolUseId;
+        },
+      ),
       assertComplete: Effect.void,
     });
   }),
@@ -3193,6 +3260,27 @@ export function makeClaudeAdapterV2(
           });
         });
 
+        // A subagent's projection ids derive from its task id, so they are
+        // the same whether this process created the subagent or not.
+        const claudeSubagentIds = (context: ActiveClaudeTurnContext, taskId: string) => ({
+          nodeId: idAllocator.derive.nodeFromProviderItem({
+            driver: CLAUDE_PROVIDER,
+            nativeItemId: `task:${taskId}`,
+          }),
+          childRootNodeId: idAllocator.derive.nodeFromProviderItem({
+            driver: CLAUDE_PROVIDER,
+            nativeItemId: `task:${taskId}:thread-root`,
+          }),
+          childThreadId: idAllocator.derive.threadFromProviderThread({
+            driver: CLAUDE_PROVIDER,
+            nativeThreadId: `${context.input.providerThread.id}:${taskId}`,
+          }),
+          turnItemId: idAllocator.derive.turnItemFromProviderItem({
+            driver: CLAUDE_PROVIDER,
+            nativeItemId: `task:${taskId}:subagent`,
+          }),
+        });
+
         const resolveItemOrdinal = Effect.fnUntraced(function* (
           context: ActiveClaudeTurnContext,
           nativeItemId: string,
@@ -3388,6 +3476,97 @@ export function makeClaudeAdapterV2(
           });
         });
 
+        // A subagent launched before a server restart is missing from the
+        // registry when SendMessage resumes it. The resume's task_started
+        // names only the SendMessage call, while the resumed run's frames
+        // carry the launch call as parent_tool_use_id, which only the CLI's
+        // session storage still records. Registering the subagent as a
+        // finished run lets the resume reopen it like an in-session resume:
+        // same child thread, launch prompt kept, the new prompt appended.
+        const recoverResumedClaudeSubagent = Effect.fnUntraced(function* (resume: {
+          readonly context: ActiveClaudeTurnContext;
+          readonly nativeThreadId: string;
+          readonly taskId: string;
+          readonly toolUseId: string | undefined;
+          readonly title: string;
+        }) {
+          // An Agent launch never enters toolCalls, so a task_started under a
+          // tracked tool call is a resume.
+          if (
+            resume.toolUseId === undefined ||
+            !resume.context.toolCalls.has(resume.toolUseId) ||
+            resume.context.subagentsByTaskId.has(resume.taskId) ||
+            (yield* Ref.get(sessionSubagentsByTaskId)).has(resume.taskId)
+          ) {
+            return;
+          }
+          const launchToolUseId = yield* queryRunner
+            .subagentLaunchToolUseId({
+              sessionId: resume.nativeThreadId,
+              agentId: resume.taskId,
+              dir: resume.context.input.runtimePolicy.cwd,
+              threadId: resume.context.input.threadId,
+              providerSessionId: input.providerSessionId,
+            })
+            .pipe(
+              Effect.catch(() =>
+                Effect.logWarning("orchestration-v2.claude-subagent-launch-lookup-failed", {
+                  taskId: resume.taskId,
+                }).pipe(Effect.as(null)),
+              ),
+            );
+          if (launchToolUseId === null || launchToolUseId === resume.toolUseId) {
+            return;
+          }
+          const ids = claudeSubagentIds(resume.context, resume.taskId);
+          const now = yield* DateTime.now;
+          const subagent: ActiveClaudeSubagent = {
+            task: {
+              id: ids.nodeId,
+              threadId: resume.context.input.threadId,
+              runId: resume.context.input.runId,
+              parentNodeId: resume.context.input.rootNodeId,
+              origin: "provider_native",
+              createdBy: "agent",
+              driver: CLAUDE_PROVIDER,
+              providerInstanceId: resume.context.input.modelSelection.instanceId,
+              providerThreadId: null,
+              childThreadId: ids.childThreadId,
+              nativeTaskRef: {
+                driver: CLAUDE_PROVIDER,
+                nativeId: resume.taskId,
+                strength: "strong",
+              },
+              prompt: "",
+              title: resume.title,
+              model: null,
+              result: null,
+              status: "completed",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            },
+            childThreadId: ids.childThreadId,
+            childRootNodeId: ids.childRootNodeId,
+            turnItemId: ids.turnItemId,
+            turnItemOrdinal: yield* resolveItemOrdinal(
+              resume.context,
+              `task:${resume.taskId}:subagent`,
+            ),
+            runToolUseId: launchToolUseId,
+            nextChildItemOrdinal: 100,
+            resultItemOrdinal: null,
+            lastAssistantText: null,
+            lastAssistantMessageId: null,
+          };
+          yield* Ref.update(sessionSubagentsByTaskId, (current) =>
+            new Map(current).set(resume.taskId, subagent),
+          );
+          yield* Ref.update(sessionSubagentTaskIdsByToolUseId, (current) =>
+            new Map(current).set(launchToolUseId, resume.taskId),
+          );
+        });
+
         const updateClaudeSubagentNode = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly taskId: string;
@@ -3454,24 +3633,10 @@ export function makeClaudeAdapterV2(
 
           const now = yield* DateTime.now;
           const nativeItemId = `task:${input.taskId}`;
-          const nodeId =
-            existingSubagent?.task.id ??
-            idAllocator.derive.nodeFromProviderItem({
-              driver: CLAUDE_PROVIDER,
-              nativeItemId,
-            });
-          const childRootNodeId =
-            existingSubagent?.childRootNodeId ??
-            idAllocator.derive.nodeFromProviderItem({
-              driver: CLAUDE_PROVIDER,
-              nativeItemId: `${nativeItemId}:thread-root`,
-            });
-          const childThreadId =
-            existingSubagent?.childThreadId ??
-            idAllocator.derive.threadFromProviderThread({
-              driver: CLAUDE_PROVIDER,
-              nativeThreadId: `${input.context.input.providerThread.id}:${input.taskId}`,
-            });
+          const derivedIds = claudeSubagentIds(input.context, input.taskId);
+          const nodeId = existingSubagent?.task.id ?? derivedIds.nodeId;
+          const childRootNodeId = existingSubagent?.childRootNodeId ?? derivedIds.childRootNodeId;
+          const childThreadId = existingSubagent?.childThreadId ?? derivedIds.childThreadId;
           if (existingSubagent === undefined) {
             input.context.subagentNodesByTaskId.set(input.taskId, nodeId);
           }
@@ -3538,12 +3703,7 @@ export function makeClaudeAdapterV2(
             task,
             childThreadId,
             childRootNodeId,
-            turnItemId:
-              existingSubagent?.turnItemId ??
-              idAllocator.derive.turnItemFromProviderItem({
-                driver: CLAUDE_PROVIDER,
-                nativeItemId: `${nativeItemId}:subagent`,
-              }),
+            turnItemId: existingSubagent?.turnItemId ?? derivedIds.turnItemId,
             turnItemOrdinal,
             runToolUseId:
               existingSubagent === undefined
@@ -5179,6 +5339,13 @@ export function makeClaudeAdapterV2(
               if (message.tool_use_id !== undefined) {
                 context.pendingSubagentModelsByToolUseId.delete(message.tool_use_id);
               }
+              yield* recoverResumedClaudeSubagent({
+                context,
+                nativeThreadId: liveQuery.nativeThreadId,
+                taskId: message.task_id,
+                toolUseId: message.tool_use_id,
+                title: message.description,
+              });
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,

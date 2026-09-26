@@ -989,6 +989,7 @@ describe("ClaudeAdapterV2 executable path", () => {
                 };
               }),
             forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
             assertComplete: Effect.void,
           }),
         );
@@ -1053,6 +1054,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
                 };
               }),
             forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
@@ -1270,6 +1272,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                 close: Effect.void,
               }),
             forkSession: () => Effect.die("unused forkSession"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
@@ -1408,6 +1411,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                 };
               }),
             forkSession: () => Effect.die("unused forkSession"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
@@ -1499,6 +1503,7 @@ describe("ClaudeAdapterV2 native fork", () => {
                 forkCalls.push(input);
                 return { sessionId: "forked-native-session" };
               }),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
@@ -1665,6 +1670,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
                 };
               }),
             forkSession: () => Effect.die("unused forkSession"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
@@ -1937,6 +1943,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               };
             }),
           forkSession: () => Effect.die("unused forkSession"),
+          subagentLaunchToolUseId: () => Effect.succeed(null),
           assertComplete: Effect.void,
         },
       });
@@ -3271,6 +3278,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   };
                 }),
               forkSession: () => Effect.die("unused forkSession"),
+              subagentLaunchToolUseId: () => Effect.succeed(null),
               assertComplete: Effect.void,
             },
           });
@@ -5756,6 +5764,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 };
               }),
             forkSession: () => Effect.die("unused forkSession"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
@@ -5923,6 +5932,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   };
                 }),
               forkSession: () => Effect.die("unused forkSession"),
+              subagentLaunchToolUseId: () => Effect.succeed(null),
               assertComplete: Effect.void,
             },
           });
@@ -6156,6 +6166,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   };
                 }),
               forkSession: () => Effect.die("unused forkSession"),
+              subagentLaunchToolUseId: () => Effect.succeed(null),
               assertComplete: Effect.void,
             },
           });
@@ -6354,6 +6365,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 });
               },
               forkSession: () => Effect.die("unused forkSession"),
+              subagentLaunchToolUseId: () => Effect.succeed(null),
               assertComplete: Effect.void,
             },
           });
@@ -6491,6 +6503,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 });
               },
               forkSession: () => Effect.die("unused forkSession"),
+              subagentLaunchToolUseId: () => Effect.succeed(null),
               assertComplete: Effect.void,
             },
           });
@@ -6665,6 +6678,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 }),
               ),
             forkSession: () => Effect.die("unused forkSession"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
