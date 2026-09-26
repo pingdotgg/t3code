@@ -677,7 +677,7 @@ function SortableSidebarProjectItem(props: {
   readonly children: ReactNode;
 }) {
   const { setNodeRef, transform, transition } = useSortable({
-    id: props.item.key,
+    id: sidebarListItemId(props.item),
     disabled: { draggable: true },
     animateLayoutChanges: animateSidebarLayoutChanges,
   });
