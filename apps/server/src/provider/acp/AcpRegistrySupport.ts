@@ -49,6 +49,8 @@ const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
 const MAX_PACKAGE_MANIFEST_BYTES = 1024 * 1024;
 const MAX_SEARCH_RESULTS = 20;
 const REGISTRY_REQUEST_TIMEOUT = "30 seconds";
+// Search runs as the user types. A fetched index serves every caller this long.
+const REGISTRY_FRESHNESS_MS = 5 * 60 * 1_000;
 const ARCHIVE_REQUEST_TIMEOUT = "20 minutes";
 const PACKAGE_INSTALL_TIMEOUT = "20 minutes";
 const PACKAGE_QUERY_TIMEOUT = "30 seconds";
@@ -620,6 +622,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   const packageReceiptsDirectory = path.join(registryDirectory, "package-installs");
   const registryRef = yield* Ref.make<AcpRegistryIndex | undefined>(undefined);
   const registryRevision = yield* Ref.make(0);
+  // When the network last returned the index. A disk fallback does not count.
+  const registryFetchedAt = yield* Ref.make<number | undefined>(undefined);
   const registrySemaphore = yield* Semaphore.make(1);
   const installSemaphore = yield* Semaphore.make(1);
   const preparedBinaryReservations = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
@@ -806,8 +810,18 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         const currentRevision = yield* Ref.get(registryRevision);
         const current = yield* Ref.get(registryRef);
         if (current !== undefined && currentRevision !== observedRevision) return current;
+        const now = yield* Clock.currentTimeMillis;
+        const fetchedAt = yield* Ref.get(registryFetchedAt);
+        if (
+          current !== undefined &&
+          fetchedAt !== undefined &&
+          now - fetchedAt < REGISTRY_FRESHNESS_MS
+        ) {
+          return current;
+        }
 
         const registry = yield* fetchRegistry().pipe(
+          Effect.tap(() => Ref.set(registryFetchedAt, now)),
           Effect.catch((networkError) =>
             readCachedRegistry.pipe(
               Effect.flatMap(

@@ -597,7 +597,8 @@ describe("AcpRegistrySupport", () => {
           version: "1.2.3",
         });
 
-        expect(requests).toEqual([registryUrl, registryUrl, archiveUrl]);
+        // Prepare reuses the index the search just fetched.
+        expect(requests).toEqual([registryUrl, archiveUrl]);
       }).pipe(
         Effect.scoped,
         Effect.provide(
@@ -736,7 +737,7 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect("refreshes explicit searches and coalesces concurrent refreshes", () => {
+  it.effect("reuses a fresh registry index for five minutes and coalesces refreshes", () => {
     const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
     let requests = 0;
     return Effect.gen(function* () {
@@ -755,6 +756,13 @@ describe("AcpRegistrySupport", () => {
       );
       expect(requests).toBe(1);
 
+      // Typing a query searches often; a fresh index serves every search.
+      yield* resolver.search({ query: "exam" });
+      yield* TestClock.adjust("4 minutes");
+      yield* resolver.search({ query: "ex" });
+      expect(requests).toBe(1);
+
+      yield* TestClock.adjust("1 minute");
       yield* resolver.search({ query: "example" });
       expect(requests).toBe(2);
     }).pipe(
