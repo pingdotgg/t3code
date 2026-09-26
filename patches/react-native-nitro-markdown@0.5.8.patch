@@ -1,0 +1,34 @@
+diff --git a/cpp/md4c/md4c.c b/cpp/md4c/md4c.c
+--- a/cpp/md4c/md4c.c
++++ b/cpp/md4c/md4c.c
+@@ -3909,7 +3909,7 @@ md_analyze_permissive_autolink(MD_CTX* ctx, int mark_index)
+         const MD_CHAR optional_end_char;
+     } URL_MAP[] = {
+         { _T('\0'), _T('.'),  _T(".-_"),      2, _T('\0') },    /* host, mandatory */
+-        { _T('/'),  _T('/'),  _T("/.-_"),     0, _T('/') },     /* path */
++        { _T('/'),  _T('/'),  _T("/.-_()"),   0, _T('/') },     /* path */
+         { _T('?'),  _T('&'),  _T("&.-+_=()"), 1, _T('\0') },    /* query */
+         { _T('#'),  _T('\0'), _T(".-+_") ,    1, _T('\0') }     /* fragment */
+     };
+@@ -4006,9 +4006,20 @@ md_analyze_permissive_autolink(MD_CTX* ctx, int mark_index)
+                 CH(end) == URL_MAP[i].optional_end_char)
+             end++;
+ 
+-        if(n_components < URL_MAP[i].min_components  ||  n_open_brackets != 0)
++        /* Scheme autolinks allow one host label, so localhost and devbox link.
++         * E-mail and www autolinks still require a dotted host. */
++        if(n_components < (i == 0 && opener->ch == ':' ? 1 : URL_MAP[i].min_components)  ||
++                n_open_brackets != 0)
+             return;
+ 
++        /* Optional port on a scheme autolink: ':' followed by digits. */
++        if(i == 0 && opener->ch == ':' && end + 1 < line_end &&
++                CH(end) == _T(':') && ISDIGIT(end + 1)) {
++            end++;
++            while(end < line_end && ISDIGIT(end))
++                end++;
++        }
++
+         if(opener->ch == '@')   /* E-mail autolinks wants only the host. */
+             break;
+     }
