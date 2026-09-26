@@ -228,7 +228,11 @@ import {
   foldSubagentActivities,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
-import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import {
+  isRichTextStrikeShortcut,
+  resolveShortcutCommand,
+  shortcutLabelForCommand,
+} from "../keybindings";
 import { isEditableFocused } from "../lib/editableFocus";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
@@ -6759,6 +6763,14 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (command === "thread.settle") {
+        if (
+          isRichTextStrikeShortcut(event) &&
+          event.target instanceof HTMLElement &&
+          event.target.closest('[data-composer-rich-text="true"]')
+        ) {
+          // The rich-text composer claims Mod+Shift+S for strikethrough.
+          return;
+        }
         event.preventDefault();
         event.stopPropagation();
         if (!isServerThread || !activeThreadRef || !supportsSettlement) return;
