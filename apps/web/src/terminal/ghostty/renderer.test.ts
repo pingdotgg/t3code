@@ -71,10 +71,73 @@ describe("ghosttyTextRunEnd", () => {
 });
 
 describe("renderGhosttySnapshot", () => {
+  it.each([1, 1.25, 1.5, 2])("keeps cursor and row edges on device pixels at %sx", (scale) => {
+    const rectangles: [number, number, number, number][] = [];
+    const context = {
+      getTransform: () => ({ d: scale }),
+      fillRect: (...rect: [number, number, number, number]) => rectangles.push(rect),
+      set fillStyle(_value: string) {},
+      set textBaseline(_value: string) {},
+    } as unknown as CanvasRenderingContext2D;
+    const snapshot: GhosttySnapshot = {
+      cols: 3,
+      rows: 3,
+      foreground: { r: 255, g: 255, b: 255 },
+      background: { r: 0, g: 0, b: 0 },
+      cursor: { r: 255, g: 255, b: 255 },
+      cursorX: 1,
+      cursorY: 1,
+      cursorVisible: true,
+      cursorBlinking: true,
+      cursorStyle: 1,
+      dirtyRows: new Set([0, 1, 2]),
+      rowData: [0, 1, 2].map(() => ({
+        cells: [cell(""), cell(""), cell("")],
+        text: "",
+        isWrapContinuation: false,
+        wrapsToNext: false,
+      })),
+    };
+    const options = {
+      context,
+      snapshot,
+      metrics: { width: 8, height: 17, baseline: 12 },
+      fontSize: 12,
+      fontFamily: "monospace",
+      padding: 4,
+      originY: 5,
+      forceFull: false,
+    };
+
+    renderGhosttySnapshot({ ...options, cursorOn: true });
+
+    expect(rectangles).toHaveLength(4);
+    for (const [, top, , height] of rectangles) {
+      expect(top * scale).toBeCloseTo(Math.round(top * scale), 10);
+      expect((top + height) * scale).toBeCloseTo(Math.round((top + height) * scale), 10);
+    }
+    for (let row = 0; row < 2; row += 1) {
+      const [, top, , height] = rectangles[row]!;
+      expect(top + height).toBe(rectangles[row + 1]![1]);
+    }
+    const middleRow = rectangles[1]!;
+    expect(rectangles[3]).toEqual([12, middleRow[1], 8, middleRow[3]]);
+
+    rectangles.length = 0;
+    renderGhosttySnapshot({
+      ...options,
+      snapshot: { ...snapshot, dirtyRows: new Set() },
+      cursorOn: false,
+      previousCursorY: 1,
+    });
+    expect(rectangles).toEqual([middleRow]);
+  });
+
   it("underlines every cell in a hovered wrapped link", () => {
     const fillRectCalls: number[][] = [];
     const context = {
       canvas: { width: 200, height: 80 },
+      getTransform: () => ({ d: 1 }),
       beginPath: () => {},
       clip: () => {},
       fillRect: (...args: number[]) => fillRectCalls.push(args),
@@ -131,6 +194,7 @@ describe("renderGhosttySnapshot", () => {
     const fillTextCalls: unknown[][] = [];
     const context = {
       canvas: { width: 200, height: 40 },
+      getTransform: () => ({ d: 1 }),
       beginPath: () => {},
       clip: () => {},
       fillRect: () => {},
@@ -180,6 +244,7 @@ describe("renderGhosttySnapshot", () => {
     const fillTextCalls: unknown[][] = [];
     const context = {
       canvas: { width: 200, height: 40 },
+      getTransform: () => ({ d: 1 }),
       beginPath: () => {},
       clip: () => {},
       fillRect: () => {},
@@ -234,6 +299,7 @@ describe("renderGhosttySnapshot", () => {
     const clearedRows: number[] = [];
     const context = {
       canvas: { width: 200, height: 80 },
+      getTransform: () => ({ d: 1 }),
       beginPath: () => {},
       clip: () => {},
       fillRect: (_left: number, top: number, _width: number, height: number) => {
