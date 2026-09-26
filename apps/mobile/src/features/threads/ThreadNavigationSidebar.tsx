@@ -1033,6 +1033,7 @@ function ThreadNavigationSidebarPane(
       >
         {Platform.OS === "android" && listItems.length === 0 ? (
           <ScrollView
+            keyboardShouldPersistTaps="handled"
             className="flex-1"
             contentContainerStyle={{
               flexGrow: 1,

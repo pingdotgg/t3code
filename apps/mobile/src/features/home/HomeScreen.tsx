@@ -900,7 +900,7 @@ export function HomeScreen(props: HomeScreenProps) {
     projectCount: props.projects.length,
   });
 
-  if (!hasAnyThreads && !hasSearchQuery) {
+  if (!hasAnyThreads && (!hasSearchQuery || !props.catalogState.hasConnections)) {
     return (
       <View className="flex-1 bg-screen android:bg-header">
         <View
@@ -998,6 +998,7 @@ export function HomeScreen(props: HomeScreenProps) {
     return (
       <View className="flex-1 bg-header">
         <ScrollView
+          keyboardShouldPersistTaps="handled"
           className="flex-1 overflow-hidden rounded-t-[28px] bg-screen px-4"
           contentContainerStyle={{
             flexGrow: 1,
