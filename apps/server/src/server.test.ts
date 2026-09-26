@@ -5814,6 +5814,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "http://collector.test/v1/traces",
       ]);
       assert.deepEqual(spanNames, []);
+
+      // Other routes keep their HTTP server span.
+      const session = yield* HttpClient.get("/api/auth/session", { headers: { cookie } });
+      assert.equal(session.status, 200);
+      assert.include(spanNames, "http.server GET");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

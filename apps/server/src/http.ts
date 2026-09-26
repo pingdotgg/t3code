@@ -377,7 +377,8 @@ const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([OTLP_TRACES_PROXY_P
 // before routing, so a route handler cannot skip it. TracerDisabledWhen is one
 // predicate for the whole server and the last layer to provide it wins, so
 // makeRoutesLayer provides this one last. Add paths here instead of providing
-// TracerDisabledWhen again. The query string is ignored, as in routing.
+// TracerDisabledWhen again; server.test.ts fails if a later layer replaces it.
+// The query string is ignored, as in routing.
 export const untracedRequestsLayer = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) => {
   const queryIndex = request.url.indexOf("?");
   return UNTRACED_REQUEST_PATHS.has(
