@@ -14,8 +14,8 @@ import * as ProcessRunner from "../processRunner.ts";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
 // Background sweeps resolve every project each minute. A long TTL keeps them
-// from spawning git each time. Clone, publish, and PR discovery (before it
-// saves links) resolve with `refresh: true`.
+// from spawning git each time. Clone, publish, and PR discovery (after a turn
+// and before it saves links) resolve with `refresh: true`.
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(15);
 // Short, so a folder that gains a repository or a remote shows up quickly.
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
