@@ -27,6 +27,7 @@ interface BranchToolbarEnvironmentSelectorProps {
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
 }
 
+/** Wide Run on select in the composer context strip. */
 export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvironmentSelector({
   autoEnvironmentLabel,
   onAutoEnvironment,
@@ -135,12 +136,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         <SelectGroup>
           <SelectGroupLabel>Run on</SelectGroupLabel>
           {onAutoEnvironment && (
-            <SelectItem
-              value="auto"
-              onClick={() => {
-                if (autoEnvironmentLabel) onAutoEnvironment?.();
-              }}
-            >
+            <SelectItem value="auto">
               <span className="inline-flex items-center gap-1.5">
                 <ScaleIcon className="size-3" aria-hidden="true" />
                 {autoEnvironmentLabel ?? "Auto balance"}

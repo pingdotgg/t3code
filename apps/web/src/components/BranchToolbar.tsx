@@ -109,6 +109,7 @@ interface MobileRunContextSelectorProps {
   onUsePreviousWorktree: () => void;
 }
 
+/** Compact Run on + workspace menu for the narrow composer context strip. */
 const MobileRunContextSelector = memo(function MobileRunContextSelector({
   forceNewWorktree,
   autoEnvironmentLabel,
@@ -238,14 +239,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
                 }
               >
                 {onAutoEnvironment && (
-                  <MenuRadioItem
-                    value="auto"
-                    disabled={envLocked}
-                    closeOnClick
-                    onClick={() => {
-                      if (autoEnvironmentLabel) onAutoEnvironment?.();
-                    }}
-                  >
+                  <MenuRadioItem value="auto" disabled={envLocked} closeOnClick>
                     <span className="flex min-w-0 items-center gap-1.5">
                       <ScaleIcon className="size-3" aria-hidden="true" />
                       <span className="min-w-0 truncate">
