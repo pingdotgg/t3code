@@ -13,6 +13,7 @@ import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
   projectGroupsSpanEnvironments,
+  resolveScopedNewThreadProjectRef,
 } from "./sidebarProjectGrouping";
 import { orderItemsByPreferredIds } from "./components/Sidebar.logic";
 import { legacyProjectCwdPreferenceKey } from "./uiStateStore";
@@ -52,6 +53,37 @@ function makeProject(overrides: Partial<Project> = {}): Project {
 }
 
 describe("environment grouping", () => {
+  it("starts scoped new threads in the scoped group, keeping the viewed checkout", () => {
+    const local = makeProject({ repositoryIdentity });
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const other = makeProject({ id: ProjectId.make("other"), workspaceRoot: "/tmp/other" });
+    const [group] = buildSidebarProjectSnapshots({
+      projects: [local, remote, other],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+    // Viewing another project's thread: the scoped group's representative wins.
+    expect(
+      resolveScopedNewThreadProjectRef(group!, {
+        environmentId: other.environmentId,
+        projectId: other.id,
+      }),
+    ).toEqual({ environmentId: local.environmentId, projectId: local.id });
+    // Viewing the group's remote checkout: stay on that machine.
+    expect(
+      resolveScopedNewThreadProjectRef(group!, {
+        environmentId: remote.environmentId,
+        projectId: remote.id,
+      }),
+    ).toEqual({ environmentId: remote.environmentId, projectId: remote.id });
+  });
+
   it("groups matching repository identities across environments", () => {
     const primary = makeProject({ repositoryIdentity });
     const remote = makeProject({
@@ -428,6 +460,11 @@ describe("environment grouping", () => {
 
   it("keeps manual project order when building grouped sidebar entries", () => {
     const primary = makeProject({ repositoryIdentity });
+    const preferredCheckout = makeProject({
+      id: ProjectId.make("preferred-checkout"),
+      workspaceRoot: "/tmp/preferred-checkout",
+      repositoryIdentity,
+    });
     const remote = makeProject({
       id: ProjectId.make("project-remote"),
       environmentId: remoteEnvironmentId,
@@ -439,8 +476,8 @@ describe("environment grouping", () => {
       workspaceRoot: "/tmp/separate",
     });
     const orderedProjects = orderItemsByPreferredIds({
-      items: [primary, remote, separate],
-      preferredIds: [getProjectOrderKey(separate), getProjectOrderKey(primary)],
+      items: [primary, remote, separate, preferredCheckout],
+      preferredIds: [getProjectOrderKey(separate), getProjectOrderKey(preferredCheckout)],
       getId: getProjectOrderKey,
       getPreferenceIds: (project) => [
         getProjectOrderKey(project),
@@ -456,5 +493,11 @@ describe("environment grouping", () => {
     });
 
     expect(groups.map((group) => group.displayName)).toEqual(["separate", "shared-repo"]);
+    expect(
+      resolveScopedNewThreadProjectRef(groups[1]!, {
+        environmentId: separate.environmentId,
+        projectId: separate.id,
+      }),
+    ).toEqual({ environmentId: primaryEnvironmentId, projectId: preferredCheckout.id });
   });
 });
