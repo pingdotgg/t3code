@@ -62,6 +62,7 @@ import {
   resolveVisibleWorktreeSetup,
   observeProactivePanelUserChoice,
   resolveProactiveTurnDiffAction,
+  gitStatusSinceRefresh,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   threadShellHasStarted,
@@ -147,11 +148,13 @@ describe("floating browser preview", () => {
         selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref),
       );
 
-    panels.openProactive(ref, { id: "diff", kind: "diff" }, revision);
+    panels.openProactive(ref, { kind: "diff", turnId: TurnId.make("turn-1") }, revision);
     expect(isFloating()).toBe(true);
     panels.activateSurface(ref, "browser:agent-tab");
     expect(isFloating()).toBe(false);
-    expect(panels.openProactive(ref, { id: "diff", kind: "diff" }, revision)).toBe(false);
+    expect(
+      panels.openProactive(ref, { kind: "diff", turnId: TurnId.make("turn-2") }, revision),
+    ).toBe(false);
     panels.open(ref, "diff");
     expect(isFloating()).toBe(true);
     expect(
@@ -218,6 +221,17 @@ describe("floating browser preview", () => {
   });
 });
 
+function gitStatusWithWorkingTree(paths: ReadonlyArray<string>) {
+  return {
+    isRepo: true,
+    workingTree: {
+      files: paths.map((path) => ({ path, insertions: 0, deletions: 0 })),
+      insertions: 0,
+      deletions: 0,
+    },
+  };
+}
+
 describe("proactive panels", () => {
   it("keeps a manual PR selection made after following a replacement while loading", () => {
     useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
@@ -257,7 +271,7 @@ describe("proactive panels", () => {
         turnCompleted: true,
       }),
     ).toBe(true);
-    expect(panels.openProactive(ref, { id: "diff", kind: "diff" }, loaded.userActionRevision)).toBe(
+    expect(panels.openProactive(ref, { kind: "diff", turnId }, loaded.userActionRevision)).toBe(
       false,
     );
   });
@@ -288,7 +302,11 @@ describe("proactive panels", () => {
         },
       );
       expect(
-        panels.openProactive(ref, { id: "diff", kind: "diff" }, loadingNextTurn.userActionRevision),
+        panels.openProactive(
+          ref,
+          { kind: "diff", turnId: nextTurn },
+          loadingNextTurn.userActionRevision,
+        ),
       ).toBe(true);
 
       panels.openFile(ref, "src/second.ts");
@@ -298,7 +316,11 @@ describe("proactive panels", () => {
         userActionRevision: panels.getUserActionRevision(ref),
       });
       expect(
-        panels.openProactive(ref, { id: "diff", kind: "diff" }, loaded.userActionRevision),
+        panels.openProactive(
+          ref,
+          { kind: "diff", turnId: TurnId.make("turn-3") },
+          loaded.userActionRevision,
+        ),
       ).toBe(false);
       expect(
         selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref)?.id,
@@ -408,7 +430,7 @@ describe("proactive panels", () => {
       expect(
         resolveProactiveTurnDiffAction({
           checkpoint: changedCheckpoint,
-          isGitRepo: true,
+          gitStatus: gitStatusWithWorkingTree(["src/app-0.ts"]),
         }),
       ).toBe(action);
     },
@@ -427,21 +449,55 @@ describe("proactive panels", () => {
     expect(
       resolveProactiveTurnDiffAction({
         checkpoint: undefined,
-        isGitRepo: true,
+        gitStatus: gitStatusWithWorkingTree(["src/app.ts"]),
       }),
     ).toBe("defer");
     expect(
       resolveProactiveTurnDiffAction({
         checkpoint: missingCheckpoint,
-        isGitRepo: true,
+        gitStatus: gitStatusWithWorkingTree(["src/app.ts"]),
       }),
     ).toBe("defer");
     expect(
       resolveProactiveTurnDiffAction({
         checkpoint: changedCheckpoint,
-        isGitRepo: undefined,
+        gitStatus: null,
       }),
     ).toBe("defer");
+  });
+
+  it("treats git status from before the latest refresh request as not loaded", () => {
+    const status = gitStatusWithWorkingTree(["src/app.ts"]);
+
+    expect(gitStatusSinceRefresh({ data: status, dataUpdatedAt: 1_000 }, 2_000)).toBeNull();
+    expect(gitStatusSinceRefresh({ data: null, dataUpdatedAt: null }, 0)).toBeNull();
+    expect(gitStatusSinceRefresh({ data: status, dataUpdatedAt: 3_000 }, 2_000)).toBe(status);
+  });
+
+  it("opens only when the working tree it shows has changes", () => {
+    const largeCheckpoint = {
+      status: "ready",
+      files: Array.from({ length: 58 }, (_, index) => ({
+        path: `packages/pulled-${index}.ts`,
+        kind: "modified" as const,
+        additions: 40,
+        deletions: 20,
+      })),
+    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: largeCheckpoint,
+        gitStatus: gitStatusWithWorkingTree([]),
+      }),
+    ).toBe("ignore");
+    // Git status reports untracked files with zero line counts.
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: largeCheckpoint,
+        gitStatus: gitStatusWithWorkingTree(["src/new-file.ts"]),
+      }),
+    ).toBe("open");
   });
 });
 

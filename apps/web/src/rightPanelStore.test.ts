@@ -1,5 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { type EnvironmentId, ThreadId, TurnId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -102,7 +102,7 @@ describe("rightPanelStore", () => {
     },
   );
 
-  const completedDiff = { id: "diff", kind: "diff" } as const;
+  const completedDiff = { kind: "diff", turnId: TurnId.make("turn-1") } as const;
   const linkedPullRequest = pullRequestSurface({
     projectId: "project-a",
     repository: "pingdotgg/t3code",
@@ -175,9 +175,15 @@ describe("rightPanelStore", () => {
     expect(
       store.openProactive(refA, { id: "pull-requests", kind: "pull-requests" }, revision),
     ).toBe(false);
-    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toBe(
-      chosen,
+    const { isOpen, activeSurfaceId, surfaces } = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
     );
+    expect({ isOpen, activeSurfaceId, surfaces }).toEqual({
+      isOpen: chosen.isOpen,
+      activeSurfaceId: chosen.activeSurfaceId,
+      surfaces: chosen.surfaces,
+    });
   });
 
   it("allows automatic panels for a later turn after a manual choice", () => {
@@ -187,8 +193,71 @@ describe("rightPanelStore", () => {
     expect(store.openProactive(refA, completedDiff, firstTurnRevision)).toBe(false);
 
     const nextTurnRevision = store.getUserActionRevision(refA);
-    expect(store.openProactive(refA, completedDiff, nextTurnRevision)).toBe(true);
+    expect(
+      store.openProactive(
+        refA,
+        { ...completedDiff, turnId: TurnId.make("turn-2") },
+        nextTurnRevision,
+      ),
+    ).toBe(true);
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+  });
+
+  it.each([
+    { dismissal: "hide", dismiss: () => useRightPanelStore.getState().close(refA) },
+    {
+      dismissal: "close tab",
+      dismiss: () => useRightPanelStore.getState().closeSurface(refA, "diff"),
+    },
+  ])("offers each turn's diff once after $dismissal and reload", ({ dismiss }) => {
+    const store = useRightPanelStore.getState();
+    expect(store.openProactive(refA, completedDiff, store.getUserActionRevision(refA))).toBe(true);
+    dismiss();
+    const persisted = JSON.parse(
+      JSON.stringify({ byThreadKey: useRightPanelStore.getState().byThreadKey }),
+    );
+    useRightPanelStore.setState(migratePersistedRightPanelState(persisted));
+
+    expect(store.openProactive(refA, completedDiff, store.getUserActionRevision(refA))).toBe(false);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
+
+    const nextTurn = { ...completedDiff, turnId: TurnId.make("turn-2") };
+    expect(store.openProactive(refA, nextTurn, store.getUserActionRevision(refA))).toBe(true);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+  });
+
+  it.each([
+    { action: "open file", act: () => useRightPanelStore.getState().openFile(refA, "src/app.ts") },
+    { action: "open files", act: () => useRightPanelStore.getState().open(refA, "files") },
+    {
+      action: "open pull request",
+      act: () => useRightPanelStore.getState().openPullRequest(refA, linkedPullRequest),
+    },
+  ])("keeps the offered turn after dismissing, then $action, then reload", ({ act }) => {
+    const store = useRightPanelStore.getState();
+    expect(store.openProactive(refA, completedDiff, store.getUserActionRevision(refA))).toBe(true);
+    store.close(refA);
+    act();
+    const persisted = JSON.parse(
+      JSON.stringify({ byThreadKey: useRightPanelStore.getState().byThreadKey }),
+    );
+    useRightPanelStore.setState(migratePersistedRightPanelState(persisted));
+    const before = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+
+    expect(store.openProactive(refA, completedDiff, store.getUserActionRevision(refA))).toBe(false);
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toBe(
+      before,
+    );
+  });
+
+  it("does not retry a diff offer the user already declined", () => {
+    const store = useRightPanelStore.getState();
+    const revision = store.getUserActionRevision(refA);
+    store.openFile(refA, "src/app.ts");
+    expect(store.openProactive(refA, completedDiff, revision)).toBe(false);
+
+    expect(store.openProactive(refA, completedDiff, store.getUserActionRevision(refA))).toBe(false);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("file");
   });
 
   it("keeps manual choices scoped to their thread and environment", () => {

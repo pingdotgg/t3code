@@ -18,6 +18,7 @@ import {
   type ThreadId,
   type ThreadLinkedPullRequest,
   type TurnId,
+  type VcsStatusLocalResult,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
@@ -43,6 +44,7 @@ import { type ComposerImageAttachment, type DraftThreadState } from "../composer
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
+import type { EnvironmentQueryView } from "../state/query";
 import { stripInlineContextReferences } from "~/lib/composerContextReferences";
 import { filterTerminalContextsWithText, type TerminalContextDraft } from "../lib/terminalContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
@@ -173,16 +175,35 @@ export function shouldOpenProactiveTurnDiff(input: {
   );
 }
 
+/**
+ * Status emitted before the latest refresh request can predate the turn's final edits,
+ * so it counts as not loaded yet. The status stream stays pending while subscribed,
+ * so only the emission time is meaningful.
+ */
+export function gitStatusSinceRefresh<A>(
+  query: Pick<EnvironmentQueryView<A>, "data" | "dataUpdatedAt">,
+  refreshRequestedAt: number,
+): A | null {
+  return query.dataUpdatedAt !== null && query.dataUpdatedAt > refreshRequestedAt
+    ? query.data
+    : null;
+}
+
+/**
+ * The checkpoint decides whether the turn changed enough. It also absorbs edits made
+ * between turns (pulls, branch switches), so the diff only opens when the working
+ * tree it shows is not empty.
+ */
 export function resolveProactiveTurnDiffAction(input: {
   checkpoint: Pick<TurnDiffSummary, "status" | "files"> | undefined;
-  isGitRepo: boolean | undefined;
+  gitStatus: Pick<VcsStatusLocalResult, "isRepo" | "workingTree"> | null;
 }): "defer" | "ignore" | "open" {
   if (input.checkpoint === undefined || input.checkpoint.status === "missing") return "defer";
-  if (input.isGitRepo === undefined) return "defer";
+  if (input.gitStatus === null) return "defer";
   if (
-    !input.isGitRepo ||
+    !input.gitStatus.isRepo ||
     input.checkpoint.status !== "ready" ||
-    input.checkpoint.files.length === 0
+    input.gitStatus.workingTree.files.length === 0
   ) {
     return "ignore";
   }

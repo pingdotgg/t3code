@@ -469,6 +469,7 @@ import {
   timelineHasEphemeralPreviewUrls,
   observeProactivePanelUserChoice,
   resolveProactiveTurnDiffAction,
+  gitStatusSinceRefresh,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
@@ -3665,10 +3666,16 @@ export default function ChatView(props: ChatViewProps) {
           input: { cwd: gitStatusCwd },
         }),
   );
+  const gitStatusRefreshRequestedAtRef = useRef(0);
+  const refreshGitStatus = gitStatusQuery.refresh;
+  const refreshGitStatusForMutation = useCallback(() => {
+    gitStatusRefreshRequestedAtRef.current = Date.now();
+    refreshGitStatus();
+  }, [refreshGitStatus]);
   useWorkspaceMutationRefresh({
     enabled: gitStatusCwd !== null,
     mutationId: workspaceMutationId,
-    refresh: gitStatusQuery.refresh,
+    refresh: refreshGitStatusForMutation,
     resourceKey: `git-status:${activeThreadKey ?? ""}:${gitStatusCwd ?? ""}`,
   });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -4839,7 +4846,10 @@ export default function ChatView(props: ChatViewProps) {
     const diffAction = eligibleCompletion
       ? resolveProactiveTurnDiffAction({
           checkpoint: completedCheckpoint,
-          isGitRepo: gitStatusQuery.data?.isRepo,
+          gitStatus: gitStatusSinceRefresh(
+            { data: gitStatusQuery.data, dataUpdatedAt: gitStatusQuery.dataUpdatedAt },
+            gitStatusRefreshRequestedAtRef.current,
+          ),
         })
       : "ignore";
     proactivePanelObservationRef.current = {
@@ -4849,7 +4859,13 @@ export default function ChatView(props: ChatViewProps) {
         diffAction === "defer" || shouldDeferLink ? previousRunningTurnId : activeRunningTurnId,
     };
     if (diffAction !== "open" || newlyCompletedTurnId === null) return;
-    if (!panels.openProactive(activeThreadRef, { id: "diff", kind: "diff" }, userActionRevision)) {
+    if (
+      !panels.openProactive(
+        activeThreadRef,
+        { kind: "diff", turnId: newlyCompletedTurnId },
+        userActionRevision,
+      )
+    ) {
       return;
     }
     useDiffPanelStore.getState().selectGitScope(activeThreadRef, "unstaged");
@@ -4862,7 +4878,8 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadKey,
     activeThreadRef,
     clientSettingsHydrated,
-    gitStatusQuery.data?.isRepo,
+    gitStatusQuery.data,
+    gitStatusQuery.dataUpdatedAt,
     isServerThread,
     latestTurnSettled,
     linkedThreadPullRequest,
