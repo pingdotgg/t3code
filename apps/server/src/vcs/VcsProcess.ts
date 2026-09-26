@@ -177,7 +177,7 @@ export const make = Effect.gen(function* () {
 
     if (!input.allowNonZeroExit && result.code !== 0) {
       const failureKind = classifyNonZeroExit(input.command, result.stderr);
-      return yield* VcsProcessExitError.fromProcessExit(
+      const error = VcsProcessExitError.fromProcessExit(
         baseError,
         {
           exitCode: result.code,
@@ -189,6 +189,18 @@ export const make = Effect.gen(function* () {
           failureKind === "command-failed" &&
           isTransientGitExit(result.stderr),
       );
+      if (
+        input.command === "git" &&
+        /^fatal: unable to create ['"][^\r\n]*[/\\]index\.lock['"]: file exists\.?$/im.test(
+          result.stderr,
+        )
+      ) {
+        return yield* new VcsProcessExitError({
+          ...error,
+          detail: "Git's index is locked. Wait for other Git operations to finish, then try again.",
+        });
+      }
+      return yield* error;
     }
 
     return {
