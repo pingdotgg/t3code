@@ -1,4 +1,4 @@
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -13,6 +13,7 @@ import {
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
+  setSidebarEnvironmentScopeId,
   setSidebarProjectScopeKey,
   setThreadChangedFilesExpanded,
   type UiState,
@@ -23,6 +24,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectExpandedById: {},
     projectOrder: [],
     sidebarProjectScopeKey: null,
+    sidebarEnvironmentScopeId: null,
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -156,6 +158,16 @@ describe("uiStateStore pure functions", () => {
     expect(setSidebarProjectScopeKey(scoped, null).sidebarProjectScopeKey).toBeNull();
     expect(setSidebarProjectScopeKey(scoped, "").sidebarProjectScopeKey).toBeNull();
   });
+
+  it("stores the sidebar environment scope and resets it to all environments", () => {
+    const remote = EnvironmentId.make("remote-1");
+    const scoped = setSidebarEnvironmentScopeId(makeUiState(), remote);
+
+    expect(scoped.sidebarEnvironmentScopeId).toBe(remote);
+    // Same object back, or every re-select would persist and re-render.
+    expect(setSidebarEnvironmentScopeId(scoped, remote)).toBe(scoped);
+    expect(setSidebarEnvironmentScopeId(scoped, null).sidebarEnvironmentScopeId).toBeNull();
+  });
 });
 
 describe("parsePersistedState", () => {
@@ -202,6 +214,7 @@ describe("parsePersistedState", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
+      sidebarEnvironmentScopeId: null,
       pullRequestMergeMethod: "merge",
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -210,6 +223,27 @@ describe("parsePersistedState", () => {
         },
       },
     });
+  });
+
+  it("hydrates the sidebar environment scope only from a trimmed non-empty id", () => {
+    expect(parsePersistedState({}).sidebarEnvironmentScopeId).toBeNull();
+    expect(
+      parsePersistedState({ sidebarEnvironmentScopeId: "remote-1" }).sidebarEnvironmentScopeId,
+    ).toBe("remote-1");
+    // The schema decode is what makes this differ from a length check.
+    expect(
+      parsePersistedState({ sidebarEnvironmentScopeId: " remote-1 " }).sidebarEnvironmentScopeId,
+    ).toBe("remote-1");
+    for (const invalid of [1, "", " ", ["remote-1"]] as unknown as string[]) {
+      // Sibling fields must survive: a throwing sanitizer would drop them all
+      // through readPersistedState's single try/catch.
+      const parsed = parsePersistedState({
+        sidebarEnvironmentScopeId: invalid,
+        sidebarProjectScopeKey: "github.com/pingdotgg/t3code",
+      });
+      expect(parsed.sidebarEnvironmentScopeId, `value ${JSON.stringify(invalid)}`).toBeNull();
+      expect(parsed.sidebarProjectScopeKey).toBe("github.com/pingdotgg/t3code");
+    }
   });
 
   it.each([undefined, 1])("ignores changed-file expansion version %s", (version) => {
@@ -324,6 +358,7 @@ describe("uiStateStore persistence", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
+      sidebarEnvironmentScopeId: null,
       threadChangedFilesExpansionVersion: 2,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -348,6 +383,17 @@ describe("uiStateStore persistence", () => {
     expect(parsePersistedState(persisted).sidebarProjectScopeKey).toBe(
       "github.com/pingdotgg/t3code",
     );
+  });
+
+  it("restores the sidebar environment scope across reloads", () => {
+    const remote = EnvironmentId.make("remote-1");
+    persistState(makeUiState({ sidebarEnvironmentScopeId: remote }));
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+
+    expect(parsePersistedState(persisted).sidebarEnvironmentScopeId).toBe(remote);
   });
 
   it("drops the temporary expanded-only migration fallback when rewriting state", () => {

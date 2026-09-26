@@ -21,6 +21,43 @@ export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
   readonly relayManaged: boolean;
 }
 
+type ScopeEnvironment = Pick<EnvironmentPresentation, "environmentId" | "label" | "displayUrl">;
+
+/**
+ * Menu row label for an environment. Labels are not unique, so a name shared
+ * with another environment gets its address appended, and the id as well when
+ * the address is shared too (two SSH backends on one host); two machines must
+ * never read as one row.
+ */
+export function environmentScopeLabel(
+  environment: ScopeEnvironment,
+  environments: readonly ScopeEnvironment[],
+): string {
+  const sameLabel = environments.filter(
+    (other) =>
+      other.environmentId !== environment.environmentId && other.label === environment.label,
+  );
+  if (sameLabel.length === 0) return environment.label;
+  if (environment.displayUrl === null) return `${environment.label} · ${environment.environmentId}`;
+  const sameAddress = sameLabel.some((other) => other.displayUrl === environment.displayUrl);
+  return sameAddress
+    ? `${environment.label} · ${environment.displayUrl} · ${environment.environmentId}`
+    : `${environment.label} · ${environment.displayUrl}`;
+}
+
+/**
+ * Environments the sidebar can scope to: enabled catalog entries in catalog
+ * order. Switched-off entries contribute no projects or threads, so they are
+ * not choices. Fewer than two enabled environments is no choice either, so
+ * the result is empty and the header renders no control.
+ */
+export function buildSidebarEnvironmentScopeItems(
+  environments: readonly EnvironmentPresentation[],
+): readonly EnvironmentPresentation[] {
+  const enabled = environments.filter((environment) => environment.entry.enabled);
+  return enabled.length < 2 ? [] : enabled;
+}
+
 function projectEnvironmentPresentation(
   environmentId: EnvironmentId,
   presentation: BaseEnvironmentPresentation,

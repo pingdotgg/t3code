@@ -145,7 +145,7 @@ import {
 } from "../rightPanelStore";
 import { useDebouncedValue } from "../state/queries";
 import { useAllEnvironmentShellsBootstrapped, useProjects } from "../state/entities";
-import { useEnvironments } from "../state/environments";
+import { environmentScopeLabel, useEnvironments } from "../state/environments";
 import {
   pullRequestEnvironment,
   usePullRequestList,
@@ -1877,7 +1877,7 @@ function PullRequestsRouteView() {
     { value: "", label: "All servers", Icon: LayersIcon },
     ...capableEnvironments.map((environment) => ({
       value: environment.environmentId,
-      label: environment.label,
+      label: environmentScopeLabel(environment, capableEnvironments),
       Icon: environmentMachineIcon(resolveEnvironmentMachineKind(environment.serverConfig)),
     })),
   ];

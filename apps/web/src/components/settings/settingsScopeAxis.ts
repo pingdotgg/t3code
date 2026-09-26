@@ -1,22 +1,6 @@
-import type { EnvironmentPresentation } from "../../state/environments";
+import { ALL_ENVIRONMENTS_VALUE } from "../EnvironmentScopeRadioItems";
 import type { SettingsScopeSearch } from "./settingsScope";
 
-type ScopeEnvironment = Pick<EnvironmentPresentation, "environmentId" | "label" | "displayUrl">;
-
-export function settingsScopeEnvironmentLabel(
-  environment: ScopeEnvironment,
-  environments: readonly ScopeEnvironment[],
-) {
-  const duplicate = environments.some(
-    (other) =>
-      other.environmentId !== environment.environmentId && other.label === environment.label,
-  );
-  return duplicate
-    ? `${environment.label} · ${environment.displayUrl ?? environment.environmentId}`
-    : environment.label;
-}
-
-export const ALL_ENVIRONMENTS_VALUE = "all";
 export const ALL_PROJECTS_VALUE = "all";
 
 /**

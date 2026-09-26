@@ -38,6 +38,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import {
   resolveEnvironmentMachineKind,
+  type EnvironmentId,
   type EnvironmentMachineKind,
   type ProjectIconOverride,
   type ScopedThreadRef,
@@ -130,7 +131,12 @@ import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
-import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
+import {
+  buildSidebarEnvironmentScopeItems,
+  environmentScopeLabel,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "../state/environments";
 import {
   readThreadShell,
   useAllEnvironmentProjectSnapshotsReady,
@@ -238,6 +244,12 @@ import {
 } from "./ui/combobox";
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { SidebarEnvironmentScopeMenu } from "./sidebar/SidebarEnvironmentScopeMenu";
+import {
+  resolveSidebarScope,
+  sidebarScopeIncludes,
+  sidebarScopeProjectKeys,
+} from "./sidebar/sidebarScope";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
@@ -822,6 +834,7 @@ interface SidebarDraftRowData {
 const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   projectByKey: ReadonlyMap<string, EnvironmentProject>;
   projectDisplayNameByKey: ReadonlyMap<string, string>;
+  scopedEnvironmentId: EnvironmentId | null;
   scopedProjectKeys: ReadonlySet<string> | null;
   routeDraftId: string | null;
   onNavigateToDraft: (draftId: DraftId) => void;
@@ -855,6 +868,10 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   }
   const drafts = useMemo(() => {
     const rows: SidebarDraftRowData[] = [];
+    const filter = {
+      environmentId: props.scopedEnvironmentId,
+      projectKeys: props.scopedProjectKeys,
+    };
     // Every non-promoted session with content gets a row, mapped or not:
     // new-thread surfaces mint fresh drafts and leave invested ones behind
     // unmapped, so the mapping only knows about the latest per project.
@@ -862,10 +879,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
       if (session.promotedTo != null) {
         continue;
       }
-      if (
-        props.scopedProjectKeys !== null &&
-        !props.scopedProjectKeys.has(`${session.environmentId}:${session.projectId}`)
-      ) {
+      if (!sidebarScopeIncludes(filter, session)) {
         continue;
       }
       if (draftKey === props.routeDraftId) {
@@ -890,6 +904,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
     draftsByThreadKey,
     frozenActive,
     props.routeDraftId,
+    props.scopedEnvironmentId,
     props.scopedProjectKeys,
   ]);
   const handleDiscard = useCallback(
@@ -2390,24 +2405,75 @@ export default function Sidebar() {
   // fresh clock whenever it recomputes.
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
 
-  // Project scope: one menu above the list. Scoping filters the list without
-  // making the header width depend on the number or length of project names.
-  // The selection lives in the persisted UI store next to the other sidebar
-  // project preferences, so routes that unmount the sidebar (Settings) and
-  // app restarts keep it.
+  // Scope: an environment menu and a project menu above the list. Scoping
+  // filters the list without making the header width depend on the number or
+  // length of project names. Both selections live in the persisted UI store
+  // next to the other sidebar project preferences, so routes that unmount the
+  // sidebar (Settings) and app restarts keep them.
   const projectScopeKey = useUiStateStore((store) => store.sidebarProjectScopeKey);
   const setProjectScopeKey = useUiStateStore((store) => store.setSidebarProjectScopeKey);
+  const environmentScopeId = useUiStateStore((store) => store.sidebarEnvironmentScopeId);
+  const setEnvironmentScopeId = useUiStateStore((store) => store.setSidebarEnvironmentScopeId);
+  const environmentScopeItems = useMemo(
+    () => buildSidebarEnvironmentScopeItems(environments),
+    [environments],
+  );
+  // A persisted scope that names nothing visible reads as "all" at once, but
+  // storage is only cleared after every enabled environment has a live project
+  // snapshot: cached or disconnected environments cannot establish that a
+  // project is gone. Both axes share that gate rather than the environment
+  // axis using catalog readiness, because the persisted catalog can emit
+  // before platform discovery registers the primary environment
+  // (state/shell.ts), which would wipe a scope on it during a cold start.
+  const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
+  const scope = useMemo(
+    () =>
+      resolveSidebarScope({
+        environmentScopeId,
+        projectScopeKey,
+        environmentItems: environmentScopeItems,
+        projectGroups,
+        snapshotsReady: allProjectSnapshotsReady,
+      }),
+    [
+      allProjectSnapshotsReady,
+      environmentScopeId,
+      environmentScopeItems,
+      projectGroups,
+      projectScopeKey,
+    ],
+  );
+  // The only place a stored scope is dropped. The resolver already fell back
+  // for display; this makes storage agree once absence is proven.
+  useEffect(() => {
+    if (scope.stale.environment) setEnvironmentScopeId(null);
+    if (scope.stale.project) setProjectScopeKey(null);
+  }, [scope.stale.environment, scope.stale.project, setEnvironmentScopeId, setProjectScopeKey]);
+  // The thread partition, draft rows and draft count key on these two rather
+  // than on `scope`: the resolver hands back a fresh object on every catalog
+  // or group change, while the id is a primitive and the key set only changes
+  // with the effective group, so an unscoped sidebar never repartitions on
+  // connection churn.
+  const scopedEnvironmentId = scope.environment?.environmentId ?? null;
+  const scopedProjectKeys = useMemo(
+    () => sidebarScopeProjectKeys(scope.projectGroup),
+    [scope.projectGroup],
+  );
+  const scopedEnvironmentLabel =
+    scope.environment === null
+      ? null
+      : environmentScopeLabel(scope.environment, environmentScopeItems);
   // {value, label} items let Base UI drive the combobox selection contract
   // while the popup search filters the same collection.
   const projectScopeItems = useMemo(
     () => [
       { value: "all", label: "All projects" },
-      ...projectGroups.map((project) => ({
+      ...scope.projectGroups.map((project) => ({
         value: project.projectKey,
         label: project.displayName,
       })),
     ],
-    [projectGroups],
+    [scope.projectGroups],
   );
   // Same-named projects on two machines are only told apart by where they
   // live, so rows on another machine carry its icon once the catalog spans
@@ -2417,14 +2483,14 @@ export default function Sidebar() {
     [projectGroups],
   );
   const projectGroupByScopeKey = useMemo(
-    () => new Map(projectGroups.map((project) => [project.projectKey, project] as const)),
-    [projectGroups],
+    () => new Map(scope.projectGroups.map((project) => [project.projectKey, project] as const)),
+    [scope.projectGroups],
   );
   const selectedProjectScopeItem = useMemo(
     () =>
-      projectScopeItems.find((item) => item.value === (projectScopeKey ?? "all")) ??
+      projectScopeItems.find((item) => item.value === (scope.projectGroup?.projectKey ?? "all")) ??
       projectScopeItems[0]!,
-    [projectScopeItems, projectScopeKey],
+    [projectScopeItems, scope.projectGroup],
   );
   const [projectScopeMenuState, dispatchProjectScopeMenu] = useReducer(
     reduceSidebarProjectScopeMenuState,
@@ -2447,33 +2513,6 @@ export default function Sidebar() {
       }),
     [projectScopeFilter, projectScopeItems, projectScopeMenuState.query],
   );
-  const scopedProjectGroup = useMemo(
-    () =>
-      projectScopeKey === null
-        ? null
-        : (projectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
-    [projectGroups, projectScopeKey],
-  );
-  const scopedProjectKeys = useMemo(
-    () =>
-      scopedProjectGroup === null
-        ? null
-        : new Set(
-            scopedProjectGroup.memberProjectRefs.map(
-              (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
-            ),
-          ),
-    [scopedProjectGroup],
-  );
-  // A persisted scope whose project is gone falls back to all projects, but
-  // only after every catalog environment has a live project snapshot. Cached
-  // or disconnected environments cannot establish that the project is gone.
-  const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
-  useEffect(() => {
-    if (projectScopeKey !== null && allProjectSnapshotsReady && scopedProjectGroup === null) {
-      setProjectScopeKey(null);
-    }
-  }, [allProjectSnapshotsReady, projectScopeKey, scopedProjectGroup, setProjectScopeKey]);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from
@@ -2491,8 +2530,10 @@ export default function Sidebar() {
         continue;
       }
       if (
-        scopedProjectKeys !== null &&
-        !scopedProjectKeys.has(`${session.environmentId}:${session.projectId}`)
+        !sidebarScopeIncludes(
+          { environmentId: scopedEnvironmentId, projectKeys: scopedProjectKeys },
+          session,
+        )
       ) {
         continue;
       }
@@ -2504,7 +2545,7 @@ export default function Sidebar() {
   // hidden now, and bulk actions must never count or touch invisible rows.
   useEffect(() => {
     clearSelection();
-  }, [clearSelection, projectScopeKey]);
+  }, [clearSelection, scope.key]);
 
   const openProjectSettings = useCallback(
     (projectGroup: SidebarProjectSnapshot) => {
@@ -2570,11 +2611,9 @@ export default function Sidebar() {
     // memo exactly at the next wake boundary.
     void snoozeWakeTick;
     const preciseNow = new Date().toISOString();
+    const filter = { environmentId: scopedEnvironmentId, projectKeys: scopedProjectKeys };
     const visible = threads.filter(
-      (thread) =>
-        thread.archivedAt === null &&
-        (scopedProjectKeys === null ||
-          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+      (thread) => thread.archivedAt === null && sidebarScopeIncludes(filter, thread),
     );
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
@@ -2660,7 +2699,15 @@ export default function Sidebar() {
       settledThreads: sortSettledThreads(settled),
       snoozeNow: preciseNow,
     };
-  }, [nowMinute, optimisticDrop, scopedProjectKeys, serverConfigs, snoozeWakeTick, threads]);
+  }, [
+    nowMinute,
+    optimisticDrop,
+    scopedEnvironmentId,
+    scopedProjectKeys,
+    serverConfigs,
+    snoozeWakeTick,
+    threads,
+  ]);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -2670,12 +2717,19 @@ export default function Sidebar() {
     () => [...pinnedThreads, ...activeThreads, ...snoozedThreads, ...settledThreads],
     [activeThreads, pinnedThreads, settledThreads, snoozedThreads],
   );
+  // Scoped to one environment, the server-side content search fans out only
+  // to that environment (or nowhere while it is disconnected) instead of
+  // fetching matches from every machine and discarding them.
   const searchEnvironmentIds = useMemo(
     () =>
       environments
-        .filter((environment) => environment.connection.phase === "connected")
+        .filter(
+          (environment) =>
+            environment.connection.phase === "connected" &&
+            (scopedEnvironmentId === null || environment.environmentId === scopedEnvironmentId),
+        )
         .map((environment) => environment.environmentId),
-    [environments],
+    [environments, scopedEnvironmentId],
   );
   // useThreadSearch owns the debounce and the two-character floor.
   const threadSearch = useThreadSearch(searchEnvironmentIds, threadSearchQuery);
@@ -2731,7 +2785,7 @@ export default function Sidebar() {
   // filter context changes so a scope/search flip never inherits a deep
   // page state.
   const [settledVisibleCount, setSettledVisibleCount] = useState(SETTLED_TAIL_INITIAL_COUNT);
-  const settledResetKey = projectScopeKey ?? "all";
+  const settledResetKey = scope.key;
   const lastSettledResetKeyRef = useRef(settledResetKey);
   if (lastSettledResetKeyRef.current !== settledResetKey) {
     lastSettledResetKeyRef.current = settledResetKey;
@@ -4088,7 +4142,7 @@ export default function Sidebar() {
               projectFilter: threadProjectGroup
                 ? {
                     label: threadProjectGroup.displayName,
-                    isActive: projectScopeKey === threadProjectGroup.projectKey,
+                    isActive: scope.projectGroup?.projectKey === threadProjectGroup.projectKey,
                   }
                 : null,
               isPinned,
@@ -4126,7 +4180,7 @@ export default function Sidebar() {
             // already-scoped project again is the way back to all projects.
             if (threadProjectGroup) {
               setProjectScopeKey(
-                projectScopeKey === threadProjectGroup.projectKey
+                scope.projectGroup?.projectKey === threadProjectGroup.projectKey
                   ? null
                   : threadProjectGroup.projectKey,
               );
@@ -4313,8 +4367,8 @@ export default function Sidebar() {
       handleMultiSelectContextMenu,
       markThreadUnread,
       openProjectSettings,
-      projectScopeKey,
       projectByKey,
+      scope.projectGroup,
       serverConfigs,
       setProjectScopeKey,
       setThreadAutoSettle,
@@ -4449,6 +4503,16 @@ export default function Sidebar() {
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
+              environmentScope={
+                environmentScopeItems.length === 0 ? null : (
+                  <SidebarEnvironmentScopeMenu
+                    items={environmentScopeItems}
+                    selected={scope.environment}
+                    anchor={headerSearchRef}
+                    onChange={setEnvironmentScopeId}
+                  />
+                )
+              }
               projectScope={
                 <Combobox
                   items={projectScopeItems}
@@ -4478,18 +4542,18 @@ export default function Sidebar() {
                     render={
                       <SidebarHeaderIconButton
                         label={
-                          scopedProjectGroup
-                            ? `Filter threads by project: ${scopedProjectGroup.displayName}`
+                          scope.projectGroup
+                            ? `Filter threads by project: ${scope.projectGroup.displayName}`
                             : "Filter threads by project"
                         }
                       />
                     }
                   >
-                    {scopedProjectGroup ? (
+                    {scope.projectGroup ? (
                       // Wrapped so the button's direct-child svg color rule cannot override
                       // a project's own icon color.
                       <span className="flex shrink-0">
-                        <ProjectFavicon project={scopedProjectGroup} className="size-4" />
+                        <ProjectFavicon project={scope.projectGroup} className="size-4" />
                       </span>
                     ) : (
                       <FolderIcon className="size-4" />
@@ -4839,6 +4903,7 @@ export default function Sidebar() {
                           key="draft-sessions"
                           projectByKey={projectByKey}
                           projectDisplayNameByKey={projectDisplayNameByKey}
+                          scopedEnvironmentId={scopedEnvironmentId}
                           scopedProjectKeys={scopedProjectKeys}
                           routeDraftId={routeDraftIdForRows}
                           onNavigateToDraft={navigateToDraft}
@@ -4987,8 +5052,12 @@ export default function Sidebar() {
                     Add project
                   </button>
                 </>
-              ) : scopedProjectGroup ? (
-                `No threads in ${scopedProjectGroup.displayName} yet`
+              ) : scope.projectGroup ? (
+                `No threads in ${scope.projectGroup.displayName}${
+                  scopedEnvironmentLabel === null ? "" : ` on ${scopedEnvironmentLabel}`
+                } yet`
+              ) : scopedEnvironmentLabel !== null ? (
+                `No threads on ${scopedEnvironmentLabel} yet`
               ) : (
                 "No threads yet"
               )}
