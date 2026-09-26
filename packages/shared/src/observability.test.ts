@@ -12,7 +12,10 @@ import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
+import { vi } from "vite-plus/test";
 
+import { RotatingFileSink } from "./logging.ts";
 import {
   causeErrorTag,
   compactTraceAttributes,
@@ -423,6 +426,98 @@ describe("observability", () => {
         }),
       ),
     );
+
+    it.effect("drops records after a failed write and logs once per failure episode", () => {
+      const logs: Array<{ readonly logLevel: string; readonly message: unknown }> = [];
+      const captureLogs = Logger.make(({ logLevel, message }) => {
+        logs.push({ logLevel, message });
+      });
+      const spans: Array<Tracer.NativeSpan> = [];
+      const recordingTracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+        const tracePath = path.join(tempDir, "shared.trace.ndjson");
+        // A directory at the trace path fails every append, like a full disk.
+        yield* fileSystem.makeDirectory(tracePath);
+        const write = vi.spyOn(RotatingFileSink.prototype, "write");
+        yield* Effect.addFinalizer(() => Effect.sync(() => write.mockRestore()));
+
+        const sink = yield* makeTraceSink({
+          filePath: tracePath,
+          maxBytes: 1024 * 1024,
+          maxFiles: 2,
+          batchWindowMs: 1_000,
+        }).pipe(Effect.withTracer(recordingTracer));
+
+        for (let index = 0; index < 1_024; index += 1) {
+          sink.push(makeRecord("lost", String(index)));
+        }
+        // Timed flushes run in the fiber forked inside the makeTraceSink span.
+        for (let index = 0; index < 5; index += 1) {
+          sink.push(makeRecord("lost"));
+          yield* TestClock.adjust("1 second");
+        }
+
+        // One write per batch, never a growing backlog.
+        assert.deepStrictEqual(
+          write.mock.calls.map(([chunk]) => String(chunk).split("\n").length - 1),
+          [256, 256, 256, 256, 1, 1, 1, 1, 1],
+        );
+        expect(logs).toEqual([
+          { logLevel: "Warn", message: [expect.any(String), { filePath: tracePath }] },
+        ]);
+
+        // Once the disk recovers, new records are written and the loss is reported.
+        yield* fileSystem.remove(tracePath, { recursive: true });
+        sink.push(makeRecord("recovered"));
+        yield* TestClock.adjust("1 second");
+
+        const records = yield* readTraceRecords(tracePath);
+        assert.deepStrictEqual(
+          records.map((record) => record.name),
+          ["recovered"],
+        );
+        expect(logs[1]).toEqual({
+          logLevel: "Info",
+          message: [expect.any(String), { filePath: tracePath, droppedCount: 1_029 }],
+        });
+
+        // Healthy flushes after the recovery log nothing.
+        sink.push(makeRecord("healthy"));
+        yield* TestClock.adjust("1 second");
+        expect(logs).toHaveLength(2);
+
+        // A new failure episode warns again.
+        yield* fileSystem.remove(tracePath);
+        yield* fileSystem.makeDirectory(tracePath);
+        sink.push(makeRecord("lost-again"));
+        yield* TestClock.adjust("1 second");
+        assert.deepStrictEqual(
+          logs.map((log) => log.logLevel),
+          ["Warn", "Info", "Warn"],
+        );
+
+        // The ended makeTraceSink span is never released, so it must not collect log events.
+        assert.deepStrictEqual(
+          spans.map((span) => [span.name, span.events.length]),
+          [["makeTraceSink", 0]],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Logger.layer([captureLogs, Logger.tracerLogger], { mergeWithExisting: false }),
+        ),
+      );
+    });
 
     it.effect("writes nested spans to disk and captures log messages as span events", () =>
       Effect.scoped(
