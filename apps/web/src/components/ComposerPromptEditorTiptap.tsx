@@ -1151,7 +1151,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   const focusAt = useCallback(
     (nextCursor: number) => {
       if (!editor) return;
-      editor.view.dom.focus({ preventScroll: true });
+      // view.focus() writes the state selection to the DOM as it focuses. A
+      // bare DOM focus leaves the native caret at the start until
+      // ProseMirror resyncs it 20ms later, and dictation tools type fast
+      // enough to land keys there, ahead of the text already inserted.
+      editor.view.focus();
       // A newer prompt is waiting to be applied (a chip was just inserted
       // through the store). Reporting the editor's stale text now would
       // overwrite that prompt; the pending rewrite places the caret instead.
