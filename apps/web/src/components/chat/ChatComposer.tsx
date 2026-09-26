@@ -400,6 +400,13 @@ const COMPOSER_RESTING_TRANSITION_CLEANUP_BUFFER_MS = 50;
 const COMPOSER_RESTING_TRANSITION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 const COMPOSER_RESTING_CONTROLS_ARRIVAL_DRIFT_PX = 4;
 
+function composerPromptLineCenter(prompt: HTMLElement): number {
+  const rect = prompt.getBoundingClientRect();
+  const lineSource = prompt.querySelector<HTMLElement>('[data-testid="composer-editor"]') ?? prompt;
+  const lineHeight = Number.parseFloat(getComputedStyle(lineSource).lineHeight);
+  return rect.top + (Number.isFinite(lineHeight) ? lineHeight / 2 : rect.height / 2);
+}
+
 function useComposerRestingTransition(
   isCollapsed: boolean,
   isResting: boolean,
@@ -469,15 +476,12 @@ function useComposerRestingTransition(
         Array.from(element.querySelectorAll<HTMLElement>(selector)).find(
           (candidate) => candidate.getClientRects().length > 0,
         ) ?? null;
-      const prompt = visibleTransitionElement(
-        '[data-testid="composer-editor"], [data-chat-composer-transition-prompt="true"]',
-      );
+      const prompt = visibleTransitionElement('[data-chat-composer-transition-prompt="true"]');
       const action = visibleTransitionElement('[data-chat-composer-transition-actions="true"]');
       const footer = element.querySelector<HTMLElement>('[data-chat-composer-footer="true"]');
       const interruptedAnimation = animationRef.current;
-      const interruptedPromptTop = interruptedAnimation
-        ? (prompt?.getBoundingClientRect().top ?? null)
-        : null;
+      const interruptedPromptTop =
+        interruptedAnimation && prompt ? composerPromptLineCenter(prompt) : null;
       const interruptedActionTop = interruptedAnimation
         ? (action?.getBoundingClientRect().top ?? null)
         : null;
@@ -520,7 +524,7 @@ function useComposerRestingTransition(
         onOverlayHeightChange(overlayHeight);
       }
       const nextPromptRect = prompt?.getBoundingClientRect() ?? null;
-      const nextPromptTop = nextPromptRect?.top ?? null;
+      const nextPromptTop = prompt ? composerPromptLineCenter(prompt) : null;
       const nextActionTop = action?.getBoundingClientRect().top ?? null;
       const previousHeight = interruptedHeight ?? previousHeightRef.current;
       const targetChanged =
@@ -602,9 +606,10 @@ function useComposerRestingTransition(
         const animateContentPosition = (
           content: HTMLElement | null,
           previousTop: number | null,
+          measureTop: (content: HTMLElement) => number,
         ) => {
           if (!content || previousTop === null) return;
-          const offset = previousTop - content.getBoundingClientRect().top;
+          const offset = Math.round(previousTop - measureTop(content));
           if (Math.abs(offset) < 0.5) return;
           contentAnimations.push(
             content.animate(
@@ -616,8 +621,12 @@ function useComposerRestingTransition(
             ),
           );
         };
-        animateContentPosition(prompt, previousPromptTop);
-        animateContentPosition(action, previousActionTop);
+        animateContentPosition(prompt, previousPromptTop, composerPromptLineCenter);
+        animateContentPosition(
+          action,
+          previousActionTop,
+          (content) => content.getBoundingClientRect().top,
+        );
         contentAnimationsRef.current = contentAnimations;
 
         if (stateChanged) {
@@ -798,16 +807,14 @@ function useComposerRestingTransition(
         Array.from(element.querySelectorAll<HTMLElement>(selector)).find(
           (candidate) => candidate.getClientRects().length > 0,
         ) ?? null;
-      const promptRect = visibleTransitionElement(
-        '[data-testid="composer-editor"], [data-chat-composer-transition-prompt="true"]',
-      )?.getBoundingClientRect();
+      const prompt = visibleTransitionElement('[data-chat-composer-transition-prompt="true"]');
       const actionTop = visibleTransitionElement(
         '[data-chat-composer-transition-actions="true"]',
       )?.getBoundingClientRect().top;
       previousHeightRef.current = elementRect.height;
       previousContentOffsetsRef.current = {
-        promptFromTop: promptRect === undefined ? null : promptRect.top - elementRect.top,
-        promptHeight: promptRect?.height ?? null,
+        promptFromTop: prompt ? composerPromptLineCenter(prompt) - elementRect.top : null,
+        promptHeight: prompt?.getBoundingClientRect().height ?? null,
         actionFromBottom: actionTop === undefined ? null : elementRect.bottom - actionTop,
       };
     });

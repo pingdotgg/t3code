@@ -1296,6 +1296,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       <ComposerContextRecordsContext value={contextRecords}>
         <ComposerCitationCommentContext value={citationCommentActions}>
           <div
+            data-chat-composer-transition-prompt="true"
             className={cn(
               "relative flow-root font-(family-name:--font-composer,var(--font-sans)) text-(length:--font-size-prompt,var(--text-sm)) max-sm:pointer-coarse:text-(length:--font-size-prompt-touch)",
               containerClassName,
