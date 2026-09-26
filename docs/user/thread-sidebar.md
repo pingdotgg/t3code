@@ -25,6 +25,19 @@ in a new thread's model picker to add or remove them. A regular click returns to
 single model. Choose a base branch and send. Each selection starts a separate thread
 and worktree while you stay in the new thread composer. This requires a Git project.
 
+## Ask an agent about its thread
+
+Ask your agent to inspect the thread's model, service tier, reasoning effort,
+Daybreak availability, project, or host environment. It can retrieve only the
+fields it needs with `get_thread_metadata` and rename the thread with
+`set_thread_name`.
+
+Metadata distinguishes your saved selections from the latest request sent to the
+provider. Neither confirms what the provider actually used. Missing information
+is reported as unknown; Daybreak availability comes from the provider's cached
+model catalog. For OpenCode, these tools are available when T3 Code starts its
+server. They are unavailable when connecting to an externally managed OpenCode server.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.

@@ -160,6 +160,18 @@ function makeThreadOpenResponse(
 }
 
 describe("buildTurnStartParams", () => {
+  it.effect("sends Daybreak and explicit standard selections to the app server", () =>
+    Effect.gen(function* () {
+      for (const cyberAccessProgram of ["daybreakBlue", "daybreakRed", "standard"] as const) {
+        const params = yield* buildTurnStartParams({
+          threadId: "provider-thread-1",
+          runtimeMode: "full-access",
+          cyberAccessProgram,
+        });
+        NodeAssert.equal(params.cyberAccessProgram, cyberAccessProgram);
+      }
+    }),
+  );
   it.effect("sends currency skill aliases in Codex's canonical dollar form", () =>
     Effect.gen(function* () {
       for (const symbol of ["€", "£", "¥", "₹", "₩", "₿", "𑿝"]) {

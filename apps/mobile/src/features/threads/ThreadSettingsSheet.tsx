@@ -10,6 +10,7 @@ import type { LegendListRenderItemProps } from "@legendapp/list/react-native";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import {
+  carryCodexCyberAccessProgram,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
@@ -433,15 +434,34 @@ function ThreadSettingsSessionProvider(
   const pressModel = useCallback(
     (option: ModelOption) => {
       void Haptics.selectionAsync();
-      setPendingModel((current) =>
-        pendingModelAfterPress({
-          current,
-          pressed: option,
-          pressedIsApplied: isApplied(option),
-        }),
-      );
+      const pending = pendingModelAfterPress({
+        current: pendingModel,
+        pressed: option,
+        pressedIsApplied: isApplied(option),
+      });
+      if (!pending) {
+        setPendingModel(null);
+        return;
+      }
+      const { selection, didReset } = carryCodexCyberAccessProgram({
+        current: pendingModel?.selection ?? props.selectedModel,
+        next: pending.selection,
+        nextCapabilities: pending.capabilities,
+      });
+      if (didReset) {
+        Alert.alert(
+          "Switch models and reset Daybreak?",
+          "The selected model does not support your current Daybreak setting.",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "OK", onPress: () => setPendingModel({ ...pending, selection }) },
+          ],
+        );
+        return;
+      }
+      setPendingModel({ ...pending, selection });
     },
-    [isApplied],
+    [isApplied, pendingModel, props.selectedModel],
   );
 
   const value = useMemo<ThreadSettingsSessionValue>(
@@ -1342,10 +1362,10 @@ export function ExistingThreadSettingsRouteScreen() {
     return <View className="flex-1 bg-sheet" />;
   }
 
-  const { ownerId: _ownerId, ...settings } = session;
+  const { ownerId, ...settings } = session;
 
   return (
-    <ThreadSettingsSessionProvider {...settings}>
+    <ThreadSettingsSessionProvider key={ownerId} {...settings}>
       <ThreadSettingsPickerNavigator onClose={() => navigation.goBack()} />
     </ThreadSettingsSessionProvider>
   );

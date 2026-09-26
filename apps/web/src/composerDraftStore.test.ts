@@ -18,7 +18,7 @@ import {
   type PreviewAnnotationPayload,
   type ProviderOptionSelection,
 } from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+import { carryCodexCyberAccessProgram, createModelSelection } from "@t3tools/shared/model";
 import {
   collectAssistantCitations,
   serializeAssistantCitation,
@@ -2391,6 +2391,33 @@ describe("composerDraftStore sticky composer settings", () => {
       activeProvider: "claudeAgent",
     });
   });
+
+  it.each(["standard", "daybreakBlue"])(
+    "keeps a reset %s selection cleared when applying sticky state to a new draft",
+    (program) => {
+      const store = useComposerDraftStore.getState();
+      const current = modelSelection(CODEX_DRIVER, "daybreak-model", {
+        cyberAccessProgram: program,
+      });
+      store.setStickyModelSelection(current);
+      const { selection } = carryCodexCyberAccessProgram({
+        current,
+        next: modelSelection(CODEX_DRIVER, "unsupported-model"),
+        nextCapabilities: undefined,
+      });
+
+      store.setStickyModelSelection(selection, { replaceOptions: true });
+      const draftId = DraftId.make("draft-after-daybreak-reset");
+      store.applyStickyState(draftId);
+
+      expect(
+        useComposerDraftStore.getState().stickyModelSelectionByProvider[CODEX_INSTANCE],
+      ).toEqual(modelSelection(CODEX_DRIVER, "unsupported-model"));
+      expect(draftByKey(draftId)?.modelSelectionByProvider[CODEX_INSTANCE]).toEqual(
+        modelSelection(CODEX_DRIVER, "unsupported-model"),
+      );
+    },
+  );
 
   it("replaces a non-explicit stale model and its options with sticky state", () => {
     const store = useComposerDraftStore.getState();

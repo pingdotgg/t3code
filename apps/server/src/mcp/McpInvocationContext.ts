@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  type ModelSelection,
   McpCapabilityUnavailableError,
   PreviewAutomationUnavailableError,
   type ProviderInstanceId,
@@ -8,13 +9,15 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-export type McpCapability = "preview" | "device" | "pull-requests";
+export type McpCapability = "preview" | "device" | "pull-requests" | "thread";
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;
+  /** Latest adapter request captured at the authenticated HTTP boundary. */
+  readonly requestedModelSelection?: ModelSelection | null;
   readonly capabilities: ReadonlySet<McpCapability>;
   readonly issuedAt: number;
 }

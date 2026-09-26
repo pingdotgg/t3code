@@ -89,6 +89,22 @@ const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
 };
 
 const DEFAULT_SERVICE_TIER_ID = "default";
+const isCodexAccessPrograms = Schema.is(
+  Schema.Struct({ cyber: Schema.optionalKey(Schema.Array(Schema.String)) }),
+);
+const CodexModelWithAccessPrograms = CodexSchema.V2ModelListResponse__Model.pipe(
+  Schema.fieldsAssign({
+    // This unpinned field must not prevent the rest of the model catalog from loading.
+    availableAccessPrograms: Schema.optionalKey(Schema.Unknown),
+  }),
+);
+export const CodexModelListWithAccessPrograms = CodexSchema.V2ModelListResponse.pipe(
+  Schema.fieldsAssign({ data: Schema.Array(CodexModelWithAccessPrograms) }),
+);
+const decodeCodexModelListWithAccessPrograms = Schema.decodeUnknownEffect(
+  CodexModelListWithAccessPrograms,
+);
+type CodexModelWithAccessPrograms = typeof CodexModelWithAccessPrograms.Type;
 
 function reasoningEffortLabel(reasoningEffort: string): string {
   return REASONING_EFFORT_LABELS[reasoningEffort] ?? reasoningEffort;
@@ -142,9 +158,7 @@ function codexAccountEmail(account: CodexSchema.V2GetAccountResponse["account"])
   return account.email;
 }
 
-export function mapCodexModelCapabilities(
-  model: CodexSchema.V2ModelListResponse__Model,
-): ModelCapabilities {
+export function mapCodexModelCapabilities(model: CodexModelWithAccessPrograms): ModelCapabilities {
   const reasoningOptions = model.supportedReasoningEfforts.map(({ reasoningEffort }) =>
     reasoningEffort ===
     (codexModelFamily(model.model) === "gpt-6-astra" ? "medium" : model.defaultReasoningEffort)
@@ -206,12 +220,35 @@ export function mapCodexModelCapabilities(
     });
   }
 
+  const accessPrograms = isCodexAccessPrograms(model.availableAccessPrograms)
+    ? (model.availableAccessPrograms.cyber ?? [])
+    : [];
+  const daybreakPrograms = ["daybreakRed", "daybreakBlue"].filter((program) =>
+    accessPrograms.includes(program),
+  );
+  // Off must be a real explicit program, not an omission that Codex can route automatically.
+  if (accessPrograms.includes("standard") && daybreakPrograms.length > 0) {
+    optionDescriptors.push({
+      id: "cyberAccessProgram",
+      label: "Daybreak",
+      type: "select",
+      options: [
+        { id: "standard", label: "Off", isDefault: true },
+        ...daybreakPrograms.map((program) => ({
+          id: program,
+          label: daybreakPrograms.length === 1 ? "On" : program === "daybreakBlue" ? "Blue" : "Red",
+        })),
+      ],
+      currentValue: "standard",
+    });
+  }
+
   return createModelCapabilities({
     optionDescriptors,
   });
 }
 
-const toDisplayName = (model: CodexSchema.V2ModelListResponse__Model): string => {
+const toDisplayName = (model: CodexModelWithAccessPrograms): string => {
   // Capitalize 'gpt' to 'GPT-' and capitalize any letter following a dash
   return model.displayName
     .replace(/^gpt/i, "GPT") // Handle start with 'gpt' or 'GPT'
@@ -219,7 +256,7 @@ const toDisplayName = (model: CodexSchema.V2ModelListResponse__Model): string =>
 };
 
 function parseCodexModelListResponse(
-  response: CodexSchema.V2ModelListResponse,
+  response: typeof CodexModelListWithAccessPrograms.Type,
 ): ReadonlyArray<ServerProviderModel> {
   return response.data.map((model) => ({
     slug: model.model,
@@ -260,7 +297,7 @@ export function applyPreferredCodexDefaultModel(
  * the first built-in's descriptors; an entry with its own capabilities keeps
  * them.
  */
-function appendCustomCodexModels(
+export function appendCustomCodexModels(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<CustomModelSetting>,
 ): ReadonlyArray<ServerProviderModel> {
@@ -270,6 +307,14 @@ function appendCustomCodexModels(
 
   const seen = new Set(models.map((model) => model.slug));
   const fallbackCapabilities = models.find((model) => model.capabilities)?.capabilities ?? null;
+  const safeFallbackCapabilities = fallbackCapabilities
+    ? {
+        ...fallbackCapabilities,
+        optionDescriptors: fallbackCapabilities.optionDescriptors?.filter(
+          (descriptor) => descriptor.id !== "cyberAccessProgram",
+        ),
+      }
+    : null;
   const customEntries: ServerProviderModel[] = [];
   for (const entry of readCustomModelEntries(customModels)) {
     if (seen.has(entry.slug)) {
@@ -280,7 +325,14 @@ function appendCustomCodexModels(
       slug: entry.slug,
       name: entry.name,
       isCustom: true,
-      capabilities: entry.capabilities ?? fallbackCapabilities,
+      capabilities: entry.capabilities
+        ? {
+            ...entry.capabilities,
+            optionDescriptors: entry.capabilities.optionDescriptors?.filter(
+              (descriptor) => descriptor.id !== "cyberAccessProgram",
+            ),
+          }
+        : safeFallbackCapabilities,
     });
   }
   return customEntries.length === 0 ? models : [...models, ...customEntries];
@@ -329,10 +381,19 @@ const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
   let cursor: string | null | undefined = undefined;
 
   do {
-    const response: CodexSchema.V2ModelListResponse = yield* client.request(
-      "model/list",
-      cursor ? { cursor } : {},
-    );
+    // The pinned generated schema predates account-specific access programs.
+    // Decode the live response with a narrow overlay so discovery keeps them.
+    const rawResponse: unknown = yield* client.raw.request("model/list", cursor ? { cursor } : {});
+    const response: typeof CodexModelListWithAccessPrograms.Type =
+      yield* decodeCodexModelListWithAccessPrograms(rawResponse).pipe(
+        Effect.mapError((error) =>
+          CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
+            "decode-response-payload",
+            error,
+            { method: "model/list" },
+          ),
+        ),
+      );
     models.push(...parseCodexModelListResponse(response));
     cursor = response.nextCursor;
   } while (cursor);

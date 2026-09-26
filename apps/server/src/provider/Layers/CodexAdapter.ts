@@ -2539,6 +2539,16 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       input.modelSelection?.instanceId === boundInstanceId
         ? getCodexServiceTierOptionValue(input.modelSelection)
         : undefined;
+    const selectedCyberAccessProgram =
+      input.modelSelection?.instanceId === boundInstanceId
+        ? getModelSelectionStringOptionValue(input.modelSelection, "cyberAccessProgram")
+        : undefined;
+    const cyberAccessProgram =
+      selectedCyberAccessProgram === "standard" ||
+      selectedCyberAccessProgram === "daybreakBlue" ||
+      selectedCyberAccessProgram === "daybreakRed"
+        ? selectedCyberAccessProgram
+        : undefined;
     return yield* session.runtime
       .sendTurn({
         ...(input.input !== undefined ? { input: input.input } : {}),
@@ -2551,6 +2561,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             }
           : {}),
         ...(serviceTier ? { serviceTier } : {}),
+        ...(cyberAccessProgram ? { cyberAccessProgram } : {}),
         ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
         ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
       })

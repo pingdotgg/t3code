@@ -1,6 +1,149 @@
 import { assert, it } from "@effect/vitest";
+import * as Schema from "effect/Schema";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  appendCustomCodexModels,
+  applyPreferredCodexDefaultModel,
+  CodexModelListWithAccessPrograms,
+  mapCodexModelCapabilities,
+} from "./CodexProvider.ts";
+
+const modelForAccessTest = {
+  additionalSpeedTiers: [],
+  defaultReasoningEffort: "high",
+  description: "Test model",
+  displayName: "GPT Test",
+  hidden: false,
+  id: "gpt-test",
+  isDefault: true,
+  model: "gpt-test",
+  supportedReasoningEfforts: [{ description: "High", reasoningEffort: "high" }],
+};
+const decodeCodexModelListWithAccessPrograms = Schema.decodeUnknownSync(
+  CodexModelListWithAccessPrograms,
+);
+
+it("keeps caller-specific access programs from model discovery", () => {
+  const response = decodeCodexModelListWithAccessPrograms({
+    data: [
+      {
+        ...modelForAccessTest,
+        availableAccessPrograms: { cyber: ["standard", "daybreakBlue", "daybreakRed"] },
+      },
+    ],
+    nextCursor: null,
+  });
+  assert.deepStrictEqual(mapCodexModelCapabilities(response.data[0]!).optionDescriptors?.at(-1), {
+    id: "cyberAccessProgram",
+    label: "Daybreak",
+    type: "select",
+    options: [
+      { id: "standard", label: "Off", isDefault: true },
+      { id: "daybreakRed", label: "Red" },
+      { id: "daybreakBlue", label: "Blue" },
+    ],
+    currentValue: "standard",
+  });
+});
+
+it.each([
+  { name: "null", value: null },
+  { name: "a primitive", value: "daybreakBlue" },
+  { name: "an array", value: ["standard", "daybreakBlue"] },
+  { name: "a non-array cyber field", value: { cyber: "daybreakBlue" } },
+  { name: "object cyber entries", value: { cyber: [{ id: "daybreakBlue" }] } },
+  { name: "mixed cyber entries", value: { cyber: ["standard", "daybreakBlue", null] } },
+])("preserves model discovery when access programs contain $name", ({ value }) => {
+  const response = decodeCodexModelListWithAccessPrograms({
+    data: [
+      { ...modelForAccessTest, availableAccessPrograms: value },
+      {
+        ...modelForAccessTest,
+        id: "gpt-daybreak",
+        model: "gpt-daybreak",
+        availableAccessPrograms: { cyber: ["standard", "daybreakBlue"] },
+      },
+    ],
+    nextCursor: null,
+  });
+  assert.deepStrictEqual(
+    response.data.map((model) => model.model),
+    ["gpt-test", "gpt-daybreak"],
+  );
+  assert.deepStrictEqual(
+    mapCodexModelCapabilities(response.data[0]!),
+    mapCodexModelCapabilities(modelForAccessTest),
+  );
+  assert.equal(
+    mapCodexModelCapabilities(response.data[1]!).optionDescriptors?.some(
+      (descriptor) => descriptor.id === "cyberAccessProgram",
+    ),
+    true,
+  );
+});
+
+it("uses On and Off when the account has one Daybreak program", () => {
+  for (const program of ["daybreakBlue", "daybreakRed"]) {
+    const daybreak = mapCodexModelCapabilities({
+      ...modelForAccessTest,
+      availableAccessPrograms: { cyber: ["standard", program] },
+    }).optionDescriptors?.find((descriptor) => descriptor.id === "cyberAccessProgram");
+    assert.deepStrictEqual(daybreak?.type === "select" ? daybreak.options : [], [
+      { id: "standard", label: "Off", isDefault: true },
+      { id: program, label: "On" },
+    ]);
+  }
+});
+
+it("hides Daybreak when access is absent for the account or model", () => {
+  for (const model of [
+    modelForAccessTest,
+    {
+      ...modelForAccessTest,
+      model: "gpt-6-astra",
+      availableAccessPrograms: { cyber: ["standard"] },
+    },
+    {
+      ...modelForAccessTest,
+      model: "experimental-red-only-alias",
+      availableAccessPrograms: { cyber: ["daybreakRed"] },
+    },
+  ]) {
+    assert.equal(
+      mapCodexModelCapabilities(model).optionDescriptors?.some(
+        (descriptor) => descriptor.id === "cyberAccessProgram",
+      ),
+      false,
+    );
+  }
+});
+
+it("does not give unverified custom models a built-in model's Daybreak access", () => {
+  const builtInCapabilities = mapCodexModelCapabilities({
+    ...modelForAccessTest,
+    availableAccessPrograms: { cyber: ["standard", "daybreakBlue"] },
+  });
+  const custom = appendCustomCodexModels(
+    [{ slug: "gpt-test", name: "GPT Test", isCustom: false, capabilities: builtInCapabilities }],
+    ["custom-model"],
+  );
+  assert.equal(
+    custom[1]?.capabilities?.optionDescriptors?.some(
+      (descriptor) => descriptor.id === "cyberAccessProgram",
+    ),
+    false,
+  );
+  const explicitlyConfigured = appendCustomCodexModels(
+    [{ slug: "gpt-test", name: "GPT Test", isCustom: false, capabilities: builtInCapabilities }],
+    [{ slug: "custom-model", capabilities: builtInCapabilities }],
+  );
+  assert.equal(
+    explicitlyConfigured[1]?.capabilities?.optionDescriptors?.some(
+      (descriptor) => descriptor.id === "cyberAccessProgram",
+    ),
+    false,
+  );
+});
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({

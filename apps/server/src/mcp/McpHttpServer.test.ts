@@ -15,6 +15,8 @@ import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/uns
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerConfig from "../config.ts";
+import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
+import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -58,6 +60,19 @@ const PullRequestsTestLayer = McpHttpServer.PullRequestsToolkitRegistrationLive.
         getThreadShellById: () => Effect.succeedNone,
       }),
       Layer.mock(OrchestrationEngineService)({}),
+      NodeServices.layer,
+    ),
+  ),
+);
+
+const ThreadTestLayer = McpHttpServer.ThreadToolkitRegistrationLive.pipe(
+  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(ProjectionSnapshotQuery)({ getThreadShellById: () => Effect.succeedNone }),
+      Layer.mock(OrchestrationEngineService)({}),
+      Layer.mock(ProviderRegistry)({}),
+      Layer.mock(ServerEnvironment)({}),
       NodeServices.layer,
     ),
   ),
@@ -462,6 +477,45 @@ it.effect(
         { type: "text", text: "MCP credential does not grant the pull-requests capability." },
       ]);
     }).pipe(Effect.provide(PullRequestsTestLayer)),
+);
+
+it.effect(
+  "registers thread metadata and rename tools with their capability and input schemas",
+  () =>
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      expect(server.tools.map(({ tool }) => tool.name)).toEqual(
+        expect.arrayContaining(["get_thread_metadata", "set_thread_name"]),
+      );
+      const read = server.tools.find(({ tool }) => tool.name === "get_thread_metadata");
+      const rename = server.tools.find(({ tool }) => tool.name === "set_thread_name");
+      expect(read?.tool.annotations?.readOnlyHint).toBe(true);
+      expect(rename?.tool.annotations?.readOnlyHint).toBe(false);
+      expect(read?.tool.inputSchema).toMatchObject({
+        properties: {
+          fields: {
+            anyOf: expect.arrayContaining([
+              { type: "array", items: expect.any(Object), description: expect.any(String) },
+            ]),
+          },
+        },
+      });
+      for (const [name, args] of [
+        ["get_thread_metadata", {}],
+        ["set_thread_name", { name: "Name" }],
+      ] as const) {
+        const denied = yield* server
+          .callTool({ name, arguments: args })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+        expect(denied.isError).toBe(true);
+        expect(denied.content).toEqual([
+          { type: "text", text: "MCP credential does not grant the thread capability." },
+        ]);
+      }
+    }).pipe(Effect.provide(ThreadTestLayer)),
 );
 
 it.effect("keeps the snapshot text under the agent's output ceiling", () =>

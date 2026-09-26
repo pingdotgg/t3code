@@ -13,6 +13,7 @@ import * as Stream from "effect/Stream";
 
 import { ProviderAdapterRegistry } from "../src/provider/Services/ProviderAdapterRegistry.ts";
 import { makeAdapterRegistryMock } from "../src/provider/testUtils/providerAdapterRegistryMock.ts";
+import { makeProviderRegistryLayer } from "../src/provider/testUtils/providerRegistryMock.ts";
 import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSessionDirectory.ts";
 import {
   NoOpProviderEventLoggers,
@@ -94,6 +95,7 @@ const makeIntegrationFixture = (options?: { readonly analytics?: Layer.Layer<Ana
     const shared = Layer.mergeAll(
       directoryLayer,
       Layer.succeed(ProviderAdapterRegistry, registry),
+      makeProviderRegistryLayer(),
       ServerConfig.layerTest(cwd, cwd).pipe(Layer.provide(NodeServices.layer)),
       ServerSettingsService.layerTest(DEFAULT_SERVER_SETTINGS),
       options?.analytics ?? AnalyticsService.layerTest,
