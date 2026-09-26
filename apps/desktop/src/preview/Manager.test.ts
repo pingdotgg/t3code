@@ -614,6 +614,43 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("keeps sign-in popups above their live host window", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents();
+        const hostWebContents = {};
+        const isDestroyed = vi.fn(() => false);
+        const mainWindow = { isDestroyed, once: vi.fn(), webContents: hostWebContents };
+        Object.assign(preview.webContents, { hostWebContents });
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.setMainWindow(mainWindow as never);
+        yield* manager.createTab("tab_popup_owner");
+        yield* manager.registerWebview("tab_popup_owner", 42);
+
+        const open = vi
+          .mocked((preview.webContents as Electron.WebContents).setWindowOpenHandler)
+          .mock.calls.at(-1)![0];
+        const request = {
+          url: "https://accounts.google.com/o/oauth2/auth",
+          disposition: "new-window",
+        } as Electron.HandlerDetails;
+        const result = open(request);
+        expect(result.action).toBe("allow");
+        expect(result.overrideBrowserWindowOptions?.parent).toBe(mainWindow);
+        expect(result.overrideBrowserWindowOptions?.webPreferences).toMatchObject({
+          sandbox: true,
+          nodeIntegration: false,
+          contextIsolation: true,
+        });
+        expect(result.overrideBrowserWindowOptions?.alwaysOnTop).not.toBe(true);
+        expect(result.overrideBrowserWindowOptions?.modal).not.toBe(true);
+
+        isDestroyed.mockReturnValue(true);
+        expect(open(request).overrideBrowserWindowOptions?.parent).toBeUndefined();
+      }),
+    ),
+  );
+
   effectIt.effect("preserves focused browser editing in tabs and sign-in popups", () =>
     withManager((manager) =>
       Effect.gen(function* () {

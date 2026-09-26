@@ -21,12 +21,16 @@
  *   the preload's `import { ipcRenderer }` line, but no Node globals leak.
  * - `nodeIntegration=false`: pinned for clarity (the page itself never gets
  *   Node access).
+ * - `disableBlinkFeatures=FedCm`: Electron does not implement Chromium's
+ *   browser-owned identity dialog. Advertising FedCM makes Google sign-in
+ *   select a prompt that immediately dismisses instead of its popup fallback.
+ *   Disable it only in preview guests, including their cross-origin frames.
  *
  * Format notes (locked down by `WebviewPreferences.test.ts`):
  * - Whitespace-free. Electron's webpreferences parser splits on `,` and
  *   does not trim, so a leading space would turn a key into an unknown one
  *   and silently drop it.
- * - Values are JS-boolean strings (`true`/`false`) — `yes`/`no` are not
+ * - Boolean values are JS-boolean strings (`true`/`false`) — `yes`/`no` are not
  *   special-cased by the parser; `value="no"` becomes the truthy STRING
  *   `"no"` when assigned to a boolean webPreferences key. Most critically,
  *   `contextIsolation="no"` is truthy → contextIsolation stays ENABLED →
@@ -39,4 +43,4 @@
  * security-critical flags can't regress on preview tabs.
  */
 export const PREVIEW_WEBVIEW_PREFERENCES =
-  "contextIsolation=false,sandbox=true,nodeIntegration=false";
+  "contextIsolation=false,sandbox=true,nodeIntegration=false,disableBlinkFeatures=FedCm";
