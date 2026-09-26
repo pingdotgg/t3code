@@ -240,3 +240,15 @@ describe("navigating voice tool executor", () => {
     expect(navigator.destinations).toHaveLength(0);
   });
 });
+
+it.each(["unknownTool", "voice.unknownTool", "toString", "voice.__proto__"])(
+  "rejects unknown tool %s before dispatch",
+  async (name) => {
+    const tools = makeTools();
+    const navigator = makeNavigator({ status: "acknowledged", destination: DESTINATION });
+    const executor = createNavigatingVoiceToolExecutor({ tools, navigator });
+    await expect(executor.execute(name, {})).rejects.toThrow("Unknown voice tool");
+    expect(tools.calls).toEqual([]);
+    expect(navigator.destinations).toEqual([]);
+  },
+);

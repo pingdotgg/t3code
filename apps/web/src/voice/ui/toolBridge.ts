@@ -16,7 +16,7 @@
  * (`apps/server/src/voice/broker.ts` `voiceToolName`); names are normalized
  * to the bare VoiceToolSchemas key before dispatch.
  */
-import type { VoiceToolName } from "@t3tools/contracts";
+import { VoiceToolSchemas, type VoiceToolName } from "@t3tools/contracts";
 import type { VoiceLiveToolExecutor } from "../live-client";
 import type { VoiceNavigator } from "../navigation";
 import type { VoiceToolExecutor } from "../tools";
@@ -26,8 +26,13 @@ export interface NavigatingVoiceToolExecutorDeps {
   readonly navigator: Pick<VoiceNavigator, "navigateToThread">;
 }
 
-const normalizeToolName = (name: string): VoiceToolName =>
-  (name.startsWith("voice.") ? name.slice("voice.".length) : name) as VoiceToolName;
+const normalizeToolName = (name: string): VoiceToolName => {
+  const tool = name.startsWith("voice.") ? name.slice("voice.".length) : name;
+  if (!Object.hasOwn(VoiceToolSchemas, tool)) {
+    throw new Error(`Unknown voice tool: ${name}`);
+  }
+  return tool as VoiceToolName;
+};
 
 export function createNavigatingVoiceToolExecutor(
   deps: NavigatingVoiceToolExecutorDeps,

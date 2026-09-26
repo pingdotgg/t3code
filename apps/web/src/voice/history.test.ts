@@ -141,6 +141,27 @@ describe("voice history recorder", () => {
     expect(writes.size).toBeLessThanOrEqual(2);
   });
 
+  it("folds deltas across intervening entries without duplicate utterance IDs", () => {
+    const recorder = createVoiceHistoryRecorder({ now: () => 1000 });
+    recorder.beginSession();
+    recorder.record(transcript("output", "out-1", "Hel"));
+    recorder.record({ type: "command_result", text: "Opened thread" });
+    recorder.record(transcript("output", "out-1", "lo"));
+    recorder.endSession();
+    const session = recorder.listSessions()[0]!;
+    expect(recorder.readSession(session.id)!.entries).toEqual([
+      {
+        kind: "utterance",
+        id: "output:out-1",
+        channel: "output",
+        text: "Hello",
+        startedAt: 1000,
+        updatedAt: 1000,
+      },
+      { kind: "command", text: "Opened thread", at: 1000 },
+    ]);
+  });
+
   it("folds consecutive deltas into one utterance entry with identity", () => {
     const recorder = createVoiceHistoryRecorder({ now: () => 1000 });
     recorder.beginSession();

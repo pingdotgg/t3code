@@ -822,9 +822,12 @@ export function createVoiceHistoryRecorder(
           // touched only when a new utterance opens (persisting the closed
           // previous one), never per delta.
           const key = `${event.channel}:${event.utterance}`;
-          const last = current.entries[current.entries.length - 1];
-          if (last !== undefined && last.kind === "utterance" && last.id === key) {
-            current.entries[current.entries.length - 1] = {
+          const index = current.entries.findIndex(
+            (entry) => entry.kind === "utterance" && entry.id === key,
+          );
+          const last = current.entries[index];
+          if (last !== undefined && last.kind === "utterance") {
+            current.entries[index] = {
               ...last,
               text: capText(last.text + event.delta),
               updatedAt: now(),

@@ -78,6 +78,8 @@ export interface VoiceKeyValueStorage {
   setItem: (name: string, value: string) => unknown;
 }
 
+const fallbackVoiceStorage = createMemoryStorage() as unknown as VoiceKeyValueStorage;
+
 function resolveVoiceStorage(storage: VoiceKeyValueStorage | undefined): VoiceKeyValueStorage {
   if (storage !== undefined) {
     return storage;
@@ -91,7 +93,7 @@ function resolveVoiceStorage(storage: VoiceKeyValueStorage | undefined): VoiceKe
   } catch {
     // Fall through to the in-memory fallback.
   }
-  return createMemoryStorage() as unknown as VoiceKeyValueStorage;
+  return fallbackVoiceStorage;
 }
 
 // ---------------------------------------------------------------------------

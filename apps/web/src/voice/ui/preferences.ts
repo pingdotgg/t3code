@@ -2,11 +2,14 @@ import { useSyncExternalStore } from "react";
 
 const KEY = "t3code:voice-fast-commands:v1";
 const EVENT = "t3code:voice-preferences";
+let fallback = true;
+let storageUnavailable = false;
 function read() {
+  if (storageUnavailable) return fallback;
   try {
     return localStorage.getItem(KEY) !== "false";
   } catch {
-    return true;
+    return fallback;
   }
 }
 function subscribe(listener: () => void) {
@@ -23,7 +26,13 @@ export function useVoiceFastCommands() {
   return [
     enabled,
     (value: boolean) => {
-      localStorage.setItem(KEY, String(value));
+      fallback = value;
+      try {
+        localStorage.setItem(KEY, String(value));
+      } catch {
+        storageUnavailable = true;
+        // Keep the preference usable for this page when storage is unavailable.
+      }
       window.dispatchEvent(new Event(EVENT));
     },
   ] as const;

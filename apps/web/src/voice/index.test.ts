@@ -264,6 +264,18 @@ const delegateInput = (requestId: string) => ({
 // ---------------------------------------------------------------------------
 
 describe("worker-profile configuration surface", () => {
+  it("retains profiles in memory when localStorage is unavailable", () => {
+    vi.stubGlobal("localStorage", undefined);
+    try {
+      const profiles = { routine: { instanceId: "inst-a", model: "model-a" } };
+      saveVoiceWorkerProfilesConfig(profiles);
+      expect(readVoiceWorkerProfilesConfig()).toEqual(profiles);
+    } finally {
+      saveVoiceWorkerProfilesConfig({});
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("round-trips routine and deep profiles through the storage key", () => {
     const storage = memoryStorage();
     saveVoiceWorkerProfilesConfig(
