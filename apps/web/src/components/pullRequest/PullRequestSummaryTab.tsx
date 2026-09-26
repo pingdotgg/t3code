@@ -431,7 +431,9 @@ function CommentGroup({
                       <TooltipTrigger render={<time dateTime={latest} />}>
                         {formatRelativeTimeLabel(latest)}
                       </TooltipTrigger>
-                      <TooltipPopup>{formatFullTimestamp(latest, timestampFormat) || "Invalid Date"}</TooltipPopup>
+                      <TooltipPopup>
+                        {formatFullTimestamp(latest, timestampFormat) || "Invalid Date"}
+                      </TooltipPopup>
                     </Tooltip>
                   </span>
                 ) : null}
