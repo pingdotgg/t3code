@@ -180,7 +180,9 @@ export function isSidebarProjectMoreItem(
 }
 
 export function sidebarListItemId(item: SidebarListItem): string {
-  return item.kind === "marker" ? sidebarMarkerId(item.marker) : item.key;
+  if (item.kind === "thread") return item.key;
+  if (item.kind === "marker") return sidebarMarkerId(item.marker);
+  return `${SIDEBAR_MARKER_PREFIX}${encodeURIComponent(item.marker)}`;
 }
 
 /** The section a slot belongs to, read off the markers around it: from

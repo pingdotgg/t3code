@@ -182,9 +182,13 @@ export function createSidebarSortingStrategy(input: {
       const result: SidebarListItem[] = [];
       const seen = new Set<string>();
       for (const header of headers) {
+        const projectItems = groups[section].filter(
+          (item) => item.projectKey === header.projectKey,
+        );
+        if (projectItems.length === 0) continue;
         seen.add(header.projectKey);
         result.push(header);
-        result.push(...groups[section].filter((item) => item.projectKey === header.projectKey));
+        result.push(...projectItems);
         const more = items
           .filter(isSidebarProjectMoreItem)
           .find((item) => item.section === section && item.projectKey === header.projectKey);

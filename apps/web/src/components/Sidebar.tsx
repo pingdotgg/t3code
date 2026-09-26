@@ -5144,28 +5144,35 @@ export default function Sidebar() {
                           const project = projectGroupByScopeKey.get(item.projectKey) ?? null;
                           items.push(
                             <SortableSidebarProjectItem key={item.key} item={item}>
-                              <button
-                                type="button"
-                                aria-label={`${item.title} project`}
-                                aria-expanded={item.expanded}
-                                data-thread-selection-safe
-                                onClick={() => toggleProjectGroup(item.projectKey)}
-                                className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium text-sidebar-foreground/85 hover:bg-sidebar-row-hover"
-                              >
-                                {project ? (
+                              {project ? (
+                                <button
+                                  type="button"
+                                  aria-label={`${item.title} project`}
+                                  aria-expanded={item.expanded}
+                                  data-thread-selection-safe
+                                  onClick={() => toggleProjectGroup(item.projectKey)}
+                                  className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium text-sidebar-foreground/85 hover:bg-sidebar-row-hover"
+                                >
                                   <ProjectFavicon project={project} className="size-4 shrink-0" />
-                                ) : (
+                                  <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                                  <ChevronDownIcon
+                                    aria-hidden
+                                    className={cn(
+                                      "size-3 shrink-0 text-sidebar-muted-foreground transition-transform",
+                                      !item.expanded && "-rotate-90",
+                                    )}
+                                  />
+                                </button>
+                              ) : (
+                                <div
+                                  role="heading"
+                                  aria-level={3}
+                                  className="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium text-sidebar-foreground/85"
+                                >
                                   <FolderIcon aria-hidden className="size-4 shrink-0" />
-                                )}
-                                <span className="min-w-0 flex-1 truncate">{item.title}</span>
-                                <ChevronDownIcon
-                                  aria-hidden
-                                  className={cn(
-                                    "size-3 shrink-0 text-sidebar-muted-foreground transition-transform",
-                                    !item.expanded && "-rotate-90",
-                                  )}
-                                />
-                              </button>
+                                  <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                                </div>
+                              )}
                             </SortableSidebarProjectItem>,
                           );
                           continue;
