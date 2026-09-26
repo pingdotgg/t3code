@@ -20,6 +20,7 @@ import { serviceCommand } from "./cli/service.ts";
 import { uninstallCommand } from "./cli/uninstall.ts";
 import { updateCommand } from "./cli/update.ts";
 import { claudeHistoryCommand } from "./cli/claudeHistory.ts";
+import { extensionWorkerCommand } from "./cli/extensionWorker.ts";
 import { serviceLauncherCommand } from "./cli/serviceLauncher.ts";
 import { servicePreflightCommand } from "./cli/servicePreflight.ts";
 import { sshHelperCommand } from "./cli/sshHelper.ts";
@@ -68,6 +69,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       uninstallCommand,
       serviceLauncherCommand,
       claudeHistoryCommand,
+      extensionWorkerCommand,
       servicePreflightCommand,
       sshHelperCommand,
       themeCommand,

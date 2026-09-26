@@ -62,6 +62,10 @@ type TerminalOverrides = Pick<TerminalManager.TerminalManager["Service"], "open"
 
 const makeTerminalManagerLayer = (overrides: TerminalOverrides) =>
   Layer.succeed(TerminalManager.TerminalManager, {
+    openOrAttach: () => Effect.die(new Error("unused")),
+    inspect: () => Effect.die(new Error("unused")),
+    readOutput: () => Effect.die(new Error("unused")),
+    subscribeOutput: () => Effect.die(new Error("unused")),
     attachStream: () => Effect.die(new Error("unused")),
     resize: () => Effect.void,
     clear: () => Effect.void,

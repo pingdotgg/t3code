@@ -5,4 +5,5 @@ export const browserApiCorsAllowedHeaders = [
   "traceparent",
   "content-type",
   "dpop",
+  "x-t3-client-instance",
 ] as const;

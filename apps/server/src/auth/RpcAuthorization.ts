@@ -22,6 +22,11 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
  * runtime failure.
  */
 export const RPC_REQUIRED_SCOPES = {
+  [WS_METHODS.subscribeExtensionCatalogue]: AuthOrchestrationReadScope,
+  [WS_METHODS.subscribeExtensionApi]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsClientProvidersConnect]: AuthOrchestrationOperateScope,
+  [WS_METHODS.extensionsClientProvidersRespond]: AuthOrchestrationOperateScope,
+  [WS_METHODS.extensionsClientProvidersEmit]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,
   [ORCHESTRATION_WS_METHODS.getTurnDiff]: AuthOrchestrationReadScope,
@@ -155,6 +160,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.previewAutomationConnect]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationRespond]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewAutomationFocusHost]: AuthOrchestrationOperateScope,
+  [WS_METHODS.browserFramesOpenInput]: AuthOrchestrationOperateScope,
+  [WS_METHODS.browserFramesCloseInput]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribePreviewEvents]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeDiscoveredLocalServers]: AuthOrchestrationReadScope,
   [WS_METHODS.deviceConfigure]: AuthOrchestrationOperateScope,

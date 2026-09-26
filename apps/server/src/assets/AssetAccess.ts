@@ -32,6 +32,7 @@ import { githubMediaFetchUrl, githubMediaFileName } from "@t3tools/shared/github
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
@@ -137,6 +138,25 @@ const AssetClaimsSchema = Schema.Union([
     app: ToolActivityNativeAppReference,
     expiresAt: Schema.Number,
   }),
+  // Presentation-attachment lease, not a file asset: binds the engine session
+  // identity the desktop host uses to key webviews (environmentId + threadId
+  // + tabId + serverEpoch — previewRuntimeTabId's exact components) plus the
+  // closed command set the bearer may drive. `resolveAsset` declines it; the
+  // browser attachment channel verifies it via verifyBrowserSurfaceClaims.
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("browser-surface"),
+    environmentId: Schema.String,
+    threadId: Schema.String,
+    tabId: Schema.String,
+    serverEpoch: Schema.String,
+    // Server-owned acquisition identity: unique per mint so two simultaneous
+    // presentations of the same session never sign the same claim or share a
+    // presentation slot.
+    slotId: Schema.String,
+    allowedCommands: Schema.Array(Schema.Literals(["attach", "present", "release"])),
+    expiresAt: Schema.Number,
+  }),
   Schema.Struct({
     version: Schema.Literal(1),
     kind: Schema.Literal("github-media"),
@@ -147,6 +167,7 @@ const AssetClaimsSchema = Schema.Union([
   }),
 ]);
 type AssetClaims = typeof AssetClaimsSchema.Type;
+type BrowserSurfaceClaims = Extract<AssetClaims, { readonly kind: "browser-surface" }>;
 
 const AssetClaimsJson = Schema.fromJsonString(AssetClaimsSchema);
 const decodeAssetClaims = Schema.decodeUnknownOption(AssetClaimsJson);
@@ -720,9 +741,64 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   };
 });
 
-export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
+export class BrowserSurfaceIssueError extends Data.TaggedError("BrowserSurfaceIssueError")<{
+  readonly cause: unknown;
+}> {}
+
+/**
+ * Mints a `browser-surface` presentation lease: signed claims binding the
+ * exact engine session identity the desktop host keys webviews on
+ * (environmentId + threadId + tabId + serverEpoch), plus the closed
+ * command set the bearer may drive on the attachment channel. Same signing
+ * key, TTL, and token format as the asset mint; the URL vends no file.
+ */
+export const issueBrowserSurfaceUrl = Effect.fn("AssetAccess.issueBrowserSurfaceUrl")(
+  function* (input: {
+    readonly environmentId: string;
+    readonly threadId: string;
+    readonly tabId: string;
+    readonly serverEpoch: string;
+    readonly allowedCommands: ReadonlyArray<"attach" | "present" | "release">;
+  }) {
+    const expiresAt = (yield* Clock.currentTimeMillis) + ASSET_TOKEN_TTL_MS;
+    const secretStore = yield* ServerSecretStore.ServerSecretStore;
+    const signingSecret = yield* secretStore
+      .getOrCreateRandom(SIGNING_SECRET_NAME, 32)
+      .pipe(Effect.mapError((cause) => new BrowserSurfaceIssueError({ cause })));
+    const crypto = yield* Crypto.Crypto;
+    const slotId = yield* crypto.randomUUIDv4.pipe(
+      Effect.mapError((cause) => new BrowserSurfaceIssueError({ cause })),
+    );
+    const claims: BrowserSurfaceClaims = {
+      version: 1,
+      kind: "browser-surface",
+      environmentId: input.environmentId,
+      threadId: input.threadId,
+      tabId: input.tabId,
+      serverEpoch: input.serverEpoch,
+      slotId,
+      // Sorted + deduplicated so equal rights carry the same command set —
+      // the claims still differ by slotId, which is the point.
+      allowedCommands: [...new Set(input.allowedCommands)].sort(),
+      expiresAt,
+    };
+    const encodedPayload = base64UrlEncode(encodeAssetClaims(claims));
+    const token = `${encodedPayload}.${signPayload(encodedPayload, signingSecret)}`;
+    return {
+      relativeUrl: `${ASSET_ROUTE_PREFIX}/${token}/browser-surface`,
+      expiresAt,
+      slotId,
+    };
+  },
+);
+
+/**
+ * Signature + expiry verification shared by the asset route and the
+ * browser-surface attachment gate. Returns the decoded claims or null —
+ * malformed, unsigned, and expired tokens are indistinguishable.
+ */
+const verifySignedAssetClaims = Effect.fn("AssetAccess.verifySignedAssetClaims")(function* (
   token: string,
-  relativePath: string,
 ) {
   const [encodedPayload, signature] = token.split(".");
   if (!encodedPayload || !signature) return null;
@@ -737,6 +813,49 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
 
   const claims = decodeClaims(encodedPayload);
   if (!claims || claims.expiresAt <= (yield* Clock.currentTimeMillis)) return null;
+  return claims;
+});
+
+/**
+ * The browser attachment channel's gate (consumed by the browser sessions
+ * adapter): verifies a `browser-surface` lease's signature, expiry, and
+ * field-exact session binding. A lease minted for one session or epoch never
+ * verifies against another — the binding is equality, never re-binding.
+ */
+export const verifyBrowserSurfaceClaims = Effect.fn("AssetAccess.verifyBrowserSurfaceClaims")(
+  function* (
+    token: string,
+    expected: {
+      readonly environmentId: string;
+      readonly threadId: string;
+      readonly tabId: string;
+      readonly serverEpoch: string;
+    },
+  ) {
+    const claims = yield* verifySignedAssetClaims(token);
+    if (!claims || claims.kind !== "browser-surface") return null;
+    if (
+      claims.environmentId !== expected.environmentId ||
+      claims.threadId !== expected.threadId ||
+      claims.tabId !== expected.tabId ||
+      claims.serverEpoch !== expected.serverEpoch
+    ) {
+      return null;
+    }
+    return claims;
+  },
+);
+
+export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
+  token: string,
+  relativePath: string,
+) {
+  const claims = yield* verifySignedAssetClaims(token);
+  if (!claims) return null;
+
+  // A browser-surface lease authorizes the presentation attachment channel;
+  // it vends no file, so the asset route declines it like any non-asset claim.
+  if (claims.kind === "browser-surface") return null;
 
   if (claims.kind === "attachment") {
     const config = yield* ServerConfig.ServerConfig;

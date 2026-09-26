@@ -70,6 +70,12 @@ export interface AuthenticatedSession {
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
   readonly expiresAt?: DateTime.DateTime;
+  /**
+   * Deadline of the presented credential (e.g. a five-minute `wsTicket`),
+   * capped by the underlying session. Absent only when the credential
+   * carries no expiry of its own.
+   */
+  readonly credentialExpiresAt?: DateTime.DateTime;
 }
 
 const serverAuthInternalErrorContext = {
@@ -631,6 +637,9 @@ export const make = Effect.gen(function* () {
         scopes: session.scopes,
         ...(session.proofKeyThumbprint ? { proofKeyThumbprint: session.proofKeyThumbprint } : {}),
         ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+        ...(session.credentialExpiresAt
+          ? { credentialExpiresAt: session.credentialExpiresAt }
+          : {}),
       })),
       mapSessionVerificationErrors,
     );
@@ -1085,6 +1094,9 @@ export const make = Effect.gen(function* () {
               method: session.method,
               scopes: session.scopes,
               ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+              ...(session.credentialExpiresAt
+                ? { credentialExpiresAt: session.credentialExpiresAt }
+                : {}),
             })),
             mapSessionVerificationErrors,
           );

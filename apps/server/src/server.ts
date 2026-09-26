@@ -37,6 +37,8 @@ import {
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { fixPath } from "./os-jank.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
+import { browserFrameProxyRouteLayer } from "./browserFrames/BrowserFrameProxy.ts";
+import { layer as BrowserFrameLeasesLayer } from "./browserFrames/BrowserFrameLeases.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
@@ -73,6 +75,14 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as EnvironmentExtensions from "./extensions/EnvironmentExtensions.ts";
+import * as ExtensionCatalogueChanges from "./extensions/catalogueChanges.ts";
+import { extensionsHttpApiLayer } from "./extensions/http.ts";
+import { OrchestrationCommandReceiptRepositoryLive } from "./persistence/Layers/OrchestrationCommandReceipts.ts";
+import { ProjectionProjectRepositoryLive } from "./persistence/Layers/ProjectionProjects.ts";
+import { ProjectionThreadActivityRepositoryLive } from "./persistence/Layers/ProjectionThreadActivities.ts";
+import { ProjectionThreadRepositoryLive } from "./persistence/Layers/ProjectionThreads.ts";
+import { ProjectionTurnRepositoryLive } from "./persistence/Layers/ProjectionTurns.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { deviceHubProxyRouteLayer } from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -341,8 +351,10 @@ const RepositoryIdentityResolverLayerLive = Layer.effect(
   }),
 ).pipe(Layer.provide(SourceControlProviderRegistryLayerLive), Layer.provide(ProcessRunner.layer));
 
+// provideMerge so the extension adapter reports per-provider capabilities off
+// the same registry instance the service reads through.
 const PullRequestServiceLive = PullRequestService.layer.pipe(
-  Layer.provide(PullRequestProviderRegistry.layer),
+  Layer.provideMerge(PullRequestProviderRegistry.layer),
   // Where the viewed-file marks live for a host that keeps none of its own.
   Layer.provide(PullRequestFilesViewed.layer),
   Layer.provide(PullRequestReadCache.layer),
@@ -590,11 +602,13 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(pullRequestHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
+      Layer.provide(extensionsHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
     attachmentUploadRouteLayer,
+    browserFrameProxyRouteLayer,
     deviceHubProxyRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
@@ -605,6 +619,19 @@ export const makeRoutesLayer = Layer.mergeAll(
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(PullRequestServiceLive),
   Layer.provide(PreviewAutomationBroker.layer),
+  Layer.provide(BrowserFrameLeasesLayer),
+  Layer.provide(
+    EnvironmentExtensions.layer.pipe(
+      Layer.provide([
+        ProjectionProjectRepositoryLive,
+        ProjectionThreadRepositoryLive,
+        OrchestrationCommandReceiptRepositoryLive,
+        ProjectionThreadActivityRepositoryLive,
+        ProjectionTurnRepositoryLive,
+      ]),
+    ),
+  ),
+  Layer.provide(ExtensionCatalogueChanges.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(DesktopAppUpdateLayerLive))),
   Layer.provide(commandReadinessLayer),
   Layer.provide(browserApiCorsLayer),
@@ -960,6 +987,13 @@ const makeServerLayer = Layer.unwrap(
     );
 
     return serverApplicationLayer.pipe(
+      // Route-handler requirements (`HttpRouter.Request` markers) surface
+      // through `serve` as ambient requirements, so the broker and lease
+      // authority must be ambient services — same mechanism that feeds
+      // EnvironmentAuth and HttpClient to route handlers. One build shares a
+      // memo map, so the instances here are the same ones the makeRoutesLayer
+      // provides hand to EnvironmentExtensions and the ws layer.
+      Layer.provideMerge(Layer.mergeAll(PreviewAutomationBroker.layer, BrowserFrameLeasesLayer)),
       Layer.provideMerge(runtimeServicesLive),
       Layer.provide(activationLayer),
       Layer.provideMerge(serverRelayBrokerTracingLayer),

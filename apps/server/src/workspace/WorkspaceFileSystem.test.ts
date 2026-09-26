@@ -175,6 +175,40 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         }),
     );
 
+    it.effect("readFileBytes returns undecoded bytes bounded by the caller's maxBytes", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const bytes = Uint8Array.from([0x61, 0x00, 0x62, 0x63, 0x64, 0x65]);
+        yield* fileSystem.writeFile(path.join(cwd, "raw.bin"), bytes).pipe(Effect.orDie);
+
+        const complete = yield* workspaceFileSystem.readFileBytes({
+          cwd,
+          relativePath: "raw.bin",
+          maxBytes: 64,
+        });
+        // No NUL/binary rejection at this layer — text callers apply that check.
+        expect(new Uint8Array(complete.bytes)).toEqual(bytes);
+        expect(complete).toMatchObject({
+          relativePath: "raw.bin",
+          resolvedPath: yield* fileSystem.realPath(path.join(cwd, "raw.bin")),
+          byteLength: 6,
+          truncated: false,
+        });
+
+        const bounded = yield* workspaceFileSystem.readFileBytes({
+          cwd,
+          relativePath: "raw.bin",
+          maxBytes: 4,
+        });
+        expect(new Uint8Array(bounded.bytes)).toEqual(new Uint8Array(bytes.subarray(0, 4)));
+        expect(bounded.byteLength).toBe(6);
+        expect(bounded.truncated).toBe(true);
+      }),
+    );
+
     it.effect("rejects directories without manufacturing an I/O cause", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

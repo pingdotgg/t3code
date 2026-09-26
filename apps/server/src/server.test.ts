@@ -127,6 +127,11 @@ import { OrchestrationThreadSettleBlockedError } from "./orchestration/Errors.ts
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
+import * as PullRequestService from "./pullRequest/PullRequestService.ts";
+import {
+  PullRequestProviderRegistry,
+  fromProviders,
+} from "./pullRequest/PullRequestProviderRegistry.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationEventStore } from "./persistence/Services/OrchestrationEventStore.ts";
@@ -156,6 +161,8 @@ import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
+import { layer as PreviewAutomationBrokerLayer } from "./mcp/PreviewAutomationBroker.ts";
+import { layer as BrowserFrameLeasesLayer } from "./browserFrames/BrowserFrameLeases.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
@@ -549,6 +556,8 @@ const buildAppUnderTest = (options?: {
     threadDeletionReactor?: Partial<ThreadDeletionReactor["Service"]>;
     analyticsService?: Partial<AnalyticsService.AnalyticsService["Service"]>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]>;
+    pullRequests?: Partial<PullRequestService.PullRequestService["Service"]>;
+    pullRequestProviderRegistry?: PullRequestProviderRegistry["Service"];
     checkpointDiffQuery?: Partial<CheckpointDiffQuery.CheckpointDiffQuery["Service"]>;
     browserTraceCollector?: Partial<BrowserTraceCollector.BrowserTraceCollector["Service"]>;
     serverLifecycleEvents?: Partial<ServerLifecycleEvents.ServerLifecycleEvents["Service"]>;
@@ -971,9 +980,15 @@ const buildAppUnderTest = (options?: {
             refresh: () => Effect.void,
             close: () => Effect.void,
             list: () => Effect.succeed({ sessions: [], serverEpoch: "test-server", revision: 0 }),
+            listDetails: () =>
+              Effect.succeed({ sessions: [], serverEpoch: "test-server", revision: 0 }),
             events: Stream.empty,
             subscribeEvents: Effect.flatMap(PubSub.unbounded<PreviewEvent>(), (pubsub) =>
               PubSub.subscribe(pubsub),
+            ),
+            subscribeDetails: Effect.flatMap(
+              PubSub.unbounded<PreviewManager.PreviewInternalEvent>(),
+              (pubsub) => PubSub.subscribe(pubsub),
             ),
           }),
           Layer.mock(PortScanner.PortDiscovery)({
@@ -1011,6 +1026,13 @@ const buildAppUnderTest = (options?: {
             drain: Effect.void,
             requestSync: () => Effect.void,
           }),
+          Layer.mock(PullRequestService.PullRequestService)({
+            ...options?.layers?.pullRequests,
+          }),
+          Layer.succeed(
+            PullRequestProviderRegistry,
+            options?.layers?.pullRequestProviderRegistry ?? fromProviders([]),
+          ),
         ),
       ),
       Layer.provide(
@@ -1073,7 +1095,15 @@ const buildAppUnderTest = (options?: {
     );
 
     const appLayer = servedRoutesLayer.pipe(
-      Layer.provide(resourceTelemetryLayer),
+      // `serve` unwraps route-handler requirements into ambient requirements
+      // of the served layer; the real server provides them via makeServerLayer.
+      Layer.provide(
+        Layer.mergeAll(
+          PreviewAutomationBrokerLayer,
+          BrowserFrameLeasesLayer,
+          resourceTelemetryLayer,
+        ),
+      ),
       Layer.provide(UsageService.layerTest),
       Layer.provide(
         Layer.mock(AnalyticsService.AnalyticsService)({
@@ -1673,6 +1703,7 @@ const assertBrowserApiCorsPreflightHeaders = (
     "content-type",
     "dpop",
     "traceparent",
+    "x-t3-client-instance",
   ]);
 };
 const crossOriginClientOrigin = "http://remote-client.test:3773";
@@ -4500,6 +4531,27 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("responds to extension api/invoke preflights carrying the client-instance header", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      // Cross-origin extension invokes carry `x-t3-client-instance` for
+      // connection attribution; the allow-list must not reject the preflight.
+      const invokeUrl = yield* getHttpServerUrl("/api/extensions/api/invoke");
+      const response = yield* fetchEffect(invokeUrl, {
+        method: "OPTIONS",
+        headers: {
+          origin: crossOriginClientOrigin,
+          "access-control-request-method": "POST",
+          "access-control-request-headers": "authorization, x-t3-client-instance",
+        },
+      });
+
+      assert.equal(response.status, 204);
+      assertBrowserApiCorsPreflightHeaders(response.headers);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("allows credentialed cloud link proof preflights from the configured dev UI", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({
@@ -5585,6 +5637,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "content-type",
         "dpop",
         "traceparent",
+        "x-t3-client-instance",
       ]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

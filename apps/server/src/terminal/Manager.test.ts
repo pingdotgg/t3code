@@ -7,11 +7,15 @@ import {
   type TerminalMetadataStreamEvent,
   type TerminalOpenInput,
   type TerminalRestartInput,
+  AuthTerminalOperateScope,
+  extensionWorkspaceRevision,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ServerSettingsError,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
+import type { HostApiInvocationMetadata } from "@t3tools/extension-runtime";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Data from "effect/Data";
 import * as Clock from "effect/Clock";
@@ -34,6 +38,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
 
+import { createTerminalOutputEventsApiProvider } from "../extensions/terminalOutputEventsApi.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
@@ -113,12 +118,25 @@ class FakePtyAdapter {
   readonly spawnFailures: Error[] = [];
   private readonly mode: "sync" | "async";
   private nextPid = 9000;
+  spawnGate: Deferred.Deferred<void> | null = null;
+  spawnStarted: Deferred.Deferred<void> | null = null;
 
   constructor(mode: "sync" | "async" = "sync") {
     this.mode = mode;
   }
 
   spawn(
+    input: PtyAdapter.PtySpawnInput,
+  ): Effect.Effect<PtyAdapter.PtyProcess, PtyAdapter.PtySpawnError> {
+    if (this.spawnGate) {
+      const gate = this.spawnGate;
+      if (this.spawnStarted) Deferred.doneUnsafe(this.spawnStarted, Effect.void);
+      return Deferred.await(gate).pipe(Effect.andThen(this.spawnNow(input)));
+    }
+    return this.spawnNow(input);
+  }
+
+  private spawnNow(
     input: PtyAdapter.PtySpawnInput,
   ): Effect.Effect<PtyAdapter.PtyProcess, PtyAdapter.PtySpawnError> {
     this.spawnInputs.push(input);
@@ -233,6 +251,7 @@ interface CreateManagerOptions {
   resolveProviderInstanceEnvironment?: Parameters<
     typeof TerminalManager.makeWithOptions
   >[0]["resolveProviderInstanceEnvironment"];
+  unregisterTerminal?: Parameters<typeof TerminalManager.makeWithOptions>[0]["unregisterTerminal"];
 }
 
 interface ManagerFixture {
@@ -281,6 +300,9 @@ const createManager = (
         ...(options.resolveProviderInstanceEnvironment !== undefined
           ? { resolveProviderInstanceEnvironment: options.resolveProviderInstanceEnvironment }
           : {}),
+        ...(options.unregisterTerminal !== undefined
+          ? { unregisterTerminal: options.unregisterTerminal }
+          : {}),
       });
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
       const unsubscribe = yield* manager.subscribe((event) =>
@@ -302,24 +324,95 @@ const createManager = (
 const withHostPlatform = (platform: NodeJS.Platform) =>
   Layer.succeed(HostProcessPlatform, platform);
 
-// Apply the existing line policy, then find the longest code-point-aligned byte tail.
+const outputEventsContext = {
+  resource: {
+    namespace: "test.extension",
+    id: "surface",
+    environmentId: "env",
+    projectId: "project",
+    threadId: "thread-1",
+  },
+  client: "test",
+  workspaceRevision: extensionWorkspaceRevision(process.cwd(), null),
+} as const;
+
+const outputEventsMetadata: HostApiInvocationMetadata = {
+  callId: "call",
+  rootCallerId: "root",
+  callerId: "caller",
+  providerId: "t3.host-terminal-output-events",
+  providerGeneration: 1,
+  callerGenerations: [],
+  principal: {
+    kind: "environment-session",
+    id: "session",
+    environmentId: "env",
+    scopes: [AuthTerminalOperateScope],
+  },
+};
+
+const outputEventsProvider = (manager: ManagerFixture["manager"]) =>
+  createTerminalOutputEventsApiProvider({
+    environmentId: "env",
+    projects: {
+      getById: (input: { projectId: ProjectId }) =>
+        Effect.succeed(
+          Option.some({
+            projectId: input.projectId,
+            workspaceRoot: process.cwd(),
+            deletedAt: null,
+          }),
+        ),
+    },
+    threads: {
+      getById: () =>
+        Effect.succeed(
+          Option.some({
+            projectId: ProjectId.make("project"),
+            worktreePath: null,
+            deletedAt: null,
+          }),
+        ),
+    },
+    terminal: manager,
+  });
+
+type OutputEventsWireItem = {
+  readonly type: string;
+  readonly value: Record<string, unknown>;
+};
+
+const nextOutputEventFrame = (iterator: AsyncIterator<unknown>) =>
+  Effect.promise(() => iterator.next() as Promise<IteratorResult<OutputEventsWireItem>>);
+
+// Apply the existing line policy, then find the longest code-point-aligned
+// byte tail — then advance the cut through any control sequence it lands
+// inside, matching the history's sequence-aware eviction boundary.
 function retainedHistory(text: string, maxLines: number, maxBytes = Infinity): string {
   const terminated = text.endsWith("\n");
   const lines = text.split("\n");
   if (terminated) lines.pop();
   const retained = lines.slice(Math.max(0, lines.length - maxLines)).join("\n");
-  const capped = terminated ? `${retained}\n` : retained;
-  if (Buffer.byteLength(capped) <= maxBytes) return capped;
-  const points = Array.from(capped);
-  let start = points.length;
-  let bytes = 0;
-  while (start > 0) {
-    const next = Buffer.byteLength(points[start - 1]!);
-    if (bytes + next > maxBytes) break;
-    bytes += next;
-    start -= 1;
+  let capped = terminated ? `${retained}\n` : retained;
+  if (Buffer.byteLength(capped) > maxBytes) {
+    const points = Array.from(capped);
+    let start = points.length;
+    let bytes = 0;
+    while (start > 0) {
+      const next = Buffer.byteLength(points[start - 1]!);
+      if (bytes + next > maxBytes) break;
+      bytes += next;
+      start -= 1;
+    }
+    capped = points.slice(start).join("");
   }
-  return points.slice(start).join("");
+  // The dropped prefix determines the sequence state at the cut; a retained
+  // head continuing an evicted sequence is dropped through its end.
+  const dropped = text.slice(0, text.length - capped.length);
+  const state = TerminalManager.scanTerminalSequenceState(dropped, "none").state;
+  if (state === "none") return capped;
+  const { endIndex } = TerminalManager.scanTerminalSequenceState(capped, state);
+  return endIndex === null ? "" : capped.slice(endIndex);
 }
 
 it("preserves line and byte limits across arbitrary chunks, Unicode, ANSI sequences, and clear", () => {
@@ -388,6 +481,73 @@ it("bounds long partial lines and joins surrogate pairs across chunk boundaries"
   }
 });
 
+it("reads a bounded UTF-8-safe retained tail", () => {
+  const history = new TerminalManager.BoundedTerminalHistory(
+    5_000,
+    "prefix-" + "x".repeat(8_200) + "😀",
+  );
+  const tail = history.tail(8_192, 8_192);
+  expect(tail.retainedByteLength).toBe(Buffer.byteLength(history.value()));
+  expect(tail.truncated).toBe(true);
+  expect(tail.contents.endsWith("😀")).toBe(true);
+  expect(Buffer.byteLength(tail.contents)).toBeLessThanOrEqual(8_192);
+  expect(tail.contents.length).toBeLessThanOrEqual(8_192);
+});
+
+it("stops at a non-fitting code point across history chunks", () => {
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 32_768);
+  history.append("a".repeat(16_383));
+  history.append("😀");
+  const tail = history.tail(3, 8_192);
+  expect(tail.contents).toBe("");
+  expect(tail.truncated).toBe(true);
+});
+
+it("rejects invalid tail bounds and preserves split surrogate retention", () => {
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 32);
+  expect(() => history.tail(-1, 8)).toThrow();
+  expect(() => history.tail(8, -1)).toThrow();
+  expect(() => history.tail(Number.NaN, 8)).toThrow();
+  expect(() => history.tail(1.5, 8)).toThrow();
+  expect(history.tail(0, 0)).toEqual({
+    contents: "",
+    retainedByteLength: 0,
+    truncated: false,
+  });
+  history.append(String.fromCharCode(0xd83d));
+  history.append(String.fromCharCode(0xde00));
+  expect(history.tail(8, 8).contents).toBe("😀");
+  const lone = new TerminalManager.BoundedTerminalHistory(5_000, "", 32);
+  lone.append(String.fromCharCode(0xd83d));
+  expect(lone.tail(8, 8)).toMatchObject({
+    contents: "�",
+    retainedByteLength: 3,
+    truncated: false,
+  });
+  lone.append(String.fromCharCode(0xde00));
+  expect(lone.tail(8, 8)).toMatchObject({
+    contents: "😀",
+    retainedByteLength: 4,
+    truncated: false,
+  });
+  expect(lone.value()).toBe("😀");
+  history.clear();
+  expect(history.tail(8, 8)).toEqual({
+    contents: "",
+    retainedByteLength: 0,
+    truncated: false,
+  });
+});
+
+it("reports independent byte accounting after line and byte trimming", () => {
+  const history = new TerminalManager.BoundedTerminalHistory(2, "", 12);
+  const writes = "12345\nabcdef\n😀z";
+  history.append(writes);
+  const expected = retainedHistory(writes, 2, 12);
+  expect(history.tail(8_192, 8_192).contents).toBe(expected);
+  expect(history.tail(8_192, 8_192).retainedByteLength).toBe(Buffer.byteLength(expected));
+});
+
 it("preserves retained lines as older storage is compacted", () => {
   for (const maxLines of [3, 5_000]) {
     let expected = "";
@@ -397,6 +557,355 @@ it("preserves retained lines as older storage is compacted", () => {
       history.append(chunk);
       expected = retainedHistory(expected + chunk, maxLines);
       expect(history.value()).toBe(expected);
+    }
+  }
+});
+
+it("suppresses a stripped query fragment at every eviction offset inside the sequence", () => {
+  // Byte eviction that lands inside a control sequence left a
+  // dangling fragment ("6n…") whose prefix was evicted; both read-side
+  // sanitizers then surfaced it as visible text. The retained origin must
+  // advance through the sequence end, for every split point and every
+  // append framing of the query.
+  const query = "\x1b[6n";
+  const maxBytes = 8;
+  for (let offset = 0; offset <= query.length; offset += 1) {
+    const tail = "x".repeat(maxBytes + offset - query.length);
+    for (let split = 0; split <= query.length; split += 1) {
+      const history = new TerminalManager.BoundedTerminalHistory(5_000, "", maxBytes);
+      history.append(query.slice(0, split));
+      history.append(query.slice(split) + tail);
+      // The retained raw window starts at a sequence boundary: when the cut
+      // lands inside the query the fragment is dropped, and even offset 0
+      // retains the whole query rather than a suffix of it.
+      expect(history.value(), `offset=${offset} split=${split}`).toBe(
+        offset === 0 ? query + tail : tail,
+      );
+      expect(history.sanitizedValue(), `sanitized offset=${offset} split=${split}`).toBe(tail);
+      expect(history.sanitizedTail(8_192, 8_192).contents).toBe(tail);
+      // Raw origins stay exact: the retained window starts past the query
+      // (or at 0 when nothing was evicted), never inside it.
+      expect(history.appendedUnitLength - history.value().length).toBe(
+        offset === 0 ? 0 : query.length,
+      );
+    }
+  }
+});
+
+it("suppresses fragments of every stripped sequence class at the eviction boundary", () => {
+  const cases: Array<[name: string, sequence: string, terminatorTail: string]> = [
+    ["C1 CSI", "\x9b6n", "6n"],
+    ["OSC BEL", "\x1b]10;?\x07", "?\x07"],
+    ["OSC ST", "\x1b]10;?ab\x1b\\", "b\x1b\\"],
+    ["DCS ST", "\x1bP+q544e\x1b\\", "e\x1b\\"],
+    ["escape intermediates", "\x1b)0", ")0"],
+  ];
+  for (const [name, sequence, terminatorTail] of cases) {
+    // The byte cut lands inside `sequence` immediately before
+    // `terminatorTail`; the retained fragment must be dropped whole.
+    const head = sequence.slice(0, sequence.length - terminatorTail.length);
+    const tail = "x".repeat(16);
+    const history = new TerminalManager.BoundedTerminalHistory(
+      5_000,
+      "",
+      terminatorTail.length + tail.length,
+    );
+    history.append(head + terminatorTail + tail);
+    expect(history.value(), name).toBe(tail);
+    expect(history.sanitizedValue(), name).toBe(tail);
+    expect(history.sanitizedTail(8_192, 8_192).contents, name).toBe(tail);
+  }
+});
+
+it("drops a retained window that is still inside an unterminated sequence", () => {
+  // An unterminated OSC at the retained head has no visible content; when
+  // the stream later terminates it, retention resumes after the terminator.
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 8);
+  history.append("\x1b]10;?" + "a".repeat(16));
+  expect(history.value()).toBe("");
+  history.append("bc\x07done\n");
+  expect(history.value()).toBe("done\n");
+  expect(history.sanitizedValue()).toBe("done\n");
+});
+
+it("drops a dangling fragment of a non-stripped sequence rather than leaking it as text", () => {
+  // Even a sequence the sanitizer keeps (SGR) cannot be reconstructed once
+  // its start is evicted — the fragment is dropped instead of surfacing.
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 8);
+  history.append("\x1b[31m" + "x".repeat(4));
+  expect(history.value()).toBe("x".repeat(4));
+  expect(history.sanitizedValue()).toBe("x".repeat(4));
+});
+
+it("suppresses fragments cut by line eviction inside a control sequence", () => {
+  // A newline inside a CSI counts as a line break; dropping that line can
+  // land the retained origin inside the sequence just like byte eviction.
+  const history = new TerminalManager.BoundedTerminalHistory(1, "", 8_192);
+  history.append("prompt$ \x1b[6\nn" + "x".repeat(8));
+  expect(history.value()).toBe("x".repeat(8));
+  expect(history.sanitizedValue()).toBe("x".repeat(8));
+});
+
+it("recognizes BEL and C1 ST as string terminators even right after an ESC", () => {
+  // An ESC inside a string re-arms the ST check, but BEL and
+  // C1 ST still terminate the sequence at their own position — the r12
+  // boundary tracker missed that and discarded valid retained output.
+  for (const terminator of ["\x07", "\x9c", "\x1b\\"]) {
+    const sequence = `\x1b]10;?a\x1b${terminator}`;
+    const history = new TerminalManager.BoundedTerminalHistory(5_000, "", sequence.length - 1 + 4);
+    history.append(sequence + "KEEP");
+    expect(history.value(), JSON.stringify(terminator)).toBe("KEEP");
+    expect(history.sanitizedValue()).toBe("KEEP");
+    expect(history.sanitizedTail(8_192, 8_192).contents).toBe("KEEP");
+    expect(history.appendedUnitLength - history.value().length).toBe(sequence.length);
+  }
+  // Same cut through the line-eviction path: the newline inside the OSC
+  // counts as a line break, so line trimming lands mid-string too.
+  const byLine = new TerminalManager.BoundedTerminalHistory(1, "", 8_192);
+  byLine.append("pad\n\x1b]10;?a\nb\x1b\x07KEEP");
+  expect(byLine.value()).toBe("KEEP");
+});
+
+it("retains ordinary output after a boundary-aligned sequence ends", () => {
+  // Cascade case: a stale boundary state dropped everything
+  // retained until another terminator, and subsequent trims kept
+  // discarding ordinary output that arrived after the real terminator.
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 11);
+  history.append("\x1b]10;?\x1b\x07KEEP");
+  expect(history.value()).toBe("KEEP");
+  history.append("MORE!");
+  expect(history.value()).toBe("KEEPMORE!");
+  history.append("zzz\nend\n");
+  expect(history.value()).toBe("RE!zzz\nend\n");
+  expect(history.sanitizedValue()).toBe("RE!zzz\nend\n");
+  expect(history.sanitizedTail(8_192, 8_192).contents).toBe("RE!zzz\nend\n");
+});
+
+it("drops a retroactively-ended escape only through its true end", () => {
+  // findEscapeSequenceEndIndex quirk: intermediates scan speculatively, and
+  // a non-final byte ends the sequence at `start + 1` — the intermediates
+  // and the deciding byte are ordinary text and must be retained.
+  const boundaryInside = new TerminalManager.BoundedTerminalHistory(5_000, "", 4);
+  boundaryInside.append("\x1b))\x01abc");
+  // Evicted "\x1b))" leaves the sequence open; the retained "\x01" ends it
+  // before the retained head — nothing is dropped.
+  expect(boundaryInside.value()).toBe("\x01abc");
+  const boundaryAtEsc = new TerminalManager.BoundedTerminalHistory(5_000, "", 6);
+  boundaryAtEsc.append("\x1b))\x01abc");
+  // Evicted "\x1b": the sequence is "ESC)" — only the first intermediate is
+  // dropped; the second ")" and the rest are text.
+  expect(boundaryAtEsc.value()).toBe(")\x01abc");
+});
+
+it("decides an intermediates run over the whole retained window, not per chunk", () => {
+  // A non-final byte ends an escape retroactively at its
+  // first byte, so intermediates-only chunks are ordinary text — but a
+  // chunk-local drop discarded them before the deciding byte in a later
+  // chunk was ever scanned. MAX_HISTORY_CHUNK_LENGTH is 16384, so this
+  // input splits the intermediates across chunks.
+  const input = `\x1b${")".repeat(16_384)}\x01KEEP`;
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 16_384);
+  history.append(input);
+  // The escape is "ESC)" (ends at unit 2); evicting 6 units leaves pure
+  // text — nothing may be dropped past the real sequence end.
+  expect(history.value()).toBe(input.slice(6));
+  expect(history.value().length).toBe(16_384);
+  expect(history.sanitizedValue()).toBe(input.slice(6));
+  const tail = history.sanitizedTail(8_192, 8_192);
+  expect(tail.contents).toBe(input.slice(input.length - 8_192));
+  expect(history.appendedUnitLength - tail.contents.length).toBe(8_198);
+});
+
+it("drops an intermediates run through a final byte even across chunks", () => {
+  // Near-boundary variant: same shape, but the run ends with a real final
+  // byte — then the intermediates ARE sequence content and the drop must
+  // reach the true end in a later chunk.
+  const input = `\x1b${")".repeat(16_384)}XKEEP`;
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 16_384);
+  history.append(input);
+  expect(history.value()).toBe("KEEP");
+  expect(history.sanitizedValue()).toBe("KEEP");
+  expect(history.sanitizedTail(8_192, 8_192).contents).toBe("KEEP");
+  expect(history.appendedUnitLength - history.value().length).toBe(input.length - 4);
+  // And the decision still holds after a later eviction: four more
+  // intermediates leave the window, and the remaining ones stay text.
+  const boundary = new TerminalManager.BoundedTerminalHistory(5_000, "", 16_384);
+  boundary.append(`\x1b${")".repeat(16_384)}\x01KEEP`);
+  boundary.append("tail");
+  expect(boundary.value()).toBe(`${")".repeat(16_375)}\x01KEEPtail`);
+});
+
+it("locates a retroactive escape end in window coordinates across chunks", () => {
+  // The deciding non-final byte can sit in a later chunk
+  // than the first intermediate — endIndex===0 was then read as "ended
+  // before the window", but the true endpoint is window offset 1.
+  const input = "p".repeat(16_382) + "\x1b))\x01" + "K".repeat(16_382);
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 16_385);
+  history.append(input);
+  // The escape is "ESC)" (input units 16382–16383); the cut at 16383
+  // leaves one dangling ')', dropped through window offset 1.
+  expect(history.value()).toBe(input.slice(16_384));
+  expect(history.value().length).toBe(16_384);
+  expect(history.value().startsWith(")\x01KKK")).toBe(true);
+  expect(history.appendedUnitLength - history.value().length).toBe(16_384);
+  expect(history.sanitizedValue()).toBe(input.slice(16_384));
+  expect(history.sanitizedTail(8_192, 8_192).contents).toBe(input.slice(input.length - 8_192));
+
+  // Variant where the endpoint IS before the window: the first
+  // intermediate was evicted with the ESC, so nothing is dropped.
+  const beforeWindow = new TerminalManager.BoundedTerminalHistory(5_000, "", 16_385);
+  const before = "p".repeat(16_381) + "\x1b)))" + "\x01" + "K".repeat(16_382);
+  beforeWindow.append(before);
+  // Escape = "ESC)" (units 16381–16382); cut at 16383 retains only text.
+  expect(beforeWindow.value()).toBe(before.slice(16_383));
+  expect(beforeWindow.value().length).toBe(16_385);
+
+  // Variant with a real mid-window endpoint: the run ends with a final
+  // byte inside the window, so the drop reaches it exactly.
+  const midWindow = new TerminalManager.BoundedTerminalHistory(5_000, "", 16_384);
+  const mid = "p".repeat(16_382) + "\x1b)))X" + "K".repeat(16_380);
+  midWindow.append(mid);
+  // Escape = "ESC)))X" (units 16382–16387); cut at 16383 drops through it.
+  expect(midWindow.value()).toBe("K".repeat(16_380));
+  expect(midWindow.appendedUnitLength - midWindow.value().length).toBe(16_387);
+});
+
+it("carries the retroactive endpoint across a storage seam inside the window", () => {
+  // The boundary scan walks chunks without joining; the escape's
+  // retroactive end must survive intermediates that cross the 16 KiB
+  // storage seam, with the deciding byte in a later chunk.
+  const input = "p".repeat(100) + "\x1b" + ")".repeat(16_384) + "\x01KEEP";
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 16_389);
+  history.append(input);
+  // Evicted "p"×100 + ESC leaves entry state "escape": the first
+  // intermediate sits at window offset 0, so the escape ends
+  // retroactively at window offset 1 — proven only when chunk 2's \x01
+  // is scanned after 16_283 intermediates in chunk 1.
+  expect(history.value()).toBe(input.slice(102));
+  expect(history.value().length).toBe(16_388);
+  expect(history.appendedUnitLength - history.value().length).toBe(102);
+  expect(history.sanitizedValue()).toBe(input.slice(102));
+
+  // Same seam, but the first intermediate was evicted too: the endpoint
+  // is before the window and nothing is dropped.
+  const evictedStart = new TerminalManager.BoundedTerminalHistory(5_000, "", 16_387);
+  evictedStart.append("p".repeat(100) + "\x1b))" + ")".repeat(16_382) + "\x01KEEP");
+  expect(evictedStart.value()).toBe(")".repeat(16_382) + "\x01KEEP");
+  expect(evictedStart.value().length).toBe(16_387);
+});
+
+it("never joins the retained window while aligning a sequence boundary", () => {
+  // Performance contract: boundary alignment scans chunks in place —
+  // value() must not be called from the append/trim path at all.
+  const history = new TerminalManager.BoundedTerminalHistory(5_000, "", 8 * 1024);
+  let valueCalls = 0;
+  const value = history.value.bind(history);
+  history.value = () => {
+    valueCalls += 1;
+    return value();
+  };
+  for (let index = 0; index < 64; index += 1) {
+    history.append("\x1b[31m" + "x".repeat(508));
+  }
+  expect(valueCalls).toBe(0);
+  expect(history.value().length).toBeLessThanOrEqual(8 * 1024);
+});
+
+// The sanitizer's own parse as a span oracle: every sequence's extent per
+// sanitizeTerminalHistoryChunk's grammar, using its actual helpers.
+function sequenceSpans(text: string): Array<readonly [number, number]> {
+  const spans: Array<readonly [number, number]> = [];
+  let index = 0;
+  while (index < text.length) {
+    const codePoint = text.charCodeAt(index);
+    let end: number | null = null;
+    if (codePoint === 0x1b) {
+      const next = text.charCodeAt(index + 1);
+      if (Number.isNaN(next)) end = null;
+      else if (next === 0x5b) {
+        let cursor = index + 2;
+        while (cursor < text.length && !TerminalManager.isCsiFinalByte(text.charCodeAt(cursor)))
+          cursor += 1;
+        end = cursor < text.length ? cursor + 1 : null;
+      } else if (next === 0x5d || next === 0x50 || next === 0x5e || next === 0x5f) {
+        end = TerminalManager.findStringTerminatorIndex(text, index + 2);
+      } else {
+        end = TerminalManager.findEscapeSequenceEndIndex(text, index + 1);
+      }
+    } else if (codePoint === 0x9b) {
+      let cursor = index + 1;
+      while (cursor < text.length && !TerminalManager.isCsiFinalByte(text.charCodeAt(cursor)))
+        cursor += 1;
+      end = cursor < text.length ? cursor + 1 : null;
+    } else if (
+      codePoint === 0x9d ||
+      codePoint === 0x90 ||
+      codePoint === 0x9e ||
+      codePoint === 0x9f
+    ) {
+      end = TerminalManager.findStringTerminatorIndex(text, index + 1);
+    }
+    if (
+      end !== null ||
+      codePoint === 0x1b ||
+      codePoint === 0x9b ||
+      codePoint === 0x9d ||
+      codePoint === 0x90 ||
+      codePoint === 0x9e ||
+      codePoint === 0x9f
+    ) {
+      // An unterminated sequence runs to the end of the input, like the
+      // sanitizer's pendingControlSequence.
+      const spanEnd = end ?? text.length;
+      spans.push([index, spanEnd]);
+      index = spanEnd;
+      continue;
+    }
+    index += 1;
+  }
+  return spans;
+}
+
+it("boundary tracking drops exactly what the sanitizer grammar marks as sequence", () => {
+  const texts = [
+    "plain text only",
+    "a\x1b[31mb",
+    "a\x1b[6nb",
+    "a\x9b6nb",
+    "unterminated\x1b[12",
+    "x\x1b]10;?y\x07z",
+    "x\x1b]10;?y\x1b\\z",
+    "x\x1b]10;?y\x9cz",
+    "x\x1bP+q544e\x1b\\z",
+    "x\x9d10;?y\x07z",
+    "x\x1b]a\x1bb\x07z",
+    "x\x1b]a\x1b\x07z",
+    "x\x1b]a\x1b\x9cz",
+    "x\x1b]a\x1b\x1b\\z",
+    "x\x1b]never ends",
+    "x\x1b]ends in esc\x1b",
+    "a\x1bZb",
+    "a\x1b)0b",
+    "a\x1b))\x01b",
+    "a\x1b))\x9b6nb",
+    "a\x1b[6nb\x1b]x\x07c\x1bZd\x1b",
+    "x\n\x1b[6\nnY",
+  ];
+  for (const text of texts) {
+    const spans = sequenceSpans(text);
+    for (let cut = 0; cut <= text.length; cut += 1) {
+      const inside = spans.find(([start, end]) => start < cut && cut < end);
+      const suffix = text.slice(cut);
+      const mid = TerminalManager.scanTerminalSequenceState(text.slice(0, cut), "none");
+      const actualDrop =
+        mid.state === "none"
+          ? 0
+          : (TerminalManager.scanTerminalSequenceState(suffix, mid.state).endIndex ??
+            suffix.length);
+      const expectedDrop = inside === undefined ? 0 : inside[1] - cut;
+      expect(actualDrop, `${JSON.stringify(text)} cut=${cut} spans=${JSON.stringify(spans)}`).toBe(
+        expectedDrop,
+      );
     }
   }
 });
@@ -445,6 +954,551 @@ it.layer(
       assert.equal(snapshot.snapshot.threadId, "thread-1");
       assert.equal(snapshot.snapshot.terminalId, DEFAULT_TERMINAL_ID);
       expect(ptyAdapter.spawnInputs).toHaveLength(1);
+    }),
+  );
+
+  it.effect("observes an existing terminal with an acquired snapshot boundary", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const outputSeen = yield* Deferred.make<void>();
+      const events: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const unsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => {
+          events.push(event);
+          if (event.type === "output") Deferred.doneUnsafe(outputSeen, Effect.void);
+        },
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      expect(events[0]?.type).toBe("snapshot");
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      ptyAdapter.processes[0]!.emitData("after snapshot");
+      yield* Deferred.await(outputSeen);
+      expect(events.filter((event) => event.type === "output")).toHaveLength(1);
+      expect(events.find((event) => event.type === "output")).toMatchObject({
+        data: "after snapshot",
+      });
+      expect(ptyAdapter.processes[0]!.writes).toHaveLength(0);
+      expect(ptyAdapter.processes[0]!.resizeCalls).toHaveLength(0);
+    }),
+  );
+
+  it.effect("returns only an exited snapshot and emits clear/close lifecycle observations", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const exited = yield* Deferred.make<void>();
+      const legacyUnsubscribe = yield* manager.subscribe((event) =>
+        event.type === "exited"
+          ? Effect.sync(() => {
+              Deferred.doneUnsafe(exited, Effect.void);
+            })
+          : Effect.void,
+      );
+      ptyAdapter.processes[0]!.emitExit({ exitCode: 0, signal: 0 });
+      yield* Deferred.await(exited);
+      yield* Effect.sync(legacyUnsubscribe);
+
+      const exitedEvents: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const exitedUnsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => exitedEvents.push(event),
+      );
+      yield* Effect.sync(exitedUnsubscribe);
+      expect(exitedEvents).toHaveLength(2);
+      expect(exitedEvents[0]).toMatchObject({ type: "snapshot", snapshot: { status: "exited" } });
+      expect(exitedEvents[1]).toMatchObject({ type: "exited" });
+
+      yield* manager.open(openInput());
+      const cleared = yield* Deferred.make<void>();
+      const closed = yield* Deferred.make<void>();
+      const events: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const unsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => {
+          events.push(event);
+          if (event.type === "cleared") Deferred.doneUnsafe(cleared, Effect.void);
+          if (event.type === "closed") Deferred.doneUnsafe(closed, Effect.void);
+        },
+      );
+      yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      yield* Deferred.await(cleared);
+      yield* manager.close({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      yield* Deferred.await(closed);
+      yield* Effect.sync(unsubscribe);
+      expect(events.map((event) => event.type)).toEqual(["snapshot", "cleared", "closed"]);
+    }),
+  );
+
+  it.effect("bumps the snapshot clear generation across a history clear", () =>
+    Effect.gen(function* () {
+      const { manager } = yield* createManager();
+      yield* manager.open(openInput());
+      const snapshotGeneration = () => {
+        const events: TerminalManager.TerminalOutputObservationEvent[] = [];
+        return Effect.gen(function* () {
+          const unsubscribe = yield* manager.subscribeOutput(
+            { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+            (event) => events.push(event),
+          );
+          yield* Effect.sync(unsubscribe);
+          const snapshot = events.find((event) => event.type === "snapshot");
+          return snapshot?.type === "snapshot" ? snapshot.clearGeneration : -1;
+        });
+      };
+      expect(yield* snapshotGeneration()).toBe(0);
+      yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      expect(yield* snapshotGeneration()).toBe(1);
+    }),
+  );
+
+  it.effect("reports the absolute retained-window origin across line eviction", () =>
+    Effect.gen(function* () {
+      // 5-line limit: a burst of short lines evicts the head while the
+      // retained tail still fits under the snapshot byte cap, so the
+      // snapshot arrives untruncated — only contentsUnitStart reveals
+      // that units were dropped from the front of the window.
+      const { manager, ptyAdapter } = yield* createManager(5);
+      yield* manager.open(openInput());
+      const drained = yield* Deferred.make<void>();
+      const drainUnsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => {
+          if (event.type === "output" && event.data.endsWith("last\n"))
+            Deferred.doneUnsafe(drained, Effect.void);
+        },
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(drainUnsubscribe));
+      ptyAdapter.processes[0]!.emitData("q\n" + "x\n".repeat(10) + "last\n");
+      yield* Deferred.await(drained);
+
+      const events: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const unsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => events.push(event),
+      );
+      yield* Effect.sync(unsubscribe);
+      const snapshot = events.find((event) => event.type === "snapshot");
+      if (!snapshot || snapshot.type !== "snapshot") return assert.fail("missing snapshot");
+      // totalUnits = 2 + 20 + 5 = 27; retained tail = last 5 lines.
+      const expected = 27 - snapshot.snapshot.contents.length;
+      expect(snapshot.contentsUnitStart).toBe(expected);
+      expect(snapshot.contentsUnitStart).toBeGreaterThan(0);
+      expect(snapshot.clearGeneration).toBe(0);
+      expect(snapshot.snapshot.truncated).toBe(false);
+      expect(snapshot.snapshot.contents.startsWith("q")).toBe(false);
+    }),
+  );
+
+  it.effect("a history clear restarts the retained window at unit origin 0", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5);
+      yield* manager.open(openInput());
+      const cleared = yield* Deferred.make<void>();
+      const events: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const unsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => {
+          events.push(event);
+          if (event.type === "cleared") Deferred.doneUnsafe(cleared, Effect.void);
+        },
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      ptyAdapter.processes[0]!.emitData("before\n");
+      yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      yield* Deferred.await(cleared);
+      const clearedEvent = events.find((event) => event.type === "cleared");
+      expect(clearedEvent).toMatchObject({ type: "cleared", clearGeneration: 1 });
+
+      const drained = yield* Deferred.make<void>();
+      const drainUnsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => {
+          if (event.type === "output" && event.data.endsWith("after\n"))
+            Deferred.doneUnsafe(drained, Effect.void);
+        },
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(drainUnsubscribe));
+      ptyAdapter.processes[0]!.emitData("after\n");
+      yield* Deferred.await(drained);
+
+      const post: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const postUnsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => post.push(event),
+      );
+      yield* Effect.sync(postUnsubscribe);
+      const snapshot = post.find((event) => event.type === "snapshot");
+      if (!snapshot || snapshot.type !== "snapshot") return assert.fail("missing snapshot");
+      expect(snapshot.contentsUnitStart).toBe(0);
+      expect(snapshot.clearGeneration).toBe(1);
+      expect(snapshot.snapshot.contents).toBe("after\n");
+    }),
+  );
+
+  it.effect("retains raw output so evicted-byte provenance stays absolute", () =>
+    Effect.gen(function* () {
+      // The sanitizer removes the answered CSI 6n from display text but the
+      // retained window — and therefore contentsUnitStart — must count the
+      // raw delivered stream. With a 5-line cap the eviction burst drops the
+      // first line: raw origin moves to 7 (the sanitized view would report
+      // 3, which is exactly the coordinate confusion a sanitized view
+      // would create).
+      const { manager, ptyAdapter } = yield* createManager(5);
+      yield* manager.open(openInput());
+      ptyAdapter.processes[0]!.emitData("\x1b[6n");
+      ptyAdapter.processes[0]!.emitData("\x1bZ\n");
+      // Attach-path history is the sanitized boundary: the answered query
+      // is gone from the replay text while the raw window keeps it.
+      const attach = yield* manager.open(openInput());
+      expect(attach.history).toBe("\x1bZ\n");
+
+      ptyAdapter.processes[0]!.emitData("x\x1bZ\n" + "z\n".repeat(4));
+
+      const events: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const unsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => events.push(event),
+      );
+      yield* Effect.sync(unsubscribe);
+      const snapshot = events.find((event) => event.type === "snapshot");
+      if (!snapshot || snapshot.type !== "snapshot") return assert.fail("missing snapshot");
+      expect(snapshot.contentsUnitStart).toBe(7);
+      expect(snapshot.clearGeneration).toBe(0);
+      expect(snapshot.snapshot.truncated).toBe(false);
+      expect(snapshot.snapshot.contents).toBe("x\x1bZ\n" + "z\n".repeat(4));
+    }),
+  );
+
+  it.effect(
+    "keeps an incomplete control inside retained contents across the subscription boundary",
+    () =>
+      Effect.gen(function* () {
+        // The subscription lands between the two halves of the bracketed-
+        // paste setter. The prefix is retained inside the window rather than
+        // held outside it, so the snapshot's coverage claim includes it and
+        // the live stream continues the sequence.
+        const { manager, ptyAdapter } = yield* createManager();
+        yield* manager.open(openInput());
+        ptyAdapter.processes[0]!.emitData("\x1b[?2004");
+
+        const events: TerminalManager.TerminalOutputObservationEvent[] = [];
+        const unsubscribe = yield* manager.subscribeOutput(
+          { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+          (event) => events.push(event),
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+        const snapshot = events.find((event) => event.type === "snapshot");
+        if (!snapshot || snapshot.type !== "snapshot") return assert.fail("missing snapshot");
+        expect(snapshot.contentsUnitStart).toBe(0);
+        expect(snapshot.clearGeneration).toBe(0);
+        expect(snapshot.snapshot.truncated).toBe(false);
+        expect(snapshot.snapshot.contents).toBe("\x1b[?2004");
+
+        ptyAdapter.processes[0]!.emitData("h");
+        yield* waitFor(
+          Effect.sync(() => events.some((event) => event.type === "output" && event.data === "h")),
+        );
+      }),
+  );
+
+  it.effect("resets the clear generation for the next incarnation", () =>
+    Effect.gen(function* () {
+      // clearGeneration is scoped to the stream epoch: a restart opens a new
+      // incarnation whose retained window starts empty at generation 0.
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      ptyAdapter.processes[0]!.emitData("before\n");
+      yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+
+      const before: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const unsubBefore = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => before.push(event),
+      );
+      yield* Effect.sync(unsubBefore);
+      const epochOne = before.find((event) => event.type === "snapshot");
+      if (!epochOne || epochOne.type !== "snapshot") return assert.fail("missing snapshot");
+      expect(epochOne.clearGeneration).toBe(1);
+
+      yield* manager.restart(restartInput());
+
+      const events: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const unsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => events.push(event),
+      );
+      yield* Effect.sync(unsubscribe);
+      const snapshot = events.find((event) => event.type === "snapshot");
+      if (!snapshot || snapshot.type !== "snapshot") return assert.fail("missing snapshot");
+      expect(snapshot.sourceEpoch).not.toBe(epochOne.sourceEpoch);
+      expect(snapshot.clearGeneration).toBe(0);
+      expect(snapshot.contentsUnitStart).toBe(0);
+      expect(snapshot.snapshot.contents).toBe("");
+    }),
+  );
+
+  // Wire-frame contract for detached replay: the exact output-events frames
+  // a terminal client consumes in the evicted-query and split-mode-setter
+  // scenarios. Every subscription opens with a snapshot, identity
+  // (streamEpoch) survives resubscription within one incarnation, and raw
+  // retained-window provenance (contentsUnitStart) counts the delivered
+  // stream — including bytes the sanitized attach view removes.
+  for (const gapQuery of [true, false]) {
+    it.effect(
+      `pins the output-events wire frames for an evicted query's dead claim (gap tail ${gapQuery ? "queries" : "inert"})`,
+      () =>
+        Effect.gen(function* () {
+          const { manager, ptyAdapter } = yield* createManager(5);
+          yield* manager.open(openInput());
+          const provider = outputEventsProvider(manager);
+
+          const subscribe = (abort: AbortController) =>
+            provider.subscribe!(
+              "subscribe",
+              { terminalId: DEFAULT_TERMINAL_ID },
+              outputEventsContext,
+              abort.signal,
+              outputEventsMetadata,
+            )[Symbol.asyncIterator]();
+
+          const abort1 = new AbortController();
+          yield* Effect.addFinalizer(() => Effect.sync(() => abort1.abort()));
+          const stream1 = subscribe(abort1);
+          const first = yield* nextOutputEventFrame(stream1);
+          ptyAdapter.processes[0]!.emitData("\x1b[6n");
+          const query = yield* nextOutputEventFrame(stream1);
+          ptyAdapter.processes[0]!.emitData("\x1bZ\n");
+          const lookalike = yield* nextOutputEventFrame(stream1);
+          abort1.abort();
+
+          // Disconnected: the burst evicts the line holding the answered query.
+          // The retained tail may carry a new gap query or be inert.
+          const gapTail = (gapQuery ? "x\x1bZ\n" : "xyz\n") + "z\n".repeat(4);
+          ptyAdapter.processes[0]!.emitData(gapTail);
+
+          const abort2 = new AbortController();
+          yield* Effect.addFinalizer(() => Effect.sync(() => abort2.abort()));
+          const stream2 = subscribe(abort2);
+          const resnapshot = yield* nextOutputEventFrame(stream2);
+
+          // Frame sequence: every subscription opens with a snapshot, and live
+          // output arrives as data frames after it.
+          expect(first.value.type).toBe("snapshot");
+          expect(query.value.type).toBe("data");
+          expect(lookalike.value.type).toBe("data");
+          expect(resnapshot.value.type).toBe("snapshot");
+
+          // Identity: one incarnation across both subscriptions.
+          const epoch = resnapshot.value.value.streamEpoch;
+          expect(typeof epoch).toBe("string");
+          for (const frame of [first, query, lookalike, resnapshot]) {
+            expect(frame.value.value.terminalId).toBe(DEFAULT_TERMINAL_ID);
+            expect(frame.value.value.streamEpoch).toBe(epoch);
+          }
+
+          // First snapshot: empty window at raw origin 0.
+          expect(first.value.value).toMatchObject({
+            kind: "snapshot",
+            status: "running",
+            contents: "",
+            retainedByteLength: 0,
+            truncated: false,
+            clearGeneration: 0,
+            contentsUnitStart: 0,
+            boundarySequence: 1,
+          });
+
+          // The query and the retained lookalike pass through unsanitized.
+          expect(query.value.value).toMatchObject({
+            kind: "output",
+            data: "\x1b[6n",
+            sequence: 2,
+            chunkIndex: 0,
+            chunkCount: 1,
+          });
+          expect(lookalike.value.value).toMatchObject({
+            kind: "output",
+            data: "\x1bZ\n",
+            sequence: 3,
+            chunkIndex: 0,
+            chunkCount: 1,
+          });
+
+          // Resnapshot: raw provenance. The answered query's bytes were evicted
+          // but still counted — the window starts at unit 7, not the sanitized
+          // view's 3, so a replayed claim anchored before the window is dead.
+          expect(resnapshot.value.value).toMatchObject({
+            kind: "snapshot",
+            status: "running",
+            contents: gapTail,
+            truncated: false,
+            clearGeneration: 0,
+            contentsUnitStart: 7,
+            retainedByteLength: 12,
+            boundarySequence: 4,
+          });
+        }),
+    );
+  }
+
+  it.effect("pins the output-events wire frames across a subscription-split mode setter", () =>
+    Effect.gen(function* () {
+      // "ESC[?2004" is emitted before the subscription exists; "h" completes
+      // it live. The snapshot must carry the raw prefix — coverage includes
+      // it — so a client that mounts mid-sequence continues it rather than
+      // restarting its parser state.
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const provider = outputEventsProvider(manager);
+
+      ptyAdapter.processes[0]!.emitData("\x1b[?2004");
+
+      const abort = new AbortController();
+      yield* Effect.addFinalizer(() => Effect.sync(() => abort.abort()));
+      const subscription = provider.subscribe!(
+        "subscribe",
+        { terminalId: DEFAULT_TERMINAL_ID },
+        outputEventsContext,
+        abort.signal,
+        outputEventsMetadata,
+      );
+      const stream = subscription[Symbol.asyncIterator]();
+      const snapshot = yield* nextOutputEventFrame(stream);
+      ptyAdapter.processes[0]!.emitData("h");
+      const live = yield* nextOutputEventFrame(stream);
+
+      expect(snapshot.value.type).toBe("snapshot");
+      expect(live.value.type).toBe("data");
+      expect(snapshot.value.value.terminalId).toBe(DEFAULT_TERMINAL_ID);
+      expect(snapshot.value.value.streamEpoch).toBe(live.value.value.streamEpoch);
+      expect(snapshot.value.value).toMatchObject({
+        kind: "snapshot",
+        status: "running",
+        contents: "\x1b[?2004",
+        truncated: false,
+        clearGeneration: 0,
+        contentsUnitStart: 0,
+        retainedByteLength: 7,
+        boundarySequence: 2,
+      });
+      expect(live.value.value).toMatchObject({
+        kind: "output",
+        data: "h",
+        sequence: 3,
+        chunkIndex: 0,
+        chunkCount: 1,
+      });
+    }),
+  );
+
+  it.effect("terminates an old observation on reincarnation without accepting old identity", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const closed = yield* Deferred.make<void>();
+      const events: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const unsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => {
+          events.push(event);
+          if (event.type === "closed") Deferred.doneUnsafe(closed, Effect.void);
+        },
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      yield* manager.restart(restartInput());
+      yield* Deferred.await(closed);
+      expect(events.at(-1)).toMatchObject({ type: "closed", reason: "identity-changed" });
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+    }),
+  );
+
+  it.effect("does not acquire a new observation while restart still owns the thread lock", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const gate = yield* Deferred.make<void>();
+      const spawnStarted = yield* Deferred.make<void>();
+      ptyAdapter.spawnGate = gate;
+      ptyAdapter.spawnStarted = spawnStarted;
+
+      const restartFiber = yield* manager.restart(restartInput()).pipe(Effect.forkChild);
+      yield* Deferred.await(spawnStarted);
+      const snapshotSeen = yield* Deferred.make<void>();
+      const subscribeFiber = yield* Effect.forkChild(
+        manager.subscribeOutput(
+          { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+          (event) => {
+            if (event.type === "snapshot") Deferred.doneUnsafe(snapshotSeen, Effect.void);
+          },
+        ),
+      );
+      expect(Option.isNone(yield* Deferred.poll(snapshotSeen))).toBe(true);
+
+      yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.join(restartFiber);
+      const unsubscribe = yield* Fiber.join(subscribeFiber);
+      yield* Effect.sync(unsubscribe);
+      expect(Option.isSome(yield* Deferred.poll(snapshotSeen))).toBe(true);
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+    }),
+  );
+
+  it.effect("ignores delayed old-source exit publication after reincarnation", () =>
+    Effect.gen(function* () {
+      const exitUnregisterEntered = yield* Deferred.make<void>();
+      const releaseExitUnregister = yield* Deferred.make<void>();
+      const oldExitPublished = yield* Deferred.make<void>();
+      let holdFirstExitUnregister = true;
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        unregisterTerminal: () => {
+          if (!holdFirstExitUnregister) return Effect.void;
+          holdFirstExitUnregister = false;
+          return Effect.sync(() => {
+            Deferred.doneUnsafe(exitUnregisterEntered, Effect.void);
+          }).pipe(Effect.andThen(Deferred.await(releaseExitUnregister)));
+        },
+      });
+      const legacyUnsubscribe = yield* manager.subscribe((event) =>
+        event.type === "exited"
+          ? Effect.sync(() => {
+              Deferred.doneUnsafe(oldExitPublished, Effect.void);
+            })
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(legacyUnsubscribe));
+
+      yield* manager.open(openInput());
+      const oldEvents: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const oldUnsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => oldEvents.push(event),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(oldUnsubscribe));
+      const oldEpoch = oldEvents[0]?.sourceEpoch;
+      const oldProcess = ptyAdapter.processes[0]!;
+      oldProcess.emitExit({ exitCode: 17, signal: 0 });
+      yield* Deferred.await(exitUnregisterEntered);
+
+      yield* manager.restart(restartInput());
+      const freshEvents: TerminalManager.TerminalOutputObservationEvent[] = [];
+      const freshUnsubscribe = yield* manager.subscribeOutput(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) => freshEvents.push(event),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(freshUnsubscribe));
+      const freshEpoch = freshEvents[0]?.sourceEpoch;
+      expect(freshEvents[0]?.type).toBe("snapshot");
+      expect(freshEpoch).toBeDefined();
+      expect(freshEpoch).not.toBe(oldEpoch);
+
+      yield* Deferred.succeed(releaseExitUnregister, undefined);
+      yield* Deferred.await(oldExitPublished);
+      expect(freshEvents).toHaveLength(1);
+      expect(freshEvents[0]).toMatchObject({ type: "snapshot", sourceEpoch: freshEpoch });
     }),
   );
 
@@ -1343,7 +2397,7 @@ it.layer(
       expect(events.filter((event) => event.type === "output").map((event) => event.data)).toEqual(
         writes,
       );
-      const snapshot = events.filter((event) => event.type === "snapshot").at(-1)?.snapshot;
+      const snapshot = events.findLast((event) => event.type === "snapshot")?.snapshot;
       expect(snapshot?.history).toBe("aa😀\rEND");
       expect(snapshot?.sequence).toBe(reopened.sequence);
     }),
@@ -2621,5 +3675,194 @@ it.layer(
       assert.equal(process.killSignals[0], "SIGTERM");
       expect(process.killSignals).toContain("SIGKILL");
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+  it.effect("reads existing output without flattening or changing the PTY", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      expect(yield* manager.readOutput({ threadId: "thread-1", terminalId: "missing" })).toBeNull();
+      expect(ptyAdapter.spawnInputs).toHaveLength(0);
+
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+      const retainedText = "a".repeat(20_000) + "tail😀";
+      const receipt = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output"
+          ? Deferred.succeed(receipt, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      process.emitData(retainedText);
+      yield* Deferred.await(receipt);
+      unsubscribe();
+      const originalValue = TerminalManager.BoundedTerminalHistory.prototype.value;
+      TerminalManager.BoundedTerminalHistory.prototype.value = () => {
+        throw new Error("readOutput must not flatten retained history");
+      };
+      try {
+        const output = yield* manager.readOutput({
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+        });
+        expect(output).toMatchObject({
+          terminalId: DEFAULT_TERMINAL_ID,
+          status: "running",
+          contents: "a".repeat(8_184) + "tail😀",
+          retainedByteLength: Buffer.byteLength(retainedText),
+          truncated: true,
+        });
+      } finally {
+        TerminalManager.BoundedTerminalHistory.prototype.value = originalValue;
+      }
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(process.resizeCalls).toHaveLength(0);
+    }),
+  );
+
+  it.effect("reads running and exited retained output without restart", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+      const outputReceipt = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output"
+          ? Deferred.succeed(outputReceipt, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      process.emitData("old😀");
+      yield* Deferred.await(outputReceipt);
+      unsubscribe();
+      const running = yield* manager.readOutput({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+      });
+      expect(running).toMatchObject({
+        status: "running",
+        contents: "old😀",
+        retainedByteLength: Buffer.byteLength("old😀"),
+        truncated: false,
+      });
+      const exitedReceipt = yield* Deferred.make<void>();
+      const exitUnsubscribe = yield* manager.subscribe((event) =>
+        event.type === "exited"
+          ? Deferred.succeed(exitedReceipt, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      process.emitExit({ exitCode: 7, signal: 9 });
+      yield* Deferred.await(exitedReceipt);
+      exitUnsubscribe();
+      const exited = yield* manager.readOutput({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+      });
+      expect(exited).toMatchObject({ status: "exited", contents: "old😀" });
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(process.resizeCalls).toHaveLength(0);
+    }),
+  );
+
+  it.effect("distinguishes empty existing output from missing and reopened output", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const firstProcess = ptyAdapter.processes[0];
+      expect(firstProcess).toBeDefined();
+      if (!firstProcess) return;
+      const beforeClearReceipt = yield* Deferred.make<void>();
+      const beforeClearUnsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output"
+          ? Deferred.succeed(beforeClearReceipt, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      firstProcess.emitData("before-clear");
+      yield* Deferred.await(beforeClearReceipt);
+      beforeClearUnsubscribe();
+      expect(
+        yield* manager.readOutput({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID }),
+      ).toMatchObject({
+        contents: "before-clear",
+        retainedByteLength: Buffer.byteLength("before-clear"),
+        truncated: false,
+      });
+      yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      expect(
+        yield* manager.readOutput({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID }),
+      ).toMatchObject({
+        contents: "",
+        retainedByteLength: 0,
+        truncated: false,
+      });
+      yield* manager.close({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      expect(
+        yield* manager.readOutput({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID }),
+      ).toBeNull();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[1];
+      expect(process).toBeDefined();
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+      if (!process) return;
+      const receipt = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output"
+          ? Deferred.succeed(receipt, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      process.emitData("reopened");
+      yield* Deferred.await(receipt);
+      unsubscribe();
+      expect(
+        yield* manager.readOutput({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID }),
+      ).toMatchObject({
+        contents: "reopened",
+        status: "running",
+      });
+    }),
+  );
+
+  it.effect("inspects missing, running, and exited sessions without creating or resizing", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      expect(yield* manager.inspect({ threadId: "thread-1", terminalId: "missing" })).toBeNull();
+      expect(ptyAdapter.spawnInputs).toHaveLength(0);
+      const snapshot = yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+      const spawnCount = ptyAdapter.spawnInputs.length;
+      const running = yield* manager.inspect({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+      });
+      expect(running).toMatchObject({
+        terminalId: DEFAULT_TERMINAL_ID,
+        status: "running",
+        cwd: snapshot.cwd,
+        worktreePath: null,
+      });
+      expect(ptyAdapter.spawnInputs).toHaveLength(spawnCount);
+      expect(process.resizeCalls).toHaveLength(0);
+      const exitedReceipt = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "exited" &&
+        event.threadId === "thread-1" &&
+        event.terminalId === DEFAULT_TERMINAL_ID
+          ? Deferred.succeed(exitedReceipt, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      process.emitExit({ exitCode: 7, signal: 9 });
+      yield* Deferred.await(exitedReceipt);
+      unsubscribe();
+      const exited = yield* manager.inspect({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+      });
+      expect(exited).toMatchObject({ status: "exited", exitCode: 7, exitSignal: 9 });
+      expect(ptyAdapter.spawnInputs).toHaveLength(spawnCount);
+      expect(process.resizeCalls).toHaveLength(0);
+    }),
   );
 });

@@ -15,12 +15,13 @@
   ],
   "type": "module",
   "scripts": {
-    "dev": "node --watch src/bin.ts",
-    "build:bundle": "vp pack",
+    "dev": "vp run build:extensions && node --watch src/bin.ts",
+    "build:bundle": "vp run build:extensions && vp pack",
     "build:exe": "node scripts/cli.ts build-exe",
     "start": "node dist/bin.mjs",
-    "typecheck": "tsc --noEmit",
-    "test": "vp test run"
+    "typecheck": "vp run build:extensions && tsc --noEmit",
+    "test": "vp run build:extensions && vp test run",
+    "build:extensions": "vp run --filter @t3tools/extension-runtime build"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.276",
@@ -39,13 +40,17 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/extension-runtime": "workspace:*",
+    "@t3tools/extension-sdk": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/ssh": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
     "@t3tools/web": "workspace:*",
     "@types/node": "catalog:",
     "@types/yauzl": "^3.4.0",
+    "ajv": "8.20.0",
     "effect-acp": "workspace:*",
     "effect-codex-app-server": "workspace:*",
     "vite-plus": "catalog:"

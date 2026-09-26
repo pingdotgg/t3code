@@ -399,6 +399,77 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
     }),
   );
 
+  it.effect("listDetails separates dispatch requests from engine reports", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+
+      const opened = yield* manager.open({ threadId, url: "http://localhost:5173" });
+      const afterOpen = yield* manager.listDetails({ threadId });
+      const openDetail = afterOpen.sessions.find((s) => s.snapshot.tabId === opened.tabId);
+      // Dispatch-side write: a request revision exists, no engine revision.
+      expect(openDetail?.navigation.requestedUrl).toBe("http://localhost:5173/");
+      expect(openDetail?.navigation.requestRevision).toBeGreaterThan(0);
+      expect(openDetail?.navigation.engineRevision).toBeNull();
+
+      yield* manager.reportStatus({
+        threadId,
+        tabId: opened.tabId,
+        navStatus: { _tag: "Success", url: "http://localhost:5173/", title: "Dev" },
+        canGoBack: false,
+        canGoForward: false,
+      });
+      const afterReport = yield* manager.listDetails({ threadId });
+      const reported = afterReport.sessions.find((s) => s.snapshot.tabId === opened.tabId);
+      // Engine-side write: engineRevision lands at the report's revision and
+      // the requested URL survives.
+      expect(reported?.navigation.engineRevision).toBe(afterReport.revision);
+      expect(reported?.navigation.requestedUrl).toBe("http://localhost:5173/");
+
+      // A newer dispatch request moves requestRevision ahead of the engine
+      // again — provenance, not navStatus, records who wrote last.
+      yield* manager.navigate({
+        threadId,
+        tabId: opened.tabId,
+        url: "http://localhost:5173/next",
+      });
+      const afterNavigate = yield* manager.listDetails({ threadId });
+      const pending = afterNavigate.sessions.find((s) => s.snapshot.tabId === opened.tabId);
+      expect(pending?.navigation.requestedUrl).toBe("http://localhost:5173/next");
+      expect(pending?.navigation.requestRevision).toBe(afterNavigate.revision);
+      expect(pending!.navigation.requestRevision!).toBeGreaterThan(
+        pending!.navigation.engineRevision!,
+      );
+    }),
+  );
+
+  it.effect("subscribeDetails pairs each event with its post-commit detail", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const subscription = yield* manager.subscribeDetails;
+
+      const opened = yield* manager.open({ threadId, url: "http://localhost:5173" });
+      yield* manager.reportStatus({
+        threadId,
+        tabId: opened.tabId,
+        navStatus: { _tag: "Success", url: "http://localhost:5173/", title: "Dev" },
+        canGoBack: false,
+        canGoForward: false,
+      });
+      yield* manager.close({ threadId, tabId: opened.tabId });
+
+      const items = yield* PubSub.takeUpTo(subscription, DRAIN_LIMIT);
+      expect(items.map((item) => item.event.type)).toEqual(["opened", "navigated", "closed"]);
+      const openedItem = items[0]!;
+      expect(openedItem.detail?.navigation.requestRevision).toBe(openedItem.event.revision);
+      const navigatedItem = items[1]!;
+      expect(navigatedItem.detail?.navigation.engineRevision).toBe(navigatedItem.event.revision);
+      // Removal publishes a null detail so stale projections cannot be read.
+      expect(items[2]!.detail).toBeNull();
+    }),
+  );
+
   it.effect("multiple subscribers receive every event independently", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();

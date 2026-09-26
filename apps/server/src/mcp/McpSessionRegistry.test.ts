@@ -6,6 +6,7 @@ import { HttpServer } from "effect/unstable/http";
 import * as NetAddress from "effect/unstable/net/NetAddress";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { McpInvocationContext, requireMcpCapability } from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -160,6 +161,31 @@ it.effect("does not keep credentials of other threads alive", () =>
     yield* registry.touch(ThreadId.make("thread-unrelated"));
     timestamp += 2;
 
+    expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
+it.effect("extensions-only issued credentials deny preview and are revoked together", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1000);
+    const threadId = ThreadId.make("extensions-only");
+    const issued = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["extensions"]),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    const scope = yield* registry.resolve(token);
+    expect(scope?.capabilities.has("extensions")).toBe(true);
+    expect(scope?.capabilities.has("preview")).toBe(false);
+    expect([...issued.config.capabilities].sort()).toEqual(["extensions", "pull-requests"]);
+    if (!scope) return yield* Effect.die("Issued credential missing");
+    const denial = yield* requireMcpCapability("preview").pipe(
+      Effect.provideService(McpInvocationContext, scope),
+      Effect.flip,
+    );
+    expect(denial._tag).toBe("PreviewAutomationUnavailableError");
+    yield* registry.revokeThread(threadId);
     expect(yield* registry.resolve(token)).toBeUndefined();
   }),
 );

@@ -118,6 +118,25 @@ export class WorkspaceFileSystem extends Context.Service<
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
     /**
+     * The byte-level core of `readFile` at a caller-chosen bound: the same
+     * resolution and open/stat/read discipline, but returning the undecoded
+     * prefix bytes so callers can hash or chunk them. `truncated` reports the
+     * true size exceeding `maxBytes`; no binary/NUL check runs here — text
+     * callers apply it to the delivered prefix exactly like `readFile` does.
+     */
+    readonly readFileBytes: (
+      input: ProjectReadFileInput & { readonly maxBytes: number },
+    ) => Effect.Effect<
+      {
+        readonly relativePath: string;
+        readonly resolvedPath: string;
+        readonly bytes: Uint8Array;
+        readonly byteLength: number;
+        readonly truncated: boolean;
+      },
+      WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+    >;
+    /**
      * Write a file relative to the workspace root.
      *
      * Creates parent directories as needed and rejects paths that escape the
@@ -209,8 +228,8 @@ export const make = Effect.gen(function* () {
     return { relativePath: target.relativePath, realTargetPath };
   });
 
-  const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
-    "WorkspaceFileSystem.readFile",
+  const readFileBytes: WorkspaceFileSystem["Service"]["readFileBytes"] = Effect.fn(
+    "WorkspaceFileSystem.readFileBytes",
   )(function* (input) {
     const target = yield* resolveReadTarget(input);
     const realTargetPath = target.realTargetPath;
@@ -256,34 +275,33 @@ export const make = Effect.gen(function* () {
             });
           }
 
-          const bytesToRead = Math.min(stat.size, PROJECT_READ_FILE_MAX_BYTES);
+          const bytesToRead = Math.min(stat.size, input.maxBytes);
           const buffer = Buffer.alloc(bytesToRead);
-          const { bytesRead } = yield* Effect.tryPromise({
-            try: () => handle.read(buffer, 0, bytesToRead, 0),
-            catch: (cause) =>
-              new WorkspaceFileSystemOperationError({
-                workspaceRoot: input.cwd,
-                relativePath: input.relativePath,
-                resolvedPath: realTargetPath,
-                operationPath: realTargetPath,
-                operation: "read",
-                cause,
-              }),
-          });
-          const fileBytes = buffer.subarray(0, bytesRead);
-          if (fileBytes.includes(0)) {
-            return yield* new WorkspaceBinaryFileError({
-              workspaceRoot: input.cwd,
-              relativePath: input.relativePath,
-              resolvedPath: realTargetPath,
+          let offset = 0;
+          while (offset < bytesToRead) {
+            const { bytesRead } = yield* Effect.tryPromise({
+              try: () => handle.read(buffer, offset, bytesToRead - offset, offset),
+              catch: (cause) =>
+                new WorkspaceFileSystemOperationError({
+                  workspaceRoot: input.cwd,
+                  relativePath: input.relativePath,
+                  resolvedPath: realTargetPath,
+                  operationPath: realTargetPath,
+                  operation: "read",
+                  cause,
+                }),
             });
+            if (bytesRead <= 0) break;
+            offset += bytesRead;
           }
+          const fileBytes = buffer.subarray(0, offset);
 
           return {
             relativePath: target.relativePath,
-            contents: new TextDecoder("utf-8").decode(fileBytes),
+            resolvedPath: realTargetPath,
+            bytes: fileBytes,
             byteLength: stat.size,
-            truncated: stat.size > PROJECT_READ_FILE_MAX_BYTES,
+            truncated: stat.size > input.maxBytes,
           };
         }),
       (handle) =>
@@ -300,6 +318,25 @@ export const make = Effect.gen(function* () {
             }),
         }),
     );
+  });
+
+  const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
+    "WorkspaceFileSystem.readFile",
+  )(function* (input) {
+    const file = yield* readFileBytes({ ...input, maxBytes: PROJECT_READ_FILE_MAX_BYTES });
+    if (file.bytes.includes(0)) {
+      return yield* new WorkspaceBinaryFileError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedPath: file.resolvedPath,
+      });
+    }
+    return {
+      relativePath: file.relativePath,
+      contents: new TextDecoder("utf-8").decode(file.bytes),
+      byteLength: file.byteLength,
+      truncated: file.truncated,
+    };
   });
 
   const writeFile: WorkspaceFileSystem["Service"]["writeFile"] = Effect.fn(
@@ -340,7 +377,7 @@ export const make = Effect.gen(function* () {
     return { relativePath: target.relativePath };
   });
 
-  return WorkspaceFileSystem.of({ readFile, writeFile });
+  return WorkspaceFileSystem.of({ readFile, readFileBytes, writeFile });
 });
 
 export const layer = Layer.effect(WorkspaceFileSystem, make);
