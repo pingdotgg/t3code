@@ -74,11 +74,6 @@ export const terminalRestartsTotal = Metric.counter("t3_terminal_restarts_total"
   description: "Total terminal restart requests handled.",
 });
 
-export const eventLoopDelayMax = Metric.gauge("t3_event_loop_delay_max_ms", {
-  description:
-    "Longest event loop delay since the previous sample (nominally 30 s), in milliseconds.",
-});
-
 export const metricAttributes = (
   attributes: Readonly<Record<string, unknown>>,
 ): ReadonlyArray<[string, string]> => Object.entries(compactMetricAttributes(attributes));
