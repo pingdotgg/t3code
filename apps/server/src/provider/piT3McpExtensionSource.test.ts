@@ -11,16 +11,20 @@ type RequestHook = (
 
 type AgentStartHook = (event: { systemPrompt: string }) => { systemPrompt: string };
 
+type McpToolContent = (result: unknown) => unknown;
+
+// The shipped extension as a plain script. The paths under test need no Typebox.
+const runnableSource = NodeModule.stripTypeScriptTypes(
+  PI_T3_MCP_EXTENSION_SOURCE.replace('import { Type } from "typebox";', "").replace(
+    "export default async function",
+    "async function",
+  ),
+);
+
 async function loadHandlers(): Promise<Map<string, unknown>> {
   const handlers = new Map<string, unknown>();
-  // Execute the shipped extension with MCP disabled; this path needs no Typebox.
-  const source = NodeModule.stripTypeScriptTypes(
-    PI_T3_MCP_EXTENSION_SOURCE.replace('import { Type } from "typebox";', "").replace(
-      "export default async function",
-      "async function",
-    ),
-  );
-  await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
+  // Execute the shipped extension with MCP disabled.
+  await NodeVM.runInNewContext(`${runnableSource}\nt3McpExtension(pi)`, {
     process: { env: {} },
     pi: { on: (name: string, handler: unknown) => handlers.set(name, handler) },
   });
@@ -71,5 +75,31 @@ describe("Pi runtime instructions", () => {
     assert.isTrue(systemPrompt.startsWith("Base prompt\n\n<runtime_info>"));
     assert.include(systemPrompt, "through the Pi harness");
     assert.include(systemPrompt, "<pull_request_linking>");
+  });
+});
+
+describe("Pi MCP tool results", () => {
+  const mcpToolContent = NodeVM.runInNewContext(
+    `${runnableSource}\nmcpToolContent`,
+    {},
+  ) as McpToolContent;
+  const image = { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" };
+
+  it("sends mirrored structured content once and keeps image blocks", () => {
+    const text = '{"url":"https://t3.codes"}';
+    assert.deepEqual(
+      mcpToolContent({
+        structuredContent: { url: "https://t3.codes" },
+        content: [{ type: "text", text }, image],
+      }),
+      [{ type: "text", text }, image],
+    );
+  });
+
+  it("falls back to structured content when a result has no text", () => {
+    assert.deepEqual(mcpToolContent({ structuredContent: { ok: true }, content: [image] }), [
+      { type: "text", text: '{"ok":true}' },
+      image,
+    ]);
   });
 });

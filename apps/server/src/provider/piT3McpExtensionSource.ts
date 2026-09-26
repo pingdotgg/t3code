@@ -94,25 +94,49 @@ function jsonSchemaToTypebox(schema: Record<string, unknown> | undefined) {
   return Type.Object({}, { additionalProperties: true });
 }
 
-function formatMcpContent(result: unknown): string {
-  if (result === null || result === undefined) return "";
-  if (typeof result !== "object") return String(result);
+type ToolContent =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "image"; readonly data: string; readonly mimeType: string };
+
+/**
+ * Maps an MCP tool result to Pi tool-result content: one text block, then any
+ * images (such as preview screenshots). Pi replaces images with a placeholder
+ * for models without image input.
+ */
+function mcpToolContent(result: unknown): ToolContent[] {
+  if (result === null || result === undefined) return [{ type: "text", text: "" }];
+  if (typeof result !== "object") return [{ type: "text", text: String(result) }];
   const record = result as {
-    readonly content?: ReadonlyArray<{ readonly type?: string; readonly text?: string }>;
+    readonly content?: ReadonlyArray<{
+      readonly type?: string;
+      readonly text?: string;
+      readonly data?: string;
+      readonly mimeType?: string;
+    }>;
     readonly structuredContent?: unknown;
-    readonly isError?: boolean;
   };
   const texts: string[] = [];
+  const images: ToolContent[] = [];
   if (Array.isArray(record.content)) {
     for (const part of record.content) {
       if (part?.type === "text" && typeof part.text === "string") texts.push(part.text);
+      if (
+        part?.type === "image" &&
+        typeof part.data === "string" &&
+        typeof part.mimeType === "string"
+      ) {
+        images.push({ type: "image", data: part.data, mimeType: part.mimeType });
+      }
     }
   }
-  if (record.structuredContent !== undefined) {
+  // T3's MCP server mirrors structuredContent in its text blocks, as the MCP
+  // spec asks. Sending both would spend the same payload twice.
+  if (texts.length === 0 && record.structuredContent !== undefined) {
     texts.push(JSON.stringify(record.structuredContent));
   }
-  if (texts.length > 0) return texts.join("\\n");
-  return JSON.stringify(result);
+  if (texts.length === 0 && images.length === 0) texts.push(JSON.stringify(result));
+  const text: ToolContent[] = texts.length === 0 ? [] : [{ type: "text", text: texts.join("\\n") }];
+  return [...text, ...images];
 }
 
 function isMcpToolError(result: unknown): boolean {
@@ -293,9 +317,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
               (params ?? {}) as Record<string, unknown>,
               signal,
             );
-            const text = formatMcpContent(result);
             return {
-              content: [{ type: "text", text }],
+              content: mcpToolContent(result),
               details: { server: "t3-code", tool: name },
               ...(isMcpToolError(result) ? { isError: true } : {}),
             };
