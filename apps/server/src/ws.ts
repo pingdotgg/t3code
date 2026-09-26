@@ -2675,7 +2675,9 @@ const makeWsRpcLayer = (
                       ) {
                         return false;
                       }
-                      return (instance.config as Record<string, unknown>).agentId === input.agentId;
+                      // Stored config is raw form input; the driver trims it.
+                      const agentId = (instance.config as Record<string, unknown>).agentId;
+                      return typeof agentId === "string" && agentId.trim() === input.agentId;
                     }),
                   ),
                   Effect.mapError(
