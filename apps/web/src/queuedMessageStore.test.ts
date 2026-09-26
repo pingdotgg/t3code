@@ -1,5 +1,7 @@
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
+import { createLocalDispatchSnapshot } from "./components/ChatView.logic";
 import {
   isQueuedMessageDue,
   latestCompletedToolActivityId,
@@ -15,15 +17,23 @@ function makeMessage(prompt: string): Omit<QueuedComposerMessage, "id"> {
     terminalContexts: [],
     previewAnnotations: [],
     reviewComments: [],
-    submissionIntent: "foreground",
+    sendSettings: {
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      promptEffort: null,
+    },
     queuedAfterToolActivityId: null,
     createdAt: "2026-09-11T00:00:00.000Z",
   };
 }
 
+const queue = (threadKey: string) =>
+  useQueuedMessageStore.getState().queuesByThreadKey[threadKey] ?? [];
+
 describe("queuedMessageStore", () => {
   beforeEach(() => {
-    useQueuedMessageStore.setState({ queuesByThreadKey: {}, drainGeneration: 0 });
+    useQueuedMessageStore.setState({ queuesByThreadKey: {}, lastDispatchByThreadKey: {} });
   });
 
   it("keeps messages in submission order per thread", () => {
@@ -32,71 +42,112 @@ describe("queuedMessageStore", () => {
     enqueue("thread-a", makeMessage("second"));
     enqueue("thread-b", makeMessage("other"));
 
-    const queues = useQueuedMessageStore.getState().queuesByThreadKey;
-    expect(queues["thread-a"]?.map((message) => message.prompt)).toEqual(["first", "second"]);
-    expect(queues["thread-b"]?.map((message) => message.prompt)).toEqual(["other"]);
+    expect(queue("thread-a").map((message) => message.prompt)).toEqual(["first", "second"]);
+    expect(queue("thread-b").map((message) => message.prompt)).toEqual(["other"]);
   });
 
-  it("take hands the message to exactly one caller", () => {
-    const { enqueue, take } = useQueuedMessageStore.getState();
-    const entry = enqueue("thread-a", makeMessage("first"));
-
-    expect(take("thread-a", entry.id, null)?.prompt).toBe("first");
-    expect(take("thread-a", entry.id, null)).toBeNull();
-    expect(useQueuedMessageStore.getState().queuesByThreadKey["thread-a"]).toBeUndefined();
-  });
-
-  it("take re-anchors the remaining messages to the current tool boundary", () => {
-    const { enqueue, take } = useQueuedMessageStore.getState();
+  it("allows one send per thread and re-anchors the rest to the current tool boundary", () => {
+    const { enqueue, beginSend } = useQueuedMessageStore.getState();
     const first = enqueue("thread-a", makeMessage("first"));
-    enqueue("thread-a", makeMessage("second"));
+    const second = enqueue("thread-a", makeMessage("second"));
 
-    take("thread-a", first.id, "tool-2");
+    expect(beginSend("thread-a", first.id, "tool-2")?.prompt).toBe("first");
+    expect(beginSend("thread-a", first.id, "tool-2")).toBeNull();
+    expect(beginSend("thread-a", second.id, "tool-2")).toBeNull();
 
-    const [second] = useQueuedMessageStore.getState().queuesByThreadKey["thread-a"] ?? [];
-    expect(second?.queuedAfterToolActivityId).toBe("tool-2");
+    const [sending, waiting] = queue("thread-a");
+    expect(sending?.sending).toBe("preparing");
+    expect(waiting?.queuedAfterToolActivityId).toBe("tool-2");
     expect(
-      isQueuedMessageDue({ message: second!, phase: "running", latestToolActivityId: "tool-2" }),
+      isQueuedMessageDue({ message: waiting!, phase: "running", latestToolActivityId: "tool-2" }),
     ).toBe(false);
   });
 
-  it("remove keeps the other messages' anchors", () => {
-    const { enqueue, remove } = useQueuedMessageStore.getState();
+  it("finishSend drops the sent message", () => {
+    const { enqueue, beginSend, finishSend } = useQueuedMessageStore.getState();
+    const first = enqueue("thread-a", makeMessage("first"));
+    beginSend("thread-a", first.id, null);
+
+    finishSend("thread-a", first.id);
+
+    expect(useQueuedMessageStore.getState().queuesByThreadKey["thread-a"]).toBeUndefined();
+  });
+
+  it("failSend returns the message to the head, held", () => {
+    const { enqueue, beginSend, failSend } = useQueuedMessageStore.getState();
+    enqueue("thread-a", makeMessage("first"));
+    const second = enqueue("thread-a", makeMessage("second"));
+    beginSend("thread-a", second.id, null);
+
+    expect(failSend("thread-a", second.id)).toBe(true);
+
+    const [head] = queue("thread-a");
+    expect(queue("thread-a").map((message) => message.prompt)).toEqual(["second", "first"]);
+    expect(head?.sending).toBeUndefined();
+    expect(isQueuedMessageDue({ message: head!, phase: "ready", latestToolActivityId: null })).toBe(
+      false,
+    );
+  });
+
+  it("remove keeps the other messages' anchors and refuses a message being sent", () => {
+    const { enqueue, remove, beginSend } = useQueuedMessageStore.getState();
     const first = enqueue("thread-a", { ...makeMessage("first"), queuedAfterToolActivityId: "t1" });
     const second = enqueue("thread-a", makeMessage("second"));
 
     expect(remove("thread-a", second.id)?.prompt).toBe("second");
     expect(remove("thread-a", second.id)).toBeNull();
-    expect(useQueuedMessageStore.getState().queuesByThreadKey["thread-a"]).toEqual([first]);
+    expect(queue("thread-a")).toEqual([first]);
+
+    beginSend("thread-a", first.id, "t1");
+    expect(remove("thread-a", first.id)).toBeNull();
   });
 
-  it("holdAtFront returns a failed message to the head, held", () => {
-    const { enqueue, take, holdAtFront } = useQueuedMessageStore.getState();
+  it("a failed send keeps waiting on the dispatch before it", () => {
+    const { enqueue, beginSend, markDispatching, finishSend, failSend } =
+      useQueuedMessageStore.getState();
+    const earlier = createLocalDispatchSnapshot(undefined);
     const first = enqueue("thread-a", makeMessage("first"));
-    enqueue("thread-a", makeMessage("second"));
-    const taken = take("thread-a", first.id, "t1")!;
+    const second = enqueue("thread-a", makeMessage("second"));
+    const third = enqueue("thread-a", makeMessage("third"));
+    const lastDispatch = () => useQueuedMessageStore.getState().lastDispatchByThreadKey["thread-a"];
+    beginSend("thread-a", first.id, null);
+    markDispatching("thread-a", first.id, earlier);
+    finishSend("thread-a", first.id);
 
-    holdAtFront("thread-a", taken);
+    // Fails before its turn start went out: the first send is still the one to wait on.
+    beginSend("thread-a", second.id, null);
+    failSend("thread-a", second.id);
+    expect(lastDispatch()?.thread).toBe(earlier);
 
-    const queue = useQueuedMessageStore.getState().queuesByThreadKey["thread-a"] ?? [];
-    expect(queue.map((message) => message.prompt)).toEqual(["first", "second"]);
-    expect(queue[0]?.holdUntilUserAction).toBe(true);
-    expect(
-      isQueuedMessageDue({ message: queue[0]!, phase: "ready", latestToolActivityId: null }),
-    ).toBe(false);
+    // Fails after going out: it never reached the server, so the first still counts.
+    beginSend("thread-a", third.id, null);
+    markDispatching("thread-a", third.id, { ...earlier, startedAt: "later" });
+    failSend("thread-a", third.id);
+    expect(lastDispatch()?.thread).toBe(earlier);
   });
 
-  it("drain empties one thread's queue in order", () => {
-    const { enqueue, drain } = useQueuedMessageStore.getState();
-    enqueue("thread-a", makeMessage("first"));
-    enqueue("thread-a", makeMessage("second"));
-    enqueue("thread-b", makeMessage("other"));
+  it("Stop takes back a preparing send but not one already dispatching", () => {
+    const { enqueue, beginSend, markDispatching, drain, failSend } =
+      useQueuedMessageStore.getState();
+    const preparing = enqueue("thread-a", makeMessage("preparing"));
+    enqueue("thread-a", makeMessage("waiting"));
+    beginSend("thread-a", preparing.id, null);
 
-    expect(drain("thread-a").map((message) => message.prompt)).toEqual(["first", "second"]);
-    expect(useQueuedMessageStore.getState().drainGeneration).toBe(1);
-    expect(drain("thread-a")).toEqual([]);
-    expect(useQueuedMessageStore.getState().drainGeneration).toBe(1);
-    expect(useQueuedMessageStore.getState().queuesByThreadKey["thread-b"]).toHaveLength(1);
+    expect(drain("thread-a").map((message) => message.prompt)).toEqual(["preparing", "waiting"]);
+    expect(markDispatching("thread-a", preparing.id, createLocalDispatchSnapshot(undefined))).toBe(
+      false,
+    );
+    expect(failSend("thread-a", preparing.id)).toBe(false);
+
+    const dispatching = enqueue("thread-b", makeMessage("dispatching"));
+    enqueue("thread-b", makeMessage("waiting"));
+    beginSend("thread-b", dispatching.id, null);
+    expect(
+      markDispatching("thread-b", dispatching.id, createLocalDispatchSnapshot(undefined)),
+    ).toBe(true);
+
+    expect(drain("thread-b").map((message) => message.prompt)).toEqual(["waiting"]);
+    expect(queue("thread-b").map((message) => message.prompt)).toEqual(["dispatching"]);
   });
 });
 
