@@ -129,20 +129,8 @@ const isSpeechError = Schema.is(
 
 type LoadedModel = Awaited<ReturnType<typeof loadNativeSpeechModel>>;
 
-async function resetStreamOrThrow(model: LoadedModel): Promise<void> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      model.reset(),
-      new Promise<never>((_, reject) => {
-        // Native reset already waits up to 1s for an in-flight feed,
-        // so allow extra headroom for the reset reply itself.
-        timeout = setTimeout(() => reject(new Error("Speech stream reset timed out.")), 2_500);
-      }),
-    ]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
+function resetStreamOrThrow(model: LoadedModel): Promise<void> {
+  return Effect.runPromise(Effect.promise(() => model.reset()).pipe(Effect.timeout("2500 millis")));
 }
 
 export type SpeechStream = {
@@ -486,20 +474,15 @@ export const make = Effect.gen(function* () {
       if (orphaned === orphan) orphaned = undefined;
       return;
     }
-    let settled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        orphan.done.then(() => {
-          settled = true;
+    const settled = await Effect.runPromise(
+      Effect.promise(() => orphan.done).pipe(
+        Effect.as(true),
+        Effect.timeoutOrElse({
+          duration: ORPHANED_TRANSCRIPTION_GRACE_MS,
+          orElse: () => Effect.succeed(false),
         }),
-        new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, ORPHANED_TRANSCRIPTION_GRACE_MS);
-        }),
-      ]);
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
-    }
+      ),
+    );
     if (orphaned !== orphan) return;
     orphaned = undefined;
     if (settled || orphan.target !== model) return;
