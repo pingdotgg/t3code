@@ -488,60 +488,29 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
-  it.effect("reuses a cached token when its first websocket ticket request times out", () =>
+  it.effect("keeps a cached token when its websocket ticket request times out", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         initialToken: persistedToken(),
-        responses: [STALLED, websocketTicket("slow-ticket")],
+        responses: [STALLED, websocketTicket("next-ticket")],
       });
 
-      const authorized = yield* Effect.gen(function* () {
+      const [failure, authorized] = yield* Effect.gen(function* () {
         const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
-        const pending = yield* remote
-          .authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID })
-          .pipe(Effect.forkChild);
+        const authorize = () => remote.authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID });
+        const pending = yield* authorize().pipe(Effect.flip, Effect.forkChild);
         yield* Queue.take(harness.stalls);
-        yield* TestClock.adjust("3 seconds");
-        return yield* Fiber.join(pending);
-      }).pipe(Effect.provide(harness.layer));
-
-      expect(authorized.socketUrl).toContain("wsTicket=slow-ticket");
-      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
-      expect(harness.fetch.calls.map(([url]) => String(url))).toEqual([
-        `${ENDPOINT.httpBaseUrl}/api/auth/websocket-ticket`,
-        `${ENDPOINT.httpBaseUrl}/api/auth/websocket-ticket`,
-      ]);
-    }),
-  );
-
-  it.effect("keeps a cached token when the server stays too slow to issue a ticket", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        initialToken: persistedToken(),
-        responses: [STALLED, STALLED],
-      });
-
-      const failure = yield* Effect.gen(function* () {
-        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
-        const pending = yield* remote
-          .authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID })
-          .pipe(Effect.flip, Effect.forkChild);
-        yield* Queue.take(harness.stalls);
-        yield* TestClock.adjust("3 seconds");
-        yield* Queue.take(harness.stalls);
-        // The retry gets 7 s, so the ticket step ends 10 s after it started.
-        yield* TestClock.adjust("6 seconds");
+        // The cached token gets the full 10 s ticket budget.
+        yield* TestClock.adjust("9 seconds");
         expect(pending.pollUnsafe()).toBeUndefined();
         yield* TestClock.adjust("1 second");
-        expect(pending.pollUnsafe()).toBeDefined();
-        return yield* Fiber.join(pending);
+        return [yield* Fiber.join(pending), yield* authorize()] as const;
       }).pipe(Effect.provide(harness.layer));
 
       expect(failure).toMatchObject({ _tag: "ConnectionTransientError", reason: "timeout" });
+      expect(authorized.socketUrl).toContain("wsTicket=next-ticket");
+      expect(authorized.httpAuthorization).toMatchObject({ accessToken: "cached-access-token" });
       expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
-      expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)?.accessToken).toBe(
-        "cached-access-token",
-      );
     }),
   );
 

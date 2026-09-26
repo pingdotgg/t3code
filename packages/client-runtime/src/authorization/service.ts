@@ -79,10 +79,6 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
   }
 >()("@t3tools/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
 
-const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
-// 3 s + 7 s matches the default 10 s ticket budget. That leaves at least 5 s of the
-// supervisor's 15 s setup deadline for the descriptor check and websocket open.
-const CACHED_ENDPOINT_SOCKET_RETRY_TIMEOUT_MS = 7_000;
 const BEARER_DESCRIPTOR_CACHE_TTL_MS = 10_000;
 const DPOP_AUTHORIZATION_TIMEOUT_MS = 30_000;
 
@@ -196,7 +192,7 @@ export const make = Effect.gen(function* () {
   );
 
   const createDpopSocketUrl = Effect.fn("clientRuntime.connection.remote.createDpopSocketUrl")(
-    function* (token: TokenStore.RemoteDpopAccessToken, timeoutMs?: number) {
+    function* (token: TokenStore.RemoteDpopAccessToken) {
       const ticketProof = yield* signer
         .createProof({
           method: "POST",
@@ -219,7 +215,6 @@ export const make = Effect.gen(function* () {
         dpopProof: ticketProof,
         clientMetadata: presentation.metadata,
         connectionMethod: "relay",
-        ...(timeoutMs === undefined ? {} : { timeoutMs }),
       }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
     },
   );
@@ -468,24 +463,14 @@ export const make = Effect.gen(function* () {
   ) {
     let selected = yield* getDpopToken(input);
     if (selected.fromCache) {
-      const cachedToken = selected.token;
-      // A slow server does not mean the token is bad. Retry the same token once with a
-      // longer budget so a stall does not mint a new credential and auth session. The cost:
-      // a moved endpoint whose old address never answers is only replaced when the token expires.
-      const cachedSocket = yield* createDpopSocketUrl(
-        cachedToken,
-        CACHED_ENDPOINT_SOCKET_TIMEOUT_MS,
-      ).pipe(
-        Effect.catchTags({
-          RemoteEnvironmentAuthTimeoutError: () =>
-            createDpopSocketUrl(cachedToken, CACHED_ENDPOINT_SOCKET_RETRY_TIMEOUT_MS),
-        }),
-        Effect.result,
-      );
+      const cachedSocket = yield* createDpopSocketUrl(selected.token).pipe(Effect.result);
       if (Result.isSuccess(cachedSocket)) {
         yield* assertSession(selected.identity);
-        return { ...httpAuthorization(cachedToken), socketUrl: cachedSocket.success };
+        return { ...httpAuthorization(selected.token), socketUrl: cachedSocket.success };
       }
+      // A timeout means a slow server, not a bad token. Keep the token so the next attempt
+      // reuses it instead of minting a new credential. The cost: an endpoint that accepts the
+      // request and never answers is only replaced when the token expires.
       if (
         cachedSocket.failure._tag === "ConnectionBlockedError" ||
         cachedSocket.failure._tag === "RemoteEnvironmentAuthTimeoutError"
@@ -494,7 +479,7 @@ export const make = Effect.gen(function* () {
       }
       selected = yield* getDpopToken({
         ...input,
-        rejectedAccessToken: cachedToken.accessToken,
+        rejectedAccessToken: selected.token.accessToken,
       });
     }
     const socket = yield* createDpopSocketUrl(selected.token).pipe(Effect.result);
