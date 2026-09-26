@@ -26,6 +26,12 @@ export interface UsageRecord {
    */
   readonly fast: boolean;
   /**
+   * The part of `totals.cacheCreationTokens` written to the 1-hour cache,
+   * which bills at a higher rate than the 5-minute default. Only Claude Code
+   * records this.
+   */
+  readonly cacheCreation1hTokens?: number;
+  /**
    * Key for cross-file de-duplication, or `null` when the record is inherently
    * unique and needs no dedup.
    */
@@ -140,6 +146,12 @@ export function parseClaudeLine(line: string): UsageRecord | null {
     messageId === null && requestId === null ? null : `${messageId ?? ""}:${requestId ?? ""}`;
 
   const cost = record["costUSD"];
+  const cacheCreationTokens = int(usageRecord["cache_creation_input_tokens"]);
+  const cacheCreation = usageRecord["cache_creation"];
+  const cacheCreation1hTokens =
+    typeof cacheCreation === "object" && cacheCreation !== null
+      ? int((cacheCreation as Record<string, unknown>)["ephemeral_1h_input_tokens"])
+      : 0;
 
   return {
     provider: "claude",
@@ -149,13 +161,14 @@ export function parseClaudeLine(line: string): UsageRecord | null {
     totals: {
       uncachedInputTokens: int(usageRecord["input_tokens"]),
       cachedInputTokens: int(usageRecord["cache_read_input_tokens"]),
-      cacheCreationTokens: int(usageRecord["cache_creation_input_tokens"]),
+      cacheCreationTokens,
       outputTokens: int(usageRecord["output_tokens"]),
       // Anthropic folds thinking tokens into output and does not break them out.
       reasoningTokens: 0,
     },
     reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
     fast: usageRecord["speed"] === "fast",
+    cacheCreation1hTokens: Math.min(cacheCreation1hTokens, cacheCreationTokens),
     dedupeKey,
   };
 }

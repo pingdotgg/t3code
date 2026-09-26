@@ -47,7 +47,7 @@ rates per million input and output tokens. You can enter any model ID, including
 without public pricing.
 
 Cache read and cache write rates are optional and use the input rate when blank. Enter `0` for
-tokens that are free. Saved prices replace automatic pricing for all of that environment's
+tokens that are free. The cache write rate applies to both 5-minute and 1-hour cache writes. Saved prices replace automatic pricing for all of that environment's
 history and are shared with clients connected to it. When environments have different prices,
 cells show **Mixed**. Edit rates directly in the table, then choose **Save changes** to apply all
 edited rows. Untouched cells keep each environment's rate. Select one environment to inspect its

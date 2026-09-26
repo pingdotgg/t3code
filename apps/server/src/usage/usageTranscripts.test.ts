@@ -16,6 +16,7 @@ function claudeLine(overrides: {
   model?: string;
   outputTokens?: number;
   speed?: string;
+  cacheCreation?: Record<string, number>;
 }): string {
   return JSON.stringify({
     type: "assistant",
@@ -33,6 +34,9 @@ function claudeLine(overrides: {
         cache_read_input_tokens: 1000,
         output_tokens: overrides.outputTokens ?? 286,
         ...(overrides.speed === undefined ? {} : { speed: overrides.speed }),
+        ...(overrides.cacheCreation === undefined
+          ? {}
+          : { cache_creation: overrides.cacheCreation }),
       },
     },
   });
@@ -62,6 +66,23 @@ describe("parseClaudeLine", () => {
 
     expect(line("fast")?.fast).toBe(true);
     expect(line("standard")?.fast).toBe(false);
+  });
+
+  it("reads the 1-hour share of cache writes", () => {
+    const line = (cacheCreation?: Record<string, number>) =>
+      parseClaudeLine(
+        claudeLine({
+          messageId: "msg_1",
+          contentType: "text",
+          ...(cacheCreation === undefined ? {} : { cacheCreation }),
+        }),
+      )?.cacheCreation1hTokens;
+
+    expect(line({ ephemeral_5m_input_tokens: 818, ephemeral_1h_input_tokens: 66000 })).toBe(66000);
+    expect(line({ ephemeral_5m_input_tokens: 66818, ephemeral_1h_input_tokens: 0 })).toBe(0);
+    expect(line()).toBe(0);
+    // Never more than the total, so the 5-minute remainder cannot go negative.
+    expect(line({ ephemeral_1h_input_tokens: 99_999_999 })).toBe(66818);
   });
 
   it("gives every content block of one message the same dedupe key", () => {

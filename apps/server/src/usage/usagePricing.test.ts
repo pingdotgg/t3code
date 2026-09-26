@@ -7,6 +7,7 @@ import {
   lookupRate,
   parseRateTable,
   priceUsage,
+  type RateTable,
 } from "./usagePricing.ts";
 
 const rate = (input: number, cacheRead?: number) => ({
@@ -129,6 +130,55 @@ describe("usage pricing", () => {
     expect(cost("claude-opus-5-5", true, overrides)).toBe(
       cost("claude-opus-5-5", false, overrides),
     );
+  });
+
+  describe("cache writes", () => {
+    const table = parseRateTable({
+      "claude-sonnet-5": {
+        ...rate(2e-6),
+        cache_creation_input_token_cost: 2.5e-6,
+        cache_creation_input_token_cost_above_1hr: 4e-6,
+      },
+      "claude-no-1h-rate": { ...rate(2e-6), cache_creation_input_token_cost: 2.5e-6 },
+    });
+    const writes = {
+      uncachedInputTokens: 0,
+      cachedInputTokens: 0,
+      cacheCreationTokens: 1_000_000,
+      outputTokens: 0,
+      reasoningTokens: 0,
+    };
+    const cost = (model: string, cacheCreation1hTokens?: number, overrides?: RateTable) =>
+      priceUsage(
+        table,
+        {
+          model,
+          totals: writes,
+          reportedCostUsd: null,
+          fast: false,
+          ...(cacheCreation1hTokens === undefined ? {} : { cacheCreation1hTokens }),
+        },
+        overrides,
+      ).costUsd;
+
+    it("prices 5-minute, 1-hour, and mixed writes at their own rates", () => {
+      expect(cost("claude-sonnet-5")).toBeCloseTo(2.5);
+      expect(cost("claude-sonnet-5", 0)).toBeCloseTo(2.5);
+      expect(cost("claude-sonnet-5", 1_000_000)).toBeCloseTo(4);
+      expect(cost("claude-sonnet-5", 250_000)).toBeCloseTo(0.75 * 2.5 + 0.25 * 4);
+    });
+
+    it("falls back to the 5-minute rate when no 1-hour rate is published or set", () => {
+      expect(cost("claude-no-1h-rate", 1_000_000)).toBeCloseTo(2.5);
+      const overrides = createOverrideRateTable({
+        "claude-sonnet-5": {
+          inputCostPerMillionTokens: 2,
+          outputCostPerMillionTokens: 10,
+          cacheWriteCostPerMillionTokens: 3,
+        },
+      });
+      expect(cost("claude-sonnet-5", 1_000_000, overrides)).toBeCloseTo(3);
+    });
   });
 
   it("keeps the canonical Fable rate separate from DeepInfra in either order", () => {
