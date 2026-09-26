@@ -98,9 +98,12 @@ on. The span time is when the sample ran, not when the stall happened.
 Some delay is not recorded:
 
 - `delayMaxMs` is the longest stall, and can undercount it by up to 1 s. The 2 s threshold applies to
-  this value, so every stall over 3 s is recorded, and a shorter one can be missed.
+  this value, so a stall over 3 s is normally recorded, and a shorter one can be missed. A stall
+  that ends just as a sample runs can be missed too.
 - Time the computer spends asleep reads as delay on macOS and Windows. So a sample only counts when
-  the loop was busy, not waiting for events, for at least `delayMaxMs`.
+  the loop was busy, not waiting for events, for at least `delayMaxMs`. Busy time covers the whole
+  window, so a short sleep in an otherwise busy window can still record a false stall. The span then
+  shows CPU time far below `delayMaxMs`.
 - The first sample after launch is skipped. Startup work such as migrations and projection bootstrap
   can block the loop for seconds on a large database.
 
