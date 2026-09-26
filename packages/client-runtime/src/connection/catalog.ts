@@ -20,10 +20,21 @@ export class BearerConnectionProfile extends Schema.TaggedClass<BearerConnection
   "BearerConnectionProfile",
   {
     ...ConnectionProfileBase,
+    /** The preferred route; the alternates race it when connecting. */
     httpBaseUrl: Schema.String,
     wsBaseUrl: Schema.String,
+    /**
+     * Other addresses that reach the same environment, such as a LAN address next
+     * to a tailnet one. Absent on profiles saved before routes existed.
+     */
+    alternateHttpBaseUrls: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 ) {}
+
+/** Routes to try, preferred first. */
+export function bearerRouteCandidates(profile: BearerConnectionProfile): ReadonlyArray<string> {
+  return [...new Set([profile.httpBaseUrl, ...(profile.alternateHttpBaseUrls ?? [])])];
+}
 
 export class SshConnectionProfile extends Schema.TaggedClass<SshConnectionProfile>()(
   "SshConnectionProfile",
