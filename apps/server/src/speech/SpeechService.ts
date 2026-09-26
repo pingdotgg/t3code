@@ -379,6 +379,80 @@ export const make = Effect.gen(function* () {
       catch: (cause) => speechError(operation, cause),
     });
 
+  // Interruptible variant of `exclusive`: the slot is released by an Effect
+  // finalizer, so interrupting the fiber frees it immediately instead of
+  // waiting for dangling native work to settle.
+  const exclusiveEffect = <A, E>(operation: string, effect: Effect.Effect<A, E>) =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.suspend(() => {
+        if (closing || activeOperation) return Effect.fail(new SpeechBusyError({ operation }));
+        const gate = Promise.withResolvers<void>();
+        activeOperation = gate.promise;
+        return restore(effect).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (activeOperation === gate.promise) activeOperation = undefined;
+              lastUse = performance.now();
+              scheduleUnload();
+              gate.resolve();
+            }),
+          ),
+        );
+      }),
+    );
+
+  // Runs one native transcription so fiber interruption stops the underlying
+  // work: aborting kills the isolated process via onAbort instead of leaving
+  // it running while the busy slot stays held.
+  const transcribeAbortable = (
+    target: LoadedModel,
+    pcm: Float32Array,
+    options: Parameters<LoadedModel["transcribe"]>[1],
+    onAbort: () => void,
+  ) =>
+    Effect.tryPromise({
+      try: (signal) =>
+        new Promise<Awaited<ReturnType<LoadedModel["transcribe"]>>>((resolve, reject) => {
+          const abort = () => {
+            onAbort();
+            reject(signal.reason ?? new Error("Speech transcription was cancelled."));
+          };
+          if (signal.aborted) {
+            abort();
+            return;
+          }
+          signal.addEventListener("abort", abort, { once: true });
+          target.transcribe(pcm, options).then(
+            (result) => {
+              signal.removeEventListener("abort", abort);
+              resolve(result);
+            },
+            (cause) => {
+              signal.removeEventListener("abort", abort);
+              reject(cause);
+            },
+          );
+        }),
+      catch: (cause) => speechError("transcription", cause),
+    });
+
+  // Stops abandoned native inference and drops the cached model so the next
+  // transcription reloads instead of talking to a dead process.
+  const abortTranscribeModel = (target: LoadedModel) => {
+    if (model === target) {
+      model = undefined;
+      loadedModelId = undefined;
+      loadedAcceleration = undefined;
+      loading = undefined;
+    }
+    try {
+      const stopped: unknown = target.dispose();
+      if (stopped instanceof Promise) stopped.catch(() => undefined);
+    } catch {
+      // The isolated process is already gone.
+    }
+  };
+
   const readSettings = (operation: string) =>
     serverSettings.getSettings.pipe(
       Effect.tap((settings) =>
@@ -705,97 +779,132 @@ export const make = Effect.gen(function* () {
     transcribe: (pcmBytes) =>
       readSettings("transcription").pipe(
         Effect.flatMap((settings) =>
-          exclusive("transcription", async () => {
-            if (unsupportedReason)
-              throw new SpeechUnsupportedPlatformError({ platform, architecture });
-            const pcm = decodeSpeechPcm(pcmBytes);
-            if (pcm.length === 0)
-              return { text: "", backend: "none", prepareDurationMs: 0, inferenceDurationMs: 0 };
-            activeTranscriptions += 1;
-            try {
-              const definition = selectedModel(settings);
-              const language = effectiveSpeechLanguage(definition, settings.speechLanguage);
-              const prepareStartedAt = performance.now();
-              const loaded = await loadModel(
-                definition,
-                lifetime.signal,
-                settings.speechAcceleration,
-              ).catch((cause) => {
-                throw speechError("model preparation", cause);
+          exclusiveEffect(
+            "transcription",
+            Effect.gen(function* () {
+              if (unsupportedReason)
+                return yield* new SpeechUnsupportedPlatformError({ platform, architecture });
+              const pcm = yield* Effect.try({
+                try: () => decodeSpeechPcm(pcmBytes),
+                catch: (cause) => speechError("transcription", cause),
               });
-              const prepareDurationMs = performance.now() - prepareStartedAt;
-              const inferenceStartedAt = performance.now();
-              let inferenceModel = loaded;
-              const customWords = transcriptionCustomWords(settings);
-              const dictionary = normalizeSpeechCustomWords(settings.speechCustomWords);
-              const removeFillerWords = settings.speechRemoveFillerWords;
-              const fillerWordLanguage = language === "auto" ? undefined : language;
-              const options = {
-                timestamps: "none" as const,
-                ...(language === "auto" ? {} : { language }),
-                ...(customWords.length > 0 && loaded.supportsInitialPrompt
-                  ? {
-                      family: {
-                        kind: "whisper" as const,
-                        initialPrompt: customWords.join(", "),
-                      },
-                    }
-                  : {}),
-              };
-              let result: Awaited<ReturnType<LoadedModel["transcribe"]>>;
-              try {
-                result = await inferenceModel.transcribe(pcm, options);
-              } catch (cause) {
-                if (model === inferenceModel) {
-                  model = undefined;
-                  loadedModelId = undefined;
-                  loadedAcceleration = undefined;
-                  loading = undefined;
-                }
-                if (
-                  settings.speechAcceleration !== "auto" ||
-                  inferenceModel.backend.toLowerCase() === "cpu"
-                ) {
-                  await inferenceModel.dispose();
-                  throw new SpeechOperationError({ operation: "inference", cause });
-                }
-                await inferenceModel.dispose();
-                inferenceModel = await loadModel(definition, lifetime.signal, "cpu");
-                result = await inferenceModel.transcribe(pcm, options).catch((fallbackCause) => {
-                  if (model === inferenceModel) {
-                    model = undefined;
-                    loadedModelId = undefined;
-                    loadedAcceleration = undefined;
-                    loading = undefined;
-                  }
-                  throw new SpeechOperationError({ operation: "inference", cause: fallbackCause });
+              if (pcm.length === 0)
+                return { text: "", backend: "none", prepareDurationMs: 0, inferenceDurationMs: 0 };
+              activeTranscriptions += 1;
+              return yield* Effect.gen(function* () {
+                const definition = selectedModel(settings);
+                const language = effectiveSpeechLanguage(definition, settings.speechLanguage);
+                const prepareStartedAt = performance.now();
+                const loaded = yield* Effect.tryPromise({
+                  try: (signal) =>
+                    loadModel(
+                      definition,
+                      AbortSignal.any([signal, lifetime.signal]),
+                      settings.speechAcceleration,
+                    ),
+                  catch: (cause) => speechError("model preparation", cause),
                 });
-              }
-              const corrected = applySpeechAliases(
-                loaded.supportsInitialPrompt
-                  ? result.text
-                  : applySpeechCustomWords(result.text, customWords),
-                dictionary,
+                const prepareDurationMs = performance.now() - prepareStartedAt;
+                const inferenceStartedAt = performance.now();
+                let inferenceModel = loaded;
+                const customWords = transcriptionCustomWords(settings);
+                const dictionary = normalizeSpeechCustomWords(settings.speechCustomWords);
+                const removeFillerWords = settings.speechRemoveFillerWords;
+                const fillerWordLanguage = language === "auto" ? undefined : language;
+                const options = {
+                  timestamps: "none" as const,
+                  ...(language === "auto" ? {} : { language }),
+                  ...(customWords.length > 0 && loaded.supportsInitialPrompt
+                    ? {
+                        family: {
+                          kind: "whisper" as const,
+                          initialPrompt: customWords.join(", "),
+                        },
+                      }
+                    : {}),
+                };
+                const result = yield* transcribeAbortable(inferenceModel, pcm, options, () =>
+                  abortTranscribeModel(inferenceModel),
+                ).pipe(
+                  Effect.catch((cause) =>
+                    Effect.gen(function* () {
+                      if (model === inferenceModel) {
+                        model = undefined;
+                        loadedModelId = undefined;
+                        loadedAcceleration = undefined;
+                        loading = undefined;
+                      }
+                      if (
+                        settings.speechAcceleration !== "auto" ||
+                        inferenceModel.backend.toLowerCase() === "cpu"
+                      ) {
+                        yield* Effect.tryPromise({
+                          try: () => Promise.resolve().then(() => inferenceModel.dispose()),
+                          catch: (disposeCause) => speechError("transcription", disposeCause),
+                        });
+                        return yield* new SpeechOperationError({ operation: "inference", cause });
+                      }
+                      yield* Effect.tryPromise({
+                        try: () => Promise.resolve().then(() => inferenceModel.dispose()),
+                        catch: (disposeCause) => speechError("transcription", disposeCause),
+                      });
+                      const cpu = yield* Effect.tryPromise({
+                        try: (signal) =>
+                          loadModel(definition, AbortSignal.any([signal, lifetime.signal]), "cpu"),
+                        catch: (loadCause) => speechError("transcription", loadCause),
+                      });
+                      inferenceModel = cpu;
+                      return yield* transcribeAbortable(cpu, pcm, options, () =>
+                        abortTranscribeModel(cpu),
+                      ).pipe(
+                        Effect.catch((fallbackCause) => {
+                          if (model === cpu) {
+                            model = undefined;
+                            loadedModelId = undefined;
+                            loadedAcceleration = undefined;
+                            loading = undefined;
+                          }
+                          return Effect.fail(
+                            new SpeechOperationError({
+                              operation: "inference",
+                              cause: fallbackCause,
+                            }),
+                          );
+                        }),
+                      );
+                    }),
+                  ),
+                );
+                const corrected = applySpeechAliases(
+                  loaded.supportsInitialPrompt
+                    ? result.text
+                    : applySpeechCustomWords(result.text, customWords),
+                  dictionary,
+                );
+                return {
+                  text: (removeFillerWords
+                    ? removeSpeechFillerWords(
+                        corrected,
+                        fillerWordLanguage,
+                        settings.speechPostProcessingEnabled
+                          ? settings.speechCorrectionWord
+                          : undefined,
+                      )
+                    : corrected
+                  ).trim(),
+                  backend: inferenceModel.backend,
+                  prepareDurationMs,
+                  inferenceDurationMs: performance.now() - inferenceStartedAt,
+                };
+              }).pipe(
+                Effect.ensuring(
+                  Effect.sync(() => {
+                    activeTranscriptions -= 1;
+                  }),
+                ),
               );
-              return {
-                text: (removeFillerWords
-                  ? removeSpeechFillerWords(
-                      corrected,
-                      fillerWordLanguage,
-                      settings.speechPostProcessingEnabled
-                        ? settings.speechCorrectionWord
-                        : undefined,
-                    )
-                  : corrected
-                ).trim(),
-                backend: inferenceModel.backend,
-                prepareDurationMs,
-                inferenceDurationMs: performance.now() - inferenceStartedAt,
-              };
-            } finally {
-              activeTranscriptions -= 1;
-            }
-          }),
+            }),
+          ),
         ),
         Effect.tap(({ backend, prepareDurationMs, inferenceDurationMs }) =>
           Effect.logInfo("Speech transcription completed", {

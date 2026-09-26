@@ -6,6 +6,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import { HostProcessPlatform, HostProcessArchitecture } from "@t3tools/shared/hostProcess";
+import { ServerSettingsError } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SpeechService from "./SpeechService.ts";
@@ -425,6 +426,45 @@ it.effect("releases a stream cancelled while settings are loading", () =>
   }),
 );
 
+it.effect("recovers the busy slot when a settings read fails", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const failingSettings = Layer.effect(
+      ServerSettings.ServerSettingsService,
+      Effect.gen(function* () {
+        const settings = yield* ServerSettings.ServerSettingsService;
+        return {
+          ...settings,
+          getSettings: Effect.suspend(() => {
+            reads += 1;
+            if (reads === 1)
+              return Effect.fail(
+                new ServerSettingsError({
+                  settingsPath: "<memory>",
+                  operation: "read-file",
+                  cause: new Error("settings boom"),
+                }),
+              );
+            return settings.getSettings;
+          }),
+        };
+      }),
+    ).pipe(Layer.provide(ServerSettings.layerTest({ speechModelId: "test-model" })));
+    const testLayer = SpeechService.layer.pipe(
+      Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-failing-settings-" })),
+      Layer.provide(failingSettings),
+      Layer.provide(NodeServices.layer),
+    );
+    yield* Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const first = yield* speech.startStream.pipe(Effect.scoped, Effect.result);
+      expect(Result.isFailure(first)).toBe(true);
+      yield* speech.startStream.pipe(Effect.scoped);
+      expect(loadNative).toHaveBeenCalledTimes(1);
+    }).pipe(Effect.provide(testLayer));
+  }),
+);
+
 it.effect("reuses the model when a cancelled feed finishes during reset", () =>
   Effect.gen(function* () {
     const started = Promise.withResolvers<void>();
@@ -722,29 +762,23 @@ it.effect("does not mark a deleted model active when no models remain installed"
     expect((yield* speech.models).models.every((model) => !model.active)).toBe(true);
   }).pipe(Effect.provide(layer)),
 );
-it.effect("retains ownership of native work after its request is interrupted", () =>
+it.effect("frees a cancelled batch transcription and allows retries", () =>
   Effect.gen(function* () {
     const started = Promise.withResolvers<void>();
-    const completed = Promise.withResolvers<{ text: string }>();
     native.transcribe.mockImplementationOnce(() => {
       started.resolve();
-      return completed.promise;
+      return new Promise<never>(() => {});
     });
     yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
       const request = yield* speech.transcribe(pcm()).pipe(Effect.forkChild);
       yield* Effect.promise(() => started.promise);
       yield* Fiber.interrupt(request);
-      expect(native.dispose).not.toHaveBeenCalled();
-      const removal = yield* Effect.result(speech.removeModel("test-model"));
-      expect(Result.isFailure(removal) && removal.failure).toMatchObject({
-        _tag: "SpeechBusyError",
-      });
-      const second = yield* Effect.result(speech.transcribe(pcm()));
-      expect(Result.isFailure(second) && second.failure).toMatchObject({ _tag: "SpeechBusyError" });
-      completed.resolve({ text: "late result" });
+      expect(native.dispose).toHaveBeenCalledOnce();
+      expect(yield* speech.status).toMatchObject({ state: "ready" });
+      expect(yield* speech.transcribe(pcm())).toBe("hello");
+      expect(loadNative).toHaveBeenCalledTimes(2);
     }).pipe(Effect.provide(layer));
-    expect(native.dispose).toHaveBeenCalledOnce();
   }),
 );
 
