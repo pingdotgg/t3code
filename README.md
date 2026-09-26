@@ -100,7 +100,7 @@ Full docs live in [docs/](./docs). There's no docs site yet.
 
 Building from source? Start at [docs/internals/overview.md](./docs/internals/overview.md).
 
-## If you REALLY want to contribute still.... read this first
+## If you want to contribute.... read this first
 
 ### Install `vp`
 
