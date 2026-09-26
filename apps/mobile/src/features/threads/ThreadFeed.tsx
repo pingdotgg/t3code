@@ -3,6 +3,7 @@ import {
   WorktreeSetupCard,
   type WorktreeSetupCardProps,
 } from "./worktree-setup-card";
+import { renderAssistantInsightsAsMarkdown } from "@t3tools/client-runtime/assistant-insights";
 import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { useViewabilityAmount, type LegendListRef } from "@legendapp/list/react-native";
@@ -788,7 +789,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
   const segments = useMemo(
-    () => splitCodexArtifactTemplateMarkdown(props.markdown),
+    () => splitCodexArtifactTemplateMarkdown(renderAssistantInsightsAsMarkdown(props.markdown)),
     [props.markdown],
   );
 
