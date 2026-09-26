@@ -1,0 +1,23 @@
+{
+  "name": "@t3tools/extension-agents",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "t3-extension build .",
+    "check": "t3-extension check .t3-extension",
+    "test": "node --test --experimental-strip-types viewModel.test.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "audit": "node ../scripts/audit-imports.mjs ."
+  },
+  "dependencies": {
+    "@t3tools/extension-sdk": "workspace:*",
+    "@t3tools/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "^19.2.14",
+    "react": "^19.0.0",
+    "typescript": "catalog:"
+  }
+}
