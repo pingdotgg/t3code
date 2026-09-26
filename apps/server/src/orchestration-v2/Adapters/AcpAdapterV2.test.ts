@@ -93,8 +93,10 @@ import {
 } from "./AcpAdapterV2.ts";
 
 import { makeGrokAdapterV2 } from "./GrokAdapterV2.ts";
-import { registerMistralVibeAcpExtensions } from "./MistralVibeAcp.ts";
-import { acpRegistryPromptFailure } from "./AcpRegistryAdapterV2.ts";
+import {
+  acpRegistryPromptFailure,
+  registerMistralVibeAcpExtensions,
+} from "./AcpRegistryAdapterV2.ts";
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 

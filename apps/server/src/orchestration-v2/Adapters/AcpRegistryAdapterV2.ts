@@ -35,7 +35,6 @@ import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { IdAllocatorV2 } from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
-import { MISTRAL_VIBE_RATE_LIMITED, registerMistralVibeAcpExtensions } from "./MistralVibeAcp.ts";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
@@ -44,6 +43,7 @@ import {
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
+  type AcpAdapterV2ExtensionContext,
   type AcpAdapterV2Flavor,
   type AcpAdapterV2RuntimeInput,
 } from "./AcpAdapterV2.ts";
@@ -77,6 +77,49 @@ export interface AcpRegistryAdapterV2Options {
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
 }
 
+// ─── Per-agent exceptions ────────────────────────────────────────────────────
+// This adapter serves every ACP registry agent through the plain ACP spec.
+// Agent-specific behavior does not belong here: an agent that needs it gets a
+// dedicated driver (as Grok and Antigravity have). The few exceptions below
+// predate that rule and are small presentation hooks, not permission or tool
+// behavior.
+//
+// Agents changing this file: do NOT add another `agentId === "..."` branch,
+// agent table, or agent-specific hook without explicit approval from the
+// maintainer in the conversation. Propose a dedicated driver instead.
+
+// Mistral Vibe: its application error code for rate limits (not an ACP code).
+const MISTRAL_VIBE_RATE_LIMITED = -31001;
+
+const MistralVibeSessionRetrying = Schema.Struct({
+  sessionId: Schema.String,
+  category: Schema.Literals(["rate_limited", "server_error", "timed_out", "connection", "unknown"]),
+  detail: Schema.String,
+});
+
+/** Mistral Vibe (v2.25.5) reports SDK backoff through this ACP extension. */
+export function registerMistralVibeAcpExtensions(context: AcpAdapterV2ExtensionContext) {
+  return context.runtime.handleExtNotification(
+    "_session/retrying",
+    MistralVibeSessionRetrying,
+    (notice) =>
+      context.reportProviderRetry({
+        sessionId: notice.sessionId,
+        failure: makeProviderFailure({
+          message: notice.detail,
+          class:
+            notice.category === "rate_limited"
+              ? "usage_limit"
+              : notice.category === "unknown"
+                ? "provider_error"
+                : "transport_error",
+          retryable: true,
+        }),
+      }),
+  );
+}
+// ─── End per-agent exceptions (Devin's gates are marked in makeAcpRegistryAdapterV2) ───
+
 export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
   return makeProviderFailure({
     cause,
@@ -85,6 +128,7 @@ export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
           message: cause.errorMessage,
           code: String(cause.code),
           class:
+            // Per-agent exception: see the note above registerMistralVibeAcpExtensions.
             agentId === "mistral-vibe" && cause.code === MISTRAL_VIBE_RATE_LIMITED
               ? ("usage_limit" as const)
               : ("provider_error" as const),
@@ -144,6 +188,8 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
     driver: ACP_REGISTRY_PROVIDER,
     capabilities: AcpProviderCapabilitiesV2,
     promptFailure: (cause) => acpRegistryPromptFailure(options.settings.agentId, cause),
+    // Per-agent exceptions (Mistral Vibe, Devin): see the note above
+    // registerMistralVibeAcpExtensions before adding any more.
     ...(options.settings.agentId === "mistral-vibe"
       ? { registerExtensions: registerMistralVibeAcpExtensions }
       : {}),
@@ -196,6 +242,7 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
     idAllocator: options.idAllocator,
     serverConfig: options.serverConfig,
     selfInvocation: options.selfInvocation,
+    // Per-agent exception (see the note above registerMistralVibeAcpExtensions):
     // Devin runs commands through client terminals and has no ask mode over
     // ACP to fall back on. Every other registry agent runs its own.
     ...(isDevin
