@@ -625,6 +625,12 @@ export class GhosttyTerminalSurface {
   private theme: GhosttyTheme;
   private readonly suppressedKeyCodes = new Set<string>();
   private pasteShortcutToken = 0;
+  // The paste shortcut gesture whose native paste may still arrive, and the
+  // text its clipboard read already sent (empty until then; onPaste ignores
+  // empty data). The browser may deliver that paste after the read and after
+  // other keys move, but before the shortcut key's own keyup, so only that
+  // keyup, a new shortcut, or blur ends the gesture.
+  private pasteShortcutGesture: { code: string; readText: string } | null = null;
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
   private primedCopySelection = "";
@@ -1118,19 +1124,23 @@ export class GhosttyTerminalSurface {
     }
     if (isTerminalPasteShortcut(event)) {
       this.suppressedKeyCodes.add(event.code);
+      const gesture = { code: event.code, readText: "" };
+      this.pasteShortcutGesture = gesture;
       const clipboard = navigator.clipboard;
       if (typeof clipboard?.readText === "function") {
-        // Race the async clipboard read against the browser's own paste event:
-        // the native event (dispatched synchronously with the default action)
-        // always claims the token first when it fires, and the read covers
-        // browsers whose paste shortcut produces no paste event. Not preventing
-        // the default keeps the native path alive when the read is denied.
+        // Race the async clipboard read against the browser's own paste event;
+        // the read covers browsers whose paste shortcut produces no paste
+        // event. Not preventing the default keeps the native path alive when
+        // the read is denied. A native paste that lands first claims the
+        // token; a read that lands first records its text on the gesture.
         const token = ++this.pasteShortcutToken;
         void clipboard.readText().then(
           (text) => {
             if (this.disposed || this.pasteShortcutToken !== token) return;
             this.pasteShortcutToken += 1;
-            if (text.length > 0) this.options.onData(this.core.encodePaste(text));
+            if (text.length === 0) return;
+            if (this.pasteShortcutGesture === gesture) gesture.readText = text;
+            this.options.onData(this.core.encodePaste(text));
           },
           () => {
             // Clipboard read denied; the native paste event remains the path.
@@ -1155,6 +1165,7 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
+    if (event.code === this.pasteShortcutGesture?.code) this.pasteShortcutGesture = null;
     if (this.suppressedKeyCodes.delete(event.code)) return;
     if (isTerminalCompositionKey(event, this.composing)) {
       return;
@@ -1176,6 +1187,7 @@ export class GhosttyTerminalSurface {
 
   private readonly onBlur = () => {
     this.focused = false;
+    this.pasteShortcutGesture = null;
     this.refreshHoveredLink();
     // Suppressions survive blur deliberately: a shortcut that moves focus (for
     // example terminal-toggle) must still swallow its own keyup if focus comes
@@ -1235,6 +1247,10 @@ export class GhosttyTerminalSurface {
     event.preventDefault();
     const data = event.clipboardData?.getData("text/plain") ?? "";
     if (data.length === 0) return;
+    if (data === this.pasteShortcutGesture?.readText) {
+      this.pasteShortcutGesture = null;
+      return;
+    }
     // The native paste won the race with actual text; a pending clipboard read
     // must not double. An empty native paste leaves the read as the only path.
     this.pasteShortcutToken += 1;
