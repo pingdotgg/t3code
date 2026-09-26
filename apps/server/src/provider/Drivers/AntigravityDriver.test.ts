@@ -530,6 +530,48 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "on Windows create, removes stale Antigravity-marked _MEI leftovers from the injected host temp",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const config = yield* ServerConfig;
+        const instanceId = ProviderInstanceId.make("antigravity-host-temp-sweep");
+        const hostTemp = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3-antigravity-host-temp-",
+        });
+        const stale = path.join(hostTemp, "_MEI12239");
+        const unmarked = path.join(hostTemp, "_MEIother");
+        yield* fs.makeDirectory(stale, { recursive: true });
+        yield* fs.makeDirectory(unmarked, { recursive: true });
+        yield* fs.writeFileString(path.join(stale, "agy_acp_licenses.txt"), "agy");
+        yield* fs.writeFileString(path.join(unmarked, "payload.bin"), "pyinstaller");
+        yield* fs.utimes(stale, 1, 1);
+        yield* fs.utimes(unmarked, 1, 1);
+        yield* TestClock.setTime(Date.UTC(2026, 8, 20));
+        yield* AntigravityDriver.create({
+          instanceId,
+          displayName: "Sweep",
+          enabled: false,
+          config: AntigravityDriver.defaultConfig(),
+          environment: [],
+        }).pipe(
+          Effect.provide(
+            Layer.mock(AntigravityInstallation)({
+              managedDirectory: config.stateDir,
+              resolve: () => Effect.die("unused"),
+              acquire: () => Effect.die("unused"),
+            }),
+          ),
+          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.provideService(HostProcessEnvironment, { TEMP: hostTemp, TMP: hostTemp }),
+        );
+        expect(yield* fs.exists(stale)).toBe(false);
+        expect(yield* fs.exists(unmarked)).toBe(true);
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("probes through installation resolution without launching a process", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness({ enabled: true });

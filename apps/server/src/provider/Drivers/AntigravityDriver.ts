@@ -1,6 +1,6 @@
 import { withAgentDeviceEnvironment } from "../../mcp/McpProviderSession.ts";
 import { AntigravitySettings, ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   NodeRuntimeUnavailableError,
   nodeRuntimeUnavailableMessage,
@@ -43,8 +43,10 @@ import {
 import type { AcpSessionRuntime, AcpSessionRuntimeStartResult } from "../acp/AcpSessionRuntime.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import {
+  cleanOrphanedAntigravitySystemTempDirs,
   removeAntigravityRuntimeTempDirs,
   removeAntigravitySessionFiles,
+  resolveAntigravityLegacySystemTempDirectories,
 } from "../acp/AntigravitySessionFiles.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeAntigravityAdapter } from "../Layers/AntigravityAdapter.ts";
@@ -101,7 +103,8 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       };
       const authConfigIssue = antigravityAuthConfigIssue(auth);
       const processEnvironment = mergeProviderInstanceEnvironment(environment);
-      const userHome = resolveAntigravityUserHome(yield* HostProcessPlatform, processEnvironment);
+      const platform = yield* HostProcessPlatform;
+      const userHome = resolveAntigravityUserHome(platform, processEnvironment);
       const directories = yield* resolveAntigravityInstanceDirectories(
         serverConfig.stateDir,
         instanceId,
@@ -129,6 +132,17 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         yield* removeAntigravityRuntimeTempDirs(directory).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
         );
+      }
+      // Pre-#12008 probes unpacked into the host TEMP. Profile isolation does
+      // not reclaim those. Windows-only: Unix can delete a live unpack.
+      if (platform === "win32") {
+        for (const systemTempDirectory of resolveAntigravityLegacySystemTempDirectories(
+          yield* HostProcessEnvironment,
+        )) {
+          yield* cleanOrphanedAntigravitySystemTempDirs({ systemTempDirectory }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+          );
+        }
       }
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER,
