@@ -166,6 +166,29 @@ const peerPath = NodePath.join(
 );
 
 describe("CodexSessionRuntime collab integration", () => {
+  it.effect("refreshes and waits for MCP startup before sending each turn", () =>
+    Effect.gen(function* () {
+      const script = { rootThreadId: ROOT, mcpStartup: true, notifications: [] };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-mcp-startup"),
+        binaryPath: peerPath,
+        cwd: NodeOS.tmpdir(),
+        runtimeMode: "full-access",
+        appServerArgs: ["-c", 'mcp_servers.t3-code.url="http://127.0.0.1/mcp"'],
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "first turn" });
+      yield* runtime.sendTurn({ input: "second turn" });
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("looks up child model metadata once after activity registration", () =>
     Effect.gen(function* () {
       const script = {

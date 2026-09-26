@@ -39,6 +39,7 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
+import { makeCodexMcpStartup } from "./CodexMcpStartup.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
   buildCodexAdditionalContext,
@@ -1365,6 +1366,7 @@ export const makeCodexSessionRuntime = (
       Effect.provide(clientContext),
     );
     const serverNotifications = yield* Queue.unbounded<CodexServerNotification>();
+    const refreshMcpBeforeTurn = yield* makeCodexMcpStartup(client);
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
     const randomUUIDv4 = (purpose: CodexErrors.CodexAppServerIdentifierPurpose) =>
       crypto.randomUUIDv4.pipe(
@@ -2551,13 +2553,7 @@ export const makeCodexSessionRuntime = (
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
           if (hasConfiguredMcpServer(options.appServerArgs)) {
-            yield* client.request("config/mcpServer/reload", undefined).pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("Failed to refresh Codex MCP tool catalog before turn.", {
-                  cause,
-                }),
-              ),
-            );
+            yield* refreshMcpBeforeTurn(providerThreadId);
           }
           const normalizedModel = normalizeCodexModelSlug(
             input.model ?? (yield* Ref.get(sessionRef)).model,
