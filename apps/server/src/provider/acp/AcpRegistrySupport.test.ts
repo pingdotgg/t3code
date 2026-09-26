@@ -252,6 +252,29 @@ describe("AcpRegistrySupport", () => {
         platformTarget: "darwin-aarch64",
       }),
     ).toBeUndefined();
+
+    const packageAgent = makeAgent({
+      npx: { package: "@example/acp@1.2.3" },
+      uvx: { package: "example-acp==1.2.3" },
+    });
+    // Auto skips a package runner the host lacks, and keeps the first recipe
+    // when no runner is available so its missing runner can be reported.
+    expect(
+      resolveAcpRegistryDistribution({
+        agent: packageAgent,
+        preference: "auto",
+        platformTarget: "linux-x86_64",
+        isRunnerAvailable: (runner) => runner === "uv",
+      }),
+    ).toMatchObject({ kind: "uvx", packageName: "example-acp==1.2.3" });
+    expect(
+      resolveAcpRegistryDistribution({
+        agent: packageAgent,
+        preference: "auto",
+        platformTarget: "linux-x86_64",
+        isRunnerAvailable: () => false,
+      }),
+    ).toMatchObject({ kind: "npx" });
   });
 
   it.effect("resolves command overrides while preserving registry args and environment", () => {
@@ -397,6 +420,10 @@ describe("AcpRegistrySupport", () => {
         prefix: "t3-acp-registry-global-uv-tool-",
       });
       const toolchain = yield* makeFakeUvToolchain(cacheDir);
+      // A command named like the agent elsewhere on PATH is not the uv tool.
+      const decoy = `${cacheDir}/fake-uv/bin/example-agent`;
+      yield* fileSystem.writeFileString(decoy, "#!/bin/sh\n");
+      yield* fileSystem.chmod(decoy, 0o755);
       const resolver = yield* makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
@@ -663,6 +690,58 @@ describe("AcpRegistrySupport", () => {
       expect(yield* fileSystem.readFileString(resolved.spawn.command)).toBe(
         "#!/bin/sh\necho managed\n",
       );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(HostProcessPlatform, "linux"),
+      Effect.provideService(HostProcessArchitecture, "x64"),
+    );
+  });
+
+  it.effect("rejects an archive command that links outside without changing its target", () => {
+    const downloadUrl = "https://registry.test/agent.tar.gz";
+    const agent = makeAgent({
+      binary: { "linux-x86_64": { archive: downloadUrl, cmd: "./agent" } },
+    });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-link-entry-" });
+      const secret = `${cacheDir}/secret`;
+      yield* fileSystem.writeFileString(secret, "private");
+      yield* fileSystem.chmod(secret, 0o600);
+      const source = `${cacheDir}/source`;
+      yield* fileSystem.makeDirectory(source);
+      yield* fileSystem.symlink(secret, `${source}/agent`);
+      const archivePath = `${cacheDir}/agent.tar.gz`;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const tar = yield* spawner.spawn(
+        ChildProcess.make("tar", ["-czf", archivePath, "-C", source, "."]),
+      );
+      expect(yield* tar.exitCode).toBe(0);
+      const archive = yield* fileSystem.readFile(archivePath);
+      const resolver = yield* makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                request.url === registryUrl
+                  ? new Response(makeRegistry(agent))
+                  : new Response(archive),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      const failure = yield* resolver.prepare({ agentId: agent.id }).pipe(Effect.flip);
+      expect(failure).toMatchObject({ reason: "archive_invalid" });
+      expect((yield* fileSystem.stat(secret)).mode & 0o777).toBe(0o600);
     }).pipe(
       Effect.scoped,
       Effect.provide(NodeServices.layer),
@@ -1023,6 +1102,7 @@ describe("AcpRegistrySupport", () => {
         args: ["--stdio"],
       },
     });
+    let registryRequests = 0;
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -1043,14 +1123,20 @@ describe("AcpRegistrySupport", () => {
         command: toolchain.executablePath,
         args: ["--stdio"],
       });
+
+      // The fallback index stays fresh, so offline searches do not refetch.
+      yield* resolver.search({ query: "example" });
+      yield* resolver.search({ query: "example" });
+      expect(registryRequests).toBe(1);
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        resolverLayer((request) =>
-          Effect.succeed(
+        resolverLayer((request) => {
+          registryRequests += 1;
+          return Effect.succeed(
             HttpClientResponse.fromWeb(request, new Response("unavailable", { status: 503 })),
-          ),
-        ),
+          );
+        }),
       ),
     );
   });
@@ -1389,6 +1475,67 @@ describe("AcpRegistrySupport", () => {
               ),
             );
           }),
+        ),
+      );
+    });
+  });
+
+  it.effect("keeps its install lock fresh while a download runs", () => {
+    const agent = makeAgent({
+      binary: { "linux-x86_64": { archive: archiveUrl, cmd: "./bin/example-agent" } },
+    });
+    const binaryBytes = new TextEncoder().encode("#!/bin/sh\necho example\n");
+    return Effect.gen(function* () {
+      const downloadStarted = yield* Deferred.make<void>();
+      const releaseDownload = yield* Deferred.make<void>();
+      return yield* Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-lock-refresh-",
+        });
+        const touched: Array<string> = [];
+        const resolver = yield* makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            utimes: (path, atime, mtime) =>
+              Effect.sync(() => touched.push(path)).pipe(
+                Effect.andThen(fileSystem.utimes(path, atime, mtime)),
+              ),
+          }),
+        );
+
+        const prepareFiber = yield* resolver
+          .prepare({ agentId: agent.id })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(downloadStarted);
+        expect(touched).toEqual([]);
+        yield* TestClock.adjust("1 minute");
+        expect(touched).toEqual([`${cacheDir}/tools/${agent.id}/1.2.3/linux-x86_64.lock`]);
+
+        yield* Deferred.succeed(releaseDownload, undefined);
+        expect(yield* Fiber.join(prepareFiber)).toMatchObject({ prepared: true });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          resolverLayer((request) =>
+            request.url === registryUrl
+              ? Effect.succeed(
+                  HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent))),
+                )
+              : Deferred.succeed(downloadStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseDownload)),
+                  Effect.as(
+                    HttpClientResponse.fromWeb(
+                      request,
+                      new Response(binaryBytes.buffer as ArrayBuffer),
+                    ),
+                  ),
+                ),
+          ),
         ),
       );
     });
