@@ -20,6 +20,7 @@ import type {
   MessageId,
   ModelSelection,
   OrchestrationThreadShell,
+  ProviderInstanceId,
   ProviderApprovalDecision,
   ProviderInteractionMode,
   RuntimeMode,
@@ -66,7 +67,10 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceContentWidth } from "../layout/workspace-content-width";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
+import {
+  collectProviderUsageLimits,
+  providerUsageLimitRecovery,
+} from "@t3tools/shared/usageLimits";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
@@ -449,6 +453,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const [usageLimitsPanel, setUsageLimitsPanel] = useState<{
     readonly key: string;
     readonly threadKey: string;
+    readonly instanceId: ProviderInstanceId;
     readonly now: number;
   } | null>(null);
   // A pending approval or question is part of the key: once it is answered,
@@ -463,22 +468,42 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   if (usageLimitsPanel !== null && usageLimitsPanel.key !== usageLimitsKey) {
     setUsageLimitsPanel(null);
   }
+  const usageLimitError = props.selectedThread.session?.lastError;
+  const usageLimitRecoveryInstanceId =
+    props.selectedThread.session?.providerInstanceId ??
+    props.selectedThread.modelSelection.instanceId;
+  const usageLimitRecovery = useMemo(
+    () =>
+      providerUsageLimitRecovery(
+        usageLimitError,
+        usageLimitRecoveryInstanceId,
+        props.serverConfig?.providers ?? [],
+        props.serverConfig?.usageLimitSources ?? [],
+      ),
+    [usageLimitError, usageLimitRecoveryInstanceId, props.serverConfig],
+  );
+  const [autoOpenedUsageLimitError, setAutoOpenedUsageLimitError] = useState<string | null>(null);
+  const usageLimitErrorKey = `${usageLimitsKey}:${usageLimitError}`;
+  if (usageLimitRecovery !== null && autoOpenedUsageLimitError !== usageLimitErrorKey) {
+    setAutoOpenedUsageLimitError(usageLimitErrorKey);
+    setUsageLimitsPanel({
+      key: usageLimitsKey,
+      threadKey: selectedThreadKey,
+      instanceId: usageLimitRecoveryInstanceId,
+      now: Date.parse(usageLimitRecovery.report.createdAt),
+    });
+  }
   const usageLimitsReport = useMemo(
     () =>
       usageLimitsPanel !== null && usageLimitsPanel.key === usageLimitsKey
         ? collectProviderUsageLimits(
-            props.selectedThread.modelSelection.instanceId,
+            usageLimitsPanel.instanceId,
             props.serverConfig?.providers ?? [],
             props.serverConfig?.usageLimitSources ?? [],
             usageLimitsPanel.now,
           )
         : null,
-    [
-      props.selectedThread.modelSelection.instanceId,
-      props.serverConfig,
-      usageLimitsKey,
-      usageLimitsPanel,
-    ],
+    [props.serverConfig, usageLimitsKey, usageLimitsPanel],
   );
   const showUsageLimits = useCallback(
     (report: UsageLimitsReport | null) =>
@@ -488,10 +513,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           : {
               key: usageLimitsKey,
               threadKey: selectedThreadKey,
+              instanceId: props.selectedThread.modelSelection.instanceId,
               now: Date.parse(report.createdAt),
             },
       ),
-    [selectedThreadKey, usageLimitsKey],
+    [props.selectedThread.modelSelection.instanceId, selectedThreadKey, usageLimitsKey],
   );
   const dismissUsageLimits = useCallback(() => setUsageLimitsPanel(null), []);
   // A send may resolve after navigating away, so only the originating

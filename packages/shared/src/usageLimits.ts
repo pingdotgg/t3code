@@ -508,6 +508,52 @@ export function isUsageLimitsCommand(prompt: string): boolean {
   return prompt.trim().toLowerCase() === "/usage-limits";
 }
 
+/** Resolve a persisted provider limit error against the current, redeemable credit balance. */
+export function providerUsageLimitRecovery(
+  error: string | null | undefined,
+  instanceId: ProviderInstanceId | null,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+) {
+  if (!error || instanceId === null) return null;
+  const prefix = error.match(
+    /^(Codex|Claude) usage limit reached\.(?: The (?:weekly|session|monthly|other) limit resets in [^.]+\.)?/,
+  );
+  if (!prefix) return null;
+  const selectedProvider = providers.find((provider) => provider.instanceId === instanceId);
+  if (
+    !selectedProvider ||
+    (selectedProvider.driver !== prefix[1]?.toLowerCase() &&
+      !(prefix[1] === "Claude" && selectedProvider.driver === "claudeAgent"))
+  ) {
+    return null;
+  }
+  const now = Math.max(
+    Date.parse(selectedProvider.usageLimits?.checkedAt ?? selectedProvider.checkedAt),
+    ...sources.map((source) => Date.parse(source.checkedAt)),
+  );
+  const report = collectProviderUsageLimits(instanceId, providers, sources, now);
+  if (!report) return null;
+  const selected = report.accounts.find((account) => account.instanceId === instanceId);
+  // A native account cannot spend another account's credits. Proxy instances
+  // without native limits use the source accounts already shown by /usage-limits.
+  const accounts = selected ? [selected] : report.accounts.filter((account) => !account.instanceId);
+  const availableCount = accounts.reduce(
+    (count, account) =>
+      count +
+      (account.resetCreditInput && !account.limits.unavailable
+        ? (account.limits.resetCredits?.availableCount ?? 0)
+        : 0),
+    0,
+  );
+  if (availableCount === 0) return null;
+  const credits = `You have ${availableCount} reset ${availableCount === 1 ? "credit" : "credits"} available.`;
+  return {
+    report,
+    message: `${prefix[0]} ${credits}${error.slice(prefix[0].length)}`,
+  };
+}
+
 /**
  * Whether Limits has anything to say about this driver. A source that failed to
  * read keeps no accounts, so its error counts for every driver rather than
