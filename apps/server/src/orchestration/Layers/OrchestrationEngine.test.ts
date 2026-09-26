@@ -54,6 +54,7 @@ import {
 } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
+import { createEmptyReadModel, projectEvent } from "../projector.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
@@ -107,6 +108,7 @@ async function createOrchestrationSystem(
   return {
     engine,
     readModel: () => runtime.runPromise(snapshotQuery.getSnapshot()),
+    readCommandModel: () => runtime.runPromise(snapshotQuery.getCommandReadModel()),
     readThread: (threadId: ThreadId) =>
       runtime.runPromise(snapshotQuery.getThreadDetailById(threadId)),
     run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
@@ -130,6 +132,212 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
+  it("keeps command decisions and compact history across a restart", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-command-state-"));
+    const databasePath = NodePath.join(directory, "state.sqlite");
+    let system = await createOrchestrationSystem(databasePath);
+    const projectId = ProjectId.make("command-project");
+    const threadId = ThreadId.make("command-thread");
+    const importedId = ThreadId.make("import:codex:command-state");
+    const turnId = TurnId.make("command-turn");
+    const messageId = MessageId.make("command-message");
+    let commandCount = 0;
+    const commandId = () => CommandId.make(`command-state-${++commandCount}`);
+    const dispatch = (command: OrchestrationCommand) => system.run(system.engine.dispatch(command));
+    const body = "large conversation content ".repeat(4_000);
+    try {
+      await dispatch({
+        type: "project.create",
+        commandId: commandId(),
+        projectId,
+        title: "Command state",
+        workspaceRoot: "/tmp/command-state",
+        createdAt: now(),
+      });
+      for (const id of [threadId, importedId]) {
+        await dispatch({
+          type: "thread.create",
+          commandId: commandId(),
+          threadId: id,
+          projectId,
+          title: "Command state",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now(),
+        });
+      }
+      await dispatch({
+        type: "thread.message.user.append",
+        commandId: commandId(),
+        threadId,
+        message: { messageId, text: body, attachments: [] },
+        createdAt: now(),
+      });
+      await dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: commandId(),
+        threadId,
+        messageId: MessageId.make("assistant:command"),
+        delta: body,
+        createdAt: now(),
+      });
+      await dispatch({
+        type: "thread.activity.append",
+        commandId: commandId(),
+        threadId,
+        createdAt: now(),
+        activity: {
+          id: EventId.make("tool-command"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: body,
+          turnId,
+          createdAt: now(),
+          payload: { output: body },
+        },
+      });
+      await dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: commandId(),
+        threadId,
+        turnId,
+        checkpointRef: CheckpointRef.make("refs/t3/checkpoints/command"),
+        checkpointTurnCount: 1,
+        status: "ready",
+        files: [{ path: "src/app.ts", kind: "modified", additions: 3, deletions: 1 }],
+        createdAt: now(),
+        completedAt: now(),
+      });
+      await dispatch({
+        type: "thread.proposed-plan.upsert",
+        commandId: commandId(),
+        threadId,
+        createdAt: now(),
+        proposedPlan: {
+          id: "plan-command",
+          turnId,
+          planMarkdown: body,
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt: now(),
+          updatedAt: now(),
+        },
+      });
+      await dispatch({
+        type: "thread.activity.append",
+        commandId: commandId(),
+        threadId,
+        createdAt: now(),
+        activity: {
+          id: EventId.make("approval-command"),
+          kind: "approval.requested",
+          tone: "approval",
+          summary: body,
+          turnId,
+          createdAt: now(),
+          payload: { requestId: "approval-command", detail: body },
+        },
+      });
+      await dispatch({
+        type: "thread.history.import",
+        commandId: commandId(),
+        threadId: importedId,
+        messages: [
+          {
+            messageId: MessageId.make(`${importedId}:000000`),
+            role: "assistant",
+            text: body,
+            createdAt: now(),
+          },
+        ],
+      });
+
+      // Rebuild the live command projection independently of the SQL bootstrap.
+      const events = await system.run(Stream.runCollect(system.engine.readEvents(0)));
+      const live = await system.run(
+        Effect.gen(function* () {
+          let model = createEmptyReadModel(now());
+          for (const event of events) model = yield* projectEvent(model, event);
+          return model;
+        }),
+      );
+      const histories = (model: typeof live) =>
+        model.threads.map((thread) => ({
+          id: thread.id,
+          messages: thread.messages,
+          activities: thread.activities,
+          checkpoints: thread.checkpoints,
+          proposedPlans: thread.proposedPlans,
+        }));
+      const before = histories(live).toSorted((a, b) => a.id.localeCompare(b.id));
+      expect(JSON.stringify(before)).not.toContain("large conversation content");
+      expect(live.threads[0]?.messages).toHaveLength(2);
+      expect(live.threads[0]?.checkpoints[0]).not.toHaveProperty("files");
+      expect(live.threads[0]?.proposedPlans[0]).not.toHaveProperty("planMarkdown");
+      expect(
+        (await system.readModel()).threads.find((thread) => thread.id === threadId)?.messages[0]
+          ?.text,
+      ).toBe(body);
+
+      const rejectedCommands = (): OrchestrationCommand[] => [
+        {
+          type: "thread.message.user.append",
+          commandId: commandId(),
+          threadId,
+          message: { messageId, text: "duplicate", attachments: [] },
+          createdAt: now(),
+        },
+        { type: "thread.settle", commandId: commandId(), threadId },
+        {
+          type: "thread.history.import",
+          commandId: commandId(),
+          threadId: importedId,
+          messages: [
+            {
+              messageId: MessageId.make(`${importedId}:000001`),
+              role: "assistant",
+              text: "duplicate",
+              createdAt: now(),
+            },
+          ],
+        },
+        {
+          type: "thread.turn.diff.complete",
+          commandId: commandId(),
+          threadId,
+          turnId,
+          checkpointRef: CheckpointRef.make("provider-diff:command"),
+          checkpointTurnCount: 1,
+          status: "missing",
+          files: [],
+          createdAt: now(),
+          completedAt: now(),
+        },
+      ];
+      const rejectionTags = async () => {
+        const tags: string[] = [];
+        for (const command of rejectedCommands()) {
+          const error = await system.run(system.engine.dispatch(command).pipe(Effect.flip));
+          tags.push(error._tag);
+        }
+        return tags;
+      };
+      const beforeRejections = await rejectionTags();
+      await system.dispose();
+      system = await createOrchestrationSystem(databasePath);
+      expect(
+        histories(await system.readCommandModel()).toSorted((a, b) => a.id.localeCompare(b.id)),
+      ).toEqual(before);
+      expect(await rejectionTags()).toEqual(beforeRejections);
+    } finally {
+      await system.dispose();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each(["running", "stopped"] as const)(
     "sends async answers with a %s session and rejects old duplicate replies",
     async (status) => {
@@ -240,6 +448,14 @@ describe("OrchestrationEngine", () => {
           }
         };
         await appendWork("work", "2026-01-01T00:00:01.000Z");
+        const commandActivities = (await system.readCommandModel()).threads[0]?.activities;
+        expect(commandActivities).toHaveLength(501);
+        expect(
+          commandActivities?.find((activity) => activity.id === "async-question"),
+        ).toMatchObject({
+          requestId,
+          responseMode: "message",
+        });
         const before = await system.readModel();
         expect(
           before.threads[0]?.activities.some((activity) => activity.id === "async-question"),
@@ -309,6 +525,11 @@ describe("OrchestrationEngine", () => {
           ),
         ).rejects.toThrow("This question has already been answered.");
         await appendWork("later-work", "2026-01-01T00:00:03.000Z");
+        const reloadedActivities = (await system.readCommandModel()).threads[0]?.activities;
+        expect(reloadedActivities).toHaveLength(500);
+        expect(reloadedActivities?.some((activity) => activity.requestId === requestId)).toBe(
+          false,
+        );
         const afterEviction = Option.getOrThrow(await system.readThread(threadId));
         expect(
           afterEviction.activities.some((activity) => activity.kind === "user-input.resolved"),
@@ -421,6 +642,7 @@ describe("OrchestrationEngine", () => {
         Layer.succeed(ProjectionSnapshotQuery, {
           getUserInputActivity: () => Effect.die("unused"),
           listActivitiesByKind: () => Effect.die("unused"),
+          getMetadataSnapshot: () => Effect.die("unused"),
           getCommandReadModel: () => Effect.succeed(commandReadModel),
           getSnapshot: () =>
             Effect.sync(() => {

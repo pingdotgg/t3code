@@ -1,3 +1,5 @@
+import type { OrchestrationThread } from "@t3tools/contracts";
+import { toCommandActivity, type CommandReadModel } from "./CommandReadModel.ts";
 import {
   CommandId,
   EventId,
@@ -5,8 +7,6 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-  type OrchestrationReadModel,
-  type OrchestrationThread,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -27,7 +27,7 @@ function makeReadModel(input: {
   readonly archivedAt?: string | null;
   readonly activities?: OrchestrationThread["activities"];
   readonly messages?: OrchestrationThread["messages"];
-}): OrchestrationReadModel {
+}): CommandReadModel {
   return {
     snapshotSequence: 0,
     projects: [],
@@ -53,7 +53,7 @@ function makeReadModel(input: {
         deletedAt: null,
         messages: input.messages ?? [],
         proposedPlans: [],
-        activities: input.activities ?? [],
+        activities: (input.activities ?? []).map(toCommandActivity),
         checkpoints: [],
         session: null,
       },

@@ -1,10 +1,5 @@
-import {
-  CommandId,
-  ProjectId,
-  ProviderInstanceId,
-  ThreadId,
-  type OrchestrationReadModel,
-} from "@t3tools/contracts";
+import type { CommandReadModel } from "./CommandReadModel.ts";
+import { CommandId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -22,7 +17,7 @@ function makeReadModel(input: {
   readonly settledAt?: string | null;
   readonly snoozedUntil?: string | null;
   readonly snoozedAt?: string | null;
-}): OrchestrationReadModel {
+}): CommandReadModel {
   return {
     snapshotSequence: 0,
     projects: [],

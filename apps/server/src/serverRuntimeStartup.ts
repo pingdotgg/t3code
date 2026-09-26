@@ -405,7 +405,7 @@ const toServerUpdateThreadContinuationError = (cause: unknown) =>
 export const markRunningProviderSessionsForContinuation = Effect.gen(function* () {
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  const { threads } = yield* query.getCommandReadModel();
+  const { threads } = yield* query.getMetadataSnapshot();
   const running = threads.filter(
     (thread) =>
       thread.archivedAt === null &&
@@ -502,7 +502,7 @@ export const reconcileProviderSessions = Effect.gen(function* () {
   const liveThreadIds = new Set(
     (yield* providerService.listSessions()).map((session) => session.threadId),
   );
-  const { threads } = yield* query.getCommandReadModel();
+  const { threads } = yield* query.getMetadataSnapshot();
   // Provider startup can report ready before the continuation is submitted.
   // Find those markers in one read rather than querying every idle thread.
   const preparedThreadIds = new Set(
@@ -759,7 +759,7 @@ export const reconcileWorktreeSetups = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
   const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  // The command read model carries no activity bodies; read the setup
+  // The metadata snapshot carries no activity bodies; read the setup
   // records directly, live threads only.
   const recordedSetups = yield* query.listActivitiesByKind(WORKTREE_SETUP_ACTIVITY_KIND);
   const interruptedAt = DateTime.formatIso(yield* DateTime.now);

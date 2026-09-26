@@ -1,3 +1,4 @@
+import type { CommandReadModel, CommandThread } from "./CommandReadModel.ts";
 import {
   EventId,
   MAX_SCRIPT_ID_LENGTH,
@@ -8,8 +9,6 @@ import {
   isImportedAgentSessionMessageId,
   type OrchestrationCommand,
   type OrchestrationEvent,
-  type OrchestrationReadModel,
-  type OrchestrationThread,
   type ThreadPullRequestKey,
   type ThreadPullRequestLink,
   type OrchestrationThreadActivity,
@@ -64,32 +63,12 @@ const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLin
  * resolved activities always clear, respond.failed clears only when the
  * failure detail marks the request stale/unknown — or settle would be
  * rejected on threads whose shell flags read as clear.
+ * Activities retain the most recent 500 plus pending async questions.
  */
-function isStaleRequestFailureDetail(payload: Record<string, unknown> | null): boolean {
-  const detail = typeof payload?.detail === "string" ? payload.detail.toLowerCase() : null;
-  if (detail === null) return false;
-  return (
-    detail.includes("stale pending approval request") ||
-    detail.includes("unknown pending approval request") ||
-    detail.includes("unknown pending permission request") ||
-    detail.includes("stale pending user-input request") ||
-    detail.includes("unknown pending user-input request") ||
-    detail.includes("unknown pending user input request") ||
-    detail.includes("unknown pending codex user input request")
-  );
-}
-
-// Scans the read model's activities, which the projector caps at the most
-// recent 500 plus pending async questions. Async questions remain actionable
-// while the agent works, so they must not expire with the activity window.
-function openRequests(thread: Pick<OrchestrationThread, "activities">) {
-  const requests = new Map<string, OrchestrationThreadActivity>();
+function openRequests(thread: Pick<CommandThread, "activities">) {
+  const requests = new Map<string, CommandThread["activities"][number]>();
   for (const activity of thread.activities) {
-    const payload =
-      typeof activity.payload === "object" && activity.payload !== null
-        ? (activity.payload as Record<string, unknown>)
-        : null;
-    const requestId = typeof payload?.requestId === "string" ? payload.requestId : null;
+    const { requestId } = activity;
     if (requestId === null) continue;
     if (activity.kind === "approval.requested" || activity.kind === "user-input.requested") {
       requests.set(requestId, activity);
@@ -98,7 +77,7 @@ function openRequests(thread: Pick<OrchestrationThread, "activities">) {
     } else if (
       (activity.kind === "provider.approval.respond.failed" ||
         activity.kind === "provider.user-input.respond.failed") &&
-      isStaleRequestFailureDetail(payload)
+      activity.staleFailure
     ) {
       requests.delete(requestId);
     }
@@ -108,7 +87,7 @@ function openRequests(thread: Pick<OrchestrationThread, "activities">) {
 
 /** Apply the shared shell-level rule to the detailed command read model. */
 function hasQueuedTurnStartForThread(
-  thread: Pick<OrchestrationThread, "messages" | "latestTurn" | "session">,
+  thread: Pick<CommandThread, "messages" | "latestTurn" | "session">,
   now: string,
 ): boolean {
   let latestUserMessageAt: string | null = null;
@@ -132,7 +111,7 @@ function hasQueuedTurnStartForThread(
 }
 
 function findPullRequestLink(
-  thread: Pick<OrchestrationThread, "pullRequests">,
+  thread: Pick<CommandThread, "pullRequests">,
   key: ThreadPullRequestKey,
 ): ThreadPullRequestLink | undefined {
   return thread.pullRequests.find((link) => threadPullRequestKeysEqual(link, key));
@@ -179,7 +158,7 @@ const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
   readModel,
 }: {
   readonly commands: ReadonlyArray<OrchestrationCommand>;
-  readonly readModel: OrchestrationReadModel;
+  readonly readModel: CommandReadModel;
 }): Effect.fn.Return<
   ReadonlyArray<PlannedOrchestrationEvent>,
   OrchestrationCommandRejection | PlatformError.PlatformError,
@@ -214,7 +193,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   userInputActivity,
 }: {
   readonly command: OrchestrationCommand;
-  readonly readModel: OrchestrationReadModel;
+  readonly readModel: CommandReadModel;
   readonly userInputActivity?: OrchestrationThreadActivity;
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
@@ -506,8 +485,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           (activity) =>
             command.type === "thread.auto-settle" ||
             activity.kind !== "user-input.requested" ||
-            !Predicate.isObject(activity.payload) ||
-            activity.payload.responseMode !== "message",
+            activity.responseMode !== "message",
         )
       ) {
         return yield* new OrchestrationThreadSettleBlockedError({ threadId: command.threadId });

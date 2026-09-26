@@ -1,10 +1,10 @@
+import type { CommandReadModel } from "./CommandReadModel.ts";
 import {
   CommandId,
   EventId,
   ProjectId,
   ThreadId,
   type OrchestrationEvent,
-  type OrchestrationReadModel,
   type RepositoryIdentity,
   type ThreadPullRequestLink,
   type ThreadPullRequestSnapshot,
@@ -63,7 +63,7 @@ const snapshot: ThreadPullRequestSnapshot = {
   syncedAt: LATER,
 };
 
-const createThread = (model: OrchestrationReadModel) =>
+const createThread = (model: CommandReadModel) =>
   projectEvent(
     model,
     makeEvent({
@@ -84,7 +84,7 @@ const createThread = (model: OrchestrationReadModel) =>
     }),
   );
 
-const createProject = (model: OrchestrationReadModel, repositoryIdentity: RepositoryIdentity) =>
+const createProject = (model: CommandReadModel, repositoryIdentity: RepositoryIdentity) =>
   projectEvent(model, {
     ...makeEvent({
       sequence: model.snapshotSequence + 1,

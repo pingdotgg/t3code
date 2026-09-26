@@ -1,3 +1,4 @@
+import type { CommandReadModel } from "./CommandReadModel.ts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   MessageId,
@@ -6,7 +7,6 @@ import {
   ProjectId,
   ThreadId,
   type OrchestrationCommand,
-  type OrchestrationReadModel,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -15,7 +15,7 @@ import { listThreadsByProjectId, requireThread, requireThreadAbsent } from "./co
 
 const now = "2026-01-01T00:00:00.000Z";
 
-const readModel: OrchestrationReadModel = {
+const readModel: CommandReadModel = {
   snapshotSequence: 2,
   updatedAt: now,
   projects: [
@@ -198,7 +198,7 @@ describe("commandInvariants", () => {
   it("lets a draft retry re-create a thread id after its first attempt was deleted", async () => {
     const threadId = ThreadId.make("thread-1");
     const firstAttempt = readModel.threads.find((thread) => thread.id === threadId)!;
-    const afterRollback: OrchestrationReadModel = {
+    const afterRollback: CommandReadModel = {
       ...readModel,
       threads: readModel.threads.map((thread) =>
         thread.id === threadId ? { ...thread, deletedAt: now, updatedAt: now } : thread,

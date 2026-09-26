@@ -167,9 +167,9 @@ it.layer(NodeServices.layer)("thread history import", (it) => {
         metadata: {},
         payload: { threadId, turnCount: 0 },
       });
-      expect(projected.threads[0]?.messages.map((message) => message.text)).toEqual([
-        "Fix the bug",
-        "Fixed",
+      expect(projected.threads[0]?.messages.map((message) => message.role)).toEqual([
+        "user",
+        "assistant",
       ]);
     }),
   );

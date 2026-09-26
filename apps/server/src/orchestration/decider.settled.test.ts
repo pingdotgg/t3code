@@ -1,3 +1,9 @@
+import type { OrchestrationThread } from "@t3tools/contracts";
+import {
+  toCommandActivity,
+  type CommandReadModel,
+  type CommandThread,
+} from "./CommandReadModel.ts";
 import {
   CommandId,
   EventId,
@@ -6,9 +12,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type OrchestrationEvent,
-  type OrchestrationReadModel,
   type OrchestrationSession,
-  type OrchestrationThread,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -23,7 +27,7 @@ const SETTLE_BLOCKED_MESSAGE =
   "This thread still needs attention. Resolve or interrupt it first, then try again.";
 
 function makeReadModel(
-  settledOverride: OrchestrationThread["settledOverride"],
+  settledOverride: CommandThread["settledOverride"],
   archivedAt: string | null = null,
   session: OrchestrationSession | null = null,
   activities: OrchestrationThread["activities"] = [],
@@ -33,7 +37,7 @@ function makeReadModel(
     readonly snoozedUntil?: string | null;
     readonly snoozedAt?: string | null;
   } = {},
-): OrchestrationReadModel {
+): CommandReadModel {
   return {
     snapshotSequence: 0,
     projects: [],
@@ -60,7 +64,7 @@ function makeReadModel(
         deletedAt: null,
         messages,
         proposedPlans: [],
-        activities,
+        activities: activities.map(toCommandActivity),
         checkpoints: [],
         session,
       },
