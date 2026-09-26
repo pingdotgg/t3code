@@ -382,7 +382,7 @@ import { WorkspacePageHeader } from "./WorkspacePageHeader";
 import {
   type EnvironmentOption,
   resolveEffectiveEnvMode,
-  resolveLocalCheckoutBranchMismatch,
+  resolveCheckoutBranchMismatch,
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
@@ -1514,6 +1514,7 @@ export default function ChatView(props: ChatViewProps) {
     reportFailure: false,
   });
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
+  const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, { reportFailure: false });
   const setThreadRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, {
     reportFailure: false,
   });
@@ -5241,82 +5242,6 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [togglePreviewPanel],
   );
-  const persistThreadSettingsForNextTurn = useCallback(
-    async (input: {
-      threadId: ThreadId;
-      createdAt: string;
-      modelSelection?: ModelSelection;
-      branch?: string;
-      runtimeMode: RuntimeMode;
-      interactionMode: ProviderInteractionMode;
-    }): Promise<AtomCommandResult<void, unknown>> => {
-      if (!serverThread) {
-        return AsyncResult.success(undefined);
-      }
-
-      let result: AtomCommandResult<void, unknown> = AsyncResult.success(undefined);
-      const metadataUpdate = resolveThreadMetadataUpdateForNextTurn({
-        currentModelSelection: serverThread.modelSelection,
-        ...(input.modelSelection ? { nextModelSelection: input.modelSelection } : {}),
-        currentBranch: serverThread.branch,
-        ...(input.branch ? { nextBranch: input.branch } : {}),
-      });
-      if (metadataUpdate) {
-        result = mapAtomCommandResult(
-          await updateThreadMetadata({
-            environmentId,
-            input: {
-              threadId: input.threadId,
-              ...metadataUpdate,
-            },
-          }),
-          () => undefined,
-        );
-        if (result._tag === "Failure") {
-          return result;
-        }
-      }
-
-      if (input.runtimeMode !== serverThread.runtimeMode) {
-        result = mapAtomCommandResult(
-          await setThreadRuntimeMode({
-            environmentId,
-            input: {
-              threadId: input.threadId,
-              runtimeMode: input.runtimeMode,
-              createdAt: input.createdAt,
-            },
-          }),
-          () => undefined,
-        );
-        if (result._tag === "Failure") {
-          return result;
-        }
-      }
-
-      if (input.interactionMode !== serverThread.interactionMode) {
-        result = mapAtomCommandResult(
-          await setThreadInteractionMode({
-            environmentId,
-            input: {
-              threadId: input.threadId,
-              interactionMode: input.interactionMode,
-              createdAt: input.createdAt,
-            },
-          }),
-          () => undefined,
-        );
-      }
-      return result;
-    },
-    [
-      environmentId,
-      serverThread,
-      setThreadInteractionMode,
-      setThreadRuntimeMode,
-      updateThreadMetadata,
-    ],
-  );
 
   // Debounce *showing* the scroll-to-bottom pill so it doesn't flash during
   // thread switches. LegendList fires scroll events with isAtEnd=false while
@@ -5879,10 +5804,10 @@ export default function ChatView(props: ChatViewProps) {
     requestedEnvMode: envMode,
     isGitRepo,
   });
-  const localCheckoutBranchMismatch = useMemo(
+  const checkoutBranchMismatch = useMemo(
     () =>
       isServerThread
-        ? resolveLocalCheckoutBranchMismatch({
+        ? resolveCheckoutBranchMismatch({
             effectiveEnvMode: envMode,
             activeWorktreePath,
             activeThreadBranch,
@@ -5890,6 +5815,114 @@ export default function ChatView(props: ChatViewProps) {
           })
         : null,
     [activeThreadBranch, activeWorktreePath, envMode, gitStatusQuery.data?.refName, isServerThread],
+  );
+  const resolveCheckoutBranchForNextTurn = useCallback(async (): Promise<
+    AtomCommandResult<string | null, unknown>
+  > => {
+    if (!checkoutBranchMismatch || !gitStatusCwd) return AsyncResult.success(null);
+    const status = await refreshVcsStatus({ environmentId, input: { cwd: gitStatusCwd } });
+    // Refresh includes remote PR status; its availability must not prevent a local turn.
+    if (status._tag === "Failure" && !isAtomCommandInterrupted(status)) {
+      return AsyncResult.success(checkoutBranchMismatch.currentBranch);
+    }
+    return mapAtomCommandResult(status, (current) => {
+      const mismatch = resolveCheckoutBranchMismatch({
+        effectiveEnvMode: envMode,
+        activeWorktreePath,
+        activeThreadBranch,
+        currentGitBranch: current.refName,
+      });
+      return mismatch?.currentBranch ?? activeThreadBranch;
+    });
+  }, [
+    environmentId,
+    gitStatusCwd,
+    refreshVcsStatus,
+    checkoutBranchMismatch,
+    envMode,
+    activeWorktreePath,
+    activeThreadBranch,
+  ]);
+  const persistThreadSettingsForNextTurn = useCallback(
+    async (input: {
+      threadId: ThreadId;
+      createdAt: string;
+      modelSelection?: ModelSelection;
+      runtimeMode: RuntimeMode;
+      interactionMode: ProviderInteractionMode;
+    }): Promise<AtomCommandResult<void, unknown>> => {
+      if (!serverThread) {
+        return AsyncResult.success(undefined);
+      }
+
+      let result: AtomCommandResult<void, unknown> = AsyncResult.success(undefined);
+      const branchResult = await resolveCheckoutBranchForNextTurn();
+      if (branchResult._tag === "Failure") {
+        return mapAtomCommandResult(branchResult, () => undefined);
+      }
+      const metadataUpdate = resolveThreadMetadataUpdateForNextTurn({
+        currentModelSelection: serverThread.modelSelection,
+        ...(input.modelSelection ? { nextModelSelection: input.modelSelection } : {}),
+        currentBranch: serverThread.branch,
+        currentWorktreePath: serverThread.worktreePath,
+        ...(branchResult.value ? { nextBranch: branchResult.value } : {}),
+      });
+      if (metadataUpdate) {
+        result = mapAtomCommandResult(
+          await updateThreadMetadata({
+            environmentId,
+            input: {
+              threadId: input.threadId,
+              ...metadataUpdate,
+            },
+          }),
+          () => undefined,
+        );
+        if (result._tag === "Failure") {
+          return result;
+        }
+      }
+
+      if (input.runtimeMode !== serverThread.runtimeMode) {
+        result = mapAtomCommandResult(
+          await setThreadRuntimeMode({
+            environmentId,
+            input: {
+              threadId: input.threadId,
+              runtimeMode: input.runtimeMode,
+              createdAt: input.createdAt,
+            },
+          }),
+          () => undefined,
+        );
+        if (result._tag === "Failure") {
+          return result;
+        }
+      }
+
+      if (input.interactionMode !== serverThread.interactionMode) {
+        result = mapAtomCommandResult(
+          await setThreadInteractionMode({
+            environmentId,
+            input: {
+              threadId: input.threadId,
+              interactionMode: input.interactionMode,
+              createdAt: input.createdAt,
+            },
+          }),
+          () => undefined,
+        );
+      }
+      return result;
+    },
+    [
+      environmentId,
+      serverThread,
+      resolveCheckoutBranchForNextTurn,
+      setThreadInteractionMode,
+      setThreadRuntimeMode,
+      updateThreadMetadata,
+    ],
   );
   const activeComposerTasksProgress = useMemo(() => {
     if (!activeLatestTurn || latestTurnSettled || activePlan?.turnId !== activeLatestTurn.turnId) {
@@ -6176,10 +6209,10 @@ export default function ChatView(props: ChatViewProps) {
   const [, setBranchMismatchDismissTick] = useState(0);
   const activeBranchMismatchKey = branchMismatchKey(
     activeThread?.id ?? null,
-    localCheckoutBranchMismatch,
+    checkoutBranchMismatch,
   );
   const showBranchMismatchBanner = shouldShowBranchMismatchBanner({
-    hasMismatch: localCheckoutBranchMismatch !== null,
+    hasMismatch: checkoutBranchMismatch !== null,
     isDismissed: isBranchMismatchDismissedForSession(activeBranchMismatchKey),
     composerHasContent: composerHasUnsentContent,
     wasShownForCurrentMismatch:
@@ -6199,7 +6232,8 @@ export default function ChatView(props: ChatViewProps) {
     if (
       !activeProjectCwd ||
       !activeThread ||
-      !localCheckoutBranchMismatch ||
+      !checkoutBranchMismatch ||
+      !checkoutBranchMismatch.canRestoreThreadBranch ||
       isRestoringThreadBranch
     ) {
       return;
@@ -6209,7 +6243,7 @@ export default function ChatView(props: ChatViewProps) {
       environmentId,
       input: {
         cwd: activeProjectCwd,
-        refName: localCheckoutBranchMismatch.threadBranch,
+        refName: checkoutBranchMismatch.threadBranch,
       },
     });
     if (checkoutResult._tag === "Failure") {
@@ -6226,7 +6260,7 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
 
-    const nextBranch = checkoutResult.value.refName ?? localCheckoutBranchMismatch.threadBranch;
+    const nextBranch = checkoutResult.value.refName ?? checkoutBranchMismatch.threadBranch;
     if (nextBranch !== activeThread.branch) {
       const updateResult = await updateThreadMetadata({
         environmentId,
@@ -6256,7 +6290,7 @@ export default function ChatView(props: ChatViewProps) {
     environmentId,
     gitStatusQuery,
     isRestoringThreadBranch,
-    localCheckoutBranchMismatch,
+    checkoutBranchMismatch,
     scheduleComposerFocus,
     switchGitRef,
     updateThreadMetadata,
@@ -6545,7 +6579,7 @@ export default function ChatView(props: ChatViewProps) {
     // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
-    if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
+    if (!checkoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
         ...usageLimitsItems,
@@ -6570,24 +6604,26 @@ export default function ChatView(props: ChatViewProps) {
         variant: "info",
         icon: <GitBranchIcon />,
         title: (
-          <span className="flex min-w-0 items-baseline gap-1.5">
-            <span className="shrink-0 font-normal text-muted-foreground">Branch changed — was</span>
-            <Tooltip>
-              <TooltipTrigger
-                render={
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span className="flex min-w-0 items-baseline gap-1.5">
+                  <span className="shrink-0 font-normal text-muted-foreground">
+                    Branch mismatch — Send will use
+                  </span>
                   <code className="min-w-0 truncate font-medium text-foreground">
-                    {localCheckoutBranchMismatch.threadBranch}
+                    {checkoutBranchMismatch.currentBranch}
                   </code>
-                }
-              />
-              <TooltipPopup side="top">
-                This thread last ran on {localCheckoutBranchMismatch.threadBranch}. Sending will
-                continue on {localCheckoutBranchMismatch.currentBranch}.
-              </TooltipPopup>
-            </Tooltip>
-          </span>
+                </span>
+              }
+            />
+            <TooltipPopup side="top">
+              This thread last ran on {checkoutBranchMismatch.threadBranch}. Send will use{" "}
+              {checkoutBranchMismatch.currentBranch}.
+            </TooltipPopup>
+          </Tooltip>
         ),
-        actions: (
+        actions: checkoutBranchMismatch.canRestoreThreadBranch ? (
           <Button
             size="xs"
             variant="ghost"
@@ -6596,8 +6632,8 @@ export default function ChatView(props: ChatViewProps) {
           >
             {isRestoringThreadBranch ? "Restoring..." : "Restore branch"}
           </Button>
-        ),
-        dismissLabel: "Dismiss branch change notice",
+        ) : null,
+        dismissLabel: "Dismiss branch mismatch notice",
         onDismiss: () => {
           dismissBranchMismatchForSession(activeBranchMismatchKey);
           setBranchMismatchDismissTick((tick) => tick + 1);
@@ -6611,7 +6647,7 @@ export default function ChatView(props: ChatViewProps) {
     feedbackBannerItems,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
-    localCheckoutBranchMismatch,
+    checkoutBranchMismatch,
     parkedThreadBannerItem,
     projectCloneBannerItem,
     resumeCompactionBannerItem,
@@ -7208,9 +7244,6 @@ export default function ChatView(props: ChatViewProps) {
         threadId,
         createdAt,
         modelSelection: context.selectedModelSelection,
-        ...(localCheckoutBranchMismatch
-          ? { branch: localCheckoutBranchMismatch.currentBranch }
-          : {}),
         runtimeMode,
         interactionMode: context.interactionMode,
       });
@@ -8335,9 +8368,6 @@ export default function ChatView(props: ChatViewProps) {
         threadId: threadIdForSend,
         createdAt: messageCreatedAt,
         ...(ctxSelectedModel ? { modelSelection: ctxSelectedModelSelection } : {}),
-        ...(localCheckoutBranchMismatch
-          ? { branch: localCheckoutBranchMismatch.currentBranch }
-          : {}),
         runtimeMode,
         interactionMode: sendInteractionMode,
       });
@@ -8973,9 +9003,6 @@ export default function ChatView(props: ChatViewProps) {
         threadId: threadIdForSend,
         createdAt: messageCreatedAt,
         modelSelection: ctxSelectedModelSelection,
-        ...(localCheckoutBranchMismatch
-          ? { branch: localCheckoutBranchMismatch.currentBranch }
-          : {}),
         runtimeMode,
         interactionMode: nextInteractionMode,
       });
@@ -9055,7 +9082,6 @@ export default function ChatView(props: ChatViewProps) {
       isConnecting,
       isSendBusy,
       isServerThread,
-      localCheckoutBranchMismatch,
       persistThreadSettingsForNextTurn,
       resetLocalDispatch,
       runtimeMode,
@@ -9120,20 +9146,24 @@ export default function ChatView(props: ChatViewProps) {
       resetLocalDispatch();
     };
 
-    const createResult = await createThread({
-      environmentId,
-      input: {
-        threadId: nextThreadId,
-        projectId: activeProject.id,
-        title: nextThreadTitle,
-        modelSelection: nextThreadModelSelection,
-        runtimeMode: defaultRuntimeMode,
-        interactionMode: "default",
-        branch: activeThreadBranch,
-        worktreePath: activeThread.worktreePath,
-        createdAt,
-      },
-    });
+    const branchResult = await resolveCheckoutBranchForNextTurn();
+    const createResult =
+      branchResult._tag === "Failure"
+        ? branchResult
+        : await createThread({
+            environmentId,
+            input: {
+              threadId: nextThreadId,
+              projectId: activeProject.id,
+              title: nextThreadTitle,
+              modelSelection: nextThreadModelSelection,
+              runtimeMode: defaultRuntimeMode,
+              interactionMode: "default",
+              branch: branchResult.value ?? activeThreadBranch,
+              worktreePath: activeThread.worktreePath,
+              createdAt,
+            },
+          });
     let failure: AtomCommandResult<unknown, unknown> | null =
       createResult._tag === "Failure" ? createResult : null;
 
@@ -9183,17 +9213,19 @@ export default function ChatView(props: ChatViewProps) {
     }
 
     if (failure !== null) {
-      const cleanupResult = await deleteThread({
-        environmentId,
-        input: {
-          threadId: nextThreadId,
-        },
-      });
-      if (cleanupResult._tag === "Failure" && !isAtomCommandInterrupted(cleanupResult)) {
-        console.warn(
-          "Failed to clean up implementation thread after start failure.",
-          squashAtomCommandFailure(cleanupResult),
-        );
+      if (branchResult._tag === "Success") {
+        const cleanupResult = await deleteThread({
+          environmentId,
+          input: {
+            threadId: nextThreadId,
+          },
+        });
+        if (cleanupResult._tag === "Failure" && !isAtomCommandInterrupted(cleanupResult)) {
+          console.warn(
+            "Failed to clean up implementation thread after start failure.",
+            squashAtomCommandFailure(cleanupResult),
+          );
+        }
       }
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
@@ -9217,6 +9249,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThread,
     beginLocalDispatch,
     activeEnvironmentUnavailable,
+    resolveCheckoutBranchForNextTurn,
     createThread,
     deleteThread,
     isConnecting,
@@ -10216,7 +10249,7 @@ export default function ChatView(props: ChatViewProps) {
                   <AlertDialogTitle>
                     Switch to{" "}
                     <code className="font-medium">
-                      {localCheckoutBranchMismatch?.threadBranch ?? ""}
+                      {checkoutBranchMismatch?.threadBranch ?? ""}
                     </code>
                     ?
                   </AlertDialogTitle>
