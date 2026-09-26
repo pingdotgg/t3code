@@ -370,7 +370,8 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
  * Projects one event onto the engine's private command read model. Only the
  * decider and the engine's command checks read it; clients read the SQL
  * projections. It lives for the whole server process, so it keeps only what
- * the decider reads: user messages, request activities, and checkpoints
+ * the decider reads: user messages, the first non-user message (without its
+ * text) for the history-import guard, request activities, and checkpoints
  * without their file lists. While a request is open, other activities stay as
  * payload-free placeholders so the activity cap counts them as before.
  */
