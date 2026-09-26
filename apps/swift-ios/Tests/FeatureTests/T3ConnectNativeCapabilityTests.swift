@@ -39,7 +39,9 @@ final class T3ConnectNativeCapabilityTests: XCTestCase {
         guard case let .snapshot(snapshot)? = event else {
             return XCTFail("Managed connect did not publish its initial Home snapshot")
         }
-        XCTAssertEqual(snapshot.connection.state, .connected)
+        // HTTP hydration publishes content before the deliberately blocked live stream.
+        XCTAssertEqual(snapshot.connection.state, .reconnecting)
+        XCTAssertEqual(snapshot.environments.first(where: { $0.id == "managed-1" })?.connectionState, .connected)
         XCTAssertEqual(snapshot.connection.environmentName, "Managed Studio")
 
         let saved = try await store.load()

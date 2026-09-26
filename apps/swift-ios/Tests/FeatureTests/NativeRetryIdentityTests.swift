@@ -353,31 +353,21 @@ final class NativeRetryIdentityTests: XCTestCase {
         let settingsStore = UserDefaults(suiteName: settingsSuite)!
         defer { settingsStore.removePersistentDomain(forName: settingsSuite) }
         let client = NativeFeatureClient(runtime: runtime, settingsStore: settingsStore)
-        var events = client.events().makeAsyncIterator()
-        let initial = try await client.initialSnapshot()
+        let seed = try await client.initialSnapshot()
+        let recorder = AcceptedCommandSnapshotRecorder(seed: seed, events: client.events())
+        defer { recorder.stop() }
+        let initial = try await recorder.wait { !$0.projects.isEmpty && !$0.threads.isEmpty }
         await connection.waitUntilConnected()
         var updated = initial.settings
         updated.textSize = FeatureTextSizeAdjustment(steps: 2)
         updated.codeSize = FeatureTextSizeAdjustment(steps: -1)
         try await client.saveSettings(updated)
         await connection.failReceive()
-
-        var receivedReconnect = false
-        while let event = await events.next() {
-            guard case let .connection(state, _) = event,
-                  state.state == .reconnecting else {
-                continue
-            }
-            receivedReconnect = true
-            break
+        let snapshot = try await recorder.wait {
+            $0.connection.state == .reconnecting && $0.settings.textSize.steps == 2
         }
-        XCTAssertTrue(receivedReconnect)
-        // A reconnect patches the connection instead of republishing the
-        // snapshot. The next snapshot the client builds must still carry the
-        // saved sizes.
-        let republished = try await client.backgroundSnapshot()
-        XCTAssertEqual(republished.settings.textSize.steps, 2)
-        XCTAssertEqual(republished.settings.codeSize.steps, -1)
+        XCTAssertEqual(snapshot.settings.textSize.steps, 2)
+        XCTAssertEqual(snapshot.settings.codeSize.steps, -1)
         await client.disconnect()
     }
 
@@ -1549,6 +1539,13 @@ private final class AcceptedCommandSnapshotRecorder {
                 case let .threadRemoved(id):
                     guard var snapshot = self.history.last else { continue }
                     snapshot.threads.removeAll { $0.id == id }
+                    self.record(snapshot)
+                case let .connection(connection, environmentID):
+                    guard var snapshot = self.history.last else { continue }
+                    snapshot.connection = connection
+                    if let index = snapshot.environments.firstIndex(where: { $0.id == environmentID }) {
+                        snapshot.environments[index].connectionState = connection.state
+                    }
                     self.record(snapshot)
                 default: break
                 }

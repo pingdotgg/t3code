@@ -153,6 +153,7 @@ public final class FeatureRootModel {
 
     func applicationDidEnterBackground(at date: Date = .now) {
         backgroundedAt = date
+        client.suspendForBackground()
     }
 
     func applicationDidBecomeActive(at date: Date = .now) async {

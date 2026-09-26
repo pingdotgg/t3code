@@ -1452,15 +1452,18 @@ private struct CatchUpFixture {
                 requests: requests.continuation, completionMarker: completionMarker
             )
         )
+        let readiness = CatchUpBootstrapReadiness()
         let client = NativeFeatureClient(
             runtime: runtime, settingsStore: UserDefaults(suiteName: UUID().uuidString)!,
             fallbackPollingInitialDelay: .seconds(3_600),
             aggregateRefreshInterval: .seconds(3_600),
+            aggregateRefreshReceipt: { readiness.record($0) },
             detailPublicationSleep: detailPublicationSleep,
             catchUpDelay: { try await delay.wait() },
             threadRetryDelay: threadRetryDelay
         )
         _ = try await client.initialSnapshot()
+        try await readiness.wait()
         return Self(client: client, http: http, requests: requests.stream, delay: delay, directory: directory)
     }
 
@@ -1941,4 +1944,37 @@ private final class CatchUpPublicationClock: Sendable {
     }
 
     func release() async { await gate.release() }
+}
+
+@MainActor
+private final class CatchUpBootstrapReadiness {
+    private var hasShell = false
+    private var hasConfig = false
+    private var waiters: [UUID: CheckedContinuation<Void, Error>] = [:]
+
+    func record(_ receipt: NativePassiveShellReceipt) {
+        switch receipt {
+        case .shellApplied(environmentID: "one", sequence: _): hasShell = true
+        case .configurationApplied(environmentID: "one"): hasConfig = true
+        default: break
+        }
+        if hasShell && hasConfig {
+            let pending = waiters.values
+            waiters.removeAll()
+            pending.forEach { $0.resume() }
+        }
+    }
+
+    func wait() async throws {
+        try Task.checkCancellation()
+        guard !hasShell || !hasConfig else { return }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { waiters[id] = $0 }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.waiters.removeValue(forKey: id)?.resume(throwing: CancellationError())
+            }
+        }
+    }
 }
