@@ -129,6 +129,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const pathService = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
       const eventLoggers = yield* ProviderEventLoggers;
       const modelManifest = yield* ModelManifest.ModelManifest;
       const processEnv = mergeProviderInstanceEnvironment(environment);
@@ -182,7 +183,12 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const checkProvider = modelManifest.refreshInBackground.pipe(
         Effect.andThen(
           Effect.zipWith(
-            checkCodexProviderStatus(effectiveConfig, undefined, processEnv),
+            checkCodexProviderStatus(
+              effectiveConfig,
+              undefined,
+              processEnv,
+              serverConfig.codexLaunchArgs,
+            ),
             modelManifest.current,
             (draft, manifest) =>
               stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
@@ -239,7 +245,12 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         models,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
-      const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv, models);
+      const textGeneration = yield* makeCodexTextGeneration(
+        effectiveConfig,
+        processEnv,
+        models,
+        serverConfig.codexLaunchArgs,
+      );
       const snapshotForCwd = (cwd: string) =>
         !effectiveConfig.enabled
           ? snapshot.getSnapshot
@@ -248,7 +259,10 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
               probeCodexSkillsForCwd({
                 binaryPath: effectiveConfig.binaryPath,
                 homePath: effectiveConfig.homePath,
-                launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+                launchArgs: resolveCodexLaunchArgs(
+                  effectiveConfig.launchArgs,
+                  serverConfig.codexLaunchArgs,
+                ),
                 cwd,
                 environment: processEnv,
               }).pipe(
@@ -284,7 +298,10 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
               const { client } = yield* withCodexAppServerClient({
                 binaryPath: effectiveConfig.binaryPath,
                 homePath: effectiveConfig.homePath,
-                launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+                launchArgs: resolveCodexLaunchArgs(
+                  effectiveConfig.launchArgs,
+                  serverConfig.codexLaunchArgs,
+                ),
                 // Account-level request; any directory serves, same as the status probe.
                 cwd: process.cwd(),
                 environment: processEnv,

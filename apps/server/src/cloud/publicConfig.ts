@@ -5,11 +5,14 @@ import {
 } from "@t3tools/shared/connectAuth";
 import { clerkFrontendApiUrlFromPublishableKey } from "@t3tools/shared/relayAuth";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import {
+  makeHostedAppUrlConfig,
+  makePublicValueConfig,
+  makeRelayUrlConfig as makeCanonicalRelayUrlConfig,
+} from "../cli/config.ts";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
-import * as SchemaIssue from "effect/SchemaIssue";
 
 declare const __T3CODE_BUILD_RELAY_URL__: string | undefined;
 declare const __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
@@ -20,21 +23,6 @@ declare const __T3CODE_BUILD_RELAY_CLIENT_OTLP_TRACES_TOKEN__: string | undefine
 
 const CLOUD_CLI_OAUTH_LOOPBACK_PORT = 34338;
 const CLOUD_CLI_OAUTH_SCOPES = CONNECT_OAUTH_SCOPES;
-
-function validateRelayUrl(value: string) {
-  const relayUrl = normalizeSecureRelayUrl(value);
-  return relayUrl === null
-    ? Effect.fail(
-        new Config.ConfigError(
-          new Schema.SchemaError(
-            new SchemaIssue.InvalidValue({
-              message: "Relay URL must be a secure absolute HTTPS origin.",
-            }),
-          ),
-        ),
-      )
-    : Effect.succeed(relayUrl);
-}
 
 function readBuildTimeValue(value: string | undefined): string {
   return typeof value === "undefined" ? "" : value.trim();
@@ -96,10 +84,7 @@ export function resolveRelayClientTracingConfig(
 }
 
 export function makeRelayUrlConfig(fallback = buildTimeRelayUrl) {
-  const runtimeConfig = Config.NonEmptyString("T3CODE_RELAY_URL");
-  return (fallback ? runtimeConfig.pipe(Config.withDefault(fallback)) : runtimeConfig).pipe(
-    Config.mapEffect(validateRelayUrl),
-  );
+  return makeCanonicalRelayUrlConfig(fallback);
 }
 
 export const relayUrlConfig = makeRelayUrlConfig();
@@ -109,45 +94,7 @@ export const relayUrlConfig = makeRelayUrlConfig();
  * machines. Overridable so staging/nightly builds can point their CLIs at a
  * matching hosted deployment.
  */
-export const hostedAppUrlConfig = makePublicValueConfig(
-  "T3CODE_HOSTED_APP_URL",
-  DEFAULT_HOSTED_APP_URL,
-).pipe(Config.mapEffect(validateHostedAppUrl));
-
-function validateHostedAppUrl(value: string) {
-  try {
-    const url = new URL(value);
-    const isLoopbackHttp =
-      url.protocol === "http:" &&
-      (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]");
-    if (
-      (url.protocol !== "https:" && !isLoopbackHttp) ||
-      url.pathname !== "/" ||
-      url.search !== "" ||
-      url.hash !== ""
-    ) {
-      throw new Error("invalid hosted app origin");
-    }
-    return Effect.succeed(url.origin);
-  } catch {
-    return Effect.fail(
-      new Config.ConfigError(
-        new Schema.SchemaError(
-          new SchemaIssue.InvalidValue({
-            message: "Hosted app URL must be an absolute HTTPS origin (or HTTP loopback origin).",
-          }),
-        ),
-      ),
-    );
-  }
-}
-
-function makePublicValueConfig(name: string, fallback: string) {
-  const runtimeConfig = Config.NonEmptyString(name);
-  return (fallback ? runtimeConfig.pipe(Config.withDefault(fallback)) : runtimeConfig).pipe(
-    Config.map((value) => value.trim()),
-  );
-}
+export const hostedAppUrlConfig = makeHostedAppUrlConfig(DEFAULT_HOSTED_APP_URL);
 
 /**
  * The CLI never calls Clerk's /oauth/authorize itself: the browser leg goes

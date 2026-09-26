@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { serverEnvironmentConfig } from "../cli/config.ts";
 import {
   NonNegativeInt,
   TrimmedNonEmptyString,
@@ -32,19 +33,16 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import { retryAtFromHeader } from "./SourceControlRateLimit.ts";
 
-const DEFAULT_API_BASE_URL = "https://api.bitbucket.org/2.0";
 /** A response body past this is cut short, so one huge diff cannot exhaust the server. */
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 /** Bitbucket redirects a diff once; this leaves room without following a chain forever. */
 const MAX_REDIRECTS = 3;
 
 const BitbucketApiEnvConfig = Config.all({
-  baseUrl: Config.String("T3CODE_BITBUCKET_API_BASE_URL").pipe(
-    Config.withDefault(DEFAULT_API_BASE_URL),
-  ),
-  accessToken: Config.String("T3CODE_BITBUCKET_ACCESS_TOKEN").pipe(Config.option),
-  email: Config.String("T3CODE_BITBUCKET_EMAIL").pipe(Config.option),
-  apiToken: Config.String("T3CODE_BITBUCKET_API_TOKEN").pipe(Config.option),
+  baseUrl: serverEnvironmentConfig.bitbucketApiBaseUrl,
+  accessToken: serverEnvironmentConfig.bitbucketAccessToken,
+  email: serverEnvironmentConfig.bitbucketEmail,
+  apiToken: serverEnvironmentConfig.bitbucketApiToken,
 });
 
 const BitbucketApiOperation = Schema.Literals([

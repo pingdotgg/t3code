@@ -26,6 +26,7 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -271,6 +272,7 @@ describe("ProviderRuntimeIngestion", () => {
     threadTitle?: string;
     workspaceSubdirectory?: string;
     isGitRepository?: CheckpointStore.CheckpointStore["Service"]["isGitRepository"];
+    strictProviderLifecycleGuard?: boolean;
   }) {
     const repositoryRoot = makeTempDir("t3-provider-project-");
     NodeChildProcess.execFileSync("git", ["init", "--initial-branch=main"], {
@@ -342,6 +344,20 @@ describe("ProviderRuntimeIngestion", () => {
       ),
       Layer.provideMerge(VcsProcess.layer),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env:
+              options?.strictProviderLifecycleGuard === undefined
+                ? {}
+                : {
+                    T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD: String(
+                      options.strictProviderLifecycleGuard,
+                    ),
+                  },
+          }),
+        ),
+      ),
       Layer.provideMerge(NodeServices.layer),
       Layer.provideMerge(Layer.succeed(Tracer.Tracer, sqlCounter.tracer)),
     );
@@ -1350,6 +1366,39 @@ describe("ProviderRuntimeIngestion", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-guarded-main"),
+      status: "completed",
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
+    );
+  });
+
+  it("applies non-active lifecycle events when strict guarding is disabled", async () => {
+    const harness = await createHarness({ strictProviderLifecycleGuard: false });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-non-strict"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-non-strict-main"),
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.activeTurnId === "turn-non-strict-main",
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-non-strict"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-non-strict-other"),
       status: "completed",
     });
 

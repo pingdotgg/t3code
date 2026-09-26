@@ -97,6 +97,7 @@ export class ServerConfig extends Context.Service<
     readonly desktopTelemetryFd?: number | undefined;
     readonly desktopTelemetryControlFd?: number | undefined;
     readonly resourceMonitorPath?: string | undefined;
+    readonly codexLaunchArgs?: ReadonlyArray<string> | undefined;
     readonly autoBootstrapProjectFromCwd: boolean;
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
@@ -107,7 +108,8 @@ export class ServerConfig extends Context.Service<
   static readonly layerTest = (
     cwd: string,
     baseDirOrPrefix: string | { readonly prefix: string },
-  ) => layerTest(cwd, baseDirOrPrefix);
+    overrides?: Partial<ServerConfig["Service"]>,
+  ) => layerTest(cwd, baseDirOrPrefix, overrides);
 }
 
 export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config);
@@ -197,6 +199,7 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
 const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
   cwd: string,
   baseDirOrPrefix: string | { readonly prefix: string },
+  overrides: Partial<ServerConfig["Service"]> = {},
 ) {
   const devUrl = undefined;
   const fs = yield* FileSystem.FileSystem;
@@ -235,16 +238,21 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     desktopTelemetryFd: undefined,
     desktopTelemetryControlFd: undefined,
     resourceMonitorPath: undefined,
+    codexLaunchArgs: undefined,
     staticDir: undefined,
     devUrl,
     devAllowedOrigins: [],
     noBrowser: false,
     startupPresentation: "browser",
+    ...overrides,
   });
 });
 
-export const layerTest = (cwd: string, baseDirOrPrefix: string | { readonly prefix: string }) =>
-  Layer.effect(ServerConfig, makeTest(cwd, baseDirOrPrefix));
+export const layerTest = (
+  cwd: string,
+  baseDirOrPrefix: string | { readonly prefix: string },
+  overrides?: Partial<ServerConfig["Service"]>,
+) => Layer.effect(ServerConfig, makeTest(cwd, baseDirOrPrefix, overrides));
 
 export const resolveStaticDir = Effect.fn(function* () {
   const { join, resolve } = yield* Path.Path;

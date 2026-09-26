@@ -11,6 +11,15 @@ describe("tokenizeCliArgs", () => {
     ).toEqual(["--config", "model=gpt 5", "--enable", "foo bar", "--config=profile=work profile"]);
   });
 
+  it("rejects unterminated quotes", () => {
+    expect(() => tokenizeCliArgs('--config "unterminated')).toThrow(
+      "unterminated quote in CLI arguments",
+    );
+    expect(() => tokenizeCliArgs("--config 'unterminated")).toThrow(
+      "unterminated quote in CLI arguments",
+    );
+  });
+
   it("preserves literal backslashes in path values", () => {
     expect(
       tokenizeCliArgs(String.raw`--config cacheDir=C:\Users\me --config "quoted=C:\Users\me"`),

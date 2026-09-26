@@ -1,11 +1,41 @@
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 
-const T3CODE_CODEX_LAUNCH_ARGS_ENV = "T3CODE_CODEX_LAUNCH_ARGS";
+export type CodexLaunchArgs = ReadonlyArray<string>;
+
+const MAX_CODEX_LAUNCH_ARGS_LENGTH = 16_384;
+const MAX_CODEX_LAUNCH_ARG_COUNT = 256;
+const SAFE_ARGUMENT = /^[A-Za-z0-9_./:@%+=,-]+$/u;
+
+export const parseCodexLaunchArgs = (value: string): CodexLaunchArgs => {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return [];
+  if (
+    trimmed.length > MAX_CODEX_LAUNCH_ARGS_LENGTH ||
+    trimmed.includes("\0") ||
+    trimmed.includes("\r") ||
+    trimmed.includes("\n") ||
+    trimmed.endsWith("\\")
+  ) {
+    throw new Error("invalid Codex launch arguments");
+  }
+  const args = tokenizeCliArgs(trimmed);
+  if (args.length > MAX_CODEX_LAUNCH_ARG_COUNT) {
+    throw new Error("too many Codex launch arguments");
+  }
+  return args;
+};
+
+const serializeCodexLaunchArgs = (args: CodexLaunchArgs): string =>
+  args.map((arg) => (SAFE_ARGUMENT.test(arg) ? arg : JSON.stringify(arg))).join(" ");
 
 export const resolveCodexLaunchArgs = (
   launchArgs?: string,
-  environment: NodeJS.ProcessEnv = process.env,
-) => environment[T3CODE_CODEX_LAUNCH_ARGS_ENV]?.trim() || launchArgs?.trim() || "";
+  environmentLaunchArgs?: CodexLaunchArgs,
+): string => {
+  const args =
+    environmentLaunchArgs ?? (launchArgs === undefined ? [] : parseCodexLaunchArgs(launchArgs));
+  return serializeCodexLaunchArgs(args);
+};
 
 const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> => tokenizeCliArgs(launchArgs);
 

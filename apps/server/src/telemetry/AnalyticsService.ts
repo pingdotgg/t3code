@@ -21,6 +21,7 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
+import { serverEnvironmentConfig } from "../cli/config.ts";
 import { getTelemetryIdentifier } from "./Identify.ts";
 
 interface BufferedAnalyticsEvent {
@@ -30,18 +31,12 @@ interface BufferedAnalyticsEvent {
 }
 
 const TelemetryEnvConfig = Config.all({
-  posthogKey: Config.String("T3CODE_POSTHOG_KEY").pipe(
-    Config.withDefault("phc_XOWci4oZP4VvLiEyrFqkFjP4CZn55mjYYBMREK5Wd6m"),
-  ),
-  posthogHost: Config.String("T3CODE_POSTHOG_HOST").pipe(
-    Config.withDefault("https://us.i.posthog.com"),
-  ),
-  enabled: Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.withDefault(true)),
-  flushBatchSize: Config.Number("T3CODE_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
-  maxBufferedEvents: Config.Number("T3CODE_TELEMETRY_MAX_BUFFERED_EVENTS").pipe(
-    Config.withDefault(1_000),
-  ),
-  wslDistroName: Config.String("WSL_DISTRO_NAME").pipe(Config.option),
+  posthogKey: serverEnvironmentConfig.posthogKey,
+  posthogHost: serverEnvironmentConfig.posthogHost,
+  enabled: serverEnvironmentConfig.telemetryEnabled,
+  flushBatchSize: serverEnvironmentConfig.telemetryFlushBatchSize,
+  maxBufferedEvents: serverEnvironmentConfig.telemetryMaxBufferedEvents,
+  wslDistroName: serverEnvironmentConfig.wslDistroName,
 });
 
 export class AnalyticsService extends Context.Service<

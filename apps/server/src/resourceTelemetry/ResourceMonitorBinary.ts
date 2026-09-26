@@ -1,8 +1,4 @@
-import {
-  HostProcessArchitecture,
-  HostProcessEnvironment,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -50,10 +46,23 @@ export class ResourceMonitorBinaryNotExecutable extends Schema.TaggedError<Resou
   }
 }
 
+export class ResourceMonitorBinaryInvalidPath extends Schema.TaggedError<ResourceMonitorBinaryInvalidPath>()(
+  "ResourceMonitorBinaryInvalidPath",
+  {
+    path: Schema.String,
+    reason: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Resource monitor binary path '${this.path}' is invalid: ${this.reason}.`;
+  }
+}
+
 export type ResourceMonitorBinaryError =
   | ResourceMonitorBinaryUnsupported
   | ResourceMonitorBinaryNotFound
-  | ResourceMonitorBinaryNotExecutable;
+  | ResourceMonitorBinaryNotExecutable
+  | ResourceMonitorBinaryInvalidPath;
 
 export class ResourceMonitorBinary extends Context.Service<
   ResourceMonitorBinary,
@@ -135,21 +144,83 @@ function resourceMonitorRustTarget(
   return undefined;
 }
 
+export const isResourceMonitorPathAbsolute = (
+  candidate: string,
+  platform: NodeJS.Platform,
+  path: Path.Path,
+): boolean => {
+  if (
+    candidate.length === 0 ||
+    candidate !== candidate.trim() ||
+    candidate.includes("\0") ||
+    candidate.includes("\r") ||
+    candidate.includes("\n")
+  ) {
+    return false;
+  }
+  if (platform === "win32") {
+    return (
+      path.isAbsolute(candidate) &&
+      (/^[A-Za-z]:[\\/]/u.test(candidate) || candidate.startsWith("\\\\"))
+    );
+  }
+  return path.isAbsolute(candidate);
+};
+
+export const validateResourceMonitorOverride = Effect.fn(
+  "resourceTelemetry.resourceMonitorBinary.validateOverride",
+)(function* (candidate: string, platform: NodeJS.Platform, architecture: NodeJS.Architecture) {
+  const path = yield* Path.Path;
+  if (!isResourceMonitorPathAbsolute(candidate, platform, path)) {
+    return yield* new ResourceMonitorBinaryInvalidPath({
+      path: candidate,
+      reason: "expected an absolute path",
+    });
+  }
+  if (platform === "win32" && !candidate.toLowerCase().endsWith(".exe")) {
+    return yield* new ResourceMonitorBinaryInvalidPath({
+      path: candidate,
+      reason: "Windows overrides must use a .exe file",
+    });
+  }
+  const fileSystem = yield* FileSystem.FileSystem;
+  const stat = yield* fileSystem.stat(candidate).pipe(Effect.option);
+  if (Option.isNone(stat)) {
+    return yield* new ResourceMonitorBinaryNotFound({
+      platform,
+      architecture,
+      candidates: [candidate],
+    });
+  }
+  if (stat.value.type !== "File" || (platform !== "win32" && (stat.value.mode & 0o111) === 0)) {
+    return yield* new ResourceMonitorBinaryNotExecutable({
+      path: candidate,
+      mode: stat.value.mode,
+    });
+  }
+});
+
 export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(function* () {
   const config = yield* ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
   const architecture = yield* HostProcessArchitecture;
-  const environment = yield* HostProcessEnvironment;
   const linuxLibc = platform === "linux" ? yield* ResourceMonitorHostLinuxLibc : undefined;
   const executableName = binaryName(platform);
   const platformKey = resourceMonitorPlatformKey(platform, architecture);
   const rustTarget = resourceMonitorRustTarget(platform, architecture, linuxLibc);
-  const overrideCandidates = [
-    environment.T3CODE_RESOURCE_MONITOR_PATH,
-    config.resourceMonitorPath,
-  ].filter((candidate): candidate is string => Boolean(candidate));
+  if (config.resourceMonitorPath !== undefined) {
+    const override = config.resourceMonitorPath;
+    const resolve: ResourceMonitorBinary["Service"]["resolve"] = Effect.gen(function* () {
+      yield* validateResourceMonitorOverride(override, platform, architecture).pipe(
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+      );
+      return override;
+    });
+    return ResourceMonitorBinary.of({ resolve });
+  }
   const bundledCandidates =
     platformKey === undefined || rustTarget === undefined
       ? []
@@ -182,7 +253,7 @@ export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(fu
             executableName,
           ),
         ];
-  if (overrideCandidates.length === 0 && bundledCandidates.length === 0) {
+  if (bundledCandidates.length === 0) {
     return ResourceMonitorBinary.of({
       resolve: Effect.fail(
         new ResourceMonitorBinaryUnsupported({
@@ -193,7 +264,7 @@ export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(fu
     });
   }
 
-  const candidates = [...overrideCandidates, ...bundledCandidates];
+  const candidates = bundledCandidates;
 
   const resolve: ResourceMonitorBinary["Service"]["resolve"] = Effect.gen(function* () {
     for (const candidate of candidates) {

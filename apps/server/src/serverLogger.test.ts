@@ -73,6 +73,7 @@ const configLayer = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =
         desktopTelemetryFd: undefined,
         desktopTelemetryControlFd: undefined,
         resourceMonitorPath: undefined,
+        codexLaunchArgs: undefined,
         staticDir: undefined,
         devUrl: undefined,
         devAllowedOrigins: [],

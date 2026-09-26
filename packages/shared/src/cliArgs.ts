@@ -60,6 +60,9 @@ export function tokenizeCliArgs(args?: string): ReadonlyArray<string> {
     }
   }
 
+  if (quote !== undefined) {
+    throw new Error("unterminated quote in CLI arguments");
+  }
   if (current || quoted) tokens.push(current);
   return tokens;
 }

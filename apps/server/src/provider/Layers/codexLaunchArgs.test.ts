@@ -5,26 +5,30 @@ import { describe, it } from "vite-plus/test";
 import {
   codexAppServerArgs,
   codexExecLaunchArgs,
+  parseCodexLaunchArgs,
   resolveCodexLaunchArgs,
 } from "./codexLaunchArgs.ts";
 
 describe("resolveCodexLaunchArgs", () => {
-  it("uses T3CODE_CODEX_LAUNCH_ARGS before configured settings", () => {
+  it("uses validated environment arguments before configured settings", () => {
     NodeAssert.equal(
-      resolveCodexLaunchArgs(" --strict-config ", { T3CODE_CODEX_LAUNCH_ARGS: "--enable foo" }),
-      "--enable foo",
+      resolveCodexLaunchArgs(" --strict-config ", ["--enable", "foo bar"]),
+      '--enable "foo bar"',
     );
   });
 
-  it("uses configured settings when T3CODE_CODEX_LAUNCH_ARGS is empty", () => {
-    NodeAssert.equal(
-      resolveCodexLaunchArgs(" --strict-config ", { T3CODE_CODEX_LAUNCH_ARGS: "   " }),
-      "--strict-config",
-    );
+  it("uses configured settings when environment arguments are absent", () => {
+    NodeAssert.equal(resolveCodexLaunchArgs(" --strict-config "), "--strict-config");
   });
 
   it("ignores whitespace-only environment values", () => {
-    NodeAssert.equal(resolveCodexLaunchArgs("", { T3CODE_CODEX_LAUNCH_ARGS: "   " }), "");
+    NodeAssert.equal(resolveCodexLaunchArgs("", undefined), "");
+  });
+
+  it("rejects malformed quoting and control characters", () => {
+    NodeAssert.throws(() => parseCodexLaunchArgs('--config "unterminated'), /unterminated quote/);
+    NodeAssert.throws(() => parseCodexLaunchArgs("--config=value\nmalicious"), /invalid Codex/);
+    NodeAssert.throws(() => parseCodexLaunchArgs("--config=value\\"), /invalid Codex/);
   });
 });
 
