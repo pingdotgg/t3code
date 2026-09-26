@@ -56,6 +56,7 @@ export function HostedBrowserWebview(props: {
    */
   readonly profileId: string | undefined;
   readonly zoomFactor: number;
+  readonly touchEmulation: boolean;
 }) {
   const {
     threadRef,
@@ -66,6 +67,7 @@ export function HostedBrowserWebview(props: {
     pictureInPicture,
     zoomFactor,
     profileId,
+    touchEmulation,
   } = props;
   const clientSettingsHydrated = useClientSettingsHydrated();
   const config = usePreviewWebviewConfig(threadRef.environmentId, profileId);
@@ -262,6 +264,13 @@ export function HostedBrowserWebview(props: {
     wrapper.scrollTo({ left: 0, top: 0 });
   }, [runtimeTabId, viewport._tag, viewportHeight, viewportWidth]);
 
+  // Touch is a device-mode control, so leaving device mode by any route
+  // (toolbar close, menu, agent resize) turns it off.
+  useEffect(() => {
+    if (viewport._tag !== "fill" || !touchEmulation) return;
+    void previewBridge?.setTouchEmulation(runtimeTabId, false).catch(() => undefined);
+  }, [runtimeTabId, touchEmulation, viewport._tag]);
+
   if (!clientSettingsHydrated || !config) return null;
 
   const renderingActive = active || backgroundActivity || pictureInPicture || recordingActive;
@@ -295,6 +304,10 @@ export function HostedBrowserWebview(props: {
             aspectRatio={lockedAspectRatio}
             onAspectRatioChange={handleAspectRatioChange}
             onChange={commitViewportChange}
+            touchEmulation={touchEmulation}
+            onTouchEmulationChange={(enabled) => {
+              void previewBridge?.setTouchEmulation(runtimeTabId, enabled).catch(() => undefined);
+            }}
           />
         ) : null}
         <webview

@@ -5,6 +5,7 @@ import {
   ThreadId,
   type ClientSettings,
   type DesktopPreviewBridge,
+  type PreviewViewportSetting,
 } from "@t3tools/contracts";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   closeTab: vi.fn<DesktopPreviewBridge["closeTab"]>(),
   registerWebview: vi.fn<DesktopPreviewBridge["registerWebview"]>(),
   getPreviewConfig: vi.fn<DesktopPreviewBridge["getPreviewConfig"]>(),
+  setTouchEmulation: vi.fn<DesktopPreviewBridge["setTouchEmulation"]>(),
   activeRecordings: new Set<string>(),
 }));
 
@@ -30,6 +32,7 @@ vi.mock("~/components/preview/previewBridge", () => ({
     closeTab: mocks.closeTab,
     registerWebview: mocks.registerWebview,
     getPreviewConfig: mocks.getPreviewConfig,
+    setTouchEmulation: mocks.setTouchEmulation,
   },
 }));
 
@@ -70,6 +73,7 @@ beforeEach(() => {
   mocks.createTab.mockReset().mockResolvedValue(undefined);
   mocks.closeTab.mockReset().mockResolvedValue(undefined);
   mocks.registerWebview.mockReset().mockResolvedValue(undefined);
+  mocks.setTouchEmulation.mockReset().mockResolvedValue(undefined);
   mocks.getPreviewConfig.mockReset().mockResolvedValue({
     partition: "persist:t3-preview-work",
     webPreferences: "contextIsolation=yes",
@@ -129,6 +133,7 @@ describe("HostedBrowserWebview settings hydration", () => {
           pictureInPicture={false}
           profileId="work"
           zoomFactor={1.25}
+          touchEmulation={false}
         />,
         {
           createNodeMock: (element) =>
@@ -196,5 +201,41 @@ describe("HostedBrowserWebview settings hydration", () => {
     expect(mocks.registerWebview).toHaveBeenCalledExactlyOnceWith(runtimeTabId, 41);
     expect(mocks.closeTab).not.toHaveBeenCalled();
     expect(mocks.setClientSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe("HostedBrowserWebview touch emulation", () => {
+  it("turns touch emulation off when the tab leaves device mode", async () => {
+    const threadRef = {
+      environmentId: EnvironmentId.make("host-touch"),
+      threadId: ThreadId.make("thread-touch"),
+    };
+    mocks.getClientSettings.mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
+    const render = (viewport: PreviewViewportSetting) => (
+      <HostedBrowserWebview
+        threadRef={threadRef}
+        tabId="server-tab"
+        runtimeTabId="touch-tab"
+        initialUrl="https://example.com"
+        viewport={viewport}
+        pictureInPicture={false}
+        profileId={undefined}
+        zoomFactor={1}
+        touchEmulation
+      />
+    );
+
+    await act(() => {
+      renderer = create(render({ _tag: "freeform", width: 390, height: 844 }), {
+        createNodeMock: (element) =>
+          element.type === "webview"
+            ? Object.assign(new EventTarget(), { getWebContentsId: () => 41 })
+            : { scrollLeft: 0, scrollTop: 0, scrollTo: () => undefined },
+      });
+    });
+    expect(mocks.setTouchEmulation).not.toHaveBeenCalled();
+
+    await act(() => renderer?.update(render(FILL_PREVIEW_VIEWPORT)));
+    expect(mocks.setTouchEmulation).toHaveBeenCalledExactlyOnceWith("touch-tab", false);
   });
 });

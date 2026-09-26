@@ -28,6 +28,7 @@ export interface DesktopPreviewOverlay {
   zoomFactor: number;
   pictureInPicture: boolean;
   colorScheme: DesktopPreviewColorScheme;
+  touchEmulation: boolean;
   audioMuted: boolean;
   audible: boolean;
   controller: "human" | "agent" | "none";
@@ -370,6 +371,7 @@ function isPreviewStateEqual(
       previous.zoomFactor === next.zoomFactor &&
       previous.pictureInPicture === next.pictureInPicture &&
       previous.colorScheme === next.colorScheme &&
+      previous.touchEmulation === next.touchEmulation &&
       previous.audioMuted === next.audioMuted &&
       previous.audible === next.audible &&
       previous.controller === next.controller &&

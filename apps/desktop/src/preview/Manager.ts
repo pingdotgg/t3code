@@ -113,6 +113,8 @@ export interface PreviewTabState {
   zoomFactor: number;
   pictureInPicture: boolean;
   colorScheme: DesktopPreviewColorScheme;
+  /** Re-applied on every control-session (re)attach, like colorScheme. */
+  touchEmulation: boolean;
   /** User intent to silence this tab. Re-applied to each guest that attaches. */
   audioMuted: boolean;
   /** Observed from Chromium. Stays true while a muted tab keeps playing. */
@@ -2125,6 +2127,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           zoomFactor: normalizeZoomFactor(defaults?.zoomFactor),
           pictureInPicture: false,
           colorScheme: defaults?.colorScheme ?? "system",
+          touchEmulation: false,
           audioMuted: false,
           audible: false,
           controller: "none",
@@ -2194,6 +2197,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       zoomFactor: DEFAULT_ZOOM_FACTOR,
       pictureInPicture: false,
       colorScheme: "system",
+      touchEmulation: false,
       audioMuted: false,
       audible: false,
       controller: "none",
@@ -2410,6 +2414,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         zoomFactor: current?.zoomFactor ?? DEFAULT_ZOOM_FACTOR,
         pictureInPicture: current?.pictureInPicture ?? false,
         colorScheme: current?.colorScheme ?? "system",
+        touchEmulation: current?.touchEmulation ?? false,
         // Both carry across navigation. Mute is user intent, and the old
         // document keeps playing until loadURL actually replaces it, so
         // clearing audibility here would drop the speaker with no transition
@@ -2755,10 +2760,34 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  // Touch emulation also lives on the CDP session. It only changes the device
+  // the page sees; mouse input stays mouse. Emulation.setEmitTouchEventsForMouse
+  // is not an option: Chromium shares that converter with the embedding window,
+  // so T3's own UI would lose hover and get taps instead of clicks.
+  //
+  // Sends the tab's committed value rather than a caller's snapshot, and
+  // re-checks after each send: a restore and a setter can interleave, and the
+  // last command Chromium receives must match the tab state.
+  const syncTouchEmulation = Effect.fn("PreviewManager.syncTouchEmulation")(function* (
+    control: BrowserControlSession,
+    tabId: string,
+  ) {
+    let sent: boolean | undefined;
+    while (true) {
+      const enabled = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.touchEmulation ?? false;
+      if (enabled === sent) return;
+      yield* attemptPromise(
+        { operation: "applyTouchEmulation", tabId, webContentsId: control.webContentsId },
+        () => control.debugger.sendCommand("Emulation.setTouchEmulationEnabled", { enabled }),
+      );
+      sent = enabled;
+    }
+  });
+
   // Re-establish the control session after a detach, restoring any
-  // color-scheme override the tab carries. The scheme is read after the
-  // session attaches so a concurrent setColorScheme is not overwritten with
-  // a stale snapshot.
+  // color-scheme or touch override the tab carries. Both are read after the
+  // session attaches so a concurrent setter is not overwritten with a stale
+  // snapshot.
   const restoreControlSession = (tabId: string, wc: Electron.WebContents) =>
     Effect.gen(function* () {
       const beforeAttach = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
@@ -2781,7 +2810,31 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           }),
         );
       }
+      if (afterAttach.touchEmulation) {
+        yield* syncTouchEmulation(control, tabId);
+      }
     }).pipe(Effect.ignore);
+
+  const setTouchEmulation = Effect.fn("PreviewManager.setTouchEmulation")(function* (
+    tabId: string,
+    enabled: boolean,
+  ) {
+    const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+    if (!tab) {
+      return yield* new PreviewTabNotFoundError({ tabId });
+    }
+    // Recorded first for the same reason as setColorScheme: a later
+    // control-session (re)attach re-applies it.
+    if (tab.touchEmulation !== enabled) {
+      yield* update(tabId, { touchEmulation: enabled });
+    }
+    const webContentsId = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.webContentsId;
+    if (webContentsId == null) return;
+    const wc = webContents.fromId(webContentsId);
+    if (!wc || wc.isDestroyed()) return;
+    const control = yield* ensureControlSession(wc);
+    yield* syncTouchEmulation(control, tabId);
+  });
 
   const setColorScheme = Effect.fn("PreviewManager.setColorScheme")(function* (
     tabId: string,
@@ -4637,6 +4690,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     setAnnotationTheme,
     setAudioMuted,
     setColorScheme,
+    setTouchEmulation,
     setMainWindow,
     startRecording,
     closePictureInPicture,
@@ -4979,6 +5033,10 @@ export class PreviewManager extends Context.Service<
       tabId: string,
       colorScheme: DesktopPreviewColorScheme,
     ) => Effect.Effect<void, PreviewManagerError>;
+    readonly setTouchEmulation: (
+      tabId: string,
+      enabled: boolean,
+    ) => Effect.Effect<void, PreviewManagerError>;
     readonly setAudioMuted: (
       tabId: string,
       audioMuted: boolean,
@@ -5098,6 +5156,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     reapplyZoom: operations.reapplyZoom,
     hardReload: operations.hardReload,
     setColorScheme: operations.setColorScheme,
+    setTouchEmulation: operations.setTouchEmulation,
     setAudioMuted: operations.setAudioMuted,
     openDevTools: operations.openDevTools,
     clearCookies: Effect.fn("PreviewManager.clearCookies")(function* (partitions) {
