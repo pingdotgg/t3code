@@ -10,3 +10,8 @@ export function startAgentLiveActivity(
 ): LiveActivity<AgentActivityProps> | null {
   return null;
 }
+
+/** Home-screen widgets only exist on iOS. */
+export function publishAgentActivityWidget(_props: AgentActivityProps): boolean {
+  return false;
+}

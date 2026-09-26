@@ -1,4 +1,9 @@
-import AgentActivity, { type AgentActivityProps } from "../../widgets/AgentActivity";
+import AgentActivity, {
+  publishAgentActivityWidget,
+  type AgentActivityProps,
+} from "../../widgets/AgentActivity";
+
+export { publishAgentActivityWidget };
 
 export function getAgentLiveActivities() {
   return AgentActivity.getInstances();
