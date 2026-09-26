@@ -716,7 +716,7 @@ it.effect("ProviderServiceLive shutdown leaves settled session rows untouched", 
       assert.propertyVal(binding?.runtimePayload, "lastRuntimeEvent", "provider.stopAll");
     }
     const [stoppedAll] = recordedAnalytics.eventsByName("provider.sessions.stopped_all");
-    assert.equal(stoppedAll?.properties?.sessionCount, 2);
+    assert.equal(stoppedAll?.properties?.stoppedSessionCount, 2);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 

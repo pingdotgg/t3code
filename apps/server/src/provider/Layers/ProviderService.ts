@@ -2394,8 +2394,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         });
       }),
     ).pipe(Effect.asVoid);
+    // Not `sessionCount`: that older property counted every row, so a new name
+    // keeps the two meanings in separate series.
     yield* analytics.record("provider.sessions.stopped_all", {
-      sessionCount: bindings.length,
+      stoppedSessionCount: bindings.length,
     });
     yield* analytics.flush;
   });
