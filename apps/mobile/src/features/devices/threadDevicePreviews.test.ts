@@ -70,6 +70,7 @@ const state: DeviceServiceState = {
   ],
   onboardingCompleted: true,
   agentAccessEnabled: true,
+  streamSource: "scrcpy" as const,
   hubBasePath: "/api/device-hub",
   revision: 1,
 };

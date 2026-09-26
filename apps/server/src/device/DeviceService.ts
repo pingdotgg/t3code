@@ -192,6 +192,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       enabled: value.enableDeviceSupport,
       agentAccessEnabled: value.enableAgentDeviceAccess,
       onboardingCompleted: value.deviceOnboardingCompleted,
+      streamSource: value.deviceStreamSource,
     })),
     Effect.mapError(
       (cause) =>
@@ -216,6 +217,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       sessions: [],
       onboardingCompleted: initialSettings.onboardingCompleted,
       agentAccessEnabled: initialSettings.agentAccessEnabled,
+      streamSource: initialSettings.streamSource,
       hubBasePath: DEVICE_HUB_ROUTE_PREFIX,
       revision: 0,
     },
@@ -524,11 +526,16 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
   const configure: DeviceService["Service"]["configure"] = Effect.fn("DeviceService.configure")(
     function* (input) {
-      const currentSettings = yield* readDeviceSettings;
-      const nextEnabled = input.enabled ?? currentSettings.enabled;
-      const nextAgentAccess = input.agentAccessEnabled ?? currentSettings.agentAccessEnabled;
-      yield* lifecycleLock.withPermit(
+      // Everything a concurrent configure could change is read, written, and
+      // published under one permit; a snapshot taken before the lock lets the
+      // later call republish the values the earlier one just moved.
+      const { nextEnabled, nextAgentAccess } = yield* lifecycleLock.withPermit(
         Effect.gen(function* () {
+          const currentSettings = yield* readDeviceSettings;
+          const nextEnabled = input.enabled ?? currentSettings.enabled;
+          const nextAgentAccess = input.agentAccessEnabled ?? currentSettings.agentAccessEnabled;
+          const nextStreamSource = input.streamSource ?? currentSettings.streamSource;
+          const streamSourceChanged = nextStreamSource !== currentSettings.streamSource;
           yield* settings
             .updateSettings({
               ...(input.enabled === undefined ? {} : { enableDeviceSupport: input.enabled }),
@@ -538,6 +545,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               ...(input.onboardingCompleted === undefined
                 ? {}
                 : { deviceOnboardingCompleted: input.onboardingCompleted }),
+              ...(streamSourceChanged ? { deviceStreamSource: nextStreamSource } : {}),
             })
             .pipe(
               Effect.mapError(
@@ -549,7 +557,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                   }),
               ),
             );
-          if (!nextEnabled) {
+          // The capture source is a hub start argument, so a running hub keeps
+          // the old one until it is restarted. Open panels reconnect through
+          // `list`.
+          if (!nextEnabled || streamSourceChanged) {
             yield* Effect.forEach(hosts.values(), (host) => host.stop, { discard: true });
           } else if (input.agentAccessEnabled === false) {
             yield* Effect.forEach(hosts.values(), (host) => host.stopAgent, { discard: true });
@@ -563,8 +574,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             sessions: nextEnabled ? state.sessions : [],
             bootingDevices: nextEnabled ? state.bootingDevices : [],
             agentAccessEnabled: nextAgentAccess,
+            streamSource: nextStreamSource,
             onboardingCompleted: input.onboardingCompleted ?? state.onboardingCompleted,
           }));
+          return { nextEnabled, nextAgentAccess };
         }),
       );
       if (nextEnabled && nextAgentAccess && input.agentAccessEnabled === true) {

@@ -175,12 +175,24 @@ export function parseSemuPacket(raw: ArrayBuffer): {
   return { data: bytes, isKey: null, timestamp: null };
 }
 
-const isVideoSessionMessage = (text: string) => {
+/**
+ * serve-emu announces `video-session` for every encoder restart, not only for
+ * the rotations that resize it: opening a video client and any `reset-video`
+ * restart it too. Only the announced size tells those apart.
+ */
+const videoSession = (text: string): { size: { width: number; height: number } | null } | null => {
   try {
-    const message = JSON.parse(text) as { type?: unknown };
-    return message.type === "video-session";
+    const message = JSON.parse(text) as {
+      type?: unknown;
+      size?: { width?: unknown; height?: unknown };
+    };
+    if (message.type !== "video-session") return null;
+    const { width, height } = message.size ?? {};
+    return {
+      size: typeof width === "number" && typeof height === "number" ? { width, height } : null,
+    };
   } catch {
-    return false;
+    return null;
   }
 };
 
@@ -366,6 +378,8 @@ export function createDeviceStreamClient(
   let videoDecoder: VideoDecoder | null = null;
   let timestamp = 0;
   let awaitingKeyframe = true;
+  /** Size serve-emu last announced, so a same-size encoder restart is ignored. */
+  let sessionSize: { width: number; height: number } | null = null;
   let screen: DeviceScreenSize | null = null;
   let firstFrame = false;
   let configuring = false;
@@ -871,6 +885,7 @@ export function createDeviceStreamClient(
   // Android: one socket for video and input.
   const connectAndroid = () => {
     if (stopped) return;
+    sessionSize = null;
     const ws = new WebSocket(wsUrl(`/ws?device=${device}&frame-meta=1`));
     ws.binaryType = "arraybuffer";
     socket = ws;
@@ -882,13 +897,26 @@ export function createDeviceStreamClient(
     ws.onmessage = (event) => {
       if (stopped || socket !== ws) return;
       if (typeof event.data === "string") {
-        // The encoder restarts at a new size when the device rotates; the
-        // next keyframe carries a fresh SPS, so the decoder is rebuilt from it.
-        if (isVideoSessionMessage(event.data)) {
-          closeDecoder();
-          configuring = false;
-          connecting();
-          requestKeyframe();
+        // The encoder restarts at a new size when the device rotates, and the
+        // next keyframe carries a fresh SPS to rebuild the decoder from. A
+        // restart at the same size is one we caused (the hub resets video when
+        // a client opens, and whenever we ask for a keyframe); tearing the
+        // decoder down there, and asking for another keyframe, is what kept the
+        // stream in a restart loop that never painted a frame.
+        const session = videoSession(event.data);
+        if (session) {
+          const { size } = session;
+          const same =
+            size !== null &&
+            sessionSize !== null &&
+            size.width === sessionSize.width &&
+            size.height === sessionSize.height;
+          sessionSize = size;
+          if (!same) {
+            closeDecoder();
+            configuring = false;
+            connecting();
+          }
         }
         return;
       }
@@ -904,18 +932,28 @@ export function createDeviceStreamClient(
         configuring = true;
         const epoch = decoderEpoch;
         const isCurrent = () => !stopped && socket === ws;
+        const pending = packet.data;
+        const pendingIsKey = isKey;
+        const pendingTimestamp = packet.timestamp;
         void configureDecoder({ codec: avcCodecString(scanned.sps) }, isCurrent).then(
           (configured) => {
             if (!isCurrent() || epoch !== decoderEpoch) return;
             configuring = false;
             awaitingKeyframe = true;
-            if (configured) requestKeyframe();
+            if (!configured) return;
+            // The SPS arrived on this access unit, so decode it here. Asking
+            // for another keyframe instead restarts scrcpy's encoder, which
+            // only lands us back at an unconfigured decoder.
+            if (pendingIsKey) decode(true, pending, pendingTimestamp);
+            else requestKeyframe();
           },
         );
         return;
       }
       if (!videoDecoder || videoDecoder.state !== "configured") {
-        if (!isKey) requestKeyframe();
+        // Deltas during a pending configure are expected; resetting on them
+        // restarts the encoder underneath the handshake already running.
+        if (!isKey && !configuring) requestKeyframe();
         return;
       }
       decode(isKey, packet.data, packet.timestamp);

@@ -32,6 +32,7 @@ const baseState: DeviceServiceState = {
   sessions: [],
   onboardingCompleted: false,
   agentAccessEnabled: false,
+  streamSource: "scrcpy",
   hubBasePath: "/api/device-hub",
   revision: 0,
 };
@@ -152,6 +153,7 @@ const fixture = Effect.fn("fixture")(function* (
               patch.enableAgentDeviceAccess ?? current.enableAgentDeviceAccess,
             deviceOnboardingCompleted:
               patch.deviceOnboardingCompleted ?? current.deviceOnboardingCompleted,
+            deviceStreamSource: patch.deviceStreamSource ?? current.deviceStreamSource,
           })),
         streamChanges: Stream.empty,
         subscribeChanges: Effect.succeed(Stream.empty),
@@ -282,6 +284,24 @@ describe("device setup consent", () => {
         expect(yield* service.readinessIfSupported()).toBeNull();
         expect(starts).toEqual(["start", "stop"]);
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("switching the capture source persists it and restarts hosts", () =>
+    Effect.gen(function* () {
+      const { service, starts, settings } = yield* fixture();
+      yield* service.configure({ enabled: true });
+      expect(starts).toEqual(["start"]);
+
+      const switched = yield* service.configure({ streamSource: "grpc-screenshot" });
+      expect(switched.streamSource).toBe("grpc-screenshot");
+      expect((yield* Ref.get(settings)).deviceStreamSource).toBe("grpc-screenshot");
+      // The hub takes the source at spawn, so the running one has to go.
+      expect(starts.filter((event) => event === "stop")).toHaveLength(1);
+
+      // Re-selecting the current source leaves the running hub alone.
+      yield* service.configure({ streamSource: "grpc-screenshot" });
+      expect(starts.filter((event) => event === "stop")).toHaveLength(1);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("boots a stopped Android AVD and uses its emulator serial without duplicating it", () =>

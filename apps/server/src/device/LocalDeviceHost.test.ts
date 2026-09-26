@@ -16,6 +16,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import { HttpClient } from "effect/unstable/http";
 import * as NetService from "@t3tools/shared/Net";
 import * as ServerConfig from "../config.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 const diagnose = (
@@ -141,7 +142,13 @@ it.effect(
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-consent-" });
       const host = yield* LocalDeviceHost.make().pipe(
-        Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
+        Effect.provide(
+          Layer.mergeAll(
+            ServerConfig.layerTest(baseDir, baseDir),
+            NetService.layer,
+            ServerSettingsService.layerTest(),
+          ),
+        ),
         Effect.provideService(HostProcessEnvironment, { HOME: baseDir, PATH: "" }),
         Effect.provideService(HostProcessPlatform, "linux"),
         Effect.provideService(

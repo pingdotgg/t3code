@@ -1,5 +1,11 @@
 import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
-import type { DevicePermission, DeviceSummary, DeviceTextSize } from "@t3tools/contracts";
+import type {
+  DevicePermission,
+  DeviceStreamSource,
+  DeviceSummary,
+  DeviceTextSize,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import { ChevronDown, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -17,8 +23,19 @@ import { Spinner } from "~/components/ui/spinner";
 import { Switch } from "~/components/ui/switch";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { cn } from "~/lib/utils";
+import { deviceEnvironment, useDeviceState } from "~/state/device";
+import { useAtomCommand } from "~/state/use-atom-command";
 import type { DeviceControls } from "./useDeviceControls";
 import { type DeviceEventLogEntry, subscribeDeviceEventLog } from "./deviceHubApi";
+
+/**
+ * serve-emu reads Android frames from one of these. The hub takes it as a start
+ * argument, so switching restarts every device host on the environment.
+ */
+const STREAM_SOURCES: ReadonlyArray<{ value: DeviceStreamSource; label: string }> = [
+  { value: "scrcpy", label: "scrcpy" },
+  { value: "grpc-screenshot", label: "gRPC screenshot" },
+];
 
 const TEXT_SIZES: ReadonlyArray<{ value: DeviceTextSize; label: string }> = [
   { value: "small", label: "Small" },
@@ -82,6 +99,7 @@ const LOCATION_PRESETS = [
  * local state so the controls never show a value the device did not confirm.
  */
 export function DeviceToolsPanel(props: {
+  readonly environmentId: EnvironmentId;
   readonly controls: DeviceControls;
   readonly hostDiagnostics: string | undefined;
   readonly device: DeviceSummary;
@@ -91,8 +109,17 @@ export function DeviceToolsPanel(props: {
   readonly onClose: () => void;
   readonly className?: string;
 }) {
-  const { device, controls } = props;
+  const { environmentId, device, controls } = props;
   const { detail, pending, error, foregroundApp, disabled, act } = controls;
+  const { state: deviceState } = useDeviceState(environmentId);
+  const configure = useAtomCommand(deviceEnvironment.configure);
+  const [streamSourcePending, setStreamSourcePending] = useState(false);
+  const changeStreamSource = async (value: DeviceStreamSource) => {
+    setStreamSourcePending(true);
+    await configure({ environmentId, input: { streamSource: value } }).finally(() =>
+      setStreamSourcePending(false),
+    );
+  };
   const settings = detail?.settings;
   const isIos = device.platform === "ios";
 
@@ -194,6 +221,17 @@ export function DeviceToolsPanel(props: {
               onChange={(value) => act({ type: "setTextSize", value })}
             />
           </Row>
+          {isIos ? null : (
+            <Row label="Video source">
+              <ChoiceSelect
+                ariaLabel="Video source"
+                value={deviceState.streamSource}
+                options={STREAM_SOURCES}
+                disabled={streamSourcePending}
+                onChange={changeStreamSource}
+              />
+            </Row>
+          )}
           {isIos ? (
             <>
               <Row label="Liquid Glass">
