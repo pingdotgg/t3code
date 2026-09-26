@@ -11,6 +11,7 @@ import {
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   deleteSelectedThreadEntries,
+  deriveSidebarSubagentCounts,
   filterSidebarProjectScopeItems,
   filterSidebarV2VisibleThreads,
   formatWorkingDurationLabel,
@@ -57,6 +58,7 @@ import {
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 
 import {
   DEFAULT_INTERACTION_MODE,
@@ -2118,4 +2120,60 @@ describe("navigation after parking a thread", () => {
       ).toBe(expected);
     },
   );
+});
+
+describe("deriveSidebarSubagentCounts", () => {
+  const environmentId = EnvironmentId.make("environment-subagents");
+  const parentId = ThreadId.make("thread-subagent-parent");
+  const parentKey = scopedThreadKey(scopeThreadRef(environmentId, parentId));
+  const child = (
+    status: "running" | "completed" | "failed" | "interrupted" | "cancelled",
+    createdAt: string,
+    relationshipToParent: "subagent" | "fork" = "subagent",
+  ) => ({
+    environmentId,
+    lineage: { parentThreadId: parentId, relationshipToParent, rootThreadId: parentId },
+    createdAt,
+    source: { status, activityRunStatus: null as "running" | null },
+  });
+
+  it("tallies the batch that started with the oldest working subagent", () => {
+    const counts = deriveSidebarSubagentCounts([
+      // An earlier round, finished before the current batch started.
+      child("completed", "2026-09-25T09:00:00.000Z"),
+      child("failed", "2026-09-25T09:01:00.000Z"),
+      child("running", "2026-09-25T10:00:00.000Z"),
+      child("running", "2026-09-25T10:00:01.000Z"),
+      child("completed", "2026-09-25T10:00:02.000Z"),
+      child("failed", "2026-09-25T10:00:03.000Z"),
+      child("interrupted", "2026-09-25T10:00:04.000Z"),
+      child("cancelled", "2026-09-25T10:00:05.000Z"),
+    ]);
+    // Interrupted and cancelled subagents were stopped, not failed.
+    expect(counts.get(parentKey)).toEqual({ working: 2, done: 1, failed: 1 });
+  });
+
+  it("omits parents whose subagents have all finished", () => {
+    const counts = deriveSidebarSubagentCounts([
+      child("completed", "2026-09-25T10:00:00.000Z"),
+      child("failed", "2026-09-25T10:00:01.000Z"),
+    ]);
+    expect(counts.has(parentKey)).toBe(false);
+  });
+
+  it("reads the live run status before the thread status", () => {
+    const counts = deriveSidebarSubagentCounts([
+      {
+        ...child("completed", "2026-09-25T10:00:00.000Z"),
+        source: { status: "completed", activityRunStatus: "running" },
+      },
+    ]);
+    expect(counts.get(parentKey)).toEqual({ working: 1, done: 0, failed: 0 });
+  });
+
+  it("ignores forks", () => {
+    expect(
+      deriveSidebarSubagentCounts([child("running", "2026-09-25T10:00:00.000Z", "fork")]).size,
+    ).toBe(0);
+  });
 });

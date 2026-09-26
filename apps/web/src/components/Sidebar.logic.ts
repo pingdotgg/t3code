@@ -6,6 +6,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
@@ -1358,4 +1359,68 @@ export function sortScopedProjectsForSidebar<
       left.environmentId.localeCompare(right.environmentId) ||
       left.id.localeCompare(right.id),
   );
+}
+
+export interface SidebarSubagentCounts {
+  readonly working: number;
+  readonly done: number;
+  readonly failed: number;
+}
+
+type SidebarSubagentThread = Pick<
+  SidebarThreadSummary,
+  "environmentId" | "lineage" | "createdAt"
+> & {
+  readonly source: Pick<SidebarThreadSummary["source"], "status" | "activityRunStatus">;
+};
+
+const WORKING_SUBAGENT_STATUSES = new Set([
+  "preparing",
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+]);
+
+/**
+ * Subagent tallies keyed by the parent's scoped thread key. Only parents with
+ * a subagent still working get an entry: a quiet thread must not carry a
+ * finished batch forever. The batch starts at the oldest subagent still
+ * working, so earlier finished rounds drop out. (The parent's latest user
+ * message cannot mark the batch: delegated results arrive as user messages.)
+ */
+export function deriveSidebarSubagentCounts(
+  threads: ReadonlyArray<SidebarSubagentThread>,
+): ReadonlyMap<string, SidebarSubagentCounts> {
+  const subagentsByParent = new Map<
+    string,
+    Array<{ readonly createdAt: string; readonly status: string }>
+  >();
+  for (const thread of threads) {
+    const parentThreadId = thread.lineage.parentThreadId;
+    if (thread.lineage.relationshipToParent !== "subagent" || parentThreadId === null) continue;
+    const parentKey = scopedThreadKey(scopeThreadRef(thread.environmentId, parentThreadId));
+    const subagents = subagentsByParent.get(parentKey) ?? [];
+    subagents.push({
+      createdAt: thread.createdAt,
+      status: thread.source.activityRunStatus ?? thread.source.status,
+    });
+    subagentsByParent.set(parentKey, subagents);
+  }
+  const counts = new Map<string, SidebarSubagentCounts>();
+  for (const [parentKey, subagents] of subagentsByParent) {
+    const working = subagents.filter((subagent) => WORKING_SUBAGENT_STATUSES.has(subagent.status));
+    if (working.length === 0) continue;
+    const batchStartedAt = working.reduce(
+      (earliest, subagent) => (subagent.createdAt < earliest ? subagent.createdAt : earliest),
+      working[0]!.createdAt,
+    );
+    const batch = subagents.filter((subagent) => subagent.createdAt >= batchStartedAt);
+    counts.set(parentKey, {
+      working: working.length,
+      done: batch.filter((subagent) => subagent.status === "completed").length,
+      failed: batch.filter((subagent) => subagent.status === "failed").length,
+    });
+  }
+  return counts;
 }
