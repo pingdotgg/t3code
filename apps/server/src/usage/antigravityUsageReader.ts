@@ -114,7 +114,7 @@ const MODEL_IDS: Record<number, string> = {
 };
 
 /** Prices effort and routing variants such as `gemini-3.8-flash-high` at their base model. */
-export function antigravityRateModel(model: string): string {
+function antigravityRateModel(model: string): string {
   const base = model.replace(/-(?:extra-low|low|medium|high|tiered|control|thinking|agent)$/, "");
   // Rate tables only list Gemini 3 Flash under its preview name, as `MODEL_IDS` does.
   return base === "gemini-3-flash" ? "gemini-3-flash-preview" : base;
