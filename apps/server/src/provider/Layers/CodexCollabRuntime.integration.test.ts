@@ -29,6 +29,10 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 const ROOT = wireFixture.rootThreadId;
 const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
 const MEMORY = "memory-consolidation-thread";
+const FOREIGN = "unregistered-foreign-thread";
+const FOREIGN_RECEIVER = "unregistered-foreign-receiver";
+const FOREIGN_ACTIVITY_CHILD = "unregistered-foreign-activity-child";
+const NESTED_ACTIVITY_CHILD = "owned-nested-activity-child";
 const decodeMcpElicitationResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Struct({
@@ -59,6 +63,85 @@ function buildScript() {
           status: "completed",
           senderThreadId: ROOT,
           receiverThreadIds: [CHILD_A, CHILD_B],
+        },
+      },
+    },
+    // An already-owned child can establish ownership for descendants.
+    {
+      method: "item/completed",
+      params: {
+        completedAtMs: 5,
+        threadId: CHILD_A,
+        turnId: `${CHILD_A}-turn-1`,
+        item: {
+          id: "nested-sub-agent-activity",
+          type: "subAgentActivity",
+          kind: "started",
+          agentThreadId: NESTED_ACTIVITY_CHILD,
+          agentPath: "/root/alpha/nested",
+        },
+      },
+    },
+    // Foreign collaboration announcements cannot establish ownership for
+    // receiver IDs or subAgentActivity children in this runtime.
+    {
+      method: "item/completed",
+      params: {
+        completedAtMs: 2,
+        threadId: FOREIGN,
+        turnId: "foreign-turn",
+        item: {
+          id: "foreign-collab-call",
+          type: "collabAgentToolCall",
+          tool: "wait",
+          status: "completed",
+          senderThreadId: FOREIGN,
+          receiverThreadIds: [FOREIGN_RECEIVER],
+        },
+      },
+    },
+    {
+      method: "item/completed",
+      params: {
+        completedAtMs: 3,
+        threadId: FOREIGN_RECEIVER,
+        turnId: "foreign-receiver-turn",
+        item: {
+          id: "foreign-receiver-message",
+          type: "agentMessage",
+          phase: "final_answer",
+          text: "foreign receiver report",
+        },
+      },
+    },
+    {
+      method: "item/completed",
+      params: {
+        completedAtMs: 4,
+        threadId: FOREIGN,
+        turnId: "foreign-turn",
+        item: {
+          id: "foreign-sub-agent-activity",
+          type: "subAgentActivity",
+          kind: "started",
+          agentThreadId: FOREIGN_ACTIVITY_CHILD,
+          agentPath: "/root/foreign",
+        },
+      },
+    },
+    // A different app-server session can emit an assistant item without a
+    // preceding thread/started notification. It must not become parent chat.
+    {
+      method: "item/completed",
+      params: {
+        completedAtMs: 1,
+        threadId: FOREIGN,
+        turnId: "foreign-turn",
+        item: {
+          id: "foreign-message",
+          type: "agentMessage",
+          phase: "final_answer",
+          text: "unrelated background report",
         },
       },
     },
@@ -166,6 +249,90 @@ const peerPath = NodePath.join(
 );
 
 describe("CodexSessionRuntime collab integration", () => {
+  it.effect("keeps startup ownership on the authoritative thread response", () =>
+    Effect.gen(function* () {
+      const script = {
+        rootThreadId: ROOT,
+        startupResponseDelayMs: 25,
+        startupNotifications: [
+          capturedSpawnedThread(FOREIGN),
+          {
+            method: "item/agentMessage/delta",
+            params: {
+              delta: "foreign startup content",
+              itemId: "foreign-startup-message",
+              threadId: FOREIGN,
+              turnId: "foreign-startup-turn",
+            },
+          },
+        ],
+        notifications: [
+          {
+            method: "item/agentMessage/delta",
+            params: {
+              delta: "owned root content",
+              itemId: "root-message",
+              threadId: ROOT,
+              turnId: `${ROOT}-turn`,
+            },
+          },
+          { method: "warning", params: { message: "foreign warning", threadId: FOREIGN } },
+          { method: "warning", params: { message: "root warning", threadId: ROOT } },
+        ],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-startup-ownership"),
+        binaryPath: peerPath,
+        cwd: NodeOS.tmpdir(),
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const eventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.method === "turn/completed"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      const session = yield* runtime.start();
+      assert.deepEqual(session.resumeCursor, { threadId: ROOT });
+      yield* runtime.sendTurn({ input: "continue on the owned root" });
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+
+      assert.isFalse(
+        events.some((event) => event.textDelta === "foreign startup content"),
+        "foreign content emitted before the root response must stay out of chat",
+      );
+      assert.isTrue(
+        events.some((event) => event.textDelta === "owned root content"),
+        "root content remains visible after authoritative ownership is established",
+      );
+      assert.isFalse(
+        events.some(
+          (event) =>
+            event.method === "warning" &&
+            (event.payload as { message?: string } | undefined)?.message === "foreign warning",
+        ),
+        "foreign thread warnings must stay out of the root conversation",
+      );
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.method === "warning" &&
+            (event.payload as { message?: string } | undefined)?.message === "root warning",
+        ),
+        "root thread warnings remain visible",
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("looks up child model metadata once after activity registration", () =>
     Effect.gen(function* () {
       const script = {
@@ -467,6 +634,32 @@ describe("CodexSessionRuntime collab integration", () => {
         leaked.map((event) => event.method),
         [],
         "child thread/* lifecycle must not appear as parent events",
+      );
+      assert.isFalse(
+        events.some(
+          (event) => (event.payload as { threadId?: string } | undefined)?.threadId === FOREIGN,
+        ),
+        "unregistered foreign assistant items must not appear as parent events",
+      );
+      assert.isFalse(
+        events.some((event) => {
+          const payload = event.payload as
+            | { threadId?: string; agentThreadId?: string }
+            | undefined;
+          return (
+            payload?.threadId === FOREIGN_RECEIVER ||
+            payload?.agentThreadId === FOREIGN_ACTIVITY_CHILD
+          );
+        }),
+        "foreign collaboration announcements must not establish child ownership",
+      );
+      assert.isTrue(
+        events.some(
+          (event) =>
+            (event.payload as { agentThreadId?: string } | undefined)?.agentThreadId ===
+            NESTED_ACTIVITY_CHILD,
+        ),
+        "owned children can register nested subAgentActivity descendants",
       );
 
       yield* runtime.close;
