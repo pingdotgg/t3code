@@ -488,65 +488,54 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
-  it.effect("asks the relay again after three timed-out cached ticket steps", () =>
+  // connection/supervisor.test.ts covers the limit: the third timeout in a row asks the relay.
+  it.effect("resets the cached ticket timeout count when a retry succeeds", () =>
     Effect.gen(function* () {
+      // An attempt sends the cached ticket request and, after it times out, one retry.
+      const timedOutAttempt = [STALLED, STALLED] as const;
+      const recoveredAttempt = [STALLED, websocketTicket("cached-ticket")] as const;
       const harness = yield* makeHarness({
         initialToken: persistedToken(),
         responses: [
-          STALLED,
-          STALLED,
-          STALLED,
-          STALLED,
-          STALLED,
-          websocketTicket("cached-ticket"),
-          STALLED,
-          STALLED,
-          STALLED,
-          STALLED,
-          STALLED,
-          STALLED,
-          Response.json(DESCRIPTOR),
-          accessToken("replacement-access-token"),
-          websocketTicket("replacement-ticket"),
+          ...timedOutAttempt,
+          ...timedOutAttempt,
+          ...recoveredAttempt,
+          ...timedOutAttempt,
         ],
       });
 
-      const [timeouts, replaced] = yield* Effect.gen(function* () {
+      const [timeouts, recovered] = yield* Effect.gen(function* () {
         const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
-        const authorize = () => remote.authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID });
-        // Runs an attempt whose cached ticket request (3 s) and same-token retry (7 s) both stall.
-        const stalled = <A, E>(attempt: Effect.Effect<A, E>) =>
-          Effect.gen(function* () {
-            const pending = yield* Effect.forkChild(attempt);
-            yield* Queue.take(harness.stalls);
-            yield* TestClock.adjust("3 seconds");
-            yield* Queue.take(harness.stalls);
-            yield* TestClock.adjust("7 seconds");
-            return yield* Fiber.join(pending);
-          });
-        const timeouts = [
-          yield* stalled(Effect.flip(authorize())),
-          yield* stalled(Effect.flip(authorize())),
-        ];
-        // Only the first request stalls here, so the retry succeeds and resets the count.
-        const pending = yield* Effect.forkChild(authorize());
-        yield* Queue.take(harness.stalls);
-        yield* TestClock.adjust("3 seconds");
-        expect((yield* Fiber.join(pending)).socketUrl).toContain("wsTicket=cached-ticket");
-        timeouts.push(
-          yield* stalled(Effect.flip(authorize())),
-          yield* stalled(Effect.flip(authorize())),
-        );
-        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
-        return [timeouts, yield* stalled(authorize())] as const;
+        const timeOut = Effect.gen(function* () {
+          const pending = yield* remote
+            .authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID })
+            .pipe(Effect.flip, Effect.forkChild);
+          yield* Queue.take(harness.stalls);
+          yield* TestClock.adjust("3 seconds");
+          yield* Queue.take(harness.stalls);
+          yield* TestClock.adjust("7 seconds");
+          return yield* Fiber.join(pending);
+        });
+        const recover = Effect.gen(function* () {
+          const pending = yield* remote
+            .authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID })
+            .pipe(Effect.forkChild);
+          yield* Queue.take(harness.stalls);
+          yield* TestClock.adjust("3 seconds");
+          return yield* Fiber.join(pending);
+        });
+        const timeouts = [yield* timeOut, yield* timeOut];
+        const recovered = yield* recover;
+        // Without the reset, this would be the third timeout in a row and ask the relay.
+        timeouts.push(yield* timeOut);
+        return [timeouts, recovered] as const;
       }).pipe(Effect.provide(harness.layer));
 
       for (const failure of timeouts) {
         expect(failure).toMatchObject({ _tag: "ConnectionTransientError", reason: "timeout" });
       }
-      expect(replaced.socketUrl).toContain("wsTicket=replacement-ticket");
-      expect(replaced.httpAuthorization).toMatchObject({ accessToken: "replacement-access-token" });
-      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
+      expect(recovered.socketUrl).toContain("wsTicket=cached-ticket");
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
     }),
   );
 
