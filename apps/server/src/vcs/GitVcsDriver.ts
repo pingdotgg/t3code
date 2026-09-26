@@ -166,6 +166,9 @@ export interface GitCommitProgress {
 export interface GitCommitOptions {
   readonly timeoutMs?: number;
   readonly progress?: GitCommitProgress;
+  readonly stage?: {
+    readonly filePaths?: readonly string[];
+  };
 }
 
 export interface GitPushResult {
