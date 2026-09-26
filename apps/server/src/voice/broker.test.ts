@@ -48,6 +48,7 @@ const usageInput = (sessionId: string): VoiceSessionUsage => ({
 });
 
 interface RecordedUpstreamRequest {
+  readonly signal: AbortSignal | undefined;
   readonly authorization: string | undefined;
   readonly url: string;
   readonly body: unknown;
@@ -83,6 +84,7 @@ const makeUpstreamFetch = (state: UpstreamRecorder): typeof fetch => {
       body = parsed._tag === "Success" ? parsed.value : bodyText;
     }
     state.recorded.push({
+      signal: init?.signal ?? undefined,
       authorization: headers.get("authorization") ?? undefined,
       url: String(input),
       body,
@@ -622,6 +624,45 @@ describe("voice broker routes", () => {
         }).pipe(Effect.provide(makeEnvironmentAuthLayer()));
         expect(response.status).toBe(401);
         expect(yield* responseBody(response)).toMatchObject({ code: "auth_invalid" });
+      }),
+    ),
+  );
+
+  it.effect("keeps upstream error bodies out of public Live and backend failures", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { state, handlers } = yield* makeTest();
+        const mint = () =>
+          runHandler(handlers.mintSession, {
+            method: "POST",
+            path: MINT_PATH,
+            token: OPERATE_TOKEN,
+            body: { clientDelegation: true, transport: { type: "webrtc", sdp: "offer-sdp" } },
+          }).pipe(Effect.provide(makeEnvironmentAuthLayer()));
+        // Establish a session so backend failures reach the upstream boundary.
+        expect((yield* mint()).status).toBe(200);
+        for (const [status, code, message] of [
+          [400, "invalid_request", "The voice request could not be completed."],
+          [401, "auth_invalid", "Voice authentication failed. Check the OpenAI key."],
+          [500, "environment_unreachable", "OpenAI voice service is unavailable."],
+        ] as const) {
+          const body = { error: { message: "private upstream detail\n".repeat(1000) } };
+          state.queue.push({ status, body });
+          const liveResponse = yield* mint();
+          expect(state.recorded.at(-1)?.signal?.aborted).toBe(true);
+          expect(liveResponse.status).toBe(status === 500 ? 502 : status);
+          expect(yield* responseBody(liveResponse)).toEqual({ code, message });
+          state.queue.push({ status, body });
+          const backendResponse = yield* runHandler(handlers.respond, {
+            method: "POST",
+            path: "/api/voice/backend",
+            token: OPERATE_TOKEN,
+            body: { sessionId: "live_sess_1", input: [] },
+          }).pipe(Effect.provide(makeEnvironmentAuthLayer()));
+          expect(state.recorded.at(-1)?.signal?.aborted).toBe(true);
+          expect(backendResponse.status).toBe(status === 500 ? 502 : status);
+          expect(yield* responseBody(backendResponse)).toEqual({ code, message });
+        }
       }),
     ),
   );

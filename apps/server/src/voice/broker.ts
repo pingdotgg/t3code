@@ -297,19 +297,10 @@ const UpstreamLiveSessionCreated = Schema.Struct({
   }),
 });
 
-const UpstreamErrorBody = Schema.Struct({
-  error: Schema.optional(
-    Schema.Struct({
-      message: Schema.optional(Schema.String),
-      code: Schema.optional(Schema.String),
-    }),
-  ),
-});
-
 /** Maps an OpenAI failure to the frozen VoiceToolError codes: credential
     problems are `auth_invalid`, upstream 5xx/network problems are
     `environment_unreachable`, and rejected requests are `invalid_request`. */
-const upstreamFailureError = (status: number, detail: string): VoiceBrokerError => {
+const upstreamFailureError = (status: number): VoiceBrokerError => {
   const code: VoiceToolErrorCode =
     status === 401 || status === 403
       ? "auth_invalid"
@@ -317,10 +308,15 @@ const upstreamFailureError = (status: number, detail: string): VoiceBrokerError 
         ? "environment_unreachable"
         : "invalid_request";
   const httpStatus = code === "auth_invalid" ? 401 : code === "environment_unreachable" ? 502 : 400;
-  // Upstream messages are echoed without credentials or request bodies.
+  const message =
+    code === "auth_invalid"
+      ? "Voice authentication failed. Check the OpenAI key."
+      : code === "environment_unreachable"
+        ? "OpenAI voice service is unavailable."
+        : "The voice request could not be completed.";
   return new VoiceBrokerError({
     code,
-    message: `OpenAI Live session request failed: ${detail}`,
+    message,
     status: httpStatus,
   });
 };
@@ -393,6 +389,7 @@ const makeBroker = Effect.gen(function* () {
   // endpoint handlers map any request error to their upstreamFailureError
   // messages, so the timeout inherits that treatment.
   const httpClient = resolvedHttpClient.pipe(
+    HttpClient.withScope,
     HttpClient.transform((effect) => Effect.timeout(effect, "30 seconds")),
   );
   const secrets = yield* ServerSecretStore.ServerSecretStore;
@@ -515,36 +512,17 @@ const makeBroker = Effect.gen(function* () {
       .pipe(
         Effect.catch((cause) =>
           Effect.logWarning("OpenAI Live session request failed", { cause }).pipe(
-            Effect.flatMap(() =>
-              Effect.fail(
-                upstreamFailureError(500, "the Live session endpoint could not be reached"),
-              ),
-            ),
+            Effect.flatMap(() => Effect.fail(upstreamFailureError(500))),
           ),
         ),
       );
 
     if (response.status < 200 || response.status >= 300) {
-      const detail = yield* response.text.pipe(
-        Effect.map((text) => {
-          const decoded = Schema.decodeUnknownExit(Schema.fromJsonString(UpstreamErrorBody))(text);
-          if (decoded._tag === "Success") {
-            const message = decoded.value.error?.message;
-            if (message !== undefined) {
-              return message;
-            }
-          }
-          return `HTTP ${response.status}`;
-        }),
-        Effect.orElseSucceed(() => `HTTP ${response.status}`),
-      );
-      return yield* upstreamFailureError(response.status, detail);
+      return yield* upstreamFailureError(response.status);
     }
 
     const body = yield* response.json.pipe(
-      Effect.mapError(() =>
-        upstreamFailureError(response.status, "the Live session response was unreadable"),
-      ),
+      Effect.mapError(() => upstreamFailureError(response.status)),
     );
     const decoded = Schema.decodeUnknownExit(UpstreamLiveSessionCreated)(body);
     if (decoded._tag === "Failure") {
@@ -567,7 +545,7 @@ const makeBroker = Effect.gen(function* () {
       sessionId,
       sdp: decoded.value.transport.sdp,
     } satisfies VoiceBrokerSessionCreated;
-  });
+  }, Effect.scoped);
 
   const respond = Effect.fn("VoiceLiveBroker.respond")(function* (input: VoiceBackendRequest) {
     const retained = yield* requireSession(input.sessionId);
@@ -577,7 +555,7 @@ const makeBroker = Effect.gen(function* () {
       );
     }
     const encoded = yield* encodeBackendInput(input.input).pipe(
-      Effect.mapError(() => upstreamFailureError(400, "invalid backend input")),
+      Effect.mapError(() => upstreamFailureError(400)),
     );
     if (encoded.length > 128_000) {
       return yield* brokerInvalidRequest(
@@ -587,9 +565,8 @@ const makeBroker = Effect.gen(function* () {
     const config = yield* loadBrokerConfig(secrets);
     const key = yield* secrets
       .get(OPENAI_API_KEY_SECRET_NAME)
-      .pipe(Effect.mapError(() => upstreamFailureError(401, "the backend key could not be read")));
-    if (Option.isNone(key))
-      return yield* upstreamFailureError(401, "the backend key is unavailable");
+      .pipe(Effect.mapError(() => upstreamFailureError(401)));
+    if (Option.isNone(key)) return yield* upstreamFailureError(401);
     const tools = (Object.keys(VoiceToolSchemas) as Array<keyof typeof VoiceToolSchemas>).map(
       (name) => {
         const document = Schema.toJsonSchemaDocument(
@@ -626,24 +603,13 @@ const makeBroker = Effect.gen(function* () {
           include: ["reasoning.encrypted_content"],
         }),
       })
-      .pipe(
-        Effect.mapError(() =>
-          upstreamFailureError(500, "the Responses backend could not be reached"),
-        ),
-      );
+      .pipe(Effect.mapError(() => upstreamFailureError(500)));
     if (response.status < 200 || response.status >= 300) {
-      const detail = yield* response.text.pipe(
-        Effect.orElseSucceed(() => `HTTP ${response.status}`),
-      );
-      return yield* upstreamFailureError(response.status, detail.slice(0, 1000));
+      return yield* upstreamFailureError(response.status);
     }
-    const body = yield* response.json.pipe(
-      Effect.mapError(() => upstreamFailureError(500, "unreadable backend response")),
-    );
-    return yield* decodeBackendResult(body).pipe(
-      Effect.mapError(() => upstreamFailureError(500, "unexpected backend response shape")),
-    );
-  });
+    const body = yield* response.json.pipe(Effect.mapError(() => upstreamFailureError(500)));
+    return yield* decodeBackendResult(body).pipe(Effect.mapError(() => upstreamFailureError(500)));
+  }, Effect.scoped);
 
   const closeSession = Effect.fn("VoiceLiveBroker.closeSession")(function* (
     input: VoiceBrokerSessionCloseInput,
