@@ -173,6 +173,8 @@ import {
   TerminalCloseInput,
   TerminalError,
   TerminalEvent,
+  TerminalInspectSubprocessesInput,
+  TerminalInspectSubprocessesResult,
   TerminalMetadataStreamEvent,
   TerminalOpenInput,
   TerminalResizeInput,
@@ -336,6 +338,7 @@ export const WS_METHODS = {
   terminalResize: "terminal.resize",
   terminalClear: "terminal.clear",
   terminalRestart: "terminal.restart",
+  terminalInspectSubprocesses: "terminal.inspectSubprocesses",
   terminalClose: "terminal.close",
 
   // Preview methods
@@ -1142,6 +1145,12 @@ const WsTerminalRestartRpc = Rpc.make(WS_METHODS.terminalRestart, {
   error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
 });
 
+const WsTerminalInspectSubprocessesRpc = Rpc.make(WS_METHODS.terminalInspectSubprocesses, {
+  payload: TerminalInspectSubprocessesInput,
+  success: TerminalInspectSubprocessesResult,
+  error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
+});
+
 const WsTerminalCloseRpc = Rpc.make(WS_METHODS.terminalClose, {
   payload: TerminalCloseInput,
   error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
@@ -1499,6 +1508,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsTerminalResizeRpc,
   WsTerminalClearRpc,
   WsTerminalRestartRpc,
+  WsTerminalInspectSubprocessesRpc,
   WsTerminalCloseRpc,
   WsSubscribeTerminalEventsRpc,
   WsSubscribeTerminalMetadataRpc,
