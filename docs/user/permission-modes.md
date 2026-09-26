@@ -24,8 +24,12 @@ Providers enforce permissions differently. Some read-only actions can proceed in
 **Auto** uses automatic review on Codex, Claude, and Cursor; providers without an equivalent,
 including OpenCode and Antigravity, fall back to asking.
 
-For Grok, **Always allow this session** remembers the matching command or tool input. Other
-actions still require approval.
+Grok offers no **Auto-accept edits**. A Grok thread already set to it runs in **Supervised**. For
+Grok, **Always allow this session** remembers the matching command or tool input. Other actions
+still require approval.
+
+ACP Registry agents run their own tools in their own mode; T3 Code answers their approval requests
+by the permission mode. See [ACP Registry permissions](./providers-acp.md#permissions-and-terminals).
 
 Antigravity can still send native approval requests in **Full access**. It only offers remembered
 approvals for actions that support them.

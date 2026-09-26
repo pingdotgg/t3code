@@ -90,17 +90,19 @@ instead of disappearing.
 
 ## Permissions and terminals
 
-Registry agents follow the thread's approval mode at the T3 client boundary: full-access threads
-approve mediated permission requests automatically, while approval-required threads keep asking
-before edits and commands. File reads and searches are never gated behind an approval prompt.
-For ACP v1 agents, T3 can mediate the file and terminal requests they send through the client. ACP
-v2 terminals are instead owned by the agent; T3 displays their command, output, and exit state when
-the agent publishes them, but does not execute or control those terminals.
+Registry agents read files, edit, and run commands themselves, under their own sandbox and
+approval rules. They start in their own default mode, and their mode picker in the model options
+menu switches it. How far an agent is confined depends on that mode and the agent's own settings,
+so use its sandbox and permission controls when that matters.
 
-ACP does not let T3 Code confine tools the agent executes inside its own process. An agent may run
-provider-owned commands or file operations without passing through T3's handlers, so an ACP thread
-does not provide the same native sandbox guarantee as Codex. Use the agent's own sandbox and
-permission controls when that distinction matters.
+When a registry agent asks for approval, T3 Code answers by the thread's
+[permission mode](./permission-modes.md): **Supervised** shows the request in the conversation,
+**Auto-accept edits** approves edits and shows the rest, and **Auto** and **Full access** approve
+automatically. File reads and searches never wait for approval.
+
+Devin runs its commands through T3 Code's terminals, and those commands follow the thread's
+permission mode. For other agents, T3 Code shows the command, output, and exit status the agent
+reports but does not run or stop their terminals.
 
 Registry agents can schedule work and use T3's MCP tools. Child-task presentation depends on what
 the agent exposes: ACP has no portable native subagent-lineage contract, so richer delegation views
