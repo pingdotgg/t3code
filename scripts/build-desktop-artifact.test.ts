@@ -8,13 +8,18 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as FileSystem from "effect/FileSystem";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as PlatformError from "effect/PlatformError";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  buildDesktopBundles,
+  DesktopBuildManifestRestoreError,
   BundleNotSelfContainedError,
   BuildCommandFailedError,
   parseWslRuntimeArchiveMembers,
@@ -90,9 +95,15 @@ import {
   WslRuntimeArchiveMissingError,
   wslRuntimeArchiveStem,
 } from "./build-desktop-artifact.ts";
+import {
+  ReleasePackageManifestError,
+  releasePackageFiles,
+} from "./update-release-package-versions.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+
+const isDesktopBuildManifestRestoreError = Schema.is(DesktopBuildManifestRestoreError);
 
 // A minimal stand-in for the Linux CLI release archive: one top-level
 // directory named after the archive stem holding the executable, the web
@@ -248,6 +259,128 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
 });
 
 it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
+  it.effect(
+    "aligns client and server build versions and restores manifests after success or failure",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-desktop-build-version-" });
+        const packageJson = `{
+          "name": "desktop-version-fixture",
+          "version": "0.0.42",
+          "scripts": { "build:desktop": "node build.cjs" }
+        }`;
+        yield* fs.writeFileString(path.join(root, "package.json"), packageJson);
+        const originalManifest = '{ "version": "0.0.42", "private": true }\n';
+        for (const relativePath of releasePackageFiles) {
+          const filePath = path.join(root, relativePath);
+          yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+          yield* fs.writeFileString(filePath, originalManifest);
+        }
+        // Exercise both version sources in a real child process: the client
+        // build environment and the server's imported package manifest.
+        yield* fs.writeFileString(
+          path.join(root, "build.cjs"),
+          `require("node:fs").writeFileSync("version.txt", [
+            process.env.APP_VERSION?.trim() || require("./apps/web/package.json").version,
+            require("./apps/server/package.json").version
+          ].join("\\n"));`,
+        );
+        for (const version of ["0.0.43-nightly.20260920.2018", "0.0.43"]) {
+          yield* buildDesktopBundles(root, version, false);
+          assert.equal(
+            yield* fs.readFileString(path.join(root, "version.txt")),
+            `${version}\n${version}`,
+          );
+          for (const relativePath of releasePackageFiles) {
+            assert.equal(yield* fs.readFileString(path.join(root, relativePath)), originalManifest);
+          }
+          assert.equal(yield* fs.readFileString(path.join(root, "package.json")), packageJson);
+        }
+        yield* fs.writeFileString(path.join(root, "build.cjs"), "process.exit(1);");
+        const failure = yield* Effect.flip(buildDesktopBundles(root, "0.0.44", false));
+        assert.instanceOf(failure, BuildCommandFailedError);
+        for (const relativePath of releasePackageFiles) {
+          assert.equal(yield* fs.readFileString(path.join(root, relativePath)), originalManifest);
+        }
+        const invalidPath = releasePackageFiles[releasePackageFiles.length - 1]!;
+        yield* fs.writeFileString(path.join(root, invalidPath), "invalid manifest");
+        const alignmentFailure = yield* Effect.flip(buildDesktopBundles(root, "0.0.44", false));
+        assert.instanceOf(alignmentFailure, ReleasePackageManifestError);
+        for (const relativePath of releasePackageFiles) {
+          assert.equal(
+            yield* fs.readFileString(path.join(root, relativePath)),
+            relativePath === invalidPath ? "invalid manifest" : originalManifest,
+          );
+        }
+      }),
+  );
+
+  for (const buildFails of [false, true]) {
+    it.effect(`attempts every restore and reports write failures (buildFails=${buildFails})`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-manifest-restore-failure-" });
+        yield* fs.writeFileString(
+          path.join(root, "package.json"),
+          `{
+          "name": "restore-fixture", "scripts": { "build:desktop": "node build.cjs" }
+        }`,
+        );
+        yield* fs.writeFileString(
+          path.join(root, "build.cjs"),
+          `process.exit(${buildFails ? 1 : 0});`,
+        );
+        const original = '{ "version": "0.0.42" }\n';
+        for (const relativePath of releasePackageFiles) {
+          const filePath = path.join(root, relativePath);
+          yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+          yield* fs.writeFileString(filePath, original);
+        }
+        const failedPath = path.join(root, releasePackageFiles[0]);
+        const writeFailure = PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "writeFileString",
+          pathOrDescriptor: failedPath,
+        });
+        const logs: unknown[] = [];
+        const failure = yield* Effect.flip(buildDesktopBundles(root, "0.0.43", false)).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            writeFileString: (filePath, contents, options) =>
+              filePath === failedPath && contents === original
+                ? Effect.fail(writeFailure)
+                : fs.writeFileString(filePath, contents, options),
+          }),
+          Effect.provide(
+            Logger.layer([
+              Logger.make(({ message }) => {
+                logs.push(message);
+              }),
+            ]),
+          ),
+        );
+        if (buildFails) {
+          assert.instanceOf(failure, BuildCommandFailedError);
+          assert.isTrue(logs.flat().some(isDesktopBuildManifestRestoreError));
+        } else {
+          assert.instanceOf(failure, DesktopBuildManifestRestoreError);
+          if (isDesktopBuildManifestRestoreError(failure)) {
+            assert.equal(failure.failures[0]?.filePath, failedPath);
+            assert.strictEqual(failure.failures[0]?.cause, writeFailure);
+          }
+        }
+        assert.notEqual(yield* fs.readFileString(failedPath), original);
+        for (const relativePath of releasePackageFiles.slice(1)) {
+          assert.equal(yield* fs.readFileString(path.join(root, relativePath)), original);
+        }
+      }),
+    );
+  }
+
   it("resolves the dedicated nightly updater channel from nightly versions", () => {
     assert.equal(resolveDesktopUpdateChannel("0.0.17-nightly.20260413.42"), "nightly");
     assert.equal(resolveDesktopUpdateChannel("0.0.17"), "latest");
