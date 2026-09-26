@@ -18,3 +18,7 @@ the import wizard afterward. You can revoke Full Disk Access once the import is 
 On Windows, import supports Firefox and Helium profiles that use standard profile encryption.
 Other Chromium-based browsers use app-bound encryption and cannot be imported. Partitioned cookies
 are skipped on all platforms.
+
+Passkeys are not imported. On macOS, the preview browser can save a new passkey for a site and
+unlock it with Touch ID. It stays on this Mac, in the browser profile that created it, and does not
+sync to iCloud Keychain or your other browsers.

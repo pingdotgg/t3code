@@ -71,6 +71,8 @@ export class ElectronApp extends Context.Service<
     ) => Effect.Effect<boolean>;
     readonly setDesktopName: (desktopName: string) => Effect.Effect<void>;
     readonly setDockIcon: (iconPath: string) => Effect.Effect<void>;
+    /** macOS only. */
+    readonly configureWebAuthn: (options: Electron.ConfigureWebAuthnOptions) => Effect.Effect<void>;
     readonly appendCommandLineSwitch: (switchName: string, value?: string) => Effect.Effect<void>;
     readonly onBeforeQuitForUpdate: (
       listener: () => void,
@@ -182,6 +184,10 @@ export const make = ElectronApp.of({
   setDockIcon: (iconPath) =>
     Effect.sync(() => {
       Electron.app.dock?.setIcon(iconPath);
+    }),
+  configureWebAuthn: (options) =>
+    Effect.sync(() => {
+      Electron.app.configureWebAuthn(options);
     }),
   appendCommandLineSwitch: (switchName, value) =>
     Effect.sync(() => {

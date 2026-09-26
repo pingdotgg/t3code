@@ -1,13 +1,17 @@
-import type { Session } from "electron";
+import type { Session, WebAuthnAccount } from "electron";
 import { session } from "electron";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 
 const PREVIEW_PARTITION_PREFIX = "persist:t3code-preview-";
 /**
@@ -159,9 +163,58 @@ const encodeScopeForDigest = (scope: string): Uint8Array =>
       ),
   );
 
+const webAuthnAccountLabel = (account: WebAuthnAccount, index: number): string => {
+  const name = account.name?.trim();
+  const displayName = account.displayName?.trim();
+  if (name && displayName && name !== displayName) return `${displayName} (${name})`;
+  return displayName || name || `Passkey ${index + 1}`;
+};
+
+/**
+ * Asks the user which passkey to use when a site's `navigator.credentials.get()`
+ * matches several discoverable credentials. Resolves to the chosen credential
+ * id, or none when the user cancels.
+ */
+const chooseWebAuthnAccount = Effect.fn("BrowserSession.chooseWebAuthnAccount")(function* (
+  relyingPartyId: string,
+  accounts: ReadonlyArray<WebAuthnAccount>,
+) {
+  const dialog = yield* ElectronDialog.ElectronDialog;
+  const { response } = yield* dialog.showMessageBox({
+    type: "question",
+    message: `Choose a passkey for ${relyingPartyId}`,
+    buttons: [...accounts.map(webAuthnAccountLabel), "Cancel"],
+    defaultId: 0,
+    cancelId: accounts.length,
+    noLink: true,
+  });
+  return Option.fromNullishOr(accounts[response]?.credentialId);
+});
+
+/**
+ * Electron keeps the credential request pending until `callback` runs, so it
+ * is answered exactly once on every exit. Calling it without an id cancels the
+ * request, and the page receives `NotAllowedError`.
+ */
+const answerWebAuthnAccountSelection = (
+  relyingPartyId: string,
+  accounts: ReadonlyArray<WebAuthnAccount>,
+  callback: (credentialId?: string | null) => void,
+) =>
+  chooseWebAuthnAccount(relyingPartyId, accounts).pipe(
+    Effect.onExit((exit) =>
+      Effect.sync(() => {
+        const credentialId = Exit.isSuccess(exit) ? Option.getOrNull(exit.value) : null;
+        callback(credentialId);
+      }),
+    ),
+    Effect.ignore({ log: "Warn" }),
+  );
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* BrowserSessionMake() {
   const crypto = yield* Crypto.Crypto;
+  const runFork = Effect.runForkWith(yield* Effect.context<ElectronDialog.ElectronDialog>());
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
 
   const getPartition = Effect.fn("BrowserSession.getPartition")(function* (
@@ -209,6 +262,13 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           browserSession.setPermissionCheckHandler((_webContents, permission) =>
             ALLOWED_PREVIEW_PERMISSIONS.has(permission),
           );
+          // Without a listener Electron cancels any sign-in that matches more
+          // than one passkey, so the user picks one here.
+          browserSession.on("select-webauthn-account", (_event, details, callback) => {
+            runFork(
+              answerWebAuthnAccountSelection(details.relyingPartyId, details.accounts, callback),
+            );
+          });
           const next = new Map(sessions);
           next.set(partition, browserSession);
           return [browserSession, next] as const;
