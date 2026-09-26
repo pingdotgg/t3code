@@ -1831,15 +1831,25 @@ const makeWsRpcLayer = (
           ) {
             return null;
           }
+          // Only [a-z0-9] reaches the name, so it stays one path segment
+          // inside the Scratch root. A short id is tried first; a taken name
+          // falls back to the full id so two threads never share a folder.
           const words = input.text
             .toLowerCase()
             .split(/[^a-z0-9]+/)
             .filter(Boolean)
             .slice(0, 5);
-          const folder = path.join(
-            scratchRoot,
-            [input.createdAt.slice(0, 10), ...words, input.threadId.slice(0, 8)].join("-"),
-          );
+          const id = input.threadId.toLowerCase().replace(/[^a-z0-9]/g, "");
+          const folderFor = (idPart: string) =>
+            path.join(
+              scratchRoot,
+              [input.createdAt.slice(0, 10), ...words, idPart].filter(Boolean).join("-"),
+            );
+          const shortFolder = folderFor(id.slice(0, 8));
+          const shortTaken = yield* fileSystem
+            .exists(shortFolder)
+            .pipe(Effect.orElseSucceed(() => false));
+          const folder = shortTaken ? folderFor(id) : shortFolder;
           yield* fileSystem.makeDirectory(folder, { recursive: true }).pipe(
             Effect.mapError(
               (cause) =>

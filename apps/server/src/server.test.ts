@@ -5308,46 +5308,51 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             scratchRoot =
               (yield* client[WS_METHODS.serverGetConfig]({})).scratchWorkspaceRoot ?? "";
             const createdAt = "2026-09-25T10:00:00.000Z";
-            const threadId = ThreadId.make("a1b2c3d4-scratch-thread");
-            yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
-              type: "thread.turn.start",
-              commandId: CommandId.make("cmd-scratch-turn-start"),
-              threadId,
-              message: {
-                messageId: MessageId.make("msg-scratch"),
-                role: "user",
-                text: "Convert these PNGs to WebP, please!",
-                attachments: [],
-              },
-              modelSelection: defaultModelSelection,
-              runtimeMode: "full-access",
-              interactionMode: "default",
-              bootstrap: {
-                createThread: {
-                  projectId: scratchProjectId,
-                  title: "New thread",
-                  modelSelection: defaultModelSelection,
-                  runtimeMode: "full-access",
-                  interactionMode: "default",
-                  branch: null,
-                  worktreePath: null,
-                  createdAt,
+            // The second id shares the first's short prefix; the third tries to
+            // climb out of the Scratch root.
+            const ids = ["a1b2c3d4-scratch-thread", "a1b2c3d4-other", "../../escape"];
+            for (const [index, id] of ids.entries()) {
+              yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                type: "thread.turn.start",
+                commandId: CommandId.make(`cmd-scratch-turn-start-${index}`),
+                threadId: ThreadId.make(id),
+                message: {
+                  messageId: MessageId.make(`msg-scratch-${index}`),
+                  role: "user",
+                  text: "Convert these PNGs to WebP, please!",
+                  attachments: [],
                 },
-              },
-              createdAt,
-            });
+                modelSelection: defaultModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                bootstrap: {
+                  createThread: {
+                    projectId: scratchProjectId,
+                    title: "New thread",
+                    modelSelection: defaultModelSelection,
+                    runtimeMode: "full-access",
+                    interactionMode: "default",
+                    branch: null,
+                    worktreePath: null,
+                    createdAt,
+                  },
+                },
+                createdAt,
+              });
+            }
           }),
         ),
       );
 
       // The date is the server's receipt time, not the client's createdAt.
-      const folder = created[0] ?? "";
-      assert.equal(path.dirname(folder), scratchRoot);
-      assert.match(
-        path.basename(folder),
-        /^\d{4}-\d{2}-\d{2}-convert-these-pngs-to-webp-a1b2c3d4$/,
-      );
-      assert.isTrue(yield* fileSystem.exists(folder));
+      const names = created.map((folder) => path.basename(folder ?? ""));
+      assert.match(names[0] ?? "", /^\d{4}-\d{2}-\d{2}-convert-these-pngs-to-webp-a1b2c3d4$/);
+      assert.match(names[1] ?? "", /-convert-these-pngs-to-webp-a1b2c3d4other$/);
+      assert.match(names[2] ?? "", /-convert-these-pngs-to-webp-escape$/);
+      for (const folder of created) {
+        assert.equal(path.dirname(folder ?? ""), scratchRoot);
+        assert.isTrue(yield* fileSystem.exists(folder ?? ""));
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
