@@ -3,7 +3,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { formatAbsoluteTimestamp } from "~/timestampFormat";
+import { formatAbsoluteTimestamp, formatExpiresInLabel } from "~/timestampFormat";
 import {
   type EnvironmentId,
   type TailcatConnectionCodeResult,
@@ -31,11 +31,12 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { QRCodeSvg } from "../ui/qr-code";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { SettingsRow } from "./settingsLayout";
-import { OneTimeCodeReveal } from "./OneTimeCodeReveal";
+import { SettingsRow, useRelativeTimeTick } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import {
   formatTailcatConnectionError,
@@ -44,6 +45,76 @@ import {
   tailcatStatusBadgeVariant,
   tailcatStatusLabel,
 } from "./TailcatRemoteAccess.logic";
+
+/**
+ * A freshly minted connection code: the text, a copy button, its QR, and a
+ * live countdown. Ticks only while a code is on screen.
+ */
+const ConnectionCodeReveal = memo(function ConnectionCodeReveal({
+  code,
+  expiresAt,
+}: {
+  readonly code: string;
+  readonly expiresAt: string;
+}) {
+  const nowMs = useRelativeTimeTick(1_000);
+  const { copyToClipboard } = useCopyToClipboard<void>({
+    onCopy: () => {
+      toastManager.add({
+        type: "success",
+        title: "Connection code copied",
+        description:
+          "Paste it in the desktop app on the other device under Add environment → Tailcat.",
+      });
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not copy connection code",
+          description: error.message,
+        }),
+      );
+    },
+  });
+
+  if (Date.parse(expiresAt) <= nowMs) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        That code expired unused. Create a new one when the other device is ready.
+      </p>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+      <div className="min-w-0 flex-1 space-y-2">
+        <Textarea
+          readOnly
+          value={code}
+          rows={4}
+          aria-label="Connection code"
+          font="mono"
+          className="break-all"
+          onFocus={(event) => event.currentTarget.select()}
+          onClick={(event) => event.currentTarget.select()}
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="xs" variant="outline" onClick={() => copyToClipboard(code)}>
+            <CopyIcon aria-hidden />
+            Copy code
+          </Button>
+          <span className="text-2xs text-muted-foreground">
+            {formatExpiresInLabel(expiresAt, nowMs)} · single use
+          </span>
+        </div>
+      </div>
+      <div className="w-fit shrink-0 self-center rounded-xl bg-white p-3 sm:self-start">
+        <QRCodeSvg value={code} size={168} level="L" marginSize={1} title="Connection code" />
+      </div>
+    </div>
+  );
+});
 
 type TrustedPeerRowProps = {
   readonly peer: TailcatTrustedPeer;
@@ -436,13 +507,7 @@ export const TailcatRemoteAccessRow = memo(function TailcatRemoteAccessRow({
                 </Button>
               </div>
               {issuedCode !== null ? (
-                <OneTimeCodeReveal
-                  code={issuedCode.code}
-                  expiresAt={issuedCode.expiresAt}
-                  label="Connection code"
-                  copiedDescription="Paste it in the desktop app on the other device under Add environment → Tailcat."
-                  expiredMessage="That code expired unused. Create a new one when the other device is ready."
-                />
+                <ConnectionCodeReveal code={issuedCode.code} expiresAt={issuedCode.expiresAt} />
               ) : !state.enabled ? (
                 <p className="text-2xs text-muted-foreground/70">
                   Enable remote access to create codes.

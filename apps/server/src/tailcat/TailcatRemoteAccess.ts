@@ -1,7 +1,6 @@
 import {
   AuthStandardClientScopes,
   type AuthSessionId,
-  FEDERATION_PEER_CODE_PAIRING_SUBJECT,
   TAILCAT_CONNECTION_CODE_DEFAULT_TTL_SECONDS,
   TAILCAT_CONNECTION_CODE_PAIRING_SUBJECT,
   type TailcatAddress,
@@ -78,12 +77,6 @@ export const TAILCAT_REMOTE_ACCESS_STATE_FILE = "tailcat-remote-access.json";
 export const TAILCAT_SERVER_IDENTITY_FILE = "tailcat-server-identity.private.json";
 const RELOCK_DEBOUNCE = Duration.millis(1_500);
 const EXPIRY_GRACE = Duration.seconds(1);
-
-/** Pairing-link subjects whose active links open the Tailcat pairing window. */
-const PAIRING_WINDOW_SUBJECTS: ReadonlySet<string> = new Set([
-  TAILCAT_CONNECTION_CODE_PAIRING_SUBJECT,
-  FEDERATION_PEER_CODE_PAIRING_SUBJECT,
-]);
 
 const PersistedTailcatRemoteAccess = Schema.Struct({
   version: Schema.Literal(1),
@@ -277,7 +270,9 @@ export const make = Effect.gen(function* () {
   const signalReconcile = Queue.offer(signals, "reconcile").pipe(Effect.asVoid);
 
   const listActiveConnectionCodes = pairingLinks.listActive().pipe(
-    Effect.map((links) => links.filter((link) => PAIRING_WINDOW_SUBJECTS.has(link.subject))),
+    Effect.map((links) =>
+      links.filter((link) => link.subject === TAILCAT_CONNECTION_CODE_PAIRING_SUBJECT),
+    ),
     Effect.catch((cause) =>
       Effect.logWarning("Could not list Tailcat connection codes; treating none as active.", {
         cause,
@@ -501,7 +496,7 @@ export const make = Effect.gen(function* () {
     Stream.filter(
       (change) =>
         change.type === "pairingLinkRemoved" ||
-        PAIRING_WINDOW_SUBJECTS.has(change.pairingLink.subject),
+        change.pairingLink.subject === TAILCAT_CONNECTION_CODE_PAIRING_SUBJECT,
     ),
     Stream.runForEach(() => signalReconcile),
     Effect.forkIn(serviceScope),

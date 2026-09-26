@@ -58,8 +58,7 @@ bearer endpoint. A saved Tailcat connection persists the logical endpoint, the
 peer's Tailcat address and the server's port, never the local forward port, which
 is chosen anew for each forward. The tunnel decides reachability only: trust comes
 from redeeming a connection code, and the server's listener admits just the node
-keys that did. See [Tailcat](./tailcat.md), and [federation](./federation.md) for
-server-to-server use.
+keys that did. See [Tailcat](./tailcat.md).
 
 Remote servers can outlive several client releases. Clients must use advertised
 capabilities and handle their absence, rather than assume their own version

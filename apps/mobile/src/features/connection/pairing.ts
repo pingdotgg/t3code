@@ -43,8 +43,6 @@ export class PairingInputNotPairableError extends Schema.TaggedError<PairingInpu
     switch (this.kind) {
       case "tailcat":
         return "This is a Tailcat connection code. Paste it in the desktop app under Add environment → Tailcat.";
-      case "peer":
-        return "This is a federation peer code. Add it in the desktop app under Settings → Connections → Federation.";
       default:
         return "This is a T3 connection code, not a pairing URL. Use it in the desktop app.";
     }

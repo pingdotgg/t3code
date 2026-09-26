@@ -1,6 +1,6 @@
 /**
  * Plumbing for CLI commands that manage the running T3 Code server
- * (`t3 remote`, `t3 peer`).
+ * (`t3 remote`).
  *
  * Discovery and credentials mirror `t3 pair`: the running server is found
  * through the runtime state it persists next to its database, and every
@@ -51,9 +51,9 @@ interface RunningServerSession {
 }
 
 /**
- * Anything the running server answered with that is not a typed Tailcat or
- * federation failure: rejected credentials, an internal error, a transport
- * failure, or no answer at all. The cause stays attached for logs.
+ * Anything the running server answered with that is not a typed Tailcat
+ * failure: rejected credentials, an internal error, a transport failure, or
+ * no answer at all. The cause stays attached for logs.
  */
 export class RunningServerRequestError extends Schema.TaggedError<RunningServerRequestError>()(
   "RunningServerRequestError",
@@ -182,7 +182,7 @@ export const callRunningServer = <A, E, T extends E>(
     ),
   );
 
-/** `--ttl` for one-time codes (`t3 remote tailcat code`, `t3 peer code`). */
+/** `--ttl` for one-time codes (`t3 remote tailcat code`). */
 export const codeTtlFlag = Flag.String("ttl").pipe(
   Flag.withSchema(DurationFromString),
   Flag.withDescription(

@@ -3,9 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   T3ConnectionCodeInvalidError,
-  decodeFederationPeerCode,
   decodeTailcatConnectionCode,
-  encodeFederationPeerCode,
+  describeTailcatConnectionCode,
   encodeTailcatConnectionCode,
   isT3ConnectionCode,
   peekT3ConnectionCodeKind,
@@ -77,25 +76,13 @@ describe("t3ConnectionCode", () => {
     }
   });
 
-  it("rejects the wrong kind of code", () => {
-    const peer = encodeFederationPeerCode({
-      v: 1,
-      kind: "peer",
-      protocolVersion: 1,
-      environmentId: "env-b" as never,
-      publicKey: "-----BEGIN PUBLIC KEY-----\nabc\n-----END PUBLIC KEY-----",
-      label: "gpu-box",
-      transport: { tailcat: { address: ADDRESS, port: 3773 } },
-      token: "one-time",
-      scopes: ["environment.read", "projects.read"],
-      expiresAt: "2026-09-03T12:00:00.000Z",
-    });
-    expect(peekT3ConnectionCodeKind(peer)).toBe("peer");
-    expect(decodeFederationPeerCode(peer).scopes).toEqual(["environment.read", "projects.read"]);
+  it("rejects codes of a kind this app does not support", () => {
+    const code = `t3c://other/${Buffer.from(JSON.stringify({ v: 1 })).toString("base64url")}`;
+    expect(peekT3ConnectionCodeKind(code)).toBeNull();
     try {
-      decodeTailcatConnectionCode(peer);
+      decodeTailcatConnectionCode(code);
     } catch (error) {
-      expect((error as T3ConnectionCodeInvalidError).reason).toBe("kind-mismatch");
+      expect((error as T3ConnectionCodeInvalidError).reason).toBe("unknown-kind");
     }
   });
 
@@ -107,5 +94,23 @@ describe("t3ConnectionCode", () => {
     expect(redacted.startsWith("t3c://tailcat/…")).toBe(true);
     expect(redacted.length).toBeLessThan(40);
     expect(peekT3ConnectionCodeKind("nope")).toBeNull();
+  });
+
+  it("previews a pasted code for the connect form", () => {
+    const code = encodeTailcatConnectionCode(TAILCAT_PAYLOAD);
+    expect(describeTailcatConnectionCode(`  ${code}\n`)).toEqual({
+      kind: "valid",
+      payload: expect.objectContaining({ address: ADDRESS, port: 3773, name: "gpu-box" }),
+      expiresAtMs: Date.parse(TAILCAT_PAYLOAD.expiresAt),
+    });
+    expect(describeTailcatConnectionCode("")).toEqual({ kind: "empty" });
+    expect(describeTailcatConnectionCode("https://example.com/pair#token=x")).toMatchObject({
+      kind: "invalid",
+      message: expect.stringContaining("t3c://tailcat/"),
+    });
+    expect(describeTailcatConnectionCode("t3c://tailcat/%%%")).toMatchObject({
+      kind: "invalid",
+      message: expect.stringContaining("incomplete or damaged"),
+    });
   });
 });

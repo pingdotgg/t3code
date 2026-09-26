@@ -67,8 +67,6 @@ export interface SettingsSearchItem {
   readonly requiresThreadAutoSettlement?: boolean;
   /** Its row only renders when the primary server can serve itself over Tailcat. */
   readonly requiresTailcatRemoteAccess?: boolean;
-  /** Its section only renders when the primary server speaks the federation protocol. */
-  readonly requiresFederation?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -81,7 +79,6 @@ export interface SettingsSearchAvailability {
   readonly isWslSettingsRowVisible: boolean;
   readonly hasThreadAutoSettlement: boolean;
   readonly hasTailcatRemoteAccess?: boolean;
-  readonly hasFederation?: boolean;
 }
 
 /**
@@ -834,26 +831,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
-    id: "federation",
-    title: "Federation",
-    to: "/settings/connections",
-    searchTerms: [
-      "peers peer code add peer remote runs run on peer artifacts diff scopes identity fingerprint server to server",
-    ],
-    localBackendManagementOnly: true,
-    requiresFederation: true,
-  },
-  {
-    id: "federation-peers",
-    title: "Peers",
-    to: "/settings/connections",
-    searchTerms: [
-      "federation add peer code remove refresh online offline fingerprint scopes granted allowed",
-    ],
-    localBackendManagementOnly: true,
-    requiresFederation: true,
-  },
-  {
     id: "load-balancing",
     title: "Load balancing",
     to: "/settings/connections",
@@ -1012,8 +989,7 @@ export function filterAvailableSettingsSearchItems(
       (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
-      (!item.requiresTailcatRemoteAccess || availability.hasTailcatRemoteAccess) &&
-      (!item.requiresFederation || availability.hasFederation),
+      (!item.requiresTailcatRemoteAccess || availability.hasTailcatRemoteAccess),
   );
 }
 

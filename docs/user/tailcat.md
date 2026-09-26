@@ -80,16 +80,3 @@ Tailcat environment on other devices needs a fresh code.
   later.
 - **Copy diagnostics** in **Tailcat details…** gathers the tunnel status, the path
   probe, and the recent forwarder output with secrets removed. Attach it to a bug report.
-
-## Working across two of your own machines
-
-Two T3 Code servers can pair with each other over Tailcat, so a run can be started on one
-machine and executed on another. See the **Federation** section in Settings → Connections:
-create a peer code on one machine, add it on the other, choose what each side may do, and
-start runs on the peer from the same screen. Every remote run and every artifact says which
-machine it executed on.
-
-Headless servers do the same from the command line: `npx t3 peer code` on one machine,
-`npx t3 peer add <code>` on the other, then `npx t3 peer list`, `npx t3 peer projects <peer>`
-and `npx t3 peer run <peer> <project> "<prompt>" --wait`. Both commands accept `--base-dir`
-to target a specific data directory and `--json` for scripting.

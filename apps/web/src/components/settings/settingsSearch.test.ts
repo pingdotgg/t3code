@@ -159,15 +159,12 @@ describe("searchSettings", () => {
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
       hasTailcatRemoteAccess: false,
-      hasFederation: false,
     });
 
     const gatedIds = new Set<string>([
       "tailcat-remote-access",
       "tailcat-connection-code",
       "tailcat-trusted-devices",
-      "federation",
-      "federation-peers",
       "follow-change-request-templates",
       "git-fetch-interval",
       "network-access",
@@ -238,7 +235,6 @@ describe("searchSettings", () => {
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: true,
       hasTailcatRemoteAccess: false,
-      hasFederation: false,
     });
 
     expect(searchSettings("auto-settle", available).map((item) => item.id)).toEqual([
@@ -248,7 +244,7 @@ describe("searchSettings", () => {
     ]);
   });
 
-  it("shows Tailcat and federation settings only when the server advertises them", () => {
+  it("shows Tailcat settings only when the server advertises them", () => {
     const base = {
       hasCloudPublicConfig: false,
       hasEnvironment: true,
@@ -258,29 +254,22 @@ describe("searchSettings", () => {
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
     };
-    const withBoth = filterAvailableSettingsSearchItems({
+    const withTailcat = filterAvailableSettingsSearchItems({
       ...base,
       hasTailcatRemoteAccess: true,
-      hasFederation: true,
     });
-    expect(searchSettings("tailcat", withBoth).map((item) => item.id)).toEqual([
+    expect(searchSettings("tailcat", withTailcat).map((item) => item.id)).toEqual([
       "tailcat-remote-access",
       "tailcat-connection-code",
       "tailcat-trusted-devices",
       "remote-environments",
     ]);
-    expect(searchSettings("peers", withBoth).map((item) => item.id)).toEqual([
-      "federation-peers",
-      "federation",
-    ]);
 
-    const withoutEither = filterAvailableSettingsSearchItems({
+    const withoutTailcat = filterAvailableSettingsSearchItems({
       ...base,
       hasTailcatRemoteAccess: false,
-      hasFederation: false,
     });
-    expect(searchSettings("trusted devices", withoutEither)).toEqual([]);
-    expect(searchSettings("federation", withoutEither)).toEqual([]);
+    expect(searchSettings("trusted devices", withoutTailcat)).toEqual([]);
   });
 
   it("finds keybinding commands by label, command id, and default key", () => {

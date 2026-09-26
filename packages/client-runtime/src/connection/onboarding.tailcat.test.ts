@@ -187,12 +187,14 @@ it.layer(cryptoLayer)("tailcat onboarding", (it) => {
       );
       expect(notACode).toMatchObject({ _tag: "ConnectionBlockedError", reason: "configuration" });
 
-      const peerCode = yield* prepareTailcatRegistration({ code: "t3c://peer/eyJ2IjoxfQ" }).pipe(
-        Effect.provideService(TailcatEnvironmentGateway, gateway()),
-        Effect.flip,
-      );
-      expect(peerCode).toMatchObject({ _tag: "ConnectionBlockedError", reason: "configuration" });
-      expect(peerCode.detail).toMatch(/peer|Tailcat connection code/iu);
+      const foreignKind = yield* prepareTailcatRegistration({
+        code: "t3c://other/eyJ2IjoxfQ",
+      }).pipe(Effect.provideService(TailcatEnvironmentGateway, gateway()), Effect.flip);
+      expect(foreignKind).toMatchObject({
+        _tag: "ConnectionBlockedError",
+        reason: "configuration",
+      });
+      expect(foreignKind.detail).toMatch(/not supported/iu);
     }),
   );
 

@@ -1,9 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration exercises Node HTTP and filesystem boundaries.
 /**
- * Harness for CLI commands that talk to a running server (`t3 remote`,
- * `t3 peer`): a real HTTP server the CLI can discover through persisted
- * runtime state, the real auth stack behind its `/ws` upgrade, and scripted
- * RPC handlers in place of the full server.
+ * Harness for CLI commands that talk to a running server (`t3 remote`): a
+ * real HTTP server the CLI can discover through persisted runtime state, the
+ * real auth stack behind its `/ws` upgrade, and scripted RPC handlers in place
+ * of the full server.
  */
 import * as NodeHttp from "node:http";
 import * as NodeFS from "node:fs";

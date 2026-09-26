@@ -18,7 +18,7 @@ import {
 
 export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch = {}) {
   const { environments } = useEnvironments();
-  // Tailcat remote access and federation are managed on the primary server only.
+  // Tailcat remote access is managed on the primary server only.
   const primaryCapabilities = usePrimaryEnvironment()?.serverConfig?.environment.capabilities;
   const primarySessionState = usePrimarySessionState();
   const localEnvironmentDisabled = isLocalEnvironmentDisabled();
@@ -62,7 +62,6 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
         hasThreadAutoSettlement:
           getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0,
         hasTailcatRemoteAccess: primaryCapabilities?.tailcatRemoteAccess === true,
-        hasFederation: primaryCapabilities?.federation !== undefined,
       }),
     [
       canManageLocalBackend,

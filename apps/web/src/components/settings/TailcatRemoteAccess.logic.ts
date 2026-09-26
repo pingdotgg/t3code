@@ -1,5 +1,4 @@
 import type {
-  TailcatConnectionCodePayload,
   TailcatForwardStatus,
   TailcatPathProbe,
   TailcatRemoteAccessState,
@@ -7,7 +6,6 @@ import type {
   TailcatServeStatus,
 } from "@t3tools/contracts";
 import { parseTailcatBridgeError, TAILCAT_BRIDGE_FALLBACK_DETAIL } from "~/connection/platform";
-import { describeT3ConnectionCode } from "@t3tools/shared/t3ConnectionCode";
 
 export type TailcatStatusBadgeVariant = "outline" | "warning" | "success" | "error";
 
@@ -46,26 +44,6 @@ export function tailcatStatusBadgeVariant(status: TailcatServeStatus): TailcatSt
 /** "bundled 0.5.0", "system 0.5.0", "override 0.5.0"; null when the server has not resolved a runtime. */
 export function tailcatRuntimeLabel(runtime: TailcatRuntimeInfo | null): string | null {
   return runtime === null ? null : `${runtime.source} ${runtime.version}`;
-}
-
-type TailcatConnectionCodePreview =
-  | { readonly kind: "empty" }
-  | { readonly kind: "invalid"; readonly message: string }
-  | { readonly kind: "peer-code"; readonly message: string }
-  | {
-      readonly kind: "valid";
-      readonly payload: TailcatConnectionCodePayload;
-      readonly expiresAtMs: number;
-    };
-
-/**
- * Live feedback for the connection-code field: memoize on the pasted text and
- * judge expiry per tick. A federation peer code is recognised and redirected
- * rather than reported as damaged.
- */
-export function parseTailcatConnectionCodePreview(raw: string): TailcatConnectionCodePreview {
-  const preview = describeT3ConnectionCode(raw, "tailcat");
-  return preview.kind === "other-kind" ? { kind: "peer-code", message: preview.message } : preview;
 }
 
 /** "Direct", "Relay (via fra)", "Relay", or "Unknown" for a measured path. */

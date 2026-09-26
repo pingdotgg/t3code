@@ -17,8 +17,6 @@ import {
   type DpopFailureReason,
   EnvironmentId,
   EventId,
-  type FederationRemoteRunsSnapshot,
-  type FederationSnapshot,
   GitCommandError,
   KeybindingRule,
   MessageId,
@@ -117,7 +115,6 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
-import * as FederationService from "./federation/FederationService.ts";
 import * as TailcatRemoteAccess from "./tailcat/TailcatRemoteAccess.ts";
 import {
   isThreadDetailEvent,
@@ -564,7 +561,6 @@ const buildAppUnderTest = (options?: {
     serverRuntimeStartup?: Partial<ServerRuntimeStartup.ServerRuntimeStartup["Service"]>;
     serverEnvironment?: Partial<ServerEnvironment.ServerEnvironment["Service"]>;
     tailcatRemoteAccess?: Partial<TailcatRemoteAccess.TailcatRemoteAccess["Service"]>;
-    federation?: Partial<FederationService.FederationService["Service"]>;
     repositoryIdentityResolver?: Partial<
       RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]
     >;
@@ -779,9 +775,6 @@ const buildAppUnderTest = (options?: {
       recordTrustedPeer: () => Effect.void,
       start: () => Effect.void,
       ...options?.layers?.tailcatRemoteAccess,
-    });
-    const federationLayer = Layer.mock(FederationService.FederationService)({
-      ...options?.layers?.federation,
     });
     const servedRoutesLayer = HttpRouter.serve(
       // Viewed-file marks for a host that keeps none of its own are rows, so the routes want a
@@ -1095,9 +1088,7 @@ const buildAppUnderTest = (options?: {
     );
 
     const appLayer = servedRoutesLayer.pipe(
-      Layer.provide(
-        Layer.mergeAll(resourceTelemetryLayer, tailcatRemoteAccessLayer, federationLayer),
-      ),
+      Layer.provide(Layer.mergeAll(resourceTelemetryLayer, tailcatRemoteAccessLayer)),
       Layer.provide(UsageService.layerTest),
       Layer.provide(
         Layer.mock(AnalyticsService.AnalyticsService)({
@@ -6561,7 +6552,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("streams Tailcat and federation snapshots once before subsequent updates", () =>
+  it.effect("streams the Tailcat snapshot once before subsequent updates", () =>
     Effect.gen(function* () {
       const updatedAt = "2026-01-01T00:00:00.000Z";
       const nextUpdatedAt = "2026-01-01T00:00:01.000Z";
@@ -6577,34 +6568,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         lastError: null,
         updatedAt,
       });
-      const peers = yield* SubscriptionRef.make<FederationSnapshot>({
-        environmentId: EnvironmentId.make("environment-federation-test"),
-        publicKeyFingerprint: "test-fingerprint",
-        protocolVersion: 1,
-        peers: [],
-        updatedAt,
-      });
-      const runs = yield* SubscriptionRef.make<FederationRemoteRunsSnapshot>({
-        runs: [],
-        updatedAt,
-      });
-      const tailcatReplayed = yield* Deferred.make<void>();
-      const peersReplayed = yield* Deferred.make<void>();
-      const runsReplayed = yield* Deferred.make<void>();
+      const replayed = yield* Deferred.make<void>();
       yield* buildAppUnderTest({
         layers: {
           tailcatRemoteAccess: {
             state: SubscriptionRef.get(tailcat),
             changes: SubscriptionRef.changes(tailcat).pipe(
-              Stream.tap(() => Deferred.succeed(tailcatReplayed, undefined)),
-            ),
-          },
-          federation: {
-            changes: SubscriptionRef.changes(peers).pipe(
-              Stream.tap(() => Deferred.succeed(peersReplayed, undefined)),
-            ),
-            remoteRunChanges: SubscriptionRef.changes(runs).pipe(
-              Stream.tap(() => Deferred.succeed(runsReplayed, undefined)),
+              Stream.tap(() => Deferred.succeed(replayed, undefined)),
             ),
           },
         },
@@ -6613,54 +6583,22 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           Effect.gen(function* () {
-            const subscriptions = [
-              {
-                replayed: tailcatReplayed,
-                stream: client[WS_METHODS.tailcatSubscribeRemoteAccess]({}).pipe(
-                  Stream.map((state) => state.updatedAt),
-                  Stream.orDie,
-                ),
-                update: SubscriptionRef.update(tailcat, (state) => ({
-                  ...state,
-                  updatedAt: nextUpdatedAt,
-                })),
-              },
-              {
-                replayed: peersReplayed,
-                stream: client[WS_METHODS.federationSubscribePeers]({}).pipe(
-                  Stream.map((state) => state.updatedAt),
-                  Stream.orDie,
-                ),
-                update: SubscriptionRef.update(peers, (state) => ({
-                  ...state,
-                  updatedAt: nextUpdatedAt,
-                })),
-              },
-              {
-                replayed: runsReplayed,
-                stream: client[WS_METHODS.federationSubscribeRemoteRuns]({}).pipe(
-                  Stream.map((state) => state.updatedAt),
-                  Stream.orDie,
-                ),
-                update: SubscriptionRef.update(runs, (state) => ({
-                  ...state,
-                  updatedAt: nextUpdatedAt,
-                })),
-              },
-            ];
-            for (const { stream, update, replayed } of subscriptions) {
-              const firstReceived = yield* Deferred.make<void>();
-              const received = yield* stream.pipe(
-                Stream.tap(() => Deferred.succeed(firstReceived, undefined)),
-                Stream.take(2),
-                Stream.runCollect,
-                Effect.forkChild,
-              );
-              yield* Deferred.await(firstReceived);
-              yield* Deferred.await(replayed);
-              yield* update;
-              assert.deepEqual(yield* Fiber.join(received), [updatedAt, nextUpdatedAt]);
-            }
+            const firstReceived = yield* Deferred.make<void>();
+            const received = yield* client[WS_METHODS.tailcatSubscribeRemoteAccess]({}).pipe(
+              Stream.map((state) => state.updatedAt),
+              Stream.orDie,
+              Stream.tap(() => Deferred.succeed(firstReceived, undefined)),
+              Stream.take(2),
+              Stream.runCollect,
+              Effect.forkChild,
+            );
+            yield* Deferred.await(firstReceived);
+            yield* Deferred.await(replayed);
+            yield* SubscriptionRef.update(tailcat, (state) => ({
+              ...state,
+              updatedAt: nextUpdatedAt,
+            }));
+            assert.deepEqual(yield* Fiber.join(received), [updatedAt, nextUpdatedAt]);
           }),
         ),
       );

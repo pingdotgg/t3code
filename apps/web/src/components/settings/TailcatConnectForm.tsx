@@ -4,6 +4,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { describeTailcatConnectionCode } from "@t3tools/shared/t3ConnectionCode";
 import { ClipboardPasteIcon, RadioTowerIcon } from "lucide-react";
 import { memo, useCallback, useMemo, useState } from "react";
 
@@ -17,10 +18,7 @@ import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { useRelativeTimeTick } from "./settingsLayout";
-import {
-  parseTailcatConnectionCodePreview,
-  formatTailcatConnectionError,
-} from "./TailcatRemoteAccess.logic";
+import { formatTailcatConnectionError } from "./TailcatRemoteAccess.logic";
 
 const TAILCAT_DESKTOP_REQUIRED_MESSAGE =
   "Desktop app required. The T3 Code desktop app runs the Tailcat tunnel for this device.";
@@ -55,7 +53,7 @@ export const TailcatConnectForm = memo(function TailcatConnectForm({
   const canPasteFromClipboard =
     typeof navigator !== "undefined" && navigator.clipboard?.readText !== undefined;
 
-  const preview = useMemo(() => parseTailcatConnectionCodePreview(code), [code]);
+  const preview = useMemo(() => describeTailcatConnectionCode(code), [code]);
   const expired = preview.kind === "valid" && preview.expiresAtMs <= nowMs;
   const environmentMismatch =
     preview.kind === "valid" &&
@@ -185,7 +183,7 @@ export const TailcatConnectForm = memo(function TailcatConnectForm({
             </p>
           )}
         </div>
-      ) : preview.kind === "invalid" || preview.kind === "peer-code" ? (
+      ) : preview.kind === "invalid" ? (
         <p className="text-xs text-destructive">{preview.message}</p>
       ) : null}
       {error ? (

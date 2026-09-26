@@ -178,19 +178,6 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.tailcatRevokeTrustedPeer]: AuthAccessWriteScope,
   [WS_METHODS.tailcatRenameTrustedPeer]: AuthAccessWriteScope,
   [WS_METHODS.tailcatRegenerateIdentity]: AuthAccessWriteScope,
-  // Peer trust is administrative; using an already-trusted peer is ordinary
-  // orchestration work, read or operate like the local equivalent.
-  [WS_METHODS.federationSubscribePeers]: AuthAccessReadScope,
-  [WS_METHODS.federationCreatePeerCode]: AuthAccessWriteScope,
-  [WS_METHODS.federationAddPeer]: AuthAccessWriteScope,
-  [WS_METHODS.federationRemovePeer]: AuthAccessWriteScope,
-  [WS_METHODS.federationRefreshPeer]: AuthOrchestrationReadScope,
-  [WS_METHODS.federationListRemoteProjects]: AuthOrchestrationReadScope,
-  [WS_METHODS.federationStartRemoteRun]: AuthOrchestrationOperateScope,
-  [WS_METHODS.federationCancelRemoteRun]: AuthOrchestrationOperateScope,
-  [WS_METHODS.federationSubscribeRemoteRuns]: AuthOrchestrationReadScope,
-  [WS_METHODS.federationDescribeRemoteArtifacts]: AuthOrchestrationReadScope,
-  [WS_METHODS.federationFetchRemoteArtifact]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeBackgroundPolicy]: AuthOrchestrationReadScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 

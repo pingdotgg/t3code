@@ -27,6 +27,7 @@ import {
 } from "../testUtils/liveCliServer.ts";
 import { NoRunningServerError } from "./pair.ts";
 import { TailcatUnavailableError } from "./remote.ts";
+import { runningServerWsUrl } from "./runningServer.ts";
 
 const TAILCAT_ADDRESS = "tcAbCdEfGhIjKlMnOpQrStUv";
 const NODE_KEY = `nodekey:${"0123456789abcdef".repeat(4)}`;
@@ -159,6 +160,11 @@ const decodeStateJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Tailcat
 const isTailcatRemoteAccessError = Schema.is(TailcatRemoteAccessError);
 const isTailcatUnavailableError = Schema.is(TailcatUnavailableError);
 const isNoRunningServerError = Schema.is(NoRunningServerError);
+
+it("derives the RPC socket URL from the server origin", () => {
+  assert.equal(runningServerWsUrl("http://127.0.0.1:3773"), "ws://127.0.0.1:3773/ws");
+  assert.equal(runningServerWsUrl("https://[fd7a:115c::1]:3773"), "wss://[fd7a:115c::1]:3773/ws");
+});
 
 it.layer(NodeServices.layer)("t3 remote tailcat", (it) => {
   it.effect("registers every tailcat subcommand", () =>

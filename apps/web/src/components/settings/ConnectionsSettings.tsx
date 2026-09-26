@@ -76,7 +76,6 @@ import {
   environmentTransportLabel,
   formatDesktopSshTarget,
 } from "./EnvironmentRow";
-import { FederationSection } from "./FederationSection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
@@ -2023,7 +2022,6 @@ export function ConnectionsSettings() {
   const primaryServerConfig = primaryEnvironment?.serverConfig ?? null;
   const supportsTailcatRemoteAccess =
     primaryServerConfig?.environment.capabilities.tailcatRemoteAccess === true;
-  const supportsFederation = primaryServerConfig?.environment.capabilities.federation !== undefined;
   const isDesktopTailcatReady = isDesktopTailcatAvailable();
   const primaryVersionMismatch = resolveServerConfigVersionMismatch(primaryServerConfig);
   const primaryServerUpdateState = useAtomValue(
@@ -3825,10 +3823,6 @@ export function ConnectionsSettings() {
       </SettingsSection>
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <GitHubRoutingSettings environments={loadBalancingEnvironments} />
-
-      {canManageLocalBackend && supportsFederation && primaryEnvironmentId !== null ? (
-        <FederationSection environmentId={primaryEnvironmentId} />
-      ) : null}
     </SettingsPageContainer>
   );
 }

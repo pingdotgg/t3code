@@ -166,11 +166,6 @@ import {
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
-import { federationHttpApiLayer } from "./federation/http.ts";
-import * as FederationIdentity from "./federation/FederationIdentity.ts";
-import * as FederationPeerStore from "./federation/FederationPeerStore.ts";
-import * as FederationService from "./federation/FederationService.ts";
-import * as FederationTransport from "./federation/FederationTransport.ts";
 import * as TailcatRemoteAccess from "./tailcat/TailcatRemoteAccess.ts";
 import * as TailcatRuntimeLive from "./tailcat/TailcatRuntimeLive.ts";
 import { formatTailcatHeadlessOutput } from "./tailcat/startupOutput.ts";
@@ -583,23 +578,10 @@ const RuntimeBaseDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provide(NetService.layer),
 );
 
-// Tailcat exposes this environment's loopback listener; federation rides on it.
-// Both consume the runtime above (auth, orchestration, checkpoints, workspace).
-const TailcatRemoteAccessLayerLive = TailcatRemoteAccess.layer.pipe(
+// Tailcat exposes this environment's loopback listener, on top of the runtime
+// above (auth, pairing links, secrets).
+const RuntimeDependenciesLive = TailcatRemoteAccess.layer.pipe(
   Layer.provide(TailcatRuntimeLive.layer),
-);
-const FederationLayerLive = FederationService.layer.pipe(
-  Layer.provideMerge(
-    FederationTransport.layer.pipe(
-      Layer.provide(TailcatRuntimeLive.layer),
-      Layer.provide(NetService.layer),
-    ),
-  ),
-  Layer.provideMerge(FederationPeerStore.layer),
-  Layer.provideMerge(FederationIdentity.layer.pipe(Layer.provide(ServerSecretStore.layer))),
-);
-const RuntimeDependenciesLive = FederationLayerLive.pipe(
-  Layer.provideMerge(TailcatRemoteAccessLayerLive),
   Layer.provideMerge(RuntimeBaseDependenciesLive),
 );
 
@@ -619,7 +601,6 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(pullRequestHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
-      Layer.provide(federationHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
     otlpTracesProxyRouteLayer,

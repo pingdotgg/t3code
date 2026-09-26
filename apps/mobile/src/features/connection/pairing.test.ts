@@ -10,7 +10,6 @@ import {
 } from "./pairing";
 
 const TAILCAT_CODE = "t3c://tailcat/eyJ2IjoxfQ";
-const PEER_CODE = "t3c://peer/eyJ2IjoxfQ";
 
 describe("buildPairingUrl", () => {
   it("uses HTTP for a schemeless IP address", () => {
@@ -78,12 +77,9 @@ describe("parsePairingUrl", () => {
 });
 
 describe("unsupportedPairingInputMessage", () => {
-  it("guides Tailcat and peer codes to the desktop app", () => {
+  it("guides Tailcat codes to the desktop app", () => {
     expect(unsupportedPairingInputMessage(`  ${TAILCAT_CODE} `)).toBe(
       "This is a Tailcat connection code. Paste it in the desktop app under Add environment → Tailcat.",
-    );
-    expect(unsupportedPairingInputMessage(PEER_CODE)).toBe(
-      "This is a federation peer code. Add it in the desktop app under Settings → Connections → Federation.",
     );
     expect(unsupportedPairingInputMessage("t3c://mystery/abc")).toBe(
       "This is a T3 connection code, not a pairing URL. Use it in the desktop app.",

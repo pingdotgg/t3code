@@ -151,8 +151,7 @@ Connections**, turn on **Remote access via Tailcat** in the section for this mac
 connection code; a command-line host can start with `npx t3 serve --tailcat` instead. On the
 other machine's desktop app, open **Settings → Connections → Add environment**, choose
 **Tailcat**, and paste the code. Each device is trusted individually and can be revoked from
-the same card. See [Tailcat remote access](./tailcat.md) for the full guide, including
-server-to-server federation.
+the same card. See [Tailcat remote access](./tailcat.md) for the full guide.
 
 ## Manage or revoke access
 

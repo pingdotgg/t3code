@@ -16,23 +16,6 @@ import {
 
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
-  FederationAddPeerInput,
-  FederationArtifactFetchResponse,
-  FederationArtifactsResponse,
-  FederationCreatePeerCodeInput,
-  FederationError,
-  FederationPeer,
-  FederationPeerCodeResult,
-  FederationPeerIdInput,
-  FederationProjectsResponse,
-  FederationRemoteArtifactInput,
-  FederationRemoteRun,
-  FederationRemoteRunInput,
-  FederationRemoteRunsSnapshot,
-  FederationSnapshot,
-  FederationStartRemoteRunInput,
-} from "./federation.ts";
-import {
   TailcatConnectionCodeResult,
   TailcatCreateConnectionCodeInput,
   TailcatRemoteAccessError,
@@ -462,19 +445,6 @@ export const WS_METHODS = {
   tailcatRevokeTrustedPeer: "tailcat.revokeTrustedPeer",
   tailcatRenameTrustedPeer: "tailcat.renameTrustedPeer",
   tailcatRegenerateIdentity: "tailcat.regenerateIdentity",
-
-  // Federation (explicit server-to-server coordination)
-  federationSubscribePeers: "federation.subscribePeers",
-  federationCreatePeerCode: "federation.createPeerCode",
-  federationAddPeer: "federation.addPeer",
-  federationRemovePeer: "federation.removePeer",
-  federationRefreshPeer: "federation.refreshPeer",
-  federationListRemoteProjects: "federation.listRemoteProjects",
-  federationStartRemoteRun: "federation.startRemoteRun",
-  federationCancelRemoteRun: "federation.cancelRemoteRun",
-  federationSubscribeRemoteRuns: "federation.subscribeRemoteRuns",
-  federationDescribeRemoteArtifacts: "federation.describeRemoteArtifacts",
-  federationFetchRemoteArtifact: "federation.fetchRemoteArtifact",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -1480,82 +1450,6 @@ const WsTailcatRegenerateIdentityRpc = Rpc.make(WS_METHODS.tailcatRegenerateIden
   error: TailcatRpcError,
 });
 
-const FederationRpcError = Schema.Union([FederationError, EnvironmentAuthorizationError]);
-
-export const WsFederationSubscribePeersRpc = Rpc.make(WS_METHODS.federationSubscribePeers, {
-  payload: Schema.Struct({}),
-  success: FederationSnapshot,
-  error: FederationRpcError,
-  stream: true,
-});
-
-export const WsFederationCreatePeerCodeRpc = Rpc.make(WS_METHODS.federationCreatePeerCode, {
-  payload: FederationCreatePeerCodeInput,
-  success: FederationPeerCodeResult,
-  error: FederationRpcError,
-});
-
-export const WsFederationAddPeerRpc = Rpc.make(WS_METHODS.federationAddPeer, {
-  payload: FederationAddPeerInput,
-  success: FederationPeer,
-  error: FederationRpcError,
-});
-
-export const WsFederationRemovePeerRpc = Rpc.make(WS_METHODS.federationRemovePeer, {
-  payload: FederationPeerIdInput,
-  success: Schema.Void,
-  error: FederationRpcError,
-});
-
-const WsFederationRefreshPeerRpc = Rpc.make(WS_METHODS.federationRefreshPeer, {
-  payload: FederationPeerIdInput,
-  success: FederationPeer,
-  error: FederationRpcError,
-});
-
-export const WsFederationListRemoteProjectsRpc = Rpc.make(WS_METHODS.federationListRemoteProjects, {
-  payload: FederationPeerIdInput,
-  success: FederationProjectsResponse,
-  error: FederationRpcError,
-});
-
-export const WsFederationStartRemoteRunRpc = Rpc.make(WS_METHODS.federationStartRemoteRun, {
-  payload: FederationStartRemoteRunInput,
-  success: FederationRemoteRun,
-  error: FederationRpcError,
-});
-
-const WsFederationCancelRemoteRunRpc = Rpc.make(WS_METHODS.federationCancelRemoteRun, {
-  payload: FederationRemoteRunInput,
-  success: FederationRemoteRun,
-  error: FederationRpcError,
-});
-
-export const WsFederationSubscribeRemoteRunsRpc = Rpc.make(
-  WS_METHODS.federationSubscribeRemoteRuns,
-  {
-    payload: Schema.Struct({}),
-    success: FederationRemoteRunsSnapshot,
-    error: FederationRpcError,
-    stream: true,
-  },
-);
-
-const WsFederationDescribeRemoteArtifactsRpc = Rpc.make(
-  WS_METHODS.federationDescribeRemoteArtifacts,
-  {
-    payload: FederationRemoteRunInput,
-    success: FederationArtifactsResponse,
-    error: FederationRpcError,
-  },
-);
-
-const WsFederationFetchRemoteArtifactRpc = Rpc.make(WS_METHODS.federationFetchRemoteArtifact, {
-  payload: FederationRemoteArtifactInput,
-  success: FederationArtifactFetchResponse,
-  error: FederationRpcError,
-});
-
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -1707,15 +1601,4 @@ export const WsRpcGroup = RpcGroup.make(
   WsTailcatRevokeTrustedPeerRpc,
   WsTailcatRenameTrustedPeerRpc,
   WsTailcatRegenerateIdentityRpc,
-  WsFederationSubscribePeersRpc,
-  WsFederationCreatePeerCodeRpc,
-  WsFederationAddPeerRpc,
-  WsFederationRemovePeerRpc,
-  WsFederationRefreshPeerRpc,
-  WsFederationListRemoteProjectsRpc,
-  WsFederationStartRemoteRunRpc,
-  WsFederationCancelRemoteRunRpc,
-  WsFederationSubscribeRemoteRunsRpc,
-  WsFederationDescribeRemoteArtifactsRpc,
-  WsFederationFetchRemoteArtifactRpc,
 );

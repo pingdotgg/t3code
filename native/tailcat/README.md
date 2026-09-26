@@ -1,7 +1,7 @@
 # Tailcat runtime
 
 T3 Code bundles the upstream [Tailcat](https://github.com/tailscale/tailcat) CLI as the transport
-behind Tailcat environments and federation. The binary is pinned by `manifest.json` in this
+behind Tailcat environments. The binary is pinned by `manifest.json` in this
 directory and verified by SHA-256 before it is staged into any artifact. Nothing downloads a
 binary at runtime. `T3CODE_TAILCAT_BINARY` overrides and a `tailcat` on `PATH` are also supported
 and checked for version compatibility; they are not verified against the manifest's checksums.

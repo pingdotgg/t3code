@@ -44,12 +44,6 @@ transaction](../../apps/server/src/persistence/AuthSessions.ts); a failed
 replacement must leave the old credential usable. Pairing and browser sessions
 do not follow this replacement rule.
 
-Federation peers hold ordinary sessions whose only scope is the marker
-`federation:peer`, with the peer's environment ID as subject. The marker grants
-nothing on its own; the federation HTTP group checks the per-peer scopes each
-side granted at pairing. Treating the marker as a capability anywhere else would
-let a peer act as a client. See [federation](./federation.md).
-
 ### Reusable dev credential
 
 Web development environments can accept one `T3CODE_DEV_AUTH_TOKEN` across

@@ -1,4 +1,4 @@
-# ADR 001: Tailcat as a transport, and federation on top of it
+# ADR 001: Tailcat as a transport
 
 Status: accepted (2026-09). Owners: T3 Code maintainers.
 
@@ -6,7 +6,7 @@ Status: accepted (2026-09). Owners: T3 Code maintainers.
 
 Users want to reach a T3 server on another machine without a VPN, tailnet, port forwarding,
 or T3 Connect. Tailcat (a small open-source point-to-point tunnel CLI) can do that with a
-per-device allowlist. Some users also want a run started on one machine to execute on another.
+per-device allowlist.
 
 ## Decisions
 
@@ -30,13 +30,6 @@ per-device allowlist. Some users also want a run started on one machine to execu
 6. **Trust changes restart the listener.** Tailcat reads its allowlist at startup, so relocks
    restart the child and drop tunnels; clients reconnect via the supervisor. Rationale: correct
    over convenient; the interruption is a few hundred milliseconds and only on trust changes.
-7. **Federation is an explicit versioned protocol**, authenticated with the existing Ed25519
-   environment identity, authorised by ordinary T3 sessions with a `federation:peer` marker
-   scope and per-peer `FederationScope`s, and confined to the federation HTTP group. Rationale:
-   no arbitrary remote RPC, no new key material, scopes independent of transport.
-8. **Federation runs are ordinary threads on the executing environment.** Peers see only runs
-   they started; artifacts are turn diffs with origin identity. Rationale: reuse orchestration
-   and checkpoints instead of inventing a remote-execution model.
 
 ## Consequences
 
@@ -44,4 +37,3 @@ per-device allowlist. Some users also want a run started on one machine to execu
   desktop app. T3 Connect remains the path for those surfaces.
 - A relock briefly drops every Tailcat client; UX copy explains reconnection.
 - Bumping the Tailcat pin is a reviewed manifest change with CI verification.
-- Federation is desktop/web owner-driven over WS RPC; a CLI (`t3 peer`) covers headless use.

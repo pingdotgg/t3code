@@ -129,7 +129,7 @@ export function useRemoteConnections() {
     async (pairingUrl?: string) => {
       const nextPairingUrl = pairingUrl ?? connectionPairingUrl;
       setPendingConnectionError(null);
-      // Tailcat and peer codes are redeemed by the desktop app; say so instead
+      // Tailcat codes are redeemed by the desktop app; say so instead
       // of letting the pairing resolver report an invalid URL.
       const guidance = unsupportedPairingInputMessage(nextPairingUrl);
       if (guidance !== null) {

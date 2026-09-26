@@ -1,6 +1,5 @@
 import {
   EnvironmentId,
-  FEDERATION_PROTOCOL_VERSION,
   ORCHESTRATION_PROTOCOL_VERSION,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type ExecutionEnvironmentDescriptor,
@@ -244,7 +243,6 @@ export const make = Effect.gen(function* () {
       environmentIcon: true,
       projectCloneTracking: true,
       tailcatRemoteAccess: true,
-      federation: { protocolVersion: FEDERATION_PROTOCOL_VERSION },
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
         ? {

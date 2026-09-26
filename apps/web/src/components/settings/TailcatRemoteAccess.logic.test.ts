@@ -1,13 +1,8 @@
-import { EnvironmentId, type TailcatRemoteAccessState } from "@t3tools/contracts";
-import {
-  encodeFederationPeerCode,
-  encodeTailcatConnectionCode,
-} from "@t3tools/shared/t3ConnectionCode";
+import type { TailcatRemoteAccessState } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   formatTailcatConnectionError,
-  parseTailcatConnectionCodePreview,
   tailcatDiagnosticsJson,
   tailcatPathKindLabel,
   tailcatPathLabel,
@@ -17,55 +12,6 @@ import {
 } from "./TailcatRemoteAccess.logic";
 
 const ADDRESS = `tc${"a".repeat(40)}`;
-
-const tailcatCode = (expiresAt: string) =>
-  encodeTailcatConnectionCode({
-    v: 1,
-    transport: "tailcat",
-    address: ADDRESS,
-    port: 3773,
-    environmentId: EnvironmentId.make("env-studio"),
-    name: "Studio",
-    serverVersion: "0.9.0",
-    pairingToken: "one-time",
-    expiresAt,
-  });
-
-describe("parseTailcatConnectionCodePreview", () => {
-  it("previews the environment behind a valid code with its expiry", () => {
-    const code = tailcatCode("2026-09-03T12:05:00.000Z");
-    expect(parseTailcatConnectionCodePreview(`  ${code}\n`)).toEqual({
-      kind: "valid",
-      payload: expect.objectContaining({ address: ADDRESS, port: 3773, name: "Studio" }),
-      expiresAtMs: Date.parse("2026-09-03T12:05:00.000Z"),
-    });
-  });
-
-  it("redirects peer codes and rejects other input", () => {
-    const peerCode = encodeFederationPeerCode({
-      v: 1,
-      kind: "peer",
-      protocolVersion: 1,
-      environmentId: EnvironmentId.make("env-2"),
-      publicKey: "pem",
-      label: "Peer",
-      transport: { tailcat: { address: ADDRESS, port: 3773 } },
-      token: "one-time",
-      scopes: ["environment.read"],
-      expiresAt: "2026-09-03T12:05:00.000Z",
-    });
-    expect(parseTailcatConnectionCodePreview(peerCode)).toMatchObject({ kind: "peer-code" });
-    expect(parseTailcatConnectionCodePreview("")).toEqual({ kind: "empty" });
-    expect(parseTailcatConnectionCodePreview("https://example.com/pair#token=x")).toMatchObject({
-      kind: "invalid",
-      message: expect.stringContaining("t3c://tailcat/"),
-    });
-    expect(parseTailcatConnectionCodePreview("t3c://tailcat/%%%")).toMatchObject({
-      kind: "invalid",
-      message: expect.stringContaining("incomplete or damaged"),
-    });
-  });
-});
 
 describe("tailcat labels", () => {
   it("labels the measured path", () => {
