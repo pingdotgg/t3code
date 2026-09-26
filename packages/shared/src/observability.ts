@@ -373,8 +373,9 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
 
   let buffer: Array<string> = [];
   // Failure episode state. The latest write result says if the disk is
-  // failing. Records lost since the episode started are counted until a write
-  // succeeds and the flush reports the recovery.
+  // failing. Flush checks it once per window, so a disk that fails and
+  // recovers more than once inside one window stays one episode. Records lost
+  // since the episode started are counted until a flush sees a good write.
   let writeFailing = false;
   let droppedCount = 0;
   let failureReported = false;
