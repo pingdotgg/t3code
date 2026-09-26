@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
+  EventId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EnvironmentId,
   MessageId,
@@ -194,6 +195,21 @@ it.effect(
           },
           createdAt,
         });
+        yield* engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("approval-before-restart"),
+          threadId,
+          activity: {
+            id: EventId.make("approval-before-restart"),
+            kind: "approval.requested",
+            tone: "approval",
+            summary: "Command approval requested",
+            payload: { requestId: "approval-before-restart", requestKind: "command" },
+            turnId: null,
+            createdAt,
+          },
+          createdAt,
+        });
         yield* directory.upsert({
           threadId,
           provider: ProviderDriverKind.make("codex"),
@@ -274,6 +290,15 @@ it.effect(
         yield* startup.awaitCommandReady;
 
         const restartedThread = Option.getOrThrow(yield* query.getThreadDetailById(threadId));
+        assert.isFalse(
+          Option.getOrThrow(yield* query.getThreadShellById(threadId)).hasPendingApprovals,
+        );
+        assert.deepStrictEqual(
+          restartedThread.activities
+            .filter((activity) => activity.kind === "approval.resolved")
+            .map((activity) => activity.payload),
+          [{ requestId: "approval-before-restart" }],
+        );
         const restartedStoppedBindingThread = Option.getOrThrow(
           yield* query.getThreadDetailById(stoppedBindingThreadId),
         );

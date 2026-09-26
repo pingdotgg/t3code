@@ -1,3 +1,4 @@
+import { ThreadId } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
@@ -78,6 +79,25 @@ const makeProjectionPendingApprovalRepository = Effect.gen(function* () {
     `,
   });
 
+  const listPendingApprovalRows = SqlSchema.findAll({
+    Request: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
+    Result: ProjectionPendingApproval,
+    execute: ({ threadId }) => sql`
+      SELECT request_id AS "requestId", thread_id AS "threadId", turn_id AS "turnId",
+        status, decision, created_at AS "createdAt", resolved_at AS "resolvedAt"
+      FROM projection_pending_approvals
+      WHERE status = 'pending' ${threadId === undefined ? sql`` : sql`AND thread_id = ${threadId}`}
+      ORDER BY created_at ASC, request_id ASC
+    `,
+  });
+
+  const listPending: ProjectionPendingApprovalRepositoryShape["listPending"] = (input) =>
+    listPendingApprovalRows(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionPendingApprovalRepository.listPending:query"),
+      ),
+    );
+
   const getProjectionPendingApprovalRow = SqlSchema.findOneOption({
     Request: GetProjectionPendingApprovalInput,
     Result: ProjectionPendingApproval,
@@ -141,6 +161,7 @@ const makeProjectionPendingApprovalRepository = Effect.gen(function* () {
     );
 
   return {
+    listPending,
     upsert,
     listByThreadId,
     countPendingByThreadId,

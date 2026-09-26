@@ -38,10 +38,13 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import { it as effectIt } from "@effect/vitest";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
+import { PersistenceSqlError } from "../../persistence/Errors.ts";
+import { ProjectionPendingApprovalRepository } from "../../persistence/Services/ProjectionPendingApprovals.ts";
+import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
@@ -323,6 +326,7 @@ describe("ProviderRuntimeIngestion", () => {
     const layer = ProviderRuntimeIngestionLive.pipe(
       Layer.provide(Layer.succeed(Clock.Clock, shiftedClock)),
       Layer.provideMerge(orchestrationLayer),
+      Layer.provideMerge(ProjectionPendingApprovalRepositoryLive),
       Layer.provideMerge(ingestionProjectionSnapshotLayer),
       // Single shared liveness instance across ingestion (writer), the
       // engine, and the snapshot query (reader).
@@ -415,6 +419,9 @@ describe("ProviderRuntimeIngestion", () => {
 
     return {
       engine,
+      pendingApprovals: await testRuntime.runPromise(
+        Effect.service(ProjectionPendingApprovalRepository),
+      ),
       dispatch,
       readModel: () => testRuntime.runPromise(snapshotQuery.getSnapshot()),
       readTurn: (turnId: TurnId) =>
@@ -1041,6 +1048,15 @@ describe("ProviderRuntimeIngestion", () => {
           updatedAt: stoppedAt,
         },
         createdAt: stoppedAt,
+      });
+
+      harness.setProviderSession({
+        provider: ProviderDriverKind.make("codex"),
+        status: "closed",
+        runtimeMode: "approval-required",
+        threadId,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:02.000Z",
       });
 
       harness.emit({
@@ -3838,6 +3854,141 @@ describe("ProviderRuntimeIngestion", () => {
     expect(completionEvents).toHaveLength(1);
   });
 
+  it.each(["none", "query", "dispatch"] as const)(
+    "dismisses pending approvals on session exit with %s failure",
+    async (failure) => {
+      const harness = await createHarness();
+      const threadId = asThreadId("thread-1");
+      const createdAt = "2026-01-01T00:00:01.000Z";
+      await harness.emitAndDrain(
+        ["command_execution_approval", "file_change_approval", "mcp_elicitation_approval"].map(
+          (requestType, index) => ({
+            type: "request.opened",
+            eventId: asEventId(`approval-open-${index}`),
+            provider: ProviderDriverKind.make("codex"),
+            threadId,
+            requestId: ApprovalRequestId.make(`approval-${index}`),
+            createdAt,
+            payload: { requestType, detail: "Approval before exit" },
+          }),
+        ),
+      );
+      expect((await harness.readThreadShell()).hasPendingApprovals).toBe(true);
+      harness.setProviderSession({
+        provider: ProviderDriverKind.make("codex"),
+        status: "closed",
+        runtimeMode: "approval-required",
+        threadId,
+        createdAt,
+        updatedAt: "2026-01-01T00:00:02.000Z",
+      });
+      if (failure === "query") {
+        const listPending = harness.pendingApprovals.listPending;
+        let failed = false;
+        vi.spyOn(harness.pendingApprovals, "listPending").mockImplementation((input) =>
+          Effect.suspend(() => {
+            if (!failed) {
+              failed = true;
+              return Effect.fail(
+                new PersistenceSqlError({ operation: "injected approval query failure" }),
+              );
+            }
+            return listPending(input);
+          }),
+        );
+      } else if (failure === "dispatch") {
+        const dispatch = harness.engine.dispatch;
+        let failed = false;
+        vi.spyOn(harness.engine, "dispatch").mockImplementation((command) => {
+          if (
+            !failed &&
+            command.type === "thread.activity.append" &&
+            command.activity.kind === "approval.resolved" &&
+            command.activity.id.includes("approval-1")
+          ) {
+            failed = true;
+            return Effect.fail(
+              new PersistenceSqlError({ operation: "injected dismissal failure" }),
+            );
+          }
+          return dispatch(command);
+        });
+      }
+      for (const index of [1, 2]) {
+        await harness.emitAndDrain([
+          {
+            type: "session.exited",
+            eventId: asEventId(`approval-session-exit-${index}`),
+            provider: ProviderDriverKind.make("codex"),
+            threadId,
+            createdAt: "2026-01-01T00:00:02.000Z",
+          },
+        ]);
+        expect((await harness.readThreadShell()).hasPendingApprovals).toBe(false);
+      }
+      expect((await harness.readThreadShell()).hasPendingApprovals).toBe(false);
+      const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId)!;
+      expect(
+        thread.activities.filter((activity) => activity.kind === "approval.resolved"),
+      ).toHaveLength(3);
+      await harness.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("settle-after-approval-exit"),
+        threadId,
+      });
+    },
+  );
+
+  it.each(["connecting", "ready", "running"] as const)(
+    "ignores a queued exit while a replacement session is %s",
+    async (status) => {
+      const harness = await createHarness();
+      const threadId = asThreadId("thread-1");
+      const createdAt = "2026-01-01T00:00:01.000Z";
+      harness.setProviderSession({
+        provider: ProviderDriverKind.make("codex"),
+        status,
+        runtimeMode: "approval-required",
+        threadId,
+        createdAt,
+        updatedAt: createdAt,
+      });
+      await harness.emitAndDrain([
+        {
+          type: "session.started",
+          eventId: asEventId("replacement-start"),
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          createdAt,
+          payload: {},
+        },
+        {
+          type: "request.opened",
+          eventId: asEventId("replacement-approval"),
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          createdAt,
+          requestId: ApprovalRequestId.make("replacement-approval"),
+          payload: { requestType: "command_execution_approval" },
+        },
+      ]);
+      const before = await harness.readThreadShell();
+      await harness.emitAndDrain([
+        {
+          type: "session.exited",
+          eventId: asEventId("old-session-exit"),
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          createdAt,
+          payload: {},
+        },
+      ]);
+      const after = await harness.readThreadShell();
+      expect(after.session).toEqual(before.session);
+      expect(after.hasPendingApprovals).toBe(true);
+    },
+  );
+
   it("maps canonical request events into approval activities with requestKind", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -4943,6 +5094,15 @@ describe("ProviderRuntimeIngestion", () => {
       },
       createdAt: "2026-01-01T00:00:01.000Z",
     });
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      status: "closed",
+      runtimeMode: "approval-required",
+      threadId,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:02.000Z",
+    });
+
     await harness.emitAndDrain([
       {
         type: "session.exited",

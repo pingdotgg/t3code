@@ -32,6 +32,9 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
+import { ProjectionPendingApprovalRepository } from "./persistence/Services/ProjectionPendingApprovals.ts";
+import { ProjectionPendingApprovalRepositoryLive } from "./persistence/Layers/ProjectionPendingApprovals.ts";
+import { dismissPendingApprovals } from "./orchestration/dismissPendingApprovals.ts";
 import * as ServerConfig from "./config.ts";
 import { flushCompileCache } from "./compileCache.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -501,6 +504,23 @@ export const reconcileProviderSessions = Effect.gen(function* () {
 
   const liveThreadIds = new Set(
     (yield* providerService.listSessions()).map((session) => session.threadId),
+  );
+  yield* Effect.gen(function* () {
+    const pendingApprovals = yield* ProjectionPendingApprovalRepository;
+    yield* dismissPendingApprovals(
+      orchestrationEngine,
+      (yield* pendingApprovals.listPending({})).filter(
+        (approval) => !liveThreadIds.has(approval.threadId),
+      ),
+      DateTime.formatIso(yield* DateTime.now),
+    );
+  }).pipe(
+    Effect.retry({ times: 1 }),
+    Effect.catchCause((cause) =>
+      Cause.hasInterrupts(cause)
+        ? Effect.failCause(cause)
+        : Effect.logWarning("failed to dismiss orphaned provider approvals", { cause }),
+    ),
   );
   const { threads } = yield* query.getCommandReadModel();
   // Provider startup can report ready before the continuation is submitted.
@@ -1130,6 +1150,8 @@ export const make = (options?: StartupOptions) =>
   });
 
 export const layerWithOptions = (options?: StartupOptions) =>
-  Layer.effect(ServerRuntimeStartup, make(options));
+  Layer.effect(ServerRuntimeStartup, make(options)).pipe(
+    Layer.provide(ProjectionPendingApprovalRepositoryLive),
+  );
 
 export const layer = layerWithOptions();

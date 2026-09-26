@@ -906,6 +906,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
           Layer.provide(AnalyticsService.layerTest),
         );
         const reactorLayer = ProviderCommandReactorLive.pipe(
+          Layer.provide(SqlitePersistenceMemory),
           Layer.provideMerge(providerLayer),
           Layer.provide(
             Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
