@@ -392,6 +392,12 @@ export class GitVcsDriver extends Context.Service<
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
+// Staging hashes every file the index holds no stat data for. In one workspace with 83,524
+// untracked files, listing them took 10 s but a cold `add -A` took 39 minutes, so the 30 s
+// default failed every capture. A reused checkpoint index keeps later captures to changed files.
+// Captures run in CheckpointReactor, not on the provider turn, so the bound only keeps one slow
+// capture from holding the checkpoint queue indefinitely.
+const CHECKPOINT_STAGE_TIMEOUT_MS = 5 * 60_000;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
@@ -774,6 +780,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     "-c",
     "core.fsyncMethod=fsync",
   ] as const;
+  // Saved checkpoint indexes this server no longer writes; see `syncIgnoredEntries`.
+  const coldOnlyCheckpointIndexes = new Set<string>();
 
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
@@ -798,14 +806,104 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
       };
 
+      const headIndexPath = `${tempIndexPath}-head`;
       // Forced process termination can leave Git's private index lock behind.
       const cleanupTempIndex = Effect.forEach(
-        [tempIndexPath, `${tempIndexPath}.lock`],
+        [tempIndexPath, `${tempIndexPath}.lock`, headIndexPath, `${headIndexPath}.lock`],
         (indexFile) => fileSystem.remove(indexFile, { force: true }).pipe(Effect.ignore),
         { discard: true },
       );
 
-      yield* Effect.gen(function* () {
+      // Each capture keeps its index for the next, so `add -A` rehashes only files whose stat data
+      // changed instead of every untracked file. Only captures of a whole worktree use it: a nested
+      // workspace stages its own subtree, so a reused index would carry stale content elsewhere.
+      const checkpointIndexPath = yield* execute({
+        operation,
+        cwd: input.cwd,
+        args: [
+          "rev-parse",
+          "--show-prefix",
+          "--path-format=absolute",
+          "--git-path",
+          "t3-checkpoint-index",
+        ],
+        allowNonZeroExit: true,
+      }).pipe(
+        Effect.map((result) => {
+          const [prefix, indexPath] = result.stdout.split("\n");
+          return result.exitCode === 0 && prefix === "" && indexPath?.trim()
+            ? indexPath.trim()
+            : null;
+        }),
+      );
+      // A capture never stages from an index with assume-unchanged or skip-worktree entries (the
+      // checks below rebuild one), so the index it leaves needs no flag checks. Backdate the copy
+      // for the same racy-timestamp reason as the user index.
+      const startFromCheckpointIndex = (checkpointIndex: string) =>
+        Effect.gen(function* () {
+          const { mtime } = yield* fileSystem.stat(checkpointIndex);
+          if (Option.isNone(mtime)) return false;
+          const indexTime = Math.floor((mtime.value.getTime() - 1) / 1000);
+          if (indexTime <= 0) return false;
+          yield* fileSystem.copyFile(checkpointIndex, tempIndexPath);
+          yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
+          return true;
+        }).pipe(Effect.catch(() => cleanupTempIndex.pipe(Effect.as(false))));
+      // `add -A` never drops an ignored entry or adds an ignored file, so a reused index would keep
+      // files captured before they became ignored and miss ignored files tracked since. A fresh
+      // capture starts from HEAD, not the user's staged changes, so keep an ignored path only if
+      // HEAD tracks it.
+      const syncIgnoredEntries = Effect.fn(function* (headExists: boolean) {
+        const listIgnored = (env: NodeJS.ProcessEnv) =>
+          execute({
+            operation,
+            cwd: input.cwd,
+            args: [...indexConfig, "ls-files", "-z", "--cached", "--ignored", "--exclude-standard"],
+            env,
+            maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+            outputMode: "error",
+          }).pipe(
+            Effect.map((result) => new Set(splitNullSeparatedGitStdoutPaths(result))),
+            // Past the output cap, reuse cannot match a fresh capture, so stay cold like before.
+            Effect.tapErrorTag("VcsProcessOutputLimitError", () =>
+              Effect.sync(() => {
+                if (checkpointIndexPath !== null)
+                  coldOnlyCheckpointIndexes.add(checkpointIndexPath);
+              }),
+            ),
+          );
+        const captured = yield* listIgnored(commitEnv);
+        const headEnv = { ...commitEnv, GIT_INDEX_FILE: headIndexPath };
+        const tracked = headExists
+          ? yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: [...indexConfig, "read-tree", "HEAD"],
+              env: headEnv,
+            }).pipe(Effect.andThen(listIgnored(headEnv)))
+          : new Set<string>();
+        const updateIndex = (flags: ReadonlyArray<string>, paths: ReadonlyArray<string>) =>
+          paths.length === 0
+            ? Effect.void
+            : execute({
+                operation,
+                cwd: input.cwd,
+                args: [...indexConfig, ...durableWrite, "update-index", ...flags, "-z", "--stdin"],
+                stdin: `${paths.join("\0")}\0`,
+                env: commitEnv,
+              });
+        yield* updateIndex(
+          ["--force-remove"],
+          [...captured].filter((entry) => !tracked.has(entry)),
+        );
+        yield* updateIndex(
+          ["--add", "--remove"],
+          [...tracked].filter((entry) => !captured.has(entry)),
+        );
+      });
+
+      let reusedCheckpointIndex = false;
+      const capture = Effect.fn(function* (reuseCheckpointIndex: boolean) {
         const headExists = yield* hasHeadCommit(input.cwd);
         const sparseConfig = yield* execute({
           operation,
@@ -823,7 +921,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
           sparseCheckout = /--(?:\[no-\])?sparse\b/.test(`${help.stdout}${help.stderr}`);
         }
-        if (headExists) {
+        reusedCheckpointIndex =
+          reuseCheckpointIndex &&
+          checkpointIndexPath !== null &&
+          !sparseCheckout &&
+          (yield* startFromCheckpointIndex(checkpointIndexPath));
+        // `add -A` resyncs a reused index with the whole worktree, so it need not start from HEAD.
+        if (headExists && !reusedCheckpointIndex) {
           const reusedIndex = yield* Effect.gen(function* () {
             const indexPath = yield* execute({
               operation,
@@ -947,6 +1051,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ...exclusions,
             ],
             env: commitEnv,
+            timeoutMs: CHECKPOINT_STAGE_TIMEOUT_MS,
           });
         yield* stageFiles([]).pipe(
           Effect.catchTags({
@@ -1000,6 +1105,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ),
           }),
         );
+        if (reusedCheckpointIndex) yield* syncIgnoredEntries(headExists);
 
         const writeTreeResult = yield* execute({
           operation,
@@ -1041,7 +1147,32 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           cwd: input.cwd,
           args: [...durableWrite, "update-ref", input.checkpointRef, commitOid],
         });
-      }).pipe(Effect.ensuring(cleanupTempIndex));
+        if (
+          checkpointIndexPath !== null &&
+          !sparseCheckout &&
+          !coldOnlyCheckpointIndexes.has(checkpointIndexPath)
+        ) {
+          yield* fileSystem.rename(tempIndexPath, checkpointIndexPath).pipe(Effect.ignore);
+        }
+      });
+      yield* capture(true).pipe(
+        // A reused index can be corrupt or name objects Git has since pruned, which `write-tree`
+        // or `commit-tree` reject. Start over from the user index. A timeout is the working
+        // tree's own cost, which a fresh index would only repeat.
+        Effect.catchIf(
+          (error) => reusedCheckpointIndex && error._tag !== "VcsProcessTimeoutError",
+          () =>
+            cleanupTempIndex.pipe(
+              Effect.andThen(
+                checkpointIndexPath === null
+                  ? Effect.void
+                  : fileSystem.remove(checkpointIndexPath, { force: true }).pipe(Effect.ignore),
+              ),
+              Effect.andThen(capture(false)),
+            ),
+        ),
+        Effect.ensuring(cleanupTempIndex),
+      );
     }),
 
     hasCheckpointRef: (input) =>
