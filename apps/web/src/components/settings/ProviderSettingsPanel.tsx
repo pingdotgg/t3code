@@ -949,14 +949,13 @@ export function EnvironmentProviderSettings({
               readOnly={readOnly}
               onEnable={() => updateProviderInstance(row, { ...row.instance, enabled: true })}
             />
-          ) : mode === "editor" && row.driver === "cursor" ? (
+          ) : mode === "editor" && row.driver === "cursor" && !readOnly ? (
             <CursorSetupSection
               environmentId={environmentId}
               environmentLabel={environmentLabel}
               instanceId={row.instanceId}
               provider={liveProvider}
               enabled={resolveProviderInstanceEnabled(row.instance)}
-              readOnly={readOnly}
             />
           ) : null
         }

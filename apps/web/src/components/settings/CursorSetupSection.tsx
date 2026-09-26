@@ -19,16 +19,15 @@ interface CursorSetupSectionProps {
   readonly environmentLabel: string;
   readonly instanceId: ProviderInstanceId;
   readonly provider: ServerProvider | undefined;
-  readonly readOnly: boolean;
   readonly enabled: boolean;
 }
 
 /**
  * Browser sign-in for one Cursor instance. The login belongs to the environment
- * that runs the instance, so this works from remote clients too.
+ * that runs the instance, so this works from remote clients too. Render it only
+ * for clients that can change provider settings.
  */
 export function CursorSetupSection(props: CursorSetupSectionProps) {
-  if (props.readOnly) return null;
   if (!props.provider?.setup) {
     return (
       <SettingsRow
@@ -84,7 +83,9 @@ function CursorSignIn({
         ? null
         : !enabled
           ? "Enable Cursor to sign in."
-          : "Not signed in.";
+          : provider.auth.status === "unknown"
+            ? (provider.message ?? "Checking Cursor sign-in.")
+            : "Not signed in.";
 
   async function run<A, E>(request: () => Promise<AtomCommandResult<A, E>>) {
     if (pendingRef.current) return;
