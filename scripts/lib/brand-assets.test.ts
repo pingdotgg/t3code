@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - validates emitted image files at the build boundary.
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vite-plus/test";

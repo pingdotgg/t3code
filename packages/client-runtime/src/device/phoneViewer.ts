@@ -19,6 +19,11 @@ import {
 } from "./model.ts";
 import { createImportedPhoneScene, loadDeviceModel } from "./modelScene.ts";
 import { createPhoneScene, phoneDisplayLayout } from "./phoneScene.ts";
+import {
+  createAndroidFoldScene,
+  DEFAULT_FOLD_INNER_ASPECT,
+  isFoldInnerAspect,
+} from "./androidFoldScene.ts";
 import { createRenderScheduler } from "./renderScheduler.ts";
 import { createDeviceMotion } from "./deviceMotion.ts";
 import { createDeviceFraming } from "./deviceFraming.ts";
@@ -31,6 +36,7 @@ export interface PhoneViewer {
   readonly setAccessory: (source: DeviceAccessorySource | null) => void;
   readonly frameUpdated: () => void;
   readonly setScreen: (screen: DeviceScreenSize | null, profile?: DeviceShapeProfile) => void;
+  readonly setFoldAngle: (angle: number | null) => void;
   readonly resize: (width: number, height: number, pixelRatio: number) => void;
   readonly screenPoint: (
     x: number,
@@ -43,6 +49,9 @@ export interface PhoneViewer {
   readonly dispose: () => void;
 }
 
+const ANDROID_ORIENTATION_TURN_MS = 450;
+const ANDROID_FOLD_TURN_MS = 850;
+
 /** Owns only presentation resources. The caller retains the decoded canvas and the stream connection. */
 export function createPhoneViewer(options: {
   readonly canvas: HTMLCanvasElement;
@@ -53,6 +62,7 @@ export function createPhoneViewer(options: {
   readonly profile?: DeviceShapeProfile;
   readonly model?: DeviceModelSource | null;
   readonly accessory?: DeviceAccessorySource | null;
+  readonly foldAngle?: number | null;
 }): PhoneViewer {
   const renderer = new WebGLRenderer({
     canvas: options.canvas,
@@ -87,11 +97,31 @@ export function createPhoneViewer(options: {
   let screen: DeviceScreenSize | null = null;
   let layout = phoneDisplayLayout(screen, options.source.width, options.source.height);
   let profile = options.profile ?? IOS_PHONE_SHAPE;
+  let foldAngle = options.foldAngle ?? null;
+  let orientationAngle =
+    foldAngle !== null && profile.id.startsWith("android") ? 0 : layout.rotation;
+  let orientationTurn: { from: number; to: number; startedAt: number } | null = null;
   let imported: Awaited<ReturnType<typeof loadDeviceModel>> | null = null;
   let modelSource = options.model ?? null;
   let accessory: Awaited<ReturnType<typeof loadDeviceModel>> | null = null;
   let accessoryBounds: Box3 | null = null;
-  let phone = createPhoneScene(texture, layout, profile);
+  let foldTurn: { from: number; to: number; startedAt: number } | null = null;
+  // The inner display's raw width over height. Cover frames leave the last unfolded shape.
+  const rawAspect = () => options.source.width / options.source.height;
+  let foldAspect = isFoldInnerAspect(rawAspect()) ? rawAspect() : DEFAULT_FOLD_INNER_ASPECT;
+  const createFoldScene = (angle: number, displayLayout = layout) =>
+    createAndroidFoldScene(texture, displayLayout, angle, foldAspect);
+  /** The hinge angle currently on screen, including an unfinished turn. */
+  const visibleFoldAngle = (fallback: number) => {
+    if (!foldTurn) return fallback;
+    const progress = Math.min(1, (performance.now() - foldTurn.startedAt) / ANDROID_FOLD_TURN_MS);
+    const eased = progress * progress * (3 - 2 * progress);
+    return foldTurn.from + (foldTurn.to - foldTurn.from) * eased;
+  };
+  let phone: ReturnType<typeof createPhoneScene> | ReturnType<typeof createAndroidFoldScene> =
+    foldAngle !== null && profile.id.startsWith("android")
+      ? createFoldScene(foldAngle)
+      : createPhoneScene(texture, layout, profile);
   scene.add(phone.root);
   let disposed = false;
   const rest = new Quaternion();
@@ -116,7 +146,7 @@ export function createPhoneViewer(options: {
       new Vector3(phone.width / 2, phone.height / 2, 0),
     );
     if (imported && accessoryBounds) bounds.union(accessoryBounds);
-    bounds.applyMatrix4(new Matrix4().makeRotationZ(layout.rotation));
+    bounds.applyMatrix4(new Matrix4().makeRotationZ(orientationAngle));
     const size = bounds.getSize(new Vector3());
     const aspect = size.x / size.y;
     if (aspect !== framingAspect) {
@@ -140,7 +170,7 @@ export function createPhoneViewer(options: {
   };
   const applyPose = () => {
     phone.root.quaternion.copy(motion.rotation);
-    phone.orientation.rotation.z = layout.rotation;
+    phone.orientation.rotation.z = orientationAngle;
   };
   const scheduler = createRenderScheduler(() => {
     if (disposed || !viewport.width || !viewport.height) return;
@@ -160,10 +190,30 @@ export function createPhoneViewer(options: {
         applyPose();
         fit(reducedMotion());
       }
+      if (orientationTurn) {
+        const progress = Math.min(
+          1,
+          (now - orientationTurn.startedAt) / ANDROID_ORIENTATION_TURN_MS,
+        );
+        const eased = progress * progress * (3 - 2 * progress);
+        orientationAngle =
+          orientationTurn.from + (orientationTurn.to - orientationTurn.from) * eased;
+        if (progress === 1) orientationTurn = null;
+        applyPose();
+        fit(reducedMotion());
+      }
+      if (foldTurn && "setAngle" in phone) {
+        const progress = Math.min(1, (now - foldTurn.startedAt) / ANDROID_FOLD_TURN_MS);
+        const eased = progress * progress * (3 - 2 * progress);
+        phone.setAngle(foldTurn.from + (foldTurn.to - foldTurn.from) * eased);
+        if (progress === 1) foldTurn = null;
+        fit(reducedMotion());
+      }
       framing.advance(now, reducedMotion());
       applyCamera();
       renderer.render(scene, camera);
-      if (motion.needsFrame() || framing.needsFrame()) scheduler.invalidate();
+      if (motion.needsFrame() || framing.needsFrame() || orientationTurn || foldTurn)
+        scheduler.invalidate();
     } catch {
       options.onUnavailable();
     }
@@ -188,7 +238,22 @@ export function createPhoneViewer(options: {
         phone.setDisplay(texture, next);
         previous.dispose();
       }
-      if (!imported && (nextProfile !== profile || next.aspect !== layout.aspect)) {
+      // Learn the inner display shape from any unfolded frame, including before fold mode.
+      const frameAspect = rawAspect();
+      const innerChanged = isFoldInnerAspect(frameAspect) && frameAspect !== foldAspect;
+      if (innerChanged) foldAspect = frameAspect;
+      if (!imported && "setAngle" in phone && innerChanged) {
+        // A new inner display shape resizes the body; the hinge keeps its visible angle.
+        const angle = visibleFoldAngle(foldAngle ?? 180);
+        scene.remove(phone.root);
+        phone.dispose();
+        phone = createFoldScene(angle, next);
+        scene.add(phone.root);
+      } else if (
+        !imported &&
+        !("setAngle" in phone) &&
+        (nextProfile !== profile || next.aspect !== layout.aspect)
+      ) {
         scene.remove(phone.root);
         phone.dispose();
         phone = createPhoneScene(texture, next, nextProfile);
@@ -196,10 +261,26 @@ export function createPhoneViewer(options: {
       } else {
         phone.setDisplay(texture, next);
       }
+      if (next.rotation !== layout.rotation) {
+        if (nextProfile.id.startsWith("android") && !("setAngle" in phone) && !reducedMotion()) {
+          const difference = Math.atan2(
+            Math.sin(next.rotation - orientationAngle),
+            Math.cos(next.rotation - orientationAngle),
+          );
+          orientationTurn = {
+            from: orientationAngle,
+            to: orientationAngle + difference,
+            startedAt: performance.now(),
+          };
+        } else {
+          orientationTurn = null;
+          orientationAngle = "setAngle" in phone ? 0 : next.rotation;
+        }
+      }
       layout = next;
       profile = nextProfile;
       applyPose();
-      fit(true);
+      fit(!orientationTurn);
     }
     applyPose();
   };
@@ -212,7 +293,10 @@ export function createPhoneViewer(options: {
         ? null
         : model
           ? createImportedPhoneScene(model.asset, texture, layout)
-          : createPhoneScene(texture, layout, profile);
+          : foldAngle !== null && profile.id.startsWith("android")
+            ? createFoldScene(foldAngle)
+            : createPhoneScene(texture, layout, profile);
+      foldTurn = null;
       scene.remove(phone.root);
       phone.dispose();
       imported = model;
@@ -267,6 +351,34 @@ export function createPhoneViewer(options: {
       modelSlot.set(source);
     },
     setAccessory,
+    setFoldAngle(next) {
+      if (disposed || next === foldAngle) return;
+      const previous = foldAngle;
+      foldAngle = next;
+      // A loaded model owns the scene; install() reads foldAngle if it is removed.
+      if (imported) return;
+      if (next === null || !("setAngle" in phone)) {
+        scene.remove(phone.root);
+        phone.dispose();
+        phone = next === null ? createPhoneScene(texture, layout, profile) : createFoldScene(next);
+        scene.add(phone.root);
+        orientationTurn = null;
+        orientationAngle = next === null ? layout.rotation : 0;
+        foldTurn = null;
+        applyPose();
+        fit(true);
+      } else {
+        const from = visibleFoldAngle(previous ?? next);
+        if (reducedMotion()) {
+          foldTurn = null;
+          phone.setAngle(next);
+          fit(true);
+        } else {
+          foldTurn = { from, to: next, startedAt: performance.now() };
+        }
+      }
+      scheduler.invalidate();
+    },
     frameUpdated() {
       if (disposed) return;
       updateLayout();

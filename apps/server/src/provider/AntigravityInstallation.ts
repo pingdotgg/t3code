@@ -315,7 +315,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       );
     }
     const contents = yield* fs.readFileString(filePath);
-    return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(contents);
+    return yield* Schema.decodeEffect(Schema.fromJsonString(schema))(contents);
   });
 
   const executableFile = Effect.fn("AntigravityInstallation.executableFile")(function* (

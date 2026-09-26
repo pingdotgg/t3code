@@ -77,7 +77,7 @@ export const make = Effect.gen(function* () {
     () =>
       backing
         .get("revisions")
-        .pipe(Effect.flatMap((raw) => Schema.decodeUnknownEffect(revisionCodec)(raw ?? "{}"))),
+        .pipe(Effect.flatMap((raw) => Schema.decodeEffect(revisionCodec)(raw ?? "{}"))),
     {
       capacity: 1,
       timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),

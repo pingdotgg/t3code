@@ -4,8 +4,8 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // The fork previously shipped its snooze migration as 53, the same id later
-  // assigned upstream to this table. Repair either upgrade path idempotently.
+  // The fork previously shipped snoozed_through_turn_id as migrations 53 and
+  // 54, colliding with later upstream migrations. Repair every upgrade path.
   yield* sql`
     CREATE TABLE IF NOT EXISTS pull_request_files_viewed (
       provider TEXT NOT NULL,
@@ -23,6 +23,13 @@ export default Effect.gen(function* () {
   const columns = yield* sql<{ readonly name: string }>`
     PRAGMA table_info(projection_threads)
   `;
+
+  if (!columns.some((column) => column.name === "auto_settle_disabled_at")) {
+    yield* sql`
+      ALTER TABLE projection_threads
+      ADD COLUMN auto_settle_disabled_at TEXT
+    `;
+  }
 
   if (!columns.some((column) => column.name === "snoozed_through_turn_id")) {
     yield* sql`

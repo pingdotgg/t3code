@@ -93,9 +93,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         Option.match(runtime, {
           onNone: () => Effect.succeed(Option.none<ProviderRuntimeBinding>()),
           onSome: (value) =>
-            toRuntimeBinding(value, "ProviderSessionDirectory.getBinding").pipe(
-              Effect.map((binding) => Option.some(binding)),
-            ),
+            toRuntimeBinding(value, "ProviderSessionDirectory.getBinding").pipe(Effect.asSome),
         }),
       ),
     );

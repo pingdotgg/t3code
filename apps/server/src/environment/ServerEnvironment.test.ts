@@ -6,7 +6,6 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
@@ -35,7 +34,7 @@ const makeServerEnvironmentLayer = (baseDir: string) =>
 const emptySecretStoreLayer = Layer.succeed(
   ServerSecretStore.ServerSecretStore,
   ServerSecretStore.ServerSecretStore.of({
-    get: () => Effect.succeed(Option.none()),
+    get: () => Effect.succeedNone,
     set: () => Effect.void,
     create: () => Effect.void,
     getOrCreateRandom: () => Effect.succeed(new Uint8Array()),
@@ -60,7 +59,6 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
     otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
     otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
     otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
-    otlpServiceName: "t3-server",
     otelEnvironment: OtelEnvironment.none,
     cwd: process.cwd(),
     baseDir,
