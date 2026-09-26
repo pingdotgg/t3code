@@ -351,6 +351,13 @@ interface ActivePiTurn {
   activeCompaction: PiCompactionState | null;
   activeProviderRetry: PiProviderRetryState | null;
   failure: ReturnType<typeof makeProviderFailure> | null;
+  /** Session-tree refs read just before Stop terminates Pi, when no read is possible later. */
+  stopTreeRefs?: PiTurnTreeRefs | null;
+}
+
+interface PiTurnTreeRefs {
+  readonly turnStartEntryId: string | null;
+  readonly leafId: string | null;
 }
 
 interface PendingPiPrompt {
@@ -1367,13 +1374,18 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
        * point `fork` rolls back to); the leaf becomes the conversation head.
        * Pure bookkeeping: failures degrade to the synthetic refs.
        */
-      const captureTurnTreeRefs = Effect.fnUntraced(function* () {
+      const captureTurnTreeRefs = Effect.fnUntraced(function* (
+        timeoutMs = PI_REQUEST_TIMEOUT_MS,
+      ): Effect.fn.Return<PiTurnTreeRefs | null> {
         const cursorWasStale = leafCursorStale;
         const cursor = cursorWasStale ? null : lastKnownLeaf;
-        const data = yield* request({
-          type: "get_entries",
-          ...(cursor === null ? {} : { since: cursor }),
-        }).pipe(Effect.orElseSucceed(() => undefined));
+        const data = yield* request(
+          {
+            type: "get_entries",
+            ...(cursor === null ? {} : { since: cursor }),
+          },
+          timeoutMs,
+        ).pipe(Effect.orElseSucceed(() => undefined));
         if (data === undefined) {
           // Pi may have advanced past `lastKnownLeaf` while this failed, so the
           // cursor can no longer be trusted to bound a single turn.
@@ -1431,7 +1443,8 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           }
         }
         yield* cancelPendingPrompts(completedAt);
-        const treeRefs = yield* captureTurnTreeRefs();
+        const treeRefs =
+          turn.stopTreeRefs !== undefined ? turn.stopTreeRefs : yield* captureTurnTreeRefs();
         const tokenUsage = readUsage
           ? yield* readTokenUsage(turn.latestCompactionAfterTokens, completedAt)
           : undefined;
@@ -2490,7 +2503,18 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
               if (interruptInput.requestRuntimeRestart === true && !turn.settleWhenIdle) {
                 yield* request({ type: "abort" }, 2_000).pipe(Effect.ignore);
               }
-              yield* connection.terminate;
+              // Terminating fails every later request, so read the stopped
+              // turn's session-tree refs first: rolling back past this turn
+              // forks at its user entry. Holding the event permit also lets a
+              // finalize that is already reading them finish before the kill.
+              yield* sessionEventPermit.withPermits(1)(
+                Effect.gen(function* () {
+                  if (threadState?.activeTurn === turn && turn.stopTreeRefs === undefined) {
+                    turn.stopTreeRefs = yield* captureTurnTreeRefs(2_000);
+                  }
+                  yield* connection.terminate;
+                }),
+              );
               return;
             }
             yield* request({ type: "abort" }).pipe(
