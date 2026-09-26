@@ -16,24 +16,20 @@ import {
   ArrowDownUpIcon,
   ArrowLeftIcon,
   ChevronDownIcon,
-  ChevronRightIcon,
   CircleDotIcon,
   ExternalLinkIcon,
   FileDiffIcon,
   GitCommitHorizontalIcon,
   GitMergeIcon,
   MessageSquareIcon,
-  TagIcon,
-  UsersIcon,
   RefreshCwIcon,
   XIcon,
 } from "lucide-react";
-import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import {
@@ -50,8 +46,6 @@ import {
   pullRequestMonitorStatusQueryOptions,
   pullRequestMonitorContextQueryOptions,
   pullRequestReplyToThreadMutationOptions,
-  pullRequestRequestReviewersMutationOptions,
-  pullRequestReviewerCandidatesQueryOptions,
   pullRequestRunActionMutationOptions,
   pullRequestSetThreadResolutionMutationOptions,
   pullRequestSubmitReviewMutationOptions,
@@ -70,6 +64,7 @@ import {
 import { presentCollaborativeAcceptanceStatus } from "./collaborativeAcceptancePresentation";
 import type { ThreadShell } from "~/types";
 import { PullRequestBody } from "./PullRequestBody";
+import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestMediaDialog, type PullRequestMediaPreview } from "./PullRequestMediaDialog";
 
 import {
@@ -80,13 +75,10 @@ import {
 } from "./pullRequestReviewStore";
 import {
   PullRequestActorLabel,
-  PullRequestCheckStatusIcon,
   PullRequestDiffStat,
   PullRequestStateGlyph,
   pullRequestActionLabel,
-  pullRequestCheckStatusLabel,
   pullRequestCheckSummaryLabel,
-  pullRequestLabelColor,
   pullRequestReviewVerdictPresentation,
   pullRequestStatePresentation,
   resolvePullRequestMergeSelection,
@@ -130,46 +122,6 @@ function ReviewVerdictBadge({ reviewState }: { readonly reviewState: string | nu
     <Badge size="sm" variant={presentation.variant}>
       {presentation.label}
     </Badge>
-  );
-}
-
-function PullRequestSection({
-  title,
-  children,
-  defaultOpen = true,
-}: {
-  readonly title: string;
-  readonly children: ReactNode;
-  readonly defaultOpen?: boolean;
-}) {
-  return (
-    <Collapsible defaultOpen={defaultOpen}>
-      <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-3 text-left text-xs font-medium text-muted-foreground hover:text-foreground">
-        <ChevronRightIcon className="size-3.5 transition-transform data-panel-open:rotate-90" />
-        <span>{title}</span>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="px-4 pb-4">{children}</CollapsibleContent>
-    </Collapsible>
-  );
-}
-
-function PullRequestMetaRow({
-  icon,
-  label,
-  children,
-}: {
-  readonly icon: ReactNode;
-  readonly label: string;
-  readonly children: ReactNode;
-}) {
-  return (
-    <div className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-2 text-xs">
-      <span className="flex items-center gap-1.5 text-muted-foreground">
-        {icon}
-        {label}
-      </span>
-      <span className="min-w-0 text-foreground">{children}</span>
-    </div>
   );
 }
 
@@ -580,7 +532,6 @@ export function PullRequestDetailPanel({
     ...pullRequestActivityQueryOptions({
       environmentId,
       reference,
-      enabled: tab !== "summary",
     }),
     // While GitHub's quota is exhausted every poll fails identically; back
     // off to the server's failure cooldown instead of re-walking the review
@@ -669,16 +620,6 @@ export function PullRequestDetailPanel({
   );
   const invalidate = useMutation(
     pullRequestInvalidateMutationOptions({ environmentId, queryClient }),
-  );
-  const reviewersQuery = useQuery(
-    pullRequestReviewerCandidatesQueryOptions({
-      environmentId,
-      reference,
-      enabled: detail?.capabilities.reviewers.listCandidates === true,
-    }),
-  );
-  const requestReviewers = useMutation(
-    pullRequestRequestReviewersMutationOptions({ environmentId, queryClient }),
   );
   const pauseAcceptance = useMutation(
     collaborativeAcceptancePauseMutationOptions({ environmentId, queryClient }),
@@ -1297,148 +1238,24 @@ export function PullRequestDetailPanel({
         role="tabpanel"
       >
         {activeTab === "summary" ? (
-          <div className="min-h-full">
-            <div className="space-y-2 border-b border-border/60 px-4 pt-3 pb-4">
-              <PullRequestMetaRow icon={<UsersIcon className="size-3.5" />} label="Reviewers">
-                {detail.reviewers.length > 0 ? (
-                  <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-                    {detail.reviewers.map((reviewer) => (
-                      <PullRequestActorLabel
-                        actor={reviewer}
-                        className="rounded-full bg-muted/40 px-1.5 py-0.5"
-                        key={reviewer.login}
-                      />
-                    ))}
-                  </span>
-                ) : (
-                  <span className="text-muted-foreground">None</span>
-                )}
-              </PullRequestMetaRow>
-              <PullRequestMetaRow icon={<TagIcon className="size-3.5" />} label="Labels">
-                {detail.labels.length > 0 ? (
-                  <span className="flex min-w-0 flex-wrap items-center gap-1">
-                    {detail.labels.map((label) => {
-                      const dot = pullRequestLabelColor(label.color);
-                      return (
-                        <span
-                          className="inline-flex max-w-48 min-w-0 items-center gap-1.5 rounded-full bg-muted/40 py-0.5 pr-2 pl-1.5 text-xs"
-                          key={label.name}
-                        >
-                          <span
-                            aria-hidden
-                            className="size-2 shrink-0 rounded-full bg-muted-foreground"
-                            {...(dot ? { style: { backgroundColor: dot } } : {})}
-                          />
-                          <span className="truncate">{label.name}</span>
-                        </span>
-                      );
-                    })}
-                  </span>
-                ) : (
-                  <span className="text-muted-foreground">None</span>
-                )}
-              </PullRequestMetaRow>
-            </div>
-            <PullRequestSection title="Description">
-              <PullRequestBody
-                body={detail.body || "_No description provided._"}
-                cwd={detail.workspaceRoot}
-                onPreview={setMediaPreview}
-              />
-            </PullRequestSection>
-            <PullRequestSection title={`Checks (${detail.checks.length})`} defaultOpen={false}>
-              <ul className="space-y-1 text-xs">
-                {detail.checks.map((check) => (
-                  <li
-                    className="group flex items-center gap-2 rounded-md px-1 py-1 hover:bg-accent/60"
-                    key={check.name}
-                  >
-                    <PullRequestCheckStatusIcon status={check.status} />
-                    {check.url ? (
-                      <a
-                        className="min-w-0 flex-1 truncate hover:underline"
-                        href={check.url}
-                        rel="noreferrer"
-                        target="_blank"
-                      >
-                        {check.name}
-                      </a>
-                    ) : (
-                      <span className="min-w-0 flex-1 truncate">{check.name}</span>
-                    )}
-                    <span className="shrink-0 text-muted-foreground">
-                      {pullRequestCheckStatusLabel(check.status)}
-                    </span>
-                  </li>
-                ))}
-                {detail.checks.length === 0 ? (
-                  <li className="text-xs text-muted-foreground">No checks reported.</li>
-                ) : null}
-              </ul>
-            </PullRequestSection>
-            {detail.reviewers.length > 0 || detail.capabilities.reviewers.listCandidates ? (
-              <PullRequestSection title="Reviewers" defaultOpen={false}>
-                <div className="flex flex-wrap gap-2">
-                  {detail.reviewers.map((reviewer) => (
-                    <span
-                      className="inline-flex items-center rounded border border-border/70 px-2 py-1 text-xs"
-                      key={reviewer.login}
-                    >
-                      <PullRequestActorLabel actor={reviewer} />
-                    </span>
-                  ))}
-                  {reviewersQuery.data?.candidates.map((candidate) => (
-                    <Button
-                      disabled={
-                        !detail.capabilities.reviewers.request ||
-                        !detail.viewerPermissions.requestReviewers ||
-                        requestReviewers.isPending
-                      }
-                      key={`${candidate.kind}:${candidate.id}`}
-                      size="xs"
-                      variant={candidate.isRequested ? "secondary" : "outline"}
-                      onClick={() =>
-                        void requestReviewers
-                          .mutateAsync({
-                            ...reference,
-                            requested: !candidate.isRequested,
-                            reviewers: [{ id: candidate.id, kind: candidate.kind }],
-                          })
-                          .catch((error) =>
-                            toastManager.add({
-                              type: "error",
-                              title: "Could not update reviewer",
-                              description: errorMessage(error),
-                            }),
-                          )
-                      }
-                    >
-                      {candidate.isRequested ? "Requested: " : "Request: "}
-                      {candidate.login}
-                    </Button>
-                  ))}
-                  {reviewersQuery.isPending ? (
-                    <span className="text-xs text-muted-foreground">Loading reviewers…</span>
-                  ) : null}
-                  {reviewersQuery.error ? (
-                    <span className="text-xs text-destructive">
-                      Could not load reviewer suggestions.
-                    </span>
-                  ) : null}
-                </div>
-              </PullRequestSection>
-            ) : null}
-            {detail.capabilities.comment && detail.viewerPermissions.comment ? (
-              <div className="px-4 pt-3 pb-4">
-                <CommentComposer
-                  value={comment}
-                  disabled={postComment.isPending}
-                  onChange={setComment}
-                  onSubmit={submitComment}
-                />
-              </div>
-            ) : null}
-          </div>
+          <PullRequestSummaryTab
+            activityError={activityQuery.error ? errorMessage(activityQuery.error) : null}
+            activityPending={activityQuery.isPending}
+            detail={detail}
+            environmentId={environmentId}
+            reference={reference}
+            onOpenUrl={(url) => {
+              void openLink(url).catch((error: unknown) => {
+                toastManager.add({
+                  type: "error",
+                  title: "Could not open link",
+                  description: errorMessage(error),
+                });
+              });
+            }}
+            onPreviewMedia={setMediaPreview}
+            onRetryActivity={() => void activityQuery.refetch()}
+          />
         ) : null}
         {activeTab === "timeline" ? (
           <div className="relative px-4 pt-4 pb-5">
