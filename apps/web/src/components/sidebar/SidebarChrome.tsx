@@ -30,6 +30,17 @@ import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
+/**
+ * Left inset for the sheet-mode sidebar trigger. On macOS desktop the header
+ * sits under the native window buttons, so the trigger takes the same left
+ * edge as the floating `SidebarControl` (`--workspace-controls-left`, 90
+ * native points there, `0.75rem` elsewhere and in fullscreen) instead of the
+ * header's own `px-3`. Web and mobile keep the header padding.
+ */
+export function resolveSidebarSheetTriggerInsetClass(isElectron: boolean): string | null {
+  return isElectron ? "ml-[calc(var(--workspace-controls-left)-0.75rem)]" : null;
+}
+
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
 }: {
@@ -55,11 +66,14 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
       )}
     >
       {backdropVariant ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
-      <SidebarTrigger
-        // Over the stage artwork: the media viewer's control-on-imagery treatment.
-        variant={backdropVariant ? "media-navigation" : "ghost"}
-        className="relative top-auto z-10 translate-y-0 md:hidden"
-      />
+      {/* Placement belongs to the parent: the inset keeps the trigger clear of the window controls. */}
+      <span className={cn("md:hidden", resolveSidebarSheetTriggerInsetClass(isElectron))}>
+        <SidebarTrigger
+          // Over the stage artwork: the media viewer's control-on-imagery treatment.
+          variant={backdropVariant ? "media-navigation" : "ghost"}
+          className="relative top-auto z-10 translate-y-0 md:hidden"
+        />
+      </span>
       <SidebarBrand onBackdrop={backdropVariant !== null} />
       {pillLabel ? (
         <Badge
