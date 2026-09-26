@@ -555,6 +555,68 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     );
   }
 
+  const apiError =
+    "API Error: 400 Model blocked by guardrail: 4 endpoints excluded for claude-haiku-4-5";
+  const wrapperNotice = "Using the OpenRouter credential from the global credential file.";
+  for (const [name, input, expectedDetail] of [
+    [
+      "the stdout result over a wrapper notice on stderr",
+      {
+        output: JSON.stringify({ is_error: true, api_error_status: 400, result: apiError }),
+        stderr: wrapperNotice,
+      },
+      `Claude CLI command failed: ${apiError}`,
+    ],
+    [
+      "the result message of verbose stdout",
+      {
+        output: JSON.stringify([
+          { type: "system", subtype: "init" },
+          { type: "result", is_error: true, result: apiError },
+        ]),
+        stderr: wrapperNotice,
+      },
+      `Claude CLI command failed: ${apiError}`,
+    ],
+    [
+      "a capped stdout result",
+      { output: JSON.stringify({ is_error: true, result: `API Error: ${"x".repeat(600)}` }) },
+      `Claude CLI command failed: API Error: ${"x".repeat(489)}...`,
+    ],
+    [
+      "stderr when stdout carries no result",
+      { output: "not json", stderr: "claude: command crashed" },
+      "Claude CLI command failed: claude: command crashed",
+    ],
+    [
+      "stderr when the stdout result is blank",
+      { output: JSON.stringify({ is_error: true, result: "  " }), stderr: "claude: crashed" },
+      "Claude CLI command failed: claude: crashed",
+    ],
+  ] as const) {
+    it.effect(`reports ${name} when the Claude CLI exits non-zero`, () =>
+      withFakeClaudeEnv({ ...input, exitCode: 1 }, (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            textGeneration.generateCommitMessage({
+              cwd: process.cwd(),
+              branch: "feature/claude-failure",
+              stagedSummary: "M README.md",
+              stagedPatch: "diff --git a/README.md b/README.md",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            }),
+          );
+
+          expect(error._tag).toBe("TextGenerationError");
+          expect(error.detail).toBe(expectedDetail);
+        }),
+      ),
+    );
+  }
+
   it.effect("falls back when Claude thread title normalization becomes whitespace-only", () =>
     withFakeClaudeEnv(
       {
