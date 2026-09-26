@@ -5,6 +5,7 @@ import {
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2SystemNoticeAction,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   type PlanId,
@@ -70,6 +71,8 @@ export interface WorkLogEntry {
   readonly toolIcon?: ToolActivityIcon;
   readonly toolSource?: ToolActivitySource;
   readonly sourceActivityKind?: string;
+  /** Button a notice offers, such as allowing a blocked `.envrc`. */
+  readonly warningAction?: OrchestrationV2SystemNoticeAction;
   readonly taskId?: string;
   readonly agentRole?: string;
   readonly toolData?: unknown;
@@ -475,6 +478,8 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
         ...common,
         label: item.message,
         sourceActivityKind: "runtime.warning",
+        ...(item.detail ? { detail: item.detail } : {}),
+        ...(item.action ? { warningAction: item.action } : {}),
       };
     case "error": {
       const presentation = providerErrorPresentation(item);

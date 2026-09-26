@@ -62,6 +62,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as DirenvEnvironment from "../../provider/DirenvEnvironment.ts";
 import {
   expandPiSkillReference,
   parsePiCompactCommand,
@@ -428,7 +429,10 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
       }
       const launch = buildPiRpcLaunch({
         launchArgs: resolvedLaunchArgs.args,
-        environment: options.environment,
+        environment: DirenvEnvironment.withThreadDirenvEnvironment(
+          options.environment,
+          input.threadId,
+        ),
         mcpSession,
         extensionPath,
         runtimeMode: input.runtimePolicy.runtimeMode,

@@ -49,6 +49,7 @@ import {
   XAiAskUserQuestionRequest,
   XAiExitPlanModeRequest,
 } from "../../provider/acp/XAiAcpExtension.ts";
+import { applyDirenvEnvironment } from "../../provider/DirenvEnvironment.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { acpPermissionDisposition } from "../../provider/acp/AcpClientPolicy.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
@@ -268,12 +269,12 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
       }),
     makeRuntime:
       options.makeRuntime ??
-      (({ runtimePolicy, ...input }) =>
+      (({ runtimePolicy, direnvEnvironment, ...input }) =>
         makeGrokAcpRuntime({
           ...input,
           interruptPromptOnCancel: input.interruptPromptOnCancel ?? false,
           grokSettings: options.settings,
-          environment: options.environment,
+          environment: applyDirenvEnvironment(options.environment, direnvEnvironment),
           childProcessSpawner: options.childProcessSpawner,
           runtimeMode: grokLaunchRuntimeMode(runtimePolicy),
         })),

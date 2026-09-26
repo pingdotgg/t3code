@@ -272,6 +272,7 @@ it.effect(
           closeInstance: () => Effect.void,
           release: () => Effect.void,
           detach: () => Effect.void,
+          takeProjectEnvironmentFailure: () => Effect.succeed(undefined),
         }),
       );
       const controlLayer = providerTurnControlLayer.pipe(

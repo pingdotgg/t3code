@@ -32,6 +32,7 @@ import { AcpRegistryRuntimeCoordinator } from "../../provider/acp/AcpRegistryRun
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.ts";
 import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
+import { applyDirenvEnvironment } from "../../provider/DirenvEnvironment.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { IdAllocatorV2 } from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
@@ -146,7 +147,7 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
     Crypto.Crypto | Scope.Scope
   > =>
     Effect.gen(function* () {
-      const { processEnvironment, ...runtimeInput } = input;
+      const { processEnvironment, direnvEnvironment, ...runtimeInput } = input;
       const resolved = yield* options.resolver
         .resolve(options.settings, input.cwd, options.environment)
         .pipe(
@@ -162,11 +163,17 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
         AcpSessionRuntime.layer({
           ...runtimeInput,
           spawn:
-            processEnvironment === undefined
+            processEnvironment === undefined && direnvEnvironment === undefined
               ? resolved.spawn
               : {
                   ...resolved.spawn,
-                  env: { ...resolved.spawn.env, ...processEnvironment },
+                  env: {
+                    ...applyDirenvEnvironment(
+                      resolved.spawn.env ?? options.environment,
+                      direnvEnvironment,
+                    ),
+                    ...processEnvironment,
+                  },
                 },
           ...(options.settings.authMethodId ? { authMethodId: options.settings.authMethodId } : {}),
         }).pipe(

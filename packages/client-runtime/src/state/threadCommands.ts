@@ -383,6 +383,10 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    allowDirenv: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:allow-direnv",
+      tag: WS_METHODS.projectEnvironmentAllowDirenv,
+    }),
   };
   const optimistic = createOptimisticThreadLifecycle(snapshotAtom);
   return {

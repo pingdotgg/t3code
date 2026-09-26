@@ -33,6 +33,7 @@ import {
 } from "react";
 import {
   AccessibilityInfo,
+  Alert,
   AppState,
   type ColorValue,
   Pressable,
@@ -41,7 +42,7 @@ import {
   View,
 } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
-import type { EnvironmentId, ToolActivityIcon } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId, ToolActivityIcon } from "@t3tools/contracts";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 
 import { AppText as Text } from "../../components/AppText";
@@ -80,6 +81,8 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useAssetUrl } from "../../state/assets";
+import { threadEnvironment } from "../../state/threads";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 const SHIMMER_WIDTH = 72;
 const SHIMMER_SWEEP_MS = 1_350;
@@ -767,6 +770,54 @@ function workLogRowKey(row: ThreadFeedActivity): string {
   return row.id;
 }
 
+/** Allows the thread's blocked `.envrc`; the next message loads it. */
+// The work log remounts rows, so the outcome outlives the button.
+const allowedDirenvWarnings = new Set<string>();
+
+function AllowDirenvButton(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly warningId: string;
+}) {
+  const allowDirenv = useAtomCommand(threadEnvironment.allowDirenv, "allow direnv");
+  const [state, setState] = useState<"idle" | "pending" | "allowed">(() =>
+    allowedDirenvWarnings.has(props.warningId) ? "allowed" : "idle",
+  );
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityHint="Loads the project's direnv environment with your next message."
+      disabled={state !== "idle"}
+      hitSlop={6}
+      onPress={async () => {
+        setState("pending");
+        const result = await allowDirenv({
+          environmentId: props.environmentId,
+          input: { threadId: props.threadId },
+        });
+        if (result._tag === "Success" && result.value.allowed) {
+          allowedDirenvWarnings.add(props.warningId);
+          setState("allowed");
+          return;
+        }
+        setState("idle");
+        if (result._tag === "Success") {
+          Alert.alert("Could not allow the .envrc", result.value.error);
+        }
+      }}
+      className="min-h-8 justify-center px-2"
+    >
+      <Text className="font-t3-medium text-xs text-foreground">
+        {state === "allowed"
+          ? "Allowed · applies to your next message"
+          : state === "pending"
+            ? "Allowing…"
+            : "Allow .envrc"}
+      </Text>
+    </Pressable>
+  );
+}
+
 const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   props: Omit<
     ThreadWorkLogProps,
@@ -952,6 +1003,14 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
         )}
 
         <View className="shrink-0 flex-row items-center gap-px">
+          {row.projectedItem.item.type === "system_notice" &&
+          row.projectedItem.item.action?.type === "direnv.allow" ? (
+            <AllowDirenvButton
+              environmentId={props.environmentId}
+              threadId={row.projectedItem.item.threadId}
+              warningId={row.projectedItem.item.id}
+            />
+          ) : null}
           {props.copied ? (
             <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
               Copied

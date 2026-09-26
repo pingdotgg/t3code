@@ -31,6 +31,7 @@ import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/unstable/http";
 
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
+import * as DirenvEnvironment from "../provider/DirenvEnvironment.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
@@ -58,6 +59,7 @@ import { makeSingleLayer as makeProviderAdapterRegistryLayer } from "./ProviderA
 import { layer as providerEventIngestorLayer } from "./ProviderEventIngestor.ts";
 import {
   ProviderSessionManagerV2,
+  type ProviderSessionManagerV2Error,
   layerWithOptions as providerSessionManagerLayerWithOptions,
 } from "./ProviderSessionManager.ts";
 
@@ -354,6 +356,7 @@ function makeTestLayer(input: {
   readonly hangSessionScopeClose?: boolean;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly direnvLayer?: Layer.Layer<DirenvEnvironment.DirenvEnvironment>;
 }) {
   const configuredEventSinkLayer = input.failReleaseEventWrites
     ? FailingReleaseEventSinkLayer
@@ -394,6 +397,7 @@ function makeTestLayer(input: {
           TestStoresLayer,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
+          ...(input.direnvLayer === undefined ? [] : [input.direnvLayer]),
         ),
       ),
     ),
@@ -3003,4 +3007,165 @@ it.effect(
       });
       assert.isFalse(denied?.capabilities?.has("device"));
     }),
+);
+
+/**
+ * Runs `body` against a manager whose direnv loads answer from `results` in
+ * order, recording each load's `previous` diff and the environment each
+ * provider process opened with.
+ */
+function runDirenvScenario(
+  results: ReadonlyArray<DirenvEnvironment.DirenvLoadResult>,
+  body: (input: {
+    readonly manager: ProviderSessionManagerV2["Service"];
+    readonly open: Effect.Effect<ProviderAdapterV2SessionRuntime, ProviderSessionManagerV2Error>;
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<void, ProviderSessionManagerV2Error>,
+) {
+  return Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const threadId = ThreadId.make("thread-provider-session-manager-direnv");
+    const loads = yield* Ref.make<
+      ReadonlyArray<DirenvEnvironment.DirenvEnvironmentDiff | undefined>
+    >([]);
+    const openedWith = yield* Ref.make<
+      ReadonlyArray<DirenvEnvironment.DirenvEnvironmentDiff | undefined>
+    >([]);
+    const direnvLayer = Layer.succeed(
+      DirenvEnvironment.DirenvEnvironment,
+      DirenvEnvironment.DirenvEnvironment.of({
+        load: (_cwd, previous) =>
+          Ref.modify(loads, (current) => [
+            results[Math.min(current.length, results.length - 1)]!,
+            [...current, previous],
+          ]),
+        allow: () => Effect.succeed({ _tag: "NotFound" }),
+      }),
+    );
+    const beforeOpen = () =>
+      Ref.update(openedWith, (current) => [
+        ...current,
+        DirenvEnvironment.readThreadDirenvEnvironment(threadId),
+      ]);
+
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const manager = yield* ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      yield* body({
+        manager,
+        open: manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy }),
+        threadId,
+      });
+    }).pipe(
+      Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000, beforeOpen, direnvLayer })),
+    );
+    return {
+      state: yield* Ref.get(state),
+      loads: yield* Ref.get(loads),
+      openedWith: yield* Ref.get(openedWith),
+    };
+  });
+}
+
+it.effect("ProviderSessionManagerV2 opens a session with the project's direnv environment", () =>
+  Effect.gen(function* () {
+    const diff = { PATH: "/nix/store/tools/bin", DIRENV_DIFF: "d1" };
+    const result = yield* runDirenvScenario([{ _tag: "Loaded", diff, changed: true }], ({ open }) =>
+      open.pipe(Effect.asVoid),
+    );
+    assert.deepStrictEqual(result.openedWith, [diff]);
+    assert.deepStrictEqual(result.loads, [undefined]);
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 keeps a session whose direnv environment is current", () =>
+  Effect.gen(function* () {
+    const diff = { PATH: "/nix/store/tools/bin", DIRENV_DIFF: "d1" };
+    const result = yield* runDirenvScenario(
+      [
+        { _tag: "Loaded", diff, changed: true },
+        { _tag: "Loaded", diff, changed: false },
+      ],
+      ({ open }) =>
+        Effect.gen(function* () {
+          const first = yield* open;
+          const second = yield* open;
+          assert.strictEqual(first, second);
+        }),
+    );
+    assert.equal(result.state.openCount, 1);
+    // The reuse is direnv's staleness check against what the session loaded.
+    assert.deepStrictEqual(result.loads, [undefined, diff]);
+  }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 restarts an idle session when its direnv environment changes",
+  () =>
+    Effect.gen(function* () {
+      const before = { PATH: "/nix/store/old/bin", DIRENV_DIFF: "d1" };
+      const after = { PATH: "/nix/store/new/bin", DIRENV_DIFF: "d2" };
+      const result = yield* runDirenvScenario(
+        [
+          { _tag: "Loaded", diff: before, changed: true },
+          { _tag: "Loaded", diff: after, changed: true },
+        ],
+        ({ open }) =>
+          Effect.gen(function* () {
+            const first = yield* open;
+            const second = yield* open;
+            assert.notStrictEqual(first, second);
+          }),
+      );
+      assert.equal(result.state.openCount, 2);
+      assert.deepStrictEqual(result.openedWith, [before, after]);
+      // The restart reuses the environment the check loaded instead of evaluating again.
+      assert.equal(result.loads.length, 2);
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 restarts without an environment direnv no longer provides",
+  () =>
+    Effect.gen(function* () {
+      const diff = { PATH: "/nix/store/tools/bin", DIRENV_DIFF: "d1" };
+      const result = yield* runDirenvScenario(
+        [{ _tag: "Loaded", diff, changed: true }, { _tag: "None" }, { _tag: "None" }],
+        ({ open }) => Effect.all([open, open], { discard: true }),
+      );
+      assert.equal(result.state.openCount, 2);
+      assert.deepStrictEqual(result.openedWith, [diff, undefined]);
+    }),
+);
+
+it.effect("ProviderSessionManagerV2 reports a failing .envrc once per thread", () =>
+  Effect.gen(function* () {
+    const blocked: DirenvEnvironment.DirenvLoadResult = {
+      _tag: "Failed",
+      envrcPath: "/project/.envrc",
+      reason: "blocked",
+      message: "/project/.envrc is blocked. Run `direnv allow` to approve its content",
+    };
+    const result = yield* runDirenvScenario([blocked], ({ manager, open, threadId }) =>
+      Effect.gen(function* () {
+        yield* open;
+        assert.deepStrictEqual(yield* manager.takeProjectEnvironmentFailure(threadId), blocked);
+        assert.equal(yield* manager.takeProjectEnvironmentFailure(threadId), undefined);
+        // The per-message check sees the same failure; the thread already shows it.
+        yield* open;
+        assert.equal(yield* manager.takeProjectEnvironmentFailure(threadId), undefined);
+      }),
+    );
+    assert.equal(result.state.openCount, 1);
+    assert.deepStrictEqual(result.openedWith, [undefined]);
+  }),
 );

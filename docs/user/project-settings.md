@@ -87,6 +87,26 @@ itself, or **Skip** to leave them for a setup script. It resolves in the same or
 workspace default: a `"worktreeSubmodules"` value in the `t3.json` of the branch being checked out
 applies when the project and environment are both on **Inherit**.
 
+## Project environments with direnv
+
+If a project uses [direnv](https://direnv.net), agents start with the same environment its `.envrc`
+gives your shell, such as the tools from a Nix dev shell. T3 Code only loads an `.envrc` you
+approved with `direnv allow`. A blocked or failing one shows a warning in the thread and the agent
+continues without it. For a blocked `.envrc`, **Allow .envrc** on the warning approves it without
+opening a terminal.
+
+Like your shell, T3 Code checks the environment again before each message. After you allow or edit
+the `.envrc`, or update a file it watches such as `flake.lock`, your next message restarts the
+agent with the new environment and the conversation continues. direnv asks for a new allow after
+every edit to `.envrc`.
+
+Cursor agents run inside T3 Code through the Cursor SDK, which has no way to pass them an
+environment, so they do not get the project's `.envrc`.
+
+direnv approves each directory separately, so a new worktree needs its own allow. Turn off **Load
+direnv environment** in **Settings → General**, for an environment or for one project, to stop
+loading it.
+
 ## Storage cleanup
 
 Open **Settings → Storage** to enable automatic cleanup on one machine or all connected

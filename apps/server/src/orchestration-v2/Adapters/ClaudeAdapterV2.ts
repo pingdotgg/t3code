@@ -110,6 +110,7 @@ import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanc
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3OrchestrationInstructions.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as DirenvEnvironment from "../../provider/DirenvEnvironment.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
@@ -6268,7 +6269,10 @@ export function makeClaudeAdapterV2(
                 cwd: turnInput.runtimePolicy.cwd,
                 attachmentsDir,
                 settings: adapterOptions.settings,
-                environment: adapterOptions.environment,
+                environment: DirenvEnvironment.withThreadDirenvEnvironment(
+                  adapterOptions.environment,
+                  turnInput.threadId,
+                ),
                 tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
                 ...mcpOverrides,
                 permissionMode: queryPolicy.permissionMode,

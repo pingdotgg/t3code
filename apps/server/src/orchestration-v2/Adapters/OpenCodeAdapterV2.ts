@@ -57,6 +57,7 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as DirenvEnvironment from "../../provider/DirenvEnvironment.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
 import {
@@ -1026,7 +1027,10 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           binaryPath: options.settings.binaryPath,
           directory: cwd,
           serverUrl: options.settings.serverUrl,
-          environment: options.environment,
+          environment: DirenvEnvironment.withThreadDirenvEnvironment(
+            options.environment,
+            input.threadId,
+          ),
         });
         const client = runtime.createOpenCodeSdkClient({
           baseUrl: connection.url,
