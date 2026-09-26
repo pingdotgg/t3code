@@ -240,6 +240,18 @@ describe("acpMcpToolApprovalElicitationDisposition", () => {
 
     assert.equal(acpMcpToolApprovalElicitationDisposition(fullAccess, tagged), "allow");
     assert.equal(acpMcpToolApprovalElicitationDisposition(approvalRequired, tagged), "ask");
+    // Agents tag approvals for any MCP server; Auto-accept edits only approves edits.
+    assert.equal(
+      acpMcpToolApprovalElicitationDisposition(
+        { runtimeMode: "auto-accept-edits", cwd: process.cwd() },
+        tagged,
+      ),
+      "ask",
+    );
+    assert.equal(
+      acpMcpToolApprovalElicitationDisposition({ runtimeMode: "auto", cwd: process.cwd() }, tagged),
+      "allow",
+    );
     assert.equal(
       acpMcpToolApprovalElicitationDisposition(
         { ...fullAccess, approvalPolicy: "on-request" },

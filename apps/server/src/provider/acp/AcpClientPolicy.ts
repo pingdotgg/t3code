@@ -249,10 +249,14 @@ export function acpMcpToolApprovalElicitationDisposition(
   ) {
     return undefined;
   }
-  // This request comes from T3's authenticated, scope-checked MCP endpoint,
-  // not an arbitrary provider command. Let explicit approval mode surface it
-  // to the user and otherwise allow the endpoint to enforce its own policy.
-  return acpPolicyRequiresApproval(runtimePolicy) ? "ask" : "allow";
+  if (acpPolicyRequiresApproval(runtimePolicy)) return "ask";
+  // Codex-style agents tag approvals for every MCP server they run, not only
+  // T3's, and the request names no server T3 controls. Auto-accept edits
+  // approves file edits only, so an MCP tool call asks like other actions.
+  return runtimePolicy.runtimeMode === "auto-accept-edits" &&
+    runtimePolicy.approvalPolicy === undefined
+    ? "ask"
+    : "allow";
 }
 
 /** Disposition of a client-mediated `terminal/create` (Devin's client terminals). */
