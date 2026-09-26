@@ -35,13 +35,28 @@ function repositoryKeyFromPullRequestUrl(url: string): string | null {
   }
 }
 
+function repositoryKeyFromPullRequestHead(pullRequest: GitResolvedPullRequest): string | null {
+  const baseKey = repositoryKeyFromPullRequestUrl(pullRequest.url);
+  if (!baseKey) return null;
+
+  const headRepository = pullRequest.headRepositoryNameWithOwner?.trim();
+  if (!headRepository) {
+    return pullRequest.isCrossRepository === true ? null : baseKey;
+  }
+
+  const headMatch = /^([^/]+)\/([^/]+)$/u.exec(headRepository);
+  if (!headMatch) return null;
+  const host = baseKey.slice(0, baseKey.indexOf("/"));
+  return `${host}/${headMatch[1]}/${headMatch[2]}`.toLowerCase();
+}
+
 export function pullRequestAssociationBlockReason(input: {
   readonly thread: Pick<OrchestrationThread, "projectId" | "branch">;
   readonly project: Pick<OrchestrationProject, "id" | "repositoryIdentity"> | undefined;
   readonly localStatus: GitStatusLocalResult;
   readonly pullRequest: GitResolvedPullRequest;
 }): PullRequestAssociationBlockReason | null {
-  const repositoryKey = repositoryKeyFromPullRequestUrl(input.pullRequest.url);
+  const repositoryKey = repositoryKeyFromPullRequestHead(input.pullRequest);
   if (
     !repositoryKey ||
     !input.project ||

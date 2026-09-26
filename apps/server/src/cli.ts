@@ -2346,6 +2346,7 @@ const chatAssociatePrCommand = Command.make("associate-pr", {
               expectedUpdatedAt: thread.updatedAt,
               expectedWorkspaceCwd: context.workspaceCwd,
               pullRequest: resolution.success.pullRequest,
+              pullRequestSource: "agent",
               pullRequestOwnership: "transfer",
               pendingPullRequestAssociation: null,
             });

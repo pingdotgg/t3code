@@ -166,8 +166,16 @@ export const makePullRequestAssociationRecovery = (nowMs: () => number = Date.no
         ) {
           return;
         }
+        const currentPending = currentThread.pendingPullRequestAssociation;
         if (
-          currentThread.updatedAt !== thread.updatedAt ||
+          !currentPending ||
+          currentPending.status !== "pending" ||
+          currentPending.reference !== pending.reference ||
+          currentPending.requestedAt !== pending.requestedAt
+        ) {
+          return;
+        }
+        if (
           currentThread.branch !== thread.branch ||
           currentThread.worktreePath !== thread.worktreePath ||
           resolveThreadWorkspaceCwd({
@@ -200,6 +208,7 @@ export const makePullRequestAssociationRecovery = (nowMs: () => number = Date.no
           expectedUpdatedAt: currentThread.updatedAt,
           expectedWorkspaceCwd: cwd,
           pullRequest: resolution.success.pullRequest,
+          pullRequestSource: "agent",
           pullRequestOwnership: "transfer",
           pendingPullRequestAssociation: null,
         });

@@ -10,6 +10,7 @@ import {
   ThreadId,
   type GitStatusResult,
   type GitStatusLocalResult,
+  type GitResolvedPullRequest,
   type OrchestrationCommand,
   type OrchestrationMessage,
   type PendingPullRequestAssociation,
@@ -134,7 +135,7 @@ async function harness() {
   let resolveLookups = 0;
   let gitStatus = status;
   let gitLocalStatus = localStatus;
-  let resolvedPullRequest = status.pr!;
+  let resolvedPullRequest: GitResolvedPullRequest = status.pr!;
   let failLookup = false;
   let onLookup = () => {};
   let failResolve: GitHubCliError | null = null;
@@ -232,6 +233,22 @@ async function harness() {
     },
     setResolvedPullRequest: (value: typeof resolvedPullRequest) => {
       resolvedPullRequest = value;
+    },
+    setProjectRepositoryIdentity: (canonicalKey: string) => {
+      model = {
+        ...model,
+        projects: model.projects.map((project) => ({
+          ...project,
+          repositoryIdentity: {
+            canonicalKey,
+            locator: {
+              source: "git-remote" as const,
+              remoteName: "origin",
+              remoteUrl: `https://${canonicalKey}.git`,
+            },
+          },
+        })),
+      };
     },
     setPendingIntent: (value: PendingPullRequestAssociation) => {
       model = {
@@ -599,15 +616,25 @@ describe("pull request association recovery", () => {
         type: "thread.meta.update",
         threadId,
         pullRequest: status.pr,
+        pullRequestSource: "agent",
         pullRequestOwnership: "transfer",
         pendingPullRequestAssociation: null,
       }),
     );
+    const associatedThread = h.thread();
+    if (!associatedThread) throw new Error("Expected the associated thread.");
+    expect(createdPullRequestLinks(associatedThread)).toMatchObject([
+      { source: "agent", pullRequest: { url } },
+    ]);
   });
 
   it("blocks repository and head mismatches without setting a successful association", async () => {
     for (const [pullRequest, reason] of [
       [{ ...status.pr!, url: "https://github.com/other/app/pull/42" }, "repository-mismatch"],
+      [
+        { ...status.pr!, isCrossRepository: true, headRepositoryNameWithOwner: "attacker/app" },
+        "repository-mismatch",
+      ],
       [{ ...status.pr!, headBranch: "other" }, "head-mismatch"],
     ] as const) {
       const h = await harness();
@@ -622,6 +649,26 @@ describe("pull request association recovery", () => {
         reason,
       });
     }
+  });
+
+  it("accepts an upstream PR when the checked-out origin owns its fork head", async () => {
+    const h = await harness();
+    const forkPullRequest = {
+      ...status.pr!,
+      isCrossRepository: true,
+      headRepositoryNameWithOwner: "contributor/app",
+    };
+    h.setProjectRepositoryIdentity("github.com/contributor/app");
+    h.setResolvedPullRequest(forkPullRequest);
+    h.setPendingIntent(pendingIntent());
+
+    await Effect.runPromise(h.recovery.sweep);
+
+    expect(h.thread()?.pullRequest).toMatchObject({
+      url,
+      headRepositoryNameWithOwner: "contributor/app",
+    });
+    expect(h.thread()?.pendingPullRequestAssociation).toBeNull();
   });
 
   it("does not transfer after a competing association supersedes the pending request", async () => {
@@ -643,6 +690,53 @@ describe("pull request association recovery", () => {
     await Effect.runPromise(h.recovery.sweep);
 
     expect(h.thread()?.pullRequest).toEqual(competing);
+    expect(h.commands).toEqual([]);
+  });
+
+  it("keeps pending association retryable when only the thread title changes during lookup", async () => {
+    const h = await harness();
+    h.setPendingIntent(pendingIntent());
+    h.onResolve(() =>
+      h.updateThread({
+        title: "Renamed while resolving",
+        updatedAt: "2026-09-08T00:00:01.000Z",
+      }),
+    );
+
+    await Effect.runPromise(h.recovery.sweep);
+
+    expect(h.thread()?.title).toBe("Renamed while resolving");
+    expect(h.thread()?.pullRequest).toEqual(status.pr);
+    expect(h.thread()?.pendingPullRequestAssociation).toBeNull();
+    expect(h.commands).toContainEqual(
+      expect.objectContaining({
+        type: "thread.meta.update",
+        expectedUpdatedAt: "2026-09-08T00:00:01.000Z",
+        pullRequest: status.pr,
+      }),
+    );
+  });
+
+  it("does not apply a resolved PR after the pending reference changes", async () => {
+    const h = await harness();
+    h.setPendingIntent(pendingIntent());
+    h.onResolve(() =>
+      h.updateThread({
+        pendingPullRequestAssociation: {
+          ...pendingIntent(),
+          reference: "https://github.com/acme/app/pull/43",
+        },
+        updatedAt: "2026-09-08T00:00:01.000Z",
+      }),
+    );
+
+    await Effect.runPromise(h.recovery.sweep);
+
+    expect(h.thread()?.pullRequest).toBeFalsy();
+    expect(h.thread()?.pendingPullRequestAssociation).toMatchObject({
+      status: "pending",
+      reference: "https://github.com/acme/app/pull/43",
+    });
     expect(h.commands).toEqual([]);
   });
 });

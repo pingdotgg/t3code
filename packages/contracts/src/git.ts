@@ -108,6 +108,8 @@ export const GitResolvedPullRequest = Schema.Struct({
   url: Schema.String,
   baseBranch: TrimmedNonEmptyStringSchema,
   headBranch: TrimmedNonEmptyStringSchema,
+  isCrossRepository: Schema.optional(Schema.Boolean),
+  headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
   state: Schema.NullOr(GitPullRequestState).pipe(
     Schema.decodeTo(
       GitPullRequestState,
