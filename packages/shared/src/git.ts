@@ -237,12 +237,26 @@ export function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | nu
     return null;
   }
 
-  const match =
-    /^(?:git@github\.com:|ssh:\/\/(?:git@)?github\.com\/|https:\/\/github\.com\/|git:\/\/github\.com\/)([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(
-      trimmed,
-    );
-  const repositoryNameWithOwner = match?.[1]?.trim() ?? "";
-  return repositoryNameWithOwner.length > 0 ? repositoryNameWithOwner : null;
+  let pathname: string;
+  if (/^git@github\.com:/i.test(trimmed)) {
+    pathname = `/${trimmed.slice("git@github.com:".length)}`;
+  } else {
+    try {
+      const remote = new URL(trimmed);
+      if (
+        !["https:", "ssh:", "git:"].includes(remote.protocol) ||
+        remote.hostname.toLowerCase() !== "github.com" ||
+        /[?#]/.test(trimmed) ||
+        /\s/.test(trimmed)
+      ) {
+        return null;
+      }
+      pathname = remote.pathname;
+    } catch {
+      return null;
+    }
+  }
+  return /^\/([^/\s?#]+\/[^/\s?#]+?)(?:\.git)?\/?$/i.exec(pathname)?.[1] ?? null;
 }
 
 function deriveLocalBranchNameCandidatesFromRemoteRef(
