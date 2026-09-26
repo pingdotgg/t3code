@@ -1,11 +1,3 @@
-/**
- * Projects events onto the engine's private command read model. The decider
- * and the engine's command checks read it; clients read the SQL projections
- * instead. It lives for the whole server process, so keep only the fields
- * those readers need: user messages, request activities, and checkpoints
- * without their file lists. A thread with only non-user messages keeps one
- * of them without its text, so it does not look empty.
- */
 import type {
   OrchestrationEvent,
   OrchestrationProject,
@@ -66,8 +58,8 @@ import {
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
-// The activity kinds openRequests in decider.ts reads. Other activities, such
-// as user-input.answer-submitted, carry a requestId but stay in SQL.
+// The activity kinds openRequests in decider.ts reads. The command model
+// drops all other activities.
 const REQUEST_ACTIVITY_KINDS: ReadonlySet<string> = new Set([
   "approval.requested",
   "approval.resolved",
@@ -322,6 +314,13 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
   };
 }
 
+/**
+ * Projects one event onto the engine's private command read model. Only the
+ * decider and the engine's command checks read it; clients read the SQL
+ * projections. It lives for the whole server process, so it keeps only what
+ * the decider reads: user messages, request activities, and checkpoints
+ * without their file lists.
+ */
 export function projectEvent(
   model: OrchestrationReadModel,
   event: OrchestrationEvent,
@@ -772,10 +771,9 @@ export function projectEvent(
         if (!thread) {
           return nextBase;
         }
-        // The decider reads user messages. The history-import guard also needs
-        // to know if the thread has any message, so a thread with no message
-        // keeps one non-user message without its text as that signal.
-        // Assistant text and streaming deltas stay in the SQL projections.
+        // The decider reads user messages. The history-import guard only needs
+        // to know that a message exists, so a thread with no message keeps
+        // its first non-user message, without the text.
         if (payload.role !== "user" && thread.messages.length > 0) {
           return {
             ...nextBase,
@@ -1074,13 +1072,7 @@ export function projectEvent(
           if (!thread) {
             return nextBase;
           }
-          // The decider reads only request activities (see openRequests in
-          // decider.ts). Tool output and other activities stay in SQL.
-          if (
-            !REQUEST_ACTIVITY_KINDS.has(payload.activity.kind) ||
-            !Predicate.isObject(payload.activity.payload) ||
-            typeof payload.activity.payload.requestId !== "string"
-          ) {
+          if (!REQUEST_ACTIVITY_KINDS.has(payload.activity.kind)) {
             return {
               ...nextBase,
               threads: updateThread(nextBase.threads, payload.threadId, {
