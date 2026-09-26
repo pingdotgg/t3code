@@ -151,6 +151,23 @@ describe("resolvePreviewMiniPlayerFrame", () => {
       }),
     ).toMatchObject({ width: 480, height: 320 });
   });
+
+  it("shapes the frame to the painted aspect instead of the derived source", () => {
+    const frame = resolvePreviewMiniPlayerFrame({
+      width: null,
+      position: null,
+      source,
+      container,
+      aspect: 390 / 844,
+    });
+    expect(frame).toEqual({ x: 748, y: PREVIEW_MINI_PLAYER_EDGE_GAP, width: 240, height: 519 });
+  });
+
+  it("keeps the source's aspect until a painted rectangle exists", () => {
+    expect(
+      resolvePreviewMiniPlayerFrame({ width: null, position: null, source, container }),
+    ).toEqual({ x: 668, y: PREVIEW_MINI_PLAYER_EDGE_GAP, width: 320, height: 200 });
+  });
 });
 
 describe("resizePreviewMiniPlayer", () => {
@@ -280,6 +297,19 @@ describe("resizePreviewMiniPlayer", () => {
         container,
       }),
     ).toEqual({ x: 300, y: 200, width: 240, height: 150 });
+  });
+
+  it("keeps the painted aspect through a drag", () => {
+    expect(
+      resizePreviewMiniPlayer({
+        start,
+        direction: "east",
+        delta: { x: 160, y: 0 },
+        source,
+        container,
+        aspect: 390 / 844,
+      }),
+    ).toEqual({ x: 300, y: PREVIEW_MINI_PLAYER_EDGE_GAP, width: 312, height: 676 });
   });
 });
 

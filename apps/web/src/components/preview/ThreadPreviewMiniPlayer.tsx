@@ -163,6 +163,20 @@ function BrowserMiniPlayer({
   const fittedSourceContent = useBrowserSurfaceStore(
     (state) => state.byTabId[runtimeTabId]?.fittedSourceContent ?? null,
   );
+  // Aspect of the rect the hosted webview painted last layout. The derived
+  // source can disagree with it (a stale frozen size, a layout pass the
+  // webview took off its own container math), and the webview centers its
+  // picture inside whatever frame it is given — a frame at the wrong aspect
+  // shows dead translucent margins around the content. So the frame's shape
+  // follows the painted rectangle, while the derived source keeps bounding
+  // the 1:1 size. Selected as a primitive so content scroll/position reports
+  // don't re-render the player.
+  const paintedAspect = useBrowserSurfaceStore((state) => {
+    const content = state.byTabId[runtimeTabId]?.content;
+    return content && content.width > 0 && content.height > 0
+      ? content.width / content.height
+      : undefined;
+  });
   const sourceSize = resolvePreviewMiniPlayerSourceSize(
     snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT,
     fittedSourceContent,
@@ -195,6 +209,7 @@ function BrowserMiniPlayer({
       threadRef={threadRef}
       miniPlayer={miniPlayer}
       sourceSize={sourceSize}
+      aspect={paintedAspect}
       composerOverlayElement={composerOverlayElement}
       label="Floating browser preview"
       recording={recording}
@@ -319,6 +334,7 @@ function MiniPlayerShell({
   threadRef,
   miniPlayer,
   sourceSize,
+  aspect,
   composerOverlayElement,
   label,
   onOpenInPanel,
@@ -330,6 +346,8 @@ function MiniPlayerShell({
   readonly threadRef: ScopedThreadRef;
   readonly miniPlayer: PreviewMiniPlayerState;
   readonly sourceSize: PreviewMiniPlayerSize;
+  /** The aspect the content is actually painting at, when it's known. */
+  readonly aspect?: number | undefined;
   readonly composerOverlayElement: HTMLElement | null;
   readonly label: string;
   readonly onOpenInPanel: () => void;
@@ -352,6 +370,7 @@ function MiniPlayerShell({
         source: sourceSize,
         container,
         obstacles,
+        aspect,
       })
     : null;
 
@@ -421,6 +440,7 @@ function MiniPlayerShell({
       source: sourceSize,
       container,
       obstacles,
+      aspect,
     });
     store.resize(threadRef, sourceKey, next.width);
     store.move(threadRef, sourceKey, { x: next.x, y: next.y });
