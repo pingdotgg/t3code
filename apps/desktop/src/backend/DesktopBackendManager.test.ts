@@ -54,6 +54,7 @@ const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
     tailscaleServePort: 443,
     desktopTelemetryFd: 4,
     desktopTelemetryControlFd: 5,
+    desktopLifetimeFd: 6,
   },
   bootstrapDelivery: "fd3",
   extendEnv: true,
@@ -260,6 +261,7 @@ describe("DesktopBackendManager", () => {
         assert.isDefined(spawnedCommand.options.forceKillAfter);
         assert.equal(spawnedCommand.options.additionalFds?.fd4?.type, "input");
         assert.equal(spawnedCommand.options.additionalFds?.fd5?.type, "output");
+        assert.equal(spawnedCommand.options.additionalFds?.fd6?.type, "input");
         assert.equal(
           Duration.toMillis(Duration.fromInputUnsafe(spawnedCommand.options.forceKillAfter)),
           2_000,
