@@ -19,6 +19,7 @@ function makeConfig(
     readonly driver: string;
     readonly displayName?: string;
     readonly accentColor?: string;
+    readonly iconUrl?: string;
   }>,
 ): ServerConfig {
   return { providers } as unknown as ServerConfig;
@@ -97,6 +98,18 @@ describe("resolveThreadProviderInstance", () => {
     const thread = makeThread(environmentId, "codex");
 
     expect(resolveThreadProviderInstance(serverConfigs, thread)?.showBadge).toBe(false);
+  });
+
+  it("carries an ACP Registry agent's icon to the thread row", () => {
+    const environmentId = EnvironmentId.make("environment-a");
+    const iconUrl = "https://cdn.agentclientprotocol.com/registry/v1/latest/kimi.svg";
+    const serverConfigs = new Map<EnvironmentId, ServerConfig>([
+      [environmentId, makeConfig([{ instanceId: "acp_kimi", driver: "acpRegistry", iconUrl }])],
+    ]);
+
+    expect(
+      resolveThreadProviderInstance(serverConfigs, makeThread(environmentId, "acp_kimi"))?.iconUrl,
+    ).toBe(iconUrl);
   });
 });
 

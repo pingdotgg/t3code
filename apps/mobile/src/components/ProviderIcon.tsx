@@ -152,6 +152,7 @@ export function ProviderIcon(props: ProviderIconProps) {
  */
 export function ProviderInstanceIcon(props: {
   readonly provider: string | null | undefined;
+  readonly iconUrl?: string | undefined;
   readonly size?: number;
   readonly displayName: string;
   readonly accentColor?: string;
@@ -161,7 +162,7 @@ export function ProviderInstanceIcon(props: {
   return (
     <View style={{ position: "relative" }}>
       <View style={{ opacity: 0.6 }}>
-        <ProviderIcon provider={props.provider} size={props.size} />
+        <ProviderIcon provider={props.provider} iconUrl={props.iconUrl} size={props.size} />
       </View>
       {props.showBadge ? (
         <View
