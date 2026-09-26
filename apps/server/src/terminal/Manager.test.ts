@@ -1915,6 +1915,29 @@ it.layer(
     }),
   );
 
+  it.effect("does not inherit the multiplexer session of the server's launching pane", () =>
+    Effect.gen(function* () {
+      const multiplexerEnv = {
+        TMUX: "/tmp/tmux-1000/default,1234,0",
+        TMUX_PANE: "%3",
+        STY: "1234.pts-0.host",
+        WINDOW: "0",
+        ZELLIJ: "0",
+        ZELLIJ_SESSION_NAME: "work",
+        ZELLIJ_PANE_ID: "2",
+      };
+      const { manager, ptyAdapter } = yield* createManager(5, { env: multiplexerEnv });
+      yield* manager.open(openInput());
+      yield* manager.open(openInput({ terminalId: "explicit", env: { TMUX_PANE: "%9" } }));
+
+      for (const key of Object.keys(multiplexerEnv)) {
+        expect(ptyAdapter.spawnInputs[0]?.env[key]).toBeUndefined();
+      }
+      // The blocklist filters only the inherited env; explicit terminal env still wins.
+      expect(ptyAdapter.spawnInputs[1]?.env.TMUX_PANE).toBe("%9");
+    }),
+  );
+
   it.effect("expands provider home paths passed to setup terminals", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5);
