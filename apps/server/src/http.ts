@@ -311,9 +311,12 @@ export const serverEnvironmentHttpApiLayer = HttpApiBuilder.group(
 
 class DecodeOtlpTraceRecordsError extends Data.TaggedError("DecodeOtlpTraceRecordsError")<{
   readonly cause: unknown;
-  readonly bodyJson: OtlpTracer.TraceData;
 }> {}
 
+// Renderers export up to once a second while they have spans buffered, so
+// tracing this proxy would add more server spans than it forwards.
+// withTracerEnabled(false) drops the handler's spans, including the forward.
+// untracedRequestsLayer drops the HTTP server span.
 export const otlpTracesProxyRouteLayer = HttpRouter.add(
   "POST",
   OTLP_TRACES_PROXY_PATH,
@@ -330,15 +333,10 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
 
     yield* Effect.try({
       try: () => decodeOtlpTraceRecords(bodyJson),
-      catch: (cause) => new DecodeOtlpTraceRecordsError({ cause, bodyJson }),
+      catch: (cause) => new DecodeOtlpTraceRecordsError({ cause }),
     }).pipe(
       Effect.flatMap((records) => browserTraceCollector.record(records)),
-      Effect.catch((cause) =>
-        Effect.logWarning("Failed to decode browser OTLP traces", {
-          cause,
-          bodyJson,
-        }),
-      ),
+      Effect.catch((cause) => Effect.logWarning("Failed to decode browser OTLP traces", { cause })),
     );
 
     if (otlpTracesUrl === undefined) {
@@ -369,8 +367,24 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
       EnvironmentInternalError: HttpServerRespondable.toResponse,
       EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
     }),
+    Effect.withTracerEnabled(false),
   ),
 );
+
+const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([OTLP_TRACES_PROXY_PATH]);
+
+// Skips the HTTP server span for UNTRACED_REQUEST_PATHS. That span starts
+// before routing, so a route handler cannot skip it. TracerDisabledWhen is one
+// predicate for the whole server and the last layer to provide it wins, so
+// makeRoutesLayer provides this one last. Add paths here instead of providing
+// TracerDisabledWhen again; server.test.ts fails if a later layer replaces it.
+// The query string is ignored, as in routing.
+export const untracedRequestsLayer = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) => {
+  const queryIndex = request.url.indexOf("?");
+  return UNTRACED_REQUEST_PATHS.has(
+    queryIndex === -1 ? request.url : request.url.slice(0, queryIndex),
+  );
+});
 
 export const assetRouteLayer = HttpRouter.add(
   "GET",

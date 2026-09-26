@@ -16,6 +16,7 @@ import * as Tracer from "effect/Tracer";
 import {
   causeErrorTag,
   compactTraceAttributes,
+  decodeOtlpTraceRecords,
   errorTag,
   makeLocalFileTracer,
   makeTraceSink,
@@ -135,6 +136,53 @@ describe("truncateTraceAttributes", () => {
   it("returns the same reference when nothing exceeds the limits", () => {
     const attributes = { short: "ok", nested: { fine: "also ok" } };
     assert.equal(truncateTraceAttributes(attributes), attributes);
+  });
+});
+
+describe("decodeOtlpTraceRecords", () => {
+  it("clamps oversized renderer span and event attributes", () => {
+    const long = "x".repeat(2_000);
+    const clamped = `${"x".repeat(500)}…[truncated]`;
+    const [record] = decodeOtlpTraceRecords({
+      resourceSpans: [
+        {
+          resource: { attributes: [], droppedAttributesCount: 0 },
+          scopeSpans: [
+            {
+              scope: { name: "effect" },
+              spans: [
+                {
+                  traceId: "11111111111111111111111111111111",
+                  spanId: "2222222222222222",
+                  parentSpanId: undefined,
+                  name: "client.span",
+                  kind: 1,
+                  startTimeUnixNano: "1000000",
+                  endTimeUnixNano: "2000000",
+                  attributes: [{ key: "payload", value: { stringValue: long } }],
+                  droppedAttributesCount: 0,
+                  events: [
+                    {
+                      name: "log",
+                      timeUnixNano: "1500000",
+                      attributes: [{ key: "effect.cause", value: { stringValue: long } }],
+                      droppedAttributesCount: 0,
+                    },
+                  ],
+                  droppedEventsCount: 0,
+                  status: { code: 1 },
+                  links: [],
+                  droppedLinksCount: 0,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    assert.equal(record?.attributes["payload"], clamped);
+    assert.equal(record?.events[0]?.attributes["effect.cause"], clamped);
   });
 });
 
