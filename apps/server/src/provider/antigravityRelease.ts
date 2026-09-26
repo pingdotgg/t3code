@@ -15,6 +15,23 @@ export interface AntigravityReleaseAsset {
   };
 }
 
+/** Asset-map CPU names. Node uses arm64/x64; uname and the ACP registry use aarch64/x86_64. */
+export type AntigravityReleaseArch = "arm64" | "x64";
+
+const RELEASE_ARCH_ALIASES: Record<string, AntigravityReleaseArch> = {
+  arm64: "arm64",
+  aarch64: "arm64",
+  arm64e: "arm64",
+  x64: "x64",
+  x86_64: "x64",
+  amd64: "x64",
+};
+
+/** Maps Node, uname, and ACP-registry CPU names onto the pinned `${platform}-${arch}` keys. */
+export function antigravityReleaseArch(arch: string): AntigravityReleaseArch | null {
+  return RELEASE_ARCH_ALIASES[arch.trim().toLowerCase()] ?? null;
+}
+
 // URLs come from the official registry. Hashes and sizes were checked on 2026-09-03.
 // https://github.com/agentclientprotocol/registry/blob/81bf71b55e15f630c4fb8a86d20d3088071d2071/antigravity-acp/agent.json
 const releaseAssets = new Map<string, AntigravityReleaseAsset>([
@@ -75,9 +92,19 @@ const releaseAssets = new Map<string, AntigravityReleaseAsset>([
   ],
 ]);
 
+/** Pick the pinned Antigravity archive, preferring the host machine CPU over Node's compile arch. */
 export function resolveAntigravityReleaseAsset(
   platform: NodeJS.Platform,
   arch: string,
+  hostMachine: string = arch,
 ): AntigravityReleaseAsset | null {
-  return releaseAssets.get(`${platform}-${arch}`) ?? null;
+  // Prefer the host machine (uname -m / registry aarch64) when it has a pin,
+  // then the Node compile arch, so linux aarch64 never falls through to x64.
+  for (const candidate of [hostMachine, arch]) {
+    const normalized = antigravityReleaseArch(candidate);
+    if (!normalized) continue;
+    const asset = releaseAssets.get(`${platform}-${normalized}`);
+    if (asset) return asset;
+  }
+  return null;
 }
