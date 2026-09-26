@@ -29,6 +29,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 const ROOT = wireFixture.rootThreadId;
 const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
 const MEMORY = "memory-consolidation-thread";
+const encodeMockScript = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeMcpElicitationResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Struct({
@@ -169,8 +170,7 @@ describe("CodexSessionRuntime collab integration", () => {
   it.effect("refreshes and waits for MCP startup before sending each turn", () =>
     Effect.gen(function* () {
       const script = { rootThreadId: ROOT, mcpStartup: true, notifications: [] };
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
-      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      NodeFS.writeFileSync(scriptPath, encodeMockScript(script), "utf8");
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
       );
@@ -183,8 +183,22 @@ describe("CodexSessionRuntime collab integration", () => {
         environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
       });
       yield* runtime.start();
-      yield* runtime.sendTurn({ input: "first turn" });
-      yield* runtime.sendTurn({ input: "second turn" });
+      for (const input of ["first turn", "second turn"]) {
+        const approvalFiber = yield* runtime.events.pipe(
+          Stream.filter((event) => event.method === "mcpServer/elicitation/request"),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const sendFiber = yield* runtime.sendTurn({ input }).pipe(Effect.forkScoped);
+        const approvals = yield* Fiber.join(approvalFiber);
+        const requestId = approvals[0]?.requestId;
+        assert.isDefined(requestId);
+        if (requestId === undefined) return;
+        assert.isUndefined(sendFiber.pollUnsafe(), "turn must wait for MCP startup approval");
+        yield* runtime.respondToRequest(requestId, "accept");
+        yield* Fiber.join(sendFiber);
+      }
       yield* runtime.close;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

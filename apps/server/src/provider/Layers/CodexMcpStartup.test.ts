@@ -64,6 +64,8 @@ it.effect("waits for every paginated server, ignoring stale snapshots and other 
     ]);
     const turn = yield* peer.refresh("root").pipe(Effect.forkChild);
     yield* Deferred.await(peer.listed);
+    yield* peer.emit({ threadId: "root", name: "fast", status: "starting" });
+    yield* peer.emit({ threadId: "root", name: "slow", status: "starting" });
     yield* peer.emit({ threadId: "root", name: "fast", status: "ready" });
     yield* peer.emit({ threadId: "child", name: "slow", status: "ready" });
     yield* peer.emit({ name: "slow", status: "ready" });
@@ -84,11 +86,34 @@ it.effect("waits for every paginated server, ignoring stale snapshots and other 
   }),
 );
 
+it.effect(
+  "ignores a preceding startup's delayed terminal update until each server starts again",
+  () =>
+    Effect.gen(function* () {
+      const peer = yield* makePeer([{ data: [server("tools", "connected")] }]);
+      const turn = yield* peer.refresh("root").pipe(Effect.forkChild);
+      yield* Deferred.await(peer.listed);
+      yield* peer.emit({ threadId: "root", name: "tools", status: "ready" });
+      yield* TestClock.adjust("1 second");
+      NodeAssert.equal(turn.pollUnsafe(), undefined);
+      yield* peer.emit({ threadId: "root", name: "tools", status: "failed" });
+      yield* TestClock.adjust("1 second");
+      NodeAssert.equal(turn.pollUnsafe(), undefined);
+      yield* peer.emit({ threadId: "root", name: "tools", status: "starting" });
+      yield* TestClock.adjust("1 second");
+      NodeAssert.equal(turn.pollUnsafe(), undefined);
+      yield* peer.emit({ threadId: "root", name: "tools", status: "ready" });
+      yield* Fiber.join(turn);
+    }),
+);
+
 it.effect("a failed server does not block the remaining ready servers", () =>
   Effect.gen(function* () {
     const peer = yield* makePeer([{ data: [server("failed"), server("ready")] }]);
     const turn = yield* peer.refresh("root").pipe(Effect.forkChild);
     yield* Deferred.await(peer.listed);
+    yield* peer.emit({ threadId: "root", name: "failed", status: "starting" });
+    yield* peer.emit({ threadId: "root", name: "ready", status: "starting" });
     yield* peer.emit({ threadId: "root", name: "failed", status: "failed" });
     yield* peer.emit({ threadId: "root", name: "ready", status: "ready" });
     yield* Fiber.join(turn);
@@ -115,11 +140,13 @@ it.effect("does not reuse readiness from a previous turn", () =>
     const peer = yield* makePeer([{ data: [server("tools", "connected")] }]);
     const first = yield* peer.refresh("root").pipe(Effect.forkChild);
     yield* Deferred.await(peer.listed);
+    yield* peer.emit({ threadId: "root", name: "tools", status: "starting" });
     yield* peer.emit({ threadId: "root", name: "tools", status: "ready" });
     yield* Fiber.join(first);
     const second = yield* peer.refresh("root").pipe(Effect.forkChild);
     yield* TestClock.adjust("1 second");
     NodeAssert.equal(second.pollUnsafe(), undefined);
+    yield* peer.emit({ threadId: "root", name: "tools", status: "starting" });
     yield* peer.emit({ threadId: "root", name: "tools", status: "ready" });
     yield* Fiber.join(second);
   }),

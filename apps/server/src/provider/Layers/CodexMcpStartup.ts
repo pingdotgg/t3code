@@ -17,6 +17,7 @@ export const makeCodexMcpStartup = Effect.fnUntraced(function* (
     | {
         threadId: string;
         statuses: Map<string, StartupUpdate["status"]>;
+        started: Set<string>;
         changed: Queue.Queue<void>;
       }
     | undefined;
@@ -25,6 +26,10 @@ export const makeCodexMcpStartup = Effect.fnUntraced(function* (
     Effect.gen(function* () {
       // Unscoped notifications cannot prove readiness for this thread's reload.
       if (!active || update.threadId !== active.threadId) return;
+      // A terminal update can arrive late from the preceding startup. Require
+      // this reload's per-server starting boundary before accepting its result.
+      if (update.status === "starting") active.started.add(update.name);
+      else if (!active.started.has(update.name)) return;
       active.statuses.set(update.name, update.status);
       yield* Queue.offer(active.changed, undefined);
     }),
@@ -33,7 +38,7 @@ export const makeCodexMcpStartup = Effect.fnUntraced(function* (
   return Effect.fnUntraced(function* (threadId: string) {
     const changed = yield* Queue.sliding<void>(1);
     const statuses = new Map<string, StartupUpdate["status"]>();
-    active = { threadId, statuses, changed };
+    active = { threadId, statuses, changed, started: new Set() };
     const expected = new Set<string>();
     const isSettled = (name: string) => {
       const status = statuses.get(name);
