@@ -13,8 +13,8 @@ import * as Layer from "effect/Layer";
 import * as ProcessRunner from "../processRunner.ts";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
-// Background sweeps resolve every project each minute, so a found identity must
-// outlive that cadence. Clone and publish resolve with `refresh: true`.
+// Background sweeps resolve every project each minute. A long TTL keeps them
+// from spawning git each time. Clone and publish resolve with `refresh: true`.
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(15);
 // Short, so a folder that gains a repository or a remote shows up quickly.
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
@@ -145,22 +145,22 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
   const refine = options.refine ?? Effect.succeed;
+  // A failed or interrupted lookup is not cached.
+  const timeToLive = (exit: Exit.Exit<unknown>) =>
+    Exit.match(exit, {
+      onSuccess: (value) =>
+        value === null
+          ? (options.negativeCacheTtl ?? DEFAULT_NEGATIVE_CACHE_TTL)
+          : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
+      onFailure: () => Duration.zero,
+    });
 
   const repositoryRootCache = yield* Cache.makeWith<string, string | null>(
     (cwd) =>
       resolveRepositoryIdentityCacheKey(cwd).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
       ),
-    {
-      capacity: cacheCapacity,
-      timeToLive: Exit.match({
-        onSuccess: (value) =>
-          value === null
-            ? (options.negativeCacheTtl ?? DEFAULT_NEGATIVE_CACHE_TTL)
-            : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
-        onFailure: () => Duration.zero,
-      }),
-    },
+    { capacity: cacheCapacity, timeToLive },
   );
 
   const repositoryIdentityCache = yield* Cache.makeWith<string, RepositoryIdentity | null>(
@@ -172,16 +172,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
           (identity) => refine(identity).pipe(Effect.orElseSucceed(() => identity)),
         ),
       ),
-    {
-      capacity: cacheCapacity,
-      timeToLive: Exit.match({
-        onSuccess: (value) =>
-          value === null
-            ? (options.negativeCacheTtl ?? DEFAULT_NEGATIVE_CACHE_TTL)
-            : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
-        onFailure: () => Duration.zero,
-      }),
-    },
+    { capacity: cacheCapacity, timeToLive },
   );
 
   // Untraced because almost every call is a cache hit. The lookups that spawn

@@ -3039,10 +3039,9 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.sourceControlPublishRepository,
             sourceControlRepositories.publishRepository(input).pipe(
-              // The new remote can change the repository identity, which stays
-              // cached for minutes. This refreshes the entry for `cwd` only, so a
-              // publish from a linked worktree leaves the project root entry to
-              // expire on its own.
+              // A new remote can change the cached identity. Only the `cwd` entry
+              // refreshes, so after a publish from a linked worktree the project
+              // root entry waits for its TTL.
               Effect.tap(() => repositoryIdentityResolver.resolve(input.cwd, { refresh: true })),
               Effect.tap(() => refreshGitStatus(input.cwd)),
             ),

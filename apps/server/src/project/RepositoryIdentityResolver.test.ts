@@ -38,41 +38,6 @@ const makeRepositoryIdentityResolverTestLayer = (options: {
     }),
   ).pipe(Layer.provide(ProcessRunner.layer));
 
-// Resolver with default TTLs on a fake git that records its calls. `rootPath`
-// answers `rev-parse --show-toplevel`; null answers like a folder outside any
-// repository.
-const makeFakeGitResolverLayer = (
-  calls: Array<ReadonlyArray<string>>,
-  rootPath: () => string | null,
-) =>
-  Layer.effect(
-    RepositoryIdentityResolver.RepositoryIdentityResolver,
-    RepositoryIdentityResolver.make(),
-  ).pipe(
-    Layer.provide(
-      Layer.succeed(ProcessRunner.ProcessRunner, {
-        run: (input) =>
-          Effect.sync(() => {
-            calls.push(input.args);
-            const root = input.args.includes("rev-parse") ? rootPath() : undefined;
-            return {
-              stdout:
-                root === undefined
-                  ? "origin\tgit@github.com:T3Tools/t3code.git (fetch)\n"
-                  : `${root ?? ""}\n`,
-              stderr: root === null ? "fatal: not a git repository" : "",
-              code: ChildProcessSpawner.ExitCode(root === null ? 128 : 0),
-              timedOut: false,
-              stdoutTruncated: false,
-              stderrTruncated: false,
-              stdoutInvalidUtf8: false,
-              stderrInvalidUtf8: false,
-            };
-          }),
-      }),
-    ),
-  );
-
 it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
   it.effect("refreshes the Git root only when requested", () => {
     const calls: Array<ReadonlyArray<string>> = [];
@@ -129,6 +94,8 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const first = yield* resolver.resolve("/repo/packages/web");
       rootPath = "/repo/packages/web";
+      // Longer than the one-minute cadence of the background sweeps.
+      yield* TestClock.adjust(Duration.minutes(10));
       const second = yield* resolver.resolve("/repo/packages/web");
 
       expect(first?.canonicalKey).toBe("github.com/t3tools/t3code");
@@ -158,41 +125,43 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       const unavailable = yield* resolver.resolve(rootPath, { refresh: true });
       expect(unavailable?.webUrl).toBeUndefined();
       expect(unavailable?.canonicalKey).toBe("ssh.forge.test/team/repo");
-    }).pipe(Effect.provide(resolverLayer));
+    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), resolverLayer)));
   });
 
-  it.effect("reuses a found identity for longer than the one-minute sweep cadence", () => {
+  it.effect("retries Git root discovery after the negative TTL", () => {
     const calls: Array<ReadonlyArray<string>> = [];
-    return Effect.gen(function* () {
-      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
-      const first = yield* resolver.resolve("/repo/packages/web");
-      expect(first?.canonicalKey).toBe("github.com/t3tools/t3code");
+    let rootAttempts = 0;
+    const processRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+      run: (input) =>
+        Effect.sync(() => {
+          calls.push(input.args);
+          const rootLookup = input.args.includes("rev-parse");
+          const failed = rootLookup && rootAttempts++ === 0;
+          return {
+            stdout: rootLookup
+              ? failed
+                ? ""
+                : "/repo\n"
+              : "origin\tgit@github.com:T3Tools/t3code.git (fetch)\n",
+            stderr: failed ? "temporary Git failure" : "",
+            code: ChildProcessSpawner.ExitCode(failed ? 1 : 0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          };
+        }),
+    });
+    const resolverLayer = Layer.effect(
+      RepositoryIdentityResolver.RepositoryIdentityResolver,
+      RepositoryIdentityResolver.make(),
+    ).pipe(Layer.provide(processRunner));
 
-      yield* TestClock.adjust(Duration.minutes(10));
-      expect(yield* resolver.resolve("/repo/packages/web")).toEqual(first);
-      expect(calls).toEqual([
-        ["-C", "/repo/packages/web", "rev-parse", "--show-toplevel"],
-        ["-C", "/repo", "remote", "-v"],
-      ]);
-    }).pipe(
-      Effect.provide(
-        Layer.merge(
-          TestClock.layer(),
-          makeFakeGitResolverLayer(calls, () => "/repo"),
-        ),
-      ),
-    );
-  });
-
-  it.effect("rechecks a folder outside any repository only after the negative TTL", () => {
-    const calls: Array<ReadonlyArray<string>> = [];
-    let rootPath: string | null = null;
     return Effect.gen(function* () {
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       expect(yield* resolver.resolve("/repo/packages/web")).toBeNull();
-      rootPath = "/repo";
       expect(yield* resolver.resolve("/repo/packages/web")).toBeNull();
-      expect(calls).toHaveLength(1);
 
       yield* TestClock.adjust(Duration.minutes(1));
       const recovered = yield* resolver.resolve("/repo/packages/web");
@@ -202,14 +171,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         ["-C", "/repo/packages/web", "rev-parse", "--show-toplevel"],
         ["-C", "/repo", "remote", "-v"],
       ]);
-    }).pipe(
-      Effect.provide(
-        Layer.merge(
-          TestClock.layer(),
-          makeFakeGitResolverLayer(calls, () => rootPath),
-        ),
-      ),
-    );
+    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), resolverLayer)));
   });
 
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
