@@ -4895,7 +4895,7 @@ export default function Sidebar() {
                               <SidebarSectionHeader
                                 key="snoozed-shelf-header"
                                 marker="snoozed-header"
-                                className="mt-auto"
+                                className="mt-4"
                                 label={
                                   snoozedShelfExpanded
                                     ? "Snoozed"
@@ -4913,7 +4913,7 @@ export default function Sidebar() {
                               <SidebarSectionHeader
                                 key="settled-shelf-header"
                                 marker="settled-header"
-                                className={cn(snoozedThreads.length === 0 && "mt-auto")}
+                                className="mt-4"
                                 label={
                                   settledShelfExpanded
                                     ? "Settled"
