@@ -1,3 +1,7 @@
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -72,6 +76,8 @@ const CODEX_PRESENTATION = {
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
   readonly rateLimits?: CodexRateLimitsProbe;
+  /** Email of the ChatGPT login in `auth.json`, read only when `account/read` names no account. */
+  readonly storedLoginEmail?: string | undefined;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
@@ -141,6 +147,40 @@ function codexAccountEmail(account: CodexSchema.V2GetAccountResponse["account"])
   if (!account || account.type !== "chatgpt") return undefined;
   return account.email;
 }
+
+/**
+ * The email claim of the ChatGPT login stored in a Codex home's `auth.json`.
+ * A custom `model_provider` with `requires_openai_auth = false`, such as a
+ * CLIProxyAPI account pool, makes `account/read` report no account, yet
+ * `account/rateLimits/read` still answers for this stored login. Without its
+ * email, Limits cannot tell that those windows belong to an account a
+ * usage-limit source also reports, and shows the account twice.
+ */
+export function codexStoredLoginEmail(authJson: string): string | undefined {
+  try {
+    const idToken: unknown = JSON.parse(authJson)?.tokens?.id_token;
+    const payload = typeof idToken === "string" ? idToken.split(".")[1] : undefined;
+    if (!payload) return undefined;
+    const email: unknown = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"))?.email;
+    return typeof email === "string" && email.trim() ? email.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const readCodexStoredLoginEmail = (homePath: string | undefined, environment: NodeJS.ProcessEnv) =>
+  Effect.tryPromise(() =>
+    NodeFSP.readFile(
+      NodePath.join(
+        homePath || environment.CODEX_HOME || NodePath.join(NodeOS.homedir(), ".codex"),
+        "auth.json",
+      ),
+      "utf8",
+    ),
+  ).pipe(
+    Effect.map(codexStoredLoginEmail),
+    Effect.orElseSucceed(() => undefined),
+  );
 
 export function mapCodexModelCapabilities(
   model: CodexSchema.V2ModelListResponse__Model,
@@ -433,7 +473,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models, rateLimits] = yield* Effect.all(
+  const [skillsResponse, models, rateLimits, storedLoginEmail] = yield* Effect.all(
     [
       client.request("skills/list", {
         cwds: [input.cwd],
@@ -459,6 +499,12 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
           ),
         ),
       ),
+      accountResponse.account
+        ? Effect.succeed(undefined)
+        : readCodexStoredLoginEmail(
+            input.homePath ? expandHomePath(input.homePath) : undefined,
+            input.environment ?? process.env,
+          ),
     ],
     { concurrency: "unbounded" },
   );
@@ -466,6 +512,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   return {
     account: accountResponse,
     rateLimits,
+    ...(storedLoginEmail ? { storedLoginEmail } : {}),
     version,
     models: applyPreferredCodexDefaultModel(
       appendCustomCodexModels(models, input.customModels ?? []),
@@ -529,13 +576,16 @@ const makePendingCodexProvider = (
     });
   });
 
-function accountProbeStatus(account: CodexAppServerProviderSnapshot["account"]): {
+function accountProbeStatus(
+  account: CodexAppServerProviderSnapshot["account"],
+  storedLoginEmail?: string,
+): {
   readonly status: Exclude<ServerProviderState, "disabled">;
   readonly auth: ServerProvider["auth"];
   readonly message?: string;
 } {
   const authLabel = codexAccountAuthLabel(account.account);
-  const authEmail = codexAccountEmail(account.account);
+  const authEmail = account.account ? codexAccountEmail(account.account) : storedLoginEmail;
   const auth = {
     status: account.account ? ("authenticated" as const) : ("unknown" as const),
     ...(account.account?.type ? { type: account.account?.type } : {}),
@@ -654,7 +704,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   }
 
   const snapshot = probeResult.success.value;
-  const accountStatus = accountProbeStatus(snapshot.account);
+  const accountStatus = accountProbeStatus(snapshot.account, snapshot.storedLoginEmail);
   const usageLimits =
     snapshot.account.account?.type === "apiKey"
       ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
