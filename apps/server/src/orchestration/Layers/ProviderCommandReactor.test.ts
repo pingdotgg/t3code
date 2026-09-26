@@ -3685,7 +3685,13 @@ describe("ProviderCommandReactor", () => {
             const thread = (await harness.readModel()).threads.find(
               (entry) => entry.id === ThreadId.make("thread-1"),
             );
-            return thread?.session?.status === "stopped";
+            // The reactor stops the session, then records the failure activity.
+            return (
+              thread?.session?.status === "stopped" &&
+              thread.activities.some(
+                (activity) => activity.kind === "provider.turn.interrupt.failed",
+              )
+            );
           }),
         );
 
