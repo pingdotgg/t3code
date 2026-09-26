@@ -119,6 +119,9 @@ export class ElectronWindow extends Context.Service<
     readonly clearMain: (window: Option.Option<Electron.BrowserWindow>) => Effect.Effect<void>;
     readonly prepareReveal: (window: Electron.BrowserWindow) => Effect.Effect<boolean>;
     readonly reveal: (window: Electron.BrowserWindow) => Effect.Effect<void>;
+    readonly fromWebContentsId: (
+      webContentsId: number,
+    ) => Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly sendAll: (channel: string, ...args: readonly unknown[]) => Effect.Effect<void>;
     readonly destroyAll: Effect.Effect<void>;
     readonly syncAllAppearance: <E, R>(
@@ -323,6 +326,24 @@ export const make = Effect.gen(function* () {
             operation: "reveal-window",
             platform,
             windowId: window.id,
+            channel: null,
+            cause,
+          }),
+      }).pipe(Effect.orDie),
+    fromWebContentsId: (webContentsId) =>
+      Effect.try({
+        try: () => {
+          const contents = Electron.webContents.fromId(webContentsId);
+          if (contents === undefined || contents.isDestroyed()) {
+            return Option.none<Electron.BrowserWindow>();
+          }
+          return Option.fromNullishOr(Electron.BrowserWindow.fromWebContents(contents) ?? null);
+        },
+        catch: (cause) =>
+          new ElectronWindowOperationError({
+            operation: "inspect-window",
+            platform,
+            windowId: null,
             channel: null,
             cause,
           }),

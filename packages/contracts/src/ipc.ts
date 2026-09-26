@@ -1114,6 +1114,11 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
   input: PreviewAutomationWaitForInput,
 });
 
+export interface DesktopThreadDeepLinkPayload {
+  readonly environmentId: string;
+  readonly threadId: string;
+}
+
 /**
  * A System Settings pane the app can deep-link to. The identifier crosses IPC
  * rather than a URL, so the renderer can only reach these known destinations.
@@ -1229,6 +1234,12 @@ export interface DesktopBridge {
   pasteAsText?: () => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   onSnapShotEvent?: (listener: (event: DesktopSnapShotEvent) => void) => () => void;
+  /**
+   * Thread deep links (`t3code://threads/<environmentId>/<threadId>`, also
+   * `t3code://app/...`) forwarded from the OS by the main process.
+   * Optional: older desktop builds never emit it.
+   */
+  onDeepLink?: (listener: (payload: DesktopThreadDeepLinkPayload) => void) => () => void;
   /**
    * Quit-confirmation hint pushes. Optional: older desktop builds never emit
    * them.
