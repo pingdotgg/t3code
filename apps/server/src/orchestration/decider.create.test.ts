@@ -1,6 +1,7 @@
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  MessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -96,6 +97,55 @@ describe("decider thread.create hierarchy", () => {
       type: "thread.created",
       payload: { parentThreadId },
     });
+  });
+
+  it("records a batch wait in the same transaction that creates its first child", async () => {
+    const childThreadId = ThreadId.make("child-thread");
+    const secondChildThreadId = ThreadId.make("second-child-thread");
+    const assignmentId = MessageId.make("child-assignment");
+    const parentWait = {
+      mode: "all" as const,
+      assignments: [
+        { childThreadId, assignmentId },
+        {
+          childThreadId: secondChildThreadId,
+          assignmentId: MessageId.make("second-child-assignment"),
+        },
+      ],
+    };
+    const command = {
+      ...createCommand({
+        threadId: childThreadId,
+        delegation: {
+          assignmentId,
+          followUp: "automatic",
+          completedAt: null,
+        },
+      }),
+      parentWait,
+    };
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({ command, readModel: createReadModel() }),
+    );
+    const events = Array.isArray(result) ? result : [result];
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "thread.created",
+          payload: expect.objectContaining({ threadId: childThreadId, parentThreadId }),
+        }),
+        expect.objectContaining({
+          type: "thread.meta-updated",
+          payload: expect.objectContaining({
+            threadId: parentThreadId,
+            nudging: expect.objectContaining({
+              wait: { mode: "all", assignments: parentWait.assignments },
+            }),
+          }),
+        }),
+      ]),
+    );
   });
 
   it("rejects a parent from another project", async () => {

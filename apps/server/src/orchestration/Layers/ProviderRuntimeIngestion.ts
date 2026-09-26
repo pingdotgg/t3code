@@ -1,4 +1,3 @@
-// @ts-nocheck
 import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
@@ -1372,6 +1371,7 @@ const make = Effect.gen(function* () {
       if (!thread?.reviewSnapshot) {
         return;
       }
+      const reviewSnapshot = thread.reviewSnapshot;
       const output =
         thread.messages
           .filter(
@@ -1397,10 +1397,10 @@ const make = Effect.gen(function* () {
         thread,
         projects: readModel.projects,
       });
-      if (cwd === null) {
+      if (cwd == null) {
         yield* Effect.logWarning("Discarding review result because the worktree is unavailable", {
           threadId: input.threadId,
-          snapshotHash: thread.reviewSnapshot.diffHash,
+          snapshotHash: reviewSnapshot.diffHash,
         });
         return;
       }
@@ -1408,12 +1408,12 @@ const make = Effect.gen(function* () {
       // the diff as it stands now rather than the snapshot taken at thread
       // creation, which is stale once the user pushes fixes and re-reviews.
       const snapshot = yield* reviewSnapshotVerifier
-        .currentSnapshot({ cwd, snapshot: thread.reviewSnapshot })
+        .currentSnapshot({ cwd, snapshot: reviewSnapshot })
         .pipe(
           Effect.tapError((error) =>
             Effect.logWarning("Discarding review result because the diff could not be resolved", {
               threadId: input.threadId,
-              snapshotHash: thread.reviewSnapshot.diffHash,
+              snapshotHash: reviewSnapshot.diffHash,
               error,
             }),
           ),

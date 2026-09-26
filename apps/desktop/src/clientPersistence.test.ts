@@ -85,6 +85,7 @@ const clientSettings: ClientSettings = {
     "environment-1:/tmp/project-a": "separate",
   },
   sidebarProjectSortOrder: "manual",
+  sidebarThreadFilter: "all",
   sidebarThreadSortOrder: "created_at",
   sidebarV2Enabled: false,
   threadCompletionNotifications: "background-only",

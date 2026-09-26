@@ -559,6 +559,31 @@ describe("OrchestrationEngine", () => {
         pullRequest,
       );
       expect(projected).toHaveLength(eventCount + 2);
+
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("clear-child-wait"),
+          threadId,
+          childWait: null,
+        }),
+      );
+      const clearedWait = await system.run(system.engine.getReadModel());
+      const pruneCommand = {
+        type: "thread.child.wait.prune" as const,
+        commandId: CommandId.make("prune-cleared-child-wait"),
+        threadId,
+        assignments: [
+          {
+            childThreadId: ThreadId.make("missing-child"),
+            assignmentId: MessageId.make("missing-assignment"),
+          },
+        ],
+      };
+      const pruned = await system.run(system.engine.dispatch(pruneCommand));
+      expect(pruned.sequence).toBe(clearedWait.snapshotSequence);
+      expect(await system.run(system.engine.getReadModel())).toEqual(clearedWait);
+      expect(await system.run(system.engine.dispatch(pruneCommand))).toEqual(pruned);
     } finally {
       await system.dispose();
     }

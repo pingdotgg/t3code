@@ -73,6 +73,7 @@ import {
 import { useLocation, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import {
   type SidebarProjectSortOrder,
+  type SidebarThreadFilter,
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts/settings";
 import { usePrimaryEnvironmentId } from "../environments/primary";
@@ -183,6 +184,8 @@ import {
   resolveThreadRowClassName,
   resolveSidebarThreadClickKind,
   resolveThreadStatusPill,
+  filterSidebarThreads,
+  SIDEBAR_THREAD_FILTER_LABELS,
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
@@ -1490,6 +1493,7 @@ interface SidebarProjectItemProps {
   suppressProjectClickAfterDragRef: React.RefObject<boolean>;
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
   isManualProjectSorting: boolean;
+  threadFilter: SidebarThreadFilter;
   dragHandleProps: SortableProjectHandleProps | null;
   /**
    * Set when the sidebar is filtered to this single project: the header would
@@ -1519,6 +1523,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     suppressProjectClickAfterDragRef,
     suppressProjectClickForContextMenuRef,
     isManualProjectSorting,
+    threadFilter,
     dragHandleProps,
   } = props;
   const threadSortOrder = useSettings<SidebarThreadSortOrder>(
@@ -1713,53 +1718,52 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     return counts;
   }, [memberProjectByScopedKey, project.memberProjects, projectThreads]);
 
-  const {
-    projectStatus,
-    visibleProjectThreads,
-    visibleProjectThreadRows,
-    threadStatusByKey,
-    orderedProjectThreadKeys,
-  } = useMemo(() => {
-    const lastVisitedAtByThreadKey = new Map(
-      projectThreads.map((thread, index) => [
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-        threadLastVisitedAts[index] ?? null,
-      ]),
-    );
-    const resolveProjectThreadStatus = (thread: SidebarThreadSummary) => {
-      const lastVisitedAt = lastVisitedAtByThreadKey.get(
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+  const visibleProjectThreads = useMemo(
+    () => selectVisibleSidebarThreads(filterSidebarThreads(projectThreads, threadFilter)),
+    [projectThreads, threadFilter],
+  );
+  const { projectStatus, visibleProjectThreadRows, threadStatusByKey, orderedProjectThreadKeys } =
+    useMemo(() => {
+      const lastVisitedAtByThreadKey = new Map(
+        projectThreads.map((thread, index) => [
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          threadLastVisitedAts[index] ?? null,
+        ]),
       );
-      return resolveThreadStatusPill({
-        thread,
-        lastVisitedAt,
+      const resolveProjectThreadStatus = (thread: SidebarThreadSummary) => {
+        const lastVisitedAt = lastVisitedAtByThreadKey.get(
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        );
+        return resolveThreadStatusPill({
+          thread,
+          lastVisitedAt,
+        });
+      };
+      const threadRows = buildSidebarThreadRows({
+        threads: visibleProjectThreads,
+        pinnedThreadKeys,
+        activeThreadKey: activeRouteThreadKey ?? undefined,
+        expandedOverrideByThreadKey: threadExpandedOverrides,
+        sortOrder: threadSortOrder,
+        resolveThreadStatus: resolveProjectThreadStatus,
       });
-    };
-    const visibleProjectThreads = selectVisibleSidebarThreads(projectThreads);
-    const threadRows = buildSidebarThreadRows({
-      threads: visibleProjectThreads,
+      return {
+        orderedProjectThreadKeys: threadRows.orderedThreadKeys,
+        projectStatus: threadRows.projectStatus,
+        visibleProjectThreads,
+        visibleProjectThreadRows: threadRows.rowViews,
+        threadStatusByKey: threadRows.statusByThreadKey,
+      };
+    }, [
+      activeRouteThreadKey,
+      threadExpandedOverrides,
       pinnedThreadKeys,
-      activeThreadKey: activeRouteThreadKey ?? undefined,
-      expandedOverrideByThreadKey: threadExpandedOverrides,
-      sortOrder: threadSortOrder,
-      resolveThreadStatus: resolveProjectThreadStatus,
-    });
-    return {
-      orderedProjectThreadKeys: threadRows.orderedThreadKeys,
-      projectStatus: threadRows.projectStatus,
+      projectThreads,
+      threadExpandedOverrides,
+      threadLastVisitedAts,
+      threadSortOrder,
       visibleProjectThreads,
-      visibleProjectThreadRows: threadRows.rowViews,
-      threadStatusByKey: threadRows.statusByThreadKey,
-    };
-  }, [
-    activeRouteThreadKey,
-    threadExpandedOverrides,
-    pinnedThreadKeys,
-    projectThreads,
-    threadExpandedOverrides,
-    threadLastVisitedAts,
-    threadSortOrder,
-  ]);
+    ]);
 
   const pinnedCollapsedThread = useMemo(() => {
     const activeThreadKey = activeRouteThreadKey ?? undefined;
@@ -2881,16 +2885,20 @@ const ProjectFilterMenu = memo(function ProjectFilterMenu({
 function ProjectSortMenu({
   projectSortOrder,
   threadSortOrder,
+  threadFilter,
   projectGroupingMode,
   onProjectSortOrderChange,
   onThreadSortOrderChange,
+  onThreadFilterChange,
   onProjectGroupingModeChange,
 }: {
   projectSortOrder: SidebarProjectSortOrder;
   threadSortOrder: SidebarThreadSortOrder;
+  threadFilter: SidebarThreadFilter;
   projectGroupingMode: SidebarProjectGroupingMode;
   onProjectSortOrderChange: (sortOrder: SidebarProjectSortOrder) => void;
   onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
+  onThreadFilterChange: (filter: SidebarThreadFilter) => void;
   onProjectGroupingModeChange: (mode: SidebarProjectGroupingMode) => void;
 }) {
   return (
@@ -2941,6 +2949,36 @@ function ProjectSortMenu({
           >
             {(
               Object.entries(SIDEBAR_THREAD_SORT_LABELS) as Array<[SidebarThreadSortOrder, string]>
+            ).map(([value, label]) => (
+              <MenuRadioItem
+                key={value}
+                value={value}
+                className="min-h-7 py-1 text-[length:var(--app-sidebar-font-size)]"
+              >
+                {label}
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        </MenuGroup>
+        <MenuGroup>
+          <div className="px-2 pt-2 pb-1 font-medium text-[length:var(--app-sidebar-font-size)] text-muted-foreground">
+            Show threads
+          </div>
+          <MenuRadioGroup
+            value={threadFilter}
+            onValueChange={(value) => {
+              if (
+                value === "all" ||
+                value === "active" ||
+                value === "with_pr" ||
+                value === "open_pr"
+              ) {
+                onThreadFilterChange(value as SidebarThreadFilter);
+              }
+            }}
+          >
+            {(
+              Object.entries(SIDEBAR_THREAD_FILTER_LABELS) as Array<[SidebarThreadFilter, string]>
             ).map(([value, label]) => (
               <MenuRadioItem
                 key={value}
@@ -3146,6 +3184,7 @@ interface SidebarProjectsContentProps {
   handleDesktopUpdateButtonClick: () => void;
   projectSortOrder: SidebarProjectSortOrder;
   threadSortOrder: SidebarThreadSortOrder;
+  threadFilter: SidebarThreadFilter;
   projectGroupingMode: SidebarProjectGroupingMode;
   updateSettings: ReturnType<typeof useUpdateSettings>["updateSettings"];
   openAddProject: () => void;
@@ -3267,6 +3306,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     handleDesktopUpdateButtonClick,
     projectSortOrder,
     threadSortOrder,
+    threadFilter,
     projectGroupingMode,
     updateSettings,
     openAddProject,
@@ -3365,6 +3405,12 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     },
     [updateSettings],
   );
+  const handleThreadFilterChange = useCallback(
+    (filter: SidebarThreadFilter) => {
+      updateSettings({ sidebarThreadFilter: filter });
+    },
+    [updateSettings],
+  );
   const handleProjectGroupingModeChange = useCallback(
     (groupingMode: SidebarProjectGroupingMode) => {
       updateSettings({ sidebarProjectGroupingMode: groupingMode });
@@ -3423,9 +3469,11 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             <ProjectSortMenu
               projectSortOrder={projectSortOrder}
               threadSortOrder={threadSortOrder}
+              threadFilter={threadFilter}
               projectGroupingMode={projectGroupingMode}
               onProjectSortOrderChange={handleProjectSortOrderChange}
               onThreadSortOrderChange={handleThreadSortOrderChange}
+              onThreadFilterChange={handleThreadFilterChange}
               onProjectGroupingModeChange={handleProjectGroupingModeChange}
             />
             <Tooltip>
@@ -3508,6 +3556,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                           suppressProjectClickForContextMenuRef
                         }
                         isManualProjectSorting={isManualProjectSorting}
+                        threadFilter={threadFilter}
                         hideProjectHeader={hideProjectHeader}
                         dragHandleProps={dragHandleProps}
                       />
@@ -3543,6 +3592,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
                 suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
                 isManualProjectSorting={isManualProjectSorting}
+                threadFilter={threadFilter}
                 hideProjectHeader={hideProjectHeader}
                 dragHandleProps={null}
               />
@@ -3585,6 +3635,7 @@ export default function Sidebar() {
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const isOnSettings = pathname.startsWith("/settings");
   const sidebarThreadSortOrder = useSettings((s) => s.sidebarThreadSortOrder);
+  const sidebarThreadFilter = useSettings((s) => s.sidebarThreadFilter);
   const sidebarProjectSortOrder = useSettings((s) => s.sidebarProjectSortOrder);
   const sidebarProjectGroupingMode = useSettings((s) => s.sidebarProjectGroupingMode);
   const projectGroupingSettings = useSettings((settings) => ({
@@ -3698,11 +3749,13 @@ export default function Sidebar() {
     return physicalToLogicalKey.get(physicalKey) ?? physicalKey;
   }, [routeThreadKey, sidebarThreadByKey, physicalToLogicalKey, projectPhysicalKeyByScopedRef]);
 
-  // Group threads by logical project key so all threads from grouped projects
-  // are displayed together.
-  const threadsByProjectKey = useMemo(() => {
+  const filteredSidebarThreads = useMemo(
+    () => filterSidebarThreads(sidebarThreads, sidebarThreadFilter),
+    [sidebarThreadFilter, sidebarThreads],
+  );
+  const filteredThreadsByProjectKey = useMemo(() => {
     const next = new Map<string, SidebarThreadSummary[]>();
-    for (const thread of sidebarThreads) {
+    for (const thread of filteredSidebarThreads) {
       const physicalKey =
         projectPhysicalKeyByScopedRef.get(
           scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
@@ -3716,7 +3769,7 @@ export default function Sidebar() {
       }
     }
     return next;
-  }, [sidebarThreads, physicalToLogicalKey, projectPhysicalKeyByScopedRef]);
+  }, [filteredSidebarThreads, physicalToLogicalKey, projectPhysicalKeyByScopedRef]);
   const getCurrentSidebarShortcutContext = useCallback(
     () => ({
       terminalFocus: isTerminalFocused(),
@@ -3843,8 +3896,8 @@ export default function Sidebar() {
   }, []);
 
   const visibleThreads = useMemo(
-    () => selectVisibleSidebarThreads(sidebarThreads),
-    [sidebarThreads],
+    () => selectVisibleSidebarThreads(filteredSidebarThreads),
+    [filteredSidebarThreads],
   );
   const sortedProjects = useMemo(() => {
     const sortableProjects = sidebarProjects.map((project) => ({
@@ -3912,7 +3965,7 @@ export default function Sidebar() {
       });
       const activeThreadKey = routeThreadKey ?? undefined;
       const projectThreads = selectVisibleSidebarThreads(
-        threadsByProjectKey.get(project.projectKey) ?? [],
+        filteredThreadsByProjectKey.get(project.projectKey) ?? [],
       );
       const pinnedCollapsedThreadKey =
         !projectExpanded && activeThreadKey
@@ -3953,7 +4006,7 @@ export default function Sidebar() {
     sidebarThreads,
     sidebarThreadSortOrder,
     visibleProjects,
-    threadsByProjectKey,
+    filteredThreadsByProjectKey,
   ]);
   const threadJumpCommandByKey = useMemo(() => {
     const mapping = new Map<string, NonNullable<ReturnType<typeof threadJumpCommandForIndex>>>();
@@ -4223,6 +4276,7 @@ export default function Sidebar() {
             handleDesktopUpdateButtonClick={handleDesktopUpdateButtonClick}
             projectSortOrder={sidebarProjectSortOrder}
             threadSortOrder={sidebarThreadSortOrder}
+            threadFilter={sidebarThreadFilter}
             projectGroupingMode={sidebarProjectGroupingMode}
             updateSettings={updateSettings}
             openAddProject={openAddProjectCommandPalette}

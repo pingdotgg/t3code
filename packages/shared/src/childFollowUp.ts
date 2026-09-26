@@ -61,26 +61,6 @@ export function childWaitBlockReason(
   return `Waiting for ${wait.mode === "any" ? "any of " : ""}${remaining} ${remaining === 1 ? "child" : "children"}.`;
 }
 
-export function staleChildWaitAssignments(
-  wait: ChildWaitCondition | null | undefined,
-  children: ReadonlyMap<ThreadId, ChildFollowUpThread>,
-  parentId?: ThreadId,
-): Array<ChildWaitCondition["assignments"][number]> {
-  if (!wait || wait.satisfiedAt || wait.mode === "decisions-only") return [];
-  return wait.assignments.filter((assignment) => {
-    if (assignment.outcome) return false;
-    const child = children.get(assignment.childThreadId);
-    if (!child || child.archivedAt !== null || child.deletedAt != null) return false;
-    if (parentId !== undefined && child.parentThreadId !== parentId) return false;
-    const delegation = child.nudging?.delegation;
-    if (!delegation) return false;
-    // Caller gates on a terminal report (result/failed/blocked from the
-    // authorized execution); the read-model copy may not yet project
-    // completedAt, so mismatch alone establishes staleness here.
-    return delegation.assignmentId !== assignment.assignmentId;
-  });
-}
-
 export function evaluateChildFollowUp(
   parent: ChildFollowUpThread,
   turn: OrchestrationQueuedTurn,
@@ -92,14 +72,13 @@ export function evaluateChildFollowUp(
     const child = children.get(report.childThreadId);
     if (child && child.parentThreadId !== undefined && child.parentThreadId !== parent.id)
       return false;
-    // Stale-assignment diagnostics intentionally reference the waited (old)
-    // assignment id rather than the child's current one; keep them so the
-    // parent wakes fail-fast instead of stranding on an unavailable wait.
-    const isStaleDiagnostic =
-      report.kind === "blocked" && report.id.startsWith("assignment-stale:");
+    // Terminal results were already accepted when queued. Reassignment must
+    // not erase a result that is waiting for this parent to dispatch.
+    const isTerminalReport =
+      report.kind === "result-available" || report.kind === "failed" || report.kind === "blocked";
     const delegation = child?.nudging?.delegation;
     if (
-      !isStaleDiagnostic &&
+      !isTerminalReport &&
       delegation &&
       (delegation.assignmentId !== report.assignmentId ||
         (report.dispatchId !== undefined &&

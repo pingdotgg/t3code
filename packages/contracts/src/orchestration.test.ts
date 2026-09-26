@@ -773,6 +773,26 @@ it.effect("rejects an explicit title combined with title regeneration", () =>
   }),
 );
 
+it.effect("rejects an unparseable child wait deadline", () =>
+  Effect.gen(function* () {
+    for (const deadlineAt of ["not-a-date", "2026-09-25", "2026-02-30T00:00:00.000Z"]) {
+      const result = yield* Effect.exit(
+        decodeOrchestrationCommand({
+          type: "thread.meta.update",
+          commandId: "cmd-invalid-child-wait-deadline",
+          threadId: "thread-1",
+          childWait: {
+            mode: "all",
+            assignments: [{ childThreadId: "child-1", assignmentId: "assignment-1" }],
+            deadlineAt,
+          },
+        }),
+      );
+      assert.strictEqual(result._tag, "Failure");
+    }
+  }),
+);
+
 it.effect("accepts a source proposed plan reference in thread.turn.start", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({

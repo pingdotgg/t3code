@@ -1,4 +1,3 @@
-// @ts-nocheck
 import {
   CheckpointRef,
   CommandId,
@@ -12,7 +11,7 @@ import {
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
-import { Cause, Effect, Layer, Option, Schedule, Stream } from "effect";
+import { Cause, Effect, Layer, Option, Schedule, Schema, Stream } from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { deriveTurnScopedCheckpointFiles } from "../../checkpointing/TurnScopedFiles.ts";
@@ -91,6 +90,8 @@ function isNonAuthoritativeCheckpoint(status: string): boolean {
   return status === "missing" || status === "speculative";
 }
 
+const isCheckpointInvariantError = Schema.is(CheckpointInvariantError);
+
 function isWorkspaceGenerationMismatch(error: unknown): boolean {
   if (error === null || error === undefined || typeof error !== "object") {
     return false;
@@ -99,8 +100,7 @@ function isWorkspaceGenerationMismatch(error: unknown): boolean {
   const detail =
     (error as { readonly detail?: unknown }).detail ??
     (error as { readonly message?: unknown }).message;
-  const isInvariant =
-    tag === "CheckpointInvariantError" || error instanceof CheckpointInvariantError;
+  const isInvariant = tag === "CheckpointInvariantError" || isCheckpointInvariantError(error);
   return (
     isInvariant &&
     typeof detail === "string" &&
@@ -254,6 +254,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly turnId: TurnId;
     readonly thread: {
+      readonly id: ThreadId;
       readonly messages: ReadonlyArray<{
         readonly id: MessageId;
         readonly role: string;
@@ -273,6 +274,12 @@ const make = Effect.gen(function* () {
     readonly status: "ready" | "missing" | "error";
     readonly assistantMessageId: MessageId | undefined;
     readonly createdAt: string;
+    readonly workspaceBinding?: {
+      readonly canonicalPath: string;
+      readonly worktreePath: string;
+      readonly branch: string | null;
+      readonly generation: number;
+    };
   }) {
     yield* assertThreadWorkspaceOwned(input.thread);
     const fromTurnCount = Math.max(0, input.turnCount - 1);
@@ -964,11 +971,11 @@ const make = Effect.gen(function* () {
       revertCommitted = true;
 
       yield* workspaceEntries.invalidate(sessionRuntime.value.cwd).pipe(
-        Effect.catch((error) =>
+        Effect.catchCause((cause) =>
           Effect.logWarning("checkpoint revert could not invalidate workspace entries", {
             threadId: event.payload.threadId,
             turnCount: event.payload.turnCount,
-            detail: error.message,
+            cause: Cause.pretty(cause),
           }),
         ),
       );
@@ -1004,22 +1011,37 @@ const make = Effect.gen(function* () {
                     ? Effect.sync(() => {
                         guardRestored = true;
                       })
-                    : Effect.fail(
-                        new CheckpointInvariantError({
-                          operation: "CheckpointReactor.handleRevertRequested",
-                          detail: "Failed to restore the pre-revert workspace guard.",
-                        }),
-                      ),
+                    : Effect.logError("Failed to restore the pre-revert workspace guard.", {
+                        threadId: event.payload.threadId,
+                        turnCount: event.payload.turnCount,
+                      }),
+                ),
+                Effect.catchCause((cause) =>
+                  Effect.logError("Checkpoint revert guard restoration failed.", {
+                    threadId: event.payload.threadId,
+                    turnCount: event.payload.turnCount,
+                    cause: Cause.pretty(cause),
+                  }),
                 ),
               ),
       ),
       Effect.ensuring(
         Effect.suspend(() =>
           revertCommitted || guardRestored
-            ? checkpointStore.deleteCheckpointRefs({
-                cwd: sessionRuntime.value.cwd,
-                checkpointRefs: [revertGuardRef],
-              })
+            ? checkpointStore
+                .deleteCheckpointRefs({
+                  cwd: sessionRuntime.value.cwd,
+                  checkpointRefs: [revertGuardRef],
+                })
+                .pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("checkpoint revert left its guard ref for later cleanup", {
+                      threadId: event.payload.threadId,
+                      turnCount: event.payload.turnCount,
+                      cause: Cause.pretty(cause),
+                    }),
+                  ),
+                )
             : Effect.void,
         ),
       ),

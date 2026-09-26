@@ -1781,6 +1781,10 @@ describe("delegate_work MCP tool", () => {
                 promptTemplate: expect.any(Object),
               }),
             }),
+            wait: expect.objectContaining({
+              type: "string",
+              enum: ["all", "any", "none"],
+            }),
             children: expect.objectContaining({
               minItems: 1,
               maxItems: 16,
@@ -1793,6 +1797,243 @@ describe("delegate_work MCP tool", () => {
         }),
       }),
     ]);
+  });
+
+  it("installs wait-all before creation can report and prunes failed assignments", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "t3-mcp-delegate-wait-"));
+    const callsPath = path.join(root, "cli-calls.jsonl");
+    const originalCallsPath = process.env.T3_MCP_TEST_CALLS;
+    const cliScript = `
+      const fs = require("node:fs");
+      const args = process.argv.slice(1);
+      fs.appendFileSync(process.env.T3_MCP_TEST_CALLS, JSON.stringify(args) + "\\n");
+      const value = (flag) => {
+        const index = args.indexOf(flag);
+        return index < 0 ? undefined : args[index + 1];
+      };
+      const chatIndex = args.indexOf("chat");
+      const command = chatIndex < 0 ? undefined : args[chatIndex + 1];
+      if (args.includes("--dry-run")) {
+        console.log(JSON.stringify({
+          status: "dry-run",
+          threadId: null,
+          threadUrl: null,
+          retryable: false,
+          workspaceCreated: false,
+          cleanupPerformed: false,
+          errorCode: null,
+          message: "Nested-thread inputs are valid; no thread or workspace was created."
+        }));
+      } else if (command === "wait-prune") {
+        console.log(JSON.stringify({ updated: true }));
+      } else if (value("--title") === "Fail") {
+        console.log(JSON.stringify({
+          status: "failed",
+          threadId: value("--thread-id"),
+          threadUrl: null,
+          retryable: false,
+          workspaceCreated: false,
+          cleanupPerformed: false,
+          errorCode: "THREAD_CLEANUP_REJECTED",
+          message: "The failed child was retained."
+        }));
+      } else {
+        console.log(JSON.stringify({
+          ...${JSON.stringify(createdOutcome)},
+          threadId: value("--thread-id") || "child-created",
+          assignmentId: value("--assignment-id") || "assignment-created"
+        }));
+      }
+    `;
+
+    try {
+      process.env.T3_MCP_TEST_CALLS = callsPath;
+      const result = JSON.parse(
+        await __testing.delegateWorkTool(
+          {
+            ...options(root, process.execPath),
+            cliArgsPrefix: ["-e", cliScript, "--"],
+          },
+          {
+            wait: "all",
+            concurrency: 1,
+            children: [
+              { title: "Keep", prompt: "Complete this work." },
+              { title: "Fail", prompt: "This creation will fail." },
+              {
+                title: "Notify",
+                prompt: "Record this work without a wake.",
+                followUp: "notify-only",
+              },
+            ],
+          },
+        ),
+      );
+      const calls = (await readFile(callsPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      const firstCreate = calls.find((args) => {
+        const chatIndex = args.indexOf("chat");
+        const titleIndex = args.indexOf("--title");
+        return (
+          chatIndex >= 0 &&
+          args[chatIndex + 1] === "new" &&
+          !args.includes("--dry-run") &&
+          titleIndex >= 0 &&
+          args[titleIndex + 1] === "Keep"
+        );
+      })!;
+      const parentWaitIndex = firstCreate.indexOf("--parent-wait");
+      expect(parentWaitIndex).toBeGreaterThan(-1);
+      const firstWait = JSON.parse(firstCreate[parentWaitIndex + 1]!);
+      const waitPrune = calls.find((args) => {
+        const chatIndex = args.indexOf("chat");
+        return chatIndex >= 0 && args[chatIndex + 1] === "wait-prune";
+      })!;
+      const removedAssignments = JSON.parse(waitPrune[waitPrune.indexOf("wait-prune") + 2]!);
+
+      expect(
+        result.results.map((entry: { outcome: { status: string } }) => entry.outcome.status),
+      ).toEqual(["created", "failed", "created"]);
+      expect(firstWait).toMatchObject({
+        mode: "all",
+        assignments: expect.arrayContaining([
+          expect.objectContaining({
+            childThreadId: firstCreate[firstCreate.indexOf("--thread-id") + 1],
+          }),
+        ]),
+      });
+      expect(firstWait.assignments).toHaveLength(2);
+      expect(removedAssignments).toEqual([
+        {
+          childThreadId: result.results[1]!.outcome.threadId,
+          assignmentId: firstWait.assignments.find(
+            (assignment: { childThreadId: string }) =>
+              assignment.childThreadId === result.results[1]!.outcome.threadId,
+          )!.assignmentId,
+        },
+      ]);
+
+      await writeFile(callsPath, "");
+      await __testing.delegateWorkTool(
+        {
+          ...options(root, process.execPath),
+          cliArgsPrefix: ["-e", cliScript, "--"],
+        },
+        {
+          wait: "all",
+          children: [{ title: "Fail", prompt: "The retained child failed to start." }],
+        },
+      );
+      const failedOnlyCalls = (await readFile(callsPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      expect(
+        failedOnlyCalls.some((args) => {
+          const chatIndex = args.indexOf("chat");
+          return chatIndex >= 0 && args[chatIndex + 1] === "wait-prune";
+        }),
+      ).toBe(true);
+    } finally {
+      if (originalCallsPath === undefined) delete process.env.T3_MCP_TEST_CALLS;
+      else process.env.T3_MCP_TEST_CALLS = originalCallsPath;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("defaults multi-child automatic work to all and leaves notify-only work ungrouped", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "t3-mcp-delegate-wait-default-"));
+    const callsPath = path.join(root, "cli-calls.jsonl");
+    const originalCallsPath = process.env.T3_MCP_TEST_CALLS;
+    const cliScript = `
+      const fs = require("node:fs");
+      const args = process.argv.slice(1);
+      fs.appendFileSync(process.env.T3_MCP_TEST_CALLS, JSON.stringify(args) + "\\n");
+      const value = (flag) => {
+        const index = args.indexOf(flag);
+        return index < 0 ? undefined : args[index + 1];
+      };
+      const chatIndex = args.indexOf("chat");
+      const command = chatIndex < 0 ? undefined : args[chatIndex + 1];
+      if (args.includes("--dry-run")) {
+        console.log(JSON.stringify({
+          status: "dry-run",
+          threadId: null,
+          threadUrl: null,
+          retryable: false,
+          workspaceCreated: false,
+          cleanupPerformed: false,
+          errorCode: null,
+          message: "Nested-thread inputs are valid; no thread or workspace was created."
+        }));
+      } else if (command === "wait") {
+        console.log(JSON.stringify({ updated: true }));
+      } else {
+        console.log(JSON.stringify({
+          ...${JSON.stringify(createdOutcome)},
+          threadId: value("--thread-id") || "child-created",
+          assignmentId: value("--assignment-id") || "assignment-created"
+        }));
+      }
+    `;
+    const invoke = async (
+      defaults: Record<string, unknown> | undefined,
+      children: Array<{ title: string; prompt: string }>,
+    ) => {
+      await writeFile(callsPath, "");
+      await __testing.delegateWorkTool(
+        {
+          ...options(root, process.execPath),
+          cliArgsPrefix: ["-e", cliScript, "--"],
+        },
+        {
+          ...(defaults ? { defaults } : {}),
+          concurrency: 1,
+          children,
+        },
+      );
+      return (await readFile(callsPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+    };
+    const isCreate = (args: string[]) => {
+      const chatIndex = args.indexOf("chat");
+      return chatIndex >= 0 && args[chatIndex + 1] === "new" && !args.includes("--dry-run");
+    };
+    const isWait = (args: string[]) => {
+      const chatIndex = args.indexOf("chat");
+      return chatIndex >= 0 && args[chatIndex + 1] === "wait";
+    };
+
+    try {
+      process.env.T3_MCP_TEST_CALLS = callsPath;
+      const automaticCalls = await invoke(undefined, [
+        { title: "First", prompt: "First result." },
+        { title: "Second", prompt: "Second result." },
+      ]);
+      const automaticCreate = automaticCalls.find(isCreate)!;
+      const automaticWaitIndex = automaticCreate.indexOf("--parent-wait");
+      expect(automaticWaitIndex).toBeGreaterThan(-1);
+      const automaticWait = JSON.parse(automaticCreate[automaticWaitIndex + 1]!);
+      expect(automaticWait).toMatchObject({ mode: "all", assignments: expect.any(Array) });
+      expect(automaticWait.assignments).toHaveLength(2);
+
+      const notifyOnlyCalls = await invoke({ followUp: "notify-only" }, [
+        { title: "Notify first", prompt: "Record first." },
+        { title: "Notify second", prompt: "Record second." },
+      ]);
+      expect(
+        notifyOnlyCalls.filter(isCreate).every((args) => !args.includes("--parent-wait")),
+      ).toBe(true);
+      expect(notifyOnlyCalls.some(isWait)).toBe(false);
+    } finally {
+      if (originalCallsPath === undefined) delete process.env.T3_MCP_TEST_CALLS;
+      else process.env.T3_MCP_TEST_CALLS = originalCallsPath;
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("derives project and model defaults without repeating them per child", async () => {
@@ -1812,7 +2053,9 @@ describe("delegate_work MCP tool", () => {
         }),
       );
 
-      expect(result.results).toEqual([{ index: 0, outcome: createdOutcome }]);
+      expect(result.results).toEqual([
+        { index: 0, outcome: { ...createdOutcome, assignmentId: expect.any(String) } },
+      ]);
       expect((await readFile(argsPath, "utf8")).trim().split("\n")).toEqual([
         "--log-level",
         "error",
@@ -1824,6 +2067,12 @@ describe("delegate_work MCP tool", () => {
         "parent-1",
         "--follow-up",
         "automatic",
+        "--thread-id",
+        expect.any(String),
+        "--assignment-id",
+        expect.any(String),
+        "--parent-wait",
+        "null",
         "--cross-thread-source",
         "parent-1",
         "--cross-thread-capability",

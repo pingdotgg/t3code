@@ -141,6 +141,7 @@
 ## PR reviews and checkpoint provenance
 
 - The assistant's PR creation report can be recovered without its association tool, but generic `recovered` links are not review candidates. After verifying the exact reported URL against the checkout, mark a creation report as `agent` and upgrade older recovered links with the same evidence; never automatically review manually associated PRs.
+- Creation-report detection must recognize common completion wording such as "opened PR", not only lines beginning with "Created"; otherwise verified agent-created PRs remain `recovered` and never enter automatic review.
 - Automatic PR review must launch the canonical `review-changes` workflow in a child worker thread. A self-addressed blocking collaboration request deadlocks its own queued turn and leaves the creator thread permanently waiting.
 - Collaborative acceptance must reserve one deterministic exchange before creating its queued review request, bind every prompt and outcome to the immutable assignment/dispatch/turn/case/candidate/head tuple, and wake only through `QueuedTurnReactor`; child completion alone is never review evidence.
 - Collaborative acceptance recovery must subscribe once before its startup snapshot, reconcile response/queue terminal events live, and treat PR-monitor notifications as wakeups that re-read authoritative evidence. Persist a terminal dispatch outcome for unrecoverable legacy work so one malformed exchange cannot strand startup or create a retry storm.

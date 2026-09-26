@@ -23,6 +23,8 @@ import {
   resolveProjectExpanded,
   resolveSidebarThreadRowStatus,
   resolveSidebarThreadClickKind,
+  matchesSidebarThreadFilter,
+  filterSidebarThreads,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
@@ -43,10 +45,170 @@ import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type Project,
+  type SidebarThreadSummary,
   type Thread,
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("matchesSidebarThreadFilter", () => {
+  const baseThread = {
+    session: null,
+    latestTurn: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasPendingQueuedTurn: false,
+    backgroundAgentRuns: [],
+    pullRequest: null,
+    pullRequests: [],
+    latestUserMessageAt: null,
+    hasActionableProposedPlan: false,
+  } as const;
+
+  it("matches all threads by default", () => {
+    expect(matchesSidebarThreadFilter({ ...baseThread }, "all")).toBe(true);
+  });
+
+  it("matches active threads with pending work", () => {
+    expect(matchesSidebarThreadFilter({ ...baseThread, hasPendingUserInput: true }, "active")).toBe(
+      true,
+    );
+    expect(matchesSidebarThreadFilter({ ...baseThread }, "active")).toBe(false);
+  });
+
+  it("matches threads whose latest turn is still running", () => {
+    expect(
+      matchesSidebarThreadFilter(
+        {
+          ...baseThread,
+          latestTurn: {
+            turnId: TurnId.make("turn-1"),
+            state: "running",
+            requestedAt: "2026-09-24T20:00:00.000Z",
+            startedAt: "2026-09-24T20:00:00.000Z",
+            completedAt: null,
+            assistantMessageId: null,
+          },
+        },
+        "active",
+      ),
+    ).toBe(true);
+  });
+
+  it("matches threads with an active orchestration turn before latest turn data arrives", () => {
+    expect(
+      matchesSidebarThreadFilter(
+        {
+          ...baseThread,
+          session: {
+            provider: ProviderDriverKind.make("codex"),
+            status: "ready",
+            orchestrationStatus: "running",
+            activeTurnId: TurnId.make("turn-1"),
+            createdAt: "2026-09-24T20:00:00.000Z",
+            updatedAt: "2026-09-24T20:00:00.000Z",
+          },
+        },
+        "active",
+      ),
+    ).toBe(true);
+  });
+
+  it("matches threads with any linked pull request", () => {
+    expect(
+      matchesSidebarThreadFilter(
+        {
+          ...baseThread,
+          pullRequest: {
+            number: 1,
+            title: "PR",
+            url: "https://example.test/pr/1",
+            baseBranch: "main",
+            headBranch: "feature",
+            state: "merged",
+          },
+        },
+        "with_pr",
+      ),
+    ).toBe(true);
+  });
+
+  it("matches only open pull requests for the open PR filter", () => {
+    expect(
+      matchesSidebarThreadFilter(
+        {
+          ...baseThread,
+          pullRequests: [
+            {
+              pullRequest: {
+                number: 1,
+                title: "PR",
+                url: "https://example.test/pr/1",
+                baseBranch: "main",
+                headBranch: "feature",
+                state: "open",
+              },
+              source: "manual",
+              linkedAt: "2026-09-25T00:00:00.000Z",
+            },
+          ],
+        },
+        "open_pr",
+      ),
+    ).toBe(true);
+    expect(
+      matchesSidebarThreadFilter(
+        {
+          ...baseThread,
+          pullRequest: {
+            number: 2,
+            title: "Historical PR",
+            url: "https://example.test/pr/2",
+            baseBranch: "main",
+            headBranch: "old-feature",
+            state: null,
+          },
+        },
+        "open_pr",
+      ),
+    ).toBe(false);
+  });
+
+  it("returns the original array for the all filter and retains matching ancestors", () => {
+    const parent = {
+      ...makeThread({
+        id: ThreadId.make("parent"),
+        parentThreadId: null,
+      }),
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasPendingQueuedTurn: false,
+      backgroundAgentRuns: [],
+      pullRequest: null,
+      pullRequests: [],
+      latestUserMessageAt: null,
+      hasActionableProposedPlan: false,
+    } as SidebarThreadSummary;
+    const child = {
+      ...makeThread({
+        id: ThreadId.make("child"),
+        parentThreadId: parent.id,
+      }),
+      hasPendingApprovals: false,
+      hasPendingUserInput: true,
+      hasPendingQueuedTurn: false,
+      backgroundAgentRuns: [],
+      pullRequest: null,
+      pullRequests: [],
+      latestUserMessageAt: null,
+      hasActionableProposedPlan: false,
+    } as SidebarThreadSummary;
+    const threads = [parent, child] as const;
+
+    expect(filterSidebarThreads(threads, "all")).toBe(threads);
+    expect(filterSidebarThreads(threads, "active")).toEqual([parent, child]);
+  });
+});
 
 describe("shouldRenderSidebarDraft", () => {
   it("keeps a sent draft visible until the server thread is published", () => {

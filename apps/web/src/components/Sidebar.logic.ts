@@ -1,5 +1,9 @@
 import * as React from "react";
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import type {
+  SidebarProjectSortOrder,
+  SidebarThreadFilter,
+  SidebarThreadSortOrder,
+} from "@t3tools/contracts/settings";
 import {
   getThreadSortTimestamp,
   sortThreads,
@@ -11,6 +15,11 @@ import { DEFAULT_NEW_THREAD_WORKSPACE } from "../lib/newThreadDefaults";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 import {
+  hierarchyThreadKey,
+  includeThreadAncestors,
+} from "@t3tools/client-runtime/state/thread-hierarchy";
+import {
+  isThreadActivelyWorking,
   hasUnseenThreadCompletion,
   resolveThreadSemanticStatus,
 } from "@t3tools/client-runtime/state/thread-status";
@@ -19,6 +28,12 @@ export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 export const SIDEBAR_THREAD_HOVER_PREWARM_DELAY_MS = 120;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
+export const SIDEBAR_THREAD_FILTER_LABELS: Record<SidebarThreadFilter, string> = {
+  all: "All threads",
+  active: "Active threads",
+  with_pr: "Threads with PRs",
+  open_pr: "Threads with open PRs",
+};
 type SidebarProject = {
   id: string;
   name: string;
@@ -34,6 +49,61 @@ export function shouldRenderSidebarDraft(input: {
   serverThreadPublished: boolean;
 }): boolean {
   return !input.serverThreadPublished && (input.hasUserContent || input.isPromoting);
+}
+
+export function matchesSidebarThreadFilter(
+  thread: Pick<
+    SidebarThreadSummary,
+    | "session"
+    | "latestTurn"
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+    | "hasPendingQueuedTurn"
+    | "backgroundAgentRuns"
+    | "virtualAgentRun"
+    | "pullRequest"
+    | "pullRequests"
+  >,
+  filter: SidebarThreadFilter,
+): boolean {
+  if (filter === "all") return true;
+
+  if (filter === "active") {
+    return (
+      thread.hasPendingApprovals ||
+      thread.hasPendingUserInput ||
+      isThreadActivelyWorking({
+        latestTurn: thread.latestTurn,
+        session: thread.session,
+        hasPendingQueuedTurn: thread.hasPendingQueuedTurn,
+        virtualAgentRun: thread.virtualAgentRun,
+      }) ||
+      thread.backgroundAgentRuns?.some((run) => run.status === "running") === true
+    );
+  }
+
+  if (filter === "with_pr") {
+    return (thread.pullRequests?.length ?? 0) > 0 || thread.pullRequest != null;
+  }
+  return (
+    thread.pullRequests?.some((link) => link.pullRequest.state === "open") === true ||
+    thread.pullRequest?.state === "open"
+  );
+}
+
+export function filterSidebarThreads<T extends SidebarThreadSummary>(
+  threads: readonly T[],
+  filter: SidebarThreadFilter,
+): readonly T[] {
+  if (filter === "all") return threads;
+
+  const matchingKeys = new Set<string>();
+  for (const thread of threads) {
+    if (matchesSidebarThreadFilter(thread, filter)) {
+      matchingKeys.add(hierarchyThreadKey(thread));
+    }
+  }
+  return includeThreadAncestors(threads, matchingKeys);
 }
 
 export function resolveSidebarDraftPreview(input: {

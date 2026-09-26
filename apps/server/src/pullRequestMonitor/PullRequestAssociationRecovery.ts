@@ -45,12 +45,17 @@ function reportsCreatedPullRequest(
     (message) =>
       message.role === "assistant" &&
       !message.streaming &&
-      message.text
-        .split(/\r?\n/)
-        .some(
-          (line) =>
-            /^\s*(?:[-*]\s*)?(?:\*\*)?Created(?:\*\*)?(?::|\s)/i.test(line) && line.includes(url),
-        ),
+      message.text.split(/\r?\n/).some((line) => {
+        const urlIndex = line.indexOf(url);
+        if (urlIndex < 0) return false;
+        if (/^\s*(?:[-*]\s*)?(?:\*\*)?Created(?:\*\*)?(?::|\s)/i.test(line)) {
+          return true;
+        }
+        const prefix = line.slice(0, urlIndex);
+        return /\b(?:created|opened)\b(?:\s+(?:a|the))?(?:\s+new)?\s*(?:\*\*)?\[?\s*(?:pull request|pr)\b/i.test(
+          prefix,
+        );
+      }),
   );
 }
 

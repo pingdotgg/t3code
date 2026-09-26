@@ -101,11 +101,20 @@ on retry; creation of the assignment and queue entry is atomic. Only one assignm
 unresolved decision may be active per child. An answer continues the same assignment, not a new one.
 
 Capture the `assignmentId` returned by creation or assignment, or inspect `t3 chat show <id>`.
+`delegate_work` accepts `wait: "all" | "any" | "none"` and installs the wait atomically with child
+creation, before any child can report. By default it waits for all when more than one automatic
+child is created, and uses no batch wait for one automatic child or notify-only children;
+notify-only children are never included. Partial creation failures are removed from the wait
+before `delegate_work` returns, so only created assignments remain. Do not call `set_child_wait`
+just to establish the wait after delegation.
+
 Use `set_child_wait` with `{mode: "any" | "all", assignments: [{childThreadId, assignmentId}]}`
-to wait for selected results. Membership is fixed: handle partial batch failures before setting it.
-Use `{mode: "decisions-only", assignments: []}` to suppress routine wakes, or `null` to restore
-automatic follow-up. A satisfied wait is consumed once; a failure escalates without pretending
-the wait succeeded. Missing required assignments need an explicit wait revision.
+to revise the selected results later. Use `{mode: "decisions-only", assignments: []}` to suppress
+routine wakes, or `null` to restore automatic follow-up. Reassigning a child retargets an
+unsettled wait entry to its new assignment; a settled entry remains tied to the assignment that
+produced its outcome. Already-queued terminal results remain deliverable after reassignment. A
+satisfied wait is consumed once; a failure escalates without pretending the wait succeeded. Legacy
+waits whose assignments are unavailable must be revised.
 
 For an early decision or important finding, a child can call `report_to_parent` with
 `kind: "decision-needed"` or `"important-update"`, a concise `summary`, and a stable `reportId`.
@@ -139,6 +148,20 @@ t3 input list --thread <threadId>
 
 `t3 chat stream` is persistent and does not exit when a turn completes. Do not use it as an
 attached completion waiter. Use approval/input skills only with the user's authorization.
+
+## Review follow-ups
+
+When the parent reviews a child's result and finds fixes within that child's original scope and
+permissions, send them to the child immediately; do not ask the user for confirmation first.
+Report what was sent and the queued ID afterwards. Ask only when a fix would widen the child's
+permissions or scope, or when the right fix is a genuine product decision.
+
+Make each follow-up self-contained: the PR or branch, the head SHA reviewed, each issue with
+file references and evidence, the required tests, validation, and the delivery boundary. Use
+`assign_to_thread` with a stable `requestId` when the child's assignment is finished and idle.
+If it is rejected because the child is busy (an active turn, queued work, or an automatic
+PR-monitor turn), use `send_to_thread` with a stable `requestId` instead; that message is not a
+tracked assignment, so it produces no automatic completion report.
 
 ## Failure handling
 

@@ -43,6 +43,7 @@ export function childWakeReason(
 function renderChildNudgePrompt(
   updates: ReadonlyArray<ChildNudgeUpdate>,
   summaryMaxChars: number,
+  waitStatus?: string,
 ): string {
   const counts = new Map<NonNullable<ChildNudgeUpdate["wakeReason"]>, number>();
   for (const update of updates) {
@@ -55,6 +56,7 @@ function renderChildNudgePrompt(
     `Results ready to inspect: ${counts.get("result-ready") ?? 0}`,
     `Failures or blockers: ${(counts.get("assignment-failed") ?? 0) + (counts.get("assignment-blocked") ?? 0)}`,
     `Other important changes: ${counts.get("important-update") ?? 0}`,
+    ...(waitStatus ? [waitStatus] : []),
     ...updates.map(
       (update) =>
         `\n${update.childTitle} (${update.childThreadId}), assignment ${update.assignmentId}: ${childWakeReason(update)}\nReport ID: ${update.id}\n${compactSummary(update, summaryMaxChars)}${update.sourceMessageId ? `\nResult message: ${update.sourceMessageId}` : ""}${update.decision ? `\nQuestion: ${update.decision.question}${update.decision.options ? `\nOptions:\n${update.decision.options.map((option, index) => `${index + 1}. ${option}`).join("\n")}` : ""}${update.decision.recommendation ? `\nRecommendation: ${update.decision.recommendation}` : ""}` : ""}${update.canContinue !== undefined ? `\nChild can continue without an answer: ${update.canContinue}` : ""}`,
@@ -63,14 +65,17 @@ function renderChildNudgePrompt(
   ].join("\n");
 }
 
-export function childNudgePrompt(updates: ReadonlyArray<ChildNudgeUpdate>): string {
+export function childNudgePrompt(
+  updates: ReadonlyArray<ChildNudgeUpdate>,
+  waitStatus?: string,
+): string {
   let low = 0;
   let high = CHILD_NUDGE_SUMMARY_MAX_CHARS;
-  let prompt = renderChildNudgePrompt(updates, high);
+  let prompt = renderChildNudgePrompt(updates, high, waitStatus);
   if (Buffer.byteLength(prompt, "utf8") <= CHILD_NUDGE_PROMPT_MAX_BYTES) return prompt;
   while (low < high) {
     const candidate = Math.ceil((low + high) / 2);
-    const candidatePrompt = renderChildNudgePrompt(updates, candidate);
+    const candidatePrompt = renderChildNudgePrompt(updates, candidate, waitStatus);
     if (Buffer.byteLength(candidatePrompt, "utf8") <= CHILD_NUDGE_PROMPT_MAX_BYTES) {
       low = candidate;
       prompt = candidatePrompt;
@@ -78,36 +83,37 @@ export function childNudgePrompt(updates: ReadonlyArray<ChildNudgeUpdate>): stri
       high = candidate - 1;
     }
   }
-  return renderChildNudgePrompt(updates, low);
+  return renderChildNudgePrompt(updates, low, waitStatus);
 }
 
-export function queueChildNudge(
+export function queueChildNudgeBatch(
   parent: OrchestrationThread,
-  update: ChildNudgeUpdate,
+  updates: ReadonlyArray<ChildNudgeUpdate>,
   notification: Extract<PlannedEvent, { type: "thread.child-lifecycle-notified" }>,
 ): PlannedEvent {
+  if (updates.length === 0 || updates.length > 32) {
+    throw new RangeError("A child nudge batch must contain between 1 and 32 reports.");
+  }
   // Only append to the tail batch: never move newer updates ahead of a user's queued message.
   const tail = parent.queuedTurns?.at(-1);
-  const batchCandidate =
+  const candidateUpdates =
     tail?.origin?.kind === "child-nudge" &&
     tail.failedAt === null &&
-    tail.origin.updates.length < 32
-      ? tail
+    tail.origin.updates.length + updates.length <= 32
+      ? [...tail.origin.updates, ...updates]
       : undefined;
   const batch =
-    batchCandidate?.origin?.kind === "child-nudge" &&
-    Buffer.byteLength(childNudgePrompt([...batchCandidate.origin.updates, update]), "utf8") <=
-      CHILD_NUDGE_PROMPT_MAX_BYTES
-      ? batchCandidate
+    candidateUpdates &&
+    Buffer.byteLength(childNudgePrompt(candidateUpdates), "utf8") <= CHILD_NUDGE_PROMPT_MAX_BYTES
+      ? candidateUpdates
       : undefined;
-  const updates =
-    batch?.origin?.kind === "child-nudge" ? [...batch.origin.updates, update] : [update];
+  const combinedUpdates = batch ?? updates;
   const origin = {
     kind: "child-nudge" as const,
-    updates,
+    updates: combinedUpdates,
     collectUntil:
-      batch?.origin?.kind === "child-nudge" && batch.origin.collectUntil
-        ? batch.origin.collectUntil
+      batch && tail?.origin?.kind === "child-nudge" && tail.origin.collectUntil
+        ? tail.origin.collectUntil
         : new Date(Date.parse(notification.occurredAt) + CHILD_RESULT_COLLECTION_MS).toISOString(),
   };
   // Queues sort by creation time, whereas delayed provider events retain their source time.
@@ -126,8 +132,8 @@ export function queueChildNudge(
         type: "thread.queued-turn-updated",
         payload: {
           threadId: parent.id,
-          queuedTurnId: batch.id,
-          text: childNudgePrompt(updates),
+          queuedTurnId: tail!.id,
+          text: childNudgePrompt(combinedUpdates),
           origin,
           updatedAt: notification.occurredAt,
         },
@@ -138,12 +144,12 @@ export function queueChildNudge(
         payload: {
           threadId: parent.id,
           queuedTurn: {
-            id: QueuedTurnId.make(`nudge:${update.id}`),
+            id: QueuedTurnId.make(`nudge:${updates[0]!.id}`),
             threadId: parent.id,
             message: {
-              messageId: MessageId.make(`nudge:${update.id}`),
+              messageId: MessageId.make(`nudge:${updates[0]!.id}`),
               role: "user",
-              text: childNudgePrompt(updates),
+              text: childNudgePrompt(combinedUpdates),
               attachments: [],
             },
             origin,
@@ -156,6 +162,14 @@ export function queueChildNudge(
           },
         },
       };
+}
+
+export function queueChildNudge(
+  parent: OrchestrationThread,
+  update: ChildNudgeUpdate,
+  notification: Extract<PlannedEvent, { type: "thread.child-lifecycle-notified" }>,
+): PlannedEvent {
+  return queueChildNudgeBatch(parent, [update], notification);
 }
 
 export function isAutomaticChildNudgeBlocked(thread: OrchestrationThread): boolean {

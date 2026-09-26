@@ -9,7 +9,7 @@ import { Effect, Schema } from "effect";
 import type { ModelSelection, ProviderInstanceId, RuntimeMode } from "@t3tools/contracts";
 import { resolveWindowsSpawn } from "@t3tools/shared/shell";
 import { killProcessTree } from "@t3tools/shared/processTree";
-import { ChildDecision, ChildWaitCondition, ThreadId } from "@t3tools/contracts";
+import { ChildDecision, ChildWaitCondition, MessageId, ThreadId } from "@t3tools/contracts";
 
 import { issueCrossThreadDispatchCapability } from "./orchestration/CrossThreadDispatchCapability.ts";
 import { composeDelegationPrompt, DELEGATION_PROMPT_BLOCKS } from "./delegationPrompt.ts";
@@ -1159,6 +1159,9 @@ function nestedThreadCommandArgs(
     readonly workspace: IsolatedWorkspaceSpec | undefined;
     readonly dryRun: boolean;
     readonly followUp: "automatic" | "notify-only";
+    readonly threadId?: string;
+    readonly assignmentId?: string;
+    readonly parentWait?: ChildWaitCondition | null;
   },
 ): ReadonlyArray<string> {
   return [
@@ -1173,6 +1176,11 @@ function nestedThreadCommandArgs(
     options.threadId,
     "--follow-up",
     input.followUp,
+    ...(input.threadId ? ["--thread-id", input.threadId] : []),
+    ...(input.assignmentId ? ["--assignment-id", input.assignmentId] : []),
+    ...(!input.dryRun && input.parentWait !== undefined
+      ? ["--parent-wait", JSON.stringify(input.parentWait)]
+      : []),
     ...(!input.dryRun
       ? [
           "--cross-thread-source",
@@ -1240,6 +1248,28 @@ async function createNestedThreadToolImpl(
   if (followUp !== "automatic" && followUp !== "notify-only") {
     throw new NestedThreadValidationError("followUp must be automatic or notify-only");
   }
+  const threadId = asString(args.threadId)?.trim();
+  const assignmentId = asString(args.assignmentId)?.trim();
+  if ((threadId === undefined) !== (assignmentId === undefined)) {
+    throw new NestedThreadValidationError(
+      `${policy.toolName} internal child and assignment identifiers must be provided together`,
+    );
+  }
+  let parentWait: ChildWaitCondition | null | undefined;
+  if (args.parentWait !== undefined) {
+    try {
+      parentWait = decodeChildWait(args.parentWait);
+    } catch (error) {
+      throw new NestedThreadValidationError(
+        `${policy.toolName} parentWait is invalid: ${toErrorMessage(error)}`,
+      );
+    }
+  }
+  if (parentWait !== undefined && (followUp !== "automatic" || !threadId)) {
+    throw new NestedThreadValidationError(
+      `${policy.toolName} parentWait requires an identified automatic child`,
+    );
+  }
   if (policy.requireExplicitProject && !asString(args.project)?.trim()) {
     throw new NestedThreadValidationError(`${policy.toolName} requires a non-empty project`);
   }
@@ -1303,6 +1333,8 @@ async function createNestedThreadToolImpl(
       workspace,
       dryRun: true,
       followUp,
+      ...(threadId ? { threadId } : {}),
+      ...(assignmentId ? { assignmentId } : {}),
     }),
     true,
   );
@@ -1312,7 +1344,7 @@ async function createNestedThreadToolImpl(
 
   if (!workspace) {
     if (dryRun) return validationOutcome;
-    return await invokeNestedThreadCli(
+    const creationOutcome = await invokeNestedThreadCli(
       options,
       nestedThreadCommandArgs(authenticatedOptions, {
         project,
@@ -1323,9 +1355,15 @@ async function createNestedThreadToolImpl(
         workspace,
         dryRun: false,
         followUp,
+        ...(threadId ? { threadId } : {}),
+        ...(assignmentId ? { assignmentId } : {}),
+        ...(parentWait !== undefined ? { parentWait } : {}),
       }),
       false,
     );
+    return creationOutcome.status === "created" && assignmentId
+      ? { ...creationOutcome, assignmentId }
+      : creationOutcome;
   }
 
   const initialPreflight = await preflightGitWorktree(options.cwd, workspace);
@@ -1390,6 +1428,9 @@ async function createNestedThreadToolImpl(
       workspace,
       dryRun: false,
       followUp,
+      ...(threadId ? { threadId } : {}),
+      ...(assignmentId ? { assignmentId } : {}),
+      ...(parentWait !== undefined ? { parentWait } : {}),
     }),
     false,
   );
@@ -1401,7 +1442,11 @@ async function createNestedThreadToolImpl(
     );
   }
   if (creationOutcome.status === "created" || creationOutcome.status === "ambiguous") {
-    return { ...creationOutcome, workspaceCreated: true };
+    return {
+      ...creationOutcome,
+      ...(creationOutcome.status === "created" && assignmentId ? { assignmentId } : {}),
+      workspaceCreated: true,
+    };
   }
   const outcomeWithWorkspace = { ...creationOutcome, workspaceCreated: true };
   if (creationOutcome.threadId !== null) {
@@ -1647,7 +1692,7 @@ function delegateWorkChild(
     model: child.model ?? defaults.model,
     reasoning: child.reasoning ?? defaults.reasoning,
     promptTemplate: child.promptTemplate ?? defaults.promptTemplate,
-    followUp: child.followUp ?? defaults.followUp,
+    followUp: child.followUp ?? defaults.followUp ?? "automatic",
     dryRun: child.dryRun ?? defaults.dryRun,
     workspace: child.workspace,
   };
@@ -1659,6 +1704,10 @@ async function delegateWorkTool(
   dependencyOverrides: Partial<NestedThreadToolDependencies> = {},
 ): Promise<string> {
   validateNestedThreadContext(options, "delegate_work");
+  const parentThreadId = options.threadId;
+  if (!parentThreadId) {
+    throw new NestedThreadValidationError("delegate_work requires a T3 provider session");
+  }
   if (
     args.defaults !== undefined &&
     (!args.defaults || typeof args.defaults !== "object" || Array.isArray(args.defaults))
@@ -1669,20 +1718,115 @@ async function delegateWorkTool(
     throw new NestedThreadValidationError("delegate_work requires a children array");
   }
   const defaults = args.defaults === undefined ? {} : asRecord(args.defaults);
+  if (
+    args.wait !== undefined &&
+    args.wait !== "all" &&
+    args.wait !== "any" &&
+    args.wait !== "none"
+  ) {
+    throw new NestedThreadValidationError("delegate_work wait must be all, any, or none");
+  }
   const children = args.children.map((child) =>
     child && typeof child === "object" && !Array.isArray(child)
       ? delegateWorkChild(options, defaults, asRecord(child))
       : child,
   );
-  return await createNestedThreadsTool(
+  const childIdentities = children.map((child) => {
+    if (!child || typeof child !== "object" || Array.isArray(child)) return null;
+    const record = asRecord(child);
+    return {
+      threadId: crypto.randomUUID(),
+      assignmentId: crypto.randomUUID(),
+      followUp: record.followUp,
+      dryRun: record.dryRun === true,
+    };
+  });
+  const automaticCount = childIdentities.filter(
+    (identity) => identity?.followUp === "automatic",
+  ).length;
+  const waitMode = args.wait ?? (automaticCount > 1 ? "all" : "none");
+  if (waitMode !== "none" && automaticCount === 0) {
+    throw new NestedThreadValidationError(
+      "delegate_work wait all or any requires at least one automatic child",
+    );
+  }
+  const waitableIndices = new Set(
+    childIdentities.flatMap((identity, index) =>
+      identity?.followUp === "automatic" && !identity.dryRun ? [index] : [],
+    ),
+  );
+  const initialParentWait: ChildWaitCondition | null =
+    waitMode === "none"
+      ? null
+      : {
+          mode: waitMode,
+          assignments: childIdentities.flatMap((identity, index) =>
+            identity && waitableIndices.has(index)
+              ? [
+                  {
+                    childThreadId: ThreadId.make(identity.threadId),
+                    assignmentId: MessageId.make(identity.assignmentId),
+                  },
+                ]
+              : [],
+          ),
+        };
+  const preparedChildren = children.map((child, index) => {
+    const identity = childIdentities[index];
+    if (!identity || !child || typeof child !== "object" || Array.isArray(child)) return child;
+    return {
+      ...asRecord(child),
+      threadId: identity.threadId,
+      assignmentId: identity.assignmentId,
+      ...(waitableIndices.has(index) ? { parentWait: initialParentWait } : {}),
+    };
+  });
+  const serializedBatch = await createNestedThreadsTool(
     options,
     {
-      children,
+      children: preparedChildren,
       ...(args.concurrency !== undefined ? { concurrency: args.concurrency } : {}),
     },
     dependencyOverrides,
     DELEGATE_WORK_POLICY,
   );
+  if (waitableIndices.size === 0 || initialParentWait === null) return serializedBatch;
+
+  const batch = decodeNestedThreadBatchCreationOutcome(JSON.parse(serializedBatch) as unknown);
+  const assignmentsToRemove = batch.results.flatMap(({ index, outcome }) => {
+    const identity = childIdentities[index];
+    if (!identity || !waitableIndices.has(index)) return [];
+    if (
+      outcome.status === "created" ||
+      (outcome.status === "ambiguous" && outcome.threadId !== null)
+    ) {
+      if (outcome.threadId !== identity.threadId) {
+        throw new Error(
+          `delegate_work child ${String(index)} returned a different thread id than requested.`,
+        );
+      }
+      return [];
+    }
+    return [
+      {
+        childThreadId: ThreadId.make(identity.threadId),
+        assignmentId: MessageId.make(identity.assignmentId),
+      },
+    ];
+  });
+  if (assignmentsToRemove.length > 0) {
+    await runCommand(options.cwd, options.cliCommand, [
+      ...(options.cliArgsPrefix ?? []),
+      "--log-level",
+      "error",
+      "chat",
+      "wait-prune",
+      parentThreadId,
+      JSON.stringify(assignmentsToRemove),
+      ...(options.cliBaseDir ? ["--base-dir", options.cliBaseDir] : []),
+    ]);
+  }
+  return serializedBatch;
 }
 
 async function sendToThreadTool(
@@ -2094,7 +2238,7 @@ const ALL_TOOLS: ReadonlyArray<McpTool> = [
   {
     name: "set_child_wait",
     description:
-      "Set when this parent should continue: any selected result, all selected results, or decisions/blockers only. Pass null to restore automatic follow-up. Use exact assignment IDs from spawn/assignment results or chat show. Membership is fixed; partial spawn failures must be handled explicitly. Never interrupts an active turn or overrides Stop.",
+      "Set when this parent should continue: any selected result, all selected results, or decisions/blockers only. Optionally set deadlineAt as an ISO timestamp; any assignments still unsettled at that deadline are reported as blocked without stopping the children. Pass null to restore automatic follow-up. Use exact assignment IDs from spawn/assignment results or chat show. Membership is fixed; partial spawn failures must be handled explicitly. Never interrupts an active turn or overrides Stop.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2105,6 +2249,7 @@ const ALL_TOOLS: ReadonlyArray<McpTool> = [
               type: "object",
               properties: {
                 mode: { type: "string", enum: ["any", "all", "decisions-only"] },
+                deadlineAt: { type: "string", format: "date-time" },
                 assignments: {
                   type: "array",
                   maxItems: 32,
@@ -2275,7 +2420,7 @@ const ALL_TOOLS: ReadonlyArray<McpTool> = [
   {
     name: "delegate_work",
     description:
-      "Canonical delegation tool for one or many helper threads. Supply children with only title and prompt; shared project, model, reasoning, prompt template, follow-up policy, and dry-run settings belong in defaults and may be overridden per child. Project defaults to the authenticated parent workspace; model defaults to the settings delegated-thread model (factory Copilot gpt-6-luna). T3 validates the complete batch, preserves input order, rejects workspace collisions before mutation, creates each child under the current thread, and returns indexed outcomes including partial failures.",
+      "Canonical delegation tool for one or many helper threads. Supply children with only title and prompt; shared project, model, reasoning, prompt template, follow-up policy, and dry-run settings belong in defaults and may be overridden per child. Project defaults to the authenticated parent workspace; model defaults to the settings delegated-thread model (factory Copilot gpt-6-luna). For automatic children, wait selects all, any, or no batch wait; the default is all when more than one automatic child is created and none for one child or notify-only work. The wait is installed atomically with child creation and revised to include only created assignments before this tool returns. T3 preserves input order, rejects workspace collisions before mutation, and returns indexed outcomes including partial failures.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2301,6 +2446,12 @@ const ALL_TOOLS: ReadonlyArray<McpTool> = [
           maximum: MAX_NESTED_THREAD_BATCH_CONCURRENCY,
           default: DEFAULT_NESTED_THREAD_BATCH_CONCURRENCY,
           description: "Maximum number of child creations in flight.",
+        },
+        wait: {
+          type: "string",
+          enum: ["all", "any", "none"],
+          description:
+            "Parent follow-up policy for automatic children. Defaults to all for batches with more than one automatic child, otherwise none. Notify-only children are never included.",
         },
       },
       required: ["children"],

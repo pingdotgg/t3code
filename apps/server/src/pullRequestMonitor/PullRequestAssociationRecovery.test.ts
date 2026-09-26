@@ -320,7 +320,9 @@ describe("pull request association recovery", () => {
 
   it("marks a verified assistant-created PR eligible for automatic review", async () => {
     const h = await harness();
-    h.updateThread({ messages: [message(`Created: [acme/app#42](${url}) — ready for review.`)] });
+    h.updateThread({
+      messages: [message(`Implemented and opened a new [PR #42](${url}).`)],
+    });
     await Effect.runPromise(h.recovery.sweep);
 
     expect(h.commands[0]).toMatchObject({
@@ -398,6 +400,20 @@ describe("pull request association recovery", () => {
     await Effect.runPromise(h.recovery.sweep);
     expect(h.lookups()).toBe(0);
     expect(h.commands).toEqual([]);
+  });
+
+  it("does not treat a reference to somebody else's created PR as creation intent", async () => {
+    const h = await harness();
+    h.updateThread({
+      messages: [message(`Reviewed the PR created by another contributor: [#42](${url}).`)],
+    });
+
+    await Effect.runPromise(h.recovery.sweep);
+
+    expect(h.commands[0]).toMatchObject({
+      type: "thread.meta.update",
+      pullRequestSource: "recovered",
+    });
   });
 
   it("does not attach a PR reported by a review workflow thread", async () => {

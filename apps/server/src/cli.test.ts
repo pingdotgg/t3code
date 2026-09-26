@@ -11,6 +11,7 @@ import {
   ApprovalRequestId,
   CommandId,
   EventId,
+  MessageId,
   ProviderInstanceId,
   ThreadId,
   TurnId,
@@ -665,6 +666,115 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
           assert.equal(shown.title, "CLI Chat");
         }),
       );
+    }),
+  );
+
+  it.effect("prunes only requested child assignments from the current wait", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-wait-prune-test-"));
+      const workspaceRoot = makeGitWorkspace("t3-cli-wait-prune-workspace-");
+      const now = new Date().toISOString();
+
+      try {
+        yield* withLiveProjectCliServer(baseDir, () =>
+          Effect.gen(function* () {
+            yield* runCliWithRuntime([
+              "project",
+              "add",
+              workspaceRoot,
+              "--title",
+              "Wait Prune Project",
+              "--base-dir",
+              baseDir,
+            ]);
+            const engine = yield* OrchestrationEngineService;
+            const readModel = yield* engine.getReadModel();
+            const project = readModel.projects.find(
+              (candidate) => candidate.workspaceRoot === workspaceRoot,
+            );
+            if (project === undefined) {
+              assert.fail("Expected project to be created.");
+            }
+
+            const parentThreadId = ThreadId.make("cli-wait-prune-parent");
+            const failedChildThreadId = ThreadId.make("cli-wait-prune-failed-child");
+            const remainingChildThreadId = ThreadId.make("cli-wait-prune-remaining-child");
+            const failedAssignmentId = MessageId.make("cli-wait-prune-failed-assignment");
+            const remainingAssignmentId = MessageId.make("cli-wait-prune-remaining-assignment");
+            for (const [threadId, assignmentId] of [
+              [parentThreadId, undefined],
+              [failedChildThreadId, failedAssignmentId],
+              [remainingChildThreadId, remainingAssignmentId],
+            ] as const) {
+              yield* engine.dispatch({
+                type: "thread.create",
+                commandId: CommandId.make(`create-${threadId}`),
+                threadId,
+                projectId: project.id,
+                title: threadId,
+                modelSelection: {
+                  instanceId: ProviderInstanceId.make("codex"),
+                  model: "gpt-5.4",
+                },
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+                createdAt: now,
+                ...(assignmentId
+                  ? {
+                      parentThreadId,
+                      delegation: {
+                        assignmentId,
+                        followUp: "automatic" as const,
+                        completedAt: null,
+                      },
+                    }
+                  : {}),
+              });
+            }
+            yield* engine.dispatch({
+              type: "thread.meta.update",
+              commandId: CommandId.make("set-wait-prune-parent-wait"),
+              threadId: parentThreadId,
+              childWait: {
+                mode: "any",
+                assignments: [
+                  { childThreadId: failedChildThreadId, assignmentId: failedAssignmentId },
+                  { childThreadId: remainingChildThreadId, assignmentId: remainingAssignmentId },
+                ],
+              },
+            });
+
+            yield* runCliWithRuntime([
+              "chat",
+              "wait-prune",
+              parentThreadId,
+              JSON.stringify([
+                {
+                  childThreadId: failedChildThreadId,
+                  assignmentId: failedAssignmentId,
+                },
+              ]),
+              "--base-dir",
+              baseDir,
+            ]);
+
+            const updated = yield* engine.getReadModel();
+            const parent = updated.threads.find((thread) => thread.id === parentThreadId);
+            assert.deepEqual(parent?.nudging?.wait, {
+              mode: "any",
+              generationId: CommandId.make("set-wait-prune-parent-wait"),
+              assignments: [
+                { childThreadId: remainingChildThreadId, assignmentId: remainingAssignmentId },
+              ],
+            });
+          }),
+        );
+      } finally {
+        rmSync(baseDir, { recursive: true, force: true });
+        rmSync(workspaceRoot, { recursive: true, force: true });
+      }
     }),
   );
 

@@ -171,6 +171,9 @@ export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "upda
 export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at"]);
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
+export const SidebarThreadFilter = Schema.Literals(["all", "active", "with_pr", "open_pr"]);
+export type SidebarThreadFilter = typeof SidebarThreadFilter.Type;
+export const DEFAULT_SIDEBAR_THREAD_FILTER: SidebarThreadFilter = "all";
 export const DEFAULT_SIDEBAR_V2_ENABLED = false;
 
 /** Initial state filter for the pull requests page when the URL names none. */
@@ -327,6 +330,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarThreadSortOrder: SidebarThreadSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_SORT_ORDER)),
+  ),
+  sidebarThreadFilter: SidebarThreadFilter.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_FILTER)),
   ),
   sidebarV2Enabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_V2_ENABLED)),
@@ -832,6 +838,7 @@ export const ClientSettingsPatch = Schema.Struct({
   ),
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
+  sidebarThreadFilter: Schema.optionalKey(SidebarThreadFilter),
   sidebarV2Enabled: Schema.optionalKey(Schema.Boolean),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   uiDensity: Schema.optionalKey(UiDensity),
