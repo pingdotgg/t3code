@@ -35,7 +35,9 @@ describe("mobile slash commands", () => {
     (allowInteractionMode) => {
       const items = buildComposerSlashCommandItems({
         query: "pl",
-        atMessageStart: true,
+        triggerKind: "slash-command",
+        draftMessage: "/pl",
+        triggerRangeStart: 0,
         hasThread: true,
         allowInteractionMode,
         selectedProviderStatus: antigravity,
@@ -56,11 +58,13 @@ describe("mobile slash commands", () => {
     },
   );
 
-  it("does not offer a native command inside the message", () => {
+  it("does not offer a native command after prior content on the same line", () => {
     expect(
       buildComposerSlashCommandItems({
         query: "plan",
-        atMessageStart: false,
+        triggerKind: "slash-skill",
+        draftMessage: "Use /plan",
+        triggerRangeStart: "Use ".length,
         hasThread: false,
         allowInteractionMode: true,
         selectedProviderStatus: antigravity,
@@ -68,10 +72,41 @@ describe("mobile slash commands", () => {
     ).toEqual([]);
   });
 
+  it("does not offer a native command on a new line after prior content", () => {
+    expect(
+      buildComposerSlashCommandItems({
+        query: "plan",
+        triggerKind: "slash-skill",
+        draftMessage: "Use\n/plan",
+        triggerRangeStart: "Use\n".length,
+        hasThread: false,
+        allowInteractionMode: true,
+        selectedProviderStatus: antigravity,
+      }),
+    ).toEqual([]);
+  });
+
+  it("offers a native command after leading whitespace", () => {
+    const items = buildComposerSlashCommandItems({
+      query: "plan",
+      triggerKind: "slash-command",
+      draftMessage: " \n/plan",
+      triggerRangeStart: " \n".length,
+      hasThread: true,
+      allowInteractionMode: true,
+      selectedProviderStatus: antigravity,
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.type).toBe("provider-slash-command");
+  });
+
   it("still applies the T3 plan command for supported providers", () => {
     const items = buildComposerSlashCommandItems({
       query: "plan",
-      atMessageStart: true,
+      triggerKind: "slash-command",
+      draftMessage: "/plan",
+      triggerRangeStart: 0,
       hasThread: true,
       allowInteractionMode: true,
       selectedProviderStatus: {

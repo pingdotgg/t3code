@@ -16,6 +16,9 @@ import {
   serializeEditorDoc,
 } from "./composer-rich-text-doc";
 
+import { detectComposerTrigger, replaceTextRange } from "./composer-logic";
+import { formatTerminalContextReference } from "./lib/terminalContext";
+
 function stubAtom(name: string, attrs: Record<string, { default: unknown }>) {
   return Node.create({
     name,
@@ -360,4 +363,31 @@ describe("composer rich text document model", () => {
     expect(collapsedToFlat(map, 3)).toBe(2);
     expect(collapsedToFlat(map, 9)).toBe(6);
   });
+});
+
+describe("slash suggestions from the rich composer document", () => {
+  it("replaces an inline skill query without losing its preceding context chip", () => {
+    const context = formatTerminalContextReference({
+      id: "terminal-1",
+      terminalLabel: "Terminal 1",
+      lineStart: 1,
+      lineEnd: 2,
+    });
+    const map = roundTrip(`${context}\n/rev`);
+    const trigger = detectComposerTrigger(map.value, map.value.length);
+    expect(trigger?.kind).toBe("slash-skill");
+    if (!trigger) throw new Error("Expected an inline skill trigger");
+    const next = replaceTextRange(map.value, trigger.rangeStart, trigger.rangeEnd, "$review ");
+    const selected = roundTrip(next.text);
+    expect(selected.value).toBe(`${context}\n$review `);
+    expect(selected.contextIds).toEqual(["terminal_terminal-1"]);
+  });
+
+  it.each(["Use /tmp/build.sh", "Use /etc/hosts", String.raw`Use /tmp\build.sh`])(
+    "leaves a typed absolute path alone: %s",
+    (text) => {
+      const map = roundTrip(text);
+      expect(detectComposerTrigger(map.value, map.value.length)).toBeNull();
+    },
+  );
 });

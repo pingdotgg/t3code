@@ -2354,8 +2354,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
       }));
     }
-    if (composerTrigger.kind === "slash-command") {
-      const builtInSlashCommandItems = [
+    if (composerTrigger.kind === "slash-command" || composerTrigger.kind === "slash-skill") {
+      const isSkillOnlySlash = composerTrigger.kind === "slash-skill";
+      const allBuiltInSlashCommandItems = [
         {
           id: "slash:model",
           type: "slash-command",
@@ -2382,21 +2383,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ] as const)
           : []),
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
+      const builtInSlashCommandItems = isSkillOnlySlash ? [] : allBuiltInSlashCommandItems;
       const slashMenuSkills = getProviderSkillsForSlashMenu(
         selectedProviderSkills,
-        settings.showSkillsInSlashMenu,
+        isSkillOnlySlash || settings.showSkillsInSlashMenu,
       );
-      const providerSlashCommandItems = getProviderSlashCommandsForSlashMenu(
-        selectedProviderSlashCommands,
-        slashMenuSkills,
-      ).map((command) => ({
-        id: `provider-slash-command:${selectedProvider}:${command.name}`,
-        type: "provider-slash-command" as const,
-        provider: selectedProvider,
-        command,
-        label: `/${command.name}`,
-        description: command.description ?? command.input?.hint ?? "Run provider command",
-      }));
+      const providerSlashCommandItems = isSkillOnlySlash
+        ? []
+        : getProviderSlashCommandsForSlashMenu(selectedProviderSlashCommands, slashMenuSkills).map(
+            (command) => ({
+              id: `provider-slash-command:${selectedProvider}:${command.name}`,
+              type: "provider-slash-command" as const,
+              provider: selectedProvider,
+              command,
+              label: `/${command.name}`,
+              description: command.description ?? command.input?.hint ?? "Run provider command",
+            }),
+          );
       const query = composerTrigger.query.trim().toLowerCase();
       const skillItems = slashMenuSkills.map((skill) => ({
         id: `skill:${selectedProvider}:${skill.name}`,
@@ -2414,7 +2417,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       );
       const slashCommandItems = slashCommandItemsForPromptPosition(
         [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],
-        composerTrigger.rangeStart === 0,
+        prompt,
+        composerTrigger.rangeStart,
       );
       return searchSlashCommandItems(slashCommandItems, query);
     }
@@ -2492,6 +2496,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pullRequestProjectId,
     pullRequestRepository,
     pullRequestTriggerNumber,
+    prompt,
     selectedProvider,
     selectedProviderSkills,
     selectedProviderSlashCommands,
@@ -2577,8 +2582,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         pullRequestTriggerNumber !== debouncedPullRequestNumber ||
         exactPullRequestLookup.isPending));
   const composerMenuEmptyState = useMemo(() => {
+    if (composerTriggerKind === "slash-skill") {
+      return "No skills found.";
+    }
     if (composerTriggerKind === "skill") {
-      return "No skills found. Try / to browse provider commands.";
+      return "No skills found. Try / in an empty composer to browse provider commands.";
     }
     if (composerTriggerKind === "pull-request") {
       if (pullRequestProjectId === null || pullRequestRepository === null) {
