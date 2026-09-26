@@ -182,6 +182,37 @@ describe("AcpSessionRuntime", () => {
     );
   }
 
+  it.effect("keeps the caller's scope open when the agent exits", () =>
+    Effect.gen(function* () {
+      const callerScope = yield* Scope.make();
+      const runtime = yield* AcpSessionRuntime.make(mockRuntimeOptions).pipe(
+        Effect.provideService(Scope.Scope, callerScope),
+      );
+      yield* runtime.start();
+      // Registered after the runtime: if the runtime closed the caller's scope,
+      // these would run before its own teardown finished.
+      let callerClosed = false;
+      yield* Scope.addFinalizer(
+        callerScope,
+        Effect.sync(() => {
+          callerClosed = true;
+        }),
+      );
+      const consumer = yield* Stream.runForEach(runtime.getEvents(), () => Effect.void).pipe(
+        Effect.forkIn(callerScope),
+      );
+
+      yield* runtime.notify("_test/exit", {});
+      // The consumer never acknowledges the barrier, so this returns once the
+      // runtime's own scope has closed after the exit.
+      yield* runtime.drainEvents;
+
+      expect(callerClosed).toBe(false);
+      expect(consumer.pollUnsafe()).toBeUndefined();
+      yield* Scope.close(callerScope, Exit.void);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("waits for native cancellation and drains final updates before another prompt", () =>
     Effect.gen(function* () {
       const toolStarted = yield* Deferred.make<void>();
