@@ -57,15 +57,17 @@ export interface DesktopSettingsChange {
 }
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
-const MIN_MAIN_WINDOW_SIZE = {
-  width: 840,
-  height: 620,
+export const MIN_MAIN_WINDOW_SIZE = {
+  width: 360,
+  height: 320,
 } as const;
+// A compositor can assign less than the requested minimum. Preserve its actual
+// bounds; the native window options enforce the preferred minimum at creation.
 export const DesktopWindowBoundsSchema = Schema.Struct({
   x: Schema.Int,
   y: Schema.Int,
-  width: Schema.Int.check(Schema.isGreaterThanOrEqualTo(MIN_MAIN_WINDOW_SIZE.width)),
-  height: Schema.Int.check(Schema.isGreaterThanOrEqualTo(MIN_MAIN_WINDOW_SIZE.height)),
+  width: Schema.Int.check(Schema.isGreaterThan(0)),
+  height: Schema.Int.check(Schema.isGreaterThan(0)),
 });
 export type DesktopWindowBounds = typeof DesktopWindowBoundsSchema.Type;
 export const DEFAULT_MAIN_WINDOW_SIZE = {

@@ -29,7 +29,7 @@ vi.mock("electron", async (importOriginal) => ({
   screen: {
     getAllDisplays: vi.fn(() => [
       {
-        bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+        workArea: { x: 0, y: 0, width: 1920, height: 1080 },
       },
     ]),
   },
@@ -580,6 +580,36 @@ describe("DesktopWindow", () => {
     );
   });
 
+  it("fits a new window inside a small display's available work area", () => {
+    assert.deepEqual(
+      DesktopWindow.resolveInitialMainWindowBounds(null, [
+        { x: -900, y: 26, width: 900, height: 574 },
+      ]),
+      { x: -900, y: 26, width: 900, height: 574 },
+    );
+  });
+
+  it("fits the fallback window after moving from a larger screen", () => {
+    assert.deepEqual(
+      DesktopWindow.resolveInitialMainWindowBounds({ x: 2040, y: 80, width: 1320, height: 880 }, [
+        { x: 0, y: 26, width: 1280, height: 694 },
+      ]),
+      { x: 90, y: 26, width: 1100, height: 694 },
+    );
+    assert.deepEqual(
+      DesktopWindow.resolveInitialMainWindowBounds(null, []),
+      DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE,
+    );
+  });
+
+  it("preserves fallback bounds for displays below the requested minimum", () => {
+    const bounds = DesktopWindow.resolveInitialMainWindowBounds(null, [
+      { x: 0, y: 26, width: 280, height: 240 },
+    ]);
+    assert.deepEqual(bounds, { x: 0, y: 26, width: 280, height: 240 });
+    assert.deepEqual(DesktopAppSettings.normalizeMainWindowBounds(bounds), bounds);
+  });
+
   it("recognizes only same-origin renderer navigations", () => {
     assert.isTrue(
       DesktopWindow.isSameOriginRendererNavigation({
@@ -1008,7 +1038,7 @@ describe("DesktopWindow", () => {
   it.effect("does not persist bounds that fail the domain schema", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
-      fakeWindow.getBounds.mockReturnValue({ x: 100.4, y: 80.2, width: 839.4, height: 619.4 });
+      fakeWindow.getBounds.mockReturnValue({ x: 100.4, y: 80.2, width: 0.4, height: 0.4 });
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
@@ -1145,6 +1175,39 @@ describe("DesktopWindow", () => {
         assert.equal(fakeWindow.getBounds.mock.calls.length, 0);
         assert.equal(fakeWindow.getNormalBounds.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("creates a resizable window within a small display's work area", () =>
+    Effect.gen(function* () {
+      vi.mocked(Electron.screen.getAllDisplays).mockReturnValueOnce([
+        {
+          ...Electron.screen.getAllDisplays()[0]!,
+          workArea: { x: 0, y: 26, width: 800, height: 574 },
+        },
+      ]);
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        createdWindowOptions,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+      }).pipe(Effect.provide(layer));
+
+      const options = createdWindowOptions[0];
+      assert.equal(options?.width, 800);
+      assert.equal(options?.height, 574);
+      assert.equal(options?.y, 26);
+      assert.equal(options?.minWidth, 360);
+      assert.equal(options?.minHeight, 320);
     }),
   );
 

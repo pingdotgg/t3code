@@ -194,7 +194,19 @@ export function resolveInitialMainWindowBounds(
   ) {
     return persistedBounds;
   }
-  return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
+  const display = displays[0];
+  const defaults = DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
+  if (!display || (defaults.width <= display.width && defaults.height <= display.height)) {
+    return defaults;
+  }
+  const width = Math.min(defaults.width, display.width);
+  const height = Math.min(defaults.height, display.height);
+  return {
+    x: display.x + Math.floor((display.width - width) / 2),
+    y: display.y + Math.floor((display.height - height) / 2),
+    width,
+    height,
+  };
 }
 
 // A self-contained "Connecting to WSL" splash, shown immediately in wsl-only
@@ -377,7 +389,7 @@ export const make = Effect.gen(function* () {
       try {
         return {
           _tag: "Success" as const,
-          bounds: Electron.screen.getAllDisplays().map((display) => display.bounds),
+          bounds: Electron.screen.getAllDisplays().map((display) => display.workArea),
         };
       } catch (cause) {
         return { _tag: "Failure" as const, cause };
@@ -391,13 +403,14 @@ export const make = Effect.gen(function* () {
           }).pipe(Effect.as<readonly Electron.Rectangle[]>([]));
     const initialBounds = resolveInitialMainWindowBounds(persistedBounds, displayBounds);
     const restoredPersistedBounds = persistedBounds !== null && initialBounds === persistedBounds;
-    if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {
+    if (persistedBounds !== null && !restoredPersistedBounds) {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
     }
     const window = yield* electronWindow.create({
       ...initialBounds,
-      minWidth: 840,
-      minHeight: 620,
+      // Let small displays and tiling compositors reach the responsive layout.
+      minWidth: Math.min(DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.width, initialBounds.width),
+      minHeight: Math.min(DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.height, initialBounds.height),
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
