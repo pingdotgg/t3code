@@ -14,12 +14,17 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "~/lib/composerContextReferences";
-import { buildMessageContext, reviewCommentContextReference } from "~/lib/composerContextRecords";
+import {
+  buildMessageContext,
+  reviewCommentContextLabel,
+  reviewCommentContextReference,
+} from "~/lib/composerContextRecords";
 
 import {
   buildAddSelectionToAgentHandoff,
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
+  buildPullRequestCommentContext,
   buildPullRequestReferenceContext,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
@@ -1190,6 +1195,122 @@ describe("asking about a change rather than working on it", () => {
     ]);
     expect(handoff.reviewComments[0]?.text).not.toContain("Do not change any code");
     expect(handoff.reviewComments[1]?.text).toBe("");
+  });
+});
+
+describe("adding a remark to the chat", () => {
+  const remark = (id: string, body: string): PullRequestComment => ({
+    id,
+    kind: "issue-comment",
+    author: { login: "octocat", name: null, avatarUrl: null },
+    body,
+    createdAt: "2026-07-03T00:00:00Z",
+    url: null,
+    path: null,
+    reviewState: null,
+  });
+
+  it("reads as the remark's author rather than as the pull request itself", () => {
+    const context = buildPullRequestCommentContext(42, {
+      kind: "comment",
+      comment: remark("c1", "Why not reuse the existing parser?"),
+    });
+
+    expect(context && reviewCommentContextLabel(context)).toBe("@octocat comment");
+    expect(context?.text).toBe("octocat: Why not reuse the existing parser?");
+  });
+
+  it("keeps every added remark when a later hand-off lands", () => {
+    const added = ["c1", "c2"].flatMap(
+      (id) =>
+        buildPullRequestCommentContext(42, { kind: "comment", comment: remark(id, "why?") }) ?? [],
+    );
+    const handedOff = buildAskAboutPullRequestHandoff({
+      number: 42,
+      title: "Add the pull requests page",
+      url: "https://github.com/pingdotgg/t3code/pull/42",
+      headBranch: "feature",
+      baseBranch: "main",
+      state: "open",
+      isDraft: false,
+    }).reviewComments;
+
+    expect(handoffReviewComments(added, handedOff).map((comment) => comment.id)).toEqual([
+      "pr-comment:c1",
+      "pr-comment:c2",
+      "pull-request-context:42",
+    ]);
+  });
+
+  it("drops a bot's bookkeeping so it cannot crowd the remark out of the bound", () => {
+    const context = buildPullRequestCommentContext(42, {
+      kind: "comment",
+      comment: remark(
+        "c1",
+        `<!-- ${"state".repeat(400)} -->\nThis leaks the token.\n\n\`\`\`html\n<!-- kept -->\n\`\`\``,
+      ),
+    });
+
+    expect(context?.text).toBe("octocat: This leaks the token.\n\n```html\n<!-- kept -->\n```");
+  });
+
+  it("keeps a fence written inside a hidden comment hidden", () => {
+    const context = buildPullRequestCommentContext(42, {
+      kind: "comment",
+      comment: remark("c1", '<!-- state\n```json\n{"secret": 1}\n```\n-->\nLooks good.'),
+    });
+
+    expect(context?.text).toBe("octocat: Looks good.");
+  });
+
+  it("closes a fence written with CRLF line endings", () => {
+    const context = buildPullRequestCommentContext(42, {
+      kind: "comment",
+      comment: remark("c1", "```ts\r\nconst x = 1;\r\n```\r\n<!-- bot -->\r\nRename x."),
+    });
+
+    expect(context?.text).toBe("octocat: ```ts\nconst x = 1;\n```\nRename x.");
+  });
+
+  it("reads inline code at the start of a line as prose, not as a fence", () => {
+    const context = buildPullRequestCommentContext(42, {
+      kind: "comment",
+      comment: remark("c1", "```x``` is unused <!-- bot -->\nRemove it."),
+    });
+
+    expect(context?.text).toBe("octocat: ```x``` is unused \nRemove it.");
+  });
+
+  it("brings nothing for a remark with no words in it", () => {
+    expect(
+      buildPullRequestCommentContext(42, {
+        kind: "comment",
+        comment: remark("c1", "<!-- bot bookkeeping -->"),
+      }),
+    ).toBeNull();
+  });
+
+  it("brings nothing for a conversation with no words in it", () => {
+    const {
+      kind: _kind,
+      path: _path,
+      reviewState: _reviewState,
+      ...bookkeeping
+    } = remark("tc1", "<!-- bot bookkeeping -->");
+    expect(
+      buildPullRequestCommentContext(42, {
+        kind: "thread",
+        thread: {
+          id: "t1",
+          path: "src/app.ts",
+          line: 3,
+          side: "right",
+          isResolved: false,
+          isOutdated: false,
+          comments: [bookkeeping],
+        },
+      }),
+    ).toBeNull();
   });
 });
 

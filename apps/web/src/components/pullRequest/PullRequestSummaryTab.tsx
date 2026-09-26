@@ -11,6 +11,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   HammerIcon,
+  MessageSquarePlusIcon,
   TagIcon,
   UsersIcon,
 } from "lucide-react";
@@ -46,6 +47,7 @@ import {
   pullRequestFindingKey,
   pullRequestReviewOutcome,
   visibleBody,
+  type PullRequestChatSubject,
   type PullRequestFinding,
 } from "./pullRequestDetail.logic";
 import {
@@ -190,6 +192,31 @@ function CommentBody({
 }
 
 /** Finished work — a resolved conversation or a dismissed review — opens collapsed. */
+/**
+ * What Add to chat hands over for a remark: a remark on a line goes as its whole conversation,
+ * the way fixing one does. Null when there are no words in it to talk about.
+ */
+function chatSubject(
+  comment: PullRequestComment,
+  thread: PullRequestReviewThread | undefined,
+): PullRequestChatSubject | null {
+  if (thread !== undefined) {
+    return thread.comments.some((entry) => visibleBody(entry.body) !== null)
+      ? { kind: "thread", thread }
+      : null;
+  }
+  return visibleBody(comment.body) === null ? null : { kind: "comment", comment };
+}
+
+function AddToChatButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button size="xs" variant="ghost" className="-mt-1 shrink-0" onClick={onClick}>
+      <MessageSquarePlusIcon className="size-3" />
+      Add to chat
+    </Button>
+  );
+}
+
 function CollapsedComment({
   comment,
   editing,
@@ -198,6 +225,7 @@ function CollapsedComment({
   reactionBar,
   detail,
   thread,
+  onAddToChat,
 }: {
   comment: PullRequestComment;
   editing: CommentEditing;
@@ -207,6 +235,7 @@ function CollapsedComment({
   reactionBar: ReactNode;
   detail: PullRequestDetailView;
   thread: PullRequestReviewThread | undefined;
+  onAddToChat?: (() => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const statusTriggerRef = useRef<HTMLButtonElement>(null);
@@ -226,6 +255,7 @@ function CollapsedComment({
                 className={cn("size-3.5 transition-transform", open && "rotate-180")}
               />
             </CollapsibleTrigger>
+            {onAddToChat ? <AddToChatButton onClick={onAddToChat} /> : null}
             {reactionBar}
           </div>
           <CommentLocation comment={comment} thread={thread} />
@@ -466,6 +496,7 @@ export function PullRequestSummaryTab({
   fixFindingLabel = "Fix in a thread",
   fixCheckLabel = "Fix",
   onFixFinding,
+  onAddToChat,
   onRefresh,
   onRefreshChecks = onRefresh,
 }: {
@@ -481,6 +512,8 @@ export function PullRequestSummaryTab({
   fixFindingLabel?: string;
   fixCheckLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
+  /** Absent where there is no composer beside the panel to add a remark to. */
+  onAddToChat?: (subject: PullRequestChatSubject) => void;
   onRefresh: () => void;
   onRefreshChecks?: () => void;
 }) {
@@ -637,6 +670,7 @@ export function PullRequestSummaryTab({
 
   const renderComment = (comment: PullRequestComment) => {
     const thread = threadByCommentId.get(comment.id);
+    const chat = chatSubject(comment, thread);
     const body = visibleBody(comment.body);
     const outcome = pullRequestReviewOutcome(comment.reviewState);
     // An approval is a verdict, not a finding: there is nothing in it to fix.
@@ -690,6 +724,9 @@ export function PullRequestSummaryTab({
               <HammerIcon className="size-3" />
               {pendingFinding === pullRequestFindingKey(finding) ? "Preparing..." : fixFindingLabel}
             </Button>
+          ) : null}
+          {onAddToChat && chat !== null ? (
+            <AddToChatButton onClick={() => onAddToChat(chat)} />
           ) : null}
           {reactionBar}
         </div>
@@ -1020,6 +1057,7 @@ export function PullRequestSummaryTab({
                     <div className="space-y-2 pt-2">
                       {orderPullRequestComments(finishedComments, commentOrder).map((comment) => {
                         const thread = threadByCommentId.get(comment.id);
+                        const chat = chatSubject(comment, thread);
                         return (
                           <CollapsedComment
                             key={comment.id}
@@ -1028,6 +1066,9 @@ export function PullRequestSummaryTab({
                             detail={detail}
                             thread={thread}
                             label={thread?.isResolved ? "Resolved" : "Review dismissed"}
+                            onAddToChat={
+                              onAddToChat && chat !== null ? () => onAddToChat(chat) : undefined
+                            }
                             body={visibleBody(comment.body)}
                             reactionBar={
                               <PullRequestReactionBar

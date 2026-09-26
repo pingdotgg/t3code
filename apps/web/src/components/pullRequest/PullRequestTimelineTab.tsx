@@ -12,6 +12,7 @@ import {
   FileCode2Icon,
   GitCommitHorizontalIcon,
   MessageSquareIcon,
+  MessageSquarePlusIcon,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -32,6 +33,7 @@ import {
   isPullRequestVerdictStale,
   newestPullRequestCommitAt,
   pullRequestReviewOutcome,
+  type PullRequestChatSubject,
   type PullRequestReviewOutcome,
   type PullRequestTimelineEvent,
 } from "./pullRequestDetail.logic";
@@ -53,6 +55,8 @@ import { PullRequestGlyph } from "./pullRequestIcons";
 /** What every comment on the timeline needs to react; only the subject differs between them. */
 interface ReactionSurface {
   readonly canReact: boolean;
+  /** Absent where there is no composer beside the panel to add a remark to. */
+  readonly onAddToChat?: ((commentId: string) => void) | undefined;
   readonly environmentId: EnvironmentId;
   /** Thread the timeline is shown beside, so body links can open in its in-app browser. */
   readonly threadRef: ScopedThreadRef | null;
@@ -160,6 +164,28 @@ function ReviewStateBadge({ state }: { state: string }) {
   );
 }
 
+function AddToChatButton({ id, reactions }: { id: string; reactions: ReactionSurface }) {
+  const onAddToChat = reactions.onAddToChat;
+  return onAddToChat === undefined ? null : (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            className="-mt-1 shrink-0"
+            aria-label="Add to chat"
+            onClick={() => onAddToChat(id)}
+          />
+        }
+      >
+        <MessageSquarePlusIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup>Add to chat</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: (url: string) => void }) {
   return url === null ? null : (
     <Button
@@ -239,6 +265,7 @@ function ConversationCard({
               onClick={() => setEditing(true)}
             />
           ) : null}
+          {event.body ? <AddToChatButton id={event.id} reactions={reactions} /> : null}
           {reactions.canReact || event.reactions.length > 0 ? (
             <PullRequestReactionBar
               className="ml-auto justify-end"
@@ -509,6 +536,7 @@ function ReviewVerdictEvent({
             </PullRequestMetaLine>
           </div>
         </div>
+        {event.body ? <AddToChatButton id={event.id} reactions={reactions} /> : null}
         {reactions.canReact || event.reactions.length > 0 ? (
           <PullRequestReactionBar
             className="ml-auto justify-end"
@@ -544,6 +572,7 @@ export function PullRequestTimelineTab({
   reference,
   order,
   onOpenCommit,
+  onAddToChat,
   onRefresh,
 }: {
   detail: PullRequestDetailView;
@@ -552,12 +581,19 @@ export function PullRequestTimelineTab({
   reference: PullRequestRef;
   order: "newest" | "oldest";
   onOpenCommit: (oid: string) => void;
+  onAddToChat?: (subject: PullRequestChatSubject) => void;
   onRefresh: () => void;
 }) {
   const events = buildPullRequestTimeline(detail);
   const newestCommitAt = newestPullRequestCommitAt(detail.commits);
   const reactions: ReactionSurface = {
     canReact: detail.capabilities.reactions === true,
+    onAddToChat:
+      onAddToChat &&
+      ((commentId) => {
+        const comment = detail.comments.find((candidate) => candidate.id === commentId);
+        if (comment !== undefined) onAddToChat({ kind: "comment", comment });
+      }),
     environmentId,
     threadRef,
     reference,

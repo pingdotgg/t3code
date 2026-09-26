@@ -32,7 +32,11 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
-import { pullRequestFindingKey, type PullRequestFinding } from "./pullRequestDetail.logic";
+import {
+  pullRequestFindingKey,
+  type PullRequestChatSubject,
+  type PullRequestFinding,
+} from "./pullRequestDetail.logic";
 import { canEditPullRequestComment } from "./pullRequestEditing.logic";
 import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 import {
@@ -200,6 +204,7 @@ function PullRequestCodeTab({
   pendingFinding,
   fixFindingLabel = "Fix in a thread",
   onFixFinding,
+  onAddToChat,
   onAddToAgentSelection,
   onRefresh,
   refreshToken = 0,
@@ -214,6 +219,8 @@ function PullRequestCodeTab({
   pendingFinding?: string | null;
   fixFindingLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
+  /** Absent where there is no composer beside the panel to add a conversation to. */
+  onAddToChat?: (subject: PullRequestChatSubject) => void;
   /** Absent where there is no active agent composer to receive a local comment. */
   onAddToAgentSelection?: (input: PullRequestAgentSelectionInput) => void;
   onRefresh: () => void;
@@ -927,6 +934,9 @@ function PullRequestCodeTab({
         fixPending={pendingFinding === pullRequestFindingKey({ kind: "thread", thread })}
         fixLabel={fixFindingLabel}
         {...(onFixFinding ? { onFix: () => onFixFinding({ kind: "thread", thread }) } : {})}
+        {...(onAddToChat
+          ? { onAddToChat: (loaded) => onAddToChat({ kind: "thread", thread: loaded }) }
+          : {})}
         onLoadMore={async (cursor): Promise<PullRequestThreadCommentsResult | null> => {
           const result = await loadThreadComments({
             environmentId,
@@ -979,6 +989,7 @@ function PullRequestCodeTab({
       loadThreadComments,
       onRefresh,
       onFixFinding,
+      onAddToChat,
       pendingFinding,
       reference,
       replyToThread,
