@@ -601,6 +601,70 @@ export const layer: Layer.Layer<
           }
           return;
         }
+        if (
+          input.attempt.contextCompaction &&
+          input.terminal.status === "completed" &&
+          // A provider may finish compacting after Stop; Stop still ends the run.
+          !(yield* input.hasUnpairedRunInterruptRequest?.() ?? Effect.succeed(false))
+        ) {
+          const attemptOrdinal = input.attempt.attemptOrdinal + 1;
+          const nextAttempt: OrchestrationV2RunAttempt = {
+            ...input.attempt,
+            id: idAllocator.derive.runAttempt({ runId: input.run.id, attemptOrdinal }),
+            attemptOrdinal,
+            contextCompaction: false,
+            providerTurnId: null,
+            reason: "provider_recovery",
+            status: "pending",
+            startedAt: null,
+            completedAt: null,
+          };
+          const { delegatedCompletion: _completion, ...run } = input.run;
+          const events = yield* Effect.forEach(
+            [
+              { type: "run-attempt.updated", payload: finalizedAttempt },
+              { type: "run-attempt.created", payload: nextAttempt },
+              {
+                type: "run.updated",
+                payload: {
+                  ...run,
+                  activeAttemptId: nextAttempt.id,
+                  status: "starting",
+                  completedAt: null,
+                },
+              },
+            ] as const,
+            (event) =>
+              Effect.gen(function* () {
+                return {
+                  ...event,
+                  id: yield* idAllocator.allocate.event({ threadId: input.run.threadId }),
+                  threadId: input.run.threadId,
+                  runId: input.run.id,
+                  nodeId: input.rootNode.id,
+                  providerInstanceId: input.run.providerInstanceId,
+                  occurredAt: completedAt,
+                } satisfies OrchestrationV2DomainEvent;
+              }),
+          );
+          const commandId = CommandId.make(`command:context-compaction:${input.attempt.id}`);
+          yield* eventSink.writeIfRunCurrent({
+            threadId: input.run.threadId,
+            runId: input.run.id,
+            activeAttemptId: input.attempt.id,
+            expectedStatus: "running",
+            events,
+            effects: [
+              {
+                id: `effect:${commandId}:provider-turn.start`,
+                commandId,
+                threadId: input.run.threadId,
+                request: { type: "provider-turn.start", runId: input.run.id },
+              },
+            ],
+          });
+          return;
+        }
         const allocateEventId = () => idAllocator.allocate.event({ threadId: input.run.threadId });
         const open = input.openRunOwnedSubagents ?? emptyOpenRunOwnedSubagentProjection();
         const hasOpenSubagentProjection =

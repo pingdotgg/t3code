@@ -512,6 +512,7 @@ export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
 export const OrchestrationV2RunAttempt = Schema.Struct({
   id: RunAttemptId,
+  contextCompaction: Schema.optional(Schema.Boolean),
   // Provider-thread rows can be reused after recovery; retain the native input destination.
   nativeThreadId: Schema.optional(Schema.String),
   runId: RunId,

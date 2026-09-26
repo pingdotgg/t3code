@@ -15,7 +15,7 @@ import { ThreadManagementService } from "./ThreadManagementService.ts";
 export function restartContinuationRun(
   projection: Pick<
     ProjectionRuntimeRecoveryState,
-    "thread" | "runs" | "providerThreads" | "providerSessions" | "providerTurns"
+    "thread" | "runs" | "attempts" | "providerThreads" | "providerSessions" | "providerTurns"
   >,
 ): OrchestrationV2Run | undefined {
   if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return;
@@ -23,7 +23,13 @@ export function restartContinuationRun(
     (latest, candidate) => (!latest || candidate.ordinal > latest.ordinal ? candidate : latest),
     undefined,
   );
-  if (!run) return;
+  if (
+    !run ||
+    projection.attempts.some(
+      (attempt) => attempt.id === run.activeAttemptId && attempt.contextCompaction,
+    )
+  )
+    return;
   const preparedContinuation =
     run.status === "starting" && run.restartContinuationOfRunId !== undefined;
   if (run.status !== "running" && !preparedContinuation) return;

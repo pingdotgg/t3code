@@ -60,6 +60,7 @@ import {
   type ProviderAdapterV2Event,
   type ProviderAdapterV2HistoricalContext,
   ProviderAdapterProtocolError,
+  ProviderAdapterEnsureThreadError,
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2SessionRuntime,
 } from "../ProviderAdapter.ts";
@@ -112,6 +113,14 @@ function makeTestAdapter(input: {
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
   readonly injectedHistory?: Ref.Ref<ReadonlyArray<unknown>>;
   readonly failStartOnce?: Ref.Ref<boolean>;
+  readonly failEnsureOnce?: Ref.Ref<boolean>;
+  readonly compaction?:
+    | "success"
+    | "failure"
+    | "interrupted"
+    | "no-shrink"
+    | "unsupported"
+    | "no-usage";
   readonly failInjectionOnce?: Ref.Ref<boolean>;
   readonly nativeThreadGeneration?: Ref.Ref<number>;
   readonly failResume?: boolean;
@@ -127,6 +136,7 @@ function makeTestAdapter(input: {
   readonly holdRunOrdinal?: number;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
+  readonly runningWhileHeld?: boolean;
 }): ProviderAdapterV2Shape {
   return {
     instanceId: input.instanceId,
@@ -164,6 +174,15 @@ function makeTestAdapter(input: {
             : { canReuseContextUsage: input.canReuseContextUsage }),
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
+              if (
+                input.failEnsureOnce !== undefined &&
+                (yield* Ref.getAndSet(input.failEnsureOnce, false))
+              )
+                return yield* new ProviderAdapterEnsureThreadError({
+                  driver: input.driver,
+                  threadId: threadInput.threadId,
+                  cause: "session creation failed",
+                });
               const createdAt = yield* DateTime.now;
               const generation =
                 input.nativeThreadGeneration === undefined
@@ -226,7 +245,12 @@ function makeTestAdapter(input: {
                     ),
                   ),
               }),
-          compactThread: (turnInput) => runtime.startTurn(turnInput),
+          ...(input.compaction === "unsupported"
+            ? {}
+            : {
+                compactThread: (turnInput: Parameters<typeof runtime.startTurn>[0]) =>
+                  runtime.startTurn(turnInput),
+              }),
           startTurn: (turnInput) =>
             Effect.gen(function* () {
               if (
@@ -245,23 +269,49 @@ function makeTestAdapter(input: {
                   attachments: turnInput.message.attachments,
                 },
               ]);
+              const eventTime = yield* DateTime.now;
+              const providerTurnId = ProviderTurnId.make(
+                `provider-turn:${input.driver}:${turnInput.threadId}:${turnInput.attemptId}`,
+              );
+              const providerTurn = {
+                id: providerTurnId,
+                providerThreadId: turnInput.providerThread.id,
+                nodeId: turnInput.rootNodeId,
+                runAttemptId: turnInput.attemptId,
+                nativeTurnRef: {
+                  driver: input.driver,
+                  nativeId: `native-turn:${turnInput.threadId}:${turnInput.attemptId}`,
+                  strength: "strong" as const,
+                },
+                ordinal: turnInput.providerTurnOrdinal,
+                startedAt: eventTime,
+              };
               if (
                 turnInput.runOrdinal === (input.holdRunOrdinal ?? 1) &&
                 input.holdFirstTurn !== undefined
               ) {
+                if (input.runningWhileHeld === true)
+                  yield* PubSub.publish(events, {
+                    type: "provider_turn.updated",
+                    driver: input.driver,
+                    providerTurn: { ...providerTurn, status: "running", completedAt: null },
+                  });
                 yield* Deferred.succeed(input.holdFirstTurn, undefined);
                 if (input.releaseFirstTurn === undefined) return;
                 yield* Deferred.await(input.releaseFirstTurn);
               }
-              const eventTime = yield* DateTime.now;
-              const providerTurnId = ProviderTurnId.make(
-                `provider-turn:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}`,
-              );
-              const terminalStatus = input.failedRunOrdinals?.has(turnInput.runOrdinal)
-                ? "failed"
-                : input.interruptedRunOrdinals?.has(turnInput.runOrdinal)
-                  ? "interrupted"
-                  : "completed";
+              const compacting =
+                input.compaction !== undefined && turnInput.message.text === "/compact";
+              const terminalStatus =
+                compacting && input.compaction === "failure"
+                  ? "failed"
+                  : compacting && input.compaction === "interrupted"
+                    ? "interrupted"
+                    : input.failedRunOrdinals?.has(turnInput.runOrdinal)
+                      ? "failed"
+                      : input.interruptedRunOrdinals?.has(turnInput.runOrdinal)
+                        ? "interrupted"
+                        : "completed";
               const response =
                 input.responseByThreadId?.[turnInput.threadId]?.[turnInput.runOrdinal] ??
                 input.responseByRunOrdinal[turnInput.runOrdinal] ??
@@ -270,28 +320,14 @@ function makeTestAdapter(input: {
                 {
                   type: "provider_turn.updated",
                   driver: input.driver,
-                  providerTurn: {
-                    id: providerTurnId,
-                    providerThreadId: turnInput.providerThread.id,
-                    nodeId: turnInput.rootNodeId,
-                    runAttemptId: turnInput.attemptId,
-                    nativeTurnRef: {
-                      driver: input.driver,
-                      nativeId: `native-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
-                      strength: "strong",
-                    },
-                    ordinal: turnInput.runOrdinal,
-                    status: terminalStatus,
-                    startedAt: eventTime,
-                    completedAt: eventTime,
-                  },
+                  providerTurn: { ...providerTurn, status: terminalStatus, completedAt: eventTime },
                 },
                 {
                   type: "turn_item.updated",
                   driver: input.driver,
                   turnItem: {
                     id: TurnItemId.make(
-                      `turn-item:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
+                      `turn-item:${input.driver}:${turnInput.threadId}:${turnInput.attemptId}:assistant`,
                     ),
                     threadId: turnInput.threadId,
                     runId: turnInput.runId,
@@ -308,7 +344,7 @@ function makeTestAdapter(input: {
                     updatedAt: eventTime,
                     type: "assistant_message",
                     messageId: MessageId.make(
-                      `message:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
+                      `message:${input.driver}:${turnInput.threadId}:${turnInput.attemptId}:assistant`,
                     ),
                     text: response,
                     streaming: false,
@@ -334,7 +370,15 @@ function makeTestAdapter(input: {
                   threadDisposition: "reusable",
                 },
               ];
-              const reportedUsage = input.tokenUsageByRunOrdinal?.[turnInput.runOrdinal];
+              const reportedUsage =
+                compacting && input.compaction === "no-usage"
+                  ? undefined
+                  : compacting
+                    ? {
+                        usedTokens: input.compaction === "no-shrink" ? 207_362 : 1_000,
+                        maxTokens: 32_000,
+                      }
+                    : input.tokenUsageByRunOrdinal?.[turnInput.runOrdinal];
               const turnEvent = providerEvents[0];
               if (reportedUsage && turnEvent?.type === "provider_turn.updated") {
                 yield* PubSub.publish(events, {
@@ -387,9 +431,27 @@ const waitForIdle = Effect.fn("ProviderSwitchTest.waitForIdle")(function* (
 describe("orchestration v2 provider switching", () => {
   for (const scenario of [
     "compact-native",
+    "first-bind-retry-native",
     "compact-fallback",
     "compact-legacy",
     "large-current-input",
+    "exhausted-native",
+    "exhausted-effort-change-native",
+    "exhausted-manual-uppercase-native",
+    "exhausted-missed-input-native",
+    "exhausted-fallback",
+    "exhausted-downgrade-native",
+    "exhausted-visible-downgrade-native",
+    "exhausted-oversized-native",
+    "exhausted-compaction-failure-native",
+    "exhausted-compaction-interrupted-native",
+    "exhausted-no-shrink-native",
+    "exhausted-no-usage-native",
+    "exhausted-stop-native",
+    "exhausted-stop-running-native",
+    "exhausted-steer-native",
+    "exhausted-unsupported-native",
+    "exhausted-unknown-capacity-native",
     "screenshot-native",
     "screenshot-fallback",
     "screenshot-pair-native",
@@ -434,22 +496,34 @@ describe("orchestration v2 provider switching", () => {
             scenario.includes("model") || scenario.includes("option-change") || reasoningScenario;
           const failStartOnce = yield* Ref.make(false);
           const failResumeOnce = yield* Ref.make(false);
+          const failEnsureOnce = yield* Ref.make(false);
           const generation = yield* Ref.make(0);
+          const compactionStarted = yield* Deferred.make<void>();
+          const finishCompaction = yield* Deferred.make<void>();
           const priorImages = scenario.includes("prior-images");
+          const exhausted = scenario.startsWith("exhausted");
           const replaceNative = scenario.includes("replacement");
           const capacityScenario = modelScenario || scenario.includes("reported-capacity");
           const returning =
-            scenario === "large-current-input" || scenario.includes("-change-") || priorImages;
-          const targetSelection: ModelSelection = !modelScenario
-            ? CLAUDE_MODEL_SELECTION
-            : {
-                ...CLAUDE_MODEL_SELECTION,
-                ...(reasoningScenario
-                  ? { options: [{ id: "reasoningEffort", value: "low" }] }
-                  : scenario.includes("option-change")
-                    ? { options: [{ id: "contextWindow", value: "1m" }] }
-                    : { model: `${CLAUDE_MODEL_SELECTION.model}-large` }),
-              };
+            scenario === "large-current-input" ||
+            scenario.includes("-change-") ||
+            priorImages ||
+            exhausted;
+          const targetSelection: ModelSelection =
+            scenario.includes("downgrade") || scenario === "exhausted-unknown-capacity-native"
+              ? { ...CLAUDE_MODEL_SELECTION, model: "small-model" }
+              : scenario === "exhausted-effort-change-native"
+                ? { ...CLAUDE_MODEL_SELECTION, options: [{ id: "reasoningEffort", value: "low" }] }
+                : !modelScenario
+                  ? CLAUDE_MODEL_SELECTION
+                  : {
+                      ...CLAUDE_MODEL_SELECTION,
+                      ...(reasoningScenario
+                        ? { options: [{ id: "reasoningEffort", value: "low" }] }
+                        : scenario.includes("option-change")
+                          ? { options: [{ id: "contextWindow", value: "1m" }] }
+                          : { model: `${CLAUDE_MODEL_SELECTION.model}-large` }),
+                    };
           const registry = makeProviderAdapterRegistryLayer([
             makeTestAdapter({
               instanceId: CODEX_MODEL_SELECTION.instanceId,
@@ -466,10 +540,49 @@ describe("orchestration v2 provider switching", () => {
               modelSelection: CLAUDE_MODEL_SELECTION,
               responseByRunOrdinal: {},
               capturedTurns,
-              ...(scenario.includes("retry") || scenario.includes("unsent")
+              failEnsureOnce,
+              ...(scenario === "exhausted-stop-native" ||
+              scenario === "exhausted-stop-running-native" ||
+              scenario === "exhausted-steer-native"
+                ? {
+                    holdRunOrdinal: 4,
+                    holdFirstTurn: compactionStarted,
+                    releaseFirstTurn: finishCompaction,
+                    runningWhileHeld: scenario === "exhausted-stop-running-native",
+                  }
+                : {}),
+              ...(scenario.includes("retry") ||
+              scenario.includes("unsent") ||
+              scenario === "exhausted-missed-input-native"
                 ? { failStartOnce }
                 : {}),
-              ...(replaceNative ? { failResumeOnce, nativeThreadGeneration: generation } : {}),
+              ...(replaceNative || exhausted
+                ? { failResumeOnce, nativeThreadGeneration: generation }
+                : {}),
+              ...(exhausted
+                ? {
+                    ...(scenario === "exhausted-unknown-capacity-native" ||
+                    scenario === "exhausted-no-usage-native"
+                      ? {}
+                      : {
+                          getModelContextWindow: (selection: ModelSelection) =>
+                            selection.model === "small-model" ? 32_000 : 258_400,
+                        }),
+                    tokenUsageByRunOrdinal: { 2: { usedTokens: 207_362, maxTokens: 258_400 } },
+                    compaction:
+                      scenario === "exhausted-compaction-failure-native"
+                        ? ("failure" as const)
+                        : scenario === "exhausted-compaction-interrupted-native"
+                          ? ("interrupted" as const)
+                          : scenario === "exhausted-no-shrink-native"
+                            ? ("no-shrink" as const)
+                            : scenario === "exhausted-unsupported-native"
+                              ? ("unsupported" as const)
+                              : scenario === "exhausted-no-usage-native"
+                                ? ("no-usage" as const)
+                                : ("success" as const),
+                  }
+                : {}),
               ...(scenario.includes("reported-capacity")
                 ? { initialContextUsage: { usedTokens: 999_999, maxTokens: 1_000_000 } }
                 : {}),
@@ -538,18 +651,22 @@ describe("orchestration v2 provider switching", () => {
                 creationSource: "web",
                 text,
                 attachments:
-                  turnUsageScenario && ordinal === 2
-                    ? Array.from({ length: 8 }, (_, index) => ({
-                        ...screenshot,
-                        id: `prior-${index}`,
-                      }))
-                    : turnUsageScenario && ordinal >= targetOrdinal
-                      ? [screenshot, { ...screenshot, id: "current-2" }]
-                      : scenario.startsWith("screenshot") && ordinal >= targetOrdinal
-                        ? screenshots
-                        : priorImages && ordinal === (scenario.startsWith("imported") ? 1 : 2)
-                          ? [screenshot]
-                          : [],
+                  scenario === "exhausted-manual-uppercase-native" && ordinal === targetOrdinal
+                    ? []
+                    : exhausted && ordinal === targetOrdinal
+                      ? [screenshot]
+                      : turnUsageScenario && ordinal === 2
+                        ? Array.from({ length: 8 }, (_, index) => ({
+                            ...screenshot,
+                            id: `prior-${index}`,
+                          }))
+                        : turnUsageScenario && ordinal >= targetOrdinal
+                          ? [screenshot, { ...screenshot, id: "current-2" }]
+                          : scenario.startsWith("screenshot") && ordinal >= targetOrdinal
+                            ? screenshots
+                            : priorImages && ordinal === (scenario.startsWith("imported") ? 1 : 2)
+                              ? [screenshot]
+                              : [],
                 modelSelection: selection,
                 dispatchMode: { type: "start_immediately" },
               });
@@ -559,7 +676,9 @@ describe("orchestration v2 provider switching", () => {
                   ({ event }) =>
                     event.type === "run.updated" &&
                     event.payload.ordinal === ordinal &&
-                    (event.payload.status === "completed" || event.payload.status === "failed"),
+                    (event.payload.status === "completed" ||
+                      event.payload.status === "failed" ||
+                      event.payload.status === "interrupted"),
                 ),
                 Stream.runHead,
                 Effect.andThen(worker.drain()),
@@ -599,20 +718,33 @@ describe("orchestration v2 provider switching", () => {
                   )
                 : undefined;
             yield* Effect.addFinalizer(() => Effect.sync(() => spy?.mockRestore()));
-            const current = scenario.startsWith("compact")
-              ? "/compact"
-              : capacityScenario && !turnUsageScenario
-                ? "x".repeat(70_000)
-                : scenario === "large-current-input"
-                  ? "x".repeat(9_000)
-                  : "Continue work";
+            const current =
+              scenario === "exhausted-manual-uppercase-native"
+                ? "/COMPACT"
+                : scenario === "exhausted-oversized-native"
+                  ? "x".repeat(260_000)
+                  : scenario === "exhausted-no-usage-native"
+                    ? "x".repeat(110_000)
+                    : scenario.startsWith("compact")
+                      ? "/compact"
+                      : capacityScenario && !turnUsageScenario
+                        ? "x".repeat(70_000)
+                        : scenario === "large-current-input"
+                          ? "x".repeat(9_000)
+                          : "Continue work";
             // First establish the returning native thread: the current request must
             // not be charged as existing context on the subsequent handoff.
             if (returning) {
               if (scenario.includes("unsent")) yield* Ref.set(failStartOnce, true);
               yield* dispatch(
                 2,
-                turnUsageScenario ? "x".repeat(27_460) : "Establish target",
+                exhausted
+                  ? scenario === "exhausted-downgrade-native"
+                    ? "Establish target"
+                    : "x".repeat(70_000)
+                  : turnUsageScenario
+                    ? "x".repeat(27_460)
+                    : "Establish target",
                 CLAUDE_MODEL_SELECTION,
               );
               yield* wait(2);
@@ -673,12 +805,18 @@ describe("orchestration v2 provider switching", () => {
                   ],
                 });
               }
+              if (scenario === "exhausted-missed-input-native") yield* Ref.set(failStartOnce, true);
               yield* dispatch(
                 3,
                 priorImages && !replaceNative
                   ? "New source constraint " + "q".repeat(9_000)
                   : "New source constraint",
-                CODEX_MODEL_SELECTION,
+                scenario.includes("downgrade") ||
+                  scenario === "exhausted-effort-change-native" ||
+                  scenario === "exhausted-unknown-capacity-native" ||
+                  scenario === "exhausted-missed-input-native"
+                  ? CLAUDE_MODEL_SELECTION
+                  : CODEX_MODEL_SELECTION,
               );
               yield* wait(3);
             }
@@ -698,7 +836,52 @@ describe("orchestration v2 provider switching", () => {
               yield* Ref.set(failResumeOnce, true);
             }
             if (scenario.includes("retry")) yield* Ref.set(failStartOnce, true);
+            if (scenario === "first-bind-retry-native") yield* Ref.set(failEnsureOnce, true);
             yield* dispatch(targetOrdinal, current, targetSelection);
+            if (
+              scenario === "exhausted-stop-native" ||
+              scenario === "exhausted-stop-running-native" ||
+              scenario === "exhausted-steer-native"
+            ) {
+              yield* Deferred.await(compactionStarted);
+              const active = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+              // Stop while the provider is compacting, not before its turn starts.
+              if (scenario === "exhausted-stop-running-native")
+                yield* orchestrator.streamStoredEvents.pipe(
+                  Stream.filter(
+                    ({ event }) =>
+                      event.type === "provider-turn.updated" &&
+                      event.payload.runAttemptId === active.activeAttemptId &&
+                      event.payload.status === "running",
+                  ),
+                  Stream.runHead,
+                );
+              if (scenario !== "exhausted-steer-native") {
+                yield* orchestrator.dispatch({
+                  type: "run.interrupt",
+                  commandId: CommandId.make("stop-compaction"),
+                  threadId,
+                  runId: active.id,
+                });
+              } else {
+                const steered = yield* Effect.result(
+                  orchestrator.dispatch({
+                    type: "message.dispatch",
+                    commandId: CommandId.make("steer-compaction"),
+                    threadId,
+                    messageId: MessageId.make("steer-compaction"),
+                    createdBy: "user",
+                    creationSource: "web",
+                    text: "Change the plan",
+                    attachments: [],
+                    modelSelection: targetSelection,
+                    dispatchMode: { type: "steer_active", targetRunId: active.id },
+                  }),
+                );
+                assert.equal(steered._tag, "Failure");
+              }
+              yield* Deferred.succeed(finishCompaction, undefined);
+            }
             yield* wait(targetOrdinal);
             if (scenario.includes("retry")) {
               const failed = yield* orchestrator.getThreadProjection(threadId);
@@ -728,13 +911,17 @@ describe("orchestration v2 provider switching", () => {
             }
             if (incompatibleTurnUsage) {
               const invalidated = yield* orchestrator.getThreadProjection(threadId);
-              assert.equal(invalidated.runs.at(-1)?.status, "failed");
+              assert.equal(invalidated.runs.at(-1)?.status, "completed");
               assert.isNull(
                 invalidated.providerThreads.find(
                   (thread) => thread.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
                 )!.contextUsage,
               );
-              assert.equal((yield* Ref.get(capturedTurns)).at(-1)!.driver, CODEX_DRIVER);
+              assert.equal((yield* Ref.get(capturedTurns)).at(-1)!.driver, CLAUDE_DRIVER);
+              assert.equal(
+                (yield* Ref.get(capturedTurns)).filter((turn) => turn.text === "/compact").length,
+                1,
+              );
               return;
             }
             if (reasoningScenario && replaceNative) {
@@ -794,6 +981,92 @@ describe("orchestration v2 provider switching", () => {
               yield* wait(targetOrdinal + 3);
             }
             const projection = yield* orchestrator.getThreadProjection(threadId);
+            if (scenario === "exhausted-manual-uppercase-native") {
+              assert.equal(projection.runs.at(-1)?.status, "completed");
+              assert.equal(
+                (yield* Ref.get(capturedTurns)).filter((turn) => turn.text === "/compact").length,
+                0,
+              );
+              assert.equal((yield* Ref.get(capturedTurns)).at(-1)?.text, "/COMPACT");
+              return;
+            }
+            if (exhausted) {
+              const failed =
+                scenario === "exhausted-oversized-native" ||
+                scenario === "exhausted-compaction-failure-native" ||
+                scenario === "exhausted-no-shrink-native" ||
+                scenario === "exhausted-unsupported-native";
+              const interrupted =
+                scenario === "exhausted-compaction-interrupted-native" ||
+                scenario === "exhausted-stop-native";
+              // The provider finished compacting after Stop, so the run completes unsent.
+              const stoppedAfterCompaction = scenario === "exhausted-stop-running-native";
+              assert.equal(
+                projection.runs.at(-1)?.status,
+                interrupted ? "interrupted" : failed ? "failed" : "completed",
+              );
+              assert.equal(yield* Ref.get(generation), 1);
+              const compactTurns = (yield* Ref.get(capturedTurns)).filter(
+                (turn) => turn.text === "/compact",
+              );
+              assert.equal(
+                compactTurns.length,
+                scenario === "exhausted-oversized-native" ||
+                  scenario === "exhausted-effort-change-native" ||
+                  scenario === "exhausted-unknown-capacity-native" ||
+                  scenario === "exhausted-unsupported-native"
+                  ? 0
+                  : 1,
+              );
+              assert.isTrue(compactTurns.every((turn) => turn.attachments.length === 0));
+              assert.isTrue(
+                projection.turnItems.some(
+                  (item) =>
+                    item.type === "user_message" &&
+                    item.text ===
+                      (scenario === "exhausted-downgrade-native"
+                        ? "Establish target"
+                        : "x".repeat(70_000)),
+                ),
+              );
+              if (failed || interrupted || stoppedAfterCompaction) {
+                assert.equal(
+                  (yield* Ref.get(capturedTurns)).filter((turn) => turn.text.endsWith(current))
+                    .length,
+                  0,
+                );
+                return;
+              }
+              if (
+                scenario === "exhausted-unknown-capacity-native" ||
+                scenario === "exhausted-effort-change-native"
+              )
+                return;
+              const latestAttempt = projection.attempts.find(
+                (attempt) => attempt.id === projection.runs.at(-1)!.activeAttemptId,
+              )!;
+              assert.include(latestAttempt.nativeThreadId!, ":0");
+              assert.deepEqual((yield* Ref.get(capturedTurns)).at(-1)!.attachments, [screenshot]);
+              assert.equal(
+                (yield* Ref.get(capturedTurns)).filter((turn) => turn.text.endsWith(current))
+                  .length,
+                1,
+              );
+              const history = scenario.endsWith("-native")
+                ? yield* encodeJson(yield* Ref.get(injectedHistory))
+                : (yield* Ref.get(capturedTurns)).at(-1)!.text;
+              if (!scenario.includes("downgrade")) assert.include(history, "New source constraint");
+              yield* dispatch(5, "Further source work", CODEX_MODEL_SELECTION);
+              yield* wait(5);
+              yield* dispatch(6, "Return to the recovered session", targetSelection);
+              yield* wait(6);
+              assert.equal(
+                (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status,
+                "completed",
+              );
+              assert.equal(yield* Ref.get(generation), 1);
+              return;
+            }
             assert.equal(projection.runs.at(-1)?.status, "completed");
             if (priorImages) {
               const handoff = projection.contextHandoffs.at(-1)!;
