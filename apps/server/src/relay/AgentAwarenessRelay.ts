@@ -25,6 +25,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -51,6 +52,8 @@ export class AgentAwarenessRelay extends Context.Service<
   AgentAwarenessRelay,
   {
     readonly publishThread: (threadId: ThreadId) => Effect.Effect<void>;
+    /** Retries a pending catch-up publish now. Call after this process links or enables publishing. */
+    readonly requestCatchUp: () => Effect.Effect<void>;
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("t3/relay/AgentAwarenessRelay") {}
@@ -309,6 +312,8 @@ export const make = Effect.gen(function* () {
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const activeSnapshotPublishedRef = yield* Ref.make(false);
+  // Holds at most one pending wake, so a burst of requests costs one retry.
+  const catchUpRequests = yield* Queue.dropping<void>(1);
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
 
   const readSecretString = (name: string) =>
@@ -569,7 +574,8 @@ export const make = Effect.gen(function* () {
   // Publishes the catch-up snapshot of active threads once the environment is
   // linked and publishing is enabled. Many environments never link, so the
   // retry backs off from 5 s to 60 s. It polls because `t3 connect` can write
-  // the secrets from another process.
+  // the secrets from another process. Links and preference changes made by
+  // this process call `requestCatchUp`, which ends the wait early.
   const publishActiveThreadsOnceWhenConfigured = (logEnabledWhenReady: boolean) =>
     Effect.gen(function* () {
       let retryDelayMs = 5_000;
@@ -585,7 +591,7 @@ export const make = Effect.gen(function* () {
           }
           return;
         }
-        yield* Effect.sleep(retryDelayMs);
+        yield* Effect.race(Effect.sleep(retryDelayMs), Queue.take(catchUpRequests));
         retryDelayMs = Math.min(retryDelayMs * 2, 60_000);
       }
     });
@@ -663,6 +669,7 @@ export const make = Effect.gen(function* () {
 
   return AgentAwarenessRelay.of({
     publishThread,
+    requestCatchUp: () => Queue.offer(catchUpRequests, undefined).pipe(Effect.asVoid),
     start,
   });
 });

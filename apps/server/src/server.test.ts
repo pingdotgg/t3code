@@ -181,6 +181,7 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
+import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
@@ -1173,14 +1174,19 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.succeed(
-          CloudManagedEndpointRuntime.CloudManagedEndpointRuntime,
-          CloudManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
-            applyConfig: () => Effect.succeed({ status: "disabled" }),
-            recoveryRequests: Stream.empty,
-            requestRecovery: () => Effect.void,
-            withLinkStateLock: (effect) => effect,
-            ...options?.layers?.cloudManagedEndpointRuntime,
+        Layer.mergeAll(
+          Layer.succeed(
+            CloudManagedEndpointRuntime.CloudManagedEndpointRuntime,
+            CloudManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
+              applyConfig: () => Effect.succeed({ status: "disabled" }),
+              recoveryRequests: Stream.empty,
+              requestRecovery: () => Effect.void,
+              withLinkStateLock: (effect) => effect,
+              ...options?.layers?.cloudManagedEndpointRuntime,
+            }),
+          ),
+          Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({
+            requestCatchUp: () => Effect.void,
           }),
         ),
       ),
