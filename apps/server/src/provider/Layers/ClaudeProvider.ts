@@ -225,7 +225,7 @@ function nonEmptyProbeString(value: string): string | undefined {
   return candidate ? candidate : undefined;
 }
 
-type ClaudeCapabilitiesProbe = {
+export type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
@@ -330,7 +330,7 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
  * subscription type information.
  */
 const probeClaudeCapabilities = (
-  claudeSettings: ClaudeSettings,
+  claudeSettings: Pick<ClaudeSettings, "binaryPath" | "homePath">,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
 ) => {
