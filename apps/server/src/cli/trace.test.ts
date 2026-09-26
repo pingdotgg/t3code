@@ -38,7 +38,7 @@ it("reports count, rate, percentiles, and exits per span name", () => {
     ),
   );
   const summarizer = makeTraceSpanSummary();
-  [...refreshes, span("probe", 2_500, 10 * MINUTE_MS), ""].forEach(summarizer.addLine);
+  [...refreshes, span("probe", 2_500, 10 * MINUTE_MS)].forEach(summarizer.addLine);
   const summary = summarizer.finish();
 
   assert.strictEqual(summary.spanCount, 11);
@@ -71,6 +71,7 @@ it("drops spans that ended before the window and counts unreadable lines", () =>
   const summarizer = makeTraceSpanSummary(MINUTE_MS);
   [
     span("old", 1, 0),
+    "",
     "{not json",
     JSON.stringify({ name: "no-duration" }),
     // Ends past the largest Date, so the report could not print it.

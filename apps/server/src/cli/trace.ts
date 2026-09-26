@@ -137,7 +137,7 @@ function formatTraceSummary(
     ]);
   const table = [header, ...rows];
   const widths = header.map((_, column) => Math.max(...table.map((row) => row[column]!.length)));
-  const formatIso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(Math.floor(ms)));
+  const formatIso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
   return [
     `${summary.spanCount} spans ended from ${formatIso(summary.firstEndMs)} to ${formatIso(summary.lastEndMs)} (${summary.minutes.toFixed(1)} min).`,
     ...(summary.skippedLineCount > 0
@@ -187,8 +187,7 @@ const traceSummaryCommand = Command.make("summary", {
         ? (yield* Clock.currentTimeMillis) - Duration.toMillis(flags.since.value)
         : undefined;
       const summarizer = makeTraceSpanSummary(sinceMs);
-      // Stream each file line by line. Only one chunk of text is in memory at a
-      // time, so memory does not grow with the size of the trace files.
+      // Stream each file so only one chunk of text is in memory at a time.
       yield* Effect.forEach(
         toRotatedTracePaths(traceFilePath, yield* traceMaxFilesConfig),
         (path) =>
