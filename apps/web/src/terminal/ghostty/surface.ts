@@ -489,6 +489,27 @@ export function terminalWheelArrowData(rows: number, applicationCursorKeys: bool
   return sequence.repeat(Math.abs(rows));
 }
 
+/**
+ * Selection autoscroll direction for a drag pointer: -1 scrolls up, 1 scrolls
+ * down, 0 holds. The bottom-docked terminal is flush with the window edge, so
+ * the pointer can never go past the bottom — the bottom cell row is the scroll
+ * zone. The top edge keeps a strict boundary so ordinary selections in the
+ * first rendered row don't scroll into scrollback, and the bottom zone is
+ * capped at half the canvas height so it can never reach above the top edge on
+ * very short terminals and invert the direction.
+ */
+export function resolveTerminalSelectionAutoscroll(input: {
+  readonly clientY: number;
+  readonly top: number;
+  readonly bottom: number;
+  readonly cellHeight: number;
+}): -1 | 0 | 1 {
+  const edgeZone = Math.min(Math.max(1, input.cellHeight), (input.bottom - input.top) / 2);
+  if (input.clientY < input.top) return -1;
+  if (input.clientY > input.bottom - edgeZone) return 1;
+  return 0;
+}
+
 export function ghosttyMouseButton(button: number): number | null {
   switch (button) {
     case 0:
@@ -1412,7 +1433,12 @@ export class GhosttyTerminalSurface {
     this.selectionPointer = { x: event.clientX, y: event.clientY };
     const bounds = this.canvas.getBoundingClientRect();
     this.setSelectionAutoscroll(
-      event.clientY < bounds.top ? -1 : event.clientY > bounds.bottom ? 1 : 0,
+      resolveTerminalSelectionAutoscroll({
+        clientY: event.clientY,
+        top: bounds.top,
+        bottom: bounds.bottom,
+        cellHeight: this.metrics.height,
+      }),
     );
     const cell = this.cellAt(event.clientX, event.clientY);
     if (cell.x === this.selectionEnd?.x && cell.y === this.selectionEnd.y) return;
