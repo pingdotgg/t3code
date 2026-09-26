@@ -9,6 +9,7 @@ import { DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 
 import {
+  basename,
   buildTerminalMenuSessions,
   nextOpenTerminalId,
   previousLiveTerminalId,
@@ -224,5 +225,15 @@ describe("resolveProjectScriptTerminalId", () => {
         hasRunningTerminal: true,
       }),
     ).toBe("term-3");
+  });
+});
+
+describe("basename", () => {
+  it("returns the folder name for POSIX and Windows paths", () => {
+    expect(basename("/Users/me/t3code/")).toBe("t3code");
+    expect(basename("C:\\Users\\me\\My Project")).toBe("My Project");
+    expect(basename("C:\\Users\\me\\My Project\\")).toBe("My Project");
+    expect(basename("/")).toBe("/");
+    expect(basename(null)).toBeNull();
   });
 });

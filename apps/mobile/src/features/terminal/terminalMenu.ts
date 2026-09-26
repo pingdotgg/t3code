@@ -33,12 +33,12 @@ export function basename(input: string | null): string | null {
     return null;
   }
 
-  const normalized = input.replace(/\/+$/, "");
+  const normalized = input.replace(/[\\/]+$/, "");
   if (normalized.length === 0) {
     return "/";
   }
 
-  const segments = normalized.split("/");
+  const segments = normalized.split(/[\\/]/);
   return segments[segments.length - 1] ?? normalized;
 }
 

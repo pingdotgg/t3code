@@ -9,6 +9,14 @@ type DraftProjectSelectionResolution =
   | { readonly kind: "select"; readonly project: EnvironmentProject }
   | { readonly kind: "pick" };
 
+/**
+ * The last segment of a project's workspace root on either OS, or null when the
+ * root is empty (a pending-task placeholder), so an "" basename matches nothing.
+ */
+export function workspaceFolderName(project: EnvironmentProject): string | null {
+  return project.workspaceRoot.split(/[\\/]/).filter(Boolean).at(-1) ?? null;
+}
+
 export function getProjectScopeSelectionTarget(
   scope: HomeProjectScope,
   preferredEnvironmentId: EnvironmentId | null,
@@ -57,9 +65,7 @@ export function resolveEnvironmentProjectMatch(
   selectedProject: EnvironmentProject | null,
 ): EnvironmentProject | null {
   const repositoryKey = selectedProject?.repositoryIdentity?.canonicalKey ?? null;
-  // `|| null` (not `??`): a pending-task placeholder project can have an empty
-  // workspaceRoot, and an "" basename would match nothing meaningful.
-  const workspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
+  const workspaceBasename = selectedProject ? workspaceFolderName(selectedProject) : null;
   // The weaker signals only apply where identity is unknown on at least one
   // side; two known, different repositories never match on a shared basename
   // or title (mirrors the environment list filter in the new-task flow).
@@ -76,8 +82,7 @@ export function resolveEnvironmentProjectMatch(
     (workspaceBasename !== null
       ? projectsOnTarget.find(
           (project) =>
-            !isKnownMismatch(project) &&
-            project.workspaceRoot.split("/").at(-1) === workspaceBasename,
+            !isKnownMismatch(project) && workspaceFolderName(project) === workspaceBasename,
         )
       : undefined) ??
     (selectedProject !== null

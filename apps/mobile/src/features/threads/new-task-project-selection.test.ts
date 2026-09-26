@@ -95,6 +95,18 @@ describe("resolveEnvironmentProjectMatch", () => {
     expect(resolveEnvironmentProjectMatch(byTitle, selected)).toBe(byTitle[1]);
   });
 
+  it("matches workspace basenames across Windows and POSIX roots", () => {
+    const selected = makeProject("win", "pc", {
+      title: "renamed",
+      workspaceRoot: "C:\\Users\\me\\t3code",
+    });
+    const targets = [
+      makeProject("other", "mac"),
+      makeProject("mac", "mac", { workspaceRoot: "/Users/me/t3code" }),
+    ];
+    expect(resolveEnvironmentProjectMatch(targets, selected)).toBe(targets[1]);
+  });
+
   it("does not treat a known different repository as a basename or title match", () => {
     const selected = makeProject("t3code", "mac", {
       repositoryKey: "github.com/t3tools/t3code",

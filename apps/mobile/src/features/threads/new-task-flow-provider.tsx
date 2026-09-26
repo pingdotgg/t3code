@@ -97,7 +97,7 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
-import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import { resolveEnvironmentProjectMatch, workspaceFolderName } from "./new-task-project-selection";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 
 type WorkspaceMode = "local" | "worktree";
@@ -342,9 +342,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // identity is the primary signal; projects that haven't reported one yet (still
   // indexing) fall back to workspace basename / title so a valid host isn't hidden.
   const selectedRepositoryKey = selectedProject?.repositoryIdentity?.canonicalKey ?? null;
-  // `|| null` (not `??`): a pending-task placeholder project can have an empty
-  // workspaceRoot, and an "" basename would reject every real host below.
-  const selectedWorkspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
+  const selectedWorkspaceBasename = selectedProject ? workspaceFolderName(selectedProject) : null;
   const selectedProjectTitle = selectedProject?.title ?? null;
   const environments = useMemo(() => {
     const seen = new Set<EnvironmentId>();
@@ -361,7 +359,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         return projectKey === selectedRepositoryKey;
       }
       return (
-        project.workspaceRoot.split("/").at(-1) === selectedWorkspaceBasename ||
+        (selectedWorkspaceBasename !== null &&
+          workspaceFolderName(project) === selectedWorkspaceBasename) ||
         (selectedProjectTitle !== null && project.title === selectedProjectTitle)
       );
     };
