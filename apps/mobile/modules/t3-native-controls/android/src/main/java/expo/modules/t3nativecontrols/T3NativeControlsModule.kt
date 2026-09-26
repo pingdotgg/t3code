@@ -3,7 +3,9 @@ package expo.modules.t3nativecontrols
 import android.content.Intent
 import android.text.format.DateFormat
 import androidx.core.content.FileProvider
+import androidx.core.view.WindowInsetsControllerCompat
 import expo.modules.kotlin.Promise
+import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
@@ -11,6 +13,17 @@ import java.net.URI
 
 class T3NativeControlsModule : Module() {
   private var filePreviewPromise: Promise? = null
+  private var systemBarsTheme: Pair<Int, Boolean>? = null
+
+  private fun applySystemBarsTheme() {
+    val (backgroundColor, dark) = systemBarsTheme ?: return
+    val window = appContext.currentActivity?.window ?: return
+    window.decorView.setBackgroundColor(backgroundColor)
+    WindowInsetsControllerCompat(window, window.decorView).apply {
+      isAppearanceLightStatusBars = !dark
+      isAppearanceLightNavigationBars = !dark
+    }
+  }
 
   @Suppress("TooGenericExceptionCaught") // Clear the pending promise before rethrowing.
   override fun definition() = ModuleDefinition {
@@ -49,6 +62,21 @@ class T3NativeControlsModule : Module() {
         filePreviewPromise?.resolve(null)
         filePreviewPromise = null
       }
+    }
+
+    // The window background shows through the transparent system bars and
+    // through caption bars that windowing hosts such as Lepton draw inside the
+    // window. AppCompat resolves it from the system night mode once, at window
+    // creation, so paint it from the in-app theme instead. The navigation bar
+    // contrast scrim follows its light-appearance flag.
+    AsyncFunction("setSystemBarsTheme") { backgroundColor: Int, dark: Boolean ->
+      systemBarsTheme = backgroundColor to dark
+      applySystemBarsTheme()
+    }.runOnQueue(Queues.MAIN)
+
+    // A recreated activity gets a fresh window, so repaint it.
+    OnActivityEntersForeground {
+      applySystemBarsTheme()
     }
 
     Function("getShowcasePairingUrl") {

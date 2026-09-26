@@ -1,7 +1,8 @@
+import { requireOptionalNativeModule } from "expo";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
-import { StatusBar, View } from "react-native";
+import { Platform, processColor, StatusBar, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -53,6 +54,29 @@ function SplashScreenCoordinator() {
   return null;
 }
 
+const androidSystemBars =
+  Platform.OS === "android"
+    ? requireOptionalNativeModule<{
+        setSystemBarsTheme(backgroundColor: number, dark: boolean): Promise<void>;
+      }>("T3NativeControls")
+    : null;
+
+/** Paints the window behind Android's transparent system bars and host caption bars from the in-app theme. */
+function AndroidSystemBarsCoordinator() {
+  const { themeAppearance, themeVariables } = useAppearancePreferences();
+  const backgroundColor = themeVariables["--color-status-bar"];
+
+  useEffect(() => {
+    const color = processColor(backgroundColor);
+    if (androidSystemBars === null || typeof color !== "number") return;
+    void androidSystemBars.setSystemBarsTheme(color, themeAppearance === "dark").catch(() => {
+      // Cosmetic only: a failed repaint must not surface as an error.
+    });
+  }, [backgroundColor, themeAppearance]);
+
+  return null;
+}
+
 export default function App() {
   return (
     <RegistryContext.Provider value={appAtomRegistry}>
@@ -72,6 +96,7 @@ function AppContent() {
   return (
     <>
       <SplashScreenCoordinator />
+      <AndroidSystemBarsCoordinator />
       <SubscriptionUsageCoordinator />
       <GestureHandlerRootView className="flex-1">
         <KeyboardProvider statusBarTranslucent>
