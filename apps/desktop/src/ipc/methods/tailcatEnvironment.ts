@@ -18,7 +18,7 @@ import * as DesktopTailcatEnvironment from "../../tailcat/DesktopTailcatEnvironm
  * diagnostics, and asks for lifecycle changes by connection id.
  */
 
-export const ensureTailcatEnvironment = DesktopIpc.makeIpcMethod({
+const ensureTailcatEnvironment = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.ENSURE_TAILCAT_ENVIRONMENT_CHANNEL,
   payload: DesktopTailcatEnvironmentEnsureInputSchema,
   result: DesktopTailcatEnvironmentBootstrapSchema,
@@ -28,7 +28,7 @@ export const ensureTailcatEnvironment = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const restartTailcatEnvironment = DesktopIpc.makeIpcMethod({
+const restartTailcatEnvironment = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.RESTART_TAILCAT_ENVIRONMENT_CHANNEL,
   payload: DesktopTailcatConnectionIdInputSchema,
   result: DesktopTailcatEnvironmentBootstrapSchema,
@@ -40,7 +40,7 @@ export const restartTailcatEnvironment = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const disconnectTailcatEnvironment = DesktopIpc.makeIpcMethod({
+const disconnectTailcatEnvironment = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.DISCONNECT_TAILCAT_ENVIRONMENT_CHANNEL,
   payload: DesktopTailcatConnectionIdInputSchema,
   result: Schema.Void,
@@ -52,7 +52,7 @@ export const disconnectTailcatEnvironment = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const getTailcatConnectionDiagnostics = DesktopIpc.makeIpcMethod({
+const getTailcatConnectionDiagnostics = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.GET_TAILCAT_CONNECTION_DIAGNOSTICS_CHANNEL,
   payload: DesktopTailcatConnectionIdInputSchema,
   result: Schema.NullOr(TailcatConnectionDiagnostics),
@@ -62,7 +62,7 @@ export const getTailcatConnectionDiagnostics = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const probeTailcatConnectionPath = DesktopIpc.makeIpcMethod({
+const probeTailcatConnectionPath = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PROBE_TAILCAT_CONNECTION_PATH_CHANNEL,
   payload: DesktopTailcatConnectionIdInputSchema,
   result: Schema.NullOr(TailcatConnectionDiagnostics),

@@ -16,7 +16,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
  * the secret store (also used for T3 Connect link proofs). Reusing it keeps one
  * stable cryptographic identity per environment instead of a second key system.
  */
-export const FEDERATION_ASSERTION_MAX_AGE_SECONDS = 120;
+const FEDERATION_ASSERTION_MAX_AGE_SECONDS = 120;
 
 export class FederationIdentity extends Context.Service<
   FederationIdentity,
@@ -72,6 +72,7 @@ export function federationKeyFingerprint(publicKeyPem: string): string {
   return `${hex.slice(0, 4)}·${hex.slice(4, 8)}·${hex.slice(8, 12)}·${hex.slice(12, 16)}`;
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const environment = yield* ServerEnvironment.ServerEnvironment;

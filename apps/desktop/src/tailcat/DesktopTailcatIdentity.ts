@@ -74,6 +74,7 @@ export class DesktopTailcatIdentity extends Context.Service<
 
 const describe = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;

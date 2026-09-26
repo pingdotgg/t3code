@@ -45,8 +45,8 @@ import * as DesktopTailcatIdentity from "./DesktopTailcatIdentity.ts";
  * probe result is kept for diagnostics.
  */
 
-export const TAILCAT_FORWARD_READINESS_TIMEOUT = Duration.seconds(20);
-export const TAILCAT_FORWARD_MAX_RESTARTS = 8;
+const TAILCAT_FORWARD_READINESS_TIMEOUT = Duration.seconds(20);
+const TAILCAT_FORWARD_MAX_RESTARTS = 8;
 
 export class DesktopTailcatEnvironmentError extends Schema.TaggedError<DesktopTailcatEnvironmentError>()(
   "DesktopTailcatEnvironmentError",
@@ -117,6 +117,7 @@ const failureCodeOf = (
 ): TailcatFailureCode =>
   error._tag === "DesktopTailcatIdentityError" ? "identity-failed" : tailcatFailureCode(error);
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const runtime = yield* TailcatRuntime.TailcatRuntime;
   const identity = yield* DesktopTailcatIdentity.DesktopTailcatIdentity;

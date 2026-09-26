@@ -14,7 +14,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
  * `native/tailcat/dist` output. A `tailcat` on PATH is the last resort and is
  * still version-checked against the pinned manifest.
  */
-export function desktopTailcatBundledCandidates(
+function desktopTailcatBundledCandidates(
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
 ): ReadonlyArray<string> {
   const architecture = environment.processArch as NodeJS.Architecture;

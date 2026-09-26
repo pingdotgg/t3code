@@ -29,7 +29,7 @@ import * as ServerConfig from "../config.ts";
  * Tailcat client identity. Forwards are created lazily, reused while healthy,
  * and closed when the peer is removed or the server shuts down.
  */
-export const TAILCAT_CLIENT_IDENTITY_FILE = "tailcat-client-identity.private.json";
+const TAILCAT_CLIENT_IDENTITY_FILE = "tailcat-client-identity.private.json";
 const PEER_READY_TIMEOUT = Duration.seconds(25);
 
 export interface PeerEndpoint {

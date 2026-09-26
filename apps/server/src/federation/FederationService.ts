@@ -105,7 +105,7 @@ import {
  * at pairing time; a transport path never implies trust by itself.
  */
 
-export const FEDERATION_CAPABILITIES: ReadonlyArray<FederationCapability> = [
+const FEDERATION_CAPABILITIES: ReadonlyArray<FederationCapability> = [
   "hello",
   "projects.list",
   "runs.start",
@@ -258,6 +258,7 @@ function scopesIncludeAll(
   return required.every((scope) => granted.includes(scope));
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const identity = yield* FederationIdentity.FederationIdentity;

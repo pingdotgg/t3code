@@ -50,7 +50,7 @@ import { type DiscoveredPairTarget, discoverPairTarget, makePairServerConfig } f
  * Bound for one unary call against the running server: generous for a busy
  * disk, short enough that a wedged server does not hang the terminal.
  */
-export const RUNNING_SERVER_REQUEST_TIMEOUT = Duration.seconds(10);
+const RUNNING_SERVER_REQUEST_TIMEOUT = Duration.seconds(10);
 
 // Enabling starts the tailcat process and waits for it to report an address;
 // a cold start with a DERP handshake is a few seconds, so poll for up to 30s.
@@ -280,7 +280,7 @@ const runTailcatCommand = <A, E, R>(
     run: (session) => Effect.flatMap(makeTailcatApi(session), run),
   }).pipe(Effect.provide(FetchHttpClient.layer));
 
-export const nodeKeyFingerprint = tailcatNodeKeyFingerprint;
+const nodeKeyFingerprint = tailcatNodeKeyFingerprint;
 
 const formatRuntime = (state: TailcatRemoteAccessState): string => {
   if (state.runtime === null) {
@@ -292,7 +292,7 @@ const formatRuntime = (state: TailcatRemoteAccessState): string => {
   return `${state.runtime.source} ${state.runtime.version} (${compatibility}) at ${state.runtime.executablePath}`;
 };
 
-export const formatTailcatStatus = (
+const formatTailcatStatus = (
   state: TailcatRemoteAccessState,
   options: { readonly json: boolean },
 ): string => {
@@ -317,7 +317,7 @@ export const formatTailcatStatus = (
   ].join("\n");
 };
 
-export const formatTrustedPeers = (
+const formatTrustedPeers = (
   peers: ReadonlyArray<TailcatTrustedPeer>,
   options: { readonly json: boolean },
 ): string => {
@@ -351,7 +351,7 @@ export const formatTrustedPeers = (
 
 // Same shape as the `t3 serve --tailcat` startup output, so the code reads
 // the same wherever the user sees it.
-export const formatConnectionCode = (
+const formatConnectionCode = (
   issued: TailcatConnectionCodeResult,
   options: { readonly json: boolean },
 ): string => {

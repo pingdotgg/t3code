@@ -192,6 +192,7 @@ const isPermanentFailure = (code: TailcatFailureCode): boolean =>
   code === "version-incompatible" ||
   code === "identity-failed";
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const runtime = yield* TailcatRuntime.TailcatRuntime;

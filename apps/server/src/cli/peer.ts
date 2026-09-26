@@ -121,7 +121,7 @@ const uniqueScopesOrDefault = (
 ): ReadonlyArray<FederationScope> =>
   scopes.length === 0 ? FEDERATION_DEFAULT_SCOPES : Array.from(new Set(scopes));
 
-export const formatPeer = (peer: FederationPeer): string =>
+const formatPeer = (peer: FederationPeer): string =>
   [
     `${peer.label} (${peer.peerId}) ${peer.status}`,
     `  fingerprint: ${peer.publicKeyFingerprint}`,
@@ -137,13 +137,10 @@ export const formatPeer = (peer: FederationPeer): string =>
     ...(peer.lastError === null ? [] : [`  last error: ${peer.lastError}`]),
   ].join("\n");
 
-export const formatPairedPeer = (
-  peer: FederationPeer,
-  options: { readonly json: boolean },
-): string =>
+const formatPairedPeer = (peer: FederationPeer, options: { readonly json: boolean }): string =>
   options.json ? JSON.stringify(peer, null, 2) : `Paired with a new peer.\n\n${formatPeer(peer)}`;
 
-export const formatPeerList = (
+const formatPeerList = (
   snapshot: FederationSnapshot,
   options: { readonly json: boolean },
 ): string => {
@@ -157,7 +154,7 @@ export const formatPeerList = (
   return [header, "", snapshot.peers.map(formatPeer).join("\n\n")].join("\n");
 };
 
-export const formatPeerCode = (
+const formatPeerCode = (
   issued: FederationPeerCodeResult,
   options: { readonly json: boolean },
 ): string => {
@@ -174,7 +171,7 @@ export const formatPeerCode = (
   ].join("\n");
 };
 
-export const formatRemoteProjects = (
+const formatRemoteProjects = (
   projects: ReadonlyArray<FederationProjectSummary>,
   options: { readonly json: boolean },
 ): string => {
@@ -191,10 +188,10 @@ export const formatRemoteProjects = (
     .join("\n\n");
 };
 
-export const formatRunEvent = (event: FederationRunEvent): string =>
+const formatRunEvent = (event: FederationRunEvent): string =>
   `[${event.at}] ${event.type}${event.summary.length > 0 ? `: ${event.summary}` : ""}`;
 
-export const formatRemoteRun = (
+const formatRemoteRun = (
   remoteRun: FederationRemoteRun,
   options: { readonly json: boolean },
 ): string => {
