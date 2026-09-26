@@ -628,10 +628,18 @@ on macOS and Linux. Windows has no `SIGUSR2`.
 Send the signal to the server pid in `server-runtime.json`, which sits in the server's state dir
 next to the `logs` dir. For a dev server or a `--home-dir` launch, use that server's state dir from
 [Traces](#traces). Do not send it to the desktop app or the service launcher: a process without the
-handler exits on `SIGUSR2`.
+handler exits on `SIGUSR2`. After a crash the file can keep a stale pid that now belongs to a
+different process, so check the pid first.
 
 ```bash
-kill -USR2 "$(jq .pid "${T3CODE_HOME:-$HOME/.t3}/userdata/server-runtime.json")"
+pid="$(jq .pid "${T3CODE_HOME:-$HOME/.t3}/userdata/server-runtime.json")"
+ps -p "$pid" -o command=
+```
+
+If `ps` shows the T3 Code server, send the signal:
+
+```bash
+kill -USR2 "$pid"
 ```
 
 The file is `<logsDir>/server-<pid>-<timestamp>.heapsnapshot`, next to `server.trace.ndjson`. To
