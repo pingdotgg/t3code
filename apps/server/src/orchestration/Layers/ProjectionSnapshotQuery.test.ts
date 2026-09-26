@@ -30,6 +30,7 @@ import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { encodeThreadDetailPageCursor } from "../threadDetailCursor.ts";
 import { projectThreadDetailSnapshot } from "../ActivityPayloadProjection.ts";
+import { readSweepSnapshot } from "../ThreadPullRequestReactor.ts";
 import { makeSqlStatementCounter } from "../../../integration/SqlStatementCounter.integration.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
@@ -3573,6 +3574,74 @@ it.effect(
     }).pipe(Effect.provide(layer));
   },
 );
+
+it.effect("reads one sweep thread and its projects like the shell snapshot", () => {
+  const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
+    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provide(ThreadPlanProgress.layer),
+    Layer.provide(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: () =>
+          Effect.succeed({
+            canonicalKey: "github.com/acme/web",
+            provider: "github",
+            displayName: "acme/web",
+            locator: {
+              source: "git-remote" as const,
+              remoteName: "origin",
+              remoteUrl: "https://github.com/acme/web.git",
+            },
+          }),
+      }),
+    ),
+    Layer.provideMerge(SqlitePersistenceMemory),
+  );
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const query = yield* ProjectionSnapshotQuery;
+    yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+      VALUES ('p1', 'One', '/one', '[]', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z'),
+        ('p2', 'Two', '/two', '[]', '2026-09-02T00:00:00Z', '2026-09-02T00:00:00Z'),
+        ('p3', 'Three', '/three', '[]', '2026-09-03T00:00:00Z', '2026-09-03T00:00:00Z')`;
+    yield* sql`INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, branch, worktree_path, branch_pull_request_json, latest_turn_id, latest_user_message_at, pending_approval_count, snoozed_until, snoozed_at, created_at, updated_at, settled_override, settled_at)
+      VALUES
+        ('t-linked', 'p1', 'Linked', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', 'feature', '/one/wt', NULL, 'turn-1', '2026-09-02T00:00:00Z', 1, NULL, NULL, '2026-09-01T00:00:00Z', '2026-09-02T00:00:00Z', NULL, NULL),
+        ('t-branch', 'p1', 'Branch', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', 'other', NULL,
+          '{"projectId":"p2","repository":"acme/web","number":8,"url":"https://github.com/acme/web/pull/8"}',
+          NULL, NULL, 0, '2026-09-10T00:00:00Z', '2026-09-02T00:00:00Z', '2026-09-01T00:00:00Z', '2026-09-02T00:00:00Z', 'settled', '2026-09-03T00:00:00Z'),
+        ('t-other', 'p3', 'Other', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', NULL, NULL)`;
+    yield* sql`INSERT INTO projection_thread_pull_requests (thread_id, host, repository, number, url, source, linked_at)
+      VALUES ('t-linked', 'github.com', 'acme/web', 7, 'https://github.com/acme/web/pull/7', 'agent', '2026-09-02T00:00:00Z')`;
+    yield* sql`INSERT INTO projection_turns (thread_id, turn_id, state, requested_at, started_at, completed_at, checkpoint_files_json)
+      VALUES ('t-linked', 'turn-1', 'completed', '2026-09-02T00:00:00Z', '2026-09-02T00:00:01Z', '2026-09-02T00:00:02Z', '[]')`;
+    yield* sql`INSERT INTO projection_thread_sessions (thread_id, status, provider_name, active_turn_id, last_error, updated_at)
+      VALUES ('t-linked', 'ready', 'codex', NULL, NULL, '2026-09-02T00:00:03Z')`;
+    for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+      yield* sql`INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+        VALUES (${projector}, 9, '2026-09-02T00:00:03Z')`;
+    }
+
+    const full = yield* query.getShellSnapshot();
+    // The seeded fields must reach the snapshot, or the parity check is empty.
+    const linked = full.threads.find((thread) => thread.id === ThreadId.make("t-linked"));
+    assert.strictEqual(full.snapshotSequence, 9);
+    assert.strictEqual(linked?.linkedPullRequest?.number, 7);
+    assert.strictEqual(linked?.latestTurn?.turnId, asTurnId("turn-1"));
+    assert.strictEqual(linked?.session?.status, "ready");
+
+    for (const [threadId, projectIds] of [
+      [ThreadId.make("t-linked"), [asProjectId("p1")]],
+      // Settlement also needs the project that the saved branch PR names.
+      [ThreadId.make("t-branch"), [asProjectId("p1"), asProjectId("p2")]],
+    ] as const) {
+      assert.deepStrictEqual(yield* readSweepSnapshot(query, threadId), {
+        snapshotSequence: full.snapshotSequence,
+        projects: full.projects.filter((project) => projectIds.includes(project.id)),
+        threads: full.threads.filter((thread) => thread.id === threadId),
+      });
+    }
+  }).pipe(Effect.provide(layer));
+});
 
 projectionSnapshotLayer("ProjectionSnapshotQuery activities by kind", (it) => {
   it.effect("lists one kind across active threads only, without hydrating the threads", () =>
