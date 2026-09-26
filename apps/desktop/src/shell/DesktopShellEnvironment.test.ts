@@ -152,6 +152,59 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("hydrates Bitbucket credentials from the login shell on macOS", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            T3CODE_BITBUCKET_ACCESS_TOKEN: "access-token",
+            T3CODE_BITBUCKET_EMAIL: "developer@example.com",
+            T3CODE_BITBUCKET_API_TOKEN: "api-token",
+          }),
+      });
+
+      assert.equal(env.T3CODE_BITBUCKET_ACCESS_TOKEN, "access-token");
+      assert.equal(env.T3CODE_BITBUCKET_EMAIL, "developer@example.com");
+      assert.equal(env.T3CODE_BITBUCKET_API_TOKEN, "api-token");
+    }),
+  );
+
+  it.effect("does not mix login-shell Bitbucket credentials into an inherited set", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        T3CODE_BITBUCKET_ACCESS_TOKEN: "inherited-access-token",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            T3CODE_BITBUCKET_EMAIL: "developer@example.com",
+            T3CODE_BITBUCKET_API_TOKEN: "api-token",
+          }),
+      });
+
+      // An access token outranks email plus API token, so hydrating the pair here
+      // would leave the app authenticating with the inherited token and the shell
+      // credentials silently ignored.
+      assert.equal(env.T3CODE_BITBUCKET_ACCESS_TOKEN, "inherited-access-token");
+      assert.equal(env.T3CODE_BITBUCKET_EMAIL, undefined);
+      assert.equal(env.T3CODE_BITBUCKET_API_TOKEN, undefined);
+    }),
+  );
+
   it.effect("hydrates the locale from the login shell on macOS", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
