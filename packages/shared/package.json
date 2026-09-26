@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./voicePunctuation": {
+      "types": "./src/voicePunctuation.ts",
+      "import": "./src/voicePunctuation.ts"
+    },
     "./legacyCliLauncher": {
       "types": "./src/legacyCliLauncher.ts",
       "import": "./src/legacyCliLauncher.ts"

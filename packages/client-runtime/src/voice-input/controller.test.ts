@@ -9,6 +9,7 @@ import {
   type VoiceDraftSnapshot,
   type VoiceInputControllerDependencies,
   type VoiceRecorder,
+  type StreamingVoiceInputDependencies,
 } from "./controller.ts";
 import type { PreparedVoiceTranscription, VoiceTranscriber } from "./transcription.ts";
 
@@ -76,7 +77,89 @@ function createHarness(
   };
 }
 
+describe("streaming voice ownership", () => {
+  beforeEach(resetVoiceInputGlobalsForTests);
+
+  function streamingHarness(start: () => Promise<void> = async () => {}) {
+    const dispose = vi.fn();
+    const commit = vi.fn();
+    let callbacks!: Parameters<StreamingVoiceInputDependencies["createRecorder"]>[0];
+    const controller = new VoiceInputController({
+      mode: "streaming",
+      now: () => 0,
+      readDraft: () => draft(),
+      commitDraft: commit,
+      onStateChange: vi.fn(),
+      createRecorder: (next) => {
+        callbacks = next;
+        return { start, stop: async () => ({ text: "hello", locale: "en" }), dispose };
+      },
+    });
+    return { controller, dispose, commit, callbacks: () => callbacks };
+  }
+
+  it("shares the active recording gate with the native recorder", async () => {
+    const streaming = streamingHarness();
+    const native = createHarness();
+    await streaming.controller.start();
+    await native.controller.start();
+    expect(native.recorder.record).not.toHaveBeenCalled();
+    expect(native.controller.currentState.error).toContain("already active");
+    streaming.controller.cancel();
+    await native.controller.start();
+    expect(native.recorder.record).toHaveBeenCalledOnce();
+    const other = streamingHarness();
+    await other.controller.start();
+    expect(other.controller.currentState.error).toContain("already active");
+    await native.controller.interruptRecording();
+    await other.controller.start();
+    expect(other.controller.currentState.phase).toBe("recording");
+    other.controller.dispose();
+  });
+
+  it("does not let cancelled startup release a newer session or insert late speech", async () => {
+    const startup = deferred<void>();
+    const old = streamingHarness(() => startup.promise);
+    const starting = old.controller.start();
+    old.controller.cancel();
+    const next = streamingHarness();
+    await next.controller.start();
+    startup.resolve();
+    await starting;
+    old.callbacks().onTranscript("late speech");
+    expect(old.commit).not.toHaveBeenCalled();
+    expect(old.dispose).toHaveBeenCalledOnce();
+    expect(next.dispose).not.toHaveBeenCalled();
+    const blocked = createHarness();
+    await blocked.controller.start();
+    expect(blocked.recorder.record).not.toHaveBeenCalled();
+    next.controller.dispose();
+  });
+
+  it("releases a pending stream when backgrounded", async () => {
+    const startup = deferred<void>();
+    const streaming = streamingHarness(() => startup.promise);
+    const starting = streaming.controller.start();
+    streaming.controller.appMovedToBackground();
+    expect(streaming.dispose).toHaveBeenCalledOnce();
+    const native = createHarness();
+    await native.controller.start();
+    expect(native.recorder.record).toHaveBeenCalledOnce();
+    startup.resolve();
+    await starting;
+    expect(streaming.controller.currentState.error).toContain("background");
+    await native.controller.interruptRecording();
+  });
+});
+
 describe("resolveTranscriptCommit", () => {
+  it("attaches dictated punctuation to the word before the caret", () => {
+    const captured = draft({ text: "Ready", selection: { start: 5, end: 5 } });
+    expect(resolveTranscriptCommit(captured, captured, "?", "en-US")).toMatchObject({
+      kind: "commit",
+      text: "Ready?",
+    });
+  });
   it("replaces the recorded UTF-16 selection around emoji and composer tokens", () => {
     const text = "Fix 🧪 then $review please";
     const tokenStart = text.indexOf("$review");

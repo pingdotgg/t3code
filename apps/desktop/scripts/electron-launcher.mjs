@@ -269,6 +269,7 @@ export function resolveMacBundleInfoPlistStrings(executableName) {
     CFBundleIdentifier: APP_BUNDLE_ID,
     CFBundleExecutable: executableName,
     CFBundleIconFile: "icon.icns",
+    NSMicrophoneUsageDescription: "T3 Code uses your microphone when you dictate a message.",
     NSScreenCaptureUsageDescription:
       "T3 Code captures the active window when you use the snapshot shortcut.",
     NSDocumentsFolderUsageDescription: "T3 Code reads project files you open in the desktop app.",
