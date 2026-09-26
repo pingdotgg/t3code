@@ -5115,9 +5115,16 @@ export default function ChatView(props: ChatViewProps) {
   const finishRightPanelSurfaceClose = useCallback(
     (surfaces: readonly RightPanelSurface[]) => {
       if (!activeThreadRef) return;
-      cleanupRightPanelSurfaces(surfaces);
       const store = useRightPanelStore.getState();
-      for (const surface of surfaces) {
+      const activeId = selectThreadRightPanelState(
+        store.byThreadKey,
+        activeThreadRef,
+      ).activeSurfaceId;
+      const ordered = surfaces.toSorted(
+        (left, right) => Number(left.id === activeId) - Number(right.id === activeId),
+      );
+      for (const surface of ordered) {
+        cleanupRightPanelSurfaces([surface]);
         store.closeSurface(activeThreadRef, surface.id);
       }
       syncActivePreviewSurface();

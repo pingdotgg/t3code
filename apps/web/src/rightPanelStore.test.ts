@@ -2,6 +2,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
+import { useClosedViewStore } from "./closedViewStore";
 import {
   migratePersistedRightPanelState,
   pullRequestSurface,
@@ -17,10 +18,112 @@ const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"))
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
 
 beforeEach(() => {
-  useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
+  useClosedViewStore.setState({ entries: [] });
+  useRightPanelStore.setState({
+    byThreadKey: {},
+    userActionRevisionByThreadKey: {},
+    closeRevisionByThreadKey: {},
+  });
 });
 
 describe("rightPanelStore", () => {
+  it("records single and bulk tab closes, newest first", () => {
+    const store = useRightPanelStore.getState();
+    const pr = pullRequestSurface({
+      projectId: "project-a",
+      repository: "pingdotgg/t3code",
+      number: 42,
+    });
+    store.openFile(refA, "src/app.ts");
+    store.open(refA, "agents");
+    store.openPullRequest(refA, pr);
+    store.open(refA, "diff");
+    store.closeSurface(refA, pr.id);
+    store.closeSurfacesToRight(refA, "agents");
+    store.closeOtherSurfaces(refA, "file:src/app.ts");
+    expect(
+      useClosedViewStore
+        .getState()
+        .entries.map((entry) => (entry.kind === "panel-tab" ? entry.surface.id : null)),
+    ).toEqual(["agents", "diff", pr.id]);
+  });
+
+  it("reopens the active tab first after a bulk close", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "files");
+    store.open(refA, "diff");
+    store.open(refA, "agents");
+    store.activateSurface(refA, "diff");
+    store.closeAllSurfaces(refA);
+
+    expect(
+      useClosedViewStore
+        .getState()
+        .entries.map((entry) => entry.kind === "panel-tab" && entry.surface.id),
+    ).toEqual(["diff", "agents", "files"]);
+  });
+
+  it("does not save an incidental Files replacement when opening an existing file", () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "src/app.ts");
+    store.open(refA, "files");
+    store.openFile(refA, "src/app.ts");
+
+    expect(useClosedViewStore.getState().entries).toEqual([]);
+  });
+
+  it("ignores session tabs without browser snapshots and records the empty browser tab", () => {
+    const store = useRightPanelStore.getState();
+    store.openBrowser(refA, "tab-1");
+    store.closeSurface(refA, "browser:tab-1");
+    expect(useClosedViewStore.getState().entries).toEqual([]);
+    store.openBrowser(refA, null);
+    store.closeSurface(refA, "browser:new");
+    expect(useClosedViewStore.getState().entries).toMatchObject([
+      { kind: "panel-tab", surface: { id: "browser:new", resourceId: null } },
+    ]);
+  });
+
+  it("keeps a dismissed device hidden after another file opens", () => {
+    const store = useRightPanelStore.getState();
+    const device = {
+      hostId: "nucbox",
+      deviceId: "emulator-5580",
+      name: "Pixel",
+      platform: "android",
+    } as const;
+    store.openFile(refA, "src/app.ts");
+    store.closeSurface(refA, "file:src/app.ts");
+    store.openDevice(refA, device);
+    store.closeSurface(refA, "device:nucbox:emulator-5580");
+
+    store.openFile(refA, "src/app.ts");
+    store.openDevice(refA, device, true);
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([expect.objectContaining({ id: "file:src/app.ts" })]);
+  });
+
+  it("records only closed tabs when a panel is hidden or a terminal tab closes", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    store.openFile(refA, "src/app.ts");
+    store.closeSurface(refA, "file:src/app.ts");
+    store.close(refA);
+    expect(useClosedViewStore.getState().entries).toMatchObject([
+      { kind: "panel-tab", threadRef: refA, surface: { id: "file:src/app.ts" } },
+    ]);
+    store.toggleVisibility(refA);
+    store.toggle(refA, "diff");
+    store.openTerminal(refA, "term-1");
+    store.closeSurface(refA, "terminal:term-1");
+    expect(useClosedViewStore.getState().entries).toMatchObject([
+      { kind: "panel-tab", threadRef: refA, surface: { id: "file:src/app.ts" } },
+    ]);
+    expect(useClosedViewStore.getState().entries).toHaveLength(1);
+  });
+
   it("gives each host/device its own tab and preserves renamed tabs", () => {
     const store = useRightPanelStore.getState();
     const android = {
