@@ -82,6 +82,8 @@ export interface UsageView {
 export function useUsage(
   input: UsageSummaryInput,
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
+  /** A namespaced project key, `null` for outside-projects buckets, `undefined` for no filter. */
+  projectFilter?: string | null,
 ): UsageView {
   const windowKey = useMemo(
     () =>
@@ -138,8 +140,12 @@ export function useUsage(
             },
           ],
     );
-    return mergeUsage(answered, USAGE_CONTRACT_VERSION);
-  }, [selectedEnvironments]);
+    return mergeUsage(
+      answered,
+      USAGE_CONTRACT_VERSION,
+      projectFilter === undefined ? undefined : { projectFilter },
+    );
+  }, [selectedEnvironments, projectFilter]);
 
   const answeredCount = selectedEnvironments.filter(
     (environment) => environment.summary !== null,

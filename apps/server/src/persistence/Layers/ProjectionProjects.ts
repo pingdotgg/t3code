@@ -98,6 +98,29 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
       `,
   });
 
+  const listProjectionProjectRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionProjectDbRow,
+    execute: () =>
+      sql`
+        SELECT
+          project_id AS "projectId",
+          title,
+          workspace_root AS "workspaceRoot",
+          default_model_selection_json AS "defaultModelSelection",
+          default_thread_env_mode AS "defaultThreadEnvMode",
+          auto_pull AS "autoPull",
+          favicon_path AS "faviconPath",
+          project_icon_json AS "projectIcon",
+          scripts_json AS "scripts",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          deleted_at AS "deletedAt"
+        FROM projection_projects
+        ORDER BY created_at ASC, project_id ASC
+      `,
+  });
+
   const upsert: ProjectionProjectRepositoryShape["upsert"] = (row) =>
     upsertProjectionProjectRow(row).pipe(
       Effect.mapError(toPersistenceSqlError("ProjectionProjectRepository.upsert:query")),
@@ -109,9 +132,16 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("ProjectionProjectRepository.getById:query")),
     );
 
+  const listAll: ProjectionProjectRepositoryShape["listAll"] = () =>
+    listProjectionProjectRows().pipe(
+      Effect.map((rows) => rows.map((row) => ({ ...row, autoPull: row.autoPull === 1 }))),
+      Effect.mapError(toPersistenceSqlError("ProjectionProjectRepository.listAll:query")),
+    );
+
   return {
     upsert,
     getById,
+    listAll,
   } satisfies ProjectionProjectRepositoryShape;
 });
 
