@@ -58,15 +58,16 @@ import {
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
-// The activity kinds openRequests reads. The command model keeps other kinds
-// only as payload-free placeholders, and only while a request is open.
-const REQUEST_ACTIVITY_KINDS: ReadonlySet<string> = new Set([
-  "approval.requested",
-  "approval.resolved",
-  "user-input.requested",
-  "user-input.resolved",
-  "provider.approval.respond.failed",
-  "provider.user-input.respond.failed",
+// Every activity kind openRequests reads, and what it does to its request.
+// The command model keeps these kinds in full. It keeps other kinds only as
+// payload-free placeholders, and only while a request is open.
+const REQUEST_ACTIVITY_ROLES: ReadonlyMap<string, "open" | "resolve" | "fail"> = new Map([
+  ["approval.requested", "open"],
+  ["user-input.requested", "open"],
+  ["approval.resolved", "resolve"],
+  ["user-input.resolved", "resolve"],
+  ["provider.approval.respond.failed", "fail"],
+  ["provider.user-input.respond.failed", "fail"],
 ]);
 
 function isStaleRequestFailureDetail(payload: Record<string, unknown>): boolean {
@@ -92,23 +93,20 @@ function isStaleRequestFailureDetail(payload: Record<string, unknown>): boolean 
  * ProjectionPipeline's pending accounting: resolved activities always clear,
  * and respond.failed clears only when its detail marks the request stale or
  * unknown. Otherwise settle is rejected on threads whose shell flags are clear.
- * Activities are capped at the most recent 500 plus pending async questions.
+ * It reads only the kinds in REQUEST_ACTIVITY_ROLES, so add a new request kind
+ * there. Activities are capped at the most recent 500 plus pending async
+ * questions.
  */
 export function openRequests(thread: Pick<OrchestrationThread, "activities">) {
   const requests = new Map<string, OrchestrationThread["activities"][number]>();
   for (const activity of thread.activities) {
-    if (!Predicate.isObject(activity.payload)) continue;
+    const role = REQUEST_ACTIVITY_ROLES.get(activity.kind);
+    if (role === undefined || !Predicate.isObject(activity.payload)) continue;
     const requestId = activity.payload.requestId;
     if (typeof requestId !== "string") continue;
-    if (activity.kind === "approval.requested" || activity.kind === "user-input.requested") {
+    if (role === "open") {
       requests.set(requestId, activity);
-    } else if (activity.kind === "approval.resolved" || activity.kind === "user-input.resolved") {
-      requests.delete(requestId);
-    } else if (
-      (activity.kind === "provider.approval.respond.failed" ||
-        activity.kind === "provider.user-input.respond.failed") &&
-      isStaleRequestFailureDetail(activity.payload)
-    ) {
+    } else if (role === "resolve" || isStaleRequestFailureDetail(activity.payload)) {
       requests.delete(requestId);
     }
   }
@@ -121,7 +119,7 @@ export function openRequests(thread: Pick<OrchestrationThread, "activities">) {
 function dropIdlePlaceholders(activities: OrchestrationThread["activities"]) {
   return openRequests({ activities }).size > 0
     ? activities
-    : activities.filter((activity) => REQUEST_ACTIVITY_KINDS.has(activity.kind));
+    : activities.filter((activity) => REQUEST_ACTIVITY_ROLES.has(activity.kind));
 }
 
 // Async questions can stay open while the agent produces more activity.
@@ -1131,7 +1129,7 @@ export function projectEvent(
           }
           // Other kinds are kept without their payload, and only while a
           // request is open (see dropIdlePlaceholders).
-          const isRequest = REQUEST_ACTIVITY_KINDS.has(payload.activity.kind);
+          const isRequest = REQUEST_ACTIVITY_ROLES.has(payload.activity.kind);
           if (!isRequest && openRequests(thread).size === 0) {
             return {
               ...nextBase,
