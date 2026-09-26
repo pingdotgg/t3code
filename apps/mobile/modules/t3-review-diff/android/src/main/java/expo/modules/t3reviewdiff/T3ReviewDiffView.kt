@@ -57,12 +57,13 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
 
   init {
     canvasView.onRowTap = { row, gesture, target -> handleRowTap(row, gesture, target) }
-    canvasView.onVisibleRowsChanged = { first, last ->
+    canvasView.onVisibleRowsChanged = { first, last, source ->
       onDebug(
         mapOf(
           "message" to "visible-range",
           "firstRowIndex" to first,
           "lastRowIndex" to last,
+          "sourceRow" to (source ?: -1),
         ),
       )
       emitVisibleFile(first)
@@ -437,6 +438,8 @@ private data class HorizontalPanTarget(
 )
 
 internal data class DiffRow(
+  val sourceRow: Int? = null,
+  val rowCount: Int = 1,
   val kind: String,
   val id: String,
   val fileId: String,
@@ -695,14 +698,17 @@ private class DiffCanvasView(context: Context) : View(context) {
   private var verticalOffset = 0
   private var horizontalOffset = 0
   private val headerPathOffsetsByFileId = mutableMapOf<String, Int>()
-  private var lastVisibleRange: Pair<Int, Int>? = null
+  private var lastVisibleRange: Triple<Int, Int, Int?>? = null
   var rows: List<DiffRow> = emptyList()
     set(value) {
+      val anchor = sourceViewport.anchor(verticalOffset)
       field = value
+      lastVisibleRange = null
       headerPathOffsetsByFileId.keys.retainAll(
         value.asSequence().filter { it.kind == "file" }.map { it.resolvedFileId }.toSet(),
       )
       rebuildOffsets()
+      anchor?.let { sourceViewport.offset(it)?.let(::setVerticalOffset) }
     }
   var tokensByRowId: Map<String, List<DiffToken>> = emptyMap()
     set(value) {
@@ -750,7 +756,7 @@ private class DiffCanvasView(context: Context) : View(context) {
       invalidate()
     }
   var onRowTap: ((DiffRow, String, RowTapTarget) -> Unit)? = null
-  var onVisibleRowsChanged: ((Int, Int) -> Unit)? = null
+  var onVisibleRowsChanged: ((Int, Int, Int?) -> Unit)? = null
 
   fun prepareRows() = drawing.prepareRows(tokensByRowId, style, width)
   fun useCodeLayouts(layouts: CodeLayoutCache) {
@@ -879,6 +885,7 @@ private class DiffCanvasView(context: Context) : View(context) {
   }
 
   private fun rowHeight(row: DiffRow): Int = when (row.kind) {
+    "placeholder" -> style.rowHeightPx.toInt() * row.rowCount.coerceAtLeast(1)
     "file" -> style.fileHeaderHeightPx.toInt()
     "notice" -> max((style.rowHeightPx * 2f).toInt(), (44 * density).toInt())
     "comment" -> if (collapsedCommentIds.contains(row.id)) {
@@ -890,21 +897,7 @@ private class DiffCanvasView(context: Context) : View(context) {
     else -> style.rowHeightPx.toInt()
   }.coerceAtLeast(1)
 
-  @Suppress("ReturnCount")
-  private fun rowIndexAt(y: Int): Int {
-    if (rows.isEmpty()) return 0
-    var low = 0
-    var high = rows.lastIndex
-    while (low <= high) {
-      val middle = (low + high) ushr 1
-      when {
-        y < rowOffsets[middle] -> high = middle - 1
-        y >= rowOffsets[middle + 1] -> low = middle + 1
-        else -> return middle
-      }
-    }
-    return low.coerceIn(0, rows.lastIndex)
-  }
+  private fun rowIndexAt(y: Int): Int = sourceViewport.rowIndexAt(y)
 
   private fun rowHitAt(y: Float): RowHit? {
     stickyFileHeader(firstVisibleRow())?.let { sticky ->
@@ -924,20 +917,23 @@ private class DiffCanvasView(context: Context) : View(context) {
 
   private fun firstVisibleRow(): Int = rowIndexAt(verticalOffset)
 
+  private val sourceViewport: DiffSourceViewport
+    get() = DiffSourceViewport(rows, rowOffsets, style.rowHeightPx.toInt().coerceAtLeast(1))
+
   private fun emitVisibleRange() {
     if (rows.isEmpty()) return
     val first = rowIndexAt(verticalOffset)
     val last = rowIndexAt(verticalOffset + max(1, height))
-    val range = first to last
+    val range = Triple(first, last, sourceViewport.requestedRow(first, last, verticalOffset))
     if (range == lastVisibleRange) return
     lastVisibleRange = range
-    onVisibleRowsChanged?.invoke(first, last)
+    onVisibleRowsChanged?.invoke(first, last, range.third)
   }
 
   private fun drawRow(canvas: Canvas, row: DiffRow, top: Int, bottom: Int) {
     when (row.kind) {
       "file" -> drawFileRow(canvas, row, top, bottom)
-      "hunk" -> drawHunkRow(canvas, row, top, bottom)
+      "hunk", "placeholder" -> drawHunkRow(canvas, row, top, bottom)
       "notice" -> drawNoticeRow(canvas, row, top, bottom)
       "comment" -> drawCommentRow(canvas, row, top, bottom)
       else -> drawLineRow(canvas, row, top, bottom)
@@ -1073,7 +1069,9 @@ private class DiffCanvasView(context: Context) : View(context) {
     }
   }
 
-  private fun drawHunkRow(canvas: Canvas, row: DiffRow, top: Int, bottom: Int) {
+  private fun drawHunkRow(canvas: Canvas, row: DiffRow, sourceTop: Int, sourceBottom: Int) {
+    val top = if (row.kind == "placeholder") max(0, sourceTop) else sourceTop
+    val bottom = if (row.kind == "placeholder") top + style.rowHeightPx.toInt() else sourceBottom
     fill(canvas, theme.hunkBackground, 0f, top.toFloat(), width.toFloat(), bottom.toFloat())
     drawing.configureMonospacePaint(
       color = theme.hunkText,
@@ -1356,6 +1354,8 @@ private fun parseRows(value: String): List<DiffRow> = try {
   List(array.length()) { index ->
     val row = array.getJSONObject(index)
     DiffRow(
+      sourceRow = row.optNullableInt("sourceRow"),
+      rowCount = row.optInt("rowCount", 1),
       kind = row.optString("kind"),
       id = row.optString("id"),
       fileId = row.optString("fileId"),

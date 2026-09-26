@@ -43,6 +43,21 @@ function makeTarget(): ReviewCommentTarget {
 }
 
 describe("review comment serialization", () => {
+  it("stores file-relative indices when selecting a line in a paged window", () => {
+    const target = makeTarget();
+    const context = formatReviewCommentContext(
+      {
+        ...target,
+        lines: target.lines.map((line, index) => ({ ...line, sourceLineIndex: 1000 + index })),
+      },
+      "Keep this change",
+    );
+    expect(parseReviewInlineComments(context)[0]).toMatchObject({
+      startIndex: 1000,
+      endIndex: 1001,
+    });
+  });
+
   it("keeps closing-tag text inside a chip label within a real review body", () => {
     const body = "Before [</review_comment>](t3-context://v1/mention/context-1) after";
     const serialized = `<review_comment sectionId="s" filePath="app.ts" startIndex="0" endIndex="0">${body}</review_comment>`;

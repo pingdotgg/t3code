@@ -477,12 +477,15 @@ export function ReviewSheet(props: ReviewSheetProps) {
     selectSection,
     isSelectedSectionPending,
     diffPreviewRevision,
+    loadTurnDiffRow,
+    loadTurnDiffRange,
   } = useReviewSections({
     enabled: isEnvironmentReady,
     environmentId,
     threadId,
     reviewCache,
   });
+  const pagedDiff = selectedSection?.page;
   useReviewDiffPrewarming({
     threadKey: reviewCache.threadKey,
     sections: reviewSections,
@@ -539,11 +542,12 @@ export function ReviewSheet(props: ReviewSheetProps) {
     threadId,
     selectedSection,
     nativeReviewDiffData,
+    loadCommentRange: loadTurnDiffRange,
   });
   const nativeBridge = useNativeReviewDiffBridge({
     threadKey: reviewCache.threadKey,
     sectionId: selectedSection?.id ?? null,
-    diff: selectedSection?.diff,
+    diff: pagedDiff ? `${pagedDiff.revision}:${pagedDiff.start}` : selectedSection?.diff,
     data: nativeReviewDiffData,
     collapsedFileIds,
     viewedFileIds,
@@ -558,6 +562,13 @@ export function ReviewSheet(props: ReviewSheetProps) {
     (event: NativeSyntheticEvent<Record<string, unknown>>) => {
       nativeBridge.onDebug(event);
       if (
+        pagedDiff &&
+        typeof event.nativeEvent.sourceRow === "number" &&
+        event.nativeEvent.sourceRow >= 0
+      ) {
+        loadTurnDiffRow(event.nativeEvent.sourceRow);
+      }
+      if (
         showcaseReviewKey === null ||
         showcasedReviewDrawRef.current === showcaseReviewKey ||
         !isNativeReviewDiffDrawEvent(event.nativeEvent)
@@ -567,12 +578,16 @@ export function ReviewSheet(props: ReviewSheetProps) {
       showcasedReviewDrawRef.current = showcaseReviewKey;
       reportShowcaseSceneRendered({ scene: "review", themeId: nativeBridge.themeId });
     },
-    [nativeBridge.onDebug, nativeBridge.themeId, showcaseReviewKey],
+    [nativeBridge.onDebug, nativeBridge.themeId, showcaseReviewKey, pagedDiff, loadTurnDiffRow],
   );
 
   const handleSelectFile = useCallback(
     (fileId: string | null) => {
       loadVisibleFile(fileId, true);
+      if (pagedDiff) {
+        const file = pagedDiff.files.find((file) => file.path === fileId);
+        loadTurnDiffRow(file?.rowStart ?? 0);
+      }
       commentSelection.clearSelection();
       if (fileId !== null && collapsedFileIds.includes(fileId)) {
         toggleExpandedFile(fileId);
@@ -585,7 +600,14 @@ export function ReviewSheet(props: ReviewSheetProps) {
         console.error("[review] Failed to navigate to diff file", error);
       });
     },
-    [collapsedFileIds, commentSelection, toggleExpandedFile, loadVisibleFile],
+    [
+      collapsedFileIds,
+      commentSelection,
+      toggleExpandedFile,
+      loadVisibleFile,
+      pagedDiff,
+      loadTurnDiffRow,
+    ],
   );
   const handleVisibleFileChange = useCallback(
     (event: NativeSyntheticEvent<{ readonly fileId?: string | null }>) => {

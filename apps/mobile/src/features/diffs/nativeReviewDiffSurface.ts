@@ -21,7 +21,9 @@ interface ExpoGlobalWithViewConfig {
 }
 
 export interface NativeReviewDiffRow {
-  readonly kind: "file" | "hunk" | "line" | "notice" | "comment";
+  readonly kind: "file" | "hunk" | "line" | "notice" | "comment" | "placeholder";
+  readonly sourceRow?: number;
+  readonly rowCount?: number;
   readonly id: string;
   readonly fileId?: string;
   readonly filePath?: string;

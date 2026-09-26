@@ -8,6 +8,11 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
+    turnDiffPage: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:turn-diff-page",
+      tag: ORCHESTRATION_WS_METHODS.getTurnDiff,
+      idleTtlMs: 0,
+    }),
     turnDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-diff",
       tag: ORCHESTRATION_WS_METHODS.getTurnDiff,

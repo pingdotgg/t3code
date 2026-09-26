@@ -39,6 +39,56 @@ function makeThreadCheckpointContext(input: {
 }
 
 describe("CheckpointDiffQuery.layer", () => {
+  it.effect("returns a window from the complete stream without sending the buffered patch", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("paged-thread");
+      const context = makeThreadCheckpointContext({
+        projectId: ProjectId.make("paged-project"),
+        threadId,
+        workspaceRoot: "/tmp/workspace",
+        worktreePath: null,
+        checkpointTurnCount: 1,
+        checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+      });
+      const layer = CheckpointDiffQuery.layer.pipe(
+        Layer.provide(
+          Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+            getThreadCheckpointContext: () => Effect.succeed(Option.some(context)),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(CheckpointStore.CheckpointStore)({
+            diffCheckpoints: (input) =>
+              Effect.sync(() => {
+                input.onStdoutChunk?.(
+                  new TextEncoder().encode(
+                    "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-before\n+after\n",
+                  ),
+                );
+                return "buffered prefix";
+              }),
+          }),
+        ),
+      );
+      const result = yield* Effect.gen(function* () {
+        const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+        return yield* query.getTurnDiff({
+          threadId,
+          fromTurnCount: 0,
+          toTurnCount: 1,
+          page: { start: 2 },
+        });
+      }).pipe(Effect.provide(layer));
+      expect(result.diff).toBe("");
+      expect(result.page).toMatchObject({
+        start: 2,
+        rowCount: 3,
+        files: [{ path: "a.ts", additions: 1, deletions: 1 }],
+        rows: [{ index: 2, content: "after", change: "add", newLineNumber: 1 }],
+      });
+    }),
+  );
+
   it.effect("uses the narrow full-thread context lookup for all-turns diffs", () =>
     Effect.gen(function* () {
       const projectId = ProjectId.make("project-full-thread");

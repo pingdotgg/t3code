@@ -111,6 +111,22 @@ function contrastRatio(first: string, second: string): number {
 }
 
 describe("getCachedNativeReviewDiffData", () => {
+  it("preserves the pure rename notice for paged files with no source rows", () => {
+    const renamed = buildReviewParsedDiff(
+      "diff --git a/old.ts b/new.ts\nsimilarity index 100%\nrename from old.ts\nrename to new.ts\n",
+      "paged-rename",
+    );
+    if (renamed.kind !== "files") throw new Error("Expected a parsed rename");
+    const result = buildNativeReviewDiffData({
+      parsedDiff: {
+        ...renamed,
+        files: renamed.files.map((file) => ({ ...file, sourceRowStart: 0, sourceRowCount: 0 })),
+      },
+    });
+    expect(result.rows.map((row) => row.kind)).toEqual(["file", "notice"]);
+    expect(result.rows[1]?.text).toBe("This file was renamed without modifications.");
+  });
+
   it.each([true, false])(
     "preserves available diff rows before a notice (has excerpt: %s)",
     (hasExcerpt) => {

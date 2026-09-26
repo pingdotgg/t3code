@@ -26,6 +26,7 @@ export interface VcsRestoreCheckpointInput {
 }
 
 export interface VcsDiffCheckpointsInput {
+  readonly onStdoutChunk?: (chunk: Uint8Array) => void;
   readonly cwd: string;
   readonly fromCheckpointRef: CheckpointRef;
   readonly toCheckpointRef: CheckpointRef;

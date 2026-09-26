@@ -34,6 +34,7 @@ export interface RestoreCheckpointInput {
 }
 
 export interface DiffCheckpointsInput {
+  readonly onStdoutChunk?: (chunk: Uint8Array) => void;
   readonly cwd: string;
   readonly fromCheckpointRef: CheckpointRef;
   readonly toCheckpointRef: CheckpointRef;
