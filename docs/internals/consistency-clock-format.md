@@ -20,7 +20,8 @@ existing fallback rather than throwing or inventing a time. Labels representing
 the same instant may use different precision when their tasks differ.
 
 Relative ages, elapsed durations, countdowns, date-only labels, ISO payloads and
-logs have different meanings and do not take the clock preference. Native date
+raw machine timestamps in logs do not take the clock preference. Log timestamps
+rendered as wall-clock labels follow the preference like other client labels. Native date
 and time inputs follow their supported platform behavior. React Native has its
 own [device preferences](../../apps/mobile/src/persistence/mobile-preferences.ts),
 with no app-level clock override at this baseline; its locale-formatted clocks
