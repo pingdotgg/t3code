@@ -762,7 +762,7 @@ it.effect("does not mark a deleted model active when no models remain installed"
     expect((yield* speech.models).models.every((model) => !model.active)).toBe(true);
   }).pipe(Effect.provide(layer)),
 );
-it.effect("frees a cancelled batch transcription and allows retries", () =>
+it.effect("frees a cancelled batch transcription and preempts it on retry", () =>
   Effect.gen(function* () {
     const started = Promise.withResolvers<void>();
     native.transcribe.mockImplementationOnce(() => {
@@ -774,10 +774,34 @@ it.effect("frees a cancelled batch transcription and allows retries", () =>
       const request = yield* speech.transcribe(pcm()).pipe(Effect.forkChild);
       yield* Effect.promise(() => started.promise);
       yield* Fiber.interrupt(request);
-      expect(native.dispose).toHaveBeenCalledOnce();
+      // The slot is free immediately while abandoned work still runs.
       expect(yield* speech.status).toMatchObject({ state: "ready" });
+      expect(native.dispose).not.toHaveBeenCalled();
+      // The retry waits out the grace period, stops the orphan, and reloads.
       expect(yield* speech.transcribe(pcm())).toBe("hello");
+      expect(native.dispose).toHaveBeenCalledOnce();
       expect(loadNative).toHaveBeenCalledTimes(2);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("reuses the model when abandoned batch work finishes first", () =>
+  Effect.gen(function* () {
+    const started = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<{ text: string }>();
+    native.transcribe.mockImplementationOnce(() => {
+      started.resolve();
+      return gate.promise;
+    });
+    yield* Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const request = yield* speech.transcribe(pcm()).pipe(Effect.forkChild);
+      yield* Effect.promise(() => started.promise);
+      yield* Fiber.interrupt(request);
+      gate.resolve({ text: "late hello" });
+      expect(yield* speech.transcribe(pcm())).toBe("hello");
+      expect(native.dispose).not.toHaveBeenCalled();
+      expect(loadNative).toHaveBeenCalledTimes(1);
     }).pipe(Effect.provide(layer));
   }),
 );

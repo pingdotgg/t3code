@@ -215,6 +215,9 @@ export const make = Effect.gen(function* () {
     | undefined;
   let activeTranscriptions = 0;
   let activeOperation: Promise<unknown> | undefined;
+  // Batch inference detached by cancellation: still running in the isolated
+  // process, no longer awaited by anyone. New work preempts it on arrival.
+  let orphaned: { done: Promise<void>; target: LoadedModel } | undefined;
   let closing = false;
   const lifetime = new AbortController();
   let unloadTimeout: SpeechModelUnloadTimeout = "min_15";
@@ -327,6 +330,9 @@ export const make = Effect.gen(function* () {
     signal = lifetime.signal,
     acceleration = "auto",
   ) => {
+    // A cancelled batch transcription may still run on the cached model.
+    // Give it a grace period to finish warm, else stop it and reload below.
+    await preemptOrphaned();
     if (model && loadedModelId === definition.id && loadedAcceleration === acceleration) {
       lastUse = performance.now();
       scheduleUnload();
@@ -401,20 +407,26 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  // Runs one native transcription so fiber interruption stops the underlying
-  // work: aborting kills the isolated process via onAbort instead of leaving
-  // it running while the busy slot stays held.
+  // Runs one native transcription so fiber interruption detaches the
+  // underlying work instead of leaving it holding the busy slot: the isolated
+  // process keeps running in the background and the model stays warm. New work
+  // preempts it on arrival (see preemptOrphaned).
   const transcribeAbortable = (
     target: LoadedModel,
     pcm: Float32Array,
     options: Parameters<LoadedModel["transcribe"]>[1],
-    onAbort: () => void,
+    onAbort: (detached: LoadedModel, settled: Promise<void>) => void,
   ) =>
     Effect.tryPromise({
       try: (signal) =>
         new Promise<Awaited<ReturnType<LoadedModel["transcribe"]>>>((resolve, reject) => {
+          const raw = target.transcribe(pcm, options);
+          const settled = raw.then(
+            () => undefined,
+            () => undefined,
+          );
           const abort = () => {
-            onAbort();
+            onAbort(target, settled);
             reject(signal.reason ?? new Error("Speech transcription was cancelled."));
           };
           if (signal.aborted) {
@@ -422,7 +434,7 @@ export const make = Effect.gen(function* () {
             return;
           }
           signal.addEventListener("abort", abort, { once: true });
-          target.transcribe(pcm, options).then(
+          raw.then(
             (result) => {
               signal.removeEventListener("abort", abort);
               resolve(result);
@@ -436,9 +448,9 @@ export const make = Effect.gen(function* () {
       catch: (cause) => speechError("transcription", cause),
     });
 
-  // Stops abandoned native inference and drops the cached model so the next
+  // Drops the cached model and stops its isolated process. The next
   // transcription reloads instead of talking to a dead process.
-  const abortTranscribeModel = (target: LoadedModel) => {
+  const dropCachedModel = (target: LoadedModel) => {
     if (model === target) {
       model = undefined;
       loadedModelId = undefined;
@@ -451,6 +463,47 @@ export const make = Effect.gen(function* () {
     } catch {
       // The isolated process is already gone.
     }
+  };
+
+  // Remembers cancelled batch inference without stopping it, so an idle cancel
+  // keeps a warm model. A superseded orphan from an older generation is dead
+  // weight and gets stopped right away.
+  const detachTranscribeModel = (target: LoadedModel, settled: Promise<void>) => {
+    const previous = orphaned;
+    orphaned = { done: settled, target };
+    if (previous && previous.target !== target) dropCachedModel(previous.target);
+  };
+
+  // Grace for abandoned inference to finish before new work kills it. Lets a
+  // nearly done transcription keep the model warm while cutting off a long one.
+  const ORPHANED_TRANSCRIPTION_GRACE_MS = 2_500;
+
+  // Runs before any model use: if cancelled batch inference is still running
+  // on the cached model, wait briefly for it, else stop it and reload below.
+  const preemptOrphaned = async () => {
+    const orphan = orphaned;
+    if (!orphan || orphan.target !== model) {
+      if (orphaned === orphan) orphaned = undefined;
+      return;
+    }
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        orphan.done.then(() => {
+          settled = true;
+        }),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, ORPHANED_TRANSCRIPTION_GRACE_MS);
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+    if (orphaned !== orphan) return;
+    orphaned = undefined;
+    if (settled || orphan.target !== model) return;
+    dropCachedModel(orphan.target);
   };
 
   const readSettings = (operation: string) =>
@@ -823,8 +876,11 @@ export const make = Effect.gen(function* () {
                       }
                     : {}),
                 };
-                const result = yield* transcribeAbortable(inferenceModel, pcm, options, () =>
-                  abortTranscribeModel(inferenceModel),
+                const result = yield* transcribeAbortable(
+                  inferenceModel,
+                  pcm,
+                  options,
+                  detachTranscribeModel,
                 ).pipe(
                   Effect.catch((cause) =>
                     Effect.gen(function* () {
@@ -854,8 +910,11 @@ export const make = Effect.gen(function* () {
                         catch: (loadCause) => speechError("transcription", loadCause),
                       });
                       inferenceModel = cpu;
-                      return yield* transcribeAbortable(cpu, pcm, options, () =>
-                        abortTranscribeModel(cpu),
+                      return yield* transcribeAbortable(
+                        cpu,
+                        pcm,
+                        options,
+                        detachTranscribeModel,
                       ).pipe(
                         Effect.catch((fallbackCause) => {
                           if (model === cpu) {
