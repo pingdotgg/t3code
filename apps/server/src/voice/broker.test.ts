@@ -620,7 +620,10 @@ describe("voice broker routes", () => {
           body: { transport: { type: "webrtc", sdp: "offer-sdp" } },
         }).pipe(Effect.provide(makeEnvironmentAuthLayer()));
         expect(response.status).toBe(401);
-        expect(yield* responseBody(response)).toMatchObject({ code: "auth_invalid" });
+        expect(yield* responseBody(response)).toEqual({
+          code: "auth_invalid",
+          message: "OpenAI voice request failed (HTTP 401, auth_invalid).",
+        });
       }),
     ),
   );

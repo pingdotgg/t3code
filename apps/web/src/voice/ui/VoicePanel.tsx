@@ -17,6 +17,8 @@
  * atom changes) — no polling loops beyond the 1 Hz auto-collapse check while
  * expanded and live, no per-frame work, no animations.
  */
+import { Button } from "~/components/ui/button";
+
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AuthOrchestrationReadScope } from "@t3tools/contracts";
@@ -554,15 +556,16 @@ export function VoicePanel() {
           <span className="text-xs font-semibold text-muted-foreground">
             Voice ({selection.label})
           </span>
-          <button
+          <Button
             type="button"
             aria-label="Minimize voice"
-            className="rounded-md px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted"
+            size="xs"
+            variant="ghost-muted"
             onPointerDown={(event) => event.stopPropagation()}
             onClick={() => setPrefs({ collapsed: true })}
           >
             Minimize
-          </button>
+          </Button>
         </div>
         <VoiceControls
           phase={panelState.phase}

@@ -3,6 +3,8 @@
  * talk control. Dumb component; all state and behavior come from the
  * controller via props.
  */
+import { Button } from "~/components/ui/button";
+
 import type { VoiceActivationMode } from "./overlayPreferences";
 
 export interface VoiceControlsProps {
@@ -52,24 +54,26 @@ export function VoiceControls(props: VoiceControlsProps) {
   const activation = props.activation ?? "manual";
   const talkInactive = sessionInactive && !props.starting;
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex select-none items-center gap-2">
       <span className="text-xs font-medium text-muted-foreground" data-voice-phase={props.phase}>
         {props.starting ? "Starting…" : phaseLabel(props.phase, props.micMuted, activation)}
       </span>
       {activation === "manual" && (
-        <button
+        <Button
           type="button"
-          className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          size="xs"
+          variant="default"
           disabled={props.starting || !sessionInactive}
           onClick={props.onConnect}
         >
           Connect
-        </button>
+        </Button>
       )}
       {activation === "hold" && (
-        <button
+        <Button
           type="button"
-          className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground select-none"
+          size="xs"
+          variant="default"
           // Press starts the session (no-op when one is already live);
           // release ends it. Handlers no-op unless the phase matches.
           onPointerDown={props.onTalkPress}
@@ -77,28 +81,26 @@ export function VoiceControls(props: VoiceControlsProps) {
           onPointerLeave={props.onTalkRelease}
         >
           Hold to talk
-        </button>
+        </Button>
       )}
       {activation === "double-press" && (
-        <button
-          type="button"
-          className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground select-none"
-          onDoubleClick={props.onTalkToggle}
-        >
+        <Button type="button" size="xs" variant="default" onDoubleClick={props.onTalkToggle}>
           Talk
-        </button>
+        </Button>
       )}
-      <button
+      <Button
         type="button"
-        className="rounded-md border px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+        size="xs"
+        variant="outline"
         disabled={props.phase !== "live"}
         onClick={props.onToggleMute}
       >
         {props.micMuted ? "Unmute" : "Mute"}
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
-        className="rounded-md border px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+        size="xs"
+        variant="outline"
         // End is the cancel for a pending connection: available whenever
         // startup work is in flight (including the initial idle-starting
         // state before a client exists), and for any live session phase.
@@ -108,17 +110,18 @@ export function VoiceControls(props: VoiceControlsProps) {
         onClick={props.onEnd}
       >
         End
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
-        className="rounded-md px-2 py-1 text-xs text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        size="xs"
+        variant="ghost-muted"
         disabled={
           props.phase === "live" || props.phase === "connecting" || props.phase === "closing"
         }
         onClick={props.onClear}
       >
         Clear
-      </button>
+      </Button>
       {activation === "double-press" && (
         <span className="text-xs text-muted-foreground">
           {talkInactive ? "Double-click Talk to listen" : undefined}

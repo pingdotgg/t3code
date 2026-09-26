@@ -51,7 +51,7 @@ import {
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { OPENAI_API_KEY_SECRET_NAME } from "./secretNames.ts";
 import {
   failEnvironmentAuthInvalid,
@@ -177,6 +177,7 @@ export class VoiceBrokerError extends Schema.TaggedError<VoiceBrokerError>()("Vo
   message: Schema.String,
   /** HTTP status the route responds with. */
   status: Schema.Number,
+  cause: Schema.optional(Schema.Defect()),
 }) {}
 
 const voiceBrokerErrorResponse = (error: VoiceBrokerError) =>
@@ -240,41 +241,41 @@ const encodeBrokerConfig = Schema.encodeEffect(Schema.fromJsonString(VoiceBroker
 
 export interface VoiceBrokerRuntimeConfig extends VoiceBrokerSessionConfig {}
 
-const loadBrokerConfig = (secrets: ServerSecretStore["Service"]) =>
-  Effect.gen(function* () {
-    const overridesJson = yield* secrets
-      .get(VOICE_BROKER_CONFIG_SECRET_NAME)
-      .pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("failed to read voice broker config secret", { cause }).pipe(
-            Effect.as(Option.none<Uint8Array>()),
-          ),
+const loadBrokerConfig = Effect.gen(function* () {
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const overridesJson = yield* secrets
+    .get(VOICE_BROKER_CONFIG_SECRET_NAME)
+    .pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("failed to read voice broker config secret", { cause }).pipe(
+          Effect.as(Option.none<Uint8Array>()),
         ),
-      );
-    let overrides: typeof VoiceBrokerConfigOverrides.Type = {};
-    if (Option.isSome(overridesJson)) {
-      const decoded = Schema.decodeUnknownExit(Schema.fromJsonString(VoiceBrokerConfigOverrides))(
-        new TextDecoder().decode(overridesJson.value),
-      );
-      if (decoded._tag === "Success") {
-        overrides = decoded.value;
-      } else {
-        yield* Effect.logWarning("ignoring malformed voice broker config secret");
-      }
+      ),
+    );
+  let overrides: typeof VoiceBrokerConfigOverrides.Type = {};
+  if (Option.isSome(overridesJson)) {
+    const decoded = Schema.decodeUnknownExit(Schema.fromJsonString(VoiceBrokerConfigOverrides))(
+      new TextDecoder().decode(overridesJson.value),
+    );
+    if (decoded._tag === "Success") {
+      overrides = decoded.value;
+    } else {
+      yield* Effect.logWarning("ignoring malformed voice broker config secret");
     }
-    return {
-      model: overrides.liveModel ?? DEFAULT_LIVE_MODEL,
-      instructions: overrides.instructions,
-      delegation: {
-        type: "responses" as const,
-        model: overrides.backendModel ?? DEFAULT_DELEGATION_MODEL,
-        ...(overrides.delegationInstructions === undefined
-          ? {}
-          : { instructions: overrides.delegationInstructions }),
-      },
-      tools: voiceBrokerToolDefinitions().map((tool) => ({ ...tool })),
-    } satisfies VoiceBrokerRuntimeConfig;
-  });
+  }
+  return {
+    model: overrides.liveModel ?? DEFAULT_LIVE_MODEL,
+    instructions: overrides.instructions,
+    delegation: {
+      type: "responses" as const,
+      model: overrides.backendModel ?? DEFAULT_DELEGATION_MODEL,
+      ...(overrides.delegationInstructions === undefined
+        ? {}
+        : { instructions: overrides.delegationInstructions }),
+    },
+    tools: voiceBrokerToolDefinitions().map((tool) => ({ ...tool })),
+  } satisfies VoiceBrokerRuntimeConfig;
+});
 
 // ---------------------------------------------------------------------------
 // Upstream OpenAI exchange
@@ -308,7 +309,7 @@ const UpstreamErrorBody = Schema.Struct({
 /** Maps an OpenAI failure to the frozen VoiceToolError codes: credential
     problems are `auth_invalid`, upstream 5xx/network problems are
     `environment_unreachable`, and rejected requests are `invalid_request`. */
-const upstreamFailureError = (status: number, detail: string): VoiceBrokerError => {
+const upstreamFailureError = (status: number, cause?: unknown): VoiceBrokerError => {
   const code: VoiceToolErrorCode =
     status === 401 || status === 403
       ? "auth_invalid"
@@ -316,10 +317,10 @@ const upstreamFailureError = (status: number, detail: string): VoiceBrokerError 
         ? "environment_unreachable"
         : "invalid_request";
   const httpStatus = code === "auth_invalid" ? 401 : code === "environment_unreachable" ? 502 : 400;
-  // Upstream messages are echoed without credentials or request bodies.
   return new VoiceBrokerError({
     code,
-    message: `OpenAI Live session request failed: ${detail}`,
+    message: `OpenAI voice request failed (HTTP ${status}, ${code}).`,
+    ...(cause === undefined ? {} : { cause }),
     status: httpStatus,
   });
 };
@@ -368,12 +369,15 @@ export class VoiceLiveBroker extends Context.Service<
 
 const makeBroker = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
-  const secrets = yield* ServerSecretStore;
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const loadConfig = loadBrokerConfig.pipe(
+    Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+  );
   const sessions = yield* Ref.make(new Map<string, RetainedVoiceSession>());
 
   const settingsFailure = () => brokerInvalidRequest("Could not access voice settings.", 500);
   const getSettings = Effect.fn("VoiceLiveBroker.getSettings")(function* () {
-    const config = yield* loadBrokerConfig(secrets);
+    const config = yield* loadConfig;
     const key = yield* secrets
       .get(OPENAI_API_KEY_SECRET_NAME)
       .pipe(Effect.mapError(settingsFailure));
@@ -386,7 +390,7 @@ const makeBroker = Effect.gen(function* () {
   const updateSettings = Effect.fn("VoiceLiveBroker.updateSettings")(function* (
     input: VoiceSettingsUpdate,
   ) {
-    const config = yield* loadBrokerConfig(secrets);
+    const config = yield* loadConfig;
     const encoded = yield* encodeBrokerConfig({
       liveModel: input.liveModel,
       backendModel: input.backendModel,
@@ -422,7 +426,7 @@ const makeBroker = Effect.gen(function* () {
   const mintSession = Effect.fn("VoiceLiveBroker.mintSession")(function* (
     input: VoiceBrokerSessionRequest,
   ) {
-    const config = yield* loadBrokerConfig(secrets);
+    const config = yield* loadConfig;
     const key = yield* secrets
       .get(OPENAI_API_KEY_SECRET_NAME)
       .pipe(
@@ -488,11 +492,7 @@ const makeBroker = Effect.gen(function* () {
       .pipe(
         Effect.catch((cause) =>
           Effect.logWarning("OpenAI Live session request failed", { cause }).pipe(
-            Effect.flatMap(() =>
-              Effect.fail(
-                upstreamFailureError(500, "the Live session endpoint could not be reached"),
-              ),
-            ),
+            Effect.flatMap(() => Effect.fail(upstreamFailureError(500, cause))),
           ),
         ),
       );
@@ -515,9 +515,7 @@ const makeBroker = Effect.gen(function* () {
     }
 
     const body = yield* response.json.pipe(
-      Effect.mapError(() =>
-        upstreamFailureError(response.status, "the Live session response was unreadable"),
-      ),
+      Effect.mapError((cause) => upstreamFailureError(500, cause)),
     );
     const decoded = Schema.decodeUnknownExit(UpstreamLiveSessionCreated)(body);
     if (decoded._tag === "Failure") {
@@ -548,17 +546,17 @@ const makeBroker = Effect.gen(function* () {
       );
     }
     const encoded = yield* encodeBackendInput(input.input).pipe(
-      Effect.mapError(() => upstreamFailureError(400, "invalid backend input")),
+      Effect.mapError((cause) => upstreamFailureError(400, cause)),
     );
     if (encoded.length > 128_000) {
       return yield* brokerInvalidRequest(
         "Voice command context is full. Start a fresh voice session.",
       );
     }
-    const config = yield* loadBrokerConfig(secrets);
+    const config = yield* loadConfig;
     const key = yield* secrets
       .get(OPENAI_API_KEY_SECRET_NAME)
-      .pipe(Effect.mapError(() => upstreamFailureError(401, "the backend key could not be read")));
+      .pipe(Effect.mapError((cause) => upstreamFailureError(401, cause)));
     if (Option.isNone(key))
       return yield* upstreamFailureError(401, "the backend key is unavailable");
     const tools = (Object.keys(VoiceToolSchemas) as Array<keyof typeof VoiceToolSchemas>).map(
@@ -597,22 +595,18 @@ const makeBroker = Effect.gen(function* () {
           include: ["reasoning.encrypted_content"],
         }),
       })
-      .pipe(
-        Effect.mapError(() =>
-          upstreamFailureError(500, "the Responses backend could not be reached"),
-        ),
-      );
+      .pipe(Effect.mapError((cause) => upstreamFailureError(500, cause)));
     if (response.status < 200 || response.status >= 300) {
       const detail = yield* response.text.pipe(
         Effect.orElseSucceed(() => `HTTP ${response.status}`),
       );
-      return yield* upstreamFailureError(response.status, detail.slice(0, 1000));
+      return yield* upstreamFailureError(response.status, detail);
     }
     const body = yield* response.json.pipe(
-      Effect.mapError(() => upstreamFailureError(500, "unreadable backend response")),
+      Effect.mapError((cause) => upstreamFailureError(500, cause)),
     );
     return yield* decodeBackendResult(body).pipe(
-      Effect.mapError(() => upstreamFailureError(500, "unexpected backend response shape")),
+      Effect.mapError((cause) => upstreamFailureError(500, cause)),
     );
   });
 

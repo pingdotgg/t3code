@@ -216,7 +216,7 @@ export function VoiceSettingsSection() {
       />
       {environment ? (
         <>
-          <p className="px-3 py-2 text-[12px] leading-relaxed text-muted-foreground sm:px-4">
+          <p className="px-3 py-2 text-xs leading-relaxed text-muted-foreground sm:px-4">
             Voice configuration for {environment.label}. Applies to this entire environment.
           </p>
           <VoiceEnvironmentSettings
@@ -225,7 +225,7 @@ export function VoiceSettingsSection() {
           />
         </>
       ) : (
-        <p className="px-3 py-2 text-[12px] leading-relaxed text-muted-foreground sm:px-4">
+        <p className="px-3 py-2 text-xs leading-relaxed text-muted-foreground sm:px-4">
           Select a connected environment to configure voice.
         </p>
       )}
