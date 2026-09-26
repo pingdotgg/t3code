@@ -111,6 +111,23 @@ describe("GhosttyTerminalCore snapshots", () => {
     vi.restoreAllMocks();
   });
 
+  it("encodes Backspace when the browser omits its physical code", async () => {
+    const core = await createCore();
+    const event = {
+      code: "",
+      key: "Backspace",
+      repeat: false,
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      isComposing: false,
+      getModifierState: () => false,
+    } as unknown as KeyboardEvent;
+
+    expect(core.encodeKey(event)).toBe("\x7f");
+  });
+
   it("preserves styles, wide cells, and selection after shared memory grows", async () => {
     const core = await createCore();
     const runtime = await loadGhosttyRuntime();

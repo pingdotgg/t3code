@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ghosttyConsumedMods, ghosttyKeyForCode, ghosttyUnshiftedCodepoint } from "./keyCodes";
+import {
+  ghosttyConsumedMods,
+  ghosttyKeyForCode,
+  ghosttyKeyForEvent,
+  ghosttyUnshiftedCodepoint,
+} from "./keyCodes";
 
 describe("ghosttyKeyForCode", () => {
   it("keeps the tail of the pinned Ghostty key enum in order", () => {
@@ -8,6 +13,25 @@ describe("ghosttyKeyForCode", () => {
     expect(ghosttyKeyForCode("PrintScreen")).toBe(ghosttyKeyForCode("FnLock") + 1);
     expect(ghosttyKeyForCode("Pause")).toBe(ghosttyKeyForCode("ScrollLock") + 1);
     expect(ghosttyKeyForCode("Paste")).toBe(ghosttyKeyForCode("Cut") + 1);
+  });
+});
+
+describe("ghosttyKeyForEvent", () => {
+  it("uses the logical key when Android omits the physical code", () => {
+    expect(ghosttyKeyForEvent({ code: "", key: "Backspace" })).toBe(ghosttyKeyForCode("Backspace"));
+    expect(ghosttyKeyForEvent({ code: "Unidentified", key: "Backspace" })).toBe(
+      ghosttyKeyForCode("Backspace"),
+    );
+  });
+
+  it("keeps the physical code when the browser supplies one", () => {
+    expect(ghosttyKeyForEvent({ code: "Delete", key: "Backspace" })).toBe(
+      ghosttyKeyForCode("Delete"),
+    );
+  });
+
+  it("does not turn an unknown key into Backspace", () => {
+    expect(ghosttyKeyForEvent({ code: "", key: "Unidentified" })).toBe(0);
   });
 });
 
