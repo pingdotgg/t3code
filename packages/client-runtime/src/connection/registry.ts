@@ -191,6 +191,8 @@ export const make = Effect.gen(function* () {
     ReadonlyMap<EnvironmentId, EnvironmentServiceScope>
   >(new Map());
   const platformEnvironmentIds = yield* Ref.make<ReadonlySet<EnvironmentId>>(new Set());
+  // The platform bearer each blocked runtime was last woken for.
+  const blockedWakeTokens = yield* Ref.make<ReadonlyMap<EnvironmentId, string>>(new Map());
   const persistedTargetsByEnvironment = yield* Ref.make<
     ReadonlyMap<EnvironmentId, ConnectionTarget>
   >(new Map(persistedTargets.map((target) => [target.environmentId, target])));
@@ -408,6 +410,8 @@ export const make = Effect.gen(function* () {
     );
   }).pipe(Effect.withSpan("EnvironmentRegistry.start"));
 
+  // Returns the retained supervisor when an equivalent runtime was kept, so
+  // callers can refresh it in place instead of tearing it down.
   const installEntryLocked = Effect.fn("EnvironmentRegistry.installEntryLocked")(function* (
     entry: ConnectionCatalogEntry,
     options?: { readonly retainEquivalentRuntime?: boolean },
@@ -422,7 +426,7 @@ export const make = Effect.gen(function* () {
       existingScope !== undefined &&
       Equal.equals(existingScope.entry, entry)
     ) {
-      return;
+      return Option.some(existingScope.supervisor);
     }
 
     yield* closeServiceScope(target.environmentId);
@@ -432,6 +436,7 @@ export const make = Effect.gen(function* () {
       return next;
     });
     yield* createServiceScope(entry);
+    return Option.none<EnvironmentSupervisor.EnvironmentSupervisor["Service"]>();
   });
 
   const register = Effect.fn("EnvironmentRegistry.register")(function* (
@@ -528,15 +533,21 @@ export const make = Effect.gen(function* () {
           // on their own loopback origin, so they authenticate with a bearer
           // token instead of the primary's same-origin cookie. Stash it where
           // the resolver's bearer broker looks it up.
+          // The platform re-emits its registrations on every poll, so a failed
+          // write is retried on the next one.
+          let bearerStored = false;
           if (registration._tag === "BearerConnectionRegistration") {
-            yield* credentials.put(registration.target.connectionId, registration.credential).pipe(
-              Effect.catch((error) =>
-                Effect.logWarning("Could not store the platform bearer credential.", {
-                  environmentId: target.environmentId,
-                  error,
-                }),
-              ),
-            );
+            bearerStored = yield* credentials
+              .put(registration.target.connectionId, registration.credential)
+              .pipe(
+                Effect.as(true),
+                Effect.catch((error) =>
+                  Effect.logWarning("Could not store the platform bearer credential.", {
+                    environmentId: target.environmentId,
+                    error,
+                  }).pipe(Effect.as(false)),
+                ),
+              );
           }
 
           if (persistedTarget !== undefined) {
@@ -560,7 +571,51 @@ export const make = Effect.gen(function* () {
             );
           }
 
-          yield* installEntryLocked(entry, { retainEquivalentRuntime: true });
+          const retained = yield* installEntryLocked(entry, { retainEquivalentRuntime: true });
+          // A new bearer revokes the previous one server-side, and the
+          // credential is not part of the catalog entry, so a kept runtime can
+          // still hold the old token. Reconcile it on every registration rather
+          // than only when the token changes: an attempt that read the old
+          // token before this one arrived can still connect with it, and the
+          // next registration then corrects it. Only a connected runtime is
+          // patched, since an attempt in flight overwrites `prepared` when it
+          // lands; the socket is left open either way.
+          if (Option.isSome(retained) && registration._tag === "BearerConnectionRegistration") {
+            const supervisor = retained.value;
+            const token = registration.credential.token;
+            const state = yield* SubscriptionRef.get(supervisor.state);
+            if (state.phase === "connected") {
+              // Publish only a real change; this runs on every platform poll.
+              yield* SubscriptionRef.updateSome(supervisor.prepared, (current) =>
+                Option.isSome(current) &&
+                current.value.httpAuthorization?._tag === "Bearer" &&
+                current.value.httpAuthorization.token !== token
+                  ? Option.some(
+                      Option.some({
+                        ...current.value,
+                        httpAuthorization: { _tag: "Bearer" as const, token },
+                      }),
+                    )
+                  : Option.none(),
+              );
+            } else if (
+              state.phase === "blocked" &&
+              state.lastFailure?.reason === "authentication" &&
+              bearerStored
+            ) {
+              // An attempt rejected for the revoked token parks the runtime
+              // until it is signalled. The next attempt reads the stored
+              // credential, so wake it once per token; a token that is itself
+              // rejected stays blocked instead of retrying every poll.
+              const alreadyWoken = (yield* Ref.get(blockedWakeTokens)).get(target.environmentId);
+              if (alreadyWoken !== token) {
+                yield* Ref.update(blockedWakeTokens, (current) =>
+                  new Map(current).set(target.environmentId, token),
+                );
+                yield* supervisor.retryNow;
+              }
+            }
+          }
         }),
       );
     },
@@ -591,6 +646,11 @@ export const make = Effect.gen(function* () {
           if (Exit.isFailure(revoked)) return;
           yield* Ref.update(platformEnvironmentIds, (current) => {
             const next = new Set(current);
+            next.delete(environmentId);
+            return next;
+          });
+          yield* Ref.update(blockedWakeTokens, (current) => {
+            const next = new Map(current);
             next.delete(environmentId);
             return next;
           });
