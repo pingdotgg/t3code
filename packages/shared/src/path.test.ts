@@ -17,13 +17,22 @@ describe("path helpers", () => {
 
   it("detects UNC paths", () => {
     expect(isUncPath("\\\\server\\share\\repo")).toBe(true);
+    expect(isUncPath("//server/share/repo")).toBe(true);
     expect(isUncPath("C:\\repo")).toBe(false);
+    expect(isUncPath("/repo")).toBe(false);
   });
 
   it("detects windows absolute paths", () => {
     expect(isWindowsAbsolutePath("C:\\repo")).toBe(true);
     expect(isWindowsAbsolutePath("\\\\server\\share\\repo")).toBe(true);
+    expect(isWindowsAbsolutePath("//server/share/repo")).toBe(true);
     expect(isWindowsAbsolutePath("./repo")).toBe(false);
+  });
+
+  it("compares a forward-slash UNC spelling to its backslash form", () => {
+    expect(normalizeProjectPathForComparison("//server/share/Repo/")).toBe(
+      normalizeProjectPathForComparison("\\\\server\\share\\repo"),
+    );
   });
 
   it("detects explicit relative paths", () => {

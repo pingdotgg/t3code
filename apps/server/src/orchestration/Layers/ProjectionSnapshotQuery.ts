@@ -36,6 +36,7 @@ import {
   ThreadPullRequestStack,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
+import { isWindowsAbsolutePath, normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import { legacyLinkedPullRequestOf } from "@t3tools/shared/threadPullRequests";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
@@ -252,6 +253,10 @@ const ThreadTurnRangeLookupInput = Schema.Struct({
   beforeTurnKey: Schema.String,
 });
 const ProjectionProjectLookupRowSchema = ProjectionProjectDbRowSchema;
+const ProjectionProjectWorkspaceRootRowSchema = Schema.Struct({
+  projectId: ProjectId,
+  workspaceRoot: Schema.String,
+});
 const ProjectionThreadIdLookupRowSchema = Schema.Struct({
   threadId: ThreadId,
 });
@@ -1223,6 +1228,44 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         LIMIT 1
       `,
   });
+
+  const listActiveProjectWorkspaceRootRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionProjectWorkspaceRootRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          project_id AS "projectId",
+          workspace_root AS "workspaceRoot"
+        FROM projection_projects
+        WHERE deleted_at IS NULL
+        ORDER BY created_at ASC, project_id ASC
+      `,
+  });
+
+  // The SQL match is exact, but Windows paths compare case-insensitively and
+  // with either separator. A miss on a drive or UNC path falls back to the
+  // normalized comparison the duplicate-workspace-root invariant uses, so
+  // `c:\repo` finds the project created as `C:\Repo`.
+  const findActiveProjectRowByWorkspaceRoot = (workspaceRoot: string) =>
+    getActiveProjectRowByWorkspaceRoot({ workspaceRoot }).pipe(
+      Effect.flatMap((exact) => {
+        if (Option.isSome(exact) || !isWindowsAbsolutePath(workspaceRoot)) {
+          return Effect.succeed(exact);
+        }
+        const wanted = normalizeProjectPathForComparison(workspaceRoot);
+        return listActiveProjectWorkspaceRootRows().pipe(
+          Effect.flatMap((rows) => {
+            const match = rows.find(
+              (row) => normalizeProjectPathForComparison(row.workspaceRoot) === wanted,
+            );
+            return match === undefined
+              ? Effect.succeed(exact)
+              : getActiveProjectRowById({ projectId: match.projectId });
+          }),
+        );
+      }),
+    );
 
   const getFirstActiveThreadIdByProject = SqlSchema.findOneOption({
     Request: ProjectIdLookupInput,
@@ -3080,7 +3123,7 @@ pending_approval_requests AS (
 
   const getActiveProjectByWorkspaceRoot: ProjectionSnapshotQueryShape["getActiveProjectByWorkspaceRoot"] =
     (workspaceRoot) =>
-      getActiveProjectRowByWorkspaceRoot({ workspaceRoot }).pipe(
+      findActiveProjectRowByWorkspaceRoot(workspaceRoot).pipe(
         Effect.mapError(
           toPersistenceSqlOrDecodeError(
             "ProjectionSnapshotQuery.getActiveProjectByWorkspaceRoot:query",

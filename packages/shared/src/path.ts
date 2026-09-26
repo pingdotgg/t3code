@@ -3,7 +3,10 @@ export function isWindowsDrivePath(value: string): boolean {
 }
 
 export function isUncPath(value: string): boolean {
-  return value.startsWith("\\\\");
+  // Forward-slash UNC arrives from POSIX-spelled sources: `git rev-parse
+  // --show-toplevel` prints `//server/share` inside a UNC worktree, and Git
+  // Bash uses that form natively.
+  return /^(\\\\|\/\/)/.test(value);
 }
 
 export function isWindowsAbsolutePath(value: string): boolean {
