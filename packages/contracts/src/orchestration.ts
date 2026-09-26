@@ -318,10 +318,10 @@ export const ChatFileAttachment = Schema.Struct({
   id: ChatAttachmentId,
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
   mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
-  sizeBytes: NonNegativeInt.check(
-    Schema.isGreaterThanOrEqualTo(1),
-    Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_FILE_BYTES),
-  ),
+  /** No upper bound: history and thread streams can carry files that a newer
+      build accepted under a higher limit. `AttachmentCreateUploadUrlInput`
+      enforces the upload cap. */
+  sizeBytes: NonNegativeInt.check(Schema.isGreaterThanOrEqualTo(1)),
   /** Clipboard text folded by a client. Providers keep these path-only so the
       agent can inspect the file selectively instead of eagerly spending the
       same context the fold is intended to preserve. */

@@ -358,9 +358,6 @@ it.effect("tolerates attachment types from newer builds when decoding messages",
   }),
 );
 
-// The tolerant member must not catch malformed known attachments: a file over
-// the size cap or an image with a bad mime has to fail its own schema, not
-// slide through the open one with those constraints unchecked.
 it.effect("rejects malformed known attachment types instead of tolerating them", () =>
   Effect.gen(function* () {
     const base = {
@@ -380,10 +377,13 @@ it.effect("rejects malformed known attachment types instead of tolerating them",
         updatedAt: "2026-01-01T00:00:00.000Z",
       });
 
-    const oversizedFile = yield* Effect.exit(
-      decode({ ...base, type: "file", sizeBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1 }),
-    );
-    assert.strictEqual(Exit.isFailure(oversizedFile), true);
+    // A newer build may raise the upload cap; this build must still read those files.
+    const aboveUploadCap = PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1;
+    const largeFile = yield* decode({ ...base, type: "file", sizeBytes: aboveUploadCap });
+    assert.strictEqual(largeFile.attachments?.[0]?.sizeBytes, aboveUploadCap);
+
+    const emptyFile = yield* Effect.exit(decode({ ...base, type: "file", sizeBytes: 0 }));
+    assert.strictEqual(Exit.isFailure(emptyFile), true);
 
     const badMimeImage = yield* Effect.exit(
       decode({ ...base, type: "image", mimeType: "application/pdf", sizeBytes: 12 }),
