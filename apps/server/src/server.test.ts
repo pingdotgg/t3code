@@ -5800,13 +5800,19 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const cookie = yield* getAuthenticatedSessionCookieHeader();
       spanNames.length = 0;
 
-      const response = yield* HttpClient.post("/api/observability/v1/traces", {
-        headers: { cookie, "content-type": "application/json" },
-        body: yield* HttpBody.json({ resourceSpans: [] }),
-      });
+      // The query string must not bring back the HTTP server span.
+      for (const url of ["/api/observability/v1/traces", "/api/observability/v1/traces?x=1"]) {
+        const response = yield* HttpClient.post(url, {
+          headers: { cookie, "content-type": "application/json" },
+          body: yield* HttpBody.json({ resourceSpans: [] }),
+        });
+        assert.equal(response.status, 204);
+      }
 
-      assert.equal(response.status, 204);
-      assert.deepEqual(forwardedUrls, ["http://collector.test/v1/traces"]);
+      assert.deepEqual(forwardedUrls, [
+        "http://collector.test/v1/traces",
+        "http://collector.test/v1/traces",
+      ]);
       assert.deepEqual(spanNames, []);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

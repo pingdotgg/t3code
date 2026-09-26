@@ -316,10 +316,7 @@ class DecodeOtlpTraceRecordsError extends Data.TaggedError("DecodeOtlpTraceRecor
 // Renderers export up to once a second while they have spans buffered, so
 // tracing this proxy would add more server spans than it forwards.
 // withTracerEnabled(false) drops the handler's spans, including the forward.
-// The URL predicate drops the HTTP server span, which starts before routing,
-// so it reaches HttpRouter.serve as a layer output. TracerDisabledWhen is one
-// value for the whole server and the last layer wins, so extend this URL list
-// instead of adding another layerTracerDisabledForUrls.
+// untracedRequestsLayer drops the HTTP server span.
 export const otlpTracesProxyRouteLayer = HttpRouter.add(
   "POST",
   OTLP_TRACES_PROXY_PATH,
@@ -372,7 +369,21 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
     }),
     Effect.withTracerEnabled(false),
   ),
-).pipe(Layer.merge(HttpMiddleware.layerTracerDisabledForUrls([OTLP_TRACES_PROXY_PATH])));
+);
+
+const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([OTLP_TRACES_PROXY_PATH]);
+
+// Skips the HTTP server span for UNTRACED_REQUEST_PATHS. That span starts
+// before routing, so a route handler cannot skip it. TracerDisabledWhen is one
+// predicate for the whole server and the last layer to provide it wins, so
+// makeRoutesLayer provides this one last. Add paths here instead of providing
+// TracerDisabledWhen again. The query string is ignored, as in routing.
+export const untracedRequestsLayer = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) => {
+  const queryIndex = request.url.indexOf("?");
+  return UNTRACED_REQUEST_PATHS.has(
+    queryIndex === -1 ? request.url : request.url.slice(0, queryIndex),
+  );
+});
 
 export const assetRouteLayer = HttpRouter.add(
   "GET",
