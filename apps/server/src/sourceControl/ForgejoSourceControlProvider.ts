@@ -239,7 +239,7 @@ export const make = Effect.gen(function* () {
           const items = yield* request(
             {
               ...input,
-              path: `${repositoryPath(repo.repository)}/pulls?state=${input.state === "merged" ? "closed" : input.state}&sort=recentupdate&limit=50&page=${page}`,
+              path: `${repositoryPath(repo.repository)}/pulls?state=${input.state === "merged" ? "closed" : input.state}&head=${encodeURIComponent(branch)}&sort=recentupdate&limit=50&page=${page}`,
             },
             Schema.Array(ForgejoPullRequestSchema),
           );
