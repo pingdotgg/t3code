@@ -3643,6 +3643,85 @@ it.effect("reads one sweep thread and its projects like the shell snapshot", () 
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("reads a full sweep from unsettled threads and every project", () => {
+  const resolved: string[] = [];
+  const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
+    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provide(ThreadPlanProgress.layer),
+    Layer.provide(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (root) =>
+          Effect.sync(() => {
+            resolved.push(root);
+            return null;
+          }),
+      }),
+    ),
+    Layer.provideMerge(SqlitePersistenceMemory),
+  );
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const query = yield* ProjectionSnapshotQuery;
+    yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+      VALUES ('p1', 'One', '/one', '[]', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z'),
+        ('p2', 'Two', '/two', '[]', '2026-09-02T00:00:00Z', '2026-09-02T00:00:00Z'),
+        ('p3', 'Three', '/three', '[]', '2026-09-03T00:00:00Z', '2026-09-03T00:00:00Z'),
+        ('p4', 'Four', '/four', '[]', '2026-09-04T00:00:00Z', '2026-09-04T00:00:00Z')`;
+    yield* sql`INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, branch_pull_request_json, latest_turn_id, created_at, updated_at, archived_at, settled_override, settled_at)
+      VALUES
+        ('t-open', 'p1', 'Open', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', NULL, 'turn-open', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', NULL, NULL, NULL),
+        ('t-resumed', 'p1', 'Resumed', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', NULL, NULL, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', NULL, 'active', NULL),
+        ('t-branch', 'p1', 'Branch', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default',
+          '{"projectId":"p2","repository":"acme/web","number":8,"url":"https://github.com/acme/web/pull/8"}',
+          NULL, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', NULL, NULL, NULL),
+        ('t-settled', 'p3', 'Settled', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', NULL, 'turn-settled', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', NULL, 'settled', '2026-09-03T00:00:00Z'),
+        ('t-archived', 'p4', 'Archived', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', NULL, NULL, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', '2026-09-04T00:00:00Z', NULL, NULL)`;
+    // The open and the settled thread both have a row in each joined table. The
+    // settled thread's turn and session are the newest rows, so updatedAt shows
+    // whether those two reads skip it.
+    yield* sql`INSERT INTO projection_thread_pull_requests (thread_id, host, repository, number, url, source, linked_at)
+      VALUES ('t-open', 'github.com', 'acme/web', 7, 'https://github.com/acme/web/pull/7', 'agent', '2026-09-02T00:00:00Z'),
+        ('t-settled', 'github.com', 'acme/web', 9, 'https://github.com/acme/web/pull/9', 'agent', '2026-09-02T00:00:00Z')`;
+    yield* sql`INSERT INTO projection_turns (thread_id, turn_id, state, requested_at, checkpoint_files_json)
+      VALUES ('t-open', 'turn-open', 'completed', '2026-09-02T00:00:00Z', '[]'),
+        ('t-settled', 'turn-settled', 'completed', '2026-09-09T00:00:00Z', '[]')`;
+    yield* sql`INSERT INTO projection_thread_sessions (thread_id, status, provider_name, active_turn_id, last_error, updated_at)
+      VALUES ('t-open', 'ready', 'codex', NULL, NULL, '2026-09-02T00:00:00Z'),
+        ('t-settled', 'stopped', 'codex', NULL, NULL, '2026-09-10T00:00:00Z')`;
+
+    const full = yield* query.getShellSnapshot();
+    // The settled thread's rows must reach the full read, or skipping them proves nothing.
+    const settled = full.threads.find((thread) => thread.id === ThreadId.make("t-settled"));
+    assert.strictEqual(settled?.pullRequests[0]?.number, 9);
+    assert.strictEqual(settled?.latestTurn?.turnId, asTurnId("turn-settled"));
+    assert.strictEqual(settled?.session?.status, "stopped");
+    assert.strictEqual(full.updatedAt, "2026-09-10T00:00:00Z");
+    resolved.length = 0;
+
+    const sweep = yield* readSweepSnapshot(query, null);
+    assert.strictEqual(sweep.snapshotSequence, full.snapshotSequence);
+    assert.deepStrictEqual(
+      sweep.threads,
+      full.threads.filter((thread) => thread.id !== ThreadId.make("t-settled")),
+    );
+    assert.deepStrictEqual(
+      sweep.threads.map((thread) => thread.id),
+      ["t-branch", "t-open", "t-resumed"],
+    );
+    // Like the full read, the sweep resolves every project, so it keeps the
+    // repository identity cache warm for client connects.
+    assert.deepStrictEqual(sweep.projects, full.projects);
+    assert.deepStrictEqual(resolved.toSorted(), ["/four", "/one", "/three", "/two"]);
+    // A settled thread's link that no longer decodes breaks the full read, but
+    // not the sweep, which never reads it.
+    yield* sql`UPDATE projection_thread_pull_requests SET snapshot_json = 'invalid-json' WHERE thread_id = 't-settled'`;
+    assert.strictEqual((yield* Effect.exit(query.getShellSnapshot()))._tag, "Failure");
+    const unsettled = yield* query.getShellSnapshot({ unsettledOnly: true });
+    assert.deepStrictEqual(unsettled.threads, sweep.threads);
+    assert.strictEqual(unsettled.updatedAt, "2026-09-04T00:00:00Z");
+  }).pipe(Effect.provide(layer));
+});
+
 projectionSnapshotLayer("ProjectionSnapshotQuery activities by kind", (it) => {
   it.effect("lists one kind across active threads only, without hydrating the threads", () =>
     Effect.gen(function* () {

@@ -74,7 +74,9 @@ export function pullRequestMatchesProject(
 
 /**
  * Read the shell state for a discovery or settlement sweep. A sweep for one
- * thread reads that thread and the projects it names, not every thread.
+ * thread reads that thread and the projects it names, not every thread. A
+ * sweep over all threads reads only unsettled threads, since both sweeps skip
+ * settled ones. Discovery's backfill does its own full read.
  */
 export const readSweepSnapshot = (
   snapshots: ProjectionSnapshotQuery.ProjectionSnapshotQueryShape,
@@ -84,7 +86,7 @@ export const readSweepSnapshot = (
   ProjectionRepositoryError
 > =>
   threadId === null
-    ? snapshots.getShellSnapshot()
+    ? snapshots.getShellSnapshot({ unsettledOnly: true })
     : Effect.gen(function* () {
         // Read the sequence first. The thread is then at least this new, so a
         // command guarded by the sequence is rejected rather than missing a change.
@@ -129,7 +131,11 @@ export const make = Effect.gen(function* () {
   const synchronize = Effect.fn("ThreadPullRequestReactor.synchronize")(function* (
     request: RefreshRequest,
   ) {
-    const snapshot = yield* readSweepSnapshot(snapshots, request.threadId);
+    // Backfill looks up settled threads, so its passes read every thread.
+    const snapshot =
+      request.threadId === null && (request.backfill || pendingBackfill.size > 0)
+        ? yield* snapshots.getShellSnapshot()
+        : yield* readSweepSnapshot(snapshots, request.threadId);
     const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
     if (request.backfill) {
       for (const thread of snapshot.threads) {
@@ -141,11 +147,15 @@ export const make = Effect.gen(function* () {
         }
       }
     }
-    // A single-thread read only shows whether its own thread is gone.
-    const threadIds = new Set(snapshot.threads.map((thread) => thread.id));
+    // A single-thread read only shows whether its own thread is gone. A thread
+    // with no branch has nothing to look up, and its entry would keep every
+    // periodic pass on the full read.
+    const branchThreadIds = new Set(
+      snapshot.threads.filter((thread) => thread.branch !== null).map((thread) => thread.id),
+    );
     const checkedIds = request.threadId === null ? pendingBackfill.keys() : [request.threadId];
     for (const threadId of checkedIds) {
-      if (!threadIds.has(threadId)) pendingBackfill.delete(threadId);
+      if (!branchThreadIds.has(threadId)) pendingBackfill.delete(threadId);
     }
     const threads = snapshot.threads.filter(
       (thread) =>

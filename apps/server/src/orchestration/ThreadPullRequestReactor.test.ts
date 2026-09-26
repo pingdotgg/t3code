@@ -27,13 +27,21 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { GitManager, type GitBranchPullRequest } from "../git/GitManager.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { PullRequestService } from "../pullRequest/PullRequestService.ts";
 import { RepositoryIdentityResolver } from "../project/RepositoryIdentityResolver.ts";
 import { ServerActivation } from "../serverActivation.ts";
+import { OrchestrationProjectionSnapshotQueryLive } from "./Layers/ProjectionSnapshotQuery.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
+import {
+  ProjectionSnapshotQuery,
+  type ProjectionSnapshotQueryShape,
+} from "./Services/ProjectionSnapshotQuery.ts";
+import * as ThreadBackgroundLiveness from "./ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "./ThreadPlanProgress.ts";
 import * as ThreadPullRequestReactor from "./ThreadPullRequestReactor.ts";
 
 const NOW = "2026-09-01T12:00:00.000Z";
@@ -135,6 +143,8 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
   readonly existingWorktrees?: ReadonlyArray<string>;
   readonly project?: OrchestrationProjectShell;
   readonly resolveRepositoryIdentity?: RepositoryIdentityResolver["Service"]["resolve"];
+  /** Serve full sweep reads from this instead of `threads`. */
+  readonly getShellSnapshot?: ProjectionSnapshotQueryShape["getShellSnapshot"];
 }) {
   const activation = yield* Deferred.make<void>();
   const snapshots = yield* Ref.make<OrchestrationShellSnapshot>({
@@ -154,7 +164,10 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
   let uuid = 0;
   const dependencies = Layer.mergeAll(
     Layer.mock(ProjectionSnapshotQuery)({
-      getShellSnapshot: () => Ref.get(snapshots).pipe(Effect.tap(() => Queue.offer(reads, null))),
+      getShellSnapshot: (readOptions) =>
+        (options.getShellSnapshot?.(readOptions) ?? Ref.get(snapshots)).pipe(
+          Effect.tap(() => Queue.offer(reads, null)),
+        ),
       getSnapshotSequence: () =>
         Ref.get(snapshots).pipe(Effect.map(({ snapshotSequence }) => ({ snapshotSequence }))),
       getThreadShellById: (threadId) =>
@@ -641,6 +654,113 @@ describe("ThreadPullRequestReactor", () => {
           expect(yield* Ref.get(fixture.commands)).toHaveLength(0);
         }).pipe(Effect.provide(fixture.layer));
       }),
+    ),
+  );
+
+  it.effect("discovers the same PRs from the unsettled read as from the full read", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const query = yield* ProjectionSnapshotQuery;
+      yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+        VALUES ('project', 'Project', '/workspace/project', '[]', ${NOW}, ${NOW}),
+          ('dormant', 'Dormant', '/workspace/dormant', '[]', ${NOW}, ${NOW})`;
+      yield* sql`INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, branch, branch_pull_request_json, created_at, updated_at, archived_at, settled_override, settled_at)
+        VALUES
+          ('open', 'project', 'Open', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', 'open', NULL, ${NOW}, ${NOW}, NULL, NULL, NULL),
+          ('resumed', 'project', 'Resumed', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', 'resumed', NULL, ${NOW}, ${NOW}, NULL, 'active', NULL),
+          ('linked', 'project', 'Linked', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', 'linked', '{"projectId":"project","repository":"owner/repository","number":3,"url":"https://github.com/owner/repository/pull/3"}', ${NOW}, ${NOW}, NULL, NULL, NULL),
+          ('settled', 'project', 'Settled', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', 'settled', '{"projectId":"project","repository":"owner/repository","number":4,"url":"https://github.com/owner/repository/pull/4"}', ${NOW}, ${NOW}, NULL, 'settled', ${NOW}),
+          ('backfill', 'project', 'Backfill', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', 'backfill', NULL, ${NOW}, ${NOW}, NULL, 'settled', ${NOW}),
+          ('imported', 'dormant', 'Imported', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', NULL, NULL, ${NOW}, ${NOW}, NULL, 'settled', ${NOW}),
+          ('archived', 'project', 'Archived', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', 'archived', NULL, ${NOW}, ${NOW}, ${NOW}, NULL, NULL)`;
+      const numbers = new Map([
+        ["open", 1],
+        ["resumed", 2],
+        ["linked", 3],
+        ["settled", 4],
+        ["backfill", 5],
+        ["archived", 6],
+      ]);
+
+      // Startup, then two periodic passes. The startup backfill lookup fails,
+      // so the first periodic pass retries it from the full read.
+      const discover = (read: ProjectionSnapshotQueryShape["getShellSnapshot"]) =>
+        Effect.gen(function* () {
+          const online = yield* Ref.make(false);
+          const reads: Array<ReadonlyArray<string>> = [];
+          const fixture = yield* makeHarness({
+            threads: [],
+            getShellSnapshot: (options) =>
+              read(options).pipe(
+                Effect.tap((snapshot) =>
+                  Effect.sync(() => reads.push(snapshot.threads.map(({ id }) => id).toSorted())),
+                ),
+              ),
+            branchPullRequest: ({ cwd, branch }) =>
+              Effect.gen(function* () {
+                if (branch === "backfill" && !(yield* Ref.get(online))) {
+                  return yield* new GitManagerError({
+                    operation: "branchPullRequest",
+                    cwd,
+                    detail: "Offline",
+                  });
+                }
+                const number = numbers.get(branch);
+                return number === undefined ? null : branchPullRequest(number);
+              }),
+          });
+          return yield* Effect.gen(function* () {
+            const reactor = yield* fixture.start();
+            const startupCalls = (yield* Ref.get(fixture.branchCalls)).length;
+            const startupCommands = (yield* Ref.get(fixture.commands)).length;
+            yield* Ref.set(online, true);
+            for (let pass = 0; pass < 2; pass++) {
+              yield* TestClock.adjust("1 minute");
+              yield* Queue.take(fixture.reads);
+              yield* reactor.drain;
+            }
+            return {
+              reads,
+              branchCalls: (yield* Ref.get(fixture.branchCalls))
+                .slice(startupCalls)
+                .map(({ branch }) => branch)
+                .toSorted(),
+              commands: (yield* Ref.get(fixture.commands))
+                .slice(startupCommands)
+                .map(
+                  ({ threadId, branchPullRequest }) => `${threadId} ${branchPullRequest?.number}`,
+                )
+                .toSorted(),
+            };
+          }).pipe(Effect.provide(fixture.layer));
+        }).pipe(Effect.scoped);
+
+      const { reads: unsettledReads, ...unsettled } = yield* discover(query.getShellSnapshot);
+      const { reads: fullReads, ...full } = yield* discover(() => query.getShellSnapshot());
+      expect(unsettled).toEqual(full);
+      expect(unsettled.commands).toEqual([
+        "backfill 5",
+        "open 1",
+        "open 1",
+        "resumed 2",
+        "resumed 2",
+      ]);
+      // The last pass has no backfill left, so it reads no settled thread.
+      expect(fullReads.at(-1)).toContain("imported");
+      expect(unsettledReads.at(-1)).toEqual(["linked", "open", "resumed"]);
+    }).pipe(
+      Effect.provide(
+        OrchestrationProjectionSnapshotQueryLive.pipe(
+          Layer.provide(ThreadBackgroundLiveness.layer),
+          Layer.provide(ThreadPlanProgress.layer),
+          Layer.provide(
+            Layer.succeed(RepositoryIdentityResolver, {
+              resolve: () => Effect.succeed(project.repositoryIdentity),
+            }),
+          ),
+          Layer.provideMerge(SqlitePersistenceMemory),
+        ),
+      ),
     ),
   );
 

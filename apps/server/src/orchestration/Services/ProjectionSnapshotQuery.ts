@@ -120,11 +120,15 @@ export interface ProjectionSnapshotQueryShape {
    *
    * Returns only projects and thread shell summaries so clients can bootstrap
    * lightweight navigation state without hydrating every thread body.
+   *
+   * `unsettledOnly` is for background sweeps, not clients. It skips settled
+   * threads and their sessions, PR links, and turns, and its `updatedAt`
+   * ignores those rows. It still resolves every project, which keeps
+   * repository identities cached for client connects.
    */
-  readonly getShellSnapshot: () => Effect.Effect<
-    OrchestrationShellSnapshot,
-    ProjectionRepositoryError
-  >;
+  readonly getShellSnapshot: (options?: {
+    readonly unsettledOnly?: boolean;
+  }) => Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>;
 
   /**
    * Read archived thread shell summaries for the archive page.
