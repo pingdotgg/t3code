@@ -1,5 +1,7 @@
 // The bridge relays opaque JSON-RPC lines verbatim; schema-decoding foreign
-// payloads here would reject traffic it must pass through untouched.
+// payloads here would reject traffic it must pass through untouched. Node
+// readline splits the stdio stream into lines without loading the Effect
+// platform layers on this startup-critical CLI path.
 // @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off
 import * as NodeReadline from "node:readline";
 
