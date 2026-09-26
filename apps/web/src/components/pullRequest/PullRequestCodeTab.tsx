@@ -79,6 +79,7 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PendingReviewCommentCard, ReviewThreadCard } from "./PullRequestReviewAnnotation";
 import {
+  foldViewedFilesOnce,
   isFileDiffCollapsed,
   isLineInFileDiff,
   toggleFileDiffFoldForViewed,
@@ -223,6 +224,13 @@ function PullRequestCodeTab({
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
   const [toggledFiles, setToggledFiles] = useState<ReadonlySet<string>>(() => new Set());
+  /** Paths whose tick has been read once for this mount; see `foldViewedFilesOnce`. */
+  const seenViewedPathsRef = useRef<ReadonlySet<string>>(new Set());
+  const pathByFileKeyRef = useRef<ReadonlyMap<string, string>>(new Map());
+  const markViewedPathSeen = useCallback((path: string | undefined) => {
+    if (path === undefined || seenViewedPathsRef.current.has(path)) return;
+    seenViewedPathsRef.current = new Set([...seenViewedPathsRef.current, path]);
+  }, []);
   // A change of any size can carry hundreds of commits, and a menu that long is a scroll rather
   // than a choice. The rest arrive ten at a time, on request.
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
@@ -267,6 +275,7 @@ function PullRequestCodeTab({
     setDraft(null);
     setSelectedLines(null);
     setToggledFiles(new Set());
+    seenViewedPathsRef.current = new Set();
     setFoldOverride(null);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
@@ -634,7 +643,10 @@ function PullRequestCodeTab({
   // these render props, so a fresh function here would recreate every visible file's portal on
   // every tab re-render (a line-selection drag, a keystroke in the draft, a review-store update).
   const toggleFile = useCallback(
-    (fileKey: string) =>
+    (fileKey: string) => {
+      // A fold the reader chose outranks the one their tick would have given it, even when the
+      // tick is only read later.
+      markViewedPathSeen(pathByFileKeyRef.current.get(fileKey));
       setToggledFiles((current) => {
         // The override becomes this file's new default the moment it is folded into the set below,
         // so nothing has to be re-derived when the reader goes back to choosing one at a time.
@@ -642,21 +654,56 @@ function PullRequestCodeTab({
         if (next.has(fileKey)) next.delete(fileKey);
         else next.add(fileKey);
         return next;
-      }),
-    [],
+      });
+    },
+    [markViewedPathSeen],
   );
+
+  const pathByFileKey = useMemo(
+    () => new Map(annotatedFiles.map(({ fileKey, path }) => [fileKey, path])),
+    [annotatedFiles],
+  );
+  useEffect(() => {
+    pathByFileKeyRef.current = pathByFileKey;
+  }, [pathByFileKey]);
+  // The ticks outlive this tab, the folds do not: fold each already-ticked file once when it
+  // first shows up with the host's answer, as its tick would have, and leave the rest alone.
+  useEffect(() => {
+    if (!filesViewedEnabled || !filesViewed.ready) return;
+    const result = foldViewedFilesOnce(
+      annotatedFiles.map(({ fileKey, path }) => ({
+        fileKey,
+        path,
+        viewed: isFileViewed(path) && !isFileViewedStale(path),
+      })),
+      seenViewedPathsRef.current,
+      effectiveFoldOverride,
+      toggledFiles,
+    );
+    seenViewedPathsRef.current = result.seenPaths;
+    if (result.toggledFileKeys !== toggledFiles) setToggledFiles(result.toggledFileKeys);
+  }, [
+    annotatedFiles,
+    effectiveFoldOverride,
+    filesViewed.ready,
+    filesViewedEnabled,
+    isFileViewed,
+    isFileViewedStale,
+    toggledFiles,
+  ]);
 
   // The tick and the fold are one gesture: clearing a file puts it away, un-clearing brings it
   // back. Folding is still held as the reader's difference from the toolbar's default rather
   // than derived from what has been ticked, so folding everything ticks nothing off.
   const setFileViewed = useCallback(
     (fileKey: string, path: string, viewed: boolean) => {
+      markViewedPathSeen(path);
       setViewed(path, viewed);
       setToggledFiles((current) =>
         toggleFileDiffFoldForViewed(fileKey, viewed, effectiveFoldOverride, current),
       );
     },
-    [effectiveFoldOverride, setViewed],
+    [effectiveFoldOverride, markViewedPathSeen, setViewed],
   );
 
   const requestTreeReveal = useCodeViewFileReveal(viewer, scopeKey);
