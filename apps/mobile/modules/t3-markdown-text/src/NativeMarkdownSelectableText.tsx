@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef } from "react";
 import { decodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import {
   findNodeHandle,
@@ -12,6 +12,7 @@ import {
   View,
 } from "react-native";
 
+import { androidMarkdownLinkPressHandlers, type AndroidLinkGesture } from "./androidLinkPress";
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
 import { markdownFileIconSource } from "./markdownFileIcons";
 import { markdownLinkIconSource } from "./markdownLinkIcons";
@@ -199,6 +200,7 @@ export function NativeMarkdownSelectableText(props: {
 }) {
   const colorScheme = useColorScheme();
   const menu = useContext(MarkdownFileContextMenuContext);
+  const androidLinkGesture = useRef<AndroidLinkGesture | null>(null);
   const contextClipboardFragment = useContext(MarkdownContextClipboardContext);
   const contextRecords = useMemo(
     () => decodeComposerContextFragment(contextClipboardFragment)?.records ?? [],
@@ -325,6 +327,10 @@ export function NativeMarkdownSelectableText(props: {
     props.textStyle.dividerColor,
     props.textStyle.contextChipBorderColor,
   ].join(":");
+  const openMarkdownLink = (href: string) => {
+    if (props.onLinkPress) props.onLinkPress(href);
+    else void Linking.openURL(href);
+  };
 
   return (
     <MarkdownTextPrimitive
@@ -349,90 +355,95 @@ export function NativeMarkdownSelectableText(props: {
         lineHeight: props.textStyle.lineHeight,
       }}
     >
-      {keyedRuns.map(({ key, run, text, linkIcon, chip, androidChip }) => {
-        const href = run.href;
-        const contextMenu = run.fileIcon && href ? menu?.fileContextMenu(href) : undefined;
-        const onPress = href
-          ? () => {
-              if (props.onLinkPress) props.onLinkPress(href);
-              else void Linking.openURL(href);
-            }
-          : undefined;
-        return (
-          <MarkdownTextPrimitive
-            key={key}
-            accessibilityLabel={androidChip ? chip?.label : undefined}
-            nativeID={
-              Platform.OS === "ios"
-                ? chip
-                  ? `t3-chip:${JSON.stringify(chip)}`
-                  : run.fileIcon
-                    ? `t3-file:${Image.resolveAssetSource(markdownFileIconSource(run.fileIcon)).uri}`
-                    : run.skillName
-                      ? "t3-skill:sf:cube"
-                      : linkIcon
-                        ? `t3-link:${Image.resolveAssetSource(markdownLinkIconSource(linkIcon)).uri}`
-                        : undefined
-                : undefined
-            }
-            contextMenuConfig={contextMenu ? JSON.stringify(contextMenu) : undefined}
-            style={[
-              runStyle(run, props.textStyle),
-              chip ? { backgroundColor: "transparent" } : undefined,
-            ]}
-            onPress={onPress}
-            onContextMenuAction={
-              contextMenu && href && menu
-                ? (event) => menu.onFileContextMenuAction(href, event.nativeEvent.actionIdentifier)
-                : undefined
-            }
-          >
-            {androidChip ? (
-              // The inline box sits on the baseline and is only as tall as the font's
-              // ascent, so it never changes the line's height. The bitmap hangs off that
-              // box (views in text are not clipped) to centre the chip on the text.
-              <View
-                accessible
-                accessibilityLabel={chip?.label}
-                accessibilityRole={onPress ? "button" : "image"}
-                accessibilityActions={onPress ? [{ name: "activate" }] : undefined}
-                onAccessibilityAction={
-                  onPress
-                    ? (event) => {
-                        if (event.nativeEvent.actionName === "activate") onPress();
-                      }
-                    : undefined
-                }
-                style={{ width: androidChip.width, height: androidChip.boxHeight }}
-              >
+      {keyedRuns.map(
+        // oxlint-disable-next-line react/refs -- Gesture is only read from the press handlers returned below, not while rendering.
+        ({ key, run, text, linkIcon, chip, androidChip }) => {
+          const href = run.href;
+          const contextMenu = run.fileIcon && href ? menu?.fileContextMenu(href) : undefined;
+          const openLink = href ? () => openMarkdownLink(href) : undefined;
+          // Nested Android text never leaves its press rect, so a selection drag
+          // still fires onPress. Ignore that press when the finger has moved.
+          const linkPress =
+            openLink && Platform.OS === "android"
+              ? androidMarkdownLinkPressHandlers(androidLinkGesture, openLink)
+              : { onPress: openLink };
+          return (
+            <MarkdownTextPrimitive
+              key={key}
+              accessibilityLabel={androidChip ? chip?.label : undefined}
+              nativeID={
+                Platform.OS === "ios"
+                  ? chip
+                    ? `t3-chip:${JSON.stringify(chip)}`
+                    : run.fileIcon
+                      ? `t3-file:${Image.resolveAssetSource(markdownFileIconSource(run.fileIcon)).uri}`
+                      : run.skillName
+                        ? "t3-skill:sf:cube"
+                        : linkIcon
+                          ? `t3-link:${Image.resolveAssetSource(markdownLinkIconSource(linkIcon)).uri}`
+                          : undefined
+                  : undefined
+              }
+              contextMenuConfig={contextMenu ? JSON.stringify(contextMenu) : undefined}
+              style={[
+                runStyle(run, props.textStyle),
+                chip ? { backgroundColor: "transparent" } : undefined,
+              ]}
+              {...linkPress}
+              onContextMenuAction={
+                contextMenu && href && menu
+                  ? (event) =>
+                      menu.onFileContextMenuAction(href, event.nativeEvent.actionIdentifier)
+                  : undefined
+              }
+            >
+              {androidChip ? (
+                // The inline box sits on the baseline and is only as tall as the font's
+                // ascent, so it never changes the line's height. The bitmap hangs off that
+                // box (views in text are not clipped) to centre the chip on the text.
+                <View
+                  accessible
+                  accessibilityLabel={chip?.label}
+                  accessibilityRole={openLink ? "button" : "image"}
+                  accessibilityActions={openLink ? [{ name: "activate" }] : undefined}
+                  onAccessibilityAction={
+                    openLink
+                      ? (event) => {
+                          if (event.nativeEvent.actionName === "activate") openLink();
+                        }
+                      : undefined
+                  }
+                  style={{ width: androidChip.width, height: androidChip.boxHeight }}
+                >
+                  <Image
+                    // The bitmap is measured in whole pixels but laid out in dp, so the box can
+                    // round a hair narrower than the image. `cover` would crop that difference
+                    // off the right-hand border; `contain` fits the whole chip instead.
+                    resizeMode="contain"
+                    source={{ uri: androidChip.uri }}
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      top: androidChip.offsetY,
+                      width: androidChip.width,
+                      height: androidChip.height,
+                    }}
+                  />
+                </View>
+              ) : Platform.OS === "android" && run.fileIcon ? (
+                <Image source={markdownFileIconSource(run.fileIcon)} style={styles.inlineIcon} />
+              ) : Platform.OS === "android" && linkIcon ? (
                 <Image
-                  // The bitmap is measured in whole pixels but laid out in dp, so the box can
-                  // round a hair narrower than the image. `cover` would crop that difference
-                  // off the right-hand border; `contain` fits the whole chip instead.
-                  resizeMode="contain"
-                  source={{ uri: androidChip.uri }}
-                  style={{
-                    position: "absolute",
-                    left: 0,
-                    top: androidChip.offsetY,
-                    width: androidChip.width,
-                    height: androidChip.height,
-                  }}
+                  source={markdownLinkIconSource(linkIcon)}
+                  style={styles.inlineIcon}
+                  tintColor={props.textStyle.linkColor}
                 />
-              </View>
-            ) : Platform.OS === "android" && run.fileIcon ? (
-              <Image source={markdownFileIconSource(run.fileIcon)} style={styles.inlineIcon} />
-            ) : Platform.OS === "android" && linkIcon ? (
-              <Image
-                source={markdownLinkIconSource(linkIcon)}
-                style={styles.inlineIcon}
-                tintColor={props.textStyle.linkColor}
-              />
-            ) : null}
-            {text}
-          </MarkdownTextPrimitive>
-        );
-      })}
+              ) : null}
+              {text}
+            </MarkdownTextPrimitive>
+          );
+        },
+      )}
     </MarkdownTextPrimitive>
   );
 }
