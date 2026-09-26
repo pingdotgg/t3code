@@ -75,14 +75,12 @@ const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
   packageName: null,
 });
 
-const makeUnsupportedTextGeneration = (): TextGeneration["Service"] => {
+/** Text generation for providers whose agent cannot run without its tools, hooks or MCP servers. */
+export const makeUnsupportedTextGeneration = (
+  detail = "ACP Registry instances do not provide application text generation.",
+): TextGeneration["Service"] => {
   const unsupported = (operation: string) =>
-    Effect.fail(
-      new TextGenerationError({
-        operation,
-        detail: "ACP Registry instances do not provide application text generation.",
-      }),
-    );
+    Effect.fail(new TextGenerationError({ operation, detail }));
   return {
     generateCommitMessage: () => unsupported("generateCommitMessage"),
     generatePrContent: () => unsupported("generatePrContent"),

@@ -637,15 +637,19 @@ export const AcpProviderCapabilitiesV2 = {
   },
 } satisfies OrchestrationV2ProviderCapabilities;
 
-function negotiatedCapabilities(
+export function negotiatedCapabilities(
   base: OrchestrationV2ProviderCapabilities,
   started: AcpSessionRuntimeStartResult,
+  flavor: Pick<AcpAdapterV2Flavor, "applyModelSelection">,
 ): OrchestrationV2ProviderCapabilities {
   const agent = started.initializeResult.agentCapabilities ?? {};
   const session = agent.sessionCapabilities;
   const setup = started.sessionSetupResult;
+  // A model config option (v2), which the generic setup path switches through,
+  // or the v1 `models` state when the flavor switches it via `session/set_model`.
   const hasModelConfig =
-    setup.configOptions?.some((option) => option.category === "model") === true;
+    setup.configOptions?.some((option) => option.category === "model") === true ||
+    (setup.models != null && flavor.applyModelSelection !== undefined);
   const canLoad = agent.loadSession === true;
   const canFork = session?.fork != null;
   return {
@@ -1007,6 +1011,55 @@ function providerRequestKind(kind: string | "unknown"): ProviderRequestKind {
     default:
       return "command";
   }
+}
+
+const ACP_TOOL_KINDS: ReadonlySet<unknown> = new Set<EffectAcpSchema.ToolKind>([
+  "read",
+  "edit",
+  "delete",
+  "move",
+  "search",
+  "execute",
+  "think",
+  "fetch",
+  "switch_mode",
+  "other",
+]);
+
+function isAcpToolKind(kind: unknown): kind is EffectAcpSchema.ToolKind {
+  return ACP_TOOL_KINDS.has(kind);
+}
+
+function isAcpToolCallLocations(
+  value: unknown,
+): value is ReadonlyArray<EffectAcpSchema.ToolCallLocation> {
+  return (
+    Array.isArray(value) && value.every((entry) => typeof unknownRecord(entry)?.path === "string")
+  );
+}
+
+/**
+ * ACP lets a permission request omit tool call fields the agent already sent in
+ * its `tool_call` update. Fill kind, title, and locations from that known state
+ * so the approval kind, policy, and grants all see the real operation. Fields
+ * present on the request win.
+ */
+function withKnownToolCall(
+  params: EffectAcpSchema.RequestPermissionRequest,
+  known: AcpToolCallState | undefined,
+): EffectAcpSchema.RequestPermissionRequest {
+  if (known === undefined) return params;
+  const { toolCall } = params;
+  const { title, locations } = known.data;
+  return {
+    ...params,
+    toolCall: {
+      ...toolCall,
+      ...(toolCall.kind == null && isAcpToolKind(known.kind) ? { kind: known.kind } : {}),
+      ...(toolCall.title == null && typeof title === "string" ? { title } : {}),
+      ...(toolCall.locations == null && isAcpToolCallLocations(locations) ? { locations } : {}),
+    },
+  };
 }
 
 function toolStatus(
@@ -5445,9 +5498,13 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 handlerGeneration,
                 Effect.gen(function* () {
                   const context = yield* activeContext;
+                  const request = withKnownToolCall(
+                    params,
+                    context.tools.get(params.toolCall.toolCallId),
+                  );
                   const disposition = (flavor.permissionDisposition ?? acpPermissionDisposition)(
                     context.input.runtimePolicy,
-                    params,
+                    request,
                   );
                   if (disposition === "allow") {
                     const optionId = selectAutoApprovedPermissionOption(params);
@@ -5471,9 +5528,10 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                   }
                   return {
                     _tag: "Pending" as const,
+                    request,
                     pending: yield* beginApprovalRequest(
                       context,
-                      params,
+                      request,
                       handlerGeneration,
                       transportRequestId,
                     ),
@@ -5508,7 +5566,8 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 requestId,
                 transportRequestId: pendingTransportRequestId,
               } = admitted.value.pending;
-              const parsedPermission = parsePermissionRequest(params);
+              const { request } = admitted.value;
+              const parsedPermission = parsePermissionRequest(request);
               const decision = yield* Deferred.await(pendingDecision).pipe(
                 Effect.ensuring(
                   runRuntimeCallbackAtGeneration(
@@ -5982,7 +6041,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
         yield* Ref.set(activeSessionId, started.sessionId);
         yield* Ref.set(activeSessionSetup, started);
         rememberTerminalEnvironment(started.sessionId, input.threadId);
-        const capabilities = negotiatedCapabilities(flavor.capabilities, started);
+        const capabilities = negotiatedCapabilities(flavor.capabilities, started, flavor);
         const canLoadSession = started.initializeResult.agentCapabilities?.loadSession === true;
         const canResumeSession =
           started.initializeResult.agentCapabilities?.sessionCapabilities?.resume != null;

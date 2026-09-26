@@ -21,6 +21,8 @@ const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
+// Announce the tool call as an edit and omit `kind` from its permission request.
+const permissionOmitsEditKind = process.env.T3_ACP_PERMISSION_OMITS_EDIT_KIND === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitV2Fidelity = process.env.T3_ACP_EMIT_V2_FIDELITY === "1";
@@ -1727,7 +1729,7 @@ const program = Effect.gen(function* () {
             sessionUpdate: "tool_call_update",
             toolCallId,
             title: "Terminal",
-            kind: "execute",
+            kind: permissionOmitsEditKind ? "edit" : "execute",
             status: "pending",
             rawInput: {
               command: ["cat", "server/package.json"],
@@ -1772,7 +1774,7 @@ const program = Effect.gen(function* () {
               toolCall: {
                 toolCallId: index === 0 ? toolCallId : `${toolCallId}-${index + 1}`,
                 title: process.env.T3_ACP_PERMISSION_TITLE ?? `\`${command}\``,
-                kind: "execute",
+                ...(permissionOmitsEditKind ? {} : { kind: "execute" as const }),
                 status: "pending",
                 rawInput: {
                   variant: "Bash",

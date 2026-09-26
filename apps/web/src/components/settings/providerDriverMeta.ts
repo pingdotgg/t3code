@@ -5,6 +5,7 @@ import {
   CodexSettings,
   CursorSettings,
   GrokSettings,
+  KiroSettings,
   OpenCodeSettings,
   PiSettings,
   ProviderDriverKind,
@@ -85,6 +86,11 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
     value: ProviderDriverKind.make("antigravity"),
     label: "Antigravity",
     settingsSchema: AntigravitySettings,
+  },
+  {
+    value: ProviderDriverKind.make("kiro"),
+    label: "Kiro",
+    settingsSchema: KiroSettings,
   },
   {
     value: ProviderDriverKind.make("pi"),

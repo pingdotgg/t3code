@@ -86,6 +86,7 @@ import {
   acpToolCallDiffPatch,
   acpTurnStartShouldPreserveContinuation,
   makeAcpAdapterV2,
+  negotiatedCapabilities,
   type AcpAdapterV2ExtensionContext,
   type AcpAdapterV2Flavor,
   type AcpAdapterV2RuntimeInput,
@@ -107,6 +108,47 @@ const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
 const testLayer = Layer.mergeAll(NodeServices.layer, idAllocatorLayer, serverConfigLayer);
 const ACP_TEST_DRIVER = ProviderDriverKind.make("acp-test");
 const decodeUnknownJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+
+describe("negotiatedCapabilities", () => {
+  const initializeResult = { protocolVersion: 1, agentCapabilities: { loadSession: true } };
+
+  it("reports model switching for a model config option or v1 `models` a flavor can apply", () => {
+    const negotiated = (
+      sessionSetupResult: Record<string, unknown>,
+      flavor: Pick<AcpAdapterV2Flavor, "applyModelSelection"> = {},
+    ) =>
+      negotiatedCapabilities(
+        AcpProviderCapabilitiesV2,
+        {
+          sessionId: "session-1",
+          initializeResult,
+          sessionSetupResult: { sessionId: "session-1", ...sessionSetupResult },
+          modelConfigId: undefined,
+        },
+        flavor,
+      ).sessions.supportsModelSwitchInSession;
+    const models = { models: { currentModelId: "auto", availableModels: [{ modelId: "auto" }] } };
+    assert.isTrue(negotiated(models, { applyModelSelection: () => Effect.succeed("auto") }));
+    // The generic setup path only switches config options, so v1 `models`
+    // alone must not advertise a switch nobody performs.
+    assert.isFalse(negotiated(models));
+    assert.isTrue(
+      negotiated({
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "a",
+            options: [],
+          },
+        ],
+      }),
+    );
+    assert.isFalse(negotiated({}));
+  });
+});
 
 describe("acpProjectedCommandExitCode", () => {
   const successOutput = { type: "Bash", exit_code: 0 };
@@ -3561,6 +3603,86 @@ describe("AcpAdapterV2", () => {
         ),
       );
       assert.equal(terminal.type, "turn.terminal");
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("uses the announced tool kind when a permission request omits it", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: {
+              T3_ACP_EMIT_TOOL_CALLS: "1",
+              T3_ACP_PERMISSION_OMITS_EDIT_KIND: "1",
+            },
+          }),
+        },
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocatorV2,
+        serverConfig: yield* ServerConfig,
+        selfInvocation: yield* resolveSelfInvocation(),
+      });
+      const threadId = ThreadId.make("thread-acp-permission-known-kind");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-permission-known-kind"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+
+      const pending = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+          ),
+          Stream.runHead,
+        ),
+      );
+      if (
+        pending.type !== "runtime_request.updated" ||
+        pending.runtimeRequest.providerTurnId === null
+      ) {
+        return yield* Effect.die("Expected a pending ACP permission request with a provider turn");
+      }
+      assert.equal(pending.runtimeRequest.kind, "file-change");
+
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: pending.runtimeRequest.providerTurnId,
+      });
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
