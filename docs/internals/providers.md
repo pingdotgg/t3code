@@ -22,6 +22,13 @@ OpenCode also stores persistent approval grants per directory. Automatic full-ac
 `once` so they cannot widen a supervised thread's permissions on a shared external server.
 See the [adapter](../../apps/server/src/provider/Layers/OpenCodeAdapter.ts).
 
+Pi runs the user's own `pi` install in RPC mode, one process per thread, and owns native extension,
+package, and project trust discovery. T3 injects only its bridge extension, which carries the
+permission hook and the optional MCP tools. The Pi session file is the resume cursor. Pi's `fork`
+targets a session-tree entry, not a turn count, so the cursor also records each turn's first user
+message; rollback without that record cannot find the boundary.
+See the [adapter](../../apps/server/src/provider/Layers/PiAdapter.ts).
+
 Antigravity separates account profiles per instance while sharing installed executables across the
 environment. It forces file-based credential storage because the native macOS keychain entry would
 otherwise be shared across instances. The launch environment removes ambient Google credentials,
