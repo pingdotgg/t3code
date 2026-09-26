@@ -2399,6 +2399,7 @@ export function PullRequestDetailPanel({
                         setTitleScope({ pullRequestKey, text: event.target.value })
                       }
                       onKeyDown={(event) => {
+                        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
                         if (event.key === "Enter") {
                           event.preventDefault();
                           void saveTitle(titleDraft);
