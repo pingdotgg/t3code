@@ -6691,6 +6691,56 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("completed turns keep their ids but not the SDK messages", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+      const completedFiber = yield* Stream.filter(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runHead, Effect.forkChild);
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-1",
+        uuid: "assistant-1",
+        parent_tool_use_id: null,
+        message: {
+          id: "assistant-message-1",
+          content: [{ type: "text", text: "Hi" }],
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-1",
+        uuid: "result-1",
+      } as unknown as SDKMessage);
+      yield* Fiber.join(completedFiber);
+
+      const snapshot = yield* adapter.readThread(session.threadId);
+      assert.deepEqual(
+        snapshot.turns.map((entry) => ({ id: String(entry.id), items: entry.items })),
+        [{ id: String(turn.turnId), items: [] }],
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("rewinds Claude history when the fork omits retained system messages", () => {
     const forkCalls: Array<Parameters<NonNullable<ClaudeAdapterLiveOptions["forkSession"]>>> = [];
     let firstTurnId = "";
