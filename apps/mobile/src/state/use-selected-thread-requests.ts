@@ -6,7 +6,12 @@ import {
   questionAttachmentDraftPrefix,
   questionAttachmentPreparationAtom,
 } from "./question-attachments";
-import { composerDraftsAtom, clearComposerDraft } from "./use-composer-drafts";
+import {
+  composerDraftsAtom,
+  clearComposerDraft,
+  getComposerDraftSnapshot,
+  setComposerDraftText,
+} from "./use-composer-drafts";
 import {
   composerAttachmentUploadsAtom,
   composerAttachmentUploadBlockReason,
@@ -23,9 +28,10 @@ import {
 import { Atom } from "effect/unstable/reactivity";
 
 import { threadEnvironment } from "../state/threads";
-import { scopedRequestKey } from "../lib/scopedEntities";
+import { scopedRequestKey, scopedThreadKey } from "../lib/scopedEntities";
 import {
   buildPendingUserInputAnswers,
+  carryDisplacedCustomAnswerIntoPrompt,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
@@ -41,10 +47,20 @@ const userInputDraftsByRequestKeyAtom = Atom.make<
 
 function setUserInputDraftOption(
   requestKey: string,
+  threadDraftKey: string,
   question: UserInputQuestion,
   value: string,
 ): void {
   const current = appAtomRegistry.get(userInputDraftsByRequestKeyAtom);
+  // The option replaces the custom answer, so typed text goes to the thread draft.
+  const threadDraftText = getComposerDraftSnapshot(threadDraftKey).text;
+  const nextThreadDraftText = carryDisplacedCustomAnswerIntoPrompt(
+    threadDraftText,
+    current[requestKey]?.[question.id]?.customAnswer,
+  );
+  if (nextThreadDraftText !== threadDraftText) {
+    setComposerDraftText(threadDraftKey, nextThreadDraftText);
+  }
   appAtomRegistry.set(userInputDraftsByRequestKeyAtom, {
     ...current,
     [requestKey]: {
@@ -192,7 +208,12 @@ export function useSelectedThreadRequests() {
       }
 
       const requestKey = scopedRequestKey(selectedThreadShell.environmentId, requestId);
-      setUserInputDraftOption(requestKey, question, value);
+      setUserInputDraftOption(
+        requestKey,
+        scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id),
+        question,
+        value,
+      );
     },
     [selectedThreadShell],
   );

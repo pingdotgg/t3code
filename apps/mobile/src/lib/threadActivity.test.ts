@@ -17,6 +17,7 @@ import {
   agentSpawnSummary,
   buildPendingUserInputAnswers,
   buildThreadFeed,
+  carryDisplacedCustomAnswerIntoPrompt,
   deriveThreadFeedPresentation,
   isPendingUserInputOptionSelected,
   setPendingUserInputCustomAnswer,
@@ -120,6 +121,17 @@ describe("pending user input answers", () => {
         questions: [nativeQuestion, singleSelectQuestion],
       },
     ]);
+  });
+
+  it("moves an answer displaced by an option into the thread draft", () => {
+    expect(carryDisplacedCustomAnswerIntoPrompt("draft", undefined)).toBe("draft");
+    expect(carryDisplacedCustomAnswerIntoPrompt("draft", "   ")).toBe("draft");
+    expect(carryDisplacedCustomAnswerIntoPrompt("", "also rename the flag ")).toBe(
+      "also rename the flag",
+    );
+    expect(carryDisplacedCustomAnswerIntoPrompt("first half\n", "second half")).toBe(
+      "first half\n\nsecond half",
+    );
   });
 
   it("replaces single-select options and toggles multi-select options", () => {

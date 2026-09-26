@@ -18,10 +18,33 @@ vi.mock("@effect/atom-react", () => ({
           ? fixture.preparations
           : {},
 }));
-vi.mock("./use-composer-drafts", () => ({
+vi.mock("./use-composer-drafts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./use-composer-drafts")>()),
+  // The render path reads drafts through the mocked useAtomValue below.
   composerDraftsAtom: "drafts",
-  clearComposerDraft: vi.fn(),
 }));
+vi.mock("expo-file-system", () => {
+  class StubEntry {
+    parentDirectory: unknown = null;
+    name = "";
+    exists = false;
+    constructor(parent: unknown, name?: string) {
+      this.parentDirectory = parent;
+      if (name) this.name = name;
+    }
+    create() {}
+    write() {}
+    moveSync() {}
+    async text() {
+      return "";
+    }
+  }
+  return {
+    Directory: StubEntry,
+    File: StubEntry,
+    Paths: { document: { uri: "file:///documents" } },
+  };
+});
 vi.mock("./composer-attachment-uploads", async () => ({
   ...(await import("../lib/composerAttachmentUploadQueue")),
   composerAttachmentUploadsAtom: "uploads",
@@ -78,6 +101,8 @@ vi.mock("./use-thread-detail", () => ({
 
 import { ApprovalRequestId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { questionAttachmentDraftKey } from "./question-attachments";
+import { getComposerDraftSnapshot, setComposerDraftText } from "./use-composer-drafts";
+import { scopedThreadKey } from "../lib/scopedEntities";
 import { useSelectedThreadRequests } from "./use-selected-thread-requests";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -136,5 +161,31 @@ describe("question attachment submission readiness", () => {
     fixture.uploads["environment-1:second"] = { status: "ready" };
     fixture.preparations[key("first")] = 1;
     expect(submitButtonMarkup()).toContain("disabled");
+  });
+});
+
+describe("user input answer drafting", () => {
+  it("moves a typed custom answer into the thread draft when an option replaces it", () => {
+    const threadDraftKey = scopedThreadKey(environmentId, ThreadId.make("thread-1"));
+    setComposerDraftText(threadDraftKey, "Existing draft");
+
+    const captured: { current: ReturnType<typeof useSelectedThreadRequests> | null } = {
+      current: null,
+    };
+    function Probe() {
+      captured.current = useSelectedThreadRequests();
+      return null;
+    }
+    renderToStaticMarkup(<Probe />);
+    const hook = captured.current!;
+    const request = hook.activePendingUserInput!;
+    expect(request.requestId).toBe("request-1");
+
+    hook.onChangeUserInputCustomAnswer(request.requestId, "first", "  also rename the flag  ");
+    hook.onSelectUserInputOption(request.requestId, request.questions[0]!, "keep");
+
+    expect(getComposerDraftSnapshot(threadDraftKey).text).toBe(
+      "Existing draft\n\nalso rename the flag",
+    );
   });
 });

@@ -2353,6 +2353,25 @@ export function isPendingUserInputOptionSelected(
   );
 }
 
+/**
+ * Selecting an option clears the custom answer. Text the user typed there must
+ * not vanish on that tap: it moves into the thread draft, after whatever was
+ * already waiting there. Mirrors the web client's helper of the same name.
+ */
+export function carryDisplacedCustomAnswerIntoPrompt(
+  prompt: string,
+  customAnswer: string | undefined,
+): string {
+  const displaced = customAnswer?.trim() ?? "";
+  if (displaced.length === 0) {
+    return prompt;
+  }
+  if (prompt.trim().length === 0) {
+    return displaced;
+  }
+  return `${prompt.trimEnd()}\n\n${displaced}`;
+}
+
 export function togglePendingUserInputOptionSelection(
   question: UserInputQuestion,
   draft: PendingUserInputDraftAnswer | undefined,
