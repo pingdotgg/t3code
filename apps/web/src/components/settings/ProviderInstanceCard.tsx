@@ -902,6 +902,10 @@ export function ProviderInstanceCard({
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={() => onAcceptUrlAuth(urlAuthAction)}
+                        // A middle click opens the link without a click event.
+                        onAuxClick={(event) => {
+                          if (event.button === 1) onAcceptUrlAuth(urlAuthAction);
+                        }}
                       />
                     }
                     size="xs"
